@@ -1,0 +1,12 @@
+[package]
+name = "tenth"
+version = "0.1.0"
+edition = "2024"
+description = "Tenth language bootstrap compiler"
+
+[dependencies]
+ndarray = "0.16"
+rustyline = "15"
+thiserror = "2"
+rand = "0.8"
+rand_distr = "0.4"
