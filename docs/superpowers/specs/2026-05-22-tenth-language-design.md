@@ -487,37 +487,51 @@ match load_weights("model.tenth") {
 
 ## 九、开发路线图
 
-### Phase 0：设计验证（当前阶段）
+### Phase 0：设计验证 ✅ 已完成
 - 完成设计规格文档
 - 收集反馈，迭代修改
 - 产出语言参考手册初稿
 
-### Phase 1：最小原型
-- 实现词法分析器和语法解析器
-- 实现 HIR 和基础类型检查
-- 支持基本张量操作（无 GPU，纯 CPU 解释执行）
-- 产出：能运行 `tensor.rand([3, 224, 224]).sum()` 的 REPL
+### Phase 1：最小原型 ✅ 已完成
+- Lexer → Parser(AST) → HIR Lowering + Type Check → Tree-walk Interpreter 完整管线
+- 基本张量操作、变量绑定、控制流、函数定义、闭包
+- 产出：22 项测试通过、可交互 REPL
+- 详见：`docs/superpowers/plans/2026-05-22-phase1-bootstrap-compiler.md`
 
-### Phase 2：核心编译器
-- 实现 MLIR 集成，打通 HIR → MIR → LIR → LLVM
-- 实现所有权检查和借用验证
-- 实现 trait 系统
-- 实现 shape 推导引擎
-- 产出：能编译简单 Tenth 程序到原生代码
+### Phase 2：夯实解释器 ✅ 已完成
+- struct/enum/match/impl 完整类型系统
+- mod/use 模块系统
+- rand/randn/softmax/matmul 张量标准库扩展
+- 改进错误诊断（源码片段 + 位置指示器）
+- 产出：38 项测试通过，可编写非平凡 Tenth 程序
+- 详见：`docs/superpowers/plans/2026-05-22-phase2-interpreter-hardening.md`
 
-### Phase 3：GPU 与性能
+### Phase 3A：类型系统深化（当前阶段）
+- 泛型系统（类型参数、泛型函数与泛型结构体）
+- trait 系统（定义、实现、约束边界）
+- 所有权与借用检查（引用、移动语义）
+- 产出：类型系统完备的解释器
+- 详见：`docs/superpowers/plans/2026-05-22-phase3a-type-system.md`
+
+### Phase 3B：MLIR 原生编译
+- MLIR 集成：HIR → MIR → LIR → LLVM 四层 IR
+- shape 推导引擎
+- 编译期优化（算子融合、死代码消除）
+- 产出：能编译 `.th` 文件到原生二进制
+
+### Phase 4：GPU 与性能
 - 实现 GPU kernel 生成（CUDA 后端）
 - 实现算子融合优化
 - 实现 arena allocator
 - 实现自动并行分解
 
-### Phase 4：AI 全栈
+### Phase 5：AI 全栈
 - 实现 autodiff 宏（标准库）
 - 实现 SPMD 并行原语
 - 实现分布式通信原语
 - 实现 nn / optim / data 标准库
 
-### Phase 5：生态与工具
+### Phase 6：生态与工具
 - 包管理器
 - LSP 服务器（IDE 支持）
 - 调试器

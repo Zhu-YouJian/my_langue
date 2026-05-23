@@ -62,6 +62,29 @@ fn main() {
 
 本手册中，`//` 表示行注释。代码块中的语法以 Tenth 0.1 版本为准。标记「待定」的章节表示该特性尚在设计中或未实现。
 
+### 1.6 实现进度
+
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| Phase 0 设计验证 | ✅ 完成 | 设计规格、参考手册框架 |
+| Phase 1 最小原型 | ✅ 完成 | Lexer/Parser/HIR/Interpreter/REPL，22 项测试 |
+| Phase 2 夯实解释器 | ✅ 完成 | struct/enum/match/impl/mod/use，张量标准库，38 项测试 |
+| Phase 3A 类型系统深化 | 🔧 当前 | 泛型、trait、所有权/借用 |
+| Phase 3B MLIR 编译 | ⏳ 规划中 | 四层 IR → LLVM 原生代码 |
+| Phase 4-6 | ⏳ 规划中 | GPU、AI 全栈、生态工具 |
+
+**Phase 1-2 已实现特性：**
+- 基本类型、张量、数组、控制流、函数、闭包
+- struct/enum 类型系统、impl 方法、match 模式匹配
+- mod/use 模块系统
+- rand/randn/softmax/matmul 张量运算
+- 含源码片段的错误诊断
+
+**Phase 3A 实现中特性：**
+- 泛型函数与泛型结构体：`fn id<T>(x: T) -> T`
+- trait 定义与实现：`trait Add { fn add(self, other: Self) -> Self; }`
+- 所有权：引用 `&`、移动 `move`
+
 ---
 
 ## 2. 词法结构
