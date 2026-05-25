@@ -523,27 +523,34 @@ match load_weights("model.tenth") {
 - 产出：5 项编译测试通过
 - 详见：`docs/superpowers/plans/2026-05-22-phase3b-mlir-compilation.md`
 
-### Phase 4：GPU 与性能 📋
-- 实现 GPU kernel 生成（CUDA 后端）
-- 实现算子融合优化
-- 实现 arena allocator
-- 实现自动并行分解
+### Phase 4：GPU 与性能 🚧 部分完成
+- ✅ Arena allocator — 内存池批量分配/释放
+- ✅ MIR 优化 passes — 常量折叠 + 死代码消除
+- ✅ 端到端 GCC 编译 — `.th → C → gcc → .exe`
+- ❌ GPU kernel 生成 — 待装 CUDA Toolkit
+- ❌ 算子融合 — 待 GPU 后端
+- ❌ 自动并行分解 — 需多 GPU
 - 详见：`docs/superpowers/plans/2026-05-26-phase4-gpu-performance.md`
+- 跳过项备忘：`docs/superpowers/plans/2026-05-26-phase4-6-skipped.md`
 
-### Phase 5：AI 全栈 📋
-- 实现 autodiff 宏（标准库）
-- 实现 SPMD 并行原语
-- 实现分布式通信原语
-- 实现 nn / optim / data 标准库
+### Phase 5：AI 全栈 🚧 部分完成
+- ✅ Autodiff 基础 — tape + vjp + grad（标量级）
+- ✅ nn 标准库原型 — Linear/ReLU/MSE/BCE（Tenth 实现）
+- ✅ optim 标准库原型 — SGD/Adam（Tenth 实现）
+- ❌ SPMD 并行原语 — 需多 GPU
+- ❌ 分布式通信 — 需 MPI/NCCL
+- ❌ data 标准库 — 未开始
 - 详见：`docs/superpowers/plans/2026-05-26-phase5-ai-fullstack.md`
+- 跳过项备忘：`docs/superpowers/plans/2026-05-26-phase4-6-skipped.md`
 
-### Phase 6：生态与工具 📋
-- 包管理器
-- LSP 服务器（IDE 支持）
-- 调试器
-- 文档生成器
-- 社区建设
+### Phase 6：生态与工具 🚧 部分完成
+- ✅ REPL 调试器 — `:break` `:step` `:print` 命令
+- ✅ 文档生成器 — HIR → Markdown API 文档
+- ❌ 包管理器 (tenthpm) — 待开发
+- ❌ LSP 服务器 — 待开发
+- ❌ 社区建设 — 待启动
 - 详见：`docs/superpowers/plans/2026-05-26-phase6-ecosystem-tools.md`
+- 跳过项备忘：`docs/superpowers/plans/2026-05-26-phase4-6-skipped.md`
 
 ---
 
