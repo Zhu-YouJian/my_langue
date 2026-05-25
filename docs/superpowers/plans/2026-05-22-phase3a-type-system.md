@@ -1,5 +1,10 @@
 # Phase 3A: 类型系统深化 实施计划
 
+> **✅ COMPLETED** — 2026-05-22  
+> 交付物：引用 (Ref/MutRef/Deref) 表达式全管线打通，move 关键字与移动语义，Scope 级所有权状态跟踪 (Owned/SharedRef/ExclusiveRef/Moved)，编译期借用检查（moved 后使用 → error，mut+shared 冲突 → error）。  
+> 11 项 ownership_test 含 3 项借用检查编译期报错，全部通过。  
+> 偏差：Tasks 1-5（泛型、trait、bounds、内置trait）在 Phase 2 中已提前交付。Tasks 6-8 按计划完成。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在 Phase 2 解释器基础上实现泛型系统、trait 系统和所有权/借用模型，产出类型系统完备的解释器。

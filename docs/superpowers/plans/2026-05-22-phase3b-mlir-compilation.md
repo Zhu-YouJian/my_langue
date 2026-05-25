@@ -1,5 +1,10 @@
 # Phase 3B: MLIR 原生编译 实施计划
 
+> **✅ COMPLETED** — 2026-05-22  
+> 交付物：MIR 定义与 HIR→MIR lowering (compile/mir.rs + compile/lower.rs)，C 代码生成器 (compile/cgen.rs)，Shape 推导引擎 (compile/shape.rs)，CLI compile 命令 (main.rs)。  
+> 5 项 compile_test 全部通过。  
+> 偏差：原计划用 inkwell/LLVM 直接生成原生二进制。实现改为 C 代码生成方案——MIR→C→调用系统 C 编译器（gcc/clang），降低了 LLVM 安装依赖。LLVM 直编留在远期计划。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 打通 HIR → MIR → LIR → LLVM IR 四层编译管线，产出能编译 `.th` 文件到原生可执行文件的编译器。
