@@ -35,6 +35,19 @@ set PATH=%PATH%;C:\Users\史蒂夫\.cargo\bin
 
 ---
 
+## 网络代理（GitHub / crates.io 访问）
+
+国内网络直连 GitHub 经常超时，需要通过代理。Clash 代理地址：
+
+```cmd
+set HTTP_PROXY=http://127.0.0.1:6454
+set HTTPS_PROXY=http://127.0.0.1:6454
+```
+
+设置后 `git push` / `cargo build`（下载 crate）均走代理。关终端即失效，不会影响系统全局设置。
+
+---
+
 ## Cargo 依赖（crates.io）
 
 定义于 `tenth/Cargo.toml` 的 `[dependencies]` 段，`cargo build` 自动下载，无需手动安装。
