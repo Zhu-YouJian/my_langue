@@ -2,9 +2,11 @@
 
 > 代号 Tenth = Tensor + Zenith，意为「张量之巅」
 >
-> 状态：原型实作阶段 (Phase 1-3B 完成) | 日期：2026-05-22
+> 状态：v0.2.0 完成，v0.3.0 进行中 | 日期：2026-05-26
 >
-> 实现进度：Lexer/Parser/HIR/Interpreter 全管线可运行；泛型/trait/所有权/借用检查 已实现；MIR→C 编译管线已打通。60 项测试全部通过。
+> 实现进度：Lexer/Parser/HIR/Interpreter/Compiler 全管线可运行；泛型/trait/所有权/借用/移动 已实现；MIR 优化 + GCC 编译 + Arena + Autodiff 已实现。
+>
+> 71 项测试全部通过。下一阶段：v0.3.0 标准库与自举（见 `docs/superpowers/plans/2026-05-26-v0.3.0-standard-library-and-self-hosting.md`）
 
 ---
 
@@ -550,6 +552,29 @@ match load_weights("model.tenth") {
 - 详见：`docs/superpowers/plans/2026-05-26-phase6-ecosystem-tools.md`
 
 > 全部跳过项详见 `MEMO.md`。
+
+---
+
+## v0.3.0 路线图（标准库 + 自举）
+
+### Phase 7：核心标准库 📋
+- Vec\<T\> 动态数组
+- String 方法（len, 索引, 切片, 拼接）
+- HashMap\<K,V\> 哈希表
+- 文件 I/O (read_file / write_file)
+- Result\<T,E\> / Option\<T\> 枚举
+
+### Phase 8：自举编译器 📋
+- Token + Lexer（Tenth 实现）
+- Parser（Tenth 实现）
+- HIR Lowering + Type Check（Tenth 实现）
+- C Codegen（Tenth 实现）
+- Bootstrap：Rust 编译器 → Tenth 编译器 → 自举循环
+
+### Phase 9：v0.3.0 收尾 📋
+- 回归测试 + 文档对齐 + 版本发布
+
+详见：`docs/superpowers/plans/2026-05-26-v0.3.0-standard-library-and-self-hosting.md`
 
 ---
 

@@ -1,6 +1,9 @@
 # 开发备忘
 
 > 各类待办、跳过项、环境依赖、注意事项均记录于此。
+>
+> **当前阶段：v0.3.0 — 标准库与自举**
+> 详见：`docs/superpowers/plans/2026-05-26-v0.3.0-standard-library-and-self-hosting.md`
 
 ---
 
