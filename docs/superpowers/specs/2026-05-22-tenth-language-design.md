@@ -508,37 +508,42 @@ match load_weights("model.tenth") {
 - 产出：38 项测试通过，可编写非平凡 Tenth 程序
 - 详见：`docs/superpowers/plans/2026-05-22-phase2-interpreter-hardening.md`
 
-### Phase 3A：类型系统深化（当前阶段）
+### Phase 3A：类型系统深化 ✅ 已完成
 - 泛型系统（类型参数、泛型函数与泛型结构体）
 - trait 系统（定义、实现、约束边界）
 - 所有权与借用检查（引用、移动语义）
-- 产出：类型系统完备的解释器
+- 产出：类型系统完备的解释器，11 项所有权/借用测试通过
 - 详见：`docs/superpowers/plans/2026-05-22-phase3a-type-system.md`
 
-### Phase 3B：MLIR 原生编译
-- MLIR 集成：HIR → MIR → LIR → LLVM 四层 IR
+### Phase 3B：编译后端 ✅ 已完成
+- HIR → MIR → C 编译管线
 - shape 推导引擎
-- 编译期优化（算子融合、死代码消除）
-- 产出：能编译 `.th` 文件到原生二进制
+- CLI compile 命令（`tenth compile input.th -o output.c`）
+- 偏差：以 C 代码生成替代原计划 LLVM 直编，降低 LLVM 安装依赖
+- 产出：5 项编译测试通过
+- 详见：`docs/superpowers/plans/2026-05-22-phase3b-mlir-compilation.md`
 
-### Phase 4：GPU 与性能
+### Phase 4：GPU 与性能 📋
 - 实现 GPU kernel 生成（CUDA 后端）
 - 实现算子融合优化
 - 实现 arena allocator
 - 实现自动并行分解
+- 详见：`docs/superpowers/plans/2026-05-26-phase4-gpu-performance.md`
 
-### Phase 5：AI 全栈
+### Phase 5：AI 全栈 📋
 - 实现 autodiff 宏（标准库）
 - 实现 SPMD 并行原语
 - 实现分布式通信原语
 - 实现 nn / optim / data 标准库
+- 详见：`docs/superpowers/plans/2026-05-26-phase5-ai-fullstack.md`
 
-### Phase 6：生态与工具
+### Phase 6：生态与工具 📋
 - 包管理器
 - LSP 服务器（IDE 支持）
 - 调试器
 - 文档生成器
 - 社区建设
+- 详见：`docs/superpowers/plans/2026-05-26-phase6-ecosystem-tools.md`
 
 ---
 

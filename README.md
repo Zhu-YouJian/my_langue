@@ -43,9 +43,9 @@ cargo run --manifest-path tenth/Cargo.toml -- compile input.th -o output.c
 | Phase 2 | 解释器夯实 | ✅ |
 | Phase 3A | 类型系统深化 | ✅ |
 | Phase 3B | 编译后端 | ✅ |
-| Phase 4 | 标准库与运行时 | 📋 |
-| Phase 5 | 编译优化 | 📋 |
-| Phase 6 | 自举编译器 | 📋 |
+| Phase 4 | GPU 与性能 | 📋 |
+| Phase 5 | AI 全栈 | 📋 |
+| Phase 6 | 生态与工具 | 📋 |
 
 详见 `docs/superpowers/plans/`。
 
