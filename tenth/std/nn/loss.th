@@ -1,0 +1,13 @@
+// Loss functions
+
+// Mean Squared Error
+fn mse(pred: Tensor[f64, ..], target: Tensor[f64, ..]) -> f64 {
+    let diff = pred - target;
+    let sq = diff * diff;
+    sq.mean()
+}
+
+// Binary Cross Entropy
+fn binary_cross_entropy(pred: f64, target: f64) -> f64 {
+    -(target * pred.log() + (1.0 - target) * (1.0 - pred).log())
+}

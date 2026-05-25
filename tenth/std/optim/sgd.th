@@ -1,0 +1,15 @@
+// Stochastic Gradient Descent optimizer
+
+// Updates weights in-place using SGD
+// w = w - lr * grad
+fn sgd_step(w: &mut Tensor[f64, ..], grad: &Tensor[f64, ..], lr: f64) {
+    *w = *w - lr * (*grad);
+}
+
+// SGD with momentum
+// v = momentum * v - lr * grad
+// w = w + v
+fn sgd_momentum_step(w: &mut Tensor[f64, ..], grad: &Tensor[f64, ..], v: &mut Tensor[f64, ..], lr: f64, momentum: f64) {
+    *v = momentum * (*v) - lr * (*grad);
+    *w = *w + (*v);
+}

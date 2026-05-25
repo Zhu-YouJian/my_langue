@@ -10,7 +10,25 @@ fn compile_to_c(src: &str) -> String {
     let program = parser.parse_program().unwrap();
     let mut lowerer = Lowerer::new();
     let hir = lowerer.lower_program(&program).unwrap();
-    compile::compile_to_c(&hir).unwrap()
+    compile::compile_to_c(&hir, true).unwrap()
+}
+
+fn compile_to_c_noopt(src: &str) -> String {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).unwrap();
+    compile::compile_to_c(&hir, false).unwrap()
+}
+
+#[test]
+fn test_const_fold_optimization() {
+    let opt = compile_to_c("2 + 3 * 4");
+    let noopt = compile_to_c_noopt("2 + 3 * 4");
+    // Optimized version should contain 14 directly, not the full expression
+    assert!(opt.contains("14"), "optimized output should contain constant-folded 14: {}", opt);
 }
 
 #[test]

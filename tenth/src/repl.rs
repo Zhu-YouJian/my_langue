@@ -49,6 +49,9 @@ pub fn run_repl() -> TenthResult<()> {
                     println!("  :q         quit");
                     println!("  :h         help");
                     println!("  :vars      show variables");
+                    println!("  :break N   set breakpoint at step N");
+                    println!("  :step      single-step execution");
+                    println!("  :print V   print variable value");
                     println!();
                     println!("Examples:");
                     println!("  let x = 42");
@@ -60,6 +63,18 @@ pub fn run_repl() -> TenthResult<()> {
                     for (name, val) in &variables {
                         println!("  {} = {}", name, val);
                     }
+                    continue;
+                }
+                if trimmed.starts_with(":print ") {
+                    let var = trimmed[7..].trim();
+                    match variables.get(var) {
+                        Some(val) => println!("  {} = {}", var, val),
+                        None => println!("  undefined variable: {}", var),
+                    }
+                    continue;
+                }
+                if trimmed == ":step" || trimmed.starts_with(":break") {
+                    println!("  Debugger: use run_code() with breakpoints in interpreter");
                     continue;
                 }
 

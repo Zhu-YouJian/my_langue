@@ -47,7 +47,8 @@ impl CGenerator {
     }
 
     fn emit_forward_decl(&mut self, func: &MirFunction) {
-        let ret_c = c_type_name(&func.return_type);
+        let is_main = func.name == "main" && func.params.is_empty();
+        let ret_c = if is_main { "int" } else { c_type_name(&func.return_type) };
         let params: Vec<String> = func.params.iter()
             .map(|(n, t)| format!("{} {}", c_type_name(t), n))
             .collect();
@@ -55,7 +56,8 @@ impl CGenerator {
     }
 
     fn generate_function(&mut self, func: &MirFunction) {
-        let ret_c = c_type_name(&func.return_type);
+        let is_main = func.name == "main" && func.params.is_empty();
+        let ret_c = if is_main { "int" } else { c_type_name(&func.return_type) };
         let params: Vec<String> = func.params.iter()
             .map(|(n, t)| format!("{} {}", c_type_name(t), n))
             .collect();
