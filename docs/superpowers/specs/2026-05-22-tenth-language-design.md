@@ -531,7 +531,6 @@ match load_weights("model.tenth") {
 - ❌ 算子融合 — 待 GPU 后端
 - ❌ 自动并行分解 — 需多 GPU
 - 详见：`docs/superpowers/plans/2026-05-26-phase4-gpu-performance.md`
-- 跳过项备忘：`docs/superpowers/plans/2026-05-26-phase4-6-skipped.md`
 
 ### Phase 5：AI 全栈 🚧 部分完成
 - ✅ Autodiff 基础 — tape + vjp + grad（标量级）
@@ -541,7 +540,6 @@ match load_weights("model.tenth") {
 - ❌ 分布式通信 — 需 MPI/NCCL
 - ❌ data 标准库 — 未开始
 - 详见：`docs/superpowers/plans/2026-05-26-phase5-ai-fullstack.md`
-- 跳过项备忘：`docs/superpowers/plans/2026-05-26-phase4-6-skipped.md`
 
 ### Phase 6：生态与工具 🚧 部分完成
 - ✅ REPL 调试器 — `:break` `:step` `:print` 命令
@@ -550,7 +548,8 @@ match load_weights("model.tenth") {
 - ❌ LSP 服务器 — 待开发
 - ❌ 社区建设 — 待启动
 - 详见：`docs/superpowers/plans/2026-05-26-phase6-ecosystem-tools.md`
-- 跳过项备忘：`docs/superpowers/plans/2026-05-26-phase4-6-skipped.md`
+
+> 全部跳过项详见 `MEMO.md`。
 
 ---
 
