@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use crate::error::TenthResult;
 use crate::lexer::lexer::Lexer;
 use crate::parser::parser::Parser;
 use crate::hir::lower::Lowerer;
+use crate::hir::hir::HirProgram;
 use crate::runtime::interpreter::Interpreter;
 use crate::runtime::value::Value;
 
@@ -13,7 +15,17 @@ pub fn run_repl() -> TenthResult<()> {
     println!("Type expressions, ':q' to quit, ':h' for help");
     println!();
 
-    let mut functions = Vec::new();
+    let mut accumulated_program = HirProgram {
+        functions: Vec::new(),
+        generic_funcs: Vec::new(),
+        main_expr: None,
+        modules: HashMap::new(),
+        uses: Vec::new(),
+        methods: HashMap::new(),
+        generic_structs: HashMap::new(),
+        trait_defs: HashMap::new(),
+        trait_impls: HashMap::new(),
+    };
     let mut variables: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
 
     loop {
@@ -53,7 +65,7 @@ pub fn run_repl() -> TenthResult<()> {
 
                 rl.add_history_entry(trimmed).ok();
 
-                match execute_line(trimmed, &mut functions, &mut variables) {
+                match execute_line(trimmed, &mut accumulated_program, &mut variables) {
                     Ok(Some(val)) => {
                         match val {
                             Value::Unit => {}
@@ -86,7 +98,7 @@ pub fn run_repl() -> TenthResult<()> {
 
 fn execute_line(
     line: &str,
-    functions: &mut Vec<crate::hir::hir::HirFnDef>,
+    accumulated_program: &mut crate::hir::hir::HirProgram,
     variables: &mut std::collections::HashMap<String, Value>,
 ) -> TenthResult<Option<Value>> {
     let mut lexer = Lexer::new(line);
@@ -98,11 +110,19 @@ fn execute_line(
     let mut lowerer = Lowerer::new();
     let hir_program = lowerer.lower_program(&program)?;
 
-    functions.extend(hir_program.functions.clone());
+    accumulated_program.functions.extend(hir_program.functions.clone());
+    accumulated_program.generic_funcs.extend(hir_program.generic_funcs.clone());
+    accumulated_program.modules.extend(hir_program.modules.clone());
+    accumulated_program.uses.extend(hir_program.uses.clone());
+    accumulated_program.methods.extend(hir_program.methods.clone());
+    accumulated_program.generic_structs.extend(hir_program.generic_structs.clone());
+    accumulated_program.trait_defs.extend(hir_program.trait_defs.clone());
+    accumulated_program.trait_impls.extend(hir_program.trait_impls.clone());
+    accumulated_program.main_expr = hir_program.main_expr;
 
-    let mut interpreter = Interpreter::new(functions.clone());
+    let mut interpreter = Interpreter::new(accumulated_program);
     interpreter.variables.extend(variables.clone());
-    let result = interpreter.execute_program(&hir_program)?;
+    let result = interpreter.execute_program(accumulated_program)?;
 
     *variables = interpreter.variables.clone();
 

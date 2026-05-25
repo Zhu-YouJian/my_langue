@@ -54,6 +54,15 @@ impl Scope {
 pub struct Lowerer {
     scope: Scope,
     functions: Vec<HirFnDef>,
+    generic_funcs: HashMap<String, HirFnDef>,
+    structs: HashMap<String, Vec<(String, Type)>>,
+    generic_structs: HashMap<String, HirGenericStruct>,
+    enums: HashMap<String, Vec<(String, Vec<(String, Type)>)>>,
+    methods: HashMap<String, HashMap<String, HirFnDef>>,
+    modules: HashMap<String, HirProgram>,
+    uses: Vec<(Vec<String>, String)>,
+    trait_defs: HashMap<String, HirTraitDef>,
+    trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
 }
 
 impl Lowerer {
@@ -67,10 +76,37 @@ impl Lowerer {
                 dims: vec![Dim::Any],
             },
         );
-        Lowerer {
+        let mut lowerer = Lowerer {
             scope,
             functions: Vec::new(),
-        }
+            generic_funcs: HashMap::new(),
+            structs: HashMap::new(),
+            generic_structs: HashMap::new(),
+            enums: HashMap::new(),
+            methods: HashMap::new(),
+            modules: HashMap::new(),
+            uses: Vec::new(),
+            trait_defs: HashMap::new(),
+            trait_impls: HashMap::new(),
+        };
+
+        lowerer.trait_defs.insert("Display".to_string(), HirTraitDef {
+            name: "Display".to_string(),
+            generics: vec![],
+            methods: vec![("display".to_string(), vec![("self".to_string(), Type::Unknown)], Type::str_())],
+        });
+        lowerer.trait_defs.insert("Eq".to_string(), HirTraitDef {
+            name: "Eq".to_string(),
+            generics: vec![],
+            methods: vec![("eq".to_string(), vec![("self".to_string(), Type::Unknown), ("other".to_string(), Type::Unknown)], Type::bool_())],
+        });
+        lowerer.trait_defs.insert("Clone".to_string(), HirTraitDef {
+            name: "Clone".to_string(),
+            generics: vec![],
+            methods: vec![("clone".to_string(), vec![("self".to_string(), Type::Unknown)], Type::Unknown)],
+        });
+
+        lowerer
     }
 
     fn lower_expr(&mut self, expr: &ast::Expr) -> TenthResult<HirExpr> {
@@ -90,22 +126,52 @@ impl Lowerer {
             }
 
             ExprKind::Ident(ident) => {
-                let var_info = self.scope.lookup_var(&ident.name);
-                let fn_info = self.scope.lookup_fn(&ident.name);
-                if var_info.is_none() && fn_info.is_none() {
-                    return Err(TenthError::TypeError {
-                        line: span.line,
-                        col: span.col,
-                        message: format!("undefined variable '{}'", ident.name),
-                    });
+                if ident.name.contains("::") {
+                    let parts: Vec<&str> = ident.name.splitn(2, "::").collect();
+                    if parts.len() == 2 {
+                        let enum_name = parts[0];
+                        let variant = parts[1];
+                        if let Some(variants) = self.enums.get(enum_name) {
+                            if variants.iter().any(|(v, _)| v == variant) {
+                                return Ok(HirExpr {
+                                    kind: HirExprKind::EnumLiteral {
+                                        enum_name: enum_name.to_string(),
+                                        variant: variant.to_string(),
+                                        fields: Vec::new(),
+                                    },
+                                    ty: Type::Unknown,
+                                    span,
+                                });
+                            }
+                        }
+                    }
+                    (HirExprKind::Var(ident.name.clone()), Type::Unknown)
+                } else {
+                    let var_info = self.scope.lookup_var(&ident.name);
+                    let fn_info = self.scope.lookup_fn(&ident.name);
+                    if var_info.is_none() && fn_info.is_none() {
+                        match ident.name.as_str() {
+                            "println" | "eprintln" | "tensor" | "rand" | "randn" => {
+                                (HirExprKind::Var(ident.name.clone()), Type::Unknown)
+                            }
+                            _ => {
+                                return Err(TenthError::TypeError {
+                                    line: span.line,
+                                    col: span.col,
+                                    message: format!("undefined variable '{}'", ident.name),
+                                });
+                            }
+                        }
+                    } else {
+                        let ty = var_info.map(|v| v.0).or_else(|| {
+                            fn_info.map(|f| Type::FnType {
+                                params: f.0.iter().map(|(_, t)| t.clone()).collect(),
+                                ret: Box::new(f.1),
+                            })
+                        }).unwrap_or(Type::Unknown);
+                        (HirExprKind::Var(ident.name.clone()), ty)
+                    }
                 }
-                let ty = var_info.map(|v| v.0).or_else(|| {
-                    fn_info.map(|f| Type::FnType {
-                        params: f.0.iter().map(|(_, t)| t.clone()).collect(),
-                        ret: Box::new(f.1),
-                    })
-                }).unwrap_or(Type::Unknown);
-                (HirExprKind::Var(ident.name.clone()), ty)
             }
 
             ExprKind::Binary { op, left, right } => {
@@ -139,6 +205,53 @@ impl Lowerer {
                     args: lowered_args,
                     ret_ty: ret_ty.clone(),
                 }, ret_ty)
+            }
+
+            ExprKind::GenericCall { func, generics, args } => {
+                let func_name = match &func.kind {
+                    ExprKind::Ident(ident) => ident.name.clone(),
+                    _ => {
+                        return Err(TenthError::TypeError {
+                            line: span.line,
+                            col: span.col,
+                            message: "generic call target must be a named function".into(),
+                        });
+                    }
+                };
+
+                let template = self.generic_funcs.get(&func_name)
+                    .ok_or_else(|| TenthError::TypeError {
+                        line: span.line,
+                        col: span.col,
+                        message: format!("undefined generic function '{}'", func_name),
+                    })?
+                    .clone();
+
+                let type_args: Vec<Type> = generics.iter()
+                    .map(|ta| Type::from_annotation(ta))
+                    .collect();
+
+                let mut type_map: HashMap<String, Type> = HashMap::new();
+                for (i, gen_name) in template.generics.iter().enumerate() {
+                    type_map.insert(gen_name.clone(), type_args.get(i).cloned().unwrap_or(Type::Unknown));
+                }
+
+                let inst_ret_ty = substitute_type(&template.return_type, &type_map);
+
+                let lowered_args: Vec<HirExpr> = args.iter()
+                    .map(|a| self.lower_expr(a))
+                    .collect::<TenthResult<_>>()?;
+
+                (HirExprKind::GenericCall {
+                    func: Box::new(HirExpr {
+                        kind: HirExprKind::Var(func_name),
+                        ty: Type::Unknown,
+                        span: span.clone(),
+                    }),
+                    generics: type_args,
+                    args: lowered_args,
+                    ret_ty: inst_ret_ty.clone(),
+                }, inst_ret_ty)
             }
 
             ExprKind::MethodCall { receiver, method, args } => {
@@ -279,6 +392,62 @@ impl Lowerer {
                 let hir_op = lower_binop(op);
                 (HirExprKind::AssignOp { target: name, op: hir_op, value: Box::new(v) }, Type::unit())
             }
+
+            ExprKind::StructLiteral { name, generics: _, fields } => {
+                let lowered_fields: Vec<(String, HirExpr)> = fields.iter()
+                    .map(|(id, e)| {
+                        let lowered = self.lower_expr(e)?;
+                        Ok((id.name.clone(), lowered))
+                    })
+                    .collect::<TenthResult<_>>()?;
+                (HirExprKind::StructLiteral {
+                    name: name.name.clone(),
+                    fields: lowered_fields,
+                }, Type::Unknown)
+            }
+
+            ExprKind::EnumLiteral { enum_name, variant, fields } => {
+                let lowered_fields: Vec<(String, HirExpr)> = fields.iter()
+                    .map(|(id, e)| {
+                        let lowered = self.lower_expr(e)?;
+                        Ok((id.name.clone(), lowered))
+                    })
+                    .collect::<TenthResult<_>>()?;
+                (HirExprKind::EnumLiteral {
+                    enum_name: enum_name.name.clone(),
+                    variant: variant.name.clone(),
+                    fields: lowered_fields,
+                }, Type::Unknown)
+            }
+
+            ExprKind::Match { scrutinee, arms } => {
+                let lowered_scrutinee = self.lower_expr(scrutinee)?;
+                let lowered_arms: Vec<HirMatchArm> = arms.iter()
+                    .map(|arm| {
+                        let hir_pattern = self.lower_pattern(&arm.pattern)?;
+
+                        let arm_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
+                        self.scope = arm_scope;
+
+                        if let ast::Pattern::EnumVariant { field_bind, .. } = &arm.pattern {
+                            if let Some((_fname, bname)) = field_bind {
+                                self.scope.define_var(bname.clone(), Type::Unknown, false);
+                            }
+                        }
+
+                        let body = self.lower_expr(&arm.body)?;
+
+                        let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
+                        self.scope = outer_scope;
+
+                        Ok(HirMatchArm { pattern: hir_pattern, body })
+                    })
+                    .collect::<TenthResult<_>>()?;
+                (HirExprKind::Match {
+                    scrutinee: Box::new(lowered_scrutinee),
+                    arms: lowered_arms,
+                }, Type::Unknown)
+            }
         };
 
         Ok(HirExpr { kind, ty, span })
@@ -293,6 +462,28 @@ impl Lowerer {
                 Ok(Index::Range { start: s.map(Box::new), end: e.map(Box::new) })
             }
             ast::IndexExpr::Colon => Ok(Index::Colon),
+        }
+    }
+
+    fn lower_pattern(&mut self, pattern: &ast::Pattern) -> TenthResult<HirPattern> {
+        match pattern {
+            ast::Pattern::EnumVariant { enum_name, variant, field_bind } => {
+                Ok(HirPattern::EnumVariant {
+                    enum_name: enum_name.clone(),
+                    variant: variant.clone(),
+                    field_bind: field_bind.clone(),
+                })
+            }
+            ast::Pattern::Wildcard => Ok(HirPattern::Wildcard),
+            ast::Pattern::Literal(lit) => {
+                let hir_lit = match lit {
+                    ast::Literal::Int(n) => Literal::Int(*n),
+                    ast::Literal::Float(n) => Literal::Float(*n),
+                    ast::Literal::Bool(b) => Literal::Bool(*b),
+                    ast::Literal::String(s) => Literal::String(s.clone()),
+                };
+                Ok(HirPattern::Literal(hir_lit))
+            }
         }
     }
 
@@ -364,7 +555,8 @@ impl Lowerer {
                     "mean" | "max" | "min" => Type::Base(dtype.clone()),
                     "reshape" | "view" => Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] },
                     "flatten" => Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] },
-                    "abs" | "sqrt" | "exp" | "log" | "relu" | "sigmoid" | "tanh" => {
+                    "abs" | "sqrt" | "exp" | "log" | "relu" |
+                    "sigmoid" | "tanh" | "softmax" => {
                         Type::Tensor { dtype: dtype.clone(), dims: dims.clone() }
                     }
                     _ => Type::Unknown,
@@ -378,6 +570,7 @@ impl Lowerer {
         match name {
             "println" | "eprintln" => Ok(Type::unit()),
             "tensor" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
+            "rand" | "randn" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
             _ => Ok(Type::Unknown),
         }
     }
@@ -434,24 +627,227 @@ impl Lowerer {
 
     pub fn lower_program(&mut self, program: &ast::Program) -> TenthResult<HirProgram> {
         for item in &program.items {
-            if let ast::ItemKind::Function { name, params, return_type, .. } = &item.kind {
-                if name.name == "<expr>" {
-                    continue;
+            match &item.kind {
+                ast::ItemKind::StructDef { name, generics, fields } => {
+                    let field_types: Vec<(String, Type)> = fields.iter()
+                        .map(|f| (f.name.name.clone(), Type::from_annotation(&f.type_ann)))
+                        .collect();
+                    if generics.is_empty() {
+                        self.structs.insert(name.name.clone(), field_types);
+                    } else {
+                        let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
+                        self.generic_structs.insert(name.name.clone(), HirGenericStruct {
+                            name: name.name.clone(),
+                            generics: gen_names,
+                            fields: field_types,
+                        });
+                    }
                 }
-                let param_types: Vec<(String, Type)> = params.iter()
-                    .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
-                    .collect();
-                let ret_ty = return_type.as_ref()
-                    .map(|rt| Type::from_annotation(rt))
-                    .unwrap_or(Type::unit());
-                self.scope.define_fn(name.name.clone(), param_types, ret_ty);
+                ast::ItemKind::EnumDef { name, variants } => {
+                    let variant_list: Vec<(String, Vec<(String, Type)>)> = variants.iter()
+                        .map(|v| {
+                            let fields: Vec<(String, Type)> = v.fields.iter()
+                                .map(|f| (f.name.name.clone(), Type::from_annotation(&f.type_ann)))
+                                .collect();
+                            (v.name.name.clone(), fields)
+                        })
+                        .collect();
+                    self.enums.insert(name.name.clone(), variant_list);
+                }
+                ast::ItemKind::Trait { name, generics, methods } => {
+                    let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
+                    let method_sigs: Vec<(String, Vec<(String, Type)>, Type)> = methods.iter()
+                        .map(|m| {
+                            let param_types: Vec<(String, Type)> = m.params.iter()
+                                .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
+                                .collect();
+                            let ret_ty = m.return_type.as_ref()
+                                .map(|rt| Type::from_annotation(rt))
+                                .unwrap_or(Type::unit());
+                            (m.name.name.clone(), param_types, ret_ty)
+                        })
+                        .collect();
+                    self.trait_defs.insert(name.name.clone(), HirTraitDef {
+                        name: name.name.clone(),
+                        generics: gen_names,
+                        methods: method_sigs,
+                    });
+                }
+                ast::ItemKind::Function { name, generics, params, return_type, .. } => {
+                    if name.name == "<expr>" || !generics.is_empty() {
+                        continue;
+                    }
+                    let param_types: Vec<(String, Type)> = params.iter()
+                        .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
+                        .collect();
+                    let ret_ty = return_type.as_ref()
+                        .map(|rt| Type::from_annotation(rt))
+                        .unwrap_or(Type::unit());
+                    self.scope.define_fn(name.name.clone(), param_types, ret_ty);
+                }
+                _ => {}
+            }
+        }
+
+        for item in &program.items {
+            match &item.kind {
+                ast::ItemKind::Impl { type_name, trait_name, functions, .. } => {
+                    if let Some(trait_name) = trait_name {
+                        let trait_name_str = trait_name.name.clone();
+                        let type_name_str = type_name.name.clone();
+                        let mut method_map = HashMap::new();
+                        for fn_item in functions {
+                            if let ast::ItemKind::Function { name, generics, params, return_type, body } = &fn_item.kind {
+                                let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
+                                let param_types: Vec<(String, Type)> = params.iter()
+                                    .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
+                                    .collect();
+                                let ret_ty = return_type.as_ref()
+                                    .map(|rt| Type::from_annotation(rt))
+                                    .unwrap_or(Type::unit());
+
+                                let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
+                                self.scope = body_scope;
+
+                                for (n, t) in &param_types {
+                                    self.scope.define_var(n.clone(), t.clone(), false);
+                                }
+
+                                let lowered_body = self.lower_expr(body)?;
+
+                                let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
+                                self.scope = outer_scope;
+
+                                let fn_def = HirFnDef {
+                                    name: name.name.clone(),
+                                    generics: gen_names,
+                                    generics_bounds: build_generics_bounds(generics),
+                                    params: param_types,
+                                    return_type: ret_ty,
+                                    body: lowered_body,
+                                    span: fn_item.span.clone(),
+                                };
+                                method_map.insert(fn_def.name.clone(), fn_def);
+                            }
+                        }
+                        self.trait_impls.entry(trait_name_str)
+                            .or_insert_with(HashMap::new)
+                            .insert(type_name_str, method_map);
+                    } else {
+                        let mut method_map = HashMap::new();
+                        for fn_item in functions {
+                            if let ast::ItemKind::Function { name, generics, params, return_type, body } = &fn_item.kind {
+                                let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
+                                let param_types: Vec<(String, Type)> = params.iter()
+                                    .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
+                                    .collect();
+                                let ret_ty = return_type.as_ref()
+                                    .map(|rt| Type::from_annotation(rt))
+                                    .unwrap_or(Type::unit());
+
+                                let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
+                                self.scope = body_scope;
+
+                                for (n, t) in &param_types {
+                                    self.scope.define_var(n.clone(), t.clone(), false);
+                                }
+
+                                let lowered_body = self.lower_expr(body)?;
+
+                                let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
+                                self.scope = outer_scope;
+
+                                let fn_def = HirFnDef {
+                                    name: name.name.clone(),
+                                    generics: gen_names,
+                                    generics_bounds: build_generics_bounds(generics),
+                                    params: param_types,
+                                    return_type: ret_ty,
+                                    body: lowered_body,
+                                    span: fn_item.span.clone(),
+                                };
+                                method_map.insert(fn_def.name.clone(), fn_def);
+                            }
+                        }
+                        self.methods.insert(type_name.name.clone(), method_map);
+                    }
+                }
+                ast::ItemKind::Mod { name, items } => {
+                    let mut lowerer = Lowerer::new();
+                    lowerer.structs = self.structs.clone();
+                    lowerer.enums = self.enums.clone();
+                    lowerer.methods = self.methods.clone();
+                    lowerer.generic_funcs = self.generic_funcs.clone();
+                    lowerer.generic_structs = self.generic_structs.clone();
+                    lowerer.trait_defs = self.trait_defs.clone();
+                    lowerer.trait_impls = self.trait_impls.clone();
+                    let mod_program = ast::Program { items: items.clone() };
+                    let hir_mod = lowerer.lower_program(&mod_program)?;
+                    self.modules.insert(name.name.clone(), hir_mod);
+                }
+                ast::ItemKind::Use { path } => {
+                    let path_strs: Vec<String> = path.iter().map(|p| p.name.clone()).collect();
+                    if path_strs.len() >= 2 {
+                        let alias = path_strs.last().cloned().unwrap_or_default();
+                        self.uses.push((path_strs.clone(), alias.clone()));
+                        let mod_name = &path_strs[0];
+                        let fn_name = &path_strs[1];
+                        if let Some(module) = self.modules.get(mod_name) {
+                            if let Some(fn_def) = module.functions.iter().find(|f| &f.name == fn_name) {
+                                let param_types = fn_def.params.clone();
+                                let ret_ty = fn_def.return_type.clone();
+                                self.scope.define_fn(alias, param_types, ret_ty);
+                            }
+                        }
+                    }
+                }
+                ast::ItemKind::Function { name, generics, params, return_type, body } => {
+                    if name.name == "<expr>" {
+                        continue;
+                    }
+                    let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
+                    let param_types: Vec<(String, Type)> = params.iter()
+                        .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
+                        .collect();
+                    let ret_ty = return_type.as_ref()
+                        .map(|rt| Type::from_annotation(rt))
+                        .unwrap_or(Type::unit());
+
+                    let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
+                    self.scope = body_scope;
+
+                    for (n, t) in &param_types {
+                        self.scope.define_var(n.clone(), t.clone(), false);
+                    }
+
+                    let lowered_body = self.lower_expr(body)?;
+
+                    let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
+                    self.scope = outer_scope;
+
+                    let fn_def = HirFnDef {
+                        name: name.name.clone(),
+                        generics: gen_names,
+                        generics_bounds: build_generics_bounds(generics),
+                        params: param_types,
+                        return_type: ret_ty,
+                        body: lowered_body,
+                        span: item.span.clone(),
+                    };
+
+                    if fn_def.generics.is_empty() {
+                        self.functions.push(fn_def);
+                    } else {
+                        self.generic_funcs.insert(fn_def.name.clone(), fn_def);
+                    }
+                }
+                _ => {}
             }
         }
 
         let mut main_expr = None;
-
         for item in &program.items {
-            if let ast::ItemKind::Function { name, params, return_type, body } = &item.kind {
+            if let ast::ItemKind::Function { name, body, .. } = &item.kind {
                 if name.name == "<expr>" {
                     let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
                     self.scope = body_scope;
@@ -462,53 +858,44 @@ impl Lowerer {
                     self.scope = outer_scope;
 
                     main_expr = Some(lowered_body);
-                    continue;
+                    break;
                 }
-
-                let param_types: Vec<(String, Type)> = params.iter()
-                    .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
-                    .collect();
-                let ret_ty = return_type.as_ref()
-                    .map(|rt| Type::from_annotation(rt))
-                    .unwrap_or(Type::unit());
-
-                let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
-                self.scope = body_scope;
-
-                for (n, t) in &param_types {
-                    self.scope.define_var(n.clone(), t.clone(), false);
-                }
-
-                let lowered_body = self.lower_expr(body)?;
-
-                let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
-                self.scope = outer_scope;
-
-                self.functions.push(HirFnDef {
-                    name: name.name.clone(),
-                    params: param_types,
-                    return_type: ret_ty,
-                    body: lowered_body,
-                    span: item.span.clone(),
-                });
-            } else {
-                let body = match &item.kind {
-                    ast::ItemKind::Function { body, .. } => body.clone(),
-                    _ => continue,
-                };
-                let main_expr_val = self.lower_expr(&body)?;
-                return Ok(HirProgram {
-                    functions: self.functions.clone(),
-                    main_expr: Some(main_expr_val),
-                });
             }
         }
 
         Ok(HirProgram {
             functions: self.functions.clone(),
+            generic_funcs: self.generic_funcs.values().cloned().collect(),
             main_expr,
+            modules: self.modules.clone(),
+            uses: self.uses.clone(),
+            methods: self.methods.clone(),
+            generic_structs: self.generic_structs.clone(),
+            trait_defs: self.trait_defs.clone(),
+            trait_impls: self.trait_impls.clone(),
         })
     }
+}
+
+fn substitute_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
+    match ty {
+        Type::TypeParam { name } => {
+            map.get(name).cloned().unwrap_or_else(|| ty.clone())
+        }
+        Type::Ref(inner) => Type::Ref(Box::new(substitute_type(inner, map))),
+        Type::MutRef(inner) => Type::MutRef(Box::new(substitute_type(inner, map))),
+        _ => ty.clone(),
+    }
+}
+
+fn build_generics_bounds(generics: &[ast::GenericParam]) -> HashMap<String, Vec<String>> {
+    let mut bounds_map = HashMap::new();
+    for gp in generics {
+        if !gp.bounds.is_empty() {
+            bounds_map.insert(gp.name.name.clone(), gp.bounds.iter().map(|b| b.name.clone()).collect());
+        }
+    }
+    bounds_map
 }
 
 fn lower_binop(op: &ast::BinOp) -> BinOp {

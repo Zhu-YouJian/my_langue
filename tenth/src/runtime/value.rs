@@ -4,7 +4,7 @@ use std::fmt;
 use super::tensor::Tensor;
 use crate::hir::types::{Type, BaseType, Dim};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
     Float(f64),
@@ -22,6 +22,15 @@ pub enum Value {
         params: Vec<(String, Type)>,
         body: Rc<crate::hir::hir::HirExpr>,
         captures: Vec<(String, Value)>,
+    },
+    Struct {
+        name: String,
+        fields: Vec<(String, Value)>,
+    },
+    Enum {
+        enum_name: String,
+        variant: String,
+        fields: Vec<(String, Value)>,
     },
 }
 
@@ -51,6 +60,8 @@ impl Value {
                     ret: Box::new(Type::Unknown),
                 }
             }
+            Value::Struct { name, .. } => Type::Struct(name.clone()),
+            Value::Enum { enum_name, .. } => Type::Enum(enum_name.clone()),
         }
     }
 
@@ -100,6 +111,26 @@ impl fmt::Display for Value {
             }
             Value::FnRef { name, .. } => write!(f, "<fn {}>", name),
             Value::Closure { .. } => write!(f, "<closure>"),
+            Value::Struct { name, fields } => {
+                write!(f, "{} {{ ", name)?;
+                for (i, (fname, fval)) in fields.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}: {}", fname, fval)?;
+                }
+                write!(f, " }}")
+            }
+            Value::Enum { enum_name, variant, fields } => {
+                if fields.is_empty() {
+                    write!(f, "{}::{}", enum_name, variant)
+                } else {
+                    write!(f, "{}::{}(", enum_name, variant)?;
+                    for (i, (fname, fval)) in fields.iter().enumerate() {
+                        if i > 0 { write!(f, ", ")?; }
+                        write!(f, "{}: {}", fname, fval)?;
+                    }
+                    write!(f, ")")
+                }
+            }
         }
     }
 }

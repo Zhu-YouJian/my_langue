@@ -28,6 +28,11 @@ pub enum Type {
         params: Vec<Type>,
         ret: Box<Type>,
     },
+    TypeParam { name: String },
+    Ref(Box<Type>),
+    MutRef(Box<Type>),
+    Struct(String),
+    Enum(String),
     Unknown,
 }
 
@@ -56,6 +61,11 @@ impl fmt::Display for Type {
                 write!(f, ") -> {}", ret)
             }
             Type::Unknown => write!(f, "<unknown>"),
+            Type::TypeParam { name } => write!(f, "{}", name),
+            Type::Ref(inner) => write!(f, "&{}", inner),
+            Type::MutRef(inner) => write!(f, "&mut {}", inner),
+            Type::Struct(name) => write!(f, "{}", name),
+            Type::Enum(name) => write!(f, "{}", name),
         }
     }
 }
@@ -92,7 +102,7 @@ impl Type {
                     "bool" => Type::Base(BaseType::Bool),
                     "char" => Type::Base(BaseType::Char),
                     "str" => Type::Base(BaseType::Str),
-                    _ => Type::Unknown,
+                    _ => Type::TypeParam { name: ident.name.clone() },
                 }
             }
             TA::Tensor { dtype, dims } => {

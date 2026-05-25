@@ -11,8 +11,7 @@ fn run_code(src: &str) -> Result<Option<Value>, String> {
     let program = parser.parse_program().map_err(|e| e.to_string())?;
     let mut lowerer = Lowerer::new();
     let hir = lowerer.lower_program(&program).map_err(|e| e.to_string())?;
-    let functions = hir.functions.clone();
-    let mut interpreter = Interpreter::new(functions);
+    let mut interpreter = Interpreter::new(&hir);
     interpreter.execute_program(&hir).map_err(|e| e.to_string())
 }
 
@@ -116,4 +115,24 @@ fn test_function_definition_and_call() {
     let src = "fn add(a: f64, b: f64) -> f64 { a + b }";
     let result = run_code(src);
     assert!(result.is_ok());
+}
+
+#[test]
+fn test_tensor_rand() {
+    let src = "rand(2, 3).sum()";
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Float(v)) => assert!(v >= 0.0, "got {}", v),
+        v => panic!("expected Float >= 0, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_tensor_softmax_sum_to_one() {
+    let src = "tensor[[1.0, 2.0, 3.0]].softmax().sum()";
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Float(v)) => assert!((v - 1.0).abs() < 1e-6, "got {}", v),
+        v => panic!("expected Float(1.0), got {:?}", v),
+    }
 }

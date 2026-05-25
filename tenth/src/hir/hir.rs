@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::lexer::token::Span;
 use super::types::Type;
 
@@ -18,6 +19,12 @@ pub enum HirExprKind {
     },
     Call {
         func: Box<HirExpr>,
+        args: Vec<HirExpr>,
+        ret_ty: Type,
+    },
+    GenericCall {
+        func: Box<HirExpr>,
+        generics: Vec<Type>,
         args: Vec<HirExpr>,
         ret_ty: Type,
     },
@@ -71,6 +78,36 @@ pub enum HirExprKind {
         op: BinOp,
         value: Box<HirExpr>,
     },
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, HirExpr)>,
+    },
+    EnumLiteral {
+        enum_name: String,
+        variant: String,
+        fields: Vec<(String, HirExpr)>,
+    },
+    Match {
+        scrutinee: Box<HirExpr>,
+        arms: Vec<HirMatchArm>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HirMatchArm {
+    pub pattern: HirPattern,
+    pub body: HirExpr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum HirPattern {
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+        field_bind: Option<(String, String)>,
+    },
+    Wildcard,
+    Literal(Literal),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -140,6 +177,8 @@ pub struct HirStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HirFnDef {
     pub name: String,
+    pub generics: Vec<String>,
+    pub generics_bounds: HashMap<String, Vec<String>>,
     pub params: Vec<(String, Type)>,
     pub return_type: Type,
     pub body: HirExpr,
@@ -147,7 +186,28 @@ pub struct HirFnDef {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct HirGenericStruct {
+    pub name: String,
+    pub generics: Vec<String>,
+    pub fields: Vec<(String, Type)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct HirProgram {
     pub functions: Vec<HirFnDef>,
+    pub generic_funcs: Vec<HirFnDef>,
     pub main_expr: Option<HirExpr>,
+    pub modules: HashMap<String, HirProgram>,
+    pub uses: Vec<(Vec<String>, String)>,
+    pub methods: HashMap<String, HashMap<String, HirFnDef>>,
+    pub generic_structs: HashMap<String, HirGenericStruct>,
+    pub trait_defs: HashMap<String, HirTraitDef>,
+    pub trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HirTraitDef {
+    pub name: String,
+    pub generics: Vec<String>,
+    pub methods: Vec<(String, Vec<(String, Type)>, Type)>,
 }

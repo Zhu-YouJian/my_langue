@@ -10,13 +10,23 @@ use super::tensor::Tensor;
 pub struct Interpreter {
     pub variables: HashMap<String, Value>,
     functions: Vec<HirFnDef>,
+    generic_funcs: HashMap<String, HirFnDef>,
+    generic_structs: HashMap<String, HirGenericStruct>,
+    methods: HashMap<String, HashMap<String, HirFnDef>>,
+    modules: HashMap<String, HirProgram>,
+    trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
 }
 
 impl Interpreter {
-    pub fn new(functions: Vec<HirFnDef>) -> Self {
+    pub fn new(program: &HirProgram) -> Self {
         Interpreter {
             variables: HashMap::new(),
-            functions,
+            functions: program.functions.clone(),
+            generic_funcs: HashMap::new(),
+            generic_structs: program.generic_structs.clone(),
+            methods: program.methods.clone(),
+            modules: program.modules.clone(),
+            trait_impls: program.trait_impls.clone(),
         }
     }
 
@@ -46,6 +56,30 @@ impl Interpreter {
             );
         }
 
+        for func in &program.generic_funcs {
+            self.generic_funcs.insert(func.name.clone(), func.clone());
+        }
+
+        for (use_path, alias) in &program.uses {
+            if use_path.len() >= 2 {
+                let mod_name = &use_path[0];
+                let fn_name = &use_path[1];
+                if let Some(module) = self.modules.get(mod_name) {
+                    if let Some(fn_def) = module.functions.iter().find(|f| &f.name == fn_name) {
+                        self.functions.push(fn_def.clone());
+                        self.variables.insert(
+                            alias.clone(),
+                            Value::FnRef {
+                                name: alias.clone(),
+                                params: fn_def.params.clone(),
+                                return_type: fn_def.return_type.clone(),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
         if let Some(ref expr) = program.main_expr {
             self.eval_expr(expr)
         } else if let Some(main_fn) = self.functions.iter().find(|f| f.name == "main") {
@@ -70,8 +104,41 @@ impl Interpreter {
             }
 
             HirExprKind::Var(name) => {
+                if name.contains("::") {
+                    let parts: Vec<&str> = name.splitn(2, "::").collect();
+                    if parts.len() == 2 {
+                        let mod_name = parts[0];
+                        let item_name = parts[1];
+                        if let Some(module) = self.modules.get(mod_name) {
+                            if let Some(fn_def) = module.functions.iter().find(|f| f.name == item_name) {
+                                return Ok(Some(Value::FnRef {
+                                    name: name.clone(),
+                                    params: fn_def.params.clone(),
+                                    return_type: fn_def.return_type.clone(),
+                                }));
+                            }
+                        }
+                    }
+                    return Ok(Some(Value::FnRef {
+                        name: name.clone(),
+                        params: Vec::new(),
+                        return_type: Type::Unknown,
+                    }));
+                }
                 self.variables.get(name)
                     .cloned()
+                    .or_else(|| {
+                        match name.as_str() {
+                            "println" | "eprintln" | "tensor" | "rand" | "randn" => {
+                                Some(Value::FnRef {
+                                    name: name.clone(),
+                                    params: Vec::new(),
+                                    return_type: Type::Unknown,
+                                })
+                            }
+                            _ => None,
+                        }
+                    })
                     .ok_or_else(|| TenthError::RuntimeError {
                         message: format!("undefined variable '{}'", name),
                     })
@@ -110,6 +177,51 @@ impl Interpreter {
                 self.eval_call(&f, &arg_values, &expr.span)
             }
 
+            HirExprKind::GenericCall { func, generics, args, .. } => {
+                let func_name = match &func.kind {
+                    HirExprKind::Var(name) => name.clone(),
+                    _ => {
+                        return Err(TenthError::RuntimeError {
+                            message: "generic call target must be a named function".into(),
+                        });
+                    }
+                };
+
+                let template = self.generic_funcs.get(&func_name)
+                    .ok_or_else(|| TenthError::RuntimeError {
+                        message: format!("undefined generic function '{}'", func_name),
+                    })?
+                    .clone();
+
+                let mut type_map: HashMap<String, Type> = HashMap::new();
+                for (i, gen_name) in template.generics.iter().enumerate() {
+                    type_map.insert(gen_name.clone(), generics.get(i).cloned().unwrap_or(Type::Unknown));
+                }
+
+                let mut arg_values = Vec::new();
+                for a in args {
+                    arg_values.push(self.eval_expr(a)?.ok_or_else(|| TenthError::RuntimeError {
+                        message: "argument is void".into(),
+                    })?);
+                }
+
+                let saved: HashMap<String, Value> = template.params.iter()
+                    .filter_map(|(n, _)| self.variables.get(n).cloned().map(|v| (n.clone(), v)))
+                    .collect();
+
+                for ((pname, _), arg) in template.params.iter().zip(arg_values.iter()) {
+                    self.variables.insert(pname.clone(), arg.clone());
+                }
+
+                let result = self.eval_expr(&template.body);
+
+                for (n, v) in saved {
+                    self.variables.insert(n, v);
+                }
+
+                result
+            }
+
             HirExprKind::MethodCall { receiver, method, args, .. } => {
                 let recv = self.eval_expr(receiver)?.ok_or_else(|| TenthError::RuntimeError {
                     message: "receiver is void".into(),
@@ -122,7 +234,7 @@ impl Interpreter {
                     })?);
                 }
 
-                self.eval_method(&recv, method, &arg_values).map(Some)
+                self.eval_method_call(&recv, method, &arg_values)
             }
 
             HirExprKind::Index { target, indices } => {
@@ -132,9 +244,35 @@ impl Interpreter {
                 self.eval_index(&t, indices).map(Some)
             }
 
-            HirExprKind::Field { target, field: _field } => {
-                let _t = self.eval_expr(target)?;
-                Ok(Some(Value::Unit))
+            HirExprKind::Field { target, field } => {
+                let t = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "field access target is void".into(),
+                })?;
+                match &t {
+                    Value::Struct { fields, .. } => {
+                        for (fname, fval) in fields {
+                            if fname == field {
+                                return Ok(Some(fval.clone()));
+                            }
+                        }
+                        Err(TenthError::RuntimeError {
+                            message: format!("struct has no field '{}'", field),
+                        })
+                    }
+                    Value::Enum { fields, .. } => {
+                        for (fname, fval) in fields {
+                            if fname == field {
+                                return Ok(Some(fval.clone()));
+                            }
+                        }
+                        Err(TenthError::RuntimeError {
+                            message: format!("enum variant has no field '{}'", field),
+                        })
+                    }
+                    _ => Err(TenthError::RuntimeError {
+                        message: format!("cannot access field '{}' on {:?}", field, t),
+                    }),
+                }
             }
 
             HirExprKind::ArrayLiteral { elements, .. } => {
@@ -220,10 +358,82 @@ impl Interpreter {
                 }))
             }
 
-            _ => {
-                Err(TenthError::RuntimeError {
-                    message: format!("unimplemented expression: {:?}", expr.kind),
-                })
+            HirExprKind::Range { .. } => Ok(Some(Value::Unit)),
+
+            HirExprKind::StructLiteral { name, fields } => {
+                let mut field_vals = Vec::new();
+                for (fname, fexpr) in fields {
+                    let v = self.eval_expr(fexpr)?.ok_or_else(|| TenthError::RuntimeError {
+                        message: format!("struct field '{}' is void", fname),
+                    })?;
+                    field_vals.push((fname.clone(), v));
+                }
+                Ok(Some(Value::Struct { name: name.clone(), fields: field_vals }))
+            }
+
+            HirExprKind::EnumLiteral { enum_name, variant, fields } => {
+                let mut field_vals = Vec::new();
+                for (fname, fexpr) in fields {
+                    let v = self.eval_expr(fexpr)?.ok_or_else(|| TenthError::RuntimeError {
+                        message: format!("enum field '{}' is void", fname),
+                    })?;
+                    field_vals.push((fname.clone(), v));
+                }
+                Ok(Some(Value::Enum {
+                    enum_name: enum_name.clone(),
+                    variant: variant.clone(),
+                    fields: field_vals,
+                }))
+            }
+
+            HirExprKind::Match { scrutinee, arms } => {
+                let val = self.eval_expr(scrutinee)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "match scrutinee is void".into(),
+                })?;
+
+                for arm in arms {
+                    if self.pattern_matches(&arm.pattern, &val) {
+                        if let HirPattern::EnumVariant { field_bind, .. } = &arm.pattern {
+                            if let Some((_fname, bname)) = field_bind {
+                                if let Value::Enum { fields, .. } = &val {
+                                    if let Some((_, v)) = fields.first() {
+                                        self.variables.insert(bname.clone(), v.clone());
+                                    }
+                                }
+                            }
+                        }
+                        let result = self.eval_expr(&arm.body);
+                        if let HirPattern::EnumVariant { field_bind, .. } = &arm.pattern {
+                            if let Some((_, bname)) = field_bind {
+                                self.variables.remove(bname);
+                            }
+                        }
+                        return result;
+                    }
+                }
+                Ok(Some(Value::Unit))
+            }
+        }
+    }
+
+    fn pattern_matches(&self, pattern: &HirPattern, val: &Value) -> bool {
+        match pattern {
+            HirPattern::Wildcard => true,
+            HirPattern::Literal(lit) => {
+                match (lit, val) {
+                    (Literal::Int(a), Value::Int(b)) => a == b,
+                    (Literal::Float(a), Value::Float(b)) => (a - b).abs() < 1e-10,
+                    (Literal::Bool(a), Value::Bool(b)) => a == b,
+                    _ => false,
+                }
+            }
+            HirPattern::EnumVariant { enum_name, variant, .. } => {
+                match val {
+                    Value::Enum { enum_name: e, variant: v, .. } => {
+                        enum_name == e && variant == v
+                    }
+                    _ => false,
+                }
             }
         }
     }
@@ -367,7 +577,88 @@ impl Interpreter {
         }
     }
 
-    fn eval_method(&self, recv: &Value, method: &str, args: &[Value]) -> TenthResult<Value> {
+    fn eval_method_call(&mut self, recv: &Value, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
+        match recv {
+            Value::Struct { name, .. } => {
+                if let Some(type_methods) = self.find_methods_for_type(name) {
+                    if let Some(method_fn) = type_methods.get(method) {
+                        return self.call_method_impl(recv, method_fn, args);
+                    }
+                }
+                for (_trait_name, type_impls) in &self.trait_impls {
+                    if let Some(methods) = type_impls.get(name) {
+                        if let Some(method_fn) = methods.get(method) {
+                            let fn_def = method_fn.clone();
+                            return self.call_method_impl(recv, &fn_def, args);
+                        }
+                    }
+                }
+                self.eval_tensor_method(recv, method, args).map(Some)
+            }
+            Value::Enum { .. } => {
+                self.eval_tensor_method(recv, method, args).map(Some)
+            }
+            Value::Tensor(_) => {
+                self.eval_tensor_method(recv, method, args).map(Some)
+            }
+            Value::Float(f) => {
+                self.eval_scalar_method(*f, method, args).map(Some)
+            }
+            Value::Int(i) => {
+                let f = *i as f64;
+                self.eval_scalar_method(f, method, args).map(Some)
+            }
+            _ => Err(TenthError::RuntimeError {
+                message: format!("method '{}' not supported on this type", method),
+            }),
+        }
+    }
+
+    fn find_methods_for_type(&self, type_name: &str) -> Option<HashMap<String, HirFnDef>> {
+        for (impl_type, methods) in &self.methods {
+            if impl_type == type_name {
+                return Some(methods.clone());
+            }
+        }
+        for module in self.modules.values() {
+            for func in &module.functions {
+                if func.name == type_name {
+                    return None;
+                }
+            }
+        }
+        None
+    }
+
+    fn call_method_impl(&mut self, receiver: &Value, method_fn: &HirFnDef, args: &[Value]) -> TenthResult<Option<Value>> {
+        let saved: HashMap<String, Value> = method_fn.params.iter()
+            .filter_map(|(n, _)| self.variables.get(n).cloned().map(|v| (n.clone(), v)))
+            .collect();
+
+        let self_saved = self.variables.get("self").cloned();
+
+        self.variables.insert("self".to_string(), receiver.clone());
+
+        for ((pname, _), arg) in method_fn.params.iter().skip(1).zip(args.iter()) {
+            self.variables.insert(pname.clone(), arg.clone());
+        }
+
+        let result = self.eval_expr(&method_fn.body);
+
+        for (n, v) in saved {
+            self.variables.insert(n, v);
+        }
+
+        if let Some(v) = self_saved {
+            self.variables.insert("self".to_string(), v);
+        } else {
+            self.variables.remove("self");
+        }
+
+        result
+    }
+
+    fn eval_tensor_method(&self, recv: &Value, method: &str, args: &[Value]) -> TenthResult<Value> {
         match recv {
             Value::Tensor(t) => {
                 let tensor = t.borrow();
@@ -425,13 +716,34 @@ impl Interpreter {
                         let result = tensor.flatten();
                         Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                     }
+                    "softmax" => {
+                        let result = tensor.softmax().ok_or_else(|| TenthError::RuntimeError {
+                            message: "softmax failed".into(),
+                        })?;
+                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                    }
                     _ => Err(TenthError::RuntimeError {
                         message: format!("unknown tensor method: {}", method),
                     }),
                 }
             }
+            Value::Struct { .. } => Err(TenthError::RuntimeError {
+                message: format!("unknown method '{}'", method),
+            }),
             _ => Err(TenthError::RuntimeError {
                 message: format!("method '{}' not supported on this type", method),
+            }),
+        }
+    }
+
+    fn eval_scalar_method(&self, val: f64, method: &str, _args: &[Value]) -> TenthResult<Value> {
+        match method {
+            "sqrt" => Ok(Value::Float(val.sqrt())),
+            "abs" => Ok(Value::Float(val.abs())),
+            "exp" => Ok(Value::Float(val.exp())),
+            "log" => Ok(Value::Float(val.ln())),
+            _ => Err(TenthError::RuntimeError {
+                message: format!("unknown method '{}' on scalar", method),
             }),
         }
     }
@@ -507,7 +819,6 @@ impl Interpreter {
     fn call_named_fn(
         &mut self, name: &str, args: &[Value], _span: &crate::lexer::token::Span,
     ) -> TenthResult<Option<Value>> {
-        // Built-in functions
         match name {
             "println" => {
                 for arg in args {
@@ -522,10 +833,54 @@ impl Interpreter {
                 }
                 return Ok(Some(Value::Unit));
             }
+            "rand" => {
+                let shape: Vec<usize> = args.iter()
+                    .map(|a| a.as_int().unwrap_or(1) as usize)
+                    .collect();
+                let t = Tensor::rand(&shape);
+                return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
+            }
+            "randn" => {
+                let shape: Vec<usize> = args.iter()
+                    .map(|a| a.as_int().unwrap_or(1) as usize)
+                    .collect();
+                let t = Tensor::randn(&shape);
+                return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
+            }
             _ => {}
         }
 
-        // User-defined functions
+        if name.contains("::") {
+            let parts: Vec<&str> = name.splitn(2, "::").collect();
+            if parts.len() == 2 {
+                let mod_name = parts[0];
+                let fn_name = parts[1];
+                if let Some(module) = self.modules.get(mod_name) {
+                    if let Some(fn_def) = module.functions.iter().find(|f| f.name == fn_name) {
+                        let fn_def = fn_def.clone();
+                        let saved: HashMap<String, Value> = fn_def.params.iter()
+                            .filter_map(|(n, _)| self.variables.get(n).cloned().map(|v| (n.clone(), v)))
+                            .collect();
+
+                        for ((pname, _), arg) in fn_def.params.iter().zip(args.iter()) {
+                            self.variables.insert(pname.clone(), arg.clone());
+                        }
+
+                        let result = self.eval_expr(&fn_def.body);
+
+                        for (n, v) in saved {
+                            self.variables.insert(n, v);
+                        }
+
+                        return result;
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: format!("undefined function '{}'", name),
+                });
+            }
+        }
+
         let func_def = self.functions.iter().find(|f| f.name == name).cloned();
         if let Some(fd) = func_def {
             let saved: HashMap<String, Value> = fd.params.iter()

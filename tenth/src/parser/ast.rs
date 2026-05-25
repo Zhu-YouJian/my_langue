@@ -65,6 +65,11 @@ pub enum ExprKind {
         func: Box<Expr>,
         args: Vec<Expr>,
     },
+    GenericCall {
+        func: Box<Expr>,
+        generics: Vec<TypeAnnotation>,
+        args: Vec<Expr>,
+    },
     MethodCall {
         receiver: Box<Expr>,
         method: Ident,
@@ -104,6 +109,37 @@ pub enum ExprKind {
         op: BinOp,
         value: Box<Expr>,
     },
+    StructLiteral {
+        name: Ident,
+        generics: Vec<TypeAnnotation>,
+        fields: Vec<(Ident, Expr)>,
+    },
+    EnumLiteral {
+        enum_name: Ident,
+        variant: Ident,
+        fields: Vec<(Ident, Expr)>,
+    },
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+        field_bind: Option<(String, String)>,
+    },
+    Wildcard,
+    Literal(Literal),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,9 +197,16 @@ pub struct Param {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct GenericParam {
+    pub name: Ident,
+    pub bounds: Vec<Ident>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ItemKind {
     Function {
         name: Ident,
+        generics: Vec<GenericParam>,
         params: Vec<Param>,
         return_type: Option<TypeAnnotation>,
         body: Expr,
@@ -176,16 +219,55 @@ pub enum ItemKind {
     Use {
         path: Vec<Ident>,
     },
+    StructDef {
+        name: Ident,
+        generics: Vec<GenericParam>,
+        fields: Vec<StructField>,
+    },
+    EnumDef {
+        name: Ident,
+        variants: Vec<EnumVariant>,
+    },
+    Impl {
+        type_name: Ident,
+        trait_name: Option<Ident>,
+        generics: Vec<GenericParam>,
+        functions: Vec<Item>,
+    },
     Mod {
         name: Ident,
         items: Vec<Item>,
     },
+    Trait {
+        name: Ident,
+        generics: Vec<GenericParam>,
+        methods: Vec<TraitMethod>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitMethod {
+    pub name: Ident,
+    pub params: Vec<Param>,
+    pub return_type: Option<TypeAnnotation>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
     pub kind: ItemKind,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructField {
+    pub name: Ident,
+    pub type_ann: TypeAnnotation,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariant {
+    pub name: Ident,
+    pub fields: Vec<StructField>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

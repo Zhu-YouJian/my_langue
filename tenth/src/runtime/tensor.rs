@@ -1,7 +1,7 @@
 use ndarray::{ArrayD, IxDyn};
 use std::fmt;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Tensor {
     data: ArrayD<f64>,
 }
@@ -142,6 +142,16 @@ impl Tensor {
         let size = self.data.len();
         let array = self.data.clone().into_shape_with_order(IxDyn(&[size])).unwrap();
         Tensor { data: array }
+    }
+
+    pub fn softmax(&self) -> Option<Tensor> {
+        let shape = self.shape().to_vec();
+        let self_data = self.data.as_slice().unwrap_or(&[]);
+        let max_val = self_data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let exps: Vec<f64> = self_data.iter().map(|x| (x - max_val).exp()).collect();
+        let sum: f64 = exps.iter().sum();
+        let result: Vec<f64> = exps.iter().map(|x| x / sum).collect();
+        Some(Tensor::from_vec(result, shape))
     }
 }
 
