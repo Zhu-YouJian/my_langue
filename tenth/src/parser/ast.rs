@@ -123,6 +123,10 @@ pub enum ExprKind {
         scrutinee: Box<Expr>,
         arms: Vec<MatchArm>,
     },
+    Ref(Box<Expr>),
+    MutRef(Box<Expr>),
+    Deref(Box<Expr>),
+    Move(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

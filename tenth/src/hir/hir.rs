@@ -91,6 +91,19 @@ pub enum HirExprKind {
         scrutinee: Box<HirExpr>,
         arms: Vec<HirMatchArm>,
     },
+    Ref(Box<HirExpr>),
+    MutRef(Box<HirExpr>),
+    Deref(Box<HirExpr>),
+    DerefAssign {
+        target: Box<HirExpr>,
+        value: Box<HirExpr>,
+    },
+    DerefAssignOp {
+        target: Box<HirExpr>,
+        op: BinOp,
+        value: Box<HirExpr>,
+    },
+    Move(Box<HirExpr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -90,6 +90,25 @@ impl Interpreter {
         }
     }
 
+    fn resolve_var(&self, name: &str) -> Option<Value> {
+        match self.variables.get(name) {
+            Some(Value::Shared(rc)) => Some(rc.borrow().clone()),
+            Some(Value::Moved) => None,
+            other => other.cloned(),
+        }
+    }
+
+    fn set_var(&mut self, name: String, val: Value) {
+        match self.variables.get(&name) {
+            Some(Value::Shared(rc)) => {
+                *rc.borrow_mut() = val;
+            }
+            _ => {
+                self.variables.insert(name, val);
+            }
+        }
+    }
+
     fn eval_expr(&mut self, expr: &HirExpr) -> TenthResult<Option<Value>> {
         use HirExprKind;
 
@@ -125,8 +144,12 @@ impl Interpreter {
                         return_type: Type::Unknown,
                     }));
                 }
-                self.variables.get(name)
-                    .cloned()
+                if matches!(self.variables.get(name), Some(Value::Moved)) {
+                    return Err(TenthError::RuntimeError {
+                        message: format!("use of moved value '{}'", name),
+                    });
+                }
+                self.resolve_var(name)
                     .or_else(|| {
                         match name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn" => {
@@ -332,12 +355,30 @@ impl Interpreter {
                 let v = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
                     message: "assign value is void".into(),
                 })?;
-                self.variables.insert(target.clone(), v);
+                self.set_var(target.clone(), v);
                 Ok(Some(Value::Unit))
             }
 
+            HirExprKind::DerefAssign { target, value } => {
+                let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "deref-assign target is void".into(),
+                })?;
+                let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "deref-assign value is void".into(),
+                })?;
+                match &target_val {
+                    Value::MutRef(rc) => {
+                        *rc.borrow_mut() = rhs;
+                        Ok(Some(Value::Unit))
+                    }
+                    _ => Err(TenthError::RuntimeError {
+                        message: "can only assign through mutable reference".into(),
+                    }),
+                }
+            }
+
             HirExprKind::AssignOp { target, op, value } => {
-                let current = self.variables.get(target).cloned().ok_or_else(|| {
+                let current = self.resolve_var(target).ok_or_else(|| {
                     TenthError::RuntimeError {
                         message: format!("undefined variable '{}'", target),
                     }
@@ -346,8 +387,28 @@ impl Interpreter {
                     message: "assign-op value is void".into(),
                 })?;
                 let result = self.eval_binary(op, &current, &rhs)?;
-                self.variables.insert(target.clone(), result);
+                self.set_var(target.clone(), result);
                 Ok(Some(Value::Unit))
+            }
+
+            HirExprKind::DerefAssignOp { target, op, value } => {
+                let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "deref-assignop target is void".into(),
+                })?;
+                let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "deref-assignop value is void".into(),
+                })?;
+                match &target_val {
+                    Value::MutRef(rc) => {
+                        let current = rc.borrow().clone();
+                        let result = self.eval_binary(op, &current, &rhs)?;
+                        *rc.borrow_mut() = result;
+                        Ok(Some(Value::Unit))
+                    }
+                    _ => Err(TenthError::RuntimeError {
+                        message: "can only assign through mutable reference".into(),
+                    }),
+                }
             }
 
             HirExprKind::Closure { params, body } => {
@@ -359,6 +420,54 @@ impl Interpreter {
             }
 
             HirExprKind::Range { .. } => Ok(Some(Value::Unit)),
+
+            HirExprKind::Ref(inner) => {
+                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "ref operand is void".into(),
+                })?;
+                Ok(Some(Value::Ref(Rc::new(RefCell::new(val)))))
+            }
+
+            HirExprKind::MutRef(inner) => {
+                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "mut ref operand is void".into(),
+                })?;
+                if let HirExprKind::Var(var_name) = &inner.kind {
+                    let rc = match self.variables.get(var_name) {
+                        Some(Value::Shared(existing)) => existing.clone(),
+                        _ => {
+                            let cell = Rc::new(RefCell::new(val));
+                            self.variables.insert(var_name.clone(), Value::Shared(cell.clone()));
+                            cell
+                        }
+                    };
+                    Ok(Some(Value::MutRef(rc)))
+                } else {
+                    Ok(Some(Value::MutRef(Rc::new(RefCell::new(val)))))
+                }
+            }
+
+            HirExprKind::Deref(inner) => {
+                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "deref operand is void".into(),
+                })?;
+                match &val {
+                    Value::Ref(rc) | Value::MutRef(rc) => Ok(Some(rc.borrow().clone())),
+                    _ => Err(TenthError::RuntimeError {
+                        message: "cannot dereference non-reference value".into(),
+                    }),
+                }
+            }
+
+            HirExprKind::Move(inner) => {
+                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "move operand is void".into(),
+                })?;
+                if let HirExprKind::Var(var_name) = &inner.kind {
+                    self.variables.insert(var_name.clone(), Value::Moved);
+                }
+                Ok(Some(val))
+            }
 
             HirExprKind::StructLiteral { name, fields } => {
                 let mut field_vals = Vec::new();

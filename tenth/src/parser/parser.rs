@@ -556,6 +556,39 @@ impl Parser {
                     span,
                 })
             }
+            TokenKind::Ampersand => {
+                self.advance();
+                if matches!(self.peek_kind(), TokenKind::Mut) {
+                    self.advance();
+                    let expr = self.parse_unary()?;
+                    Ok(Expr {
+                        kind: ExprKind::MutRef(Box::new(expr)),
+                        span,
+                    })
+                } else {
+                    let expr = self.parse_unary()?;
+                    Ok(Expr {
+                        kind: ExprKind::Ref(Box::new(expr)),
+                        span,
+                    })
+                }
+            }
+            TokenKind::Move => {
+                self.advance();
+                let expr = self.parse_unary()?;
+                Ok(Expr {
+                    kind: ExprKind::Move(Box::new(expr)),
+                    span,
+                })
+            }
+            TokenKind::Star => {
+                self.advance();
+                let expr = self.parse_unary()?;
+                Ok(Expr {
+                    kind: ExprKind::Deref(Box::new(expr)),
+                    span,
+                })
+            }
             _ => self.parse_postfix(),
         }
     }

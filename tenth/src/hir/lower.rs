@@ -5,9 +5,18 @@ use crate::parser::ast as ast;
 use super::hir::*;
 use super::types::*;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Ownership {
+    Owned,
+    SharedRef(usize),
+    ExclusiveRef,
+    Moved,
+}
+
 struct Scope {
     variables: HashMap<String, (Type, bool)>,
     functions: HashMap<String, (Vec<(String, Type)>, Type)>,
+    ownership: HashMap<String, Ownership>,
     parent: Option<Box<Scope>>,
 }
 
@@ -16,6 +25,7 @@ impl Scope {
         Scope {
             variables: HashMap::new(),
             functions: HashMap::new(),
+            ownership: HashMap::new(),
             parent: None,
         }
     }
@@ -24,6 +34,7 @@ impl Scope {
         Scope {
             variables: HashMap::new(),
             functions: HashMap::new(),
+            ownership: HashMap::new(),
             parent: Some(Box::new(parent)),
         }
     }
@@ -35,8 +46,62 @@ impl Scope {
         self.parent.as_ref().and_then(|p| p.lookup_var(name))
     }
 
+    fn get_ownership(&self, name: &str) -> Option<Ownership> {
+        if let Some(o) = self.ownership.get(name) {
+            return Some(*o);
+        }
+        self.parent.as_ref().and_then(|p| p.get_ownership(name))
+    }
+
+    fn set_ownership(&mut self, name: &str, state: Ownership) {
+        self.ownership.insert(name.to_string(), state);
+    }
+
+    fn check_use(&self, name: &str) -> TenthResult<()> {
+        if let Some(Ownership::Moved) = self.get_ownership(name) {
+            return Err(TenthError::TypeError {
+                line: 0, col: 0,
+                message: format!("use of moved value '{}'", name),
+            });
+        }
+        Ok(())
+    }
+
+    fn check_borrow_shared(&self, name: &str) -> TenthResult<()> {
+        match self.get_ownership(name) {
+            Some(Ownership::ExclusiveRef) => Err(TenthError::TypeError {
+                line: 0, col: 0,
+                message: format!("cannot borrow '{}' as shared because it is already borrowed as mutable", name),
+            }),
+            Some(Ownership::Moved) => Err(TenthError::TypeError {
+                line: 0, col: 0,
+                message: format!("cannot borrow moved value '{}'", name),
+            }),
+            _ => Ok(()),
+        }
+    }
+
+    fn check_borrow_mut(&self, name: &str) -> TenthResult<()> {
+        match self.get_ownership(name) {
+            Some(Ownership::SharedRef(n)) if n > 0 => Err(TenthError::TypeError {
+                line: 0, col: 0,
+                message: format!("cannot borrow '{}' as mutable because it is already borrowed as shared", name),
+            }),
+            Some(Ownership::ExclusiveRef) => Err(TenthError::TypeError {
+                line: 0, col: 0,
+                message: format!("cannot borrow '{}' as mutable more than once at a time", name),
+            }),
+            Some(Ownership::Moved) => Err(TenthError::TypeError {
+                line: 0, col: 0,
+                message: format!("cannot borrow moved value '{}'", name),
+            }),
+            _ => Ok(()),
+        }
+    }
+
     fn define_var(&mut self, name: String, ty: Type, mutable: bool) {
-        self.variables.insert(name, (ty, mutable));
+        self.variables.insert(name.clone(), (ty, mutable));
+        self.ownership.insert(name, Ownership::Owned);
     }
 
     fn define_fn(&mut self, name: String, params: Vec<(String, Type)>, ret: Type) {
@@ -147,6 +212,7 @@ impl Lowerer {
                     }
                     (HirExprKind::Var(ident.name.clone()), Type::Unknown)
                 } else {
+                    self.scope.check_use(&ident.name)?;
                     let var_info = self.scope.lookup_var(&ident.name);
                     let fn_info = self.scope.lookup_fn(&ident.name);
                     if var_info.is_none() && fn_info.is_none() {
@@ -363,34 +429,45 @@ impl Lowerer {
 
             ExprKind::Assign { target, value } => {
                 let v = self.lower_expr(value)?;
-                let name = match &target.kind {
-                    ExprKind::Ident(id) => id.name.clone(),
+                match &target.kind {
+                    ExprKind::Ident(id) => {
+                        let name = id.name.clone();
+                        self.scope.define_var(name.clone(), v.ty.clone(), true);
+                        (HirExprKind::Assign { target: name, value: Box::new(v) }, Type::unit())
+                    }
+                    ExprKind::Deref(inner) => {
+                        let inner_hir = self.lower_expr(inner)?;
+                        (HirExprKind::DerefAssign { target: Box::new(inner_hir), value: Box::new(v) }, Type::unit())
+                    }
                     _ => {
-                        // allow shadowing for simplicity
                         return Err(TenthError::ParseError {
                             line: span.line,
                             col: span.col,
                             message: "invalid assignment target".into(),
                         });
                     }
-                };
-                // define/update variable
-                self.scope.define_var(name.clone(), v.ty.clone(), true);
-                (HirExprKind::Assign { target: name, value: Box::new(v) }, Type::unit())
+                }
             }
 
             ExprKind::AssignOp { target, op, value } => {
                 let v = self.lower_expr(value)?;
-                let name = match &target.kind {
-                    ExprKind::Ident(id) => id.name.clone(),
+                match &target.kind {
+                    ExprKind::Ident(id) => {
+                        let name = id.name.clone();
+                        let hir_op = lower_binop(op);
+                        (HirExprKind::AssignOp { target: name, op: hir_op, value: Box::new(v) }, Type::unit())
+                    }
+                    ExprKind::Deref(inner) => {
+                        let inner_hir = self.lower_expr(inner)?;
+                        let hir_op = lower_binop(op);
+                        (HirExprKind::DerefAssignOp { target: Box::new(inner_hir), op: hir_op, value: Box::new(v) }, Type::unit())
+                    }
                     _ => return Err(TenthError::ParseError {
                         line: span.line,
                         col: span.col,
                         message: "invalid assignment target".into(),
                     }),
-                };
-                let hir_op = lower_binop(op);
-                (HirExprKind::AssignOp { target: name, op: hir_op, value: Box::new(v) }, Type::unit())
+                }
             }
 
             ExprKind::StructLiteral { name, generics: _, fields } => {
@@ -447,6 +524,52 @@ impl Lowerer {
                     scrutinee: Box::new(lowered_scrutinee),
                     arms: lowered_arms,
                 }, Type::Unknown)
+            }
+
+            ExprKind::Ref(inner) => {
+                if let ExprKind::Ident(ident) = &inner.kind {
+                    self.scope.check_borrow_shared(&ident.name)?;
+                }
+                let e = self.lower_expr(inner)?;
+                let ty = Type::Ref(Box::new(e.ty.clone()));
+                if let ExprKind::Ident(ident) = &inner.kind {
+                    let count = match self.scope.get_ownership(&ident.name) {
+                        Some(Ownership::SharedRef(n)) => n + 1,
+                        _ => 1,
+                    };
+                    self.scope.set_ownership(&ident.name, Ownership::SharedRef(count));
+                }
+                (HirExprKind::Ref(Box::new(e)), ty)
+            }
+
+            ExprKind::MutRef(inner) => {
+                if let ExprKind::Ident(ident) = &inner.kind {
+                    self.scope.check_borrow_mut(&ident.name)?;
+                }
+                let e = self.lower_expr(inner)?;
+                let ty = Type::MutRef(Box::new(e.ty.clone()));
+                if let ExprKind::Ident(ident) = &inner.kind {
+                    self.scope.set_ownership(&ident.name, Ownership::ExclusiveRef);
+                }
+                (HirExprKind::MutRef(Box::new(e)), ty)
+            }
+
+            ExprKind::Deref(inner) => {
+                let e = self.lower_expr(inner)?;
+                let inner_ty = match &e.ty {
+                    Type::Ref(t) | Type::MutRef(t) => (**t).clone(),
+                    _ => Type::Unknown,
+                };
+                (HirExprKind::Deref(Box::new(e)), inner_ty)
+            }
+
+            ExprKind::Move(inner) => {
+                let e = self.lower_expr(inner)?;
+                let ty = e.ty.clone();
+                if let ExprKind::Ident(ident) = &inner.kind {
+                    self.scope.set_ownership(&ident.name, Ownership::Moved);
+                }
+                (HirExprKind::Move(Box::new(e)), ty)
             }
         };
 

@@ -40,6 +40,7 @@ pub enum TokenKind {
     In,
     True,
     False,
+    Move,
 
     Plus,
     Minus,
@@ -136,6 +137,7 @@ impl fmt::Display for TokenKind {
             TokenKind::In => write!(f, "in"),
             TokenKind::True => write!(f, "true"),
             TokenKind::False => write!(f, "false"),
+            TokenKind::Move => write!(f, "move"),
             TokenKind::Plus => write!(f, "+"),
             TokenKind::Minus => write!(f, "-"),
             TokenKind::Star => write!(f, "*"),

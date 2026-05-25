@@ -32,6 +32,10 @@ pub enum Value {
         variant: String,
         fields: Vec<(String, Value)>,
     },
+    Ref(Rc<RefCell<Value>>),
+    MutRef(Rc<RefCell<Value>>),
+    Shared(Rc<RefCell<Value>>),
+    Moved,
 }
 
 impl Value {
@@ -62,6 +66,10 @@ impl Value {
             }
             Value::Struct { name, .. } => Type::Struct(name.clone()),
             Value::Enum { enum_name, .. } => Type::Enum(enum_name.clone()),
+            Value::Ref(v) => Type::Ref(Box::new(v.borrow().type_of())),
+            Value::MutRef(v) => Type::MutRef(Box::new(v.borrow().type_of())),
+            Value::Shared(v) => v.borrow().type_of(),
+            Value::Moved => Type::unit(),
         }
     }
 
@@ -86,6 +94,10 @@ impl Value {
             Value::Bool(b) => *b,
             Value::Int(n) => *n != 0,
             Value::Float(f) => *f != 0.0,
+            Value::Ref(v) => v.borrow().is_truthy(),
+            Value::MutRef(v) => v.borrow().is_truthy(),
+            Value::Shared(v) => v.borrow().is_truthy(),
+            Value::Moved => false,
             Value::String(s) => !s.is_empty(),
             _ => true,
         }
@@ -119,6 +131,10 @@ impl fmt::Display for Value {
                 }
                 write!(f, " }}")
             }
+            Value::Ref(v) => write!(f, "&{}", v.borrow()),
+            Value::MutRef(v) => write!(f, "&mut {}", v.borrow()),
+            Value::Shared(v) => write!(f, "{}", v.borrow()),
+            Value::Moved => write!(f, "<moved>"),
             Value::Enum { enum_name, variant, fields } => {
                 if fields.is_empty() {
                     write!(f, "{}::{}", enum_name, variant)
