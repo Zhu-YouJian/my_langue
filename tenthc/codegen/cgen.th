@@ -21,6 +21,13 @@ fn cgen_expr(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>, idx: i64) -> 
     };
     if e.kind == "call" {
         let mut args = "";
+        let mut i: i64 = 0;
+        while i < e.arg_count {
+            if i > 0 { args = args + ", "; };
+            let arg_idx = e.arg_start + i;
+            args = args + cgen_expr(prog, exprs, stmts, arg_idx);
+            i = i + 1;
+        };
         return e.sval + "(" + args + ")";
     };
     if e.kind == "field" {

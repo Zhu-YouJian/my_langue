@@ -312,10 +312,16 @@ impl MirLowerer {
                 let disc_name = self.new_local("match_disc", Type::Base(BaseType::I64));
                 stmts.push(MirStmt::Let { name: disc_name.clone(), ty: Type::Base(BaseType::I64), value: sv });
 
+                // Infer result type from first arm's body type (or default to I64)
+                let result_ty = arms.first()
+                    .map(|arm| arm.body.ty.clone())
+                    .unwrap_or(Type::Base(BaseType::I64));
+                let result_ty = if matches!(result_ty, Type::Unknown | Type::Base(BaseType::Unit)) { Type::Base(BaseType::I64) } else { result_ty };
+
                 // Build if-else chain for the arms
-                let result_tmp = self.new_local("match_res", ty.clone());
+                let result_tmp = self.new_local("match_res", result_ty.clone());
                 // Initialize with 0
-                stmts.push(MirStmt::Let { name: result_tmp.clone(), ty: ty.clone(), value: rv(ty.clone(), MirRvalueKind::Literal(LiteralValue::Int(0))) });
+                stmts.push(MirStmt::Let { name: result_tmp.clone(), ty: result_ty.clone(), value: rv(result_ty.clone(), MirRvalueKind::Literal(LiteralValue::Int(0))) });
 
                 // Process arms in reverse to build nested if-else
                 let mut current_else: Vec<MirStmt> = vec![]; // final else (wildcard or empty)
@@ -331,7 +337,11 @@ impl MirLowerer {
                             let (body_stmts, body_val) = self.lower_expr_to_block(&arm.body)?;
                             let mut then_body = body_stmts;
                             if let Some(v) = body_val {
-                                then_body.push(MirStmt::Assign { name: result_tmp.clone(), value: v });
+                                // Only assign if value is a scalar type compatible with int64_t
+                                let v_is_scalar = matches!(&v.ty, Type::Base(BaseType::I64 | BaseType::I32 | BaseType::I8 | BaseType::I16 | BaseType::Bool));
+                                if v_is_scalar || matches!(&v.ty, Type::Unknown) {
+                                    then_body.push(MirStmt::Assign { name: result_tmp.clone(), value: v });
+                                }
                             }
                             let cond = rv(Type::bool_(), MirRvalueKind::BinaryOp(
                                 BinOp::Eq,
@@ -349,7 +359,10 @@ impl MirLowerer {
                             let (body_stmts, body_val) = self.lower_expr_to_block(&arm.body)?;
                             let mut else_body = body_stmts;
                             if let Some(v) = body_val {
-                                else_body.push(MirStmt::Assign { name: result_tmp.clone(), value: v });
+                                let v_is_scalar = matches!(&v.ty, Type::Base(BaseType::I64 | BaseType::I32 | BaseType::I8 | BaseType::I16 | BaseType::Bool));
+                                if v_is_scalar || matches!(&v.ty, Type::Unknown) {
+                                    else_body.push(MirStmt::Assign { name: result_tmp.clone(), value: v });
+                                }
                             }
                             current_else = else_body;
                         }
@@ -363,7 +376,7 @@ impl MirLowerer {
                 }
 
                 stmts.extend(current_else);
-                Ok((stmts, Some(rv(ty, MirRvalueKind::Use(result_tmp)))))
+                Ok((stmts, Some(rv(result_ty, MirRvalueKind::Use(result_tmp)))))
             }
 
             _ => Ok((vec![], Some(rv(ty, MirRvalueKind::Literal(LiteralValue::Int(0)))))),
