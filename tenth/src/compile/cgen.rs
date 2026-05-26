@@ -147,7 +147,12 @@ impl CGenerator {
             for stmt in &block.stmts {
                 self.generate_stmt(stmt);
             }
-            self.generate_terminator(&block.terminator);
+            // Skip terminator if last statement is already a Return
+            let last_is_return = block.stmts.last()
+                .map_or(false, |s| matches!(s, MirStmt::Return(_)));
+            if !last_is_return {
+                self.generate_terminator(&block.terminator);
+            }
         }
 
         self.indent_level = 0;
