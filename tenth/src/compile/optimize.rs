@@ -92,6 +92,16 @@ fn fold_rvalue(val: &MirRvalue) -> MirRvalue {
                 rv(ty, MirRvalueKind::If { cond: Box::new(c), then_block: *then_block, else_block: *else_block })
             }
         }
+        MirRvalueKind::IfExpr { cond, then_val, else_val } => {
+            let c = fold_rvalue(cond);
+            if let MirRvalueKind::Literal(LiteralValue::Bool(true)) = &c.kind {
+                *then_val.clone()
+            } else if let MirRvalueKind::Literal(LiteralValue::Bool(false)) = &c.kind {
+                *else_val.clone()
+            } else {
+                rv(ty, MirRvalueKind::IfExpr { cond: Box::new(c), then_val: then_val.clone(), else_val: else_val.clone() })
+            }
+        }
         _ => val.clone(),
     }
 }

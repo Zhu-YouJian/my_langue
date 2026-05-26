@@ -60,7 +60,14 @@ impl MirLowerer {
         match &expr.kind {
             HirExprKind::Literal(lit) => Ok((vec![], Some(rv(ty, MirRvalueKind::Literal(lower_literal_val(lit)))))),
 
-            HirExprKind::Var(name) => Ok((vec![], Some(rv(ty, MirRvalueKind::Use(name.clone()))))),
+            HirExprKind::Var(name) => {
+                // If the variable's type is a reference, generate Deref for field access
+                if matches!(&ty, Type::Ref(_) | Type::MutRef(_)) {
+                    Ok((vec![], Some(rv(ty.clone(), MirRvalueKind::Deref(name.clone())))))
+                } else {
+                    Ok((vec![], Some(rv(ty, MirRvalueKind::Use(name.clone())))))
+                }
+            }
 
             HirExprKind::Binary { op, left, right, .. } => {
                 let l = self.lower_expr_rvalue(left)?;
@@ -107,18 +114,33 @@ impl MirLowerer {
             }
 
             HirExprKind::If { cond, then_branch, else_branch, .. } => {
+                // Lower condition and branches
                 let (cs, cv) = self.lower_expr_rvalue(cond)?;
-                let (ts, _) = self.lower_expr_to_block(then_branch)?;
-                let (es, _) = else_branch.as_ref().map(|e| self.lower_expr_to_block(e)).transpose()?.unwrap_or((vec![], None));
-                let tb = self.new_block(); let eb = if else_branch.is_some() { Some(self.new_block()) } else { None };
-                let ab = self.new_block();
+                let (ts, tv) = self.lower_expr_to_block(then_branch)?;
+                let (es, ev) = else_branch.as_ref()
+                    .map(|e| self.lower_expr_to_block(e))
+                    .transpose()?
+                    .unwrap_or((vec![], None));
                 let mut stmts = cs;
-                if let Some(e) = eb {
-                    stmts.push(MirStmt::Expr(rv(ty.clone(), MirRvalueKind::If { cond: Box::new(cv), then_block: tb, else_block: Some(e) })));
+                // If branches have side-effect statements, use IfElse
+                if !ts.is_empty() || !es.is_empty() {
+                    stmts.push(MirStmt::IfElse {
+                        cond: cv,
+                        then_body: ts,
+                        else_body: es,
+                    });
+                    // The result is the then-value or else-value (if any), else unit
+                    Ok((stmts, tv.or(ev)))
                 } else {
-                    stmts.push(MirStmt::Expr(rv(ty.clone(), MirRvalueKind::If { cond: Box::new(cv), then_block: tb, else_block: None })));
+                    // Pure expression branches — use ternary IfExpr
+                    Ok(match (tv, ev) {
+                        (Some(tv), Some(ev)) => {
+                            (stmts, Some(rv(ty.clone(), MirRvalueKind::IfExpr { cond: Box::new(cv), then_val: Box::new(tv), else_val: Box::new(ev) })))
+                        }
+                        (Some(tv), None) => (stmts, Some(tv)),
+                        _ => (stmts, None),
+                    })
                 }
-                Ok((stmts, None))
             }
 
             HirExprKind::Assign { target, value } => {

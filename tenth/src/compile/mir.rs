@@ -31,6 +31,7 @@ pub enum MirStmt {
     Assign { name: String, value: MirRvalue },
     Expr(MirRvalue),
     Return(Option<MirRvalue>),
+    IfElse { cond: MirRvalue, then_body: Vec<MirStmt>, else_body: Vec<MirStmt> },
 }
 
 /// MirRvalue wraps a kind with its type
@@ -52,6 +53,7 @@ pub enum MirRvalueKind {
     Field { target: Box<MirRvalue>, field: String },
     Ref(String), MutRef(String), Deref(String), Move(String),
     If { cond: Box<MirRvalue>, then_block: usize, else_block: Option<usize> },
+    IfExpr { cond: Box<MirRvalue>, then_val: Box<MirRvalue>, else_val: Box<MirRvalue> },
 }
 
 #[derive(Debug, Clone)]

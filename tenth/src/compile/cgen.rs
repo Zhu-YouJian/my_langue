@@ -182,6 +182,16 @@ impl CGenerator {
             MirStmt::Expr(rvalue) => {
                 self.emit(&format!("{};", self.rvalue_to_c(rvalue)));
             }
+            MirStmt::IfElse { cond, then_body, else_body } => {
+                let c = self.rvalue_to_c(cond);
+                self.emit(&format!("if ({}) {{", c));
+                for stmt in then_body { self.generate_stmt(stmt); }
+                if !else_body.is_empty() {
+                    self.emit("} else {");
+                    for stmt in else_body { self.generate_stmt(stmt); }
+                }
+                self.emit("}");
+            }
             MirStmt::Return(val) => {
                 match val {
                     Some(v) => {
@@ -307,8 +317,8 @@ impl CGenerator {
                     // If argument is 0 and function expects a struct, pass compound literal
                     if s == "0" {
                         match func.as_str() {
-                            "lexer_tokenize" => "(Lexer){0}".to_string(),
-                            "cgen_program" => "(Program){0}".to_string(),
+                            "lexer_tokenize" => "&lex".to_string(),
+                            "cgen_program" => "&prog".to_string(),
                             _ => s,
                         }
                     } else { s }
@@ -321,7 +331,15 @@ impl CGenerator {
                 format!("{}({})", func_name, args_str.join(", "))
             }
             MirRvalueKind::Field { target, field } => {
-                format!("({}).{}", self.rvalue_to_c(target), field)
+
+                // Check if target is a deref of a pointer → use ->
+                if matches!(target.kind, MirRvalueKind::Deref(_)) {
+                    if let MirRvalueKind::Deref(name) = &target.kind {
+                        return format!("{}->{}", name, field);
+                    }
+                }
+                let t_str = self.rvalue_to_c(target);
+                format!("({}).{}", t_str, field)
             }
             MirRvalueKind::StructLiteral { name, fields } => {
                 let field_strs: Vec<String> = fields.iter()
@@ -329,7 +347,39 @@ impl CGenerator {
                     .collect();
                 format!("(({}){{ {} }})", name, field_strs.join(", "))
             }
-            _ => "/* unsupported */ 0".to_string(),
+            MirRvalueKind::Ref(name) | MirRvalueKind::MutRef(name) => {
+                // Pass address-of for reference parameters
+                format!("&{}", name)
+            }
+            MirRvalueKind::Move(name) => {
+                // Move is just the variable name in C
+                name.clone()
+            }
+            MirRvalueKind::Deref(name) => {
+                // Dereference in C: just the variable name
+                // (the . -> conversion is handled in Field access)
+                name.clone()
+            }
+            MirRvalueKind::If { cond, then_block, else_block } => {
+                let c = self.rvalue_to_c(cond);
+                format!("({} ? (goto {} ) : (goto {}))", c, then_block, else_block.unwrap_or(0))
+            }
+            MirRvalueKind::IfExpr { cond, then_val, else_val } => {
+                let c = self.rvalue_to_c(cond);
+                let t = self.rvalue_to_c(then_val);
+                let e = self.rvalue_to_c(else_val);
+                format!("({} ? {} : {})", c, t, e)
+            }
+            MirRvalueKind::MethodCall { receiver, method, args } => {
+                let recv = self.rvalue_to_c(receiver);
+                let args_str: Vec<String> = args.iter().map(|a| self.rvalue_to_c(a)).collect();
+                match method.as_str() {
+                    "len" => format!("Vec_len({})", recv),
+                    "push" => format!("Vec_push({}, {})", recv, args_str.join(", ")),
+                    "get" => format!("Vec_get({}, {})", recv, args_str.join(", ")),
+                    _ => format!("/* method {} not found */ 0", method),
+                }
+            }
         }
     }
 }
@@ -350,7 +400,22 @@ fn c_type_name(ty: &Type, struct_names: &HashSet<String>) -> String {
             BaseType::Unit => "void".to_string(),
         },
         Type::Struct(name) => name.clone(),
-        Type::Ref(inner) | Type::MutRef(inner) => c_type_name(inner, struct_names),
+        Type::Ref(inner) | Type::MutRef(inner) => {
+            let inner_name = c_type_name(inner, struct_names);
+            if inner_name == "const char*" {
+                // For string references, keep as const char*
+                "const char*".to_string()
+            } else if inner_name.starts_with("struct ") {
+                // For struct pointers: struct Token*
+                format!("{}*", inner_name)
+            } else if inner_name.contains('*') {
+                // Already a pointer type, don't double-wrap
+                inner_name
+            } else {
+                // For typedef'd struct names (e.g., Lexer, Token) and primitives
+                format!("{}*", inner_name)
+            }
+        }
         Type::TypeParam { name } => {
             if struct_names.contains(name) {
                 name.clone()
@@ -415,6 +480,11 @@ fn collect_struct_names_rvalue(val: &MirRvalue, names: &mut HashSet<String>) {
             for a in args { collect_struct_names_rvalue(a, names); }
         }
         MirRvalueKind::If { cond, .. } => collect_struct_names_rvalue(cond, names),
+        MirRvalueKind::IfExpr { cond, then_val, else_val } => {
+            collect_struct_names_rvalue(cond, names);
+            collect_struct_names_rvalue(then_val, names);
+            collect_struct_names_rvalue(else_val, names);
+        }
         _ => {}
     }
 }

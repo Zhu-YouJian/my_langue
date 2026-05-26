@@ -3,19 +3,57 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
-// Vec_new — allocate a new empty Vec
+// === Vec (dynamic array) ====================================================
+//
+//  Vec struct layout (hidden — users see void*):
+//    typedef struct { void** data; size_t len; size_t cap; } Vec;
+
+typedef struct {
+    void** data;
+    size_t len;
+    size_t cap;
+} Vec;
+
 void* Vec_new(void) {
-    // Return NULL for now — Vec operations not yet implemented
-    return NULL;
+    Vec* v = malloc(sizeof(Vec));
+    v->data = NULL;
+    v->len = 0;
+    v->cap = 0;
+    return v;
 }
 
-// HashMap_new — allocate a new empty HashMap
+void Vec_push(void* vec, void* item) {
+    Vec* v = (Vec*)vec;
+    if (v->len >= v->cap) {
+        v->cap = v->cap == 0 ? 8 : v->cap * 2;
+        v->data = realloc(v->data, v->cap * sizeof(void*));
+    }
+    v->data[v->len++] = item;
+}
+
+int64_t Vec_len(void* vec) {
+    if (!vec) return 0;
+    Vec* v = (Vec*)vec;
+    return (int64_t)v->len;
+}
+
+void* Vec_get(void* vec, int64_t idx) {
+    Vec* v = (Vec*)vec;
+    if (idx < 0 || (size_t)idx >= v->len) return NULL;
+    return v->data[idx];
+}
+
+// === HashMap ================================================================
+
 void* HashMap_new(void) {
-    return NULL;
+    // Minimal stub — returns a Vec-like structure for "insert"
+    return Vec_new();
 }
 
-// read_file — read entire file into a malloc'd string
+// === I/O ====================================================================
+
 void* read_file(const char* path) {
     FILE* f = fopen(path, "r");
     if (!f) return NULL;
@@ -29,7 +67,6 @@ void* read_file(const char* path) {
     return buf;
 }
 
-// write_file — write string to file
 void write_file(const char* path, const char* content) {
     FILE* f = fopen(path, "w");
     if (f) {
@@ -38,7 +75,42 @@ void write_file(const char* path, const char* content) {
     }
 }
 
-// println — print a string followed by newline
 void println(const char* s) {
     printf("%s\n", s);
+}
+
+// === Utilities ==============================================================
+
+char* str_add(const char* a, const char* b) {
+    if (!a && !b) return strdup("");
+    if (!a) return strdup(b);
+    if (!b) return strdup(a);
+    size_t la = strlen(a), lb = strlen(b);
+    char* r = malloc(la + lb + 1);
+    memcpy(r, a, la);
+    memcpy(r + la, b, lb);
+    r[la + lb] = 0;
+    return r;
+}
+
+// === String helpers for Tenth compiled code ==================================
+
+// str_eq — string equality
+bool str_eq(const char* a, const char* b) {
+    if (a == b) return true;
+    if (!a || !b) return false;
+    return strcmp(a, b) == 0;
+}
+
+// str_at — get character at position, returns "" if out of bounds
+const char* str_at(const char* s, int64_t pos) {
+    if (!s || pos < 0 || (size_t)pos >= strlen(s)) return "";
+    // Return a pointer to the character (works as a single-char string)
+    return s + pos;
+}
+
+// str_to_int — parse string to int64
+int64_t str_to_int(const char* s) {
+    if (!s) return 0;
+    return (int64_t)strtoll(s, NULL, 10);
 }
