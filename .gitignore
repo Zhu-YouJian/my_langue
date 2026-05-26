@@ -1,1 +1,6 @@
 target/
+*.exe
+dbg_out.txt
+test_out.txt
+tenthc.c
+test_mini.c
