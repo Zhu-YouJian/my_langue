@@ -31,7 +31,16 @@ impl MirLowerer {
             self.lower_top_level_expr(expr)
         }).transpose()?;
 
-        Ok(MirProgram { functions, main_expr, struct_names: Vec::new() })
+        // Collect struct definitions
+        let mut struct_defs = Vec::new();
+        for (name, fields) in &program.structs {
+            let field_info: Vec<(String, String)> = fields.iter()
+                .map(|(fname, fty)| (fname.clone(), format!("{}", fty)))
+                .collect();
+            struct_defs.push((name.clone(), field_info));
+        }
+
+        Ok(MirProgram { functions, main_expr, struct_defs })
     }
 
     fn lower_function(&mut self, func: &HirFnDef) -> TenthResult<MirFunction> {
@@ -213,6 +222,14 @@ impl MirLowerer {
                 let mut stmts = s;
                 stmts.push(MirStmt::Assign { name: target.clone(), value: val });
                 Ok((stmts, None))
+            }
+
+            HirExprKind::Field { target, field } => {
+                let (mut s, t) = self.lower_expr_rvalue(target)?;
+                Ok((s, Some(MirRvalue::Field {
+                    target: Box::new(t),
+                    field: field.clone(),
+                })))
             }
 
             HirExprKind::StructLiteral { name, fields } => {

@@ -86,7 +86,15 @@ impl Type {
         use super::super::parser::ast::TypeAnnotation as TA;
         match ann {
             TA::Named(ident) => {
-                match ident.name.as_str() {
+                let name = ident.name.as_str();
+                // Handle reference types: &T, &mut T
+                if let Some(inner) = name.strip_prefix("&mut ") {
+                    return Type::MutRef(Box::new(Type::TypeParam { name: inner.to_string() }));
+                }
+                if let Some(inner) = name.strip_prefix("&") {
+                    return Type::Ref(Box::new(Type::TypeParam { name: inner.to_string() }));
+                }
+                match name {
                     "i8" => Type::Base(BaseType::I8),
                     "i16" => Type::Base(BaseType::I16),
                     "i32" => Type::Base(BaseType::I32),

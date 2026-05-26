@@ -22,6 +22,7 @@ pub fn run_repl() -> TenthResult<()> {
         modules: HashMap::new(),
         uses: Vec::new(),
         methods: HashMap::new(),
+        structs: HashMap::new(),
         generic_structs: HashMap::new(),
         trait_defs: HashMap::new(),
         trait_impls: HashMap::new(),

@@ -59,6 +59,10 @@ pub enum MirRvalue {
         name: String,
         fields: Vec<(String, MirRvalue)>,
     },
+    Field {
+        target: Box<MirRvalue>,
+        field: String,
+    },
     Ref(String),
     MutRef(String),
     Deref(String),
@@ -94,5 +98,5 @@ pub enum MirTerminator {
 pub struct MirProgram {
     pub functions: Vec<MirFunction>,
     pub main_expr: Option<MirFunction>,
-    pub struct_names: Vec<String>,
+    pub struct_defs: Vec<(String, Vec<(String, String)>)>,
 }

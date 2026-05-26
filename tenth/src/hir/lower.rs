@@ -1084,6 +1084,7 @@ impl Lowerer {
             modules: self.modules.clone(),
             uses: self.uses.clone(),
             methods: self.methods.clone(),
+            structs: self.structs.clone(),
             generic_structs: self.generic_structs.clone(),
             trait_defs: self.trait_defs.clone(),
             trait_impls: self.trait_impls.clone(),

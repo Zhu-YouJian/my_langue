@@ -8,6 +8,7 @@ pub struct CGenerator {
     indent_level: usize,
     var_types: HashMap<String, String>,
     current_ret_type: String,
+    struct_names: HashSet<String>,
 }
 
 impl CGenerator {
@@ -17,6 +18,7 @@ impl CGenerator {
             indent_level: 0,
             var_types: HashMap::new(),
             current_ret_type: "void".to_string(),
+            struct_names: HashSet::new(),
         }
     }
 
@@ -48,30 +50,18 @@ impl CGenerator {
         self.emit("extern void* HashMap_new(void);");
         self.emit("");
 
-        // Collect struct names from the program
-        let mut struct_names = HashSet::new();
-        for func in &program.functions {
-            for block in &func.blocks {
-                for stmt in &block.stmts {
-                    collect_struct_names_stmt(stmt, &mut struct_names);
-                }
-                collect_struct_names_term(&block.terminator, &mut struct_names);
+        // Emit struct typedefs from program metadata
+        self.struct_names.clear();
+        for (name, fields) in &program.struct_defs {
+            self.struct_names.insert(name.clone());
+            self.emit(&format!("typedef struct {{"));
+            for (fname, ftype_str) in fields {
+                let c_type = ftype_str_to_c(ftype_str);
+                self.emit(&format!("    {} {};", c_type, fname));
             }
+            self.emit(&format!("}} {};", name));
         }
-        if let Some(ref main_fn) = program.main_expr {
-            for block in &main_fn.blocks {
-                for stmt in &block.stmts {
-                    collect_struct_names_stmt(stmt, &mut struct_names);
-                }
-                collect_struct_names_term(&block.terminator, &mut struct_names);
-            }
-        }
-
-        // Emit forward struct declarations
-        for name in &struct_names {
-            self.emit(&format!("typedef struct {} {{ int _dummy; }} {};", name, name));
-        }
-        if !struct_names.is_empty() {
+        if !program.struct_defs.is_empty() {
             self.emit("");
         }
 
@@ -95,19 +85,19 @@ impl CGenerator {
 
     fn emit_forward_decl(&mut self, func: &MirFunction) {
         let is_main = func.name == "main" && func.params.is_empty();
-        let ret_c = if is_main { "int".to_string() } else { c_type_name(&func.return_type) };
+        let ret_c = if is_main { "int".to_string() } else { c_type_name(&func.return_type, &self.struct_names) };
         let params: Vec<String> = func.params.iter()
-            .map(|(n, t)| format!("{} {}", c_type_name(t), n))
+            .map(|(n, t)| format!("{} {}", c_type_name(t, &self.struct_names), n))
             .collect();
         self.emit(&format!("{} {}({});", ret_c, func.name, params.join(", ")));
     }
 
     fn generate_function(&mut self, func: &MirFunction) {
         let is_main = func.name == "main" && func.params.is_empty();
-        let ret_c = if is_main { "int".to_string() } else { c_type_name(&func.return_type) };
+        let ret_c = if is_main { "int".to_string() } else { c_type_name(&func.return_type, &self.struct_names) };
         self.current_ret_type = ret_c.clone();
         let params: Vec<String> = func.params.iter()
-            .map(|(n, t)| format!("{} {}", c_type_name(t), n))
+            .map(|(n, t)| format!("{} {}", c_type_name(t, &self.struct_names), n))
             .collect();
         self.emit(&format!("{} {}({}) {{", ret_c, func.name, params.join(", ")));
         self.indent_level = 1;
@@ -115,7 +105,7 @@ impl CGenerator {
         // Declare locals
         for local in &func.locals {
             if !func.params.iter().any(|(n, _)| n == &local.name) {
-                self.emit(&format!("{} {};", c_type_name(&local.ty), local.name));
+                self.emit(&format!("{} {};", c_type_name(&local.ty, &self.struct_names), local.name));
             }
         }
 
@@ -144,7 +134,7 @@ impl CGenerator {
         self.indent_level = 1;
 
         for local in &func.locals {
-            self.emit(&format!("{} {};", c_type_name(&local.ty), local.name));
+            self.emit(&format!("{} {};", c_type_name(&local.ty, &self.struct_names), local.name));
         }
 
         if !func.locals.is_empty() {
@@ -165,7 +155,7 @@ impl CGenerator {
     fn generate_stmt(&mut self, stmt: &MirStmt) {
         match stmt {
             MirStmt::Let { name, ty, value } => {
-                let type_str = c_type_name(ty);
+                let type_str = c_type_name(ty, &self.struct_names);
                 let val_str = self.rvalue_to_c_cast(value, ty);
                 self.emit(&format!("{} {} = {};", type_str, name, val_str));
             }
@@ -217,7 +207,7 @@ impl CGenerator {
 
     fn rvalue_to_c_cast(&self, rvalue: &MirRvalue, expected_ty: &Type) -> String {
         let val_str = self.rvalue_to_c(rvalue);
-        let expected_c = c_type_name(expected_ty);
+        let expected_c = c_type_name(expected_ty, &self.struct_names);
         // Add cast if the value is a literal that needs type disambiguation
         // or if the expected type is different from the literal's natural type
         match rvalue {
@@ -269,17 +259,21 @@ impl CGenerator {
                 };
                 format!("{}({})", func_name, args_str.join(", "))
             }
-            MirRvalue::StructLiteral { name, .. } => {
-                // Simplified: return NULL pointer (struct layout not tracked in MIR)
-                // Full implementation would emit compound literals with correct types
-                format!("((void*)0 /* {} literal */)", name)
+            MirRvalue::Field { target, field } => {
+                format!("({}).{}", self.rvalue_to_c(target), field)
+            }
+            MirRvalue::StructLiteral { name, fields } => {
+                let field_strs: Vec<String> = fields.iter()
+                    .map(|(fname, fval)| format!(".{} = {}", fname, self.rvalue_to_c(fval)))
+                    .collect();
+                format!("(({}){{ {} }})", name, field_strs.join(", "))
             }
             _ => "/* unsupported */ 0".to_string(),
         }
     }
 }
 
-fn c_type_name(ty: &Type) -> String {
+fn c_type_name(ty: &Type, struct_names: &HashSet<String>) -> String {
     use crate::hir::types::BaseType;
     match ty {
         Type::Base(b) => match b {
@@ -295,6 +289,14 @@ fn c_type_name(ty: &Type) -> String {
             BaseType::Unit => "void".to_string(),
         },
         Type::Struct(name) => name.clone(),
+        Type::Ref(inner) | Type::MutRef(inner) => c_type_name(inner, struct_names),
+        Type::TypeParam { name } => {
+            if struct_names.contains(name) {
+                name.clone()
+            } else {
+                "void*".to_string()
+            }
+        },
         Type::Unknown => "int64_t".to_string(),
         _ => "void*".to_string(),
     }
@@ -354,6 +356,16 @@ fn collect_struct_names_rvalue(val: &MirRvalue, names: &mut HashSet<String>) {
         }
         MirRvalue::If { cond, .. } => collect_struct_names_rvalue(cond, names),
         _ => {}
+    }
+}
+
+fn ftype_str_to_c(t: &str) -> &str {
+    match t {
+        "I32" | "I64" | "i32" | "i64" => "int64_t",
+        "F64" | "f64" => "double",
+        "Str" | "str" => "const char*",
+        "Bool" | "bool" => "bool",
+        _ => "void*",
     }
 }
 

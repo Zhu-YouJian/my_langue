@@ -223,6 +223,7 @@ pub struct HirProgram {
     pub modules: HashMap<String, HirProgram>,
     pub uses: Vec<(Vec<String>, String)>,
     pub methods: HashMap<String, HashMap<String, HirFnDef>>,
+    pub structs: HashMap<String, Vec<(String, Type)>>,
     pub generic_structs: HashMap<String, HirGenericStruct>,
     pub trait_defs: HashMap<String, HirTraitDef>,
     pub trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
