@@ -334,7 +334,7 @@ fn cgen_program(prog: &Program) -> str {
     out
 }
 
-// Self-hosting Tenth compiler v0.3.1
+// Self-hosting Tenth compiler — bootstrap
 
 fn compile(src: str) -> str {
     let mut lex = lexer_new(src);
@@ -344,9 +344,9 @@ fn compile(src: str) -> str {
 }
 
 fn main() -> i64 {
-    let src = read_file("tenthc/lexer/token.th");
+    let src = read_file("tenthc_combined.th");
     let c = compile(src);
     write_file("tenthc_output.c", c);
-    42
+    0
 }
 

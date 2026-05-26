@@ -143,8 +143,11 @@ impl MirLowerer {
                             }
                         }
                         HirStmtKind::Expr(e) => {
-                            let (s2, _) = self.lower_expr_to_block(e)?;
-                            stmts.extend(s2);
+                            let (mut s2, val) = self.lower_expr_to_block(e)?;
+                            stmts.append(&mut s2);
+                            if let Some(v) = val {
+                                stmts.push(MirStmt::Expr(v));
+                            }
                         }
                         _ => {}
                     }
