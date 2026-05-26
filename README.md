@@ -4,7 +4,7 @@
 
 ## 现状
 
-**v0.2.0** — Phase 1-6 全部完成，71 项测试全部通过。v0.3.0 标准库与自举进行中。
+**v0.2.0** — Phase 1-6 全部完成，86 项测试全部通过。v0.3.0 标准库已完工，自举进行中。
 
 | 组件 | 状态 |
 |------|------|
@@ -28,7 +28,7 @@ cargo build --manifest-path tenth/Cargo.toml
 # 运行 REPL
 cargo run --manifest-path tenth/Cargo.toml
 
-# 运行测试 (60 项)
+# 运行测试 (86 项)
 cargo test --manifest-path tenth/Cargo.toml
 
 # 编译 .th 文件为 C 代码
@@ -46,9 +46,9 @@ cargo run --manifest-path tenth/Cargo.toml -- compile input.th -o output.c
 | Phase 4 | GPU 与性能 | 🚧 部分完成 |
 | Phase 5 | AI 全栈 | 🚧 部分完成 |
 | Phase 6 | 生态与工具 | 🚧 部分完成 |
-| **Phase 7** | **核心标准库** | **📋 v0.3.0** |
-| **Phase 8** | **自举编译器** | **📋 v0.3.0** |
-| **Phase 9** | **v0.3.0 收尾** | **📋 v0.3.0** |
+| **Phase 7** | **核心标准库** | **✅** |
+| **Phase 8** | **自举编译器** | **🚧 骨架完成** |
+| **Phase 9** | **v0.3.0 收尾** | **📋** |
 
 详见 `docs/superpowers/plans/`。MEMO.md 记录跳过项备忘。
 
