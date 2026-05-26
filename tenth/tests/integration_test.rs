@@ -118,6 +118,16 @@ fn test_function_definition_and_call() {
 }
 
 #[test]
+fn test_closure_simple() {
+    let src = "{ let f = |x, y| x + y; f(10, 20) }";
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(30)) => {}
+        v => panic!("expected Some(Int(30)), got {:?}", v),
+    }
+}
+
+#[test]
 fn test_tensor_rand() {
     let src = "rand(2, 3).sum()";
     let result = run_code(src).unwrap();

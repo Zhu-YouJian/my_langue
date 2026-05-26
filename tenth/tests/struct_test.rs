@@ -74,3 +74,13 @@ fn test_impl_method_with_args() {
         v => panic!("expected Float(10.0), got {:?}", v),
     }
 }
+
+#[test]
+fn test_struct_default_fields() {
+    let src = "struct Point { x: f64, y: f64 }; { let p = Point { x: 1.0, .. }; p.x + p.y }";
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Float(n)) => assert!((n - 1.0).abs() < 0.01, "expected 1.0 + 0.0 = 1.0, got {}", n),
+        v => panic!("expected Some(Float(1.0)), got {:?}", v),
+    }
+}

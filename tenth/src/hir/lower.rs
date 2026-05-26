@@ -436,7 +436,19 @@ impl Lowerer {
                         (name.name.clone(), ty)
                     })
                     .collect();
+
+                // Create closure scope with params bound
+                let closure_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
+                self.scope = closure_scope;
+                for (name, ty) in &lowered_params {
+                    self.scope.define_var(name.clone(), ty.clone(), false);
+                }
+
                 let b = self.lower_expr(body)?;
+
+                let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
+                self.scope = outer_scope;
+
                 (HirExprKind::Closure { params: lowered_params, body: Box::new(b) }, Type::Unknown)
             }
 
@@ -491,13 +503,60 @@ impl Lowerer {
                 }
             }
 
-            ExprKind::StructLiteral { name, generics: _, fields } => {
-                let lowered_fields: Vec<(String, HirExpr)> = fields.iter()
+            ExprKind::StructLiteral { name, generics: _, fields, use_defaults } => {
+                let mut lowered_fields: Vec<(String, HirExpr)> = fields.iter()
                     .map(|(id, e)| {
                         let lowered = self.lower_expr(e)?;
                         Ok((id.name.clone(), lowered))
                     })
                     .collect::<TenthResult<_>>()?;
+
+                if *use_defaults {
+                    // Fill missing fields with default values based on type
+                    let field_names: Vec<String> = lowered_fields.iter().map(|(n, _)| n.clone()).collect();
+                    if let Some(struct_fields) = self.structs.get(&name.name) {
+                        for (fname, fty) in struct_fields {
+                            if !field_names.contains(fname) {
+                                let default_val = match fty {
+                                    Type::Base(b) => match b {
+                                        BaseType::I32 | BaseType::I64 | BaseType::I8 | BaseType::I16 => HirExpr {
+                                            kind: HirExprKind::Literal(Literal::Int(0)),
+                                            ty: fty.clone(),
+                                            span: name.span.clone(),
+                                        },
+                                        BaseType::F64 | BaseType::F32 | BaseType::F16 | BaseType::BF16 => HirExpr {
+                                            kind: HirExprKind::Literal(Literal::Float(0.0)),
+                                            ty: fty.clone(),
+                                            span: name.span.clone(),
+                                        },
+                                        BaseType::Bool => HirExpr {
+                                            kind: HirExprKind::Literal(Literal::Bool(false)),
+                                            ty: fty.clone(),
+                                            span: name.span.clone(),
+                                        },
+                                        BaseType::Str => HirExpr {
+                                            kind: HirExprKind::Literal(Literal::String(String::new())),
+                                            ty: fty.clone(),
+                                            span: name.span.clone(),
+                                        },
+                                        _ => HirExpr {
+                                            kind: HirExprKind::Literal(Literal::Int(0)),
+                                            ty: Type::Unknown,
+                                            span: name.span.clone(),
+                                        },
+                                    },
+                                    _ => HirExpr {
+                                        kind: HirExprKind::Literal(Literal::Int(0)),
+                                        ty: Type::Unknown,
+                                        span: name.span.clone(),
+                                    },
+                                };
+                                lowered_fields.push((fname.clone(), default_val));
+                            }
+                        }
+                    }
+                }
+
                 (HirExprKind::StructLiteral {
                     name: name.name.clone(),
                     fields: lowered_fields,

@@ -113,6 +113,7 @@ pub enum ExprKind {
         name: Ident,
         generics: Vec<TypeAnnotation>,
         fields: Vec<(Ident, Expr)>,
+        use_defaults: bool,
     },
     EnumLiteral {
         enum_name: Ident,

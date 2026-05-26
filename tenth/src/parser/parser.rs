@@ -89,7 +89,13 @@ impl Parser {
                     self.expect(TokenKind::Gt)?;
                     self.expect(TokenKind::LBrace)?;
                     let mut fields = Vec::new();
+                    let mut use_defaults = false;
                     while !matches!(self.peek_kind(), TokenKind::RBrace) {
+                        if matches!(self.peek_kind(), TokenKind::DotDot) {
+                            self.advance();
+                            use_defaults = true;
+                            break;
+                        }
                         let field_name = self.expect_ident()?;
                         self.expect(TokenKind::Colon)?;
                         let value = self.parse_expr()?;
@@ -100,7 +106,7 @@ impl Parser {
                         self.advance();
                     }
                     self.expect(TokenKind::RBrace)?;
-                    ExprKind::StructLiteral { name: Ident { name, span }, generics: generic_args, fields }
+                    ExprKind::StructLiteral { name: Ident { name, span }, generics: generic_args, fields, use_defaults }
                 } else if matches!(self.peek_kind(), TokenKind::LBrace) {
                     let is_struct = self.tokens.get(self.pos + 1)
                         .map(|t| matches!(t.kind, TokenKind::Identifier(_) | TokenKind::RBrace))
@@ -119,7 +125,13 @@ impl Parser {
                         let ident = Ident { name, span };
                         self.advance();
                         let mut fields = Vec::new();
+                        let mut use_defaults = false;
                         while !matches!(self.peek_kind(), TokenKind::RBrace) {
+                            if matches!(self.peek_kind(), TokenKind::DotDot) {
+                                self.advance();
+                                use_defaults = true;
+                                break;
+                            }
                             let field_name = self.expect_ident()?;
                             self.expect(TokenKind::Colon)?;
                             let value = self.parse_expr()?;
@@ -130,7 +142,7 @@ impl Parser {
                             self.advance();
                         }
                         self.expect(TokenKind::RBrace)?;
-                        ExprKind::StructLiteral { name: ident, generics: Vec::new(), fields }
+                        ExprKind::StructLiteral { name: ident, generics: Vec::new(), fields, use_defaults }
                     } else {
                         ExprKind::Ident(Ident { name, span })
                     }
@@ -219,6 +231,7 @@ impl Parser {
                             name: variant_name,
                             generics: Vec::new(),
                             fields,
+                            use_defaults: false,
                         }
                     } else {
                         ExprKind::Ident(Ident {
@@ -836,6 +849,20 @@ impl Parser {
                         dtype: Box::new(dtype),
                         dims,
                     })
+                } else if matches!(self.peek_kind(), TokenKind::Lt) {
+                    // Generic type: Vec<Token>, HashMap<K,V>, etc.
+                    self.advance();
+                    let mut args = Vec::new();
+                    while !matches!(self.peek_kind(), TokenKind::Gt) {
+                        args.push(self.parse_type()?);
+                        if !matches!(self.peek_kind(), TokenKind::Comma) {
+                            break;
+                        }
+                        self.advance();
+                    }
+                    self.expect(TokenKind::Gt)?;
+                    // Represent as Named for now — the parser AST doesn't have a generic type node
+                    Ok(TypeAnnotation::Named(Ident { name, span }))
                 } else {
                     Ok(TypeAnnotation::Named(Ident { name, span }))
                 }
