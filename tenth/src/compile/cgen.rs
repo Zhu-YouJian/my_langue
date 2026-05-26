@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use crate::hir::types::Type;
+use crate::hir::types::{Type, BaseType};
 use crate::hir::hir::{BinOp, UnaryOp};
 use super::mir::*;
 
@@ -52,11 +52,22 @@ impl CGenerator {
 
         // Emit struct typedefs from program metadata
         self.struct_names.clear();
-        for (name, fields) in &program.struct_defs {
+        // Collect struct names
+        for (name, _) in &program.struct_defs {
             self.struct_names.insert(name.clone());
-            self.emit(&format!("typedef struct {{"));
-            for (fname, ftype_str) in fields {
-                let c_type = ftype_str_to_c(ftype_str);
+        }
+        // Sort structs by dependency: structs with no struct-field deps first
+        let mut sorted: Vec<(String, Vec<(String, Type)>)> = program.struct_defs.clone();
+        sorted.sort_by(|(_, af), (_, bf)| {
+            let a_has_struct = af.iter().any(|(_, t)| matches!(t, Type::Struct(_)));
+            let b_has_struct = bf.iter().any(|(_, t)| matches!(t, Type::Struct(_)));
+            a_has_struct.cmp(&b_has_struct)
+        });
+        // Emit struct definitions
+        for (name, fields) in &sorted {
+            self.emit(&format!("typedef struct {} {{", name));
+            for (fname, fty) in fields {
+                let c_type = c_type_name(fty, &self.struct_names);
                 self.emit(&format!("    {} {};", c_type, fname));
             }
             self.emit(&format!("}} {};", name));
@@ -155,8 +166,10 @@ impl CGenerator {
     fn generate_stmt(&mut self, stmt: &MirStmt) {
         match stmt {
             MirStmt::Let { name, ty, value } => {
-                let type_str = c_type_name(ty, &self.struct_names);
-                let val_str = self.rvalue_to_c_cast(value, ty);
+                // Use the more precise type: value's type if not Unknown
+                let effective_ty = if matches!(ty, Type::Unknown) { &value.ty } else { ty };
+                let type_str = c_type_name(effective_ty, &self.struct_names);
+                let val_str = self.rvalue_to_c(value);
                 self.emit(&format!("{} {} = {};", type_str, name, val_str));
             }
             MirStmt::Assign { name, value } => {
@@ -206,19 +219,39 @@ impl CGenerator {
     }
 
     fn rvalue_to_c_cast(&self, rvalue: &MirRvalue, expected_ty: &Type) -> String {
+        // For zero literal assigned to struct type, use compound literal
+        if let MirRvalueKind::Literal(LiteralValue::Int(0)) = &rvalue.kind {
+            let struct_name = match expected_ty {
+                Type::Struct(name) => Some(name.clone()),
+                Type::TypeParam { name } if self.struct_names.contains(name) => Some(name.clone()),
+                _ => None,
+            };
+            if let Some(name) = struct_name {
+                return format!("({}){{0}}", name);
+            }
+        }
         let val_str = self.rvalue_to_c(rvalue);
         let expected_c = c_type_name(expected_ty, &self.struct_names);
-        match &rvalue.kind {
-            MirRvalueKind::Literal(_) | MirRvalueKind::Call { .. } | MirRvalueKind::StructLiteral { .. } => {
-                format!("({}){}", expected_c, val_str)
+        if expected_c == "void*" || val_str.starts_with('(') {
+            val_str
+        } else {
+            match &rvalue.kind {
+                MirRvalueKind::Literal(_) | MirRvalueKind::Call { .. } | MirRvalueKind::StructLiteral { .. } => {
+                    format!("({}){}", expected_c, val_str)
+                }
+                _ => val_str,
             }
-            _ => val_str,
         }
     }
 
     fn rvalue_to_c(&self, rvalue: &MirRvalue) -> String {
         // If the value is a zero literal but the expected type is a struct, emit empty compound literal
-        if let (MirRvalueKind::Literal(LiteralValue::Int(0)), Type::Struct(name)) = (&rvalue.kind, &rvalue.ty) {
+        let struct_name = match &rvalue.ty {
+            Type::Struct(name) => Some(name.clone()),
+            Type::TypeParam { name } if self.struct_names.contains(name) => Some(name.clone()),
+            _ => None,
+        };
+        if let (MirRvalueKind::Literal(LiteralValue::Int(0)), Some(name)) = (&rvalue.kind, struct_name) {
             return format!("({}){{0}}", name);
         }
         match &rvalue.kind {
@@ -233,7 +266,14 @@ impl CGenerator {
             MirRvalueKind::BinaryOp(op, left, right) => {
                 let l = self.rvalue_to_c(left);
                 let r = self.rvalue_to_c(right);
-                if matches!(op, BinOp::Add) && (l.starts_with('"') || r.starts_with('"')) {
+                // Use str_add for string concatenation
+                let is_str_op = matches!(op, BinOp::Add) && (
+                    l.starts_with('"') || r.starts_with('"') ||
+                    l.starts_with("str_add") || r.starts_with("str_add") ||
+                    matches!(&rvalue.ty, Type::Base(BaseType::Str)) ||
+                    matches!(&rvalue.ty, Type::TypeParam { name } if name == "str")
+                );
+                if is_str_op {
                     format!("str_add({}, {})", l, r)
                 } else {
                     let op_str = c_binop(op);
@@ -294,7 +334,7 @@ fn c_type_name(ty: &Type, struct_names: &HashSet<String>) -> String {
                 "void*".to_string()
             }
         },
-        Type::Unknown => "int64_t".to_string(),
+        Type::Unknown => "void*".to_string(),
         _ => "void*".to_string(),
     }
 }

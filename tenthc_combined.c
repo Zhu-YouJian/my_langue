@@ -19,35 +19,51 @@ extern void write_file(const char* path, const char* content);
 extern void* Vec_new(void);
 extern void* HashMap_new(void);
 
-typedef struct {
-    void* structs;
-    void* fns;
-    void* main_stmts;
-} Program;
-typedef struct {
+typedef struct Stmt {
+    const char* kind;
     const char* name;
-    const char* type_ann;
-} Param;
-typedef struct {
+    int64_t ival;
+    const char* sval;
+} Stmt;
+typedef struct Span {
     int64_t line;
     int64_t col;
 } Span;
-typedef struct {
-    const char* kind;
-    const char* value;
-    void* span;
-} Token;
-typedef struct {
+typedef struct FnDef {
+    const char* name;
+    void* params;
+    const char* return_type;
+    void* body;
+} FnDef;
+typedef struct Lexer {
     const char* source;
     int64_t pos;
     int64_t line;
     int64_t col;
 } Lexer;
-typedef struct {
+typedef struct Token {
+    const char* kind;
+    const char* value;
+    Span span;
+} Token;
+typedef struct StructDef {
+    const char* name;
+    void* fields;
+} StructDef;
+typedef struct Parser {
     void* tokens;
     int64_t pos;
 } Parser;
-typedef struct {
+typedef struct Param {
+    const char* name;
+    const char* type_ann;
+} Param;
+typedef struct Program {
+    void* structs;
+    void* fns;
+    void* main_stmts;
+} Program;
+typedef struct Expr {
     const char* kind;
     int64_t ival;
     const char* sval;
@@ -55,22 +71,6 @@ typedef struct {
     int64_t left;
     int64_t right;
 } Expr;
-typedef struct {
-    const char* name;
-    void* params;
-    const char* return_type;
-    void* body;
-} FnDef;
-typedef struct {
-    const char* kind;
-    const char* name;
-    int64_t ival;
-    const char* sval;
-} Stmt;
-typedef struct {
-    const char* name;
-    void* fields;
-} StructDef;
 
 const char* KIND_EOF();
 const char* KIND_INT();
@@ -251,7 +251,7 @@ const char* lexer_peek(Lexer lexer) {
 
 const char* lexer_advance(Lexer lexer) {
     
-    const char* ch = (const char*)lexer_peek(lexer);
+    const char* ch = lexer_peek(lexer);
     /* unsupported */ 0;
     0;
     /* unsupported */ 0;
@@ -265,15 +265,15 @@ Span make_span(int64_t line, int64_t col) {
 
 Token make_token(const char* kind, const char* value, int64_t line, int64_t col) {
     
-    Span span = (Span)make_span(line, col);
+    Span span = make_span(line, col);
     return (Token)((Token){ .kind = kind, .value = value, .span = span });
 }
 
 Token lexer_next(Lexer lexer) {
     
-    const char* ch = (const char*)lexer_peek(lexer);
-    int64_t line = (lexer).line;
-    int64_t col = (lexer).col;
+    const char* ch = lexer_peek(lexer);
+    void* line = (lexer).line;
+    void* col = (lexer).col;
     /* unsupported */ 0;
     /* unsupported */ 0;
     /* unsupported */ 0;
@@ -296,8 +296,8 @@ Token lexer_next(Lexer lexer) {
 
 void* lexer_tokenize(Lexer lexer) {
     
-    int64_t tokens = (int64_t)Vec_new();
-    bool done = (bool)false;
+    void* tokens = Vec_new();
+    bool done = false;
     return (void*)tokens;
 }
 
@@ -310,53 +310,53 @@ Token parser_next(Parser p) {
     Token tmp_0;
     
     /* unsupported */ 0;
-    return (Token)0;
+    return (Token)(Token){0};
 }
 
 Expr parse_expr(Parser p) {
-    int64_t tmp_0;
+    void* tmp_0;
     
-    Token t = (Token)parser_next(p);
+    Token t = parser_next(p);
     /* unsupported */ 0;
     return (Expr)0;
 }
 
 Stmt parse_stmt(Parser p) {
-    int64_t tmp_0;
+    void* tmp_0;
     
-    Token t = (Token)parser_next(p);
+    Token t = parser_next(p);
     /* unsupported */ 0;
     return (Stmt)0;
 }
 
 FnDef parse_fn(Parser p) {
     
-    int64_t name = (parser_next(p)).value;
+    const char* name = (parser_next(p)).value;
     parser_next(p);
-    int64_t params = (int64_t)Vec_new();
-    Token tok = (Token)parser_next(p);
+    void* params = Vec_new();
+    Token tok = parser_next(p);
     tok = parser_next(p);
     /* unsupported */ 0;
-    int64_t body = (int64_t)Vec_new();
+    void* body = Vec_new();
     tok = parser_next(p);
     return (FnDef)((FnDef){ .name = name, .params = params, .return_type = "", .body = body });
 }
 
 StructDef parse_struct(Parser p) {
     
-    int64_t name = (parser_next(p)).value;
+    const char* name = (parser_next(p)).value;
     parser_next(p);
-    int64_t fields = (int64_t)Vec_new();
-    Token tok = (Token)parser_next(p);
+    void* fields = Vec_new();
+    Token tok = parser_next(p);
     return (StructDef)((StructDef){ .name = name, .fields = fields });
 }
 
 Program parse_program(void* tokens) {
     
-    Parser p = (Parser)parser_new(tokens);
-    int64_t structs = (int64_t)Vec_new();
-    int64_t fns = (int64_t)Vec_new();
-    int64_t main_stmts = (int64_t)Vec_new();
+    Parser p = parser_new(tokens);
+    void* structs = Vec_new();
+    void* fns = Vec_new();
+    void* main_stmts = Vec_new();
     return (Program)((Program){ .structs = structs, .fns = fns, .main_stmts = main_stmts });
 }
 
@@ -376,16 +376,16 @@ const char* cgen_stmt(Stmt stmt) {
 
 const char* cgen_struct(StructDef s) {
     
-    const char* out = (const char*)"typedef struct {\n";
-    int32_t i = (int32_t)0;
-    out = str_add((str_add(out, "} ") + (s).name), ";\n\n");
+    const char* out = "typedef struct {\n";
+    int32_t i = 0;
+    out = str_add(str_add(str_add(out, "} "), (s).name), ";\n\n");
     return (const char*)out;
 }
 
 const char* cgen_fn(FnDef f) {
     
     const char* out = str_add(str_add("int ", (f).name), "(");
-    int32_t i = (int32_t)0;
+    int32_t i = 0;
     out = str_add(out, ") {\n");
     i = 0;
     out = str_add(out, "}\n\n");
@@ -394,8 +394,8 @@ const char* cgen_fn(FnDef f) {
 
 const char* cgen_program(Program prog) {
     
-    const char* out = (const char*)"#include <stdio.h>\n\n";
-    int32_t i = (int32_t)0;
+    const char* out = "#include <stdio.h>\n\n";
+    int32_t i = 0;
     i = 0;
     out = str_add(out, "int main(void) {\n");
     i = 0;
@@ -405,15 +405,15 @@ const char* cgen_program(Program prog) {
 
 const char* compile(const char* src) {
     
-    Lexer lex = (Lexer)lexer_new(src);
-    void* tokens = (void*)lexer_tokenize(0);
-    Program prog = (Program)parse_program(tokens);
+    Lexer lex = lexer_new(src);
+    void* tokens = lexer_tokenize(0);
+    Program prog = parse_program(tokens);
     return (const char*)cgen_program(0);
 }
 
 int main() {
-    const char* src = (const char*)read_file("tenthc_combined.th");
-    const char* c = (const char*)compile(src);
+    const char* src = read_file("tenthc_combined.th");
+    const char* c = compile(src);
     write_file("tenthc_output.c", c);
     return (int)0;
 }

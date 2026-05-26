@@ -23,7 +23,7 @@ impl MirLowerer {
         let main_expr = program.main_expr.as_ref().map(|e| self.lower_top_level_expr(e)).transpose()?;
         let mut struct_defs = Vec::new();
         for (name, fields) in &program.structs {
-            struct_defs.push((name.clone(), fields.iter().map(|(n,t)| (n.clone(), format!("{}", t))).collect()));
+            struct_defs.push((name.clone(), fields.clone()));
         }
         Ok(MirProgram { functions, main_expr, struct_defs })
     }

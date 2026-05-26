@@ -361,7 +361,17 @@ impl Lowerer {
 
             ExprKind::Field { target, field } => {
                 let t = self.lower_expr(target)?;
-                (HirExprKind::Field { target: Box::new(t), field: field.name.clone() }, Type::Unknown)
+                // Resolve field type from struct definition
+                let field_ty = match &t.ty {
+                    Type::Struct(name) | Type::TypeParam { name } => {
+                        self.structs.get(name)
+                            .and_then(|fields| fields.iter().find(|(n, _)| n == &field.name))
+                            .map(|(_, ty)| ty.clone())
+                            .unwrap_or(Type::Unknown)
+                    }
+                    _ => Type::Unknown,
+                };
+                (HirExprKind::Field { target: Box::new(t), field: field.name.clone() }, field_ty)
             }
 
             ExprKind::TensorLiteral(data) => {
