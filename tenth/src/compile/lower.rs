@@ -125,10 +125,10 @@ impl MirLowerer {
                             stmts.push(MirStmt::Loop { body: bs });
                         }
                         HirStmtKind::Break => {
-                            stmts.push(MirStmt::Expr(rv(Type::unit(), MirRvalueKind::Literal(LiteralValue::Int(0)))));
+                            stmts.push(MirStmt::Break);
                         }
                         HirStmtKind::Continue => {
-                            stmts.push(MirStmt::Expr(rv(Type::unit(), MirRvalueKind::Literal(LiteralValue::Int(0)))));
+                            stmts.push(MirStmt::Continue);
                         }
                         _ => {}
                     }

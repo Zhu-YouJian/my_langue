@@ -230,6 +230,12 @@ impl CGenerator {
                 for stmt in body { self.generate_stmt(stmt); }
                 self.emit("}");
             }
+            MirStmt::Break => {
+                self.emit("break;");
+            }
+            MirStmt::Continue => {
+                self.emit("continue;");
+            }
             MirStmt::Return(val) => {
                 match val {
                     Some(v) => {

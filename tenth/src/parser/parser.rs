@@ -255,7 +255,10 @@ impl Parser {
             TokenKind::If => {
                 let cond = self.parse_expr()?;
                 let then_branch = self.parse_expr()?;
-                let else_branch = if self.match_token(TokenKind::Else) {
+                let has_else = self.match_token(TokenKind::Else);
+                eprintln!("DBG_PARSER_IF: after then at line={}, peek={:?} has_else={}", 
+                    self.peek().span.line, self.peek_kind(), has_else);
+                let else_branch = if has_else {
                     Some(Box::new(self.parse_expr()?))
                 } else {
                     None

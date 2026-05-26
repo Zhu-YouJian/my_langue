@@ -35,6 +35,8 @@ pub enum MirStmt {
     IfElse { cond: MirRvalue, then_body: Vec<MirStmt>, else_body: Vec<MirStmt> },
     While { cond: MirRvalue, body: Vec<MirStmt> },
     Loop { body: Vec<MirStmt> },
+    Break,
+    Continue,
 }
 
 /// MirRvalue wraps a kind with its type
