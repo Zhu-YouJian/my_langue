@@ -27,70 +27,43 @@ pub struct BasicBlock {
 
 #[derive(Debug, Clone)]
 pub enum MirStmt {
-    Let {
-        name: String,
-        ty: Type,
-        value: MirRvalue,
-    },
-    Assign {
-        name: String,
-        value: MirRvalue,
-    },
+    Let { name: String, ty: Type, value: MirRvalue },
+    Assign { name: String, value: MirRvalue },
     Expr(MirRvalue),
     Return(Option<MirRvalue>),
 }
 
+/// MirRvalue wraps a kind with its type
 #[derive(Debug, Clone)]
-pub enum MirRvalue {
+pub struct MirRvalue {
+    pub kind: MirRvalueKind,
+    pub ty: Type,
+}
+
+#[derive(Debug, Clone)]
+pub enum MirRvalueKind {
     Literal(LiteralValue),
     Use(String),
     BinaryOp(BinOp, Box<MirRvalue>, Box<MirRvalue>),
     UnaryOp(UnaryOp, Box<MirRvalue>),
-    Call {
-        func: String,
-        args: Vec<MirRvalue>,
-    },
-    MethodCall {
-        receiver: Box<MirRvalue>,
-        method: String,
-        args: Vec<MirRvalue>,
-    },
-    StructLiteral {
-        name: String,
-        fields: Vec<(String, MirRvalue)>,
-    },
-    Field {
-        target: Box<MirRvalue>,
-        field: String,
-    },
-    Ref(String),
-    MutRef(String),
-    Deref(String),
-    Move(String),
-    If {
-        cond: Box<MirRvalue>,
-        then_block: usize,
-        else_block: Option<usize>,
-    },
+    Call { func: String, args: Vec<MirRvalue> },
+    MethodCall { receiver: Box<MirRvalue>, method: String, args: Vec<MirRvalue> },
+    StructLiteral { name: String, fields: Vec<(String, MirRvalue)> },
+    Field { target: Box<MirRvalue>, field: String },
+    Ref(String), MutRef(String), Deref(String), Move(String),
+    If { cond: Box<MirRvalue>, then_block: usize, else_block: Option<usize> },
 }
 
 #[derive(Debug, Clone)]
 pub enum LiteralValue {
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-    Str(String),
+    Int(i64), Float(f64), Bool(bool), Str(String),
 }
 
 #[derive(Debug, Clone)]
 pub enum MirTerminator {
     Return(Option<MirRvalue>),
     Goto(usize),
-    If {
-        cond: MirRvalue,
-        then_block: usize,
-        else_block: usize,
-    },
+    If { cond: MirRvalue, then_block: usize, else_block: usize },
     Unreachable,
 }
 

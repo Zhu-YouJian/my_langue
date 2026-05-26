@@ -208,10 +208,8 @@ impl CGenerator {
     fn rvalue_to_c_cast(&self, rvalue: &MirRvalue, expected_ty: &Type) -> String {
         let val_str = self.rvalue_to_c(rvalue);
         let expected_c = c_type_name(expected_ty, &self.struct_names);
-        // Add cast if the value is a literal that needs type disambiguation
-        // or if the expected type is different from the literal's natural type
-        match rvalue {
-            MirRvalue::Literal(_) | MirRvalue::Call { .. } | MirRvalue::StructLiteral { .. } => {
+        match &rvalue.kind {
+            MirRvalueKind::Literal(_) | MirRvalueKind::Call { .. } | MirRvalueKind::StructLiteral { .. } => {
                 format!("({}){}", expected_c, val_str)
             }
             _ => val_str,
@@ -219,19 +217,22 @@ impl CGenerator {
     }
 
     fn rvalue_to_c(&self, rvalue: &MirRvalue) -> String {
-        match rvalue {
-            MirRvalue::Literal(lit) => match lit {
+        // If the value is a zero literal but the expected type is a struct, emit empty compound literal
+        if let (MirRvalueKind::Literal(LiteralValue::Int(0)), Type::Struct(name)) = (&rvalue.kind, &rvalue.ty) {
+            return format!("({}){{0}}", name);
+        }
+        match &rvalue.kind {
+            MirRvalueKind::Literal(lit) => match lit {
                 LiteralValue::Int(n) => n.to_string(),
                 LiteralValue::Float(n) => format!("{:.10}", n),
                 LiteralValue::Bool(true) => "true".to_string(),
                 LiteralValue::Bool(false) => "false".to_string(),
                 LiteralValue::Str(s) => format!("\"{}\"", escape_c_string(s)),
             },
-            MirRvalue::Use(name) => name.clone(),
-            MirRvalue::BinaryOp(op, left, right) => {
+            MirRvalueKind::Use(name) => name.clone(),
+            MirRvalueKind::BinaryOp(op, left, right) => {
                 let l = self.rvalue_to_c(left);
                 let r = self.rvalue_to_c(right);
-                // Detect string concatenation: if operands are string literals, use str_add
                 if matches!(op, BinOp::Add) && (l.starts_with('"') || r.starts_with('"')) {
                     format!("str_add({}, {})", l, r)
                 } else {
@@ -239,30 +240,26 @@ impl CGenerator {
                     format!("({} {} {})", l, op_str, r)
                 }
             }
-            MirRvalue::UnaryOp(op, expr) => {
+            MirRvalueKind::UnaryOp(op, expr) => {
                 let e = self.rvalue_to_c(expr);
                 match op {
                     UnaryOp::Neg => format!("(-{})", e),
                     UnaryOp::Not => format!("(!{})", e),
                 }
             }
-            MirRvalue::Call { func, args } => {
-                let args_str: Vec<String> = args.iter()
-                    .map(|a| self.rvalue_to_c(a))
-                    .collect();
+            MirRvalueKind::Call { func, args } => {
+                let args_str: Vec<String> = args.iter().map(|a| self.rvalue_to_c(a)).collect();
                 let func_name = match func.as_str() {
-                    "Vec::new" => "Vec_new",
-                    "HashMap::new" => "HashMap_new",
-                    "read_file" => "read_file",
-                    "write_file" => "write_file",
+                    "Vec::new" => "Vec_new", "HashMap::new" => "HashMap_new",
+                    "read_file" => "read_file", "write_file" => "write_file",
                     other => other,
                 };
                 format!("{}({})", func_name, args_str.join(", "))
             }
-            MirRvalue::Field { target, field } => {
+            MirRvalueKind::Field { target, field } => {
                 format!("({}).{}", self.rvalue_to_c(target), field)
             }
-            MirRvalue::StructLiteral { name, fields } => {
+            MirRvalueKind::StructLiteral { name, fields } => {
                 let field_strs: Vec<String> = fields.iter()
                     .map(|(fname, fval)| format!(".{} = {}", fname, self.rvalue_to_c(fval)))
                     .collect();
@@ -339,22 +336,21 @@ fn collect_struct_names_term(term: &MirTerminator, names: &mut HashSet<String>) 
 }
 
 fn collect_struct_names_rvalue(val: &MirRvalue, names: &mut HashSet<String>) {
-    match val {
-        MirRvalue::StructLiteral { name, fields } => {
+    match &val.kind {
+        MirRvalueKind::StructLiteral { name, fields } => {
             names.insert(name.clone());
-            for (_, f) in fields {
-                collect_struct_names_rvalue(f, names);
-            }
+            for (_, f) in fields { collect_struct_names_rvalue(f, names); }
         }
-        MirRvalue::BinaryOp(_, l, r) => {
+        MirRvalueKind::BinaryOp(_, l, r) => {
             collect_struct_names_rvalue(l, names);
             collect_struct_names_rvalue(r, names);
         }
-        MirRvalue::UnaryOp(_, e) => collect_struct_names_rvalue(e, names),
-        MirRvalue::Call { args, .. } => {
+        MirRvalueKind::Field { target, .. } => collect_struct_names_rvalue(target, names),
+        MirRvalueKind::UnaryOp(_, e) => collect_struct_names_rvalue(e, names),
+        MirRvalueKind::Call { args, .. } => {
             for a in args { collect_struct_names_rvalue(a, names); }
         }
-        MirRvalue::If { cond, .. } => collect_struct_names_rvalue(cond, names),
+        MirRvalueKind::If { cond, .. } => collect_struct_names_rvalue(cond, names),
         _ => {}
     }
 }

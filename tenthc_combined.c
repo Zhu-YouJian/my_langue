@@ -20,29 +20,10 @@ extern void* Vec_new(void);
 extern void* HashMap_new(void);
 
 typedef struct {
-    void* tokens;
-    int64_t pos;
-} Parser;
-typedef struct {
     void* structs;
     void* fns;
     void* main_stmts;
 } Program;
-typedef struct {
-    const char* kind;
-    const char* value;
-    void* span;
-} Token;
-typedef struct {
-    const char* name;
-    void* params;
-    const char* return_type;
-    void* body;
-} FnDef;
-typedef struct {
-    const char* name;
-    void* fields;
-} StructDef;
 typedef struct {
     const char* name;
     const char* type_ann;
@@ -53,10 +34,19 @@ typedef struct {
 } Span;
 typedef struct {
     const char* kind;
-    const char* name;
-    int64_t ival;
-    const char* sval;
-} Stmt;
+    const char* value;
+    void* span;
+} Token;
+typedef struct {
+    const char* source;
+    int64_t pos;
+    int64_t line;
+    int64_t col;
+} Lexer;
+typedef struct {
+    void* tokens;
+    int64_t pos;
+} Parser;
 typedef struct {
     const char* kind;
     int64_t ival;
@@ -66,11 +56,21 @@ typedef struct {
     int64_t right;
 } Expr;
 typedef struct {
-    const char* source;
-    int64_t pos;
-    int64_t line;
-    int64_t col;
-} Lexer;
+    const char* name;
+    void* params;
+    const char* return_type;
+    void* body;
+} FnDef;
+typedef struct {
+    const char* kind;
+    const char* name;
+    int64_t ival;
+    const char* sval;
+} Stmt;
+typedef struct {
+    const char* name;
+    void* fields;
+} StructDef;
 
 const char* KIND_EOF();
 const char* KIND_INT();
