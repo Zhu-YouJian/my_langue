@@ -79,4 +79,5 @@ pub struct MirProgram {
     pub functions: Vec<MirFunction>,
     pub main_expr: Option<MirFunction>,
     pub struct_defs: Vec<(String, Vec<(String, Type)>)>,
+    pub enum_defs: Vec<(String, Vec<String>)>,
 }

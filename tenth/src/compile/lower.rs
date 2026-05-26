@@ -8,14 +8,23 @@ pub struct MirLowerer {
     local_counter: usize,
     block_counter: usize,
     locals: HashMap<String, MirLocal>,
+    enum_discr: HashMap<String, HashMap<String, i64>>,
 }
 
 impl MirLowerer {
     pub fn new() -> Self {
-        MirLowerer { local_counter: 0, block_counter: 0, locals: HashMap::new() }
+        MirLowerer { local_counter: 0, block_counter: 0, locals: HashMap::new(), enum_discr: HashMap::new() }
     }
 
     pub fn lower_program(&mut self, program: &HirProgram) -> TenthResult<MirProgram> {
+        // Build enum discriminant maps
+        for (ename, variants) in &program.enums {
+            let mut disc_map = HashMap::new();
+            for (i, (vname, _)) in variants.iter().enumerate() {
+                disc_map.insert(vname.clone(), i as i64);
+            }
+            self.enum_discr.insert(ename.clone(), disc_map);
+        }
         let mut functions = Vec::new();
         for func in &program.functions {
             functions.push(self.lower_function(func)?);
@@ -25,7 +34,11 @@ impl MirLowerer {
         for (name, fields) in &program.structs {
             struct_defs.push((name.clone(), fields.clone()));
         }
-        Ok(MirProgram { functions, main_expr, struct_defs })
+        let mut enum_defs = Vec::new();
+        for (name, variants) in &program.enums {
+            enum_defs.push((name.clone(), variants.iter().map(|(v, _)| v.clone()).collect()));
+        }
+        Ok(MirProgram { functions, main_expr, struct_defs, enum_defs })
     }
 
     fn lower_function(&mut self, func: &HirFnDef) -> TenthResult<MirFunction> {
@@ -284,6 +297,73 @@ impl MirLowerer {
                 }
                 // Multi-index or range — not yet supported
                 Ok((stmts, Some(rv(ty, MirRvalueKind::Literal(LiteralValue::Int(0))))))
+            }
+
+            HirExprKind::EnumLiteral { enum_name, variant, .. } => {
+                let disc = self.enum_discr.get(enum_name)
+                    .and_then(|m| m.get(variant))
+                    .copied()
+                    .unwrap_or(0);
+                Ok((vec![], Some(rv(Type::Base(BaseType::I64), MirRvalueKind::Literal(LiteralValue::Int(disc))))))
+            }
+
+            HirExprKind::Match { scrutinee, arms } => {
+                let (mut stmts, sv) = self.lower_expr_rvalue(scrutinee)?;
+                let disc_name = self.new_local("match_disc", Type::Base(BaseType::I64));
+                stmts.push(MirStmt::Let { name: disc_name.clone(), ty: Type::Base(BaseType::I64), value: sv });
+
+                // Build if-else chain for the arms
+                let result_tmp = self.new_local("match_res", ty.clone());
+                // Initialize with 0
+                stmts.push(MirStmt::Let { name: result_tmp.clone(), ty: ty.clone(), value: rv(ty.clone(), MirRvalueKind::Literal(LiteralValue::Int(0))) });
+
+                // Process arms in reverse to build nested if-else
+                let mut current_else: Vec<MirStmt> = vec![]; // final else (wildcard or empty)
+                let mut have_wildcard = false;
+
+                for arm in arms.iter().rev() {
+                    match &arm.pattern {
+                        HirPattern::EnumVariant { enum_name: _, variant, .. } => {
+                            let disc_val = self.enum_discr.values()
+                                .find_map(|m| m.get(variant))
+                                .copied()
+                                .unwrap_or(-1);
+                            let (body_stmts, body_val) = self.lower_expr_to_block(&arm.body)?;
+                            let mut then_body = body_stmts;
+                            if let Some(v) = body_val {
+                                then_body.push(MirStmt::Assign { name: result_tmp.clone(), value: v });
+                            }
+                            let cond = rv(Type::bool_(), MirRvalueKind::BinaryOp(
+                                BinOp::Eq,
+                                Box::new(rv(Type::Base(BaseType::I64), MirRvalueKind::Use(disc_name.clone()))),
+                                Box::new(rv(Type::Base(BaseType::I64), MirRvalueKind::Literal(LiteralValue::Int(disc_val)))),
+                            ));
+                            current_else = vec![MirStmt::IfElse {
+                                cond,
+                                then_body,
+                                else_body: std::mem::take(&mut current_else),
+                            }];
+                        }
+                        HirPattern::Wildcard => {
+                            have_wildcard = true;
+                            let (body_stmts, body_val) = self.lower_expr_to_block(&arm.body)?;
+                            let mut else_body = body_stmts;
+                            if let Some(v) = body_val {
+                                else_body.push(MirStmt::Assign { name: result_tmp.clone(), value: v });
+                            }
+                            current_else = else_body;
+                        }
+                        _ => {} // literal patterns ignored for now
+                    }
+                }
+
+                if !have_wildcard {
+                    // No wildcard → add empty else
+                    current_else = vec![MirStmt::Expr(rv(Type::unit(), MirRvalueKind::Literal(LiteralValue::Int(0))))];
+                }
+
+                stmts.extend(current_else);
+                Ok((stmts, Some(rv(ty, MirRvalueKind::Use(result_tmp)))))
             }
 
             _ => Ok((vec![], Some(rv(ty, MirRvalueKind::Literal(LiteralValue::Int(0)))))),

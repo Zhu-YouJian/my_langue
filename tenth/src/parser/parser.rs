@@ -1066,6 +1066,7 @@ impl Parser {
                 self.advance();
                 self.expect(TokenKind::LBrace)?;
                 let stmts = self.parse_block_stmts()?;
+                self.match_token(TokenKind::Semicolon);
                 Ok(Stmt {
                     kind: StmtKind::Loop { body: stmts },
                     span,

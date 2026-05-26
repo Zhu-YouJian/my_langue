@@ -5,8 +5,8 @@ fn cgen_expr(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>, idx: i64) -> 
     if idx <= 0 || idx > exprs.len() { return "0"; };
     let e = exprs[idx - 1];
 
-    if e.kind == "int" { return str_int(e.ival); };
-    if e.kind == "float" { return str_float(e.fval); };
+    if e.kind == "int" { return int_to_str(e.ival); };
+    if e.kind == "float" { return float_to_str(e.fval); };
     if e.kind == "str" { return "\"" + e.sval + "\""; };
     if e.kind == "bool" { if e.ival != 0 { return "true"; } else { return "false"; }; };
     if e.kind == "ident" { return e.sval; };
@@ -179,7 +179,7 @@ fn cgen_program(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>) -> str {
 }
 
 // Helper: int to string (for literals only)
-fn str_int(n: i64) -> str {
+fn int_to_str(n: i64) -> str {
     if n == 0 { return "0"; };
     let mut neg = false;
     if n < 0 { neg = true; n = -n; };
@@ -205,6 +205,6 @@ fn str_int(n: i64) -> str {
     s
 }
 
-fn str_float(n: f64) -> str {
-    str_int(n) + ".0"
+fn float_to_str(n: f64) -> str {
+    int_to_str(n) + ".0"
 }

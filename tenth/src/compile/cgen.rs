@@ -8,6 +8,7 @@ pub struct CGenerator {
     indent_level: usize,
     current_ret_type: String,
     struct_names: HashSet<String>,
+    enum_names: HashSet<String>,
     struct_fields: HashMap<String, Vec<(String, String)>>, // struct name → field name → C type
     local_types: HashMap<String, String>, // track C types of declared variables
 }
@@ -19,6 +20,7 @@ impl CGenerator {
             indent_level: 0,
             current_ret_type: "void".to_string(),
             struct_names: HashSet::new(),
+            enum_names: HashSet::new(),
             struct_fields: HashMap::new(),
             local_types: HashMap::new(),
         }
@@ -26,6 +28,11 @@ impl CGenerator {
 
     pub fn generate(&mut self, program: &MirProgram) -> String {
         self.output.clear();
+
+        // Register enum names
+        for (ename, _) in &program.enum_defs {
+            self.enum_names.insert(ename.clone());
+        }
 
         // Preamble
         self.emit("#include <stdio.h>");
@@ -81,12 +88,12 @@ impl CGenerator {
         for (name, fields) in &sorted {
             // Store field type info for later Field access resolution
             let field_info: Vec<(String, String)> = fields.iter()
-                .map(|(fnm, fty)| (fnm.clone(), c_type_name(fty, &self.struct_names)))
+                .map(|(fnm, fty)| (fnm.clone(), c_type_name(fty, &self.struct_names, &self.enum_names)))
                 .collect();
             self.struct_fields.insert(name.clone(), field_info);
             self.emit(&format!("typedef struct {} {{", name));
             for (fname, fty) in fields {
-                let c_type = c_type_name(fty, &self.struct_names);
+                let c_type = c_type_name(fty, &self.struct_names, &self.enum_names);
                 self.emit(&format!("    {} {};", c_type, fname));
             }
             self.emit(&format!("}} {};", name));
@@ -115,19 +122,19 @@ impl CGenerator {
 
     fn emit_forward_decl(&mut self, func: &MirFunction) {
         let is_main = func.name == "main" && func.params.is_empty();
-        let ret_c = if is_main { "int".to_string() } else { c_type_name(&func.return_type, &self.struct_names) };
+        let ret_c = if is_main { "int".to_string() } else { c_type_name(&func.return_type, &self.struct_names, &self.enum_names) };
         let params: Vec<String> = func.params.iter()
-            .map(|(n, t)| format!("{} {}", c_type_name(t, &self.struct_names), n))
+            .map(|(n, t)| format!("{} {}", c_type_name(t, &self.struct_names, &self.enum_names), n))
             .collect();
         self.emit(&format!("{} {}({});", ret_c, func.name, params.join(", ")));
     }
 
     fn generate_function(&mut self, func: &MirFunction) {
         let is_main = func.name == "main" && func.params.is_empty();
-        let ret_c = if is_main { "int".to_string() } else { c_type_name(&func.return_type, &self.struct_names) };
+        let ret_c = if is_main { "int".to_string() } else { c_type_name(&func.return_type, &self.struct_names, &self.enum_names) };
         self.current_ret_type = ret_c.clone();
         let params: Vec<String> = func.params.iter()
-            .map(|(n, t)| format!("{} {}", c_type_name(t, &self.struct_names), n))
+            .map(|(n, t)| format!("{} {}", c_type_name(t, &self.struct_names, &self.enum_names), n))
             .collect();
         self.emit(&format!("{} {}({}) {{", ret_c, func.name, params.join(", ")));
         self.indent_level = 1;
@@ -168,11 +175,36 @@ impl CGenerator {
             MirStmt::Let { name, ty, value } => {
                 // Use the more precise type: value's type if not Unknown
                 let effective_ty = if matches!(ty, Type::Unknown | Type::Base(BaseType::Unit)) { &value.ty } else { ty };
-                let type_str = c_type_name(effective_ty, &self.struct_names);
+                let mut type_str = c_type_name(effective_ty, &self.struct_names, &self.enum_names);
+                // If still void*, try to infer from field access or arithmetic
+                if type_str == "void*" {
+                    if let MirRvalueKind::Field { target: _, field } = &value.kind {
+                        for (_sname, sfields) in &self.struct_fields {
+                            if let Some((_, ftype)) = sfields.iter().find(|(fnm, _)| fnm == field) {
+                                type_str = ftype.clone();
+                                break;
+                            }
+                        }
+                    }
+                    // Binary/arithmetic operations produce integers
+                    if matches!(&value.kind, MirRvalueKind::BinaryOp(..) | MirRvalueKind::UnaryOp(..)) {
+                        type_str = "int64_t".to_string();
+                    }
+                    // Vec_len returns int64_t
+                    if let MirRvalueKind::Call { func, .. } = &value.kind {
+                        if func == "Vec_len" || func == "Vec::len" {
+                            type_str = "int64_t".to_string();
+                        }
+                    }
+                    if let MirRvalueKind::MethodCall { method, .. } = &value.kind {
+                        if method == "len" {
+                            type_str = "int64_t".to_string();
+                        }
+                    }
+                }
                 let val_str = self.rvalue_to_c(value);
                 // Track the type for later Assign statements
                 self.local_types.insert(name.clone(), type_str.clone());
-                // DEBUG: emit type info for all Let
                 self.emit(&format!("/* Let {} declared={:?} val_ty={:?} */", name, ty, value.ty));
                 self.emit(&format!("{} {} = {};", type_str, name, val_str));
             }
@@ -180,8 +212,21 @@ impl CGenerator {
                 // Emit target->field = value (or target.field = value)
                 let t_str = self.rvalue_to_c(target);
                 let v_str = self.rvalue_to_c(value);
-                // Check if target is a deref → use ->
-                if matches!(&target.kind, MirRvalueKind::Deref(_) | MirRvalueKind::Ref(_) | MirRvalueKind::MutRef(_)) {
+                // If target is void* (from Vec_get/call), try to cast to known struct
+                if matches!(&target.ty, Type::Unknown) {
+                    let mut found_struct: Option<&str> = None;
+                    for (sname, sfields) in &self.struct_fields {
+                        if sfields.iter().any(|(fnm, _)| fnm == field) {
+                            found_struct = Some(sname.as_str());
+                            break;
+                        }
+                    }
+                    if let Some(sname) = found_struct {
+                        self.emit(&format!("(({}*){})->{} = {};", sname, t_str, field, v_str));
+                    } else {
+                        self.emit(&format!("({}).{} = {};", t_str, field, v_str));
+                    }
+                } else if matches!(&target.kind, MirRvalueKind::Deref(_) | MirRvalueKind::Ref(_) | MirRvalueKind::MutRef(_)) {
                     self.emit(&format!("{}->{} = {};", t_str, field, v_str));
                 } else if matches!(&target.ty, Type::Ref(_) | Type::MutRef(_)) {
                     self.emit(&format!("{}->{} = {};", t_str, field, v_str));
@@ -486,8 +531,20 @@ impl CGenerator {
             }
             MirRvalueKind::IfExpr { cond, then_val, else_val } => {
                 let c = self.rvalue_to_c(cond);
-                let t = self.rvalue_to_c(then_val);
-                let e = self.rvalue_to_c(else_val);
+                let mut t = self.rvalue_to_c(then_val);
+                let mut e = self.rvalue_to_c(else_val);
+                // If one branch is void* (Vec_get) and the other is a struct, cast void* to struct*
+                let then_is_void = matches!(&then_val.ty, Type::Unknown) && !matches!(&then_val.kind, MirRvalueKind::StructLiteral { .. });
+                let else_is_void = matches!(&else_val.ty, Type::Unknown) && !matches!(&else_val.kind, MirRvalueKind::StructLiteral { .. });
+                if then_is_void && !else_is_void {
+                    if let MirRvalueKind::StructLiteral { name, .. } = &else_val.kind {
+                        t = format!("*(({}*)({}))", name, t);
+                    }
+                } else if else_is_void && !then_is_void {
+                    if let MirRvalueKind::StructLiteral { name, .. } = &then_val.kind {
+                        e = format!("*(({}*)({}))", name, e);
+                    }
+                }
                 format!("({} ? {} : {})", c, t, e)
             }
             MirRvalueKind::MethodCall { receiver, method, args } => {
@@ -547,7 +604,7 @@ impl CGenerator {
     }
 }
 
-fn c_type_name(ty: &Type, struct_names: &HashSet<String>) -> String {
+fn c_type_name(ty: &Type, struct_names: &HashSet<String>, enum_names: &HashSet<String>) -> String {
     use crate::hir::types::BaseType;
     match ty {
         Type::Base(b) => match b {
@@ -562,9 +619,10 @@ fn c_type_name(ty: &Type, struct_names: &HashSet<String>) -> String {
             BaseType::Str => "const char*".to_string(),
             BaseType::Unit => "void".to_string(),
         },
+        Type::Enum(_) => "int64_t".to_string(),
         Type::Struct(name) => name.clone(),
         Type::Ref(inner) | Type::MutRef(inner) => {
-            let inner_name = c_type_name(inner, struct_names);
+            let inner_name = c_type_name(inner, struct_names, enum_names);
             if inner_name == "const char*" {
                 // For string references, keep as const char*
                 "const char*".to_string()
@@ -581,11 +639,13 @@ fn c_type_name(ty: &Type, struct_names: &HashSet<String>) -> String {
         }
         Type::Generic { base, .. } => {
             // Generic args don't affect C representation — delegate to base type
-            c_type_name(base, struct_names)
+            c_type_name(base, struct_names, enum_names)
         },
         Type::TypeParam { name } => {
             if struct_names.contains(name) {
                 name.clone()
+            } else if enum_names.contains(name) {
+                "int64_t".to_string()
             } else {
                 "void*".to_string()
             }

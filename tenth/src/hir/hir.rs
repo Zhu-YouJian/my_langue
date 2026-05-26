@@ -225,6 +225,7 @@ pub struct HirProgram {
     pub methods: HashMap<String, HashMap<String, HirFnDef>>,
     pub structs: HashMap<String, Vec<(String, Type)>>,
     pub generic_structs: HashMap<String, HirGenericStruct>,
+    pub enums: HashMap<String, Vec<(String, Vec<(String, Type)>)>>,
     pub trait_defs: HashMap<String, HirTraitDef>,
     pub trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
 }

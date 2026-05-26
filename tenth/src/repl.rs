@@ -24,6 +24,7 @@ pub fn run_repl() -> TenthResult<()> {
         methods: HashMap::new(),
         structs: HashMap::new(),
         generic_structs: HashMap::new(),
+        enums: HashMap::new(),
         trait_defs: HashMap::new(),
         trait_impls: HashMap::new(),
     };

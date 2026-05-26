@@ -261,7 +261,7 @@ fn parse_postfix(p: &mut Parser) -> i64 {
                 let field_tok = parser_advance(p);
                 let field_name = "";
                 match field_tok.kind {
-                    TokenKind::Identifier(name: s) => { /* field_name = s */ },
+                    TokenKind::Identifier(name: s) => { },
                     _ => {},
                 };
                 let idx = add_expr(p, "field");
@@ -328,14 +328,8 @@ fn token_to_binop_str(tok: Token) -> str {
 }
 
 fn is_binop(tok: Token) -> bool {
-    match tok.kind {
-        TokenKind::Plus | TokenKind::Minus | TokenKind::Star |
-        TokenKind::Slash | TokenKind::Percent | TokenKind::EqEq |
-        TokenKind::NotEq | TokenKind::Lt | TokenKind::Gt |
-        TokenKind::LtEq | TokenKind::GtEq | TokenKind::AndAnd |
-        TokenKind::OrOr => true,
-        _ => false,
-    }
+    let op = token_to_binop_str(tok);
+    op != ""
 }
 
 fn parse_binary(p: &mut Parser, min_prec: i64) -> i64 {
@@ -540,10 +534,7 @@ fn parse_stmt(p: &mut Parser) -> i64 {
             parser_advance(p);
             let t2 = parser_peek(p);
             let mut expr_idx: i64 = 0;
-            match t2.kind {
-                TokenKind::Semicolon | TokenKind::RBrace | TokenKind::Eof => {},
-                _ => { expr_idx = parse_expr(p); },
-            };
+            if !is_stmt_end(t2) { expr_idx = parse_expr(p); };
             let idx = add_stmt(p, "return");
             p.stmt_nodes[idx - 1].expr_idx = expr_idx;
             idx
@@ -556,10 +547,7 @@ fn parse_stmt(p: &mut Parser) -> i64 {
             let mut body_count: i64 = 0;
             loop {
                 let t2 = parser_peek(p);
-                match t2.kind {
-                    TokenKind::RBrace | TokenKind::Eof => { break; },
-                    _ => {},
-                };
+                if is_end_of_block(t2) { break; };
                 parse_stmt(p);
                 body_count = body_count + 1;
             };
@@ -585,10 +573,7 @@ fn parse_stmt(p: &mut Parser) -> i64 {
             let mut body_count: i64 = 0;
             loop {
                 let t2 = parser_peek(p);
-                match t2.kind {
-                    TokenKind::RBrace | TokenKind::Eof => { break; },
-                    _ => {},
-                };
+                if is_end_of_block(t2) { break; };
                 parse_stmt(p);
                 body_count = body_count + 1;
             };
@@ -622,10 +607,7 @@ fn parse_fn(p: &mut Parser) -> FnDef {
     let mut params = Vec::new();
     loop {
         let t = parser_peek(p);
-        match t.kind {
-            TokenKind::RParen | TokenKind::Eof => { break; },
-            _ => {},
-        };
+        if is_end_of_paren(t) { break; };
         let pname_tok = parser_advance(p);
         let mut pname = "";
         match pname_tok.kind {
@@ -667,10 +649,7 @@ fn parse_fn(p: &mut Parser) -> FnDef {
     let mut body_count: i64 = 0;
     loop {
         let t4 = parser_peek(p);
-        match t4.kind {
-            TokenKind::RBrace | TokenKind::Eof => { break; },
-            _ => {},
-        };
+        if is_end_of_block(t4) { break; };
         parse_stmt(p);
         body_count = body_count + 1;
     };
@@ -691,10 +670,7 @@ fn parse_struct_def(p: &mut Parser) -> StructDef {
     let mut fields = Vec::new();
     loop {
         let t = parser_peek(p);
-        match t.kind {
-            TokenKind::RBrace | TokenKind::Eof => { break; },
-            _ => {},
-        };
+        if is_end_of_block(t) { break; };
         let fname_tok = parser_advance(p);
         let mut fname = "";
         match fname_tok.kind {
@@ -731,10 +707,7 @@ fn parse_enum_def(p: &mut Parser) -> EnumDef {
     let mut variants = Vec::new();
     loop {
         let t = parser_peek(p);
-        match t.kind {
-            TokenKind::RBrace | TokenKind::Eof => { break; },
-            _ => {},
-        };
+        if is_end_of_block(t) { break; };
         let vname_tok = parser_advance(p);
         let mut vname = "";
         match vname_tok.kind {
@@ -748,10 +721,7 @@ fn parse_enum_def(p: &mut Parser) -> EnumDef {
                 parser_advance(p);
                 loop {
                     let t3 = parser_peek(p);
-                    match t3.kind {
-                        TokenKind::RParen | TokenKind::Eof => { break; },
-                        _ => {},
-                    };
+                    if is_end_of_paren(t3) { break; };
                     let fname_tok = parser_advance(p);
                     let mut fname = "";
                     match fname_tok.kind {
@@ -785,6 +755,33 @@ fn parse_enum_def(p: &mut Parser) -> EnumDef {
     };
     parser_advance(p); // skip }
     EnumDef { name: name, variants: variants }
+}
+
+// ── Pattern helpers (avoids OR-patterns) ──
+
+fn is_end_of_block(tok: Token) -> bool {
+    match tok.kind {
+        TokenKind::RBrace => true,
+        TokenKind::Eof => true,
+        _ => false,
+    }
+}
+
+fn is_end_of_paren(tok: Token) -> bool {
+    match tok.kind {
+        TokenKind::RParen => true,
+        TokenKind::Eof => true,
+        _ => false,
+    }
+}
+
+fn is_stmt_end(tok: Token) -> bool {
+    match tok.kind {
+        TokenKind::Semicolon => true,
+        TokenKind::RBrace => true,
+        TokenKind::Eof => true,
+        _ => false,
+    }
 }
 
 fn parse_program(tokens: Vec<Token>) -> Program {

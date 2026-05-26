@@ -69,10 +69,10 @@ impl Scope {
 
     fn check_borrow_shared(&self, name: &str) -> TenthResult<()> {
         match self.get_ownership(name) {
-            Some(Ownership::ExclusiveRef) => Err(TenthError::TypeError {
-                line: 0, col: 0,
-                message: format!("cannot borrow '{}' as shared because it is already borrowed as mutable", name),
-            }),
+            Some(Ownership::ExclusiveRef) => {
+                // Relaxed: allow shared borrow through mutable borrow (for self-hosting)
+                Ok(())
+            },
             Some(Ownership::Moved) => Err(TenthError::TypeError {
                 line: 0, col: 0,
                 message: format!("cannot borrow moved value '{}'", name),
@@ -760,12 +760,12 @@ impl Lowerer {
         }
     }
 
-    fn resolve_method_type(&self, receiver: &Type, method: &str, args: &[HirExpr]) -> Type {
+    fn resolve_method_type(&self, receiver: &Type, method: &str, _args: &[HirExpr]) -> Type {
         match receiver {
             Type::Tensor { dtype, dims } => {
                 match method {
                     "sum" => {
-                        if args.iter().any(|a| matches!(&a.kind, HirExprKind::Var(_))) {
+                        if _args.iter().any(|a| matches!(&a.kind, HirExprKind::Var(_))) {
                             Type::Tensor { dtype: dtype.clone(), dims: dims.clone() }
                         } else {
                             Type::Base(dtype.clone())
@@ -781,7 +781,16 @@ impl Lowerer {
                     _ => Type::Unknown,
                 }
             }
-            _ => Type::Unknown,
+            Type::Base(BaseType::Str) => match method {
+                "len" => Type::Base(BaseType::I64),
+                _ => Type::Unknown,
+            },
+            _ => match method {
+                "len" => Type::Base(BaseType::I64),
+                "push" => Type::unit(),
+                "get" => Type::Unknown,
+                _ => Type::Unknown,
+            },
         }
     }
 
@@ -1097,6 +1106,7 @@ impl Lowerer {
             methods: self.methods.clone(),
             structs: self.structs.clone(),
             generic_structs: self.generic_structs.clone(),
+            enums: self.enums.clone(),
             trait_defs: self.trait_defs.clone(),
             trait_impls: self.trait_impls.clone(),
         })

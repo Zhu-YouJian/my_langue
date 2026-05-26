@@ -1,4 +1,1 @@
-fn main() -> i64 {
-    write_file("test_mini.txt", "hello world");
-    0
-}
+let x = "42;" x

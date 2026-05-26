@@ -70,6 +70,7 @@ mod tests {
             methods: std::collections::HashMap::new(),
             structs: std::collections::HashMap::new(),
             generic_structs: std::collections::HashMap::new(),
+            enums: std::collections::HashMap::new(),
             trait_defs: std::collections::HashMap::new(),
             trait_impls: std::collections::HashMap::new(),
         };
@@ -104,6 +105,7 @@ mod tests {
             methods: std::collections::HashMap::new(),
             structs: std::collections::HashMap::new(),
             generic_structs: std::collections::HashMap::new(),
+            enums: std::collections::HashMap::new(),
             trait_defs: std::collections::HashMap::new(),
             trait_impls: std::collections::HashMap::new(),
         };
