@@ -9,6 +9,7 @@ pub struct CGenerator {
     var_types: HashMap<String, String>,
     current_ret_type: String,
     struct_names: HashSet<String>,
+    local_types: HashMap<String, String>, // track C types of declared variables
 }
 
 impl CGenerator {
@@ -19,6 +20,7 @@ impl CGenerator {
             var_types: HashMap::new(),
             current_ret_type: "void".to_string(),
             struct_names: HashSet::new(),
+            local_types: HashMap::new(),
         }
     }
 
@@ -157,13 +159,27 @@ impl CGenerator {
                 let effective_ty = if matches!(ty, Type::Unknown) { &value.ty } else { ty };
                 let type_str = c_type_name(effective_ty, &self.struct_names);
                 let val_str = self.rvalue_to_c(value);
+                // Track the type for later Assign statements
+                self.local_types.insert(name.clone(), type_str.clone());
                 // DEBUG: emit type info for all Let
                 self.emit(&format!("/* Let {} declared={:?} val_ty={:?} */", name, ty, value.ty));
                 self.emit(&format!("{} {} = {};", type_str, name, val_str));
             }
             MirStmt::Assign { name, value } => {
                 let val_str = self.rvalue_to_c(value);
-                self.emit(&format!("{} = {};", name, val_str));
+                // If the target is a struct type and the value is void*, dereference
+                if let Some(target_type) = self.local_types.get(name) {
+                    if matches!(&value.ty, Type::Unknown)
+                        && target_type != "void*" && target_type != "int64_t" && target_type != "int32_t"
+                        && target_type != "double" && target_type != "const char*" && target_type != "bool"
+                    {
+                        self.emit(&format!("{} = *({}*){};", name, target_type, val_str));
+                    } else {
+                        self.emit(&format!("{} = {};", name, val_str));
+                    }
+                } else {
+                    self.emit(&format!("{} = {};", name, val_str));
+                }
             }
             MirStmt::Expr(rvalue) => {
                 self.emit(&format!("{};", self.rvalue_to_c(rvalue)));

@@ -12,6 +12,11 @@ static char* str_add(const char* a, const char* b) {
     memcpy(r, a, la); memcpy(r + la, b, lb); r[la + lb] = 0;
     return r;
 }
+// Int-to-string helper
+static char* str_int(int64_t n) {
+    char buf[32]; snprintf(buf, 32, "%lld", (long long)n);
+    return strdup(buf);
+}
 
 // Tenth built-in declarations
 extern void* read_file(const char* path);
@@ -19,18 +24,20 @@ extern void write_file(const char* path, const char* content);
 extern void* Vec_new(void);
 extern void* HashMap_new(void);
 
-typedef struct Stmt {
-    const char* kind;
-    const char* name;
-    int64_t ival;
-    const char* sval;
-} Stmt;
+typedef struct Span {
+    int64_t line;
+    int64_t col;
+} Span;
 typedef struct Lexer {
     const char* source;
     int64_t pos;
     int64_t line;
     int64_t col;
 } Lexer;
+typedef struct Param {
+    const char* name;
+    const char* type_ann;
+} Param;
 typedef struct Expr {
     const char* kind;
     int64_t ival;
@@ -39,18 +46,17 @@ typedef struct Expr {
     int64_t left;
     int64_t right;
 } Expr;
-typedef struct Param {
+typedef struct Stmt {
+    const char* kind;
     const char* name;
-    const char* type_ann;
-} Param;
-typedef struct Span {
-    int64_t line;
-    int64_t col;
-} Span;
-typedef struct Parser {
-    void* tokens;
-    int64_t pos;
-} Parser;
+    int64_t ival;
+    const char* sval;
+} Stmt;
+typedef struct Token {
+    const char* kind;
+    const char* value;
+    Span span;
+} Token;
 typedef struct StructDef {
     const char* name;
     void* fields;
@@ -60,17 +66,16 @@ typedef struct Program {
     void* fns;
     void* main_stmts;
 } Program;
+typedef struct Parser {
+    void* tokens;
+    int64_t pos;
+} Parser;
 typedef struct FnDef {
     const char* name;
     void* params;
     const char* return_type;
     void* body;
 } FnDef;
-typedef struct Token {
-    const char* kind;
-    const char* value;
-    Span span;
-} Token;
 
 const char* KIND_EOF();
 const char* KIND_INT();
@@ -247,10 +252,15 @@ const char* lexer_advance(Lexer* lexer) {
     /* Let ch declared=Base(Str) val_ty=Base(Str) */
     const char* ch = lexer_peek(lexer);
     0;
+    /* Let ifv_0 declared=Base(Unit) val_ty=Base(Unit) */
+    void ifv_0 = 0;
     if ((ch == "\n")) {
     0;
+    ifv_0 = 0;
+    } else {
+    ifv_0 = 0;
     }
-    0;
+    ifv_0;
     return (const char*)ch;
 }
 
@@ -318,34 +328,50 @@ Parser parser_new(void* tokens) {
 }
 
 Token parser_next(Parser* p) {
+    /* Let ifv_1 declared=TypeParam { name: "Vec" } val_ty=TypeParam { name: "Vec" } */
+    void* ifv_1 = 0;
     if ((p->pos < 0)) {
     /* Let t declared=TypeParam { name: "Vec" } val_ty=TypeParam { name: "Vec" } */
     void* t = 0;
     0;
+    ifv_1 = t;
+    } else {
+    ifv_1 = make_token(KIND_EOF(), "", 0, 0);
     }
-    /* Let tmp_0 declared=TypeParam { name: "Token" } val_ty=TypeParam { name: "Vec" } */
-    Token tmp_0 = t;
+    /* Let tmp_0 declared=TypeParam { name: "Token" } val_ty=TypeParam { name: "Token" } */
+    Token tmp_0 = ifv_1;
     return (Token)tmp_0;
 }
 
 Expr parse_expr(Parser* p) {
     /* Let t declared=TypeParam { name: "Token" } val_ty=TypeParam { name: "Token" } */
     Token t = parser_next(p);
+    /* Let ifv_2 declared=Unknown val_ty=Unknown */
+    void* ifv_2 = 0;
     if (((t).kind == KIND_INT())) {
+    ifv_2 = ((Expr){ .kind = "int", .ival = 0, .sval = (t).value, .op = "", .left = 0, .right = 0 });
     } else {
+    /* Let ifv_1 declared=Unknown val_ty=Unknown */
+    void* ifv_1 = 0;
     if (((t).kind == KIND_IDENT())) {
     /* Let name declared=Base(Str) val_ty=Base(Str) */
     const char* name = (t).value;
+    ifv_1 = ((Expr){ .kind = "ident", .ival = 0, .sval = name, .op = "", .left = 0, .right = 0 });
+    } else {
+    ifv_1 = ((Expr){ .kind = "int", .ival = 0, .sval = "0", .op = "", .left = 0, .right = 0 });
     }
+    ifv_2 = ifv_1;
     }
     /* Let tmp_0 declared=Unknown val_ty=Unknown */
-    void* tmp_0 = ((Expr){ .kind = "int", .ival = 0, .sval = (t).value, .op = "", .left = 0, .right = 0 });
+    void* tmp_0 = ifv_2;
     return (Expr)tmp_0;
 }
 
 Stmt parse_stmt(Parser* p) {
     /* Let t declared=TypeParam { name: "Token" } val_ty=TypeParam { name: "Token" } */
     Token t = parser_next(p);
+    /* Let ifv_2 declared=Unknown val_ty=Unknown */
+    void* ifv_2 = 0;
     if (((t).kind == KIND_LET())) {
     /* Let name declared=Base(Str) val_ty=Base(Str) */
     const char* name = (parser_next(p)).value;
@@ -353,17 +379,23 @@ Stmt parse_stmt(Parser* p) {
     /* Let val declared=TypeParam { name: "Expr" } val_ty=TypeParam { name: "Expr" } */
     Expr val = parse_expr(p);
     parser_next(p);
+    ifv_2 = ((Stmt){ .kind = "let", .name = name, .ival = (val).ival, .sval = (val).sval });
     } else {
+    /* Let ifv_1 declared=Unknown val_ty=Unknown */
+    void* ifv_1 = 0;
     if (((t).kind == KIND_RETURN())) {
     /* Let val declared=TypeParam { name: "Expr" } val_ty=TypeParam { name: "Expr" } */
     Expr val = parse_expr(p);
     parser_next(p);
+    ifv_1 = ((Stmt){ .kind = "return", .name = "", .ival = (val).ival, .sval = (val).sval });
     } else {
     parser_next(p);
+    ifv_1 = ((Stmt){ .kind = "expr", .name = "", .ival = 0, .sval = "" });
     }
+    ifv_2 = ifv_1;
     }
     /* Let tmp_0 declared=Unknown val_ty=Unknown */
-    void* tmp_0 = ((Stmt){ .kind = "let", .name = name, .ival = (val).ival, .sval = (val).sval });
+    void* tmp_0 = ifv_2;
     return (Stmt)tmp_0;
 }
 
@@ -376,11 +408,14 @@ FnDef parse_fn(Parser* p) {
     /* Let tok declared=TypeParam { name: "Token" } val_ty=TypeParam { name: "Token" } */
     Token tok = parser_next(p);
     tok = parser_next(p);
+    /* Let ifv_0 declared=Base(Unit) val_ty=Base(Unit) */
+    void ifv_0 = 0;
     if (((tok).kind == KIND_ARROW())) {
     parser_next(p);
     tok = parser_next(p);
+    ifv_0 = 0;
     }
-    0;
+    ifv_0;
     /* Let body declared=Unknown val_ty=Unknown */
     void* body = Vec_new();
     tok = parser_next(p);
@@ -412,7 +447,7 @@ Program parse_program(void* tokens) {
 
 const char* cgen_expr(Expr* expr) {
     /* Let tmp_0 declared=Base(Str) val_ty=Base(Str) */
-    const char* tmp_0 = ((expr->kind == "int") ? expr->sval : ((expr->kind == "ident") ? expr->sval : ((expr->kind == "binary") ? str_add(str_add(str_add(str_add(str_add(str_add(str_add("(", expr->sval), " "), expr->op), " "), ""), expr->right), ")") : "0")));
+    const char* tmp_0 = ((expr->kind == "int") ? expr->sval : ((expr->kind == "ident") ? expr->sval : ((expr->kind == "binary") ? str_add(str_add(str_add(str_add(str_add(str_add(str_add("(", expr->sval), " "), expr->op), " "), ""), str_int(expr->right)), ")") : "0")));
     return (const char*)tmp_0;
 }
 

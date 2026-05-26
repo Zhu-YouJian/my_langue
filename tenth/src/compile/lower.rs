@@ -124,15 +124,25 @@ impl MirLowerer {
                 let mut stmts = cs;
                 // If branches have side-effect statements, use IfElse with outer temp
                 if !ts.is_empty() || !es.is_empty() {
-                    let result_tmp = if tv.is_some() || ev.is_some() {
+                    // Only create temp if there's a non-unit value to capture
+                    let is_not_unit = |v: &MirRvalue| !matches!(&v.ty, Type::Base(crate::hir::types::BaseType::Unit));
+                    let result_tmp = if (tv.as_ref().map_or(false, is_not_unit) ||
+                                         ev.as_ref().map_or(false, is_not_unit)) {
                         Some(self.new_local("ifv", ty.clone()))
                     } else {
                         None
                     };
                     // Declare outer temp before IfElse
                     if let Some(tmp_name) = &result_tmp {
-                        // Use the then-value's type for better type resolution
-                        let init_ty = tv.as_ref().map(|v| v.ty.clone()).unwrap_or_else(|| ty.clone());
+                        // Use the best type among then-value, else-value, and expression type
+                        let init_ty = {
+                            let t_ty = tv.as_ref().map(|v| v.ty.clone());
+                            let e_ty = ev.as_ref().map(|v| v.ty.clone());
+                            let all: Vec<Option<Type>> = vec![t_ty, e_ty, Some(ty.clone())];
+                            let best = all.into_iter()
+                                .find(|t| t.as_ref().map_or(false, |t| !matches!(t, Type::Unknown)));
+                            best.flatten().unwrap_or(Type::Unknown)
+                        };
                         let val = rv(init_ty.clone(), MirRvalueKind::Literal(LiteralValue::Int(0)));
                         stmts.push(MirStmt::Let {
                             name: tmp_name.clone(),

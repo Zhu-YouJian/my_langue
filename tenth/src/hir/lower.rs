@@ -571,10 +571,11 @@ impl Lowerer {
                     }
                 }
 
+                let struct_ty = Type::from_annotation(&ast::TypeAnnotation::Named(ast::Ident { name: name.name.clone(), span: name.span.clone() }));
                 (HirExprKind::StructLiteral {
                     name: name.name.clone(),
                     fields: lowered_fields,
-                }, Type::Unknown)
+                }, struct_ty)
             }
 
             ExprKind::EnumLiteral { enum_name, variant, fields } => {
@@ -715,7 +716,8 @@ impl Lowerer {
                     Type::Tensor { dtype: dtype.clone(), dims: remaining }
                 }
             }
-            _ => base.clone(),
+            // For non-tensor types (Vec, etc.), we don't track element types
+            _ => Type::Unknown,
         }
     }
 
