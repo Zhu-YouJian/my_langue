@@ -8,7 +8,7 @@ fn compile(src: str) -> str {
 }
 
 fn main() -> i64 {
-    let src = read_file("tenthc_combined.th");
+    let src = "fn answer() -> i64 { return 42; }\nfn main() -> i64 { return answer(); }\n";
     let c = compile(src);
     write_file("tenthc_output.c", c);
     0

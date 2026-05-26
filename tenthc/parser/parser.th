@@ -493,22 +493,22 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
 
 fn parse_stmt(p: &mut Parser) -> i64 {
     let tok = parser_peek(p);
-    let disc = tok.ival;
+    let disc = tok.disc;
 
     // Let (5)
     if disc == 5 {
         parser_advance(p); // skip let
         let mut mutable = false;
         let t2 = parser_peek(p);
-        if t2.ival == 6 { parser_advance(p); mutable = true; };
+        if t2.disc == 6 { parser_advance(p); mutable = true; };
         let name_tok = parser_advance(p);
         let mut name = name_tok.sval;
         // skip optional : Type
         let t3 = parser_peek(p);
-        if t3.ival == 55 { parser_advance(p); parser_advance(p); }; // skip : and type
+        if t3.disc == 55 { parser_advance(p); parser_advance(p); }; // skip : and type
         // =
         let t4 = parser_peek(p);
-        if t4.ival == 42 {
+        if t4.disc == 42 {
             parser_advance(p);
             let init = parse_expr(p);
             let idx = add_stmt(p, "let");
@@ -758,28 +758,18 @@ fn parse_enum_def(p: &mut Parser) -> EnumDef {
 // ── Pattern helpers (avoids OR-patterns) ──
 
 fn is_end_of_block(tok: Token) -> bool {
-    match tok.kind {
-        TokenKind::RBrace => true,
-        TokenKind::Eof => true,
-        _ => false,
-    }
+    let d = tok.disc;
+    d == 50 || d == 61  // RBrace(50) or Eof(61)
 }
 
 fn is_end_of_paren(tok: Token) -> bool {
-    match tok.kind {
-        TokenKind::RParen => true,
-        TokenKind::Eof => true,
-        _ => false,
-    }
+    let d = tok.disc;
+    d == 48 || d == 61  // RParen(48) or Eof(61)
 }
 
 fn is_stmt_end(tok: Token) -> bool {
-    match tok.kind {
-        TokenKind::Semicolon => true,
-        TokenKind::RBrace => true,
-        TokenKind::Eof => true,
-        _ => false,
-    }
+    let d = tok.disc;
+    d == 54 || d == 50 || d == 61  // Semicolon(54), RBrace(50), Eof(61)
 }
 
 fn parse_program(tokens: Vec<Token>) -> Program {
@@ -794,42 +784,30 @@ fn parse_program(tokens: Vec<Token>) -> Program {
     loop {
         if parser_at_eof(&p) { break; };
         let tok = parser_peek(&p);
-        match tok.kind {
-            TokenKind::Struct => {
-                structs.push(parse_struct_def(&mut p));
-                // skip optional ;
-                let t2 = parser_peek(&p);
-                match t2.kind {
-                    TokenKind::Semicolon => { parser_advance(&mut p); },
-                    _ => {},
-                };
-            },
-            TokenKind::Enum => {
-                enums.push(parse_enum_def(&mut p));
-                let t2 = parser_peek(&p);
-                match t2.kind {
-                    TokenKind::Semicolon => { parser_advance(&mut p); },
-                    _ => {},
-                };
-            },
-            TokenKind::Fn => {
-                fns.push(parse_fn(&mut p));
-                let t2 = parser_peek(&p);
-                match t2.kind {
-                    TokenKind::Semicolon => { parser_advance(&mut p); },
-                    _ => {},
-                };
-            },
-            TokenKind::Eof => { break; },
-            _ => {
-                // Top-level expression statement (for scripting)
-                parse_stmt(&mut p);
-                let t2 = parser_peek(&p);
-                match t2.kind {
-                    TokenKind::Semicolon => { parser_advance(&mut p); },
-                    _ => {},
-                };
-            },
+        let d = tok.disc;
+
+        // Struct (16)
+        if d == 16 {
+            structs.push(parse_struct_def(&mut p));
+            let t2 = parser_peek(&p);
+            if t2.disc == 54 { parser_advance(&mut p); };
+        } else if d == 17 {
+            // Enum (17)
+            enums.push(parse_enum_def(&mut p));
+            let t2 = parser_peek(&p);
+            if t2.disc == 54 { parser_advance(&mut p); };
+        } else if d == 4 {
+            // Fn (4)
+            fns.push(parse_fn(&mut p));
+            let t2 = parser_peek(&p);
+            if t2.disc == 54 { parser_advance(&mut p); };
+        } else if d == 61 {
+            // Eof (61)
+            break;
+        } else {
+            parse_stmt(&mut p);
+            let t2 = parser_peek(&p);
+            if t2.disc == 54 { parser_advance(&mut p); };
         };
     };
 

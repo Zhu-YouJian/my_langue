@@ -83,6 +83,7 @@ enum TokenKind {
 struct Token {
     kind: TokenKind,
     span: Span,
+    disc: i64,
     ival: i64,
     sval: str,
 }
