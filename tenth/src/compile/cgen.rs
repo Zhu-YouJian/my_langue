@@ -522,7 +522,13 @@ impl CGenerator {
                     if method == "push" {
                         // First determine the base value (add & if needed)
                         let base = if s.starts_with("&") || s.starts_with("*") { s.clone() }
-                        else if matches!(&a.kind, MirRvalueKind::StructLiteral { .. }) { format!("&{}", s) }
+                        else if matches!(&a.kind, MirRvalueKind::StructLiteral { .. }) {
+                            // Heap-allocate: ({ Type* _cp = malloc(sizeof(Type)); *_cp = literal; _cp; })
+                            let name = match &a.kind { MirRvalueKind::StructLiteral { name, .. } => name.clone(), _ => String::new() };
+                            if !name.is_empty() {
+                                format!("({{ {}* _cp = malloc(sizeof({})); *_cp = {}; _cp; }})", name, name, s)
+                            } else { format!("&{}", s) }
+                        }
                         else if matches!(&a.kind, MirRvalueKind::Call { .. }) {
                             let struct_name = match &a.ty {
                                 Type::Struct(name) => Some(name.clone()),
