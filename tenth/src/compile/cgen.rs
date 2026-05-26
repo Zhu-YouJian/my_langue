@@ -476,6 +476,13 @@ impl CGenerator {
                 format!("(({}){{ {} }})", name, field_strs.join(", "))
             }
             MirRvalueKind::Ref(name) | MirRvalueKind::MutRef(name) => {
+                // Check if the variable holds a pointer (from Vec_get, etc)
+                // If so, just return the name (it's already a pointer), don't take & again
+                if let Some(c_type) = self.local_types.get(name) {
+                    if c_type == "void*" || c_type == "void" {
+                        return name.clone();
+                    }
+                }
                 // Pass address-of for reference parameters
                 format!("&{}", name)
             }
