@@ -94,4 +94,5 @@ pub enum MirTerminator {
 pub struct MirProgram {
     pub functions: Vec<MirFunction>,
     pub main_expr: Option<MirFunction>,
+    pub struct_names: Vec<String>,
 }

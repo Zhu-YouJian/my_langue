@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::hir::types::Type;
 use crate::hir::hir::{BinOp, UnaryOp};
 use super::mir::*;
@@ -25,8 +25,53 @@ impl CGenerator {
         self.emit("#include <stdio.h>");
         self.emit("#include <stdint.h>");
         self.emit("#include <stdbool.h>");
+        self.emit("#include <stdlib.h>");
+        self.emit("#include <string.h>");
         self.emit("#include <math.h>");
         self.emit("");
+        self.emit("// String concatenation helper");
+        self.emit("static char* str_add(const char* a, const char* b) {");
+        self.emit("    size_t la = strlen(a), lb = strlen(b);");
+        self.emit("    char* r = malloc(la + lb + 1);");
+        self.emit("    memcpy(r, a, la); memcpy(r + la, b, lb); r[la + lb] = 0;");
+        self.emit("    return r;");
+        self.emit("}");
+        self.emit("");
+
+        // Declare built-in functions
+        self.emit("// Tenth built-in declarations");
+        self.emit("extern void* read_file(const char* path);");
+        self.emit("extern void write_file(const char* path, const char* content);");
+        self.emit("extern void* Vec_new(void);");
+        self.emit("extern void* HashMap_new(void);");
+        self.emit("");
+
+        // Collect struct names from the program
+        let mut struct_names = HashSet::new();
+        for func in &program.functions {
+            for block in &func.blocks {
+                for stmt in &block.stmts {
+                    collect_struct_names_stmt(stmt, &mut struct_names);
+                }
+                collect_struct_names_term(&block.terminator, &mut struct_names);
+            }
+        }
+        if let Some(ref main_fn) = program.main_expr {
+            for block in &main_fn.blocks {
+                for stmt in &block.stmts {
+                    collect_struct_names_stmt(stmt, &mut struct_names);
+                }
+                collect_struct_names_term(&block.terminator, &mut struct_names);
+            }
+        }
+
+        // Emit forward struct declarations
+        for name in &struct_names {
+            self.emit(&format!("typedef struct {} {{ int _dummy; }} {};", name, name));
+        }
+        if !struct_names.is_empty() {
+            self.emit("");
+        }
 
         // Forward declarations
         for func in &program.functions {
@@ -172,8 +217,13 @@ impl CGenerator {
             MirRvalue::BinaryOp(op, left, right) => {
                 let l = self.rvalue_to_c(left);
                 let r = self.rvalue_to_c(right);
-                let op_str = c_binop(op);
-                format!("({} {} {})", l, op_str, r)
+                // Detect string concatenation: if operands are string literals, use str_add
+                if matches!(op, BinOp::Add) && (l.starts_with('"') || r.starts_with('"')) {
+                    format!("str_add({}, {})", l, r)
+                } else {
+                    let op_str = c_binop(op);
+                    format!("({} {} {})", l, op_str, r)
+                }
             }
             MirRvalue::UnaryOp(op, expr) => {
                 let e = self.rvalue_to_c(expr);
@@ -186,13 +236,19 @@ impl CGenerator {
                 let args_str: Vec<String> = args.iter()
                     .map(|a| self.rvalue_to_c(a))
                     .collect();
-                format!("{}({})", func, args_str.join(", "))
+                let func_name = match func.as_str() {
+                    "Vec::new" => "Vec_new",
+                    "HashMap::new" => "HashMap_new",
+                    "read_file" => "read_file",
+                    "write_file" => "write_file",
+                    other => other,
+                };
+                format!("{}({})", func_name, args_str.join(", "))
             }
-            MirRvalue::StructLiteral { name: _, fields } => {
-                let fields_str: Vec<String> = fields.iter()
-                    .map(|(_, v)| self.rvalue_to_c(v))
-                    .collect();
-                format!("{{ {} }}", fields_str.join(", "))
+            MirRvalue::StructLiteral { name, .. } => {
+                // Simplified: return NULL pointer (struct layout not tracked in MIR)
+                // Full implementation would emit compound literals with correct types
+                format!("((void*)0 /* {} literal */)", name)
             }
             _ => "/* unsupported */ 0".to_string(),
         }
@@ -214,8 +270,8 @@ fn c_type_name(ty: &Type) -> &str {
             BaseType::Str => "const char*",
             BaseType::Unit => "void",
         },
-        Type::Struct(name) if name == "Point" => "struct Point",
-        Type::Unknown => "int32_t",
+        Type::Struct(_) => "void*",
+        Type::Unknown => "void*",
         _ => "void*",
     }
 }
@@ -235,6 +291,45 @@ fn c_binop(op: &BinOp) -> &str {
         BinOp::GtEq => ">=",
         BinOp::And => "&&",
         BinOp::Or => "||",
+    }
+}
+
+fn collect_struct_names_stmt(stmt: &MirStmt, names: &mut HashSet<String>) {
+    match stmt {
+        MirStmt::Let { value, .. } => collect_struct_names_rvalue(value, names),
+        MirStmt::Assign { value, .. } => collect_struct_names_rvalue(value, names),
+        MirStmt::Return(Some(value)) => collect_struct_names_rvalue(value, names),
+        MirStmt::Expr(val) => collect_struct_names_rvalue(val, names),
+        _ => {}
+    }
+}
+
+fn collect_struct_names_term(term: &MirTerminator, names: &mut HashSet<String>) {
+    match term {
+        MirTerminator::Return(Some(val)) => collect_struct_names_rvalue(val, names),
+        MirTerminator::If { cond, .. } => collect_struct_names_rvalue(cond, names),
+        _ => {}
+    }
+}
+
+fn collect_struct_names_rvalue(val: &MirRvalue, names: &mut HashSet<String>) {
+    match val {
+        MirRvalue::StructLiteral { name, fields } => {
+            names.insert(name.clone());
+            for (_, f) in fields {
+                collect_struct_names_rvalue(f, names);
+            }
+        }
+        MirRvalue::BinaryOp(_, l, r) => {
+            collect_struct_names_rvalue(l, names);
+            collect_struct_names_rvalue(r, names);
+        }
+        MirRvalue::UnaryOp(_, e) => collect_struct_names_rvalue(e, names),
+        MirRvalue::Call { args, .. } => {
+            for a in args { collect_struct_names_rvalue(a, names); }
+        }
+        MirRvalue::If { cond, .. } => collect_struct_names_rvalue(cond, names),
+        _ => {}
     }
 }
 

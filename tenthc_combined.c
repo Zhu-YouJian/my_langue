@@ -1,7 +1,31 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 #include <math.h>
+
+// String concatenation helper
+static char* str_add(const char* a, const char* b) {
+    size_t la = strlen(a), lb = strlen(b);
+    char* r = malloc(la + lb + 1);
+    memcpy(r, a, la); memcpy(r + la, b, lb); r[la + lb] = 0;
+    return r;
+}
+
+// Tenth built-in declarations
+extern void* read_file(const char* path);
+extern void write_file(const char* path, const char* content);
+extern void* Vec_new(void);
+extern void* HashMap_new(void);
+
+typedef struct Lexer { int _dummy; } Lexer;
+typedef struct StructDef { int _dummy; } StructDef;
+typedef struct Token { int _dummy; } Token;
+typedef struct FnDef { int _dummy; } FnDef;
+typedef struct Program { int _dummy; } Program;
+typedef struct Span { int _dummy; } Span;
+typedef struct Parser { int _dummy; } Parser;
 
 const char* KIND_EOF();
 const char* KIND_INT();
@@ -150,7 +174,7 @@ const char* KIND_COLON2() {
 
 void* lexer_new(const char* source) {
     
-    return { source, 0, 1, 1 };
+    return ((void*)0 /* Lexer literal */);
 }
 
 bool is_digit(const char* ch) {
@@ -174,7 +198,7 @@ bool is_ws(const char* ch) {
 }
 
 const char* lexer_peek(void* lexer) {
-    int32_t tmp_0;
+    void* tmp_0;
     
     /* unsupported */ 0;
     return 0;
@@ -182,7 +206,7 @@ const char* lexer_peek(void* lexer) {
 
 const char* lexer_advance(void* lexer) {
     
-    int32_t ch = lexer_peek(lexer);
+    void* ch = lexer_peek(lexer);
     /* unsupported */ 0;
     /* unsupported */ 0;
     return ch;
@@ -190,20 +214,20 @@ const char* lexer_advance(void* lexer) {
 
 void* make_span(int64_t line, int64_t col) {
     
-    return { line, col };
+    return ((void*)0 /* Span literal */);
 }
 
 void* make_token(const char* kind, const char* value, int64_t line, int64_t col) {
     
-    int32_t span = make_span(line, col);
-    return { kind, value, span };
+    void* span = make_span(line, col);
+    return ((void*)0 /* Token literal */);
 }
 
 void* lexer_next(void* lexer) {
     
-    int32_t ch = lexer_peek(lexer);
-    int32_t line = 0;
-    int32_t col = 0;
+    void* ch = lexer_peek(lexer);
+    void* line = 0;
+    void* col = 0;
     /* unsupported */ 0;
     /* unsupported */ 0;
     /* unsupported */ 0;
@@ -225,77 +249,77 @@ void* lexer_next(void* lexer) {
 
 void* lexer_tokenize(void* lexer) {
     
-    int32_t tokens = Vec::new();
-    int32_t done = false;
+    void* tokens = Vec_new();
+    void* done = false;
     return tokens;
 }
 
 void* parser_new(void* tokens) {
     
-    return { tokens, 0 };
+    return ((void*)0 /* Parser literal */);
 }
 
 void* parser_next(void* p) {
-    int32_t tmp_0;
+    void* tmp_0;
     
     /* unsupported */ 0;
     return 0;
 }
 
 void* parse_expr(void* p) {
-    int32_t tmp_0;
+    void* tmp_0;
     
-    int32_t t = parser_next(p);
+    void* t = parser_next(p);
     /* unsupported */ 0;
     return 0;
 }
 
 void* parse_stmt(void* p) {
-    int32_t tmp_0;
+    void* tmp_0;
     
-    int32_t t = parser_next(p);
+    void* t = parser_next(p);
     /* unsupported */ 0;
     return 0;
 }
 
 void* parse_fn(void* p) {
     
-    int32_t name = 0;
-    int32_t params = Vec::new();
-    int32_t tok = parser_next(p);
+    void* name = 0;
+    void* params = Vec_new();
+    void* tok = parser_next(p);
     tok = parser_next(p);
     /* unsupported */ 0;
-    int32_t body = Vec::new();
+    void* body = Vec_new();
     tok = parser_next(p);
-    return { name, params, "", body };
+    return ((void*)0 /* FnDef literal */);
 }
 
 void* parse_struct(void* p) {
     
-    int32_t name = 0;
-    int32_t fields = Vec::new();
-    int32_t tok = parser_next(p);
-    return { name, fields };
+    void* name = 0;
+    void* fields = Vec_new();
+    void* tok = parser_next(p);
+    return ((void*)0 /* StructDef literal */);
 }
 
 void* parse_program(void* tokens) {
     
-    int32_t p = parser_new(tokens);
-    int32_t structs = Vec::new();
-    int32_t fns = Vec::new();
-    int32_t main_stmts = Vec::new();
-    return { structs, fns, main_stmts };
+    void* p = parser_new(tokens);
+    void* structs = Vec_new();
+    void* fns = Vec_new();
+    void* main_stmts = Vec_new();
+    return ((void*)0 /* Program literal */);
 }
 
 const char* cgen_expr(void* expr) {
-    int32_t tmp_0;
+    void* tmp_0;
     
     /* unsupported */ 0;
     return 0;
 }
 
 const char* cgen_stmt(void* stmt) {
-    int32_t tmp_0;
+    void* tmp_0;
     
     /* unsupported */ 0;
     return 0;
@@ -303,44 +327,44 @@ const char* cgen_stmt(void* stmt) {
 
 const char* cgen_struct(void* s) {
     
-    int32_t out = "typedef struct {\n";
-    int32_t i = 0;
-    out = (((out + "} ") + 0) + ";\n\n");
+    void* out = "typedef struct {\n";
+    void* i = 0;
+    out = str_add((str_add(out, "} ") + 0), ";\n\n");
     return out;
 }
 
 const char* cgen_fn(void* f) {
     
-    int32_t out = (("int " + 0) + "(");
-    int32_t i = 0;
-    out = (out + ") {\n");
+    void* out = str_add(str_add("int ", 0), "(");
+    void* i = 0;
+    out = str_add(out, ") {\n");
     i = 0;
-    out = (out + "}\n\n");
+    out = str_add(out, "}\n\n");
     return out;
 }
 
 const char* cgen_program(void* prog) {
     
-    int32_t out = "#include <stdio.h>\n\n";
-    int32_t i = 0;
+    void* out = "#include <stdio.h>\n\n";
+    void* i = 0;
     i = 0;
-    out = (out + "int main(void) {\n");
+    out = str_add(out, "int main(void) {\n");
     i = 0;
-    out = (out + "    return 0;\n}\n");
+    out = str_add(out, "    return 0;\n}\n");
     return out;
 }
 
 const char* compile(const char* src) {
     
-    int32_t lex = lexer_new(src);
-    int32_t tokens = lexer_tokenize(0);
-    int32_t prog = parse_program(tokens);
+    void* lex = lexer_new(src);
+    void* tokens = lexer_tokenize(0);
+    void* prog = parse_program(tokens);
     return cgen_program(0);
 }
 
 int main() {
-    int32_t src = read_file("tenthc/lexer/token.th");
-    int32_t c = compile(src);
+    void* src = read_file("tenthc/lexer/token.th");
+    void* c = compile(src);
     return 42;
 }
 

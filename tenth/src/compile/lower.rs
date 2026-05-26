@@ -31,7 +31,7 @@ impl MirLowerer {
             self.lower_top_level_expr(expr)
         }).transpose()?;
 
-        Ok(MirProgram { functions, main_expr })
+        Ok(MirProgram { functions, main_expr, struct_names: Vec::new() })
     }
 
     fn lower_function(&mut self, func: &HirFnDef) -> TenthResult<MirFunction> {
