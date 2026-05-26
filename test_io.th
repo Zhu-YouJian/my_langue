@@ -1,5 +1,0 @@
-fn main() -> i64 {
-    let content = read_file("test_compile.th");
-    write_file("test_readback.txt", content);
-    0
-}
