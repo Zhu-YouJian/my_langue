@@ -1,0 +1,10 @@
+// Self-hosting Tenth compiler v0.3.0
+// Phase 8: bootstrap
+
+fn main() {
+    let src = "42 + 10";
+    let mut lex = lexer_new(src);
+    let tokens = lexer_tokenize(&mut lex);
+    // Should produce: Int("42"), Plus("+"), Int("10"), Eof("")
+    tokens.len()
+}

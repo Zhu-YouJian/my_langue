@@ -1,0 +1,35 @@
+// Token types for the self-hosting Lexer
+// Using struct-based representation since Tenth enums don't support tuple variants
+
+struct Span {
+    line: i64,
+    col: i64,
+}
+
+struct Token {
+    kind: str,     // Token type as string: "IntLiteral", "Plus", "Fn", etc.
+    value: str,    // Lexeme text (for literals and identifiers)
+    span: Span,
+}
+
+// Token kind constants
+fn KIND_EOF() -> str { "Eof" }
+fn KIND_INT() -> str { "IntLiteral" }
+fn KIND_FLOAT() -> str { "FloatLiteral" }
+fn KIND_STR() -> str { "StringLiteral" }
+fn KIND_IDENT() -> str { "Identifier" }
+fn KIND_PLUS() -> str { "Plus" }
+fn KIND_MINUS() -> str { "Minus" }
+fn KIND_STAR() -> str { "Star" }
+fn KIND_SLASH() -> str { "Slash" }
+fn KIND_EQEQ() -> str { "EqEq" }
+fn KIND_ASSIGN() -> str { "Assign" }
+fn KIND_LPAREN() -> str { "LParen" }
+fn KIND_RPAREN() -> str { "RParen" }
+fn KIND_LBRACE() -> str { "LBrace" }
+fn KIND_RBRACE() -> str { "RBrace" }
+fn KIND_SEMICOLON() -> str { "Semicolon" }
+fn KIND_COLON() -> str { "Colon" }
+fn KIND_ARROW() -> str { "Arrow" }
+fn KIND_COMMA() -> str { "Comma" }
+fn KIND_DOT() -> str { "Dot" }

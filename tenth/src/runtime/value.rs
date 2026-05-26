@@ -37,8 +37,8 @@ pub enum Value {
     MutRef(Rc<RefCell<Value>>),
     Shared(Rc<RefCell<Value>>),
     Moved,
-    Vec(Vec<Value>),
-    Map(HashMap<String, Value>),
+    Vec(Rc<RefCell<Vec<Value>>>),
+    Map(Rc<RefCell<HashMap<String, Value>>>),
 }
 
 impl Value {
@@ -103,8 +103,8 @@ impl Value {
             Value::MutRef(v) => v.borrow().is_truthy(),
             Value::Shared(v) => v.borrow().is_truthy(),
             Value::Moved => false,
-            Value::Vec(v) => !v.is_empty(),
-            Value::Map(m) => !m.is_empty(),
+            Value::Vec(v) => !v.borrow().is_empty(),
+            Value::Map(m) => !m.borrow().is_empty(),
             Value::String(s) => !s.is_empty(),
             _ => true,
         }
@@ -143,6 +143,7 @@ impl fmt::Display for Value {
             Value::Shared(v) => write!(f, "{}", v.borrow()),
             Value::Moved => write!(f, "<moved>"),
             Value::Vec(items) => {
+                let items = items.borrow();
                 write!(f, "[")?;
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 { write!(f, ", ")?; }
@@ -151,6 +152,7 @@ impl fmt::Display for Value {
                 write!(f, "]")
             }
             Value::Map(entries) => {
+                let entries = entries.borrow();
                 write!(f, "{{")?;
                 for (i, (k, v)) in entries.iter().enumerate() {
                     if i > 0 { write!(f, ", ")?; }

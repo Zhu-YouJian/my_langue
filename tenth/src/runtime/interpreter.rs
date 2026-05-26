@@ -307,7 +307,7 @@ impl Interpreter {
                     })?;
                     vals.push(v);
                 }
-                Ok(Some(Value::Array(vals)))
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(vals)))))
             }
 
             HirExprKind::TensorLiteral { data, .. } => {
@@ -748,17 +748,16 @@ impl Interpreter {
         }
     }
 
-    fn eval_vec_method(&mut self, items: &[Value], method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
+    fn eval_vec_method(&mut self, items: &Rc<RefCell<Vec<Value>>>, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
         match method {
-            "len" => Ok(Some(Value::Int(items.len() as i64))),
+            "len" => Ok(Some(Value::Int(items.borrow().len() as i64))),
             "push" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
                         message: "push() takes 1 argument".into(),
                     });
                 }
-                // We need mutable access — this is a simplification
-                // Real implementation would use Rc<RefCell<Vec<Value>>>
+                items.borrow_mut().push(args[0].clone());
                 Ok(Some(Value::Unit))
             }
             _ => Err(TenthError::RuntimeError {
@@ -767,9 +766,10 @@ impl Interpreter {
         }
     }
 
-    fn eval_map_method(&self, m: &HashMap<String, Value>, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
+    fn eval_map_method(&self, m: &Rc<RefCell<HashMap<String, Value>>>, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
+        let map = m.borrow();
         match method {
-            "len" => Ok(Some(Value::Int(m.len() as i64))),
+            "len" => Ok(Some(Value::Int(map.len() as i64))),
             "get" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
@@ -777,7 +777,7 @@ impl Interpreter {
                     });
                 }
                 if let Value::String(key) = &args[0] {
-                    Ok(m.get(key).cloned())
+                    Ok(map.get(key).cloned())
                 } else {
                     Err(TenthError::RuntimeError {
                         message: "HashMap key must be a string".into(),
@@ -926,6 +926,58 @@ impl Interpreter {
 
     fn eval_index(&mut self, target: &Value, indices: &[Index]) -> TenthResult<Value> {
         match target {
+            Value::String(s) => {
+                if indices.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "string indexing takes exactly 1 index".into(),
+                    });
+                }
+                match &indices[0] {
+                    Index::Single(e) => {
+                        let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError {
+                            message: "index is void".into(),
+                        })?;
+                        let idx = v.as_int().unwrap_or(0) as usize;
+                        s.chars().nth(idx).map(|c| Value::String(c.to_string())).ok_or_else(|| {
+                            TenthError::RuntimeError {
+                                message: format!("string index {} out of bounds", idx),
+                            }
+                        })
+                    }
+                    Index::Range { start, end } => {
+                        let s_val = s.clone();
+                        let start_idx = match start {
+                            Some(e) => {
+                                let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError {
+                                    message: "range start is void".into(),
+                                })?;
+                                v.as_int().unwrap_or(0) as usize
+                            }
+                            None => 0,
+                        };
+                        let end_idx = match end {
+                            Some(e) => {
+                                let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError {
+                                    message: "range end is void".into(),
+                                })?;
+                                v.as_int().unwrap_or(0) as usize
+                            }
+                            None => s_val.chars().count(),
+                        };
+                        let chars: Vec<char> = s_val.chars().collect();
+                        if start_idx > chars.len() || end_idx > chars.len() || start_idx > end_idx {
+                            return Err(TenthError::RuntimeError {
+                                message: format!("string slice {}..{} out of bounds", start_idx, end_idx),
+                            });
+                        }
+                        let slice: String = chars[start_idx..end_idx].iter().collect();
+                        Ok(Value::String(slice))
+                    }
+                    _ => Err(TenthError::RuntimeError {
+                        message: "string index must be int or range".into(),
+                    }),
+                }
+            }
             Value::Tensor(t) => {
                 let tensor = t.borrow();
                 let shape = tensor.shape();
@@ -952,8 +1004,31 @@ impl Interpreter {
                     }),
                 }
             }
+            Value::Vec(items) => {
+                if indices.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "Vec indexing takes exactly 1 index".into(),
+                    });
+                }
+                match &indices[0] {
+                    Index::Single(e) => {
+                        let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError {
+                            message: "index is void".into(),
+                        })?;
+                        let idx = v.as_int().unwrap_or(0) as usize;
+                        items.borrow().get(idx).cloned().ok_or_else(|| {
+                            TenthError::RuntimeError {
+                                message: format!("Vec index {} out of bounds", idx),
+                            }
+                        })
+                    }
+                    _ => Err(TenthError::RuntimeError {
+                        message: "Vec index must be an integer".into(),
+                    }),
+                }
+            }
             _ => Err(TenthError::RuntimeError {
-                message: "indexing only supported on tensors".into(),
+                message: "indexing not supported on this type".into(),
             }),
         }
     }
@@ -1051,8 +1126,8 @@ impl Interpreter {
                     message: "write_file(path, content) expects two string args".into(),
                 });
             }
-            "Vec::new" => return Ok(Some(Value::Vec(Vec::new()))),
-            "HashMap::new" => return Ok(Some(Value::Map(HashMap::new()))),
+            "Vec::new" => return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new()))))),
+            "HashMap::new" => return Ok(Some(Value::Map(Rc::new(RefCell::new(HashMap::new()))))),
             _ => {}
         }
 

@@ -1,0 +1,137 @@
+// Self-hosting Lexer for Tenth v0.3.0
+// Uses struct-based Token representation
+
+struct Lexer {
+    source: str,
+    pos: i64,
+    line: i64,
+    col: i64,
+}
+
+fn lexer_new(source: str) -> Lexer {
+    Lexer { source: source, pos: 0, line: 1, col: 1 }
+}
+
+fn is_digit_str(ch: str) -> bool {
+    (ch >= "0") && (ch <= "9")
+}
+
+fn is_alpha_str(ch: str) -> bool {
+    ((ch >= "a") && (ch <= "z")) || ((ch >= "A") && (ch <= "Z")) || (ch == "_")
+}
+
+fn is_ws(ch: str) -> bool {
+    (ch == " ") || (ch == "\n") || (ch == "\t")
+}
+
+fn lexer_peek(lexer: &Lexer) -> str {
+    if lexer.pos < lexer.source.len() {
+        lexer.source[lexer.pos]
+    } else {
+        ""
+    }
+}
+
+fn lexer_advance(lexer: &mut Lexer) -> str {
+    let ch = lexer_peek(lexer);
+    if ch == "" { return ""; };
+    lexer.pos = lexer.pos + 1;
+    if ch == "\n" {
+        lexer.line = lexer.line + 1;
+        lexer.col = 1;
+    } else {
+        lexer.col = lexer.col + 1;
+    };
+    ch
+}
+
+fn make_token(kind: str, value: str, line: i64, col: i64) -> Token {
+    let span = Span { line: line, col: col };
+    Token { kind: kind, value: value, span: span }
+}
+
+fn lexer_next(lexer: &mut Lexer) -> Token {
+    let mut ch = lexer_peek(lexer);
+
+    // Skip whitespace
+    while (ch != "") && is_ws(ch) {
+        lexer_advance(lexer);
+        ch = lexer_peek(lexer);
+    };
+
+    let line = lexer.line;
+    let col = lexer.col;
+
+    if ch == "" {
+        return make_token(KIND_EOF(), "", line, col);
+    };
+
+    // Numbers
+    if (ch >= "0") && (ch <= "9") {
+        let mut num = "";
+        while (ch != "") && (ch >= "0") && (ch <= "9") {
+            num = num + ch;
+            lexer_advance(lexer);
+            ch = lexer_peek(lexer);
+        };
+        return make_token(KIND_INT(), num, line, col);
+    };
+
+    // Identifiers / keywords
+    if ((ch >= "a") && (ch <= "z")) || ((ch >= "A") && (ch <= "Z")) || (ch == "_") {
+        let mut ident = "";
+        while (ch != "") && (((ch >= "a") && (ch <= "z")) || ((ch >= "A") && (ch <= "Z")) || (ch == "_") || ((ch >= "0") && (ch <= "9"))) {
+            ident = ident + ch;
+            lexer_advance(lexer);
+            ch = lexer_peek(lexer);
+        };
+        return make_token(KIND_IDENT(), ident, line, col);
+    };
+
+    // Single-char tokens
+    lexer_advance(lexer);
+
+    if ch == "(" { return make_token(KIND_LPAREN(), "(", line, col); };
+    if ch == ")" { return make_token(KIND_RPAREN(), ")", line, col); };
+    if ch == "{" { return make_token(KIND_LBRACE(), "{", line, col); };
+    if ch == "}" { return make_token(KIND_RBRACE(), "}", line, col); };
+    if ch == "+" { return make_token(KIND_PLUS(), "+", line, col); };
+    if ch == "-" { return make_token(KIND_MINUS(), "-", line, col); };
+    if ch == "*" { return make_token(KIND_STAR(), "*", line, col); };
+    if ch == "/" { return make_token(KIND_SLASH(), "/", line, col); };
+    if ch == ";" { return make_token(KIND_SEMICOLON(), ";", line, col); };
+    if ch == ":" { return make_token(KIND_COLON(), ":", line, col); };
+    if ch == "," { return make_token(KIND_COMMA(), ",", line, col); };
+    if ch == "." { return make_token(KIND_DOT(), ".", line, col); };
+    if ch == "=" {
+        if lexer_peek(lexer) == "=" {
+            lexer_advance(lexer);
+            return make_token(KIND_EQEQ(), "==", line, col);
+        };
+        return make_token(KIND_ASSIGN(), "=", line, col);
+    };
+    if ch == "-" {
+        if lexer_peek(lexer) == ">" {
+            lexer_advance(lexer);
+            return make_token(KIND_ARROW(), "->", line, col);
+        };
+        return make_token(KIND_MINUS(), "-", line, col);
+    };
+
+    make_token("Unknown", ch, line, col)
+}
+
+fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {
+    let mut tokens = Vec::new();
+    let mut done = false;
+    while !done {
+        let t = lexer_next(lexer);
+        if t.kind == KIND_EOF() {
+            tokens.push(t);
+            done = true;
+        } else {
+            tokens.push(t);
+        };
+    };
+    tokens
+}
