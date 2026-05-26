@@ -1,4 +1,4 @@
-// Self-hosting Tenth compiler — bootstrap entry point (MINIMAL TEST)
+// Self-hosting Tenth compiler — bootstrap entry point
 
 fn compile(src: str) -> str {
     let mut lex = lexer_new(src);
@@ -8,7 +8,7 @@ fn compile(src: str) -> str {
 }
 
 fn main() -> i64 {
-    let src = "fn main() -> i64 { return 42; }\n";
+    let src = read_file("tenthc_combined.th");
     let c = compile(src);
     write_file("tenthc_output.c", c);
     0

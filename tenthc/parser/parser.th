@@ -493,107 +493,102 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
 
 fn parse_stmt(p: &mut Parser) -> i64 {
     let tok = parser_peek(p);
+    let disc = tok.ival;
 
-    match tok.kind {
-        TokenKind::Let => {
-            parser_advance(p); // skip let
-            let mut mutable = false;
+    // Let (5)
+    if disc == 5 {
+        parser_advance(p); // skip let
+        let mut mutable = false;
+        let t2 = parser_peek(p);
+        if t2.ival == 6 { parser_advance(p); mutable = true; };
+        let name_tok = parser_advance(p);
+        let mut name = name_tok.sval;
+        // skip optional : Type
+        let t3 = parser_peek(p);
+        if t3.ival == 55 { parser_advance(p); parser_advance(p); }; // skip : and type
+        // =
+        let t4 = parser_peek(p);
+        if t4.ival == 42 {
+            parser_advance(p);
+            let init = parse_expr(p);
+            let idx = add_stmt(p, "let");
+            p.stmt_nodes[idx - 1].name = name;
+            p.stmt_nodes[idx - 1].expr_idx = init;
+            return idx;
+        };
+        let idx = add_stmt(p, "let");
+        p.stmt_nodes[idx - 1].name = name;
+        return idx;
+    };
+
+    // Return (10)
+    if disc == 10 {
+        parser_advance(p);
+        let t2 = parser_peek(p);
+        let mut expr_idx: i64 = 0;
+        if !is_stmt_end(t2) { expr_idx = parse_expr(p); };
+        let idx = add_stmt(p, "return");
+        p.stmt_nodes[idx - 1].expr_idx = expr_idx;
+        return idx;
+    };
+
+    // While (11)
+    if disc == 11 {
+        parser_advance(p);
+        let cond = parse_expr(p);
+        parser_advance(p); // skip {
+        let body_start = p.stmt_nodes.len() + 1;
+        let mut body_count: i64 = 0;
+        loop {
             let t2 = parser_peek(p);
-            match t2.kind {
-                TokenKind::Mut => { parser_advance(p); mutable = true; },
-                _ => {},
-            };
-            let name_tok = parser_advance(p);
-            let mut name = "";
-            match name_tok.kind {
-                TokenKind::Identifier(name: s) => { name = name_tok.sval; },
-                _ => {},
-            };
-            // skip optional : Type
-            let t3 = parser_peek(p);
-            match t3.kind {
-                TokenKind::Colon => { parser_advance(p); parser_advance(p); }, // skip : and type
-                _ => {},
-            };
-            // =
-            let t4 = parser_peek(p);
-            match t4.kind {
-                TokenKind::Assign => {
-                    parser_advance(p);
-                    let init = parse_expr(p);
-                    let idx = add_stmt(p, "let");
-                    p.stmt_nodes[idx - 1].name = name;
-                    p.stmt_nodes[idx - 1].expr_idx = init;
-                    idx
-                },
-                _ => {
-                    let idx = add_stmt(p, "let");
-                    p.stmt_nodes[idx - 1].name = name;
-                    idx
-                },
-            }
-        },
-        TokenKind::Return => {
-            parser_advance(p);
+            if is_end_of_block(t2) { break; };
+            parse_stmt(p);
+            body_count = body_count + 1;
+        };
+        parser_advance(p); // skip }
+        let idx = add_stmt(p, "while");
+        p.stmt_nodes[idx - 1].expr_idx = cond;
+        p.stmt_nodes[idx - 1].body_start = body_start;
+        p.stmt_nodes[idx - 1].body_count = body_count;
+        return idx;
+    };
+
+    // Break (14)
+    if disc == 14 {
+        parser_advance(p);
+        return add_stmt(p, "break");
+    };
+
+    // Continue (15)
+    if disc == 15 {
+        parser_advance(p);
+        return add_stmt(p, "continue");
+    };
+
+    // Loop (13)
+    if disc == 13 {
+        parser_advance(p);
+        parser_advance(p); // skip {
+        let body_start = p.stmt_nodes.len() + 1;
+        let mut body_count: i64 = 0;
+        loop {
             let t2 = parser_peek(p);
-            let mut expr_idx: i64 = 0;
-            if !is_stmt_end(t2) { expr_idx = parse_expr(p); };
-            let idx = add_stmt(p, "return");
-            p.stmt_nodes[idx - 1].expr_idx = expr_idx;
-            idx
-        },
-        TokenKind::While => {
-            parser_advance(p);
-            let cond = parse_expr(p);
-            parser_advance(p); // skip {
-            let body_start = p.stmt_nodes.len() + 1;
-            let mut body_count: i64 = 0;
-            loop {
-                let t2 = parser_peek(p);
-                if is_end_of_block(t2) { break; };
-                parse_stmt(p);
-                body_count = body_count + 1;
-            };
-            parser_advance(p); // skip }
-            let idx = add_stmt(p, "while");
-            p.stmt_nodes[idx - 1].expr_idx = cond;
-            p.stmt_nodes[idx - 1].body_start = body_start;
-            p.stmt_nodes[idx - 1].body_count = body_count;
-            idx
-        },
-        TokenKind::Break => {
-            parser_advance(p);
-            add_stmt(p, "break")
-        },
-        TokenKind::Continue => {
-            parser_advance(p);
-            add_stmt(p, "continue")
-        },
-        TokenKind::Loop => {
-            parser_advance(p);
-            parser_advance(p); // skip {
-            let body_start = p.stmt_nodes.len() + 1;
-            let mut body_count: i64 = 0;
-            loop {
-                let t2 = parser_peek(p);
-                if is_end_of_block(t2) { break; };
-                parse_stmt(p);
-                body_count = body_count + 1;
-            };
-            parser_advance(p); // skip }
-            let idx = add_stmt(p, "loop");
-            p.stmt_nodes[idx - 1].body_start = body_start;
-            p.stmt_nodes[idx - 1].body_count = body_count;
-            idx
-        },
-        // Expression statement
-        _ => {
-            let expr = parse_expr(p);
-            let idx = add_stmt(p, "expr");
-            p.stmt_nodes[idx - 1].expr_idx = expr;
-            idx
-        },
-    }
+            if is_end_of_block(t2) { break; };
+            parse_stmt(p);
+            body_count = body_count + 1;
+        };
+        parser_advance(p); // skip }
+        let idx = add_stmt(p, "loop");
+        p.stmt_nodes[idx - 1].body_start = body_start;
+        p.stmt_nodes[idx - 1].body_count = body_count;
+        return idx;
+    };
+
+    // Expression statement (default)
+    let expr = parse_expr(p);
+    let idx = add_stmt(p, "expr");
+    p.stmt_nodes[idx - 1].expr_idx = expr;
+    return idx;
 }
 
 // ── Top-level parsing ──
