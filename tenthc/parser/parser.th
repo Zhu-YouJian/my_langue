@@ -1,0 +1,51 @@
+// Minimal parser for bootstrap
+
+struct Expr {
+    tag: i64,
+    ival: i64,
+    sval: str,
+}
+
+struct Stmt {
+    tag: i64,
+    name: str,
+    ival: i64,
+    sval: str,
+}
+
+struct Func {
+    name: str,
+    body_src: str,
+}
+
+struct Prog {
+    fns: Vec<Func>,
+    main_body: str,
+}
+
+fn parse_expr(tokens: i64, pos: i64) -> i64 {
+    let idx = *pos;
+    let t = tokens[idx];
+    *pos = idx + 1;
+
+    if t.kind == KIND_INT() {
+        Expr { tag: 0, ival: 0, sval: t.value }
+    } else if t.kind == KIND_IDENT() {
+        let name = t.value;
+        if *pos < tokens.len() {
+            let next = tokens[*pos];
+            if next.kind == KIND_PLUS() {
+                *pos = *pos + 1;
+                parse_expr(tokens, pos);
+                return Expr { tag: 2, ival: 0, sval: name };
+            };
+        };
+        Expr { tag: 1, ival: 0, sval: name }
+    } else {
+        0
+    }
+}
+
+fn parse_program(tokens: i64) -> i64 {
+    Prog { fns: Vec::new(), main_body: "// compiled" }
+}

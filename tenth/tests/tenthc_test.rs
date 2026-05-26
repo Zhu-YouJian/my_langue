@@ -44,26 +44,21 @@ fn test_tenthc_lexer_parses() {
 }
 
 #[test]
-fn test_tenthc_lexer_can_tokenize() {
+fn test_tenthc_pipeline_parses() {
     let token_src = std::fs::read_to_string(&project_path("tenthc/lexer/token.th")).unwrap();
     let lexer_src = std::fs::read_to_string(&project_path("tenthc/lexer/lexer.th")).unwrap();
+    let parser_src = std::fs::read_to_string(&project_path("tenthc/parser/parser.th")).unwrap();
+    let cgen_src = std::fs::read_to_string(&project_path("tenthc/codegen/cgen.th")).unwrap();
     let main_src = std::fs::read_to_string(&project_path("tenthc/main.th")).unwrap();
-
-    let src = format!("{}\n{}\n{}", token_src, lexer_src, main_src);
+    let src = format!("{}\n{}\n{}\n{}\n{}", token_src, lexer_src, parser_src, cgen_src, main_src);
     let mut lexer = Lexer::new(&src);
     let tokens = lexer.tokenize().unwrap();
     let mut parser = Parser::new(tokens);
-    match parser.parse_program() {
-        Ok(program) => {
-            let mut lowerer = Lowerer::new();
-            if let Ok(hir) = lowerer.lower_program(&program) {
-                let mut interpreter = Interpreter::new(&hir);
-                let result = interpreter.execute_program(&hir);
-                println!("Execution result: {:?}", result);
-            } else {
-                println!("Lowering failed (may be expected for complex code)");
-            }
-        }
-        Err(e) => println!("Parse error: {} (may be expected)", e),
-    }
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).unwrap();
+    let mut interpreter = Interpreter::new(&hir);
+    let result = interpreter.execute_program(&hir).unwrap();
+    // Should produce some output (the token count from main.th)
+    assert!(result.is_some(), "pipeline should produce a result");
 }

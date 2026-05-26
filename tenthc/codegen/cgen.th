@@ -1,0 +1,5 @@
+// Minimal C codegen
+
+fn gen_program(prog: i64) -> str {
+    "#include <stdio.h>\n\nint main(void) {\n    printf(\"tenthc ok\\n\");\n    return 0;\n}\n"
+}

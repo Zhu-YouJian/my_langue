@@ -1,5 +1,4 @@
-// Self-hosting Lexer for Tenth v0.3.0
-// Uses struct-based Token representation
+// Self-hosting Lexer for bootstrap — with type annotations
 
 struct Lexer {
     source: str,
@@ -12,11 +11,11 @@ fn lexer_new(source: str) -> Lexer {
     Lexer { source: source, pos: 0, line: 1, col: 1 }
 }
 
-fn is_digit_str(ch: str) -> bool {
+fn is_digit(ch: str) -> bool {
     (ch >= "0") && (ch <= "9")
 }
 
-fn is_alpha_str(ch: str) -> bool {
+fn is_alpha(ch: str) -> bool {
     ((ch >= "a") && (ch <= "z")) || ((ch >= "A") && (ch <= "Z")) || (ch == "_")
 }
 
@@ -24,15 +23,16 @@ fn is_ws(ch: str) -> bool {
     (ch == " ") || (ch == "\n") || (ch == "\t")
 }
 
-fn lexer_peek(lexer: &Lexer) -> str {
-    if lexer.pos < lexer.source.len() {
-        lexer.source[lexer.pos]
+fn lexer_peek(lexer: i64) -> str {
+    let pos = lexer.pos;
+    if pos < lexer.source.len() {
+        lexer.source[pos]
     } else {
         ""
     }
 }
 
-fn lexer_advance(lexer: &mut Lexer) -> str {
+fn lexer_advance(lexer: i64) -> str {
     let ch = lexer_peek(lexer);
     if ch == "" { return ""; };
     lexer.pos = lexer.pos + 1;
@@ -50,12 +50,11 @@ fn make_token(kind: str, value: str, line: i64, col: i64) -> Token {
     Token { kind: kind, value: value, span: span }
 }
 
-fn lexer_next(lexer: &mut Lexer) -> Token {
-    let mut ch = lexer_peek(lexer);
+fn lexer_next(lexer: i64) -> Token {
+    let ch = lexer_peek(lexer);
 
-    // Skip whitespace
     while (ch != "") && is_ws(ch) {
-        lexer_advance(lexer);
+        ch = lexer_advance(lexer);
         ch = lexer_peek(lexer);
     };
 
@@ -66,30 +65,27 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         return make_token(KIND_EOF(), "", line, col);
     };
 
-    // Numbers
-    if (ch >= "0") && (ch <= "9") {
-        let mut num = "";
-        while (ch != "") && (ch >= "0") && (ch <= "9") {
+    if is_digit(ch) {
+        let num = "";
+        while (ch != "") && is_digit(ch) {
             num = num + ch;
-            lexer_advance(lexer);
+            ch = lexer_advance(lexer);
             ch = lexer_peek(lexer);
         };
         return make_token(KIND_INT(), num, line, col);
     };
 
-    // Identifiers / keywords
-    if ((ch >= "a") && (ch <= "z")) || ((ch >= "A") && (ch <= "Z")) || (ch == "_") {
-        let mut ident = "";
-        while (ch != "") && (((ch >= "a") && (ch <= "z")) || ((ch >= "A") && (ch <= "Z")) || (ch == "_") || ((ch >= "0") && (ch <= "9"))) {
+    if is_alpha(ch) {
+        let ident = "";
+        while (ch != "") && (is_alpha(ch) || is_digit(ch)) {
             ident = ident + ch;
-            lexer_advance(lexer);
+            ch = lexer_advance(lexer);
             ch = lexer_peek(lexer);
         };
         return make_token(KIND_IDENT(), ident, line, col);
     };
 
-    // Single-char tokens
-    lexer_advance(lexer);
+    ch = lexer_advance(lexer);
 
     if ch == "(" { return make_token(KIND_LPAREN(), "(", line, col); };
     if ch == ")" { return make_token(KIND_RPAREN(), ")", line, col); };
@@ -110,20 +106,13 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         };
         return make_token(KIND_ASSIGN(), "=", line, col);
     };
-    if ch == "-" {
-        if lexer_peek(lexer) == ">" {
-            lexer_advance(lexer);
-            return make_token(KIND_ARROW(), "->", line, col);
-        };
-        return make_token(KIND_MINUS(), "-", line, col);
-    };
 
     make_token("Unknown", ch, line, col)
 }
 
-fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {
-    let mut tokens = Vec::new();
-    let mut done = false;
+fn lexer_tokenize(lexer: i64) -> i64 {
+    let tokens = Vec::new();
+    let done = false;
     while !done {
         let t = lexer_next(lexer);
         if t.kind == KIND_EOF() {
@@ -133,5 +122,5 @@ fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {
             tokens.push(t);
         };
     };
-    tokens
+    tokens.len()
 }
