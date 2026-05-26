@@ -22,6 +22,10 @@ static char* str_int(int64_t n) {
 extern void* read_file(const char* path);
 extern void write_file(const char* path, const char* content);
 extern void* Vec_new(void);
+extern void Vec_push(void* v, void* item);
+extern int64_t Vec_len(void* v);
+extern void* Vec_get(void* v, int64_t idx);
+extern const char* str_at(const char* s, int64_t pos);
 extern void* HashMap_new(void);
 
 typedef struct Lexer {
@@ -34,6 +38,10 @@ typedef struct Span {
     int64_t line;
     int64_t col;
 } Span;
+typedef struct Param {
+    const char* name;
+    const char* type_ann;
+} Param;
 typedef struct Stmt {
     const char* kind;
     const char* name;
@@ -48,34 +56,30 @@ typedef struct Expr {
     int64_t left;
     int64_t right;
 } Expr;
-typedef struct Param {
+typedef struct StructDef {
     const char* name;
-    const char* type_ann;
-} Param;
-typedef struct Program {
-    void* structs;
-    void* fns;
-    void* main_stmts;
-} Program;
+    void* fields;
+} StructDef;
+typedef struct Parser {
+    void* tokens;
+    int64_t pos;
+} Parser;
 typedef struct FnDef {
     const char* name;
     void* params;
     const char* return_type;
     void* body;
 } FnDef;
-typedef struct Parser {
-    void* tokens;
-    int64_t pos;
-} Parser;
 typedef struct Token {
     const char* kind;
     const char* value;
     Span span;
 } Token;
-typedef struct StructDef {
-    const char* name;
-    void* fields;
-} StructDef;
+typedef struct Program {
+    void* structs;
+    void* fns;
+    void* main_stmts;
+} Program;
 
 const char* KIND_EOF();
 const char* KIND_INT();
@@ -244,7 +248,7 @@ bool is_ws(const char* ch) {
 
 const char* lexer_peek(Lexer* lexer) {
     /* Let tmp_0 declared=Base(Str) val_ty=Base(Str) */
-    const char* tmp_0 = ((lexer->pos < Vec_len(lexer->source)) ? 0 : "");
+    const char* tmp_0 = ((lexer->pos < Vec_len(lexer->source)) ? str_at(lexer->source, lexer->pos) : "");
     return (const char*)tmp_0;
 }
 
@@ -282,7 +286,7 @@ Token lexer_next(Lexer* lexer) {
     if ((ch == "/")) {
     /* Let next_pos declared=Base(I64) val_ty=Base(I64) */
     int64_t next_pos = (lexer->pos + 1);
-    if (((next_pos < Vec_len(lexer->source)) && (0 == "/"))) {
+    if (((next_pos < Vec_len(lexer->source)) && (str_at(lexer->source, next_pos) == "/"))) {
     lexer_advance(lexer);
     lexer_advance(lexer);
     ch = lexer_peek(lexer);
@@ -422,14 +426,14 @@ void* lexer_tokenize(Lexer* lexer) {
     while ((!done)) {
     /* Let t declared=TypeParam { name: "Token" } val_ty=TypeParam { name: "Token" } */
     Token t = lexer_next(lexer);
-    /* Let ifv_1 declared=Base(Unit) val_ty=Base(Unit) */
-    void ifv_1 = 0;
+    /* Let ifv_1 declared=Unknown val_ty=Unknown */
+    void* ifv_1 = 0;
     if (((t).kind == KIND_EOF())) {
-    Vec_push(tokens, t);
+    Vec_push(tokens, &t);
     done = true;
     ifv_1 = 0;
     } else {
-    ifv_1 = *(void*)Vec_push(tokens, t);
+    ifv_1 = Vec_push(tokens, &t);
     }
     /* Let tmp_0 declared=Unknown val_ty=Unknown */
     void* tmp_0 = ifv_1;
@@ -447,7 +451,7 @@ Token parser_next(Parser* p) {
     Token ifv_1 = (Token){0};
     if ((p->pos < Vec_len(p->tokens))) {
     /* Let t declared=Unknown val_ty=Unknown */
-    void* t = 0;
+    void* t = Vec_get(p->tokens, p->pos);
     0;
     ifv_1 = *(Token*)t;
     } else {
@@ -588,10 +592,10 @@ Program parse_program(void* tokens) {
     if (((p).pos >= Vec_len((p).tokens))) {
     0;
     }
-    if (((0).kind == KIND_EOF())) {
+    if ((((Stmt*)Vec_get((p).tokens, (p).pos))->kind == KIND_EOF())) {
     0;
     }
-    (((0).kind == KIND_STRUCT()) ? Vec_push(structs, parse_struct(&p)) : (((0).kind == KIND_FN()) ? Vec_push(fns, parse_fn(&p)) : Vec_push(main_stmts, parse_stmt(&p))));
+    ((((Stmt*)Vec_get((p).tokens, (p).pos))->kind == KIND_STRUCT()) ? Vec_push(structs, parse_struct(&p)) : ((((Stmt*)Vec_get((p).tokens, (p).pos))->kind == KIND_FN()) ? Vec_push(fns, parse_fn(&p)) : Vec_push(main_stmts, parse_stmt(&p))));
     }
     return (Program)((Program){ .structs = structs, .fns = fns, .main_stmts = main_stmts });
 }
@@ -633,8 +637,8 @@ const char* cgen_struct(StructDef* s) {
     int32_t i = 0;
     while ((i < Vec_len(s->fields))) {
     /* Let f declared=Unknown val_ty=Unknown */
-    void* f = 0;
-    out = str_add(str_add(str_add(out, "    int "), (f).name), ";\n");
+    void* f = Vec_get(s->fields, i);
+    out = str_add(str_add(str_add(out, "    int "), ((StructDef*)f)->name), ";\n");
     i = (i + 1);
     0;
     }
@@ -649,11 +653,11 @@ const char* cgen_fn(FnDef* f) {
     int32_t i = 0;
     while ((i < Vec_len(f->params))) {
     /* Let p declared=Unknown val_ty=Unknown */
-    void* p = 0;
+    void* p = Vec_get(f->params, i);
     if ((i > 0)) {
     out = str_add(out, ", ");
     }
-    out = str_add(str_add(out, "int "), (p).name);
+    out = str_add(str_add(out, "int "), ((StructDef*)p)->name);
     i = (i + 1);
     0;
     }
@@ -661,7 +665,7 @@ const char* cgen_fn(FnDef* f) {
     i = 0;
     while ((i < Vec_len(f->body))) {
     /* Let ref_tmp_0 declared=Unknown val_ty=Unknown */
-    void* ref_tmp_0 = 0;
+    void* ref_tmp_0 = Vec_get(f->body, i);
     out = str_add(str_add(out, "    "), cgen_stmt(&ref_tmp_0));
     i = (i + 1);
     0;
@@ -677,7 +681,7 @@ const char* cgen_program(Program* prog) {
     int32_t i = 0;
     while ((i < Vec_len(prog->structs))) {
     /* Let ref_tmp_0 declared=Unknown val_ty=Unknown */
-    void* ref_tmp_0 = 0;
+    void* ref_tmp_0 = Vec_get(prog->structs, i);
     out = str_add(out, cgen_struct(&ref_tmp_0));
     i = (i + 1);
     0;
@@ -685,7 +689,7 @@ const char* cgen_program(Program* prog) {
     i = 0;
     while ((i < Vec_len(prog->fns))) {
     /* Let ref_tmp_1 declared=Unknown val_ty=Unknown */
-    void* ref_tmp_1 = 0;
+    void* ref_tmp_1 = Vec_get(prog->fns, i);
     out = str_add(out, cgen_fn(&ref_tmp_1));
     i = (i + 1);
     0;
@@ -694,7 +698,7 @@ const char* cgen_program(Program* prog) {
     i = 0;
     while ((i < Vec_len(prog->main_stmts))) {
     /* Let ref_tmp_2 declared=Unknown val_ty=Unknown */
-    void* ref_tmp_2 = 0;
+    void* ref_tmp_2 = Vec_get(prog->main_stmts, i);
     out = str_add(str_add(out, "    "), cgen_stmt(&ref_tmp_2));
     i = (i + 1);
     0;

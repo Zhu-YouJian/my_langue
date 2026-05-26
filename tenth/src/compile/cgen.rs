@@ -9,6 +9,7 @@ pub struct CGenerator {
     var_types: HashMap<String, String>,
     current_ret_type: String,
     struct_names: HashSet<String>,
+    struct_fields: HashMap<String, Vec<(String, String)>>, // struct name → field name → C type
     local_types: HashMap<String, String>, // track C types of declared variables
 }
 
@@ -20,6 +21,7 @@ impl CGenerator {
             var_types: HashMap::new(),
             current_ret_type: "void".to_string(),
             struct_names: HashSet::new(),
+            struct_fields: HashMap::new(),
             local_types: HashMap::new(),
         }
     }
@@ -54,7 +56,7 @@ impl CGenerator {
         self.emit("extern void* read_file(const char* path);");
         self.emit("extern void write_file(const char* path, const char* content);");
         self.emit("extern void* Vec_new(void);");
-        self.emit("extern void Vec_push(void* v, void* item);");
+        self.emit("extern void* Vec_push(void* v, void* item);");
         self.emit("extern int64_t Vec_len(void* v);");
         self.emit("extern void* Vec_get(void* v, int64_t idx);");
         self.emit("extern const char* str_at(const char* s, int64_t pos);");
@@ -77,6 +79,11 @@ impl CGenerator {
         });
         // Emit struct definitions
         for (name, fields) in &sorted {
+            // Store field type info for later Field access resolution
+            let field_info: Vec<(String, String)> = fields.iter()
+                .map(|(fnm, fty)| (fnm.clone(), c_type_name(fty, &self.struct_names)))
+                .collect();
+            self.struct_fields.insert(name.clone(), field_info);
             self.emit(&format!("typedef struct {} {{", name));
             for (fname, fty) in fields {
                 let c_type = c_type_name(fty, &self.struct_names);
@@ -342,12 +349,26 @@ impl CGenerator {
                             "cgen_program" => "&prog".to_string(),
                             _ => s,
                         }
-                    } else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_))
-                        && !matches!(&a.ty, Type::Base(_) | Type::Ref(_) | Type::MutRef(_))
-                    {
-                        // Vec_push and similar expect pointers — pass & for struct/param values
+                    } else if matches!(&a.kind, MirRvalueKind::Call { .. }) && func.as_str().starts_with("Vec_push") {
+                        // Vec_push with function return — wrap in compound literal address
+                        format!("&({})", s)
+                    } else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_)) {
+                        // Vec_push and similar expect pointers — pass & for struct values
                         match func.as_str() {
-                            "Vec_push" | "Vec::push" => format!("&{}", s),
+                            "Vec_push" | "Vec::push" => {
+                                if s.starts_with("&") || s.starts_with("*") { s }
+                                else { format!("&{}", s) }
+                            }
+                            _ => s,
+                        }
+                    } else if s.starts_with("&ref_tmp_") || s.starts_with("&mutref_tmp_") {
+                        // ref_tmp might be void* — cast to expected struct pointer
+                        match func.as_str() {
+                            "cgen_stmt" => format!("(Stmt*)({})", s),
+                            "cgen_struct" => format!("(StructDef*)({})", s),
+                            "cgen_fn" => format!("(FnDef*)({})", s),
+                            "cgen_expr" => format!("(Expr*)({})", s),
+                            "cgen_param" => format!("(Param*)({})", s),
                             _ => s,
                         }
                     } else { s }
@@ -370,6 +391,23 @@ impl CGenerator {
                 if matches!(&target.ty, Type::Ref(_) | Type::MutRef(_)) {
                     let name = self.rvalue_to_c(target);
                     return format!("{}->{}", name, field);
+                }
+                // If target is void* (from Vec_get/call), try to cast to known struct
+                if matches!(&target.ty, Type::Unknown) {
+                    let t_str = self.rvalue_to_c(target);
+                    // Find which struct has this field
+                    let mut found_struct: Option<&str> = None;
+                    for (sname, sfields) in &self.struct_fields {
+                        if sfields.iter().any(|(fnm, _)| fnm == field) {
+                            found_struct = Some(sname.as_str());
+                            break;
+                        }
+                    }
+                    if let Some(sname) = found_struct {
+                        return format!("(({}*){})->{}", sname, t_str, field);
+                    }
+                    // Fallback: just use ->
+                    return format!("({})->{}", t_str, field);
                 }
                 let t_str = self.rvalue_to_c(target);
                 format!("({}).{}", t_str, field)
@@ -405,7 +443,18 @@ impl CGenerator {
             }
             MirRvalueKind::MethodCall { receiver, method, args } => {
                 let recv = self.rvalue_to_c(receiver);
-                let args_str: Vec<String> = args.iter().map(|a| self.rvalue_to_c(a)).collect();
+                let args_str: Vec<String> = args.iter().map(|a| {
+                    let s = self.rvalue_to_c(a);
+                    // For push, pass &struct for non-pointer values
+                    if method == "push" {
+                        if s.starts_with("&") || s.starts_with("*") { s }
+                        else if matches!(&a.kind, MirRvalueKind::StructLiteral { .. }) {
+                            format!("&{}", s)
+                        } else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_)) {
+                            format!("&{}", s)
+                        } else { s }
+                    } else { s }
+                }).collect();
                 match method.as_str() {
                     "len" => format!("Vec_len({})", recv),
                     "push" => format!("Vec_push({}, {})", recv, args_str.join(", ")),

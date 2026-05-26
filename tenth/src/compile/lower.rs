@@ -165,10 +165,9 @@ impl MirLowerer {
                             let e_ty = ev.as_ref().map(|v| v.ty.clone());
                             let all: Vec<Option<Type>> = vec![t_ty, e_ty, Some(ty.clone())];
                             let best = all.into_iter()
-                                .find(|t| t.as_ref().map_or(false, |t| !matches!(t, Type::Unknown)));
+                                .find(|t| t.as_ref().map_or(false, |t| !matches!(t, Type::Unknown) && !matches!(t, Type::Base(crate::hir::types::BaseType::Unit))));
                             best.flatten().unwrap_or(Type::Unknown)
                         };
-                        // Don't create void-typed temps
                         if !matches!(&init_ty, Type::Base(crate::hir::types::BaseType::Unit)) {
                             let val = rv(init_ty.clone(), MirRvalueKind::Literal(LiteralValue::Int(0)));
                             stmts.push(MirStmt::Let {

@@ -24,13 +24,14 @@ void* Vec_new(void) {
     return v;
 }
 
-void Vec_push(void* vec, void* item) {
+void* Vec_push(void* vec, void* item) {
     Vec* v = (Vec*)vec;
     if (v->len >= v->cap) {
         v->cap = v->cap == 0 ? 8 : v->cap * 2;
         v->data = realloc(v->data, v->cap * sizeof(void*));
     }
     v->data[v->len++] = item;
+    return vec;
 }
 
 int64_t Vec_len(void* vec) {

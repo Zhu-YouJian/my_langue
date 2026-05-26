@@ -28,20 +28,6 @@ extern void* Vec_get(void* v, int64_t idx);
 extern const char* str_at(const char* s, int64_t pos);
 extern void* HashMap_new(void);
 
-typedef struct Param {
-    const char* name;
-    const char* type_ann;
-} Param;
-typedef struct Span {
-    int64_t line;
-    int64_t col;
-} Span;
-typedef struct Lexer {
-    const char* source;
-    int64_t pos;
-    int64_t line;
-    int64_t col;
-} Lexer;
 typedef struct Stmt {
     const char* kind;
     const char* name;
@@ -56,30 +42,44 @@ typedef struct Expr {
     int64_t left;
     int64_t right;
 } Expr;
-typedef struct Parser {
-    void* tokens;
+typedef struct Lexer {
+    const char* source;
     int64_t pos;
-} Parser;
+    int64_t line;
+    int64_t col;
+} Lexer;
+typedef struct Span {
+    int64_t line;
+    int64_t col;
+} Span;
+typedef struct Param {
+    const char* name;
+    const char* type_ann;
+} Param;
 typedef struct Token {
     const char* kind;
     const char* value;
     Span span;
 } Token;
-typedef struct Program {
-    void* structs;
-    void* fns;
-    void* main_stmts;
-} Program;
 typedef struct FnDef {
     const char* name;
     void* params;
     const char* return_type;
     void* body;
 } FnDef;
+typedef struct Parser {
+    void* tokens;
+    int64_t pos;
+} Parser;
 typedef struct StructDef {
     const char* name;
     void* fields;
 } StructDef;
+typedef struct Program {
+    void* structs;
+    void* fns;
+    void* main_stmts;
+} Program;
 
 const char* KIND_EOF();
 const char* KIND_INT();
@@ -426,12 +426,14 @@ void* lexer_tokenize(Lexer* lexer) {
     while ((!done)) {
     /* Let t declared=TypeParam { name: "Token" } val_ty=TypeParam { name: "Token" } */
     Token t = lexer_next(lexer);
+    /* Let ifv_1 declared=Unknown val_ty=Unknown */
+    void* ifv_1 = 0;
     if (((t).kind == KIND_EOF())) {
-    Vec_push(tokens, t);
+    Vec_push(tokens, &t);
     done = true;
     ifv_1 = 0;
     } else {
-    ifv_1 = Vec_push(tokens, t);
+    ifv_1 = Vec_push(tokens, &t);
     }
     /* Let tmp_0 declared=Unknown val_ty=Unknown */
     void* tmp_0 = ifv_1;
@@ -530,7 +532,7 @@ FnDef parse_fn(Parser* p) {
     parser_next(p);
     /* Let ptype declared=Base(Str) val_ty=Base(Str) */
     const char* ptype = (parser_next(p)).value;
-    Vec_push(params, ((Param){ .name = pname, .type_ann = ptype }));
+    Vec_push(params, &((Param){ .name = pname, .type_ann = ptype }));
     tok = parser_next(p);
     if (((tok).kind == KIND_COMMA())) {
     tok = parser_next(p);
@@ -546,7 +548,7 @@ FnDef parse_fn(Parser* p) {
     void* body = Vec_new();
     tok = parser_next(p);
     while (((tok).kind != KIND_RBRACE())) {
-    Vec_push(body, ((Stmt){ .kind = "expr", .name = "", .ival = 0, .sval = "" }));
+    Vec_push(body, &((Stmt){ .kind = "expr", .name = "", .ival = 0, .sval = "" }));
     tok = parser_next(p);
     0;
     }
@@ -567,7 +569,7 @@ StructDef parse_struct(Parser* p) {
     parser_next(p);
     /* Let ftype declared=Base(Str) val_ty=Base(Str) */
     const char* ftype = (parser_next(p)).value;
-    Vec_push(fields, ((Param){ .name = fname, .type_ann = ftype }));
+    Vec_push(fields, &((Param){ .name = fname, .type_ann = ftype }));
     tok = parser_next(p);
     if (((tok).kind == KIND_COMMA())) {
     tok = parser_next(p);
@@ -590,10 +592,10 @@ Program parse_program(void* tokens) {
     if (((p).pos >= Vec_len((p).tokens))) {
     0;
     }
-    if (((Vec_get((p).tokens, (p).pos)).kind == KIND_EOF())) {
+    if ((((Stmt*)Vec_get((p).tokens, (p).pos))->kind == KIND_EOF())) {
     0;
     }
-    (((Vec_get((p).tokens, (p).pos)).kind == KIND_STRUCT()) ? Vec_push(structs, parse_struct(&p)) : (((Vec_get((p).tokens, (p).pos)).kind == KIND_FN()) ? Vec_push(fns, parse_fn(&p)) : Vec_push(main_stmts, parse_stmt(&p))));
+    ((((Stmt*)Vec_get((p).tokens, (p).pos))->kind == KIND_STRUCT()) ? Vec_push(structs, parse_struct(&p)) : ((((Stmt*)Vec_get((p).tokens, (p).pos))->kind == KIND_FN()) ? Vec_push(fns, parse_fn(&p)) : Vec_push(main_stmts, parse_stmt(&p))));
     }
     return (Program)((Program){ .structs = structs, .fns = fns, .main_stmts = main_stmts });
 }
@@ -610,14 +612,14 @@ const char* cgen_stmt(Stmt* stmt) {
     if ((stmt->kind == "let")) {
     /* Let ref_tmp_1 declared=TypeParam { name: "Expr" } val_ty=TypeParam { name: "Expr" } */
     Expr ref_tmp_1 = ((Expr){ .kind = "int", .ival = stmt->ival, .sval = stmt->sval, .op = "", .left = 0, .right = 0 });
-    ifv_4 = str_add(str_add(str_add(str_add("int ", stmt->name), " = "), cgen_expr(&ref_tmp_1)), ";\n");
+    ifv_4 = str_add(str_add(str_add(str_add("int ", stmt->name), " = "), cgen_expr((Expr*)(&ref_tmp_1))), ";\n");
     } else {
     /* Let ifv_3 declared=Base(Str) val_ty=Base(Str) */
     const char* ifv_3 = 0;
     if ((stmt->kind == "return")) {
     /* Let ref_tmp_2 declared=TypeParam { name: "Expr" } val_ty=TypeParam { name: "Expr" } */
     Expr ref_tmp_2 = ((Expr){ .kind = "int", .ival = stmt->ival, .sval = stmt->sval, .op = "", .left = 0, .right = 0 });
-    ifv_3 = str_add(str_add("return ", cgen_expr(&ref_tmp_2)), ";\n");
+    ifv_3 = str_add(str_add("return ", cgen_expr((Expr*)(&ref_tmp_2))), ";\n");
     } else {
     ifv_3 = ";\n";
     }
@@ -636,7 +638,7 @@ const char* cgen_struct(StructDef* s) {
     while ((i < Vec_len(s->fields))) {
     /* Let f declared=Unknown val_ty=Unknown */
     void* f = Vec_get(s->fields, i);
-    out = str_add(str_add(str_add(out, "    int "), (f).name), ";\n");
+    out = str_add(str_add(str_add(out, "    int "), ((Stmt*)f)->name), ";\n");
     i = (i + 1);
     0;
     }
@@ -655,7 +657,7 @@ const char* cgen_fn(FnDef* f) {
     if ((i > 0)) {
     out = str_add(out, ", ");
     }
-    out = str_add(str_add(out, "int "), (p).name);
+    out = str_add(str_add(out, "int "), ((Stmt*)p)->name);
     i = (i + 1);
     0;
     }
@@ -664,7 +666,7 @@ const char* cgen_fn(FnDef* f) {
     while ((i < Vec_len(f->body))) {
     /* Let ref_tmp_0 declared=Unknown val_ty=Unknown */
     void* ref_tmp_0 = Vec_get(f->body, i);
-    out = str_add(str_add(out, "    "), cgen_stmt(&ref_tmp_0));
+    out = str_add(str_add(out, "    "), cgen_stmt((Stmt*)(&ref_tmp_0)));
     i = (i + 1);
     0;
     }
@@ -680,7 +682,7 @@ const char* cgen_program(Program* prog) {
     while ((i < Vec_len(prog->structs))) {
     /* Let ref_tmp_0 declared=Unknown val_ty=Unknown */
     void* ref_tmp_0 = Vec_get(prog->structs, i);
-    out = str_add(out, cgen_struct(&ref_tmp_0));
+    out = str_add(out, cgen_struct((StructDef*)(&ref_tmp_0)));
     i = (i + 1);
     0;
     }
@@ -688,7 +690,7 @@ const char* cgen_program(Program* prog) {
     while ((i < Vec_len(prog->fns))) {
     /* Let ref_tmp_1 declared=Unknown val_ty=Unknown */
     void* ref_tmp_1 = Vec_get(prog->fns, i);
-    out = str_add(out, cgen_fn(&ref_tmp_1));
+    out = str_add(out, cgen_fn((FnDef*)(&ref_tmp_1)));
     i = (i + 1);
     0;
     }
@@ -697,7 +699,7 @@ const char* cgen_program(Program* prog) {
     while ((i < Vec_len(prog->main_stmts))) {
     /* Let ref_tmp_2 declared=Unknown val_ty=Unknown */
     void* ref_tmp_2 = Vec_get(prog->main_stmts, i);
-    out = str_add(str_add(out, "    "), cgen_stmt(&ref_tmp_2));
+    out = str_add(str_add(out, "    "), cgen_stmt((Stmt*)(&ref_tmp_2)));
     i = (i + 1);
     0;
     }
