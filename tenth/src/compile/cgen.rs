@@ -394,12 +394,18 @@ impl CGenerator {
                             "cgen_program" => "&prog".to_string(),
                             _ => s,
                         }
-                    } else if s.starts_with("&") && !s.starts_with("&(") && !s.starts_with("&*") && (func.as_str().starts_with("Vec_push") || func.as_str() == "Vec::push") {
-                        let var_name = s[1..].to_string();
-                        let type_name = self.local_types.get(&var_name).map(|t| t.as_str()).unwrap_or("void");
-                        if type_name != "void*" && type_name != "void" && type_name != "int64_t" && type_name != "int32_t" && type_name != "const char*" && type_name != "bool" && type_name != "double" && type_name != "float" {
-                            format!("({{ {}* _cp = malloc(sizeof({})); *_cp = {}; _cp; }})", type_name, type_name, var_name)
-                        } else { s }
+                    } else if (func.as_str().starts_with("Vec_push") || func.as_str() == "Vec::push") {
+                        // Add & if needed, then maybe heap-allocate
+                        let base = if s.starts_with("&") || s.starts_with("*") { s.clone() }
+                        else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_)) { format!("&{}", s) }
+                        else { s.clone() };
+                        if base.starts_with("&") && !base.starts_with("&(") && !base.starts_with("&*") {
+                            let var_name = base[1..].to_string();
+                            let type_name = self.local_types.get(&var_name).map(|t| t.as_str()).unwrap_or("void");
+                            if type_name != "void*" && type_name != "void" && type_name != "int64_t" && type_name != "int32_t" && type_name != "const char*" && type_name != "bool" && type_name != "double" && type_name != "float" {
+                                format!("({{ {}* _cp = malloc(sizeof({})); *_cp = {}; _cp; }})", type_name, type_name, var_name)
+                            } else { base }
+                        } else { base }
                     } else if matches!(&a.kind, MirRvalueKind::Call { .. }) && (func.as_str().starts_with("Vec_push") || func.as_str() == "Vec::push") {
                         // Vec_push with function return — wrap in compound literal address &(Type){call}
                         let struct_name = match &a.ty {
@@ -514,29 +520,30 @@ impl CGenerator {
                     let s = self.rvalue_to_c(a);
                     // For push, pass &struct for non-pointer values
                     if method == "push" {
-                        if s.starts_with("&") && !s.starts_with("&(") && !s.starts_with("&*") {
-                            let var_name = s[1..].to_string();
-                            let type_name = self.local_types.get(&var_name).map(|t| t.as_str()).unwrap_or("void");
-                            if type_name != "void*" && type_name != "void" && type_name != "int64_t" && type_name != "int32_t" && type_name != "const char*" && type_name != "bool" && type_name != "double" && type_name != "float" {
-                                format!("({{ {}* _cp = malloc(sizeof({})); *_cp = {}; _cp; }})", type_name, type_name, var_name)
-                            } else { s }
-                        } else if matches!(&a.kind, MirRvalueKind::StructLiteral { .. }) {
-                            format!("&{}", s)
-                        } else if matches!(&a.kind, MirRvalueKind::Call { .. }) {
-                            // Function return — wrap in compound literal address &(Type){call}
+                        // First determine the base value (add & if needed)
+                        let base = if s.starts_with("&") || s.starts_with("*") { s.clone() }
+                        else if matches!(&a.kind, MirRvalueKind::StructLiteral { .. }) { format!("&{}", s) }
+                        else if matches!(&a.kind, MirRvalueKind::Call { .. }) {
                             let struct_name = match &a.ty {
                                 Type::Struct(name) => Some(name.clone()),
                                 Type::TypeParam { name } if self.struct_names.contains(name) => Some(name.clone()),
                                 _ => None,
                             };
                             if let Some(name) = struct_name {
-                                format!("({{ {} _t = {}; &_t; }})", name, s)
-                            } else {
-                                format!("&({})", s)
-                            }
-                        } else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_)) {
-                            format!("&{}", s)
-                        } else { s }
+                                // Heap-allocate to avoid dangling: ({ Type* _t = malloc(sizeof(Type)); *_t = call; _t; })
+                                format!("({{ {}* _t = malloc(sizeof({})); *_t = {}; _t; }})", name, name, s)
+                            } else { format!("&({})", s) }
+                        }
+                        else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_)) { format!("&{}", s) }
+                        else { s.clone() };
+                        // If passing &struct, heap-allocate to avoid dangling pointer
+                        if base.starts_with("&") && !base.starts_with("&(") && !base.starts_with("&*") && !base.contains("_t =") {
+                            let var_name = base[1..].to_string();
+                            let type_name = self.local_types.get(&var_name).map(|t| t.as_str()).unwrap_or("void");
+                            if type_name != "void*" && type_name != "void" && type_name != "int64_t" && type_name != "int32_t" && type_name != "const char*" && type_name != "bool" && type_name != "double" && type_name != "float" {
+                                format!("({{ {}* _cp = malloc(sizeof({})); *_cp = {}; _cp; }})", type_name, type_name, var_name)
+                            } else { base }
+                        } else { base }
                     } else { s }
                 }).collect();
                 match method.as_str() {
