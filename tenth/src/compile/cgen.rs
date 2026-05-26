@@ -210,6 +210,7 @@ impl CGenerator {
             }
             MirStmt::IfElse { cond, then_body, else_body } => {
                 let c = self.rvalue_to_c(cond);
+                eprintln!("DBG_CGEN IfElse: cond={} then_len={} else_len={}", c, then_body.len(), else_body.len());
                 self.emit(&format!("if ({}) {{", c));
                 for stmt in then_body { self.generate_stmt(stmt); }
                 if !else_body.is_empty() {

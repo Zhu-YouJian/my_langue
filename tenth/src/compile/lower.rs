@@ -141,14 +141,18 @@ impl MirLowerer {
             HirExprKind::If { cond, then_branch, else_branch, .. } => {
                 // Lower condition and branches
                 let (cs, cv) = self.lower_expr_rvalue(cond)?;
+                eprintln!("DBG_IF: cond lowered, stmts={}", cs.len());
                 let (ts, tv) = self.lower_expr_to_block(then_branch)?;
+                eprintln!("DBG_IF: then lowered, stmts={} tv={}", ts.len(), tv.is_some());
                 let (es, ev) = else_branch.as_ref()
                     .map(|e| self.lower_expr_to_block(e))
                     .transpose()?
                     .unwrap_or((vec![], None));
+                eprintln!("DBG_IF: else lowered, stmts={} ev={} else_is_some={}", es.len(), ev.is_some(), else_branch.is_some());
                 let mut stmts = cs;
                 // If branches have side-effect statements, use IfElse with outer temp
                 if !ts.is_empty() || !es.is_empty() {
+                    eprintln!("DBG_IF: taking IfElse path (ts_empty={} es_empty={})", ts.is_empty(), es.is_empty());
                     // Only create temp if there's a non-unit value to capture
                     let is_not_unit = |v: &MirRvalue| !matches!(&v.ty, Type::Base(crate::hir::types::BaseType::Unit));
                     let result_tmp = if (tv.as_ref().map_or(false, is_not_unit) ||
@@ -191,6 +195,7 @@ impl MirLowerer {
                         then_body,
                         else_body,
                     });
+                    eprintln!("DBG_IF: IfElse done, result_tmp={} total_stmts={}", result_tmp.is_some(), stmts.len());
                     // Return Use of the outer temp variable
                     Ok((stmts, result_tmp.map(|n| rv(ty.clone(), MirRvalueKind::Use(n)))))
                 } else {
