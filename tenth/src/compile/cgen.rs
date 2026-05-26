@@ -349,9 +349,19 @@ impl CGenerator {
                             "cgen_program" => "&prog".to_string(),
                             _ => s,
                         }
-                    } else if matches!(&a.kind, MirRvalueKind::Call { .. }) && func.as_str().starts_with("Vec_push") {
-                        // Vec_push with function return — wrap in compound literal address
-                        format!("&({})", s)
+                    } else if matches!(&a.kind, MirRvalueKind::Call { .. }) && (func.as_str().starts_with("Vec_push") || func.as_str() == "Vec::push") {
+                        // Vec_push with function return — wrap in compound literal address &(Type){call}
+                        let struct_name = match &a.ty {
+                            Type::Struct(name) => Some(name.clone()),
+                            Type::TypeParam { name } if self.struct_names.contains(name) => Some(name.clone()),
+                            _ => None,
+                        };
+                        if let Some(name) = struct_name {
+                            // GCC statement expression: ({ Type _t = call; &_t; })
+                            format!("({{ {} _t = {}; &_t; }})", name, s)
+                        } else {
+                            format!("&({})", s)
+                        }
                     } else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_)) {
                         // Vec_push and similar expect pointers — pass & for struct values
                         match func.as_str() {
@@ -450,6 +460,18 @@ impl CGenerator {
                         if s.starts_with("&") || s.starts_with("*") { s }
                         else if matches!(&a.kind, MirRvalueKind::StructLiteral { .. }) {
                             format!("&{}", s)
+                        } else if matches!(&a.kind, MirRvalueKind::Call { .. }) {
+                            // Function return — wrap in compound literal address &(Type){call}
+                            let struct_name = match &a.ty {
+                                Type::Struct(name) => Some(name.clone()),
+                                Type::TypeParam { name } if self.struct_names.contains(name) => Some(name.clone()),
+                                _ => None,
+                            };
+                            if let Some(name) = struct_name {
+                                format!("({{ {} _t = {}; &_t; }})", name, s)
+                            } else {
+                                format!("&({})", s)
+                            }
                         } else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_)) {
                             format!("&{}", s)
                         } else { s }
