@@ -104,11 +104,16 @@ bool str_eq(const char* a, const char* b) {
     return strcmp(a, b) == 0;
 }
 
-// str_at — get character at position, returns "" if out of bounds
+// str_at — get a 1-char string at position, returns "" if out of bounds
+// Uses rotating buffers to survive nested calls
+static char _str_at_buf[4][2] = {{0}};
+static int _str_at_idx = 0;
 const char* str_at(const char* s, int64_t pos) {
     if (!s || pos < 0 || (size_t)pos >= strlen(s)) return "";
-    // Return a pointer to the character (works as a single-char string)
-    return s + pos;
+    int i = (_str_at_idx++) & 3;
+    _str_at_buf[i][0] = s[pos];
+    _str_at_buf[i][1] = 0;
+    return _str_at_buf[i];
 }
 
 // str_to_int — parse string to int64
