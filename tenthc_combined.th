@@ -213,6 +213,10 @@ fn make_call_expr(func: str, args: str) -> Expr {
 fn cur_tok(p: &Parser) -> Token { p.tokens[p.pos] }
 
 fn parse_primary(p: &mut Parser) -> Expr {
+    // Don't consume } { or ; — they're statement terminators, not expressions
+    if p.pos < p.tokens.len() && p.tokens[p.pos].kind == KIND_RBRACE() { return make_int_expr("0"); }
+    if p.pos < p.tokens.len() && p.tokens[p.pos].kind == KIND_LBRACE() { return make_int_expr("0"); }
+    if p.pos < p.tokens.len() && p.tokens[p.pos].kind == KIND_SEMICOLON() { parser_next(p); return make_int_expr("0"); }
     let t = parser_next(p);
     if t.kind == KIND_INT() { make_int_expr(t.value) }
     else if t.kind == KIND_IDENT() {
@@ -231,6 +235,7 @@ fn parse_primary(p: &mut Parser) -> Expr {
         } else { make_ident_expr(name) }
     }
     else if t.kind == KIND_LPAREN() { let e = parse_expr(p); parser_next(p); e }  // skip )
+    else if t.kind == KIND_SEMICOLON() || t.kind == KIND_RBRACE() || t.kind == KIND_EOF() { make_int_expr("0") }
     else { make_int_expr("0") }
 }
 
@@ -291,6 +296,7 @@ fn parse_stmt(p: &mut Parser) -> Stmt {
         Stmt { kind: "return", name: "", ival: val.ival, sval: val.sval, op: val.op, left: val.left, right: val.right, right_sval: val.right_sval }
     } else {
         let val = parse_expr(p);
+        if p.pos < p.tokens.len() && p.tokens[p.pos].kind == KIND_SEMICOLON() { parser_next(p); };
         Stmt { kind: "expr", name: "", ival: val.ival, sval: val.sval, op: val.op, left: val.left, right: val.right, right_sval: val.right_sval }
     }
 }
@@ -311,12 +317,15 @@ fn parse_fn(p: &mut Parser) -> FnDef {
     // skip -> return type if present
     tok = parser_next(p);
     if tok.kind == KIND_ARROW() { parser_next(p); tok = parser_next(p); };
-    // tok is now { — parse the body
+    // tok is now { — parse the body tracking brace depth
     let mut body = Vec::new();
-    while p.pos < p.tokens.len() && p.tokens[p.pos].kind != KIND_RBRACE() {
-        body.push(parse_stmt(p));
+    let mut depth = 1;
+    while p.pos < p.tokens.len() && depth > 0 {
+        if p.tokens[p.pos].kind == KIND_LBRACE() { depth = depth + 1; parser_next(p); 0 }
+        else if p.tokens[p.pos].kind == KIND_RBRACE() { depth = depth - 1; if depth > 0 { parser_next(p); 0 } else { 0 }; 0 }
+        else { body.push(parse_stmt(p)); 0 };
     };
-    if p.pos < p.tokens.len() { parser_next(p); }; // skip }
+    if p.pos < p.tokens.len() && p.tokens[p.pos].kind == KIND_RBRACE() { parser_next(p); }; // skip final }
     FnDef { name: name, params: params, return_type: "", body: body }
 }
 
