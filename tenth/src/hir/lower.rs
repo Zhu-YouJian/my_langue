@@ -361,8 +361,12 @@ impl Lowerer {
 
             ExprKind::Field { target, field } => {
                 let t = self.lower_expr(target)?;
-                // Resolve field type from struct definition
-                let field_ty = match &t.ty {
+                // Unwrap reference types to get the inner struct type
+                let inner_ty = match &t.ty {
+                    Type::Ref(inner) | Type::MutRef(inner) => inner.as_ref(),
+                    other => other,
+                };
+                let field_ty = match inner_ty {
                     Type::Struct(name) | Type::TypeParam { name } => {
                         self.structs.get(name)
                             .and_then(|fields| fields.iter().find(|(n, _)| n == &field.name))

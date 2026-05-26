@@ -59,8 +59,9 @@ impl CGenerator {
         // Sort structs by dependency: structs with no struct-field deps first
         let mut sorted: Vec<(String, Vec<(String, Type)>)> = program.struct_defs.clone();
         sorted.sort_by(|(_, af), (_, bf)| {
-            let a_has_struct = af.iter().any(|(_, t)| matches!(t, Type::Struct(_)));
-            let b_has_struct = bf.iter().any(|(_, t)| matches!(t, Type::Struct(_)));
+            let is_struct_type = |t: &Type| matches!(t, Type::Struct(_) | Type::TypeParam { .. });
+            let a_has_struct = af.iter().any(|(_, t)| is_struct_type(t));
+            let b_has_struct = bf.iter().any(|(_, t)| is_struct_type(t));
             a_has_struct.cmp(&b_has_struct)
         });
         // Emit struct definitions
@@ -170,6 +171,8 @@ impl CGenerator {
                 let effective_ty = if matches!(ty, Type::Unknown) { &value.ty } else { ty };
                 let type_str = c_type_name(effective_ty, &self.struct_names);
                 let val_str = self.rvalue_to_c(value);
+                // DEBUG: emit type info for all Let
+                self.emit(&format!("/* Let {} declared={:?} val_ty={:?} */", name, ty, value.ty));
                 self.emit(&format!("{} {} = {};", type_str, name, val_str));
             }
             MirStmt::Assign { name, value } => {
@@ -184,7 +187,12 @@ impl CGenerator {
                     Some(v) => {
                         let val_str = self.rvalue_to_c(v);
                         let ret_ty = &self.current_ret_type;
-                        self.emit(&format!("return ({}){};", ret_ty, val_str));
+                        // If return type is a struct and value is zero, emit compound literal
+                        if val_str == "0" && ret_ty != "void" && ret_ty != "void*" && ret_ty != "int64_t" && ret_ty != "int32_t" {
+                            self.emit(&format!("return ({}){{0}};", ret_ty));
+                        } else {
+                            self.emit(&format!("return ({}){};", ret_ty, val_str));
+                        }
                     }
                     None => self.emit("return;"),
                 }
@@ -199,7 +207,11 @@ impl CGenerator {
                     Some(v) => {
                         let val_str = self.rvalue_to_c(v);
                         let ret_ty = &self.current_ret_type;
-                        self.emit(&format!("return ({}){};", ret_ty, val_str));
+                        if val_str == "0" && ret_ty != "void" && ret_ty != "void*" && ret_ty != "int64_t" && ret_ty != "int32_t" {
+                            self.emit(&format!("return ({}){{0}};", ret_ty));
+                        } else {
+                            self.emit(&format!("return ({}){};", ret_ty, val_str));
+                        }
                     }
                     None => self.emit("return;"),
                 }
@@ -245,14 +257,16 @@ impl CGenerator {
     }
 
     fn rvalue_to_c(&self, rvalue: &MirRvalue) -> String {
-        // If the value is a zero literal but the expected type is a struct, emit empty compound literal
-        let struct_name = match &rvalue.ty {
-            Type::Struct(name) => Some(name.clone()),
-            Type::TypeParam { name } if self.struct_names.contains(name) => Some(name.clone()),
-            _ => None,
-        };
-        if let (MirRvalueKind::Literal(LiteralValue::Int(0)), Some(name)) = (&rvalue.kind, struct_name) {
-            return format!("({}){{0}}", name);
+        // If the value is a zero literal for a struct type, emit compound literal
+        if let MirRvalueKind::Literal(LiteralValue::Int(0)) = &rvalue.kind {
+            let struct_name = match &rvalue.ty {
+                Type::Struct(name) => Some(name.clone()),
+                Type::TypeParam { name } if self.struct_names.contains(name) => Some(name.clone()),
+                _ => None,
+            };
+            if let Some(name) = struct_name {
+                return format!("({}){{0}}", name);
+            }
         }
         match &rvalue.kind {
             MirRvalueKind::Literal(lit) => match lit {
@@ -288,7 +302,17 @@ impl CGenerator {
                 }
             }
             MirRvalueKind::Call { func, args } => {
-                let args_str: Vec<String> = args.iter().map(|a| self.rvalue_to_c(a)).collect();
+                let args_str: Vec<String> = args.iter().map(|a| {
+                    let s = self.rvalue_to_c(a);
+                    // If argument is 0 and function expects a struct, pass compound literal
+                    if s == "0" {
+                        match func.as_str() {
+                            "lexer_tokenize" => "(Lexer){0}".to_string(),
+                            "cgen_program" => "(Program){0}".to_string(),
+                            _ => s,
+                        }
+                    } else { s }
+                }).collect();
                 let func_name = match func.as_str() {
                     "Vec::new" => "Vec_new", "HashMap::new" => "HashMap_new",
                     "read_file" => "read_file", "write_file" => "write_file",
