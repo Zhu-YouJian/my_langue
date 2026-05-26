@@ -783,8 +783,13 @@ Program parse_program(void* tokens) {
     void* fns = Vec_new();
     /* Let main_stmts declared=Unknown val_ty=Unknown */
     void* main_stmts = Vec_new();
+    int _iter = 0;
     while (1) {
-    printf("DBG parse_program loop: pos=%lld\n", (long long)(p).pos); fflush(stdout);
+    if (_iter < 5) { void* _tok = Vec_get((p).tokens, (p).pos);
+        printf("DBG pp tok=%p pos=%lld kind=%s val=%s\n", _tok, (long long)(p).pos,
+            _tok ? ((Token*)_tok)->kind : "NULL", _tok ? ((Token*)_tok)->value : "NULL");
+        fflush(stdout); _iter++;
+    }
     if (((p).pos >= Vec_len((p).tokens))) {
     break;
     }

@@ -394,6 +394,13 @@ impl CGenerator {
                             "cgen_program" => "&prog".to_string(),
                             _ => s,
                         }
+                    } else if s.starts_with("&") && !s.starts_with("&(") && !s.starts_with("&*") && (func.as_str().starts_with("Vec_push") || func.as_str() == "Vec::push") {
+                        // &var → heap-allocated copy
+                        let var_name = &s[1..];
+                        let type_name = self.local_types.get(var_name).map(|t| t.as_str()).unwrap_or("void");
+                        if type_name != "void*" && type_name != "void" && type_name != "int64_t" && type_name != "int32_t" && type_name != "const char*" && type_name != "bool" {
+                            format!("({{ {}* _cp = malloc(sizeof({})); *_cp = {}; _cp; }})", type_name, type_name, var_name)
+                        } else { s }
                     } else if matches!(&a.kind, MirRvalueKind::Call { .. }) && (func.as_str().starts_with("Vec_push") || func.as_str() == "Vec::push") {
                         // Vec_push with function return — wrap in compound literal address &(Type){call}
                         let struct_name = match &a.ty {
@@ -482,6 +489,13 @@ impl CGenerator {
                     if c_type == "void*" || c_type == "void" {
                         return name.clone();
                     }
+                    // For struct types, heap-allocate a copy to avoid dangling stack pointers
+                    if c_type != "int64_t" && c_type != "int32_t" && c_type != "double" 
+                        && c_type != "const char*" && c_type != "bool" && c_type != "float"
+                        && !c_type.starts_with("struct ") && !c_type.ends_with("*") 
+                    {
+                        return format!("({{ {}* _cp = malloc(sizeof({})); *_cp = {}; _cp; }})", c_type, c_type, name);
+                    }
                 }
                 // Pass address-of for reference parameters
                 format!("&{}", name)
@@ -511,8 +525,19 @@ impl CGenerator {
                     let s = self.rvalue_to_c(a);
                     // For push, pass &struct for non-pointer values
                     if method == "push" {
-                        if s.starts_with("&") || s.starts_with("*") { s }
-                        else if matches!(&a.kind, MirRvalueKind::StructLiteral { .. }) {
+                        // If passing &struct, heap-allocate a copy to avoid dangling pointer
+                        if s.starts_with("&") && !s.starts_with("&(") {
+                            // &var → malloc copy: ({ Type* _cp = malloc(sizeof(Type)); *_cp = var; _cp; })
+                            let var_name = &s[1..]; // strip &
+                            // Find the type from local_types
+                            let type_name = self.local_types.get(var_name)
+                                .map(|t| t.as_str()).unwrap_or("void");
+                            if type_name != "void*" && type_name != "void" && type_name != "int64_t" && type_name != "int32_t" && type_name != "const char*" && type_name != "bool" {
+                                format!("({{ {}* _cp = malloc(sizeof({})); *_cp = {}; _cp; }})", type_name, type_name, var_name)
+                            } else { s }
+                        } else if s.starts_with("&(") || s.starts_with("&*") {
+                            s // already a compound expression, keep as-is
+                        } else if matches!(&a.kind, MirRvalueKind::StructLiteral { .. }) {
                             format!("&{}", s)
                         } else if matches!(&a.kind, MirRvalueKind::Call { .. }) {
                             // Function return — wrap in compound literal address &(Type){call}
