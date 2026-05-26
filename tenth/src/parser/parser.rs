@@ -135,14 +135,28 @@ impl Parser {
                         ExprKind::Ident(Ident { name, span })
                     }
                 } else if matches!(self.peek_kind(), TokenKind::ColonColon) {
-                    let enum_name = Ident { name, span: span.clone() };
+                    let enum_name = Ident { name: name.clone(), span: span.clone() };
+                    let is_known_enum = matches!(name.as_str(), "Option" | "Result");
                     self.advance();
                     let variant_name = self.expect_ident()?;
                     let path_name = format!("{}::{}", enum_name.name, variant_name.name);
-                    if matches!(self.peek_kind(), TokenKind::LParen) {
-                        let next_is_ident = self.tokens.get(self.pos + 1)
-                            .map_or(false, |t| matches!(t.kind, TokenKind::Identifier(_)));
-                        if next_is_ident {
+                    if !is_known_enum {
+                        // Module path or function call: math::add(1, 2)
+                        ExprKind::Ident(Ident { name: path_name, span: enum_name.span })
+                    } else if matches!(self.peek_kind(), TokenKind::LParen) {
+                        // Check if next token is RParen (empty parens → function call, not enum)
+                        let next_is_rparen = self.tokens.get(self.pos + 1)
+                            .map_or(false, |t| matches!(t.kind, TokenKind::RParen));
+                        if next_is_rparen {
+                            // Empty parens: treat as function call, e.g. HashMap::new()
+                            ExprKind::Ident(Ident {
+                                name: path_name,
+                                span: enum_name.span,
+                            })
+                        } else {
+                            let next_is_ident = self.tokens.get(self.pos + 1)
+                                .map_or(false, |t| matches!(t.kind, TokenKind::Identifier(_)));
+                            if next_is_ident {
                             self.advance();
                             let mut fields = Vec::new();
                             while !matches!(self.peek_kind(), TokenKind::RParen) {
@@ -162,11 +176,31 @@ impl Parser {
                                 fields,
                             }
                         } else {
-                            ExprKind::Ident(Ident {
-                                name: path_name,
-                                span: enum_name.span,
-                            })
+                            // Enum constructor with positional arg: Some(42)
+                            self.advance();
+                            let mut fields = Vec::new();
+                            let mut field_idx = 0;
+                            while !matches!(self.peek_kind(), TokenKind::RParen) {
+                                let val = self.parse_expr()?;
+                                let fname = Ident {
+                                    name: format!("_{}", field_idx),
+                                    span: val.span.clone(),
+                                };
+                                fields.push((fname, val));
+                                field_idx += 1;
+                                if !matches!(self.peek_kind(), TokenKind::Comma) {
+                                    break;
+                                }
+                                self.advance();
+                            }
+                            self.expect(TokenKind::RParen)?;
+                            ExprKind::EnumLiteral {
+                                enum_name,
+                                variant: variant_name,
+                                fields,
+                            }
                         }
+                        } // close if next_is_rparen else
                     } else if matches!(self.peek_kind(), TokenKind::LBrace) {
                         self.advance();
                         let mut fields = Vec::new();

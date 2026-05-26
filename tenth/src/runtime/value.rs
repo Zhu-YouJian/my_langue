@@ -1,5 +1,6 @@
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use super::tensor::Tensor;
 use crate::hir::types::{Type, BaseType, Dim};
@@ -36,6 +37,8 @@ pub enum Value {
     MutRef(Rc<RefCell<Value>>),
     Shared(Rc<RefCell<Value>>),
     Moved,
+    Vec(Vec<Value>),
+    Map(HashMap<String, Value>),
 }
 
 impl Value {
@@ -70,6 +73,8 @@ impl Value {
             Value::MutRef(v) => Type::MutRef(Box::new(v.borrow().type_of())),
             Value::Shared(v) => v.borrow().type_of(),
             Value::Moved => Type::unit(),
+            Value::Vec(_) => Type::Unknown,
+            Value::Map(_) => Type::Unknown,
         }
     }
 
@@ -98,6 +103,8 @@ impl Value {
             Value::MutRef(v) => v.borrow().is_truthy(),
             Value::Shared(v) => v.borrow().is_truthy(),
             Value::Moved => false,
+            Value::Vec(v) => !v.is_empty(),
+            Value::Map(m) => !m.is_empty(),
             Value::String(s) => !s.is_empty(),
             _ => true,
         }
@@ -135,6 +142,22 @@ impl fmt::Display for Value {
             Value::MutRef(v) => write!(f, "&mut {}", v.borrow()),
             Value::Shared(v) => write!(f, "{}", v.borrow()),
             Value::Moved => write!(f, "<moved>"),
+            Value::Vec(items) => {
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", item)?;
+                }
+                write!(f, "]")
+            }
+            Value::Map(entries) => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in entries.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}: {}", k, v)?;
+                }
+                write!(f, "}}")
+            }
             Value::Enum { enum_name, variant, fields } => {
                 if fields.is_empty() {
                     write!(f, "{}::{}", enum_name, variant)

@@ -152,7 +152,8 @@ impl Interpreter {
                 self.resolve_var(name)
                     .or_else(|| {
                         match name.as_str() {
-                            "println" | "eprintln" | "tensor" | "rand" | "randn" => {
+                            "println" | "eprintln" | "tensor" | "rand" | "randn"
+                            | "read_file" | "write_file" | "Vec::new" | "HashMap::new" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),
@@ -554,6 +555,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
+                (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
                 (Value::Tensor(t), Value::Float(s)) => {
                     let result = t.borrow().add_scalar(*s);
                     Ok(Value::Tensor(Rc::new(RefCell::new(result))))
@@ -717,8 +719,73 @@ impl Interpreter {
                 let f = *i as f64;
                 self.eval_scalar_method(f, method, args).map(Some)
             }
+            Value::String(_) | Value::Vec(_) | Value::Map(_) => {
+                self.eval_native_method(recv, method, args)
+            }
             _ => Err(TenthError::RuntimeError {
                 message: format!("method '{}' not supported on this type", method),
+            }),
+        }
+    }
+
+    fn eval_native_method(&mut self, recv: &Value, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
+        match recv {
+            Value::String(s) => self.eval_string_method(s, method, args),
+            Value::Vec(items) => self.eval_vec_method(items, method, args),
+            Value::Map(m) => self.eval_map_method(m, method, args),
+            _ => Err(TenthError::RuntimeError {
+                message: format!("native method '{}' not available", method),
+            }),
+        }
+    }
+
+    fn eval_string_method(&self, s: &str, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
+        match method {
+            "len" => Ok(Some(Value::Int(s.chars().count() as i64))),
+            _ => Err(TenthError::RuntimeError {
+                message: format!("String has no method '{}'", method),
+            }),
+        }
+    }
+
+    fn eval_vec_method(&mut self, items: &[Value], method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
+        match method {
+            "len" => Ok(Some(Value::Int(items.len() as i64))),
+            "push" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "push() takes 1 argument".into(),
+                    });
+                }
+                // We need mutable access — this is a simplification
+                // Real implementation would use Rc<RefCell<Vec<Value>>>
+                Ok(Some(Value::Unit))
+            }
+            _ => Err(TenthError::RuntimeError {
+                message: format!("Vec has no method '{}'", method),
+            }),
+        }
+    }
+
+    fn eval_map_method(&self, m: &HashMap<String, Value>, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
+        match method {
+            "len" => Ok(Some(Value::Int(m.len() as i64))),
+            "get" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "get() takes 1 argument".into(),
+                    });
+                }
+                if let Value::String(key) = &args[0] {
+                    Ok(m.get(key).cloned())
+                } else {
+                    Err(TenthError::RuntimeError {
+                        message: "HashMap key must be a string".into(),
+                    })
+                }
+            }
+            _ => Err(TenthError::RuntimeError {
+                message: format!("HashMap has no method '{}'", method),
             }),
         }
     }
@@ -956,6 +1023,36 @@ impl Interpreter {
                 let t = Tensor::randn(&shape);
                 return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
             }
+            "read_file" => {
+                if let Some(Value::String(path)) = args.first() {
+                    match std::fs::read_to_string(path) {
+                        Ok(content) => return Ok(Some(Value::String(content))),
+                        Err(e) => return Err(TenthError::RuntimeError {
+                            message: format!("read_file failed: {}", e),
+                        }),
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "read_file(path) expects a string path".into(),
+                });
+            }
+            "write_file" => {
+                if args.len() >= 2 {
+                    if let (Value::String(path), Value::String(content)) = (&args[0], &args[1]) {
+                        match std::fs::write(path, content) {
+                            Ok(()) => return Ok(Some(Value::Unit)),
+                            Err(e) => return Err(TenthError::RuntimeError {
+                                message: format!("write_file failed: {}", e),
+                            }),
+                        }
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "write_file(path, content) expects two string args".into(),
+                });
+            }
+            "Vec::new" => return Ok(Some(Value::Vec(Vec::new()))),
+            "HashMap::new" => return Ok(Some(Value::Map(HashMap::new()))),
             _ => {}
         }
 

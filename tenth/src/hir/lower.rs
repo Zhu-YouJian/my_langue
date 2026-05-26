@@ -171,6 +171,18 @@ impl Lowerer {
             methods: vec![("clone".to_string(), vec![("self".to_string(), Type::Unknown)], Type::Unknown)],
         });
 
+        // Preload Option enum
+        lowerer.enums.insert("Option".to_string(), vec![
+            ("Some".to_string(), vec![("value".to_string(), Type::Unknown)]),
+            ("None".to_string(), vec![]),
+        ]);
+
+        // Preload Result enum
+        lowerer.enums.insert("Result".to_string(), vec![
+            ("Ok".to_string(), vec![("value".to_string(), Type::Unknown)]),
+            ("Err".to_string(), vec![("error".to_string(), Type::str_())]),
+        ]);
+
         lowerer
     }
 
@@ -217,7 +229,8 @@ impl Lowerer {
                     let fn_info = self.scope.lookup_fn(&ident.name);
                     if var_info.is_none() && fn_info.is_none() {
                         match ident.name.as_str() {
-                            "println" | "eprintln" | "tensor" | "rand" | "randn" => {
+                            "println" | "eprintln" | "tensor" | "rand" | "randn"
+                            | "read_file" | "write_file" | "Vec::new" | "HashMap::new" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)
                             }
                             _ => {
@@ -694,6 +707,9 @@ impl Lowerer {
             "println" | "eprintln" => Ok(Type::unit()),
             "tensor" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
             "rand" | "randn" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
+            "read_file" => Ok(Type::str_()),
+            "write_file" => Ok(Type::unit()),
+            "Vec::new" | "HashMap::new" => Ok(Type::Unknown),
             _ => Ok(Type::Unknown),
         }
     }
