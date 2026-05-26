@@ -7,6 +7,7 @@ pub struct CGenerator {
     output: String,
     indent_level: usize,
     var_types: HashMap<String, String>,
+    current_ret_type: String,
 }
 
 impl CGenerator {
@@ -15,6 +16,7 @@ impl CGenerator {
             output: String::new(),
             indent_level: 0,
             var_types: HashMap::new(),
+            current_ret_type: "void".to_string(),
         }
     }
 
@@ -93,7 +95,7 @@ impl CGenerator {
 
     fn emit_forward_decl(&mut self, func: &MirFunction) {
         let is_main = func.name == "main" && func.params.is_empty();
-        let ret_c = if is_main { "int" } else { c_type_name(&func.return_type) };
+        let ret_c = if is_main { "int".to_string() } else { c_type_name(&func.return_type) };
         let params: Vec<String> = func.params.iter()
             .map(|(n, t)| format!("{} {}", c_type_name(t), n))
             .collect();
@@ -102,7 +104,8 @@ impl CGenerator {
 
     fn generate_function(&mut self, func: &MirFunction) {
         let is_main = func.name == "main" && func.params.is_empty();
-        let ret_c = if is_main { "int" } else { c_type_name(&func.return_type) };
+        let ret_c = if is_main { "int".to_string() } else { c_type_name(&func.return_type) };
+        self.current_ret_type = ret_c.clone();
         let params: Vec<String> = func.params.iter()
             .map(|(n, t)| format!("{} {}", c_type_name(t), n))
             .collect();
@@ -163,7 +166,7 @@ impl CGenerator {
         match stmt {
             MirStmt::Let { name, ty, value } => {
                 let type_str = c_type_name(ty);
-                let val_str = self.rvalue_to_c(value);
+                let val_str = self.rvalue_to_c_cast(value, ty);
                 self.emit(&format!("{} {} = {};", type_str, name, val_str));
             }
             MirStmt::Assign { name, value } => {
@@ -175,7 +178,11 @@ impl CGenerator {
             }
             MirStmt::Return(val) => {
                 match val {
-                    Some(v) => self.emit(&format!("return {};", self.rvalue_to_c(v))),
+                    Some(v) => {
+                        let val_str = self.rvalue_to_c(v);
+                        let ret_ty = &self.current_ret_type;
+                        self.emit(&format!("return ({}){};", ret_ty, val_str));
+                    }
                     None => self.emit("return;"),
                 }
             }
@@ -186,7 +193,11 @@ impl CGenerator {
         match term {
             MirTerminator::Return(val) => {
                 match val {
-                    Some(v) => self.emit(&format!("return {};", self.rvalue_to_c(v))),
+                    Some(v) => {
+                        let val_str = self.rvalue_to_c(v);
+                        let ret_ty = &self.current_ret_type;
+                        self.emit(&format!("return ({}){};", ret_ty, val_str));
+                    }
                     None => self.emit("return;"),
                 }
             }
@@ -201,6 +212,19 @@ impl CGenerator {
             MirTerminator::Unreachable => {
                 self.emit("__builtin_unreachable();");
             }
+        }
+    }
+
+    fn rvalue_to_c_cast(&self, rvalue: &MirRvalue, expected_ty: &Type) -> String {
+        let val_str = self.rvalue_to_c(rvalue);
+        let expected_c = c_type_name(expected_ty);
+        // Add cast if the value is a literal that needs type disambiguation
+        // or if the expected type is different from the literal's natural type
+        match rvalue {
+            MirRvalue::Literal(_) | MirRvalue::Call { .. } | MirRvalue::StructLiteral { .. } => {
+                format!("({}){}", expected_c, val_str)
+            }
+            _ => val_str,
         }
     }
 
@@ -255,24 +279,24 @@ impl CGenerator {
     }
 }
 
-fn c_type_name(ty: &Type) -> &str {
+fn c_type_name(ty: &Type) -> String {
     use crate::hir::types::BaseType;
     match ty {
         Type::Base(b) => match b {
-            BaseType::I8 | BaseType::I16 | BaseType::I32 => "int32_t",
-            BaseType::I64 => "int64_t",
-            BaseType::U8 | BaseType::U16 | BaseType::U32 => "uint32_t",
-            BaseType::U64 => "uint64_t",
-            BaseType::F16 | BaseType::F32 => "float",
-            BaseType::F64 | BaseType::BF16 => "double",
-            BaseType::Bool => "bool",
-            BaseType::Char => "char",
-            BaseType::Str => "const char*",
-            BaseType::Unit => "void",
+            BaseType::I8 | BaseType::I16 | BaseType::I32 => "int32_t".to_string(),
+            BaseType::I64 => "int64_t".to_string(),
+            BaseType::U8 | BaseType::U16 | BaseType::U32 => "uint32_t".to_string(),
+            BaseType::U64 => "uint64_t".to_string(),
+            BaseType::F16 | BaseType::F32 => "float".to_string(),
+            BaseType::F64 | BaseType::BF16 => "double".to_string(),
+            BaseType::Bool => "bool".to_string(),
+            BaseType::Char => "char".to_string(),
+            BaseType::Str => "const char*".to_string(),
+            BaseType::Unit => "void".to_string(),
         },
-        Type::Struct(_) => "void*",
-        Type::Unknown => "void*",
-        _ => "void*",
+        Type::Struct(name) => name.clone(),
+        Type::Unknown => "int64_t".to_string(),
+        _ => "void*".to_string(),
     }
 }
 

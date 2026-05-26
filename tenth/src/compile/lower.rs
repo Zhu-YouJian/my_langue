@@ -132,11 +132,12 @@ impl MirLowerer {
                     match &s.kind {
                         HirStmtKind::Let { name, init, .. } => {
                             if let Some(init) = init {
+                                let init_ty = init.ty.clone();
                                 let (s2, val) = self.lower_expr_rvalue(init)?;
                                 stmts.extend(s2);
                                 stmts.push(MirStmt::Let {
                                     name: name.clone(),
-                                    ty: Type::Unknown,
+                                    ty: init_ty,
                                     value: val,
                                 });
                             }
@@ -232,11 +233,12 @@ impl MirLowerer {
     fn lower_expr_rvalue(&mut self, expr: &HirExpr) -> TenthResult<(Vec<MirStmt>, MirRvalue)> {
         match &expr.kind {
             HirExprKind::Block { .. } | HirExprKind::If { .. } => {
-                let tmp = self.new_local("tmp", Type::Unknown);
+                let expr_ty = expr.ty.clone();
+                let tmp = self.new_local("tmp", expr_ty.clone());
                 let (stmts, val) = self.lower_expr_to_block(expr)?;
                 if let Some(v) = val {
                     let mut s = stmts;
-                    s.push(MirStmt::Let { name: tmp.clone(), ty: Type::Unknown, value: v });
+                    s.push(MirStmt::Let { name: tmp.clone(), ty: expr_ty, value: v });
                     Ok((s, MirRvalue::Use(tmp)))
                 } else {
                     Ok((stmts, MirRvalue::Literal(LiteralValue::Int(0))))

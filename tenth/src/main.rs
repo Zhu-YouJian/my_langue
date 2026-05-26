@@ -46,8 +46,9 @@ fn main() -> TenthResult<()> {
         // If output is .exe, invoke GCC
         if output_file.ends_with(".exe") {
             let gcc = "D:\\msys64\\mingw64\\bin\\gcc.exe";
+            let runtime = "tenthc\\runtime.c";
             let status = Command::new(gcc)
-                .args(["-o", output_file, &c_file, "-lm"])
+                .args(["-o", output_file, &c_file, runtime, "-lm"])
                 .status()
                 .map_err(|e| tenth::error::TenthError::RuntimeError {
                     message: format!("cannot run gcc: {}", e),
