@@ -54,6 +54,10 @@ impl CGenerator {
         self.emit("extern void* read_file(const char* path);");
         self.emit("extern void write_file(const char* path, const char* content);");
         self.emit("extern void* Vec_new(void);");
+        self.emit("extern void Vec_push(void* v, void* item);");
+        self.emit("extern int64_t Vec_len(void* v);");
+        self.emit("extern void* Vec_get(void* v, int64_t idx);");
+        self.emit("extern const char* str_at(const char* s, int64_t pos);");
         self.emit("extern void* HashMap_new(void);");
         self.emit("");
 
@@ -194,6 +198,17 @@ impl CGenerator {
                 }
                 self.emit("}");
             }
+            MirStmt::While { cond, body } => {
+                let c = self.rvalue_to_c(cond);
+                self.emit(&format!("while ({}) {{", c));
+                for stmt in body { self.generate_stmt(stmt); }
+                self.emit("}");
+            }
+            MirStmt::Loop { body } => {
+                self.emit("while (1) {");
+                for stmt in body { self.generate_stmt(stmt); }
+                self.emit("}");
+            }
             MirStmt::Return(val) => {
                 match val {
                     Some(v) => {
@@ -327,6 +342,14 @@ impl CGenerator {
                             "cgen_program" => "&prog".to_string(),
                             _ => s,
                         }
+                    } else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_))
+                        && !matches!(&a.ty, Type::Base(_) | Type::Ref(_) | Type::MutRef(_))
+                    {
+                        // Vec_push and similar expect pointers — pass & for struct/param values
+                        match func.as_str() {
+                            "Vec_push" | "Vec::push" => format!("&{}", s),
+                            _ => s,
+                        }
                     } else { s }
                 }).collect();
                 let func_name = match func.as_str() {
@@ -338,11 +361,15 @@ impl CGenerator {
             }
             MirRvalueKind::Field { target, field } => {
 
-                // Check if target is a deref of a pointer → use ->
-                if matches!(target.kind, MirRvalueKind::Deref(_)) {
-                    if let MirRvalueKind::Deref(name) = &target.kind {
-                        return format!("{}->{}", name, field);
-                    }
+                // Check if target is a deref or ref → use ->
+                if matches!(target.kind, MirRvalueKind::Deref(_) | MirRvalueKind::MutRef(_) | MirRvalueKind::Ref(_)) {
+                    let name = self.rvalue_to_c(target);
+                    return format!("{}->{}", name, field);
+                }
+                // Also check if target type is Ref/MutRef
+                if matches!(&target.ty, Type::Ref(_) | Type::MutRef(_)) {
+                    let name = self.rvalue_to_c(target);
+                    return format!("{}->{}", name, field);
                 }
                 let t_str = self.rvalue_to_c(target);
                 format!("({}).{}", t_str, field)

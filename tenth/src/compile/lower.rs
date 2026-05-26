@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::hir::hir::*;
-use crate::hir::types::Type;
+use crate::hir::types::{Type, BaseType};
 use crate::error::{TenthError, TenthResult};
 use super::mir::*;
 
@@ -105,6 +105,31 @@ impl MirLowerer {
                             stmts.append(&mut s2);
                             if let Some(v) = val { stmts.push(MirStmt::Expr(v)); }
                         }
+                        HirStmtKind::Return(val) => {
+                            if let Some(e) = val {
+                                let (s2, v) = self.lower_expr_rvalue(e)?;
+                                stmts.extend(s2);
+                                stmts.push(MirStmt::Return(Some(v)));
+                            } else {
+                                stmts.push(MirStmt::Return(None));
+                            }
+                        }
+                        HirStmtKind::While { cond, body } => {
+                            let (cs, cv) = self.lower_expr_rvalue(cond)?;
+                            stmts.extend(cs);
+                            let (bs, _) = self.lower_stmt_to_block(body)?;
+                            stmts.push(MirStmt::While { cond: cv, body: bs });
+                        }
+                        HirStmtKind::Loop { body } => {
+                            let (bs, _) = self.lower_stmts_to_block(body)?;
+                            stmts.push(MirStmt::Loop { body: bs });
+                        }
+                        HirStmtKind::Break => {
+                            stmts.push(MirStmt::Expr(rv(Type::unit(), MirRvalueKind::Literal(LiteralValue::Int(0)))));
+                        }
+                        HirStmtKind::Continue => {
+                            stmts.push(MirStmt::Expr(rv(Type::unit(), MirRvalueKind::Literal(LiteralValue::Int(0)))));
+                        }
                         _ => {}
                     }
                 }
@@ -143,12 +168,15 @@ impl MirLowerer {
                                 .find(|t| t.as_ref().map_or(false, |t| !matches!(t, Type::Unknown)));
                             best.flatten().unwrap_or(Type::Unknown)
                         };
-                        let val = rv(init_ty.clone(), MirRvalueKind::Literal(LiteralValue::Int(0)));
-                        stmts.push(MirStmt::Let {
-                            name: tmp_name.clone(),
-                            ty: init_ty,
-                            value: val,
-                        });
+                        // Don't create void-typed temps
+                        if !matches!(&init_ty, Type::Base(crate::hir::types::BaseType::Unit)) {
+                            let val = rv(init_ty.clone(), MirRvalueKind::Literal(LiteralValue::Int(0)));
+                            stmts.push(MirStmt::Let {
+                                name: tmp_name.clone(),
+                                ty: init_ty,
+                                value: val,
+                            });
+                        }
                     }
                     // Append the values to the branch bodies as assignments to temp
                     let mut then_body = ts;
@@ -196,6 +224,52 @@ impl MirLowerer {
                 Ok((stmts, Some(rv(ty, MirRvalueKind::StructLiteral { name: name.clone(), fields: mf }))))
             }
 
+            HirExprKind::Ref(inner) => {
+                let (mut s, v) = self.lower_expr_rvalue(inner)?;
+                let name = self.ensure_var("ref_tmp", v, &mut s)?;
+                Ok((s, Some(rv(ty, MirRvalueKind::Ref(name)))))
+            }
+            HirExprKind::MutRef(inner) => {
+                let (mut s, v) = self.lower_expr_rvalue(inner)?;
+                let name = self.ensure_var("mutref_tmp", v, &mut s)?;
+                Ok((s, Some(rv(ty, MirRvalueKind::MutRef(name)))))
+            }
+            HirExprKind::Deref(inner) => {
+                let (s, v) = self.lower_expr_rvalue(inner)?;
+                Ok((s, Some(rv(ty, MirRvalueKind::Deref(v.extract_name()?)))))
+            }
+            HirExprKind::Move(inner) => {
+                let (s, v) = self.lower_expr_rvalue(inner)?;
+                Ok((s, Some(rv(ty, MirRvalueKind::Move(v.extract_name()?)))))
+            }
+            HirExprKind::MethodCall { receiver, method, args, .. } => {
+                let (rs, rv_val) = self.lower_expr_rvalue(receiver)?;
+                let mut stmts = rs;
+                let mut arg_vals = Vec::new();
+                for a in args { let (s, v) = self.lower_expr_rvalue(a)?; stmts.extend(s); arg_vals.push(v); }
+                Ok((stmts, Some(rv(ty, MirRvalueKind::MethodCall { receiver: Box::new(rv_val), method: method.clone(), args: arg_vals }))))
+            }
+
+            HirExprKind::Index { target, indices } => {
+                let (ts, tv) = self.lower_expr_rvalue(target)?;
+                let mut stmts = ts;
+                if indices.len() == 1 {
+                    if let Index::Single(idx_expr) = &indices[0] {
+                        let (is, iv) = self.lower_expr_rvalue(idx_expr)?;
+                        stmts.extend(is);
+                        // For string indexing, use str_at; for Vec, use Vec_get
+                        let is_str_target = matches!(&tv.ty, Type::Base(BaseType::Str));
+                        let func_name = if is_str_target { "str_at" } else { "Vec_get" };
+                        return Ok((stmts, Some(rv(ty, MirRvalueKind::Call {
+                            func: func_name.to_string(),
+                            args: vec![tv, iv],
+                        }))));
+                    }
+                }
+                // Multi-index or range — not yet supported
+                Ok((stmts, Some(rv(ty, MirRvalueKind::Literal(LiteralValue::Int(0))))))
+            }
+
             _ => Ok((vec![], Some(rv(ty, MirRvalueKind::Literal(LiteralValue::Int(0)))))),
         }
     }
@@ -220,6 +294,25 @@ impl MirLowerer {
         }
     }
 
+    fn lower_stmt_to_block(&mut self, stmt: &HirStmt) -> TenthResult<(Vec<MirStmt>, Option<MirRvalue>)> {
+        // Wrap a single HirStmt in a pseudo-block and lower it
+        let pseudo_block = HirExpr {
+            kind: HirExprKind::Block { stmts: vec![stmt.clone()], final_expr: None },
+            ty: Type::unit(),
+            span: stmt.span.clone(),
+        };
+        self.lower_expr_to_block(&pseudo_block)
+    }
+
+    fn lower_stmts_to_block(&mut self, stmts: &[HirStmt]) -> TenthResult<(Vec<MirStmt>, Option<MirRvalue>)> {
+        let pseudo_block = HirExpr {
+            kind: HirExprKind::Block { stmts: stmts.to_vec(), final_expr: None },
+            ty: Type::unit(),
+            span: crate::lexer::token::Span { line: 0, col: 0 },
+        };
+        self.lower_expr_to_block(&pseudo_block)
+    }
+
     fn new_block(&mut self) -> usize { let id = self.block_counter; self.block_counter += 1; id }
     fn new_local(&mut self, prefix: &str, ty: Type) -> String {
         let name = format!("{}_{}", prefix, self.local_counter); self.local_counter += 1;
@@ -228,6 +321,29 @@ impl MirLowerer {
 }
 
 fn rv(ty: Type, kind: MirRvalueKind) -> MirRvalue { MirRvalue { kind, ty } }
+
+impl MirLowerer {
+    /// If value is a simple variable, return its name. Otherwise, create a temp and push a Let.
+    fn ensure_var(&mut self, prefix: &str, value: MirRvalue, extra_stmts: &mut Vec<MirStmt>) -> TenthResult<String> {
+        match &value.kind {
+            MirRvalueKind::Use(name) | MirRvalueKind::Deref(name) | MirRvalueKind::MutRef(name) | MirRvalueKind::Ref(name) | MirRvalueKind::Move(name) => Ok(name.clone()),
+            _ => {
+                let name = self.new_local(prefix, value.ty.clone());
+                extra_stmts.push(MirStmt::Let { name: name.clone(), ty: value.ty.clone(), value });
+                Ok(name)
+            }
+        }
+    }
+}
+
+impl MirRvalue {
+    fn extract_name(&self) -> TenthResult<String> {
+        match &self.kind {
+            MirRvalueKind::Use(name) | MirRvalueKind::Deref(name) | MirRvalueKind::MutRef(name) | MirRvalueKind::Ref(name) | MirRvalueKind::Move(name) => Ok(name.clone()),
+            _ => Err(TenthError::RuntimeError { message: format!("expected variable name, got {:?}", self.kind) }),
+        }
+    }
+}
 
 fn lower_literal_val(lit: &Literal) -> LiteralValue {
     match lit {
