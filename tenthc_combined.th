@@ -35,6 +35,12 @@ fn KIND_COMMA() -> str { "Comma" }
 fn KIND_SEMICOLON() -> str { "Semicolon" }
 fn KIND_ARROW() -> str { "Arrow" }
 fn KIND_COLON2() -> str { "Colon2" }
+fn KIND_DOT() -> str { "Dot" }
+fn KIND_LBRACKET() -> str { "LBracket" }
+fn KIND_RBRACKET() -> str { "RBracket" }
+fn KIND_ANDAND() -> str { "AndAnd" }
+fn KIND_LT() -> str { "Lt" }
+fn KIND_GT() -> str { "Gt" }
 
 // Self-hosting Lexer — v0.3.1
 
@@ -150,6 +156,12 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
     if ch == ":" { if lexer_peek(lexer) == ":" { lexer_advance(lexer); return make_token(KIND_COLON2(), "::", line, col); }; return make_token(KIND_COLON(), ":", line, col); };
     if ch == "," { return make_token(KIND_COMMA(), ",", line, col); };
     if ch == "=" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return make_token(KIND_EQEQ(), "==", line, col); }; return make_token(KIND_ASSIGN(), "=", line, col); };
+    if ch == "." { return make_token(KIND_DOT(), ".", line, col); };
+    if ch == "[" { return make_token(KIND_LBRACKET(), "[", line, col); };
+    if ch == "]" { return make_token(KIND_RBRACKET(), "]", line, col); };
+    if ch == "<" { return make_token(KIND_LT(), "<", line, col); };
+    if ch == ">" { return make_token(KIND_GT(), ">", line, col); };
+    if ch == "&" { if lexer_peek(lexer) == "&" { lexer_advance(lexer); return make_token(KIND_ANDAND(), "&&", line, col); }; };
 
     make_token(KIND_IDENT(), ch, line, col)
 }
@@ -172,8 +184,8 @@ struct Parser {
     pos: i64,
 }
 
-struct Expr { kind: str, ival: i64, sval: str, op: str, left: i64, right: i64 }
-struct Stmt { kind: str, name: str, ival: i64, sval: str }
+struct Expr { kind: str, ival: i64, sval: str, op: str, left: i64, right: i64, right_sval: str }
+struct Stmt { kind: str, name: str, ival: i64, sval: str, op: str, left: i64, right: i64, right_sval: str }
 struct Param { name: str, type_ann: str }
 struct FnDef { name: str, params: Vec<Param>, return_type: str, body: Vec<Stmt> }
 struct StructDef { name: str, fields: Vec<Param> }
@@ -186,13 +198,83 @@ fn parser_next(p: &mut Parser) -> Token {
     else { make_token(KIND_EOF(), "", 0, 0) }
 }
 
-fn parse_expr(p: &mut Parser) -> Expr {
+fn make_int_expr(v: str) -> Expr { Expr { kind: "int", ival: 0, sval: v, op: "", left: 0, right: 0, right_sval: "" } }
+fn make_ident_expr(n: str) -> Expr { Expr { kind: "ident", ival: 0, sval: n, op: "", left: 0, right: 0, right_sval: "" } }
+fn make_binary_expr(l: Expr, o: str, r: Expr) -> Expr {
+    Expr { kind: "binary", ival: 0, sval: l.sval, op: o, left: 0, right: r.ival, right_sval: r.sval }
+}
+fn make_assign_expr(target: str, value: Expr) -> Expr {
+    Expr { kind: "assign", ival: 0, sval: target, op: "=", left: 0, right: value.ival, right_sval: value.sval }
+}
+fn make_call_expr(func: str, args: str) -> Expr {
+    Expr { kind: "call", ival: 0, sval: func, op: "", left: 0, right: 0, right_sval: args }
+}
+
+fn cur_tok(p: &Parser) -> Token { p.tokens[p.pos] }
+
+fn parse_primary(p: &mut Parser) -> Expr {
     let t = parser_next(p);
-    if t.kind == KIND_INT() { Expr { kind: "int", ival: 0, sval: t.value, op: "", left: 0, right: 0 } }
+    if t.kind == KIND_INT() { make_int_expr(t.value) }
     else if t.kind == KIND_IDENT() {
         let name = t.value;
-        Expr { kind: "ident", ival: 0, sval: name, op: "", left: 0, right: 0 }
-    } else { Expr { kind: "int", ival: 0, sval: "0", op: "", left: 0, right: 0 } }
+        if p.pos < p.tokens.len() && p.tokens[p.pos].kind == KIND_LPAREN() {
+            parser_next(p); // (
+            let mut args = "";
+            while p.pos < p.tokens.len() && p.tokens[p.pos].kind != KIND_RPAREN() {
+                let a = parse_expr(p);
+                if args != "" { args = args + ", "; };
+                args = args + a.sval;
+                if p.pos < p.tokens.len() && p.tokens[p.pos].kind == KIND_COMMA() { parser_next(p); };
+            };
+            parser_next(p); // )
+            make_call_expr(name, args)
+        } else { make_ident_expr(name) }
+    }
+    else if t.kind == KIND_LPAREN() { let e = parse_expr(p); parser_next(p); e }  // skip )
+    else { make_int_expr("0") }
+}
+
+fn parse_postfix(p: &mut Parser) -> Expr {
+    let mut expr = parse_primary(p);
+    while p.pos < p.tokens.len() {
+        let k = p.tokens[p.pos].kind;
+        if k == KIND_DOT() {
+            parser_next(p);
+            let field = parser_next(p).value;
+            expr.sval = expr.sval + "." + field;
+        } else if k == KIND_LBRACKET() {
+            parser_next(p);
+            let idx = parse_expr(p);
+            parser_next(p); // ]
+            expr.sval = expr.sval + "[" + idx.sval + "]";
+        } else { break; };
+    };
+    expr
+}
+
+fn parse_binary(p: &mut Parser, min_prec: i64) -> Expr {
+    let mut left = parse_postfix(p);
+    while p.pos < p.tokens.len() {
+        let k = p.tokens[p.pos].kind;
+        if k == KIND_PLUS() || k == KIND_STAR() || k == KIND_SLASH()
+            || k == KIND_MINUS() || k == KIND_EQEQ() || k == KIND_LT()
+            || k == KIND_GT() || k == KIND_ANDAND() {
+            let op_token = parser_next(p);
+            let op_str = op_token.value;
+            let right = parse_postfix(p);
+            left = make_binary_expr(left, op_str, right);
+        } else { break; };
+    };
+    left
+}
+
+fn parse_expr(p: &mut Parser) -> Expr {
+    let left = parse_binary(p, 0);
+    if p.pos < p.tokens.len() && p.tokens[p.pos].kind == KIND_ASSIGN() {
+        parser_next(p);
+        let right = parse_expr(p);
+        make_assign_expr(left.sval, right)
+    } else { left }
 }
 
 fn parse_stmt(p: &mut Parser) -> Stmt {
@@ -202,14 +284,14 @@ fn parse_stmt(p: &mut Parser) -> Stmt {
         parser_next(p); // =
         let val = parse_expr(p);
         parser_next(p); // ;
-        Stmt { kind: "let", name: name, ival: val.ival, sval: val.sval }
+        Stmt { kind: "let", name: name, ival: val.ival, sval: val.sval, op: val.op, left: val.left, right: val.right, right_sval: val.right_sval }
     } else if t.kind == KIND_RETURN() {
         let val = parse_expr(p);
         parser_next(p); // ;
-        Stmt { kind: "return", name: "", ival: val.ival, sval: val.sval }
+        Stmt { kind: "return", name: "", ival: val.ival, sval: val.sval, op: val.op, left: val.left, right: val.right, right_sval: val.right_sval }
     } else {
-        parser_next(p); // ;
-        Stmt { kind: "expr", name: "", ival: 0, sval: "" }
+        let val = parse_expr(p);
+        Stmt { kind: "expr", name: "", ival: val.ival, sval: val.sval, op: val.op, left: val.left, right: val.right, right_sval: val.right_sval }
     }
 }
 
@@ -229,15 +311,12 @@ fn parse_fn(p: &mut Parser) -> FnDef {
     // skip -> return type if present
     tok = parser_next(p);
     if tok.kind == KIND_ARROW() { parser_next(p); tok = parser_next(p); };
-    // tok is now { — skip it
+    // tok is now { — parse the body
     let mut body = Vec::new();
-    tok = parser_next(p);
-    while tok.kind != KIND_RBRACE() {
-        // Put the token "back" — we consumed it already but need it for parse_stmt
-        // Simplified: just push a placeholder
-        body.push(Stmt { kind: "expr", name: "", ival: 0, sval: "" });
-        tok = parser_next(p);
+    while p.pos < p.tokens.len() && p.tokens[p.pos].kind != KIND_RBRACE() {
+        body.push(parse_stmt(p));
     };
+    if p.pos < p.tokens.len() { parser_next(p); }; // skip }
     FnDef { name: name, params: params, return_type: "", body: body }
 }
 
@@ -275,19 +354,31 @@ fn parse_program(tokens: Vec<Token>) -> Program {
 // Self-hosting Codegen — v0.3.1
 // Program → C code
 
+fn stmt_to_expr(stmt: &Stmt) -> Expr {
+    Expr { kind: "int", ival: stmt.ival, sval: stmt.sval, op: stmt.op, left: stmt.left, right: stmt.right, right_sval: stmt.right_sval }
+}
+
 fn cgen_expr(expr: &Expr) -> str {
     if expr.kind == "int" { expr.sval }
     else if expr.kind == "ident" { expr.sval }
-    else if expr.kind == "binary" { "(" + expr.sval + " " + expr.op + " " + "" + expr.right + ")" }
+    else if expr.kind == "binary" {
+        let r = expr.right_sval;
+        if r == "" { r = "" + expr.right; };
+        "(" + expr.sval + " " + expr.op + " " + r + ")"
+    }
+    else if expr.kind == "assign" { expr.sval + " = " + expr.right_sval }
+    else if expr.kind == "call" { expr.sval + "(" + expr.right_sval + ")" }
     else { "0" }
 }
 
 fn cgen_stmt(stmt: &Stmt) -> str {
     if stmt.kind == "let" {
-        "int " + stmt.name + " = " + cgen_expr(&Expr { kind: "int", ival: stmt.ival, sval: stmt.sval, op: "", left: 0, right: 0 }) + ";\n"
+        "int " + stmt.name + " = " + cgen_expr(&stmt_to_expr(stmt)) + ";\n"
     } else if stmt.kind == "return" {
-        "return " + cgen_expr(&Expr { kind: "int", ival: stmt.ival, sval: stmt.sval, op: "", left: 0, right: 0 }) + ";\n"
-    } else { ";\n" }
+        "return " + cgen_expr(&stmt_to_expr(stmt)) + ";\n"
+    } else {
+        cgen_expr(&stmt_to_expr(stmt)) + ";\n"
+    }
 }
 
 fn cgen_struct(s: &StructDef) -> str {

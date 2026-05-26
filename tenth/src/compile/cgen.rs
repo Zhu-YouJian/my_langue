@@ -167,7 +167,7 @@ impl CGenerator {
         match stmt {
             MirStmt::Let { name, ty, value } => {
                 // Use the more precise type: value's type if not Unknown
-                let effective_ty = if matches!(ty, Type::Unknown) { &value.ty } else { ty };
+                let effective_ty = if matches!(ty, Type::Unknown | Type::Base(BaseType::Unit)) { &value.ty } else { ty };
                 let type_str = c_type_name(effective_ty, &self.struct_names);
                 let val_str = self.rvalue_to_c(value);
                 // Track the type for later Assign statements
@@ -210,7 +210,6 @@ impl CGenerator {
             }
             MirStmt::IfElse { cond, then_body, else_body } => {
                 let c = self.rvalue_to_c(cond);
-                eprintln!("DBG_CGEN IfElse: cond={} then_len={} else_len={}", c, then_body.len(), else_body.len());
                 self.emit(&format!("if ({}) {{", c));
                 for stmt in then_body { self.generate_stmt(stmt); }
                 if !else_body.is_empty() {
@@ -244,6 +243,11 @@ impl CGenerator {
                         // If return type is a struct and value is zero, emit compound literal
                         if val_str == "0" && ret_ty != "void" && ret_ty != "void*" && ret_ty != "int64_t" && ret_ty != "int32_t" {
                             self.emit(&format!("return ({}){{0}};", ret_ty));
+                        } else if matches!(&v.ty, Type::Unknown) && ret_ty != "void*" && ret_ty != "int64_t" && ret_ty != "int32_t" && ret_ty != "void"
+                            && (matches!(&v.kind, MirRvalueKind::Call { .. } | MirRvalueKind::Use(_) | MirRvalueKind::Deref(_) | MirRvalueKind::MethodCall { .. }))
+                        {
+                            // void* return value but expected struct — dereference
+                            self.emit(&format!("return *({}*)({});", ret_ty, val_str));
                         } else {
                             self.emit(&format!("return ({}){};", ret_ty, val_str));
                         }
@@ -263,6 +267,10 @@ impl CGenerator {
                         let ret_ty = &self.current_ret_type;
                         if val_str == "0" && ret_ty != "void" && ret_ty != "void*" && ret_ty != "int64_t" && ret_ty != "int32_t" {
                             self.emit(&format!("return ({}){{0}};", ret_ty));
+                        } else if matches!(&v.ty, Type::Unknown) && ret_ty != "void*" && ret_ty != "int64_t" && ret_ty != "int32_t" && ret_ty != "void"
+                            && (matches!(&v.kind, MirRvalueKind::Call { .. } | MirRvalueKind::Use(_) | MirRvalueKind::Deref(_) | MirRvalueKind::MethodCall { .. }))
+                        {
+                            self.emit(&format!("return *({}*)({});", ret_ty, val_str));
                         } else {
                             self.emit(&format!("return ({}){};", ret_ty, val_str));
                         }

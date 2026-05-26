@@ -403,11 +403,9 @@ impl Lowerer {
             }
 
             ExprKind::If { cond, then_branch, else_branch } => {
-                eprintln!("DBG_HIR_IF: else_branch is_some={} cond={:?}", else_branch.is_some(), cond);
                 let c = self.lower_expr(cond)?;
                 let t = self.lower_expr(then_branch)?;
                 let e = else_branch.as_ref().map(|eb| self.lower_expr(eb)).transpose()?;
-                eprintln!("DBG_HIR_IF: after lower, e is_some={}", e.is_some());
                 let ty = if let Some(ref eb) = e {
                     eb.ty.clone()
                 } else {
