@@ -341,6 +341,9 @@ impl MirLowerer {
                                 let v_is_scalar = matches!(&v.ty, Type::Base(BaseType::I64 | BaseType::I32 | BaseType::I8 | BaseType::I16 | BaseType::Bool));
                                 if v_is_scalar || matches!(&v.ty, Type::Unknown) {
                                     then_body.push(MirStmt::Assign { name: result_tmp.clone(), value: v });
+                                } else {
+                                    // Non-scalar value (struct/call) — emit as expression to preserve side effects
+                                    then_body.push(MirStmt::Expr(v));
                                 }
                             }
                             let cond = rv(Type::bool_(), MirRvalueKind::BinaryOp(
@@ -362,6 +365,8 @@ impl MirLowerer {
                                 let v_is_scalar = matches!(&v.ty, Type::Base(BaseType::I64 | BaseType::I32 | BaseType::I8 | BaseType::I16 | BaseType::Bool));
                                 if v_is_scalar || matches!(&v.ty, Type::Unknown) {
                                     else_body.push(MirStmt::Assign { name: result_tmp.clone(), value: v });
+                                } else {
+                                    else_body.push(MirStmt::Expr(v));
                                 }
                             }
                             current_else = else_body;
