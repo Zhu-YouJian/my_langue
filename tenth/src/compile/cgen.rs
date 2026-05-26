@@ -9,7 +9,7 @@ pub struct CGenerator {
     current_ret_type: String,
     struct_names: HashSet<String>,
     enum_names: HashSet<String>,
-    struct_fields: HashMap<String, Vec<(String, String)>>, // struct name → field name → C type
+    struct_fields: Vec<(String, Vec<(String, String)>)>, // struct name → field name → C type (ordered)
     local_types: HashMap<String, String>, // track C types of declared variables
 }
 
@@ -21,7 +21,7 @@ impl CGenerator {
             current_ret_type: "void".to_string(),
             struct_names: HashSet::new(),
             enum_names: HashSet::new(),
-            struct_fields: HashMap::new(),
+            struct_fields: Vec::new(),
             local_types: HashMap::new(),
         }
     }
@@ -90,7 +90,7 @@ impl CGenerator {
             let field_info: Vec<(String, String)> = fields.iter()
                 .map(|(fnm, fty)| (fnm.clone(), c_type_name(fty, &self.struct_names, &self.enum_names)))
                 .collect();
-            self.struct_fields.insert(name.clone(), field_info);
+            self.struct_fields.push((name.clone(), field_info));
             self.emit(&format!("typedef struct {} {{", name));
             for (fname, fty) in fields {
                 let c_type = c_type_name(fty, &self.struct_names, &self.enum_names);
@@ -220,10 +220,22 @@ impl CGenerator {
                 // If target is void* (from Vec_get/call), try to cast to known struct
                 if matches!(&target.ty, Type::Unknown) {
                     let mut found_struct: Option<&str> = None;
-                    for (sname, sfields) in &self.struct_fields {
-                        if sfields.iter().any(|(fnm, _)| fnm == field) {
-                            found_struct = Some(sname.as_str());
-                            break;
+                    // Try to guess from Vec name
+                    if let MirRvalueKind::Call { func: _, args } = &target.kind {
+                        if let Some(first_arg) = args.first() {
+                            let arg_str = self.rvalue_to_c(first_arg);
+                            if arg_str.contains("expr_nodes") { found_struct = Some("Expr"); }
+                            else if arg_str.contains("stmt_nodes") { found_struct = Some("Stmt"); }
+                            else if arg_str.contains("tokens") { found_struct = Some("Token"); }
+                            else if arg_str.contains("fields") { found_struct = Some("StructField"); }
+                        }
+                    }
+                    if found_struct.is_none() {
+                        for (sname, sfields) in &self.struct_fields {
+                            if sfields.iter().any(|(fnm, _)| fnm == field) {
+                                found_struct = Some(sname.as_str());
+                                break;
+                            }
                         }
                     }
                     if let Some(sname) = found_struct {
@@ -423,7 +435,12 @@ impl CGenerator {
                     } else if func.as_str().starts_with("Vec_push") || func.as_str() == "Vec::push" {
                         // Add & if needed, then maybe heap-allocate
                         let base = if s.starts_with("&") || s.starts_with("*") { s.clone() }
-                        else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_)) { format!("&{}", s) }
+                        else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_)) {
+                            let is_ptr = self.local_types.get(&s)
+                                .map_or(false, |t| t == "void*" || t == "const char*");
+                            if is_ptr { s.clone() }
+                            else { format!("&{}", s) }
+                        }
                         else { s.clone() };
                         if base.starts_with("&") && !base.starts_with("&(") && !base.starts_with("&*") {
                             let var_name = base[1..].to_string();
@@ -450,7 +467,13 @@ impl CGenerator {
                         match func.as_str() {
                             "Vec_push" | "Vec::push" => {
                                 if s.starts_with("&") || s.starts_with("*") { s }
-                                else { format!("&{}", s) }
+                                else {
+                                    // Check if variable is already a pointer (void* from Vec_new etc.)
+                                    let is_ptr = self.local_types.get(&s)
+                                        .map_or(false, |t| t == "void*" || t == "const char*");
+                                    if is_ptr { s }
+                                    else { format!("&{}", s) }
+                                }
                             }
                             _ => s,
                         }
@@ -490,12 +513,30 @@ impl CGenerator {
                 // If target is void* (from Vec_get/call), try to cast to known struct
                 if matches!(&target.ty, Type::Unknown) {
                     let t_str = self.rvalue_to_c(target);
-                    // Find which struct has this field
+                    // Try to guess struct type from variable name in Vec_get
                     let mut found_struct: Option<&str> = None;
-                    for (sname, sfields) in &self.struct_fields {
-                        if sfields.iter().any(|(fnm, _)| fnm == field) {
-                            found_struct = Some(sname.as_str());
-                            break;
+                    if let MirRvalueKind::Call { func: _, args } = &target.kind {
+                        if let Some(first_arg) = args.first() {
+                            let arg_str = self.rvalue_to_c(first_arg);
+                            if arg_str.contains("expr_nodes") { found_struct = Some("Expr"); }
+                            else if arg_str.contains("stmt_nodes") { found_struct = Some("Stmt"); }
+                            else if arg_str.contains("tokens") { found_struct = Some("Token"); }
+                            else if arg_str.contains("fields") { found_struct = Some("StructField"); }
+                            else if arg_str.contains("params") { found_struct = Some("Param"); }
+                            else if arg_str.contains("match_arms") { found_struct = Some("MatchArm"); }
+                            else if arg_str.contains("structs") { found_struct = Some("StructDef"); }
+                            else if arg_str.contains("fns") { found_struct = Some("FnDef"); }
+                            else if arg_str.contains("enums") { found_struct = Some("EnumDef"); }
+                            else if arg_str.contains("variants") { found_struct = Some("EnumVariant"); }
+                        }
+                    }
+                    // Fallback: find by field name
+                    if found_struct.is_none() {
+                        for (sname, sfields) in &self.struct_fields {
+                            if sfields.iter().any(|(fnm, _)| fnm == field) {
+                                found_struct = Some(sname.as_str());
+                                break;
+                            }
                         }
                     }
                     if let Some(sname) = found_struct {

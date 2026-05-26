@@ -1,0 +1,13 @@
+struct SF { name: str, typ: str }
+
+fn main() -> i64 {
+    let v = Vec::new();
+    let f1 = SF { name: "line", typ: "i64" };
+    let f2 = SF { name: "col", typ: "i64" };
+    Vec::push(v, f1);
+    Vec::push(v, f2);
+    let x = v[0];
+    let n = x.name;
+    if n == "line" { return 1; };
+    return 0;
+}
