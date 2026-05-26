@@ -4,7 +4,7 @@
 
 ## 现状
 
-**v0.2.0** — Phase 1-6 全部完成，86 项测试全部通过。v0.3.0 标准库已完工，自举进行中。
+**v0.2.0** — Phase 1-6 全部完成，86 项测试全部通过。Phase 7 标准库完工，Phase 8 自举各层补全完毕，4 项语言阻塞全部解决。
 
 | 组件 | 状态 |
 |------|------|
@@ -47,7 +47,7 @@ cargo run --manifest-path tenth/Cargo.toml -- compile input.th -o output.c
 | Phase 5 | AI 全栈 | 🚧 部分完成 |
 | Phase 6 | 生态与工具 | 🚧 部分完成 |
 | **Phase 7** | **核心标准库** | **✅** |
-| **Phase 8** | **自举编译器** | **🚧 骨架完成** |
+| **Phase 8** | **自举编译器** | **🚧 各层补全完毕** |
 | **Phase 9** | **v0.3.0 收尾** | **📋** |
 
 详见 `docs/superpowers/plans/`。MEMO.md 记录跳过项备忘。

@@ -1,10 +1,10 @@
-// Self-hosting Tenth compiler — bootstrap
+// Self-hosting Tenth compiler — bootstrap entry point
 
 fn compile(src: str) -> str {
     let mut lex = lexer_new(src);
     let tokens = lexer_tokenize(&mut lex);
     let prog = parse_program(tokens);
-    cgen_program(&prog)
+    cgen_program(&prog, &prog.expr_nodes, &prog.stmt_nodes)
 }
 
 fn main() -> i64 {

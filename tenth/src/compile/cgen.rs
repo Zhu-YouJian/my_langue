@@ -579,6 +579,10 @@ fn c_type_name(ty: &Type, struct_names: &HashSet<String>) -> String {
                 format!("{}*", inner_name)
             }
         }
+        Type::Generic { base, .. } => {
+            // Generic args don't affect C representation — delegate to base type
+            c_type_name(base, struct_names)
+        },
         Type::TypeParam { name } => {
             if struct_names.contains(name) {
                 name.clone()

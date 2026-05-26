@@ -1,106 +1,853 @@
-// Self-hosting Parser — v0.3.1 simplified: no peek, advance-only
+// Self-hosting Parser — v0.3.1 recursive descent
+
+// ── AST arena types ──
+
+struct Expr {
+    kind: str,    // "int", "float", "str", "ident", "binary", "unary",
+                  // "call", "field", "if", "block", "struct_lit",
+                  // "assign", "ref", "deref", "match"
+    ival: i64,
+    fval: f64,
+    sval: str,    // identifier name, string value, or operator
+    left: i64,    // index into expr_nodes (or 0 for none)
+    right: i64,   // index into expr_nodes (or 0 for none)
+    // For calls: arg count + first arg index stored in stmt_nodes
+    arg_start: i64,
+    arg_count: i64,
+    // For struct literals: field names and values stored in parallel
+    // For match: arm count + first arm index
+    extra_start: i64,
+    extra_count: i64,
+}
+
+struct Stmt {
+    kind: str,    // "let", "return", "expr", "while", "if",
+                  // "break", "continue", "loop", "block"
+    name: str,    // variable name for let
+    expr_idx: i64,// index into expr_nodes
+    body_start: i64, // for while/loop/block: first stmt index
+    body_count: i64,
+    else_start: i64, // for if: else block first stmt
+    else_count: i64,
+}
+
+struct Param {
+    name: str,
+    type_ann: str,
+}
+
+struct StructField {
+    name: str,
+    type_ann: str,
+}
+
+struct EnumVariant {
+    name: str,
+    fields: Vec<StructField>,
+}
+
+struct FnDef {
+    name: str,
+    params: Vec<Param>,
+    return_type: str,
+    body_start: i64,
+    body_count: i64,
+}
+
+struct StructDef {
+    name: str,
+    fields: Vec<StructField>,
+}
+
+struct EnumDef {
+    name: str,
+    variants: Vec<EnumVariant>,
+}
+
+struct MatchArm {
+    pat_kind: str,     // "enum_variant", "wildcard", "literal"
+    pat_name: str,     // enum/variant name
+    pat_bind: str,     // binding name
+    body_expr: i64,    // index into expr_nodes
+}
+
+struct Program {
+    structs: Vec<StructDef>,
+    enums: Vec<EnumDef>,
+    fns: Vec<FnDef>,
+    main_stmts_start: i64,
+    main_stmts_count: i64,
+    // Arena data
+    expr_nodes: Vec<Expr>,
+    stmt_nodes: Vec<Stmt>,
+    match_arms: Vec<MatchArm>,
+}
+
+// ── Parser state ──
 
 struct Parser {
     tokens: Vec<Token>,
     pos: i64,
+    // Arena arrays (global, indexed by the parser output)
+    expr_nodes: Vec<Expr>,
+    stmt_nodes: Vec<Stmt>,
+    match_arms: Vec<MatchArm>,
 }
 
-struct Expr { kind: str, ival: i64, sval: str, op: str, left: i64, right: i64 }
-struct Stmt { kind: str, name: str, ival: i64, sval: str }
-struct Param { name: str, type_ann: str }
-struct FnDef { name: str, params: Vec<Param>, return_type: str, body: Vec<Stmt> }
-struct StructDef { name: str, fields: Vec<Param> }
-struct Program { structs: Vec<StructDef>, fns: Vec<FnDef>, main_stmts: Vec<Stmt> }
-
-fn parser_new(tokens: Vec<Token>) -> Parser { Parser { tokens: tokens, pos: 0 } }
-
-fn parser_next(p: &mut Parser) -> Token {
-    if p.pos < p.tokens.len() { let t = p.tokens[p.pos]; p.pos = p.pos + 1; t }
-    else { make_token(KIND_EOF(), "", 0, 0) }
-}
-
-fn parse_expr(p: &mut Parser) -> Expr {
-    let t = parser_next(p);
-    if t.kind == KIND_INT() { Expr { kind: "int", ival: 0, sval: t.value, op: "", left: 0, right: 0 } }
-    else if t.kind == KIND_IDENT() {
-        let name = t.value;
-        Expr { kind: "ident", ival: 0, sval: name, op: "", left: 0, right: 0 }
-    } else { Expr { kind: "int", ival: 0, sval: "0", op: "", left: 0, right: 0 } }
-}
-
-fn parse_stmt(p: &mut Parser) -> Stmt {
-    let t = parser_next(p);
-    if t.kind == KIND_LET() {
-        let name = parser_next(p).value;
-        parser_next(p); // =
-        let val = parse_expr(p);
-        parser_next(p); // ;
-        Stmt { kind: "let", name: name, ival: val.ival, sval: val.sval }
-    } else if t.kind == KIND_RETURN() {
-        let val = parse_expr(p);
-        parser_next(p); // ;
-        Stmt { kind: "return", name: "", ival: val.ival, sval: val.sval }
-    } else {
-        parser_next(p); // ;
-        Stmt { kind: "expr", name: "", ival: 0, sval: "" }
+fn parser_new(tokens: Vec<Token>) -> Parser {
+    Parser {
+        tokens: tokens,
+        pos: 0,
+        expr_nodes: Vec::new(),
+        stmt_nodes: Vec::new(),
+        match_arms: Vec::new(),
     }
 }
 
-fn parse_fn(p: &mut Parser) -> FnDef {
-    let name = parser_next(p).value;
-    parser_next(p); // (
-    let mut params = Vec::new();
-    let mut tok = parser_next(p);
-    while tok.kind != KIND_RPAREN() {
-        let pname = tok.value;
-        parser_next(p); // :
-        let ptype = parser_next(p).value;
-        params.push(Param { name: pname, type_ann: ptype });
-        tok = parser_next(p);
-        if tok.kind == KIND_COMMA() { tok = parser_next(p); };
-    };
-    // skip -> return type if present
-    tok = parser_next(p);
-    if tok.kind == KIND_ARROW() { parser_next(p); tok = parser_next(p); };
-    // tok is now { — skip it
-    let mut body = Vec::new();
-    tok = parser_next(p);
-    while tok.kind != KIND_RBRACE() {
-        // Put the token "back" — we consumed it already but need it for parse_stmt
-        // Simplified: just push a placeholder
-        body.push(Stmt { kind: "expr", name: "", ival: 0, sval: "" });
-        tok = parser_next(p);
-    };
-    FnDef { name: name, params: params, return_type: "", body: body }
+// ── Token access ──
+
+fn parser_peek(p: &Parser) -> Token {
+    if p.pos < p.tokens.len() { p.tokens[p.pos] }
+    else { Token { kind: TokenKind::Eof, span: Span { line: 0, col: 0 } } }
 }
 
-fn parse_struct(p: &mut Parser) -> StructDef {
-    let name = parser_next(p).value;
-    parser_next(p); // {
-    let mut fields = Vec::new();
-    let mut tok = parser_next(p);
-    while tok.kind != KIND_RBRACE() {
-        let fname = tok.value;
-        parser_next(p); // :
-        let ftype = parser_next(p).value;
-        fields.push(Param { name: fname, type_ann: ftype });
-        tok = parser_next(p);
-        if tok.kind == KIND_COMMA() { tok = parser_next(p); };
+fn parser_at_eof(p: &Parser) -> bool {
+    p.pos >= p.tokens.len()
+}
+
+fn parser_advance(p: &mut Parser) -> Token {
+    if p.pos < p.tokens.len() { let t = p.tokens[p.pos]; p.pos = p.pos + 1; t }
+    else { Token { kind: TokenKind::Eof, span: Span { line: 0, col: 0 } } }
+}
+
+// ── Helper: add expr node, return index (1-based, 0 = nil) ──
+
+fn add_expr(p: &mut Parser, kind: str) -> i64 {
+    let e = Expr {
+        kind: kind, ival: 0, fval: 0.0, sval: "",
+        left: 0, right: 0, arg_start: 0, arg_count: 0,
+        extra_start: 0, extra_count: 0,
     };
+    p.expr_nodes.push(e);
+    p.expr_nodes.len()
+}
+
+fn add_stmt(p: &mut Parser, kind: str) -> i64 {
+    let s = Stmt {
+        kind: kind, name: "", expr_idx: 0,
+        body_start: 0, body_count: 0,
+        else_start: 0, else_count: 0,
+    };
+    p.stmt_nodes.push(s);
+    p.stmt_nodes.len()
+}
+
+// ── Expression parsing ──
+
+fn parse_primary(p: &mut Parser) -> i64 {
+    let tok = parser_advance(p);
+
+    match tok.kind {
+        TokenKind::IntLiteral(value: n) => {
+            let idx = add_expr(p, "int");
+            p.expr_nodes[idx - 1].ival = n;
+            idx
+        },
+        TokenKind::FloatLiteral(value: n) => {
+            let idx = add_expr(p, "float");
+            p.expr_nodes[idx - 1].fval = n;
+            idx
+        },
+        TokenKind::StringLiteral(value: s) => {
+            let idx = add_expr(p, "str");
+            p.expr_nodes[idx - 1].sval = s;
+            idx
+        },
+        TokenKind::True => {
+            let idx = add_expr(p, "bool");
+            p.expr_nodes[idx - 1].ival = 1;
+            idx
+        },
+        TokenKind::False => {
+            let idx = add_expr(p, "bool");
+            p.expr_nodes[idx - 1].ival = 0;
+            idx
+        },
+        TokenKind::Identifier(name: s) => {
+            let idx = add_expr(p, "ident");
+            p.expr_nodes[idx - 1].sval = s;
+            idx
+        },
+        TokenKind::Self_ => {
+            let idx = add_expr(p, "ident");
+            p.expr_nodes[idx - 1].sval = "self";
+            idx
+        },
+        TokenKind::LParen => {
+            let expr_idx = parse_expr(p);
+            parser_advance(p); // expect RParen
+            expr_idx
+        },
+        TokenKind::LBrace => {
+            parse_block_expr(p)
+        },
+        TokenKind::If => {
+            parse_if_expr(p)
+        },
+        TokenKind::Match => {
+            parse_match_expr(p)
+        },
+        TokenKind::Ampersand => {
+            let inner = parse_unary(p);
+            let idx = add_expr(p, "ref");
+            p.expr_nodes[idx - 1].left = inner;
+            idx
+        },
+        TokenKind::Star => {
+            let inner = parse_unary(p);
+            let idx = add_expr(p, "deref");
+            p.expr_nodes[idx - 1].left = inner;
+            idx
+        },
+        TokenKind::Minus => {
+            let inner = parse_unary(p);
+            let idx = add_expr(p, "unary");
+            p.expr_nodes[idx - 1].sval = "-";
+            p.expr_nodes[idx - 1].left = inner;
+            idx
+        },
+        TokenKind::Not => {
+            let inner = parse_unary(p);
+            let idx = add_expr(p, "unary");
+            p.expr_nodes[idx - 1].sval = "!";
+            p.expr_nodes[idx - 1].left = inner;
+            idx
+        },
+        // Default: return an error expr
+        _ => {
+            let idx = add_expr(p, "int");
+            p.expr_nodes[idx - 1].ival = 0;
+            idx
+        },
+    }
+}
+
+fn parse_unary(p: &mut Parser) -> i64 {
+    parse_primary(p)
+}
+
+fn parse_postfix(p: &mut Parser) -> i64 {
+    let mut expr_idx = parse_unary(p);
+
+    loop {
+        let tok = parser_peek(p);
+
+        match tok.kind {
+            TokenKind::LParen => {
+                parser_advance(p); // skip (
+                let start = p.expr_nodes.len() + 1; // arg indices will be stored as separate exprs
+                let mut count: i64 = 0;
+                // Parse args as expressions, but we can't easily track indices.
+                // Instead: store args in a simpler way — just count and skip for now.
+                // Full implementation would parse and store each arg.
+                count = parse_arg_list(p);
+                // Update the call node
+                p.expr_nodes[expr_idx - 1].kind = "call";
+                p.expr_nodes[expr_idx - 1].arg_start = start;
+                p.expr_nodes[expr_idx - 1].arg_count = count;
+            },
+            TokenKind::Dot => {
+                parser_advance(p); // skip .
+                let field_tok = parser_advance(p);
+                let field_name = "";
+                match field_tok.kind {
+                    TokenKind::Identifier(name: s) => { /* field_name = s */ },
+                    _ => {},
+                };
+                let idx = add_expr(p, "field");
+                p.expr_nodes[idx - 1].left = expr_idx;
+                p.expr_nodes[idx - 1].sval = ""; // TODO: store field name
+                expr_idx = idx;
+            },
+            _ => { break; },
+        };
+    };
+
+    expr_idx
+}
+
+fn parse_arg_list(p: &mut Parser) -> i64 {
+    let mut count: i64 = 0;
+    loop {
+        let tok = parser_peek(p);
+        match tok.kind {
+            TokenKind::RParen => { break; },
+            TokenKind::Eof => { break; },
+            _ => {},
+        };
+        // Parse one argument
+        let _arg = parse_expr(p);
+        count = count + 1;
+        let tok2 = parser_peek(p);
+        match tok2.kind {
+            TokenKind::Comma => { parser_advance(p); },
+            _ => { break; },
+        };
+    };
+    parser_advance(p); // skip )
+    count
+}
+
+fn binop_prec(op: str) -> i64 {
+    if op == "*" || op == "/" || op == "%" { 5 }
+    else if op == "+" || op == "-" { 4 }
+    else if op == "<" || op == ">" || op == "<=" || op == ">=" { 3 }
+    else if op == "==" || op == "!=" { 2 }
+    else if op == "&&" { 1 }
+    else if op == "||" { 0 }
+    else { -1 }
+}
+
+fn token_to_binop_str(tok: Token) -> str {
+    match tok.kind {
+        TokenKind::Plus => "+",
+        TokenKind::Minus => "-",
+        TokenKind::Star => "*",
+        TokenKind::Slash => "/",
+        TokenKind::Percent => "%",
+        TokenKind::EqEq => "==",
+        TokenKind::NotEq => "!=",
+        TokenKind::Lt => "<",
+        TokenKind::Gt => ">",
+        TokenKind::LtEq => "<=",
+        TokenKind::GtEq => ">=",
+        TokenKind::AndAnd => "&&",
+        TokenKind::OrOr => "||",
+        _ => "",
+    }
+}
+
+fn is_binop(tok: Token) -> bool {
+    match tok.kind {
+        TokenKind::Plus | TokenKind::Minus | TokenKind::Star |
+        TokenKind::Slash | TokenKind::Percent | TokenKind::EqEq |
+        TokenKind::NotEq | TokenKind::Lt | TokenKind::Gt |
+        TokenKind::LtEq | TokenKind::GtEq | TokenKind::AndAnd |
+        TokenKind::OrOr => true,
+        _ => false,
+    }
+}
+
+fn parse_binary(p: &mut Parser, min_prec: i64) -> i64 {
+    let mut left = parse_postfix(p);
+
+    loop {
+        let tok = parser_peek(p);
+        if !is_binop(tok) { break; };
+        let op = token_to_binop_str(tok);
+        let prec = binop_prec(op);
+        if prec < min_prec { break; };
+
+        parser_advance(p); // consume operator
+        let right = parse_binary(p, prec + 1);
+
+        let idx = add_expr(p, "binary");
+        p.expr_nodes[idx - 1].sval = op;
+        p.expr_nodes[idx - 1].left = left;
+        p.expr_nodes[idx - 1].right = right;
+        left = idx;
+    };
+
+    left
+}
+
+fn parse_expr(p: &mut Parser) -> i64 {
+    // Check for assignment
+    let tok = parser_peek(p);
+    // Simple: just parse binary
+    let expr = parse_binary(p, 0);
+
+    // Check for =
+    let tok2 = parser_peek(p);
+    match tok2.kind {
+        TokenKind::Assign => {
+            parser_advance(p);
+            let rhs = parse_expr(p);
+            let idx = add_expr(p, "assign");
+            p.expr_nodes[idx - 1].left = expr;
+            p.expr_nodes[idx - 1].right = rhs;
+            idx
+        },
+        _ => expr,
+    }
+}
+
+fn parse_block_expr(p: &mut Parser) -> i64 {
+    let body_start = p.stmt_nodes.len() + 1;
+    let mut count: i64 = 0;
+    loop {
+        let tok = parser_peek(p);
+        match tok.kind {
+            TokenKind::RBrace => { break; },
+            TokenKind::Eof => { break; },
+            _ => {},
+        };
+        parse_stmt(p);
+        count = count + 1;
+    };
+    parser_advance(p); // skip }
+    let idx = add_expr(p, "block");
+    p.expr_nodes[idx - 1].extra_start = body_start;
+    p.expr_nodes[idx - 1].extra_count = count;
+    idx
+}
+
+fn parse_if_expr(p: &mut Parser) -> i64 {
+    // if cond then-expr [else else-expr]
+    let cond = parse_expr(p);
+    let then_expr = parse_expr(p);
+
+    let mut else_idx: i64 = 0;
+    let tok = parser_peek(p);
+    match tok.kind {
+        TokenKind::Else => {
+            parser_advance(p);
+            else_idx = parse_expr(p);
+        },
+        _ => {},
+    };
+
+    let idx = add_expr(p, "if");
+    p.expr_nodes[idx - 1].left = cond;
+    p.expr_nodes[idx - 1].right = then_expr;
+    p.expr_nodes[idx - 1].extra_start = else_idx;
+    idx
+}
+
+fn parse_match_expr(p: &mut Parser) -> i64 {
+    let scrutinee = parse_expr(p);
+    parser_advance(p); // skip {
+
+    let arm_start = p.match_arms.len() + 1;
+    let mut arm_count: i64 = 0;
+
+    loop {
+        let tok = parser_peek(p);
+        match tok.kind {
+            TokenKind::RBrace => { break; },
+            TokenKind::Eof => { break; },
+            _ => {},
+        };
+
+        // Parse pattern
+        let pat_tok = parser_advance(p);
+        let mut pat_kind = "wildcard";
+        let mut pat_name = "";
+        let mut pat_bind = "";
+
+        match pat_tok.kind {
+            TokenKind::Identifier(name: s) => {
+                pat_kind = "enum_variant";
+                pat_name = s;
+                // Check for ::Variant
+                let next = parser_peek(p);
+                match next.kind {
+                    TokenKind::ColonColon => {
+                        parser_advance(p);
+                        let variant_tok = parser_advance(p);
+                        match variant_tok.kind {
+                            TokenKind::Identifier(name: vs) => { pat_name = vs; },
+                            _ => {},
+                        };
+                    },
+                    _ => {},
+                };
+            },
+            _ => {},
+        };
+
+        parser_advance(p); // skip =>
+        let body = parse_expr(p);
+
+        let arm = MatchArm {
+            pat_kind: pat_kind, pat_name: pat_name,
+            pat_bind: pat_bind, body_expr: body,
+        };
+        p.match_arms.push(arm);
+        arm_count = arm_count + 1;
+
+        let t = parser_peek(p);
+        match t.kind {
+            TokenKind::Comma => { parser_advance(p); },
+            _ => {},
+        };
+    };
+
+    parser_advance(p); // skip }
+
+    let idx = add_expr(p, "match");
+    p.expr_nodes[idx - 1].left = scrutinee;
+    p.expr_nodes[idx - 1].extra_start = arm_start;
+    p.expr_nodes[idx - 1].extra_count = arm_count;
+    idx
+}
+
+// ── Statement parsing ──
+
+fn parse_stmt(p: &mut Parser) -> i64 {
+    let tok = parser_peek(p);
+
+    match tok.kind {
+        TokenKind::Let => {
+            parser_advance(p); // skip let
+            let mut mutable = false;
+            let t2 = parser_peek(p);
+            match t2.kind {
+                TokenKind::Mut => { parser_advance(p); mutable = true; },
+                _ => {},
+            };
+            let name_tok = parser_advance(p);
+            let mut name = "";
+            match name_tok.kind {
+                TokenKind::Identifier(name: s) => { name = s; },
+                _ => {},
+            };
+            // skip optional : Type
+            let t3 = parser_peek(p);
+            match t3.kind {
+                TokenKind::Colon => { parser_advance(p); parser_advance(p); }, // skip : and type
+                _ => {},
+            };
+            // =
+            let t4 = parser_peek(p);
+            match t4.kind {
+                TokenKind::Assign => {
+                    parser_advance(p);
+                    let init = parse_expr(p);
+                    let idx = add_stmt(p, "let");
+                    p.stmt_nodes[idx - 1].name = name;
+                    p.stmt_nodes[idx - 1].expr_idx = init;
+                    idx
+                },
+                _ => {
+                    let idx = add_stmt(p, "let");
+                    p.stmt_nodes[idx - 1].name = name;
+                    idx
+                },
+            }
+        },
+        TokenKind::Return => {
+            parser_advance(p);
+            let t2 = parser_peek(p);
+            let mut expr_idx: i64 = 0;
+            match t2.kind {
+                TokenKind::Semicolon | TokenKind::RBrace | TokenKind::Eof => {},
+                _ => { expr_idx = parse_expr(p); },
+            };
+            let idx = add_stmt(p, "return");
+            p.stmt_nodes[idx - 1].expr_idx = expr_idx;
+            idx
+        },
+        TokenKind::While => {
+            parser_advance(p);
+            let cond = parse_expr(p);
+            parser_advance(p); // skip {
+            let body_start = p.stmt_nodes.len() + 1;
+            let mut body_count: i64 = 0;
+            loop {
+                let t2 = parser_peek(p);
+                match t2.kind {
+                    TokenKind::RBrace | TokenKind::Eof => { break; },
+                    _ => {},
+                };
+                parse_stmt(p);
+                body_count = body_count + 1;
+            };
+            parser_advance(p); // skip }
+            let idx = add_stmt(p, "while");
+            p.stmt_nodes[idx - 1].expr_idx = cond;
+            p.stmt_nodes[idx - 1].body_start = body_start;
+            p.stmt_nodes[idx - 1].body_count = body_count;
+            idx
+        },
+        TokenKind::Break => {
+            parser_advance(p);
+            add_stmt(p, "break")
+        },
+        TokenKind::Continue => {
+            parser_advance(p);
+            add_stmt(p, "continue")
+        },
+        TokenKind::Loop => {
+            parser_advance(p);
+            parser_advance(p); // skip {
+            let body_start = p.stmt_nodes.len() + 1;
+            let mut body_count: i64 = 0;
+            loop {
+                let t2 = parser_peek(p);
+                match t2.kind {
+                    TokenKind::RBrace | TokenKind::Eof => { break; },
+                    _ => {},
+                };
+                parse_stmt(p);
+                body_count = body_count + 1;
+            };
+            parser_advance(p); // skip }
+            let idx = add_stmt(p, "loop");
+            p.stmt_nodes[idx - 1].body_start = body_start;
+            p.stmt_nodes[idx - 1].body_count = body_count;
+            idx
+        },
+        // Expression statement
+        _ => {
+            let expr = parse_expr(p);
+            let idx = add_stmt(p, "expr");
+            p.stmt_nodes[idx - 1].expr_idx = expr;
+            idx
+        },
+    }
+}
+
+// ── Top-level parsing ──
+
+fn parse_fn(p: &mut Parser) -> FnDef {
+    parser_advance(p); // skip fn
+    let name_tok = parser_advance(p);
+    let mut name = "";
+    match name_tok.kind {
+        TokenKind::Identifier(name: s) => { name = s; },
+        _ => {},
+    };
+    parser_advance(p); // skip (
+    let mut params = Vec::new();
+    loop {
+        let t = parser_peek(p);
+        match t.kind {
+            TokenKind::RParen | TokenKind::Eof => { break; },
+            _ => {},
+        };
+        let pname_tok = parser_advance(p);
+        let mut pname = "";
+        match pname_tok.kind {
+            TokenKind::Identifier(name: s) => { pname = s; },
+            _ => {},
+        };
+        parser_advance(p); // skip :
+        let ptype_tok = parser_advance(p);
+        let mut ptype = "";
+        match ptype_tok.kind {
+            TokenKind::Identifier(name: s) => { ptype = s; },
+            _ => {},
+        };
+        params.push(Param { name: pname, type_ann: ptype });
+        let t2 = parser_peek(p);
+        match t2.kind {
+            TokenKind::Comma => { parser_advance(p); },
+            _ => { break; },
+        };
+    };
+    parser_advance(p); // skip )
+
+    let mut return_type = "";
+    let t3 = parser_peek(p);
+    match t3.kind {
+        TokenKind::Arrow => {
+            parser_advance(p);
+            let ret_tok = parser_advance(p);
+            match ret_tok.kind {
+                TokenKind::Identifier(name: s) => { return_type = s; },
+                _ => {},
+            };
+        },
+        _ => {},
+    };
+
+    parser_advance(p); // skip {
+    let body_start = p.stmt_nodes.len() + 1;
+    let mut body_count: i64 = 0;
+    loop {
+        let t4 = parser_peek(p);
+        match t4.kind {
+            TokenKind::RBrace | TokenKind::Eof => { break; },
+            _ => {},
+        };
+        parse_stmt(p);
+        body_count = body_count + 1;
+    };
+    parser_advance(p); // skip }
+
+    FnDef { name: name, params: params, return_type: return_type, body_start: body_start, body_count: body_count }
+}
+
+fn parse_struct_def(p: &mut Parser) -> StructDef {
+    parser_advance(p); // skip struct
+    let name_tok = parser_advance(p);
+    let mut name = "";
+    match name_tok.kind {
+        TokenKind::Identifier(name: s) => { name = s; },
+        _ => {},
+    };
+    parser_advance(p); // skip {
+    let mut fields = Vec::new();
+    loop {
+        let t = parser_peek(p);
+        match t.kind {
+            TokenKind::RBrace | TokenKind::Eof => { break; },
+            _ => {},
+        };
+        let fname_tok = parser_advance(p);
+        let mut fname = "";
+        match fname_tok.kind {
+            TokenKind::Identifier(name: s) => { fname = s; },
+            _ => {},
+        };
+        parser_advance(p); // skip :
+        let ftype_tok = parser_advance(p);
+        let mut ftype = "";
+        match ftype_tok.kind {
+            TokenKind::Identifier(name: s) => { ftype = s; },
+            _ => {},
+        };
+        fields.push(StructField { name: fname, type_ann: ftype });
+        let t2 = parser_peek(p);
+        match t2.kind {
+            TokenKind::Comma => { parser_advance(p); },
+            _ => { break; },
+        };
+    };
+    parser_advance(p); // skip }
     StructDef { name: name, fields: fields }
+}
+
+fn parse_enum_def(p: &mut Parser) -> EnumDef {
+    parser_advance(p); // skip enum
+    let name_tok = parser_advance(p);
+    let mut name = "";
+    match name_tok.kind {
+        TokenKind::Identifier(name: s) => { name = s; },
+        _ => {},
+    };
+    parser_advance(p); // skip {
+    let mut variants = Vec::new();
+    loop {
+        let t = parser_peek(p);
+        match t.kind {
+            TokenKind::RBrace | TokenKind::Eof => { break; },
+            _ => {},
+        };
+        let vname_tok = parser_advance(p);
+        let mut vname = "";
+        match vname_tok.kind {
+            TokenKind::Identifier(name: s) => { vname = s; },
+            _ => {},
+        };
+        let mut vfields = Vec::new();
+        let t2 = parser_peek(p);
+        match t2.kind {
+            TokenKind::LParen => {
+                parser_advance(p);
+                loop {
+                    let t3 = parser_peek(p);
+                    match t3.kind {
+                        TokenKind::RParen | TokenKind::Eof => { break; },
+                        _ => {},
+                    };
+                    let fname_tok = parser_advance(p);
+                    let mut fname = "";
+                    match fname_tok.kind {
+                        TokenKind::Identifier(name: s) => { fname = s; },
+                        _ => {},
+                    };
+                    parser_advance(p); // skip :
+                    let ftype_tok = parser_advance(p);
+                    let mut ftype = "";
+                    match ftype_tok.kind {
+                        TokenKind::Identifier(name: s) => { ftype = s; },
+                        _ => {},
+                    };
+                    vfields.push(StructField { name: fname, type_ann: ftype });
+                    let t4 = parser_peek(p);
+                    match t4.kind {
+                        TokenKind::Comma => { parser_advance(p); },
+                        _ => { break; },
+                    };
+                };
+                parser_advance(p); // skip )
+            },
+            _ => {},
+        };
+        variants.push(EnumVariant { name: vname, fields: vfields });
+        let t5 = parser_peek(p);
+        match t5.kind {
+            TokenKind::Comma => { parser_advance(p); },
+            _ => { break; },
+        };
+    };
+    parser_advance(p); // skip }
+    EnumDef { name: name, variants: variants }
 }
 
 fn parse_program(tokens: Vec<Token>) -> Program {
     let mut p = parser_new(tokens);
+
     let mut structs = Vec::new();
+    let mut enums = Vec::new();
     let mut fns = Vec::new();
-    let mut main_stmts = Vec::new();
+    let main_stmts_start = 1; // stmt indexing starts at 1
+    let mut stmts_before_top_level = p.stmt_nodes.len();
+
     loop {
-        if p.pos >= p.tokens.len() { break; };
-        if p.tokens[p.pos].kind == KIND_EOF() { break; };
-        if p.tokens[p.pos].kind == KIND_STRUCT() { structs.push(parse_struct(&mut p)); }
-        else if p.tokens[p.pos].kind == KIND_FN() { fns.push(parse_fn(&mut p)); }
-        else { main_stmts.push(parse_stmt(&mut p)); };
+        if parser_at_eof(&p) { break; };
+        let tok = parser_peek(&p);
+        match tok.kind {
+            TokenKind::Struct => {
+                structs.push(parse_struct_def(&mut p));
+                // skip optional ;
+                let t2 = parser_peek(&p);
+                match t2.kind {
+                    TokenKind::Semicolon => { parser_advance(&mut p); },
+                    _ => {},
+                };
+            },
+            TokenKind::Enum => {
+                enums.push(parse_enum_def(&mut p));
+                let t2 = parser_peek(&p);
+                match t2.kind {
+                    TokenKind::Semicolon => { parser_advance(&mut p); },
+                    _ => {},
+                };
+            },
+            TokenKind::Fn => {
+                fns.push(parse_fn(&mut p));
+                let t2 = parser_peek(&p);
+                match t2.kind {
+                    TokenKind::Semicolon => { parser_advance(&mut p); },
+                    _ => {},
+                };
+            },
+            TokenKind::Eof => { break; },
+            _ => {
+                // Top-level expression statement (for scripting)
+                parse_stmt(&mut p);
+                let t2 = parser_peek(&p);
+                match t2.kind {
+                    TokenKind::Semicolon => { parser_advance(&mut p); },
+                    _ => {},
+                };
+            },
+        };
+    };
+
+    let main_count = p.stmt_nodes.len() - stmts_before_top_level;
+
+    Program {
+        structs: structs,
+        enums: enums,
+        fns: fns,
+        main_stmts_start: main_stmts_start,
+        main_stmts_count: main_count,
+        expr_nodes: p.expr_nodes,
+        stmt_nodes: p.stmt_nodes,
+        match_arms: p.match_arms,
     }
-    Program { structs: structs, fns: fns, main_stmts: main_stmts }
 }

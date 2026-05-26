@@ -29,6 +29,10 @@ pub enum Type {
         ret: Box<Type>,
     },
     TypeParam { name: String },
+    Generic {
+        base: Box<Type>,
+        args: Vec<Type>,
+    },
     Ref(Box<Type>),
     MutRef(Box<Type>),
     Struct(String),
@@ -62,6 +66,14 @@ impl fmt::Display for Type {
             }
             Type::Unknown => write!(f, "<unknown>"),
             Type::TypeParam { name } => write!(f, "{}", name),
+            Type::Generic { base, args } => {
+                write!(f, "{}<", base)?;
+                for (i, a) in args.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", a)?;
+                }
+                write!(f, ">")
+            }
             Type::Ref(inner) => write!(f, "&{}", inner),
             Type::MutRef(inner) => write!(f, "&mut {}", inner),
             Type::Struct(name) => write!(f, "{}", name),
@@ -125,6 +137,14 @@ impl Type {
                     super::super::parser::ast::DimSpec::Wildcard => Dim::Any,
                 }).collect();
                 Type::Tensor { dtype: base, dims: resolved_dims }
+            }
+            TA::Generic { base, args } => {
+                let base_ty = Self::from_annotation(&TA::Named(base.clone()));
+                let arg_tys: Vec<Type> = args.iter().map(Self::from_annotation).collect();
+                Type::Generic {
+                    base: Box::new(base_ty),
+                    args: arg_tys,
+                }
             }
             TA::Array(inner) => Type::Array(Box::new(Self::from_annotation(inner))),
             TA::FnType { params, ret } => Type::FnType {

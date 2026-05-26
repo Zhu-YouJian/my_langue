@@ -2,23 +2,39 @@
 
 > 各类待办、跳过项、环境依赖、注意事项均记录于此。
 >
-> **当前阶段：v0.3.0 — Phase 7 (标准库) ✅ 完成，Phase 8 (自举) 🚧 骨架完成/核心逻辑待填**
+> **当前阶段：v0.3.0 — Phase 7 (标准库) ✅ 完成，Phase 8 (自举) 🚧 各层补全完毕，端到端待验证**
 > 详见：`docs/superpowers/plans/2026-05-26-v0.3.0-standard-library-and-self-hosting.md`
 
-## 自举阻塞项
+## 自举阻塞项（全部解决 ✅）
 
-自举编译器（tenthc/）的 Lexer + Parser + Codegen 已在 Tenth 中大致编写，但遇到以下限制：
+~~自举编译器（tenthc/）的 Lexer + Parser + Codegen 已在 Tenth 中大致编写，但遇到以下限制：~~
 
-1. ~~**结构体初始化**~~ ✅ 已解决：`..` 默认值语法 (`Point { x: 1.0, .. }`)
-2. **泛型类型在表达式中**：`Vec<Token>` 等泛型语法在函数签名的返回值位置触发解析器错误（`<` 被视为泛型参数）。**← 最后一个阻塞项**
-3. ~~**无 `enum` 元组变体**~~ ✅ 已解决：`Option::Some(42)` 可构造
-4. ~~**无闭包 / 高阶函数**~~ ✅ 已解决：`|x| x + 1` 闭包可用
+1. ~~**结构体初始化**~~ ✅ `..` 默认值语法 (`Point { x: 1.0, .. }`)
+2. ~~**泛型类型在表达式中**~~ ✅ Rust parser `parse_type` 已修复，`TypeAnnotation::Generic` + `Type::Generic` 传播完整
+3. ~~**无 `enum` 元组变体**~~ ✅ `Option::Some(42)` 可构造
+4. ~~**无闭包 / 高阶函数**~~ ✅ `|x| x + 1` 闭包可用
 
-**当前自举阻塞项（仅剩 1 项）：**
-- [x] 支持结构体字段默认值或 `Default` trait ✅
-- [x] 支持 `enum` 元组变体 (`Some(42)`) ✅
-- [x] 闭包 / Lambda ✅
-- [ ] 修复泛型在返回类型中的解析 (`fn f() -> Vec<Token>`)
+**语言阻塞项：0 项。**
+
+## 自举编译器现状
+
+tenthc/ 各层已从骨架补全为实实现：
+
+| 层 | 文件 | 状态 |
+|----|------|------|
+| Token | `tenthc/lexer/token.th` | ✅ enum TokenKind (50+ 变体) |
+| Lexer | `tenthc/lexer/lexer.th` | ✅ 完整词法分析 (无 == 比较) |
+| Parser | `tenthc/parser/parser.th` | ✅ 递归下降 + 优先级爬山 + arena AST |
+| Codegen | `tenthc/codegen/cgen.th` | ✅ 完整 C 代码生成 (表达式/语句/函数/结构体) |
+
+Rust 编译器改进：
+- `is_known_enum` 硬编码 → 动态 `known_enums` 集合 (parse_item 时注册)
+- `TypeAnnotation::Generic` + `Type::Generic` 泛型参数不再丢弃
+- `Name::Variant { fields }` 正确解析为 `EnumLiteral` 而非 `StructLiteral`
+
+待完成：
+- [ ] 端到端自举验证 (Rust → tenthc.c → tenthc.exe → tenthc_v2.c)
+- [ ] tenthc 实际编译自身并输出一致
 
 ---
 

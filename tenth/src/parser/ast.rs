@@ -17,6 +17,10 @@ pub struct Ident {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeAnnotation {
     Named(Ident),
+    Generic {
+        base: Ident,
+        args: Vec<TypeAnnotation>,
+    },
     Tensor {
         dtype: Box<TypeAnnotation>,
         dims: Vec<DimSpec>,

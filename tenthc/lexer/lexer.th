@@ -1,4 +1,4 @@
-// Self-hosting Lexer — v0.3.1
+// Self-hosting Lexer — v0.3.1 enum-based
 
 struct Lexer {
     source: str,
@@ -31,11 +31,6 @@ fn lexer_advance(lexer: &mut Lexer) -> str {
 
 fn make_span(line: i64, col: i64) -> Span { Span { line: line, col: col } }
 
-fn make_token(kind: str, value: str, line: i64, col: i64) -> Token {
-    let span = make_span(line, col);
-    Token { kind: kind, value: value, span: span }
-}
-
 fn lexer_next(lexer: &mut Lexer) -> Token {
     let mut ch = lexer_peek(lexer);
 
@@ -55,20 +50,36 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
 
     let line = lexer.line;
     let col = lexer.col;
+    let span = make_span(line, col);
 
-    if ch == "" { return make_token(KIND_EOF(), "", line, col); };
+    if ch == "" {
+        return Token { kind: TokenKind::Eof, span: span };
+    };
 
     // Numbers
     if is_digit(ch) {
         let mut num_str = "";
+        let mut is_float = false;
         while is_digit(ch) {
             num_str = num_str + ch;
             ch = lexer_advance(lexer); ch = lexer_peek(lexer);
         };
-        return make_token(KIND_INT(), num_str, line, col);
+        if ch == "." {
+            is_float = true;
+            num_str = num_str + ch;
+            ch = lexer_advance(lexer); ch = lexer_peek(lexer);
+            while is_digit(ch) {
+                num_str = num_str + ch;
+                ch = lexer_advance(lexer); ch = lexer_peek(lexer);
+            };
+        };
+        if is_float {
+            return Token { kind: TokenKind::FloatLiteral(value: 0.0), span: span };
+        };
+        return Token { kind: TokenKind::IntLiteral(value: 0), span: span };
     };
 
-    // Identifiers
+    // Identifiers and keywords
     if is_alpha(ch) {
         let mut ident = "";
         while (ch != "") && is_alnum(ch) {
@@ -76,15 +87,30 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
             ch = lexer_advance(lexer); ch = lexer_peek(lexer);
         };
 
-        // Keywords
-        if ident == "fn" { return make_token(KIND_FN(), ident, line, col); };
-        if ident == "let" { return make_token(KIND_LET(), ident, line, col); };
-        if ident == "if" { return make_token(KIND_IF(), ident, line, col); };
-        if ident == "else" { return make_token(KIND_ELSE(), ident, line, col); };
-        if ident == "return" { return make_token(KIND_RETURN(), ident, line, col); };
-        if ident == "struct" { return make_token(KIND_STRUCT(), ident, line, col); };
+        if ident == "fn" { return Token { kind: TokenKind::Fn, span: span }; };
+        if ident == "let" { return Token { kind: TokenKind::Let, span: span }; };
+        if ident == "mut" { return Token { kind: TokenKind::Mut, span: span }; };
+        if ident == "if" { return Token { kind: TokenKind::If, span: span }; };
+        if ident == "else" { return Token { kind: TokenKind::Else, span: span }; };
+        if ident == "match" { return Token { kind: TokenKind::Match, span: span }; };
+        if ident == "return" { return Token { kind: TokenKind::Return, span: span }; };
+        if ident == "while" { return Token { kind: TokenKind::While, span: span }; };
+        if ident == "for" { return Token { kind: TokenKind::For, span: span }; };
+        if ident == "loop" { return Token { kind: TokenKind::Loop, span: span }; };
+        if ident == "break" { return Token { kind: TokenKind::Break, span: span }; };
+        if ident == "continue" { return Token { kind: TokenKind::Continue, span: span }; };
+        if ident == "struct" { return Token { kind: TokenKind::Struct, span: span }; };
+        if ident == "enum" { return Token { kind: TokenKind::Enum, span: span }; };
+        if ident == "impl" { return Token { kind: TokenKind::Impl, span: span }; };
+        if ident == "trait" { return Token { kind: TokenKind::Trait, span: span }; };
+        if ident == "use" { return Token { kind: TokenKind::Use, span: span }; };
+        if ident == "mod" { return Token { kind: TokenKind::Mod, span: span }; };
+        if ident == "true" { return Token { kind: TokenKind::True, span: span }; };
+        if ident == "false" { return Token { kind: TokenKind::False, span: span }; };
+        if ident == "move" { return Token { kind: TokenKind::Move, span: span }; };
+        if ident == "self" { return Token { kind: TokenKind::Self_, span: span }; };
 
-        return make_token(KIND_IDENT(), ident, line, col);
+        return Token { kind: TokenKind::Identifier(name: ident), span: span };
     };
 
     // Strings
@@ -94,35 +120,84 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         ch = lexer_peek(lexer);
         while (ch != "") && (ch != "\"") { s = s + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
         if ch == "\"" { lexer_advance(lexer); };
-        return make_token(KIND_IDENT(), s, line, col);
+        return Token { kind: TokenKind::StringLiteral(value: s), span: span };
     };
 
-    // Single-char tokens
+    // Single-char tokens and multi-char operators
     lexer_advance(lexer);
 
-    if ch == "(" { return make_token(KIND_LPAREN(), "(", line, col); };
-    if ch == ")" { return make_token(KIND_RPAREN(), ")", line, col); };
-    if ch == "{" { return make_token(KIND_LBRACE(), "{", line, col); };
-    if ch == "}" { return make_token(KIND_RBRACE(), "}", line, col); };
-    if ch == "+" { return make_token(KIND_PLUS(), "+", line, col); };
-    if ch == "-" { if lexer_peek(lexer) == ">" { lexer_advance(lexer); return make_token(KIND_ARROW(), "->", line, col); }; return make_token(KIND_MINUS(), "-", line, col); };
-    if ch == "*" { return make_token(KIND_STAR(), "*", line, col); };
-    if ch == "/" { return make_token(KIND_SLASH(), "/", line, col); };
-    if ch == ";" { return make_token(KIND_SEMICOLON(), ";", line, col); };
-    if ch == ":" { if lexer_peek(lexer) == ":" { lexer_advance(lexer); return make_token(KIND_COLON2(), "::", line, col); }; return make_token(KIND_COLON(), ":", line, col); };
-    if ch == "," { return make_token(KIND_COMMA(), ",", line, col); };
-    if ch == "=" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return make_token(KIND_EQEQ(), "==", line, col); }; return make_token(KIND_ASSIGN(), "=", line, col); };
+    if ch == "(" { return Token { kind: TokenKind::LParen, span: span }; };
+    if ch == ")" { return Token { kind: TokenKind::RParen, span: span }; };
+    if ch == "{" { return Token { kind: TokenKind::LBrace, span: span }; };
+    if ch == "}" { return Token { kind: TokenKind::RBrace, span: span }; };
+    if ch == "[" { return Token { kind: TokenKind::LBracket, span: span }; };
+    if ch == "]" { return Token { kind: TokenKind::RBracket, span: span }; };
+    if ch == "," { return Token { kind: TokenKind::Comma, span: span }; };
+    if ch == ";" { return Token { kind: TokenKind::Semicolon, span: span }; };
 
-    make_token(KIND_IDENT(), ch, line, col)
+    if ch == "." {
+        if lexer_peek(lexer) == "." { lexer_advance(lexer); return Token { kind: TokenKind::DotDot, span: span }; };
+        return Token { kind: TokenKind::Dot, span: span };
+    };
+    if ch == ":" {
+        if lexer_peek(lexer) == ":" { lexer_advance(lexer); return Token { kind: TokenKind::ColonColon, span: span }; };
+        return Token { kind: TokenKind::Colon, span: span };
+    };
+    if ch == "+" {
+        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::PlusAssign, span: span }; };
+        return Token { kind: TokenKind::Plus, span: span };
+    };
+    if ch == "-" {
+        if lexer_peek(lexer) == ">" { lexer_advance(lexer); return Token { kind: TokenKind::Arrow, span: span }; };
+        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::MinusAssign, span: span }; };
+        return Token { kind: TokenKind::Minus, span: span };
+    };
+    if ch == "*" {
+        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::StarAssign, span: span }; };
+        return Token { kind: TokenKind::Star, span: span };
+    };
+    if ch == "/" {
+        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::SlashAssign, span: span }; };
+        return Token { kind: TokenKind::Slash, span: span };
+    };
+    if ch == "%" { return Token { kind: TokenKind::Percent, span: span }; };
+    if ch == "=" {
+        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::EqEq, span: span }; };
+        if lexer_peek(lexer) == ">" { lexer_advance(lexer); return Token { kind: TokenKind::FatArrow, span: span }; };
+        return Token { kind: TokenKind::Assign, span: span };
+    };
+    if ch == "!" {
+        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::NotEq, span: span }; };
+        return Token { kind: TokenKind::Not, span: span };
+    };
+    if ch == "<" {
+        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::LtEq, span: span }; };
+        return Token { kind: TokenKind::Lt, span: span };
+    };
+    if ch == ">" {
+        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::GtEq, span: span }; };
+        return Token { kind: TokenKind::Gt, span: span };
+    };
+    if ch == "&" {
+        if lexer_peek(lexer) == "&" { lexer_advance(lexer); return Token { kind: TokenKind::AndAnd, span: span }; };
+        return Token { kind: TokenKind::Ampersand, span: span };
+    };
+    if ch == "|" {
+        if lexer_peek(lexer) == "|" { lexer_advance(lexer); return Token { kind: TokenKind::OrOr, span: span }; };
+        return Token { kind: TokenKind::Pipe, span: span };
+    };
+
+    // Unknown char — treat as identifier
+    Token { kind: TokenKind::Identifier(name: ch), span: span }
 }
 
 fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {
     let mut tokens = Vec::new();
-    let mut done = false;
-    while !done {
+    let src_len = lexer.source.len();
+    while lexer.pos < src_len {
         let t = lexer_next(lexer);
-        if t.kind == KIND_EOF() { tokens.push(t); done = true; }
-        else { tokens.push(t); };
+        tokens.push(t);
     };
+    tokens.push(lexer_next(lexer)); // push EOF
     tokens
 }

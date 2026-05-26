@@ -1,37 +1,86 @@
-// Token definitions — v0.3.1 with struct defaults
+// Token definitions — v0.3.1 with enum TokenKind
 
 struct Span {
     line: i64,
     col: i64,
 }
 
-struct Token {
-    kind: str,      // "Int", "Ident", "Fn", "Let", "Plus", ...
-    value: str,     // lexeme text
-    span: Span,
+enum TokenKind {
+    // Literals
+    IntLiteral(value: i64),
+    FloatLiteral(value: f64),
+    StringLiteral(value: str),
+    Identifier(name: str),
+
+    // Keywords
+    Fn,
+    Let,
+    Mut,
+    If,
+    Else,
+    Match,
+    Return,
+    While,
+    For,
+    Loop,
+    Break,
+    Continue,
+    Struct,
+    Enum,
+    Impl,
+    Trait,
+    Use,
+    Mod,
+    True,
+    False,
+    Move,
+    Self_,
+
+    // Operators
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    EqEq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    AndAnd,
+    OrOr,
+    Not,
+    Ampersand,
+    Pipe,
+
+    // Assignments
+    Assign,
+    PlusAssign,
+    MinusAssign,
+    StarAssign,
+    SlashAssign,
+
+    // Delimiters
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    LBracket,
+    RBracket,
+    Comma,
+    Semicolon,
+    Colon,
+    Dot,
+    DotDot,
+    Arrow,
+    FatArrow,
+    ColonColon,
+
+    Eof,
 }
 
-fn KIND_EOF() -> str { "Eof" }
-fn KIND_INT() -> str { "Int" }
-fn KIND_IDENT() -> str { "Ident" }
-fn KIND_FN() -> str { "Fn" }
-fn KIND_LET() -> str { "Let" }
-fn KIND_IF() -> str { "If" }
-fn KIND_ELSE() -> str { "Else" }
-fn KIND_RETURN() -> str { "Return" }
-fn KIND_STRUCT() -> str { "Struct" }
-fn KIND_PLUS() -> str { "Plus" }
-fn KIND_MINUS() -> str { "Minus" }
-fn KIND_STAR() -> str { "Star" }
-fn KIND_SLASH() -> str { "Slash" }
-fn KIND_ASSIGN() -> str { "Assign" }
-fn KIND_EQEQ() -> str { "EqEq" }
-fn KIND_LPAREN() -> str { "LParen" }
-fn KIND_RPAREN() -> str { "RParen" }
-fn KIND_LBRACE() -> str { "LBrace" }
-fn KIND_RBRACE() -> str { "RBrace" }
-fn KIND_COLON() -> str { "Colon" }
-fn KIND_COMMA() -> str { "Comma" }
-fn KIND_SEMICOLON() -> str { "Semicolon" }
-fn KIND_ARROW() -> str { "Arrow" }
-fn KIND_COLON2() -> str { "Colon2" }
+struct Token {
+    kind: TokenKind,
+    span: Span,
+}
