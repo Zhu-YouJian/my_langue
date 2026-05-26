@@ -26,7 +26,7 @@ fn compile_to_c_noopt(src: &str) -> String {
 #[test]
 fn test_const_fold_optimization() {
     let opt = compile_to_c("2 + 3 * 4");
-    let noopt = compile_to_c_noopt("2 + 3 * 4");
+    let _noopt = compile_to_c_noopt("2 + 3 * 4");
     // Optimized version should contain 14 directly, not the full expression
     assert!(opt.contains("14"), "optimized output should contain constant-folded 14: {}", opt);
 }

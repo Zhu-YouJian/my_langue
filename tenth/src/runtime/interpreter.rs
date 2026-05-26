@@ -11,7 +11,6 @@ pub struct Interpreter {
     pub variables: HashMap<String, Value>,
     functions: Vec<HirFnDef>,
     generic_funcs: HashMap<String, HirFnDef>,
-    generic_structs: HashMap<String, HirGenericStruct>,
     methods: HashMap<String, HashMap<String, HirFnDef>>,
     modules: HashMap<String, HirProgram>,
     trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
@@ -23,7 +22,6 @@ impl Interpreter {
             variables: HashMap::new(),
             functions: program.functions.clone(),
             generic_funcs: HashMap::new(),
-            generic_structs: program.generic_structs.clone(),
             methods: program.methods.clone(),
             modules: program.modules.clone(),
             trait_impls: program.trait_impls.clone(),
@@ -772,7 +770,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_string_method(&self, s: &str, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
+    fn eval_string_method(&self, s: &str, method: &str, _args: &[Value]) -> TenthResult<Option<Value>> {
         match method {
             "len" => Ok(Some(Value::Int(s.chars().count() as i64))),
             _ => Err(TenthError::RuntimeError {

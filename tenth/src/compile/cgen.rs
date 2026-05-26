@@ -6,7 +6,6 @@ use super::mir::*;
 pub struct CGenerator {
     output: String,
     indent_level: usize,
-    var_types: HashMap<String, String>,
     current_ret_type: String,
     struct_names: HashSet<String>,
     struct_fields: HashMap<String, Vec<(String, String)>>, // struct name → field name → C type
@@ -18,7 +17,6 @@ impl CGenerator {
         CGenerator {
             output: String::new(),
             indent_level: 0,
-            var_types: HashMap::new(),
             current_ret_type: "void".to_string(),
             struct_names: HashSet::new(),
             struct_fields: HashMap::new(),
@@ -60,6 +58,8 @@ impl CGenerator {
         self.emit("extern int64_t Vec_len(void* v);");
         self.emit("extern void* Vec_get(void* v, int64_t idx);");
         self.emit("extern const char* str_at(const char* s, int64_t pos);");
+        self.emit("extern bool str_eq(const char* a, const char* b);");
+        self.emit("extern void println(const char* s);");
         self.emit("extern void* HashMap_new(void);");
         self.emit("");
 
@@ -292,31 +292,7 @@ impl CGenerator {
         }
     }
 
-    fn rvalue_to_c_cast(&self, rvalue: &MirRvalue, expected_ty: &Type) -> String {
-        // For zero literal assigned to struct type, use compound literal
-        if let MirRvalueKind::Literal(LiteralValue::Int(0)) = &rvalue.kind {
-            let struct_name = match expected_ty {
-                Type::Struct(name) => Some(name.clone()),
-                Type::TypeParam { name } if self.struct_names.contains(name) => Some(name.clone()),
-                _ => None,
-            };
-            if let Some(name) = struct_name {
-                return format!("({}){{0}}", name);
-            }
-        }
-        let val_str = self.rvalue_to_c(rvalue);
-        let expected_c = c_type_name(expected_ty, &self.struct_names);
-        if expected_c == "void*" || val_str.starts_with('(') {
-            val_str
-        } else {
-            match &rvalue.kind {
-                MirRvalueKind::Literal(_) | MirRvalueKind::Call { .. } | MirRvalueKind::StructLiteral { .. } => {
-                    format!("({}){}", expected_c, val_str)
-                }
-                _ => val_str,
-            }
-        }
-    }
+
 
     fn rvalue_to_c(&self, rvalue: &MirRvalue) -> String {
         // If the value is a zero literal for a struct type, emit compound literal
@@ -362,10 +338,10 @@ impl CGenerator {
                 } else if matches!(op, BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq)
                     && (is_str(left) || is_str(right) || l.starts_with('"') || r.starts_with('"'))
                 {
-                    // String comparison — use strcmp, not pointer comparison
+                    // String comparison — use str_eq for ==/!=, strcmp for ordering
                     match op {
-                        BinOp::Eq => format!("(strcmp({}, {}) == 0)", l, r),
-                        BinOp::NotEq => format!("(strcmp({}, {}) != 0)", l, r),
+                        BinOp::Eq => format!("str_eq({}, {})", l, r),
+                        BinOp::NotEq => format!("(!str_eq({}, {}))", l, r),
                         BinOp::Lt => format!("(strcmp({}, {}) < 0)", l, r),
                         BinOp::Gt => format!("(strcmp({}, {}) > 0)", l, r),
                         BinOp::LtEq => format!("(strcmp({}, {}) <= 0)", l, r),
@@ -394,7 +370,7 @@ impl CGenerator {
                             "cgen_program" => "&prog".to_string(),
                             _ => s,
                         }
-                    } else if (func.as_str().starts_with("Vec_push") || func.as_str() == "Vec::push") {
+                    } else if func.as_str().starts_with("Vec_push") || func.as_str() == "Vec::push" {
                         // Add & if needed, then maybe heap-allocate
                         let base = if s.starts_with("&") || s.starts_with("*") { s.clone() }
                         else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_)) { format!("&{}", s) }
@@ -633,58 +609,6 @@ fn c_binop(op: &BinOp) -> &str {
     }
 }
 
-fn collect_struct_names_stmt(stmt: &MirStmt, names: &mut HashSet<String>) {
-    match stmt {
-        MirStmt::Let { value, .. } => collect_struct_names_rvalue(value, names),
-        MirStmt::Assign { value, .. } => collect_struct_names_rvalue(value, names),
-        MirStmt::Return(Some(value)) => collect_struct_names_rvalue(value, names),
-        MirStmt::Expr(val) => collect_struct_names_rvalue(val, names),
-        _ => {}
-    }
-}
-
-fn collect_struct_names_term(term: &MirTerminator, names: &mut HashSet<String>) {
-    match term {
-        MirTerminator::Return(Some(val)) => collect_struct_names_rvalue(val, names),
-        MirTerminator::If { cond, .. } => collect_struct_names_rvalue(cond, names),
-        _ => {}
-    }
-}
-
-fn collect_struct_names_rvalue(val: &MirRvalue, names: &mut HashSet<String>) {
-    match &val.kind {
-        MirRvalueKind::StructLiteral { name, fields } => {
-            names.insert(name.clone());
-            for (_, f) in fields { collect_struct_names_rvalue(f, names); }
-        }
-        MirRvalueKind::BinaryOp(_, l, r) => {
-            collect_struct_names_rvalue(l, names);
-            collect_struct_names_rvalue(r, names);
-        }
-        MirRvalueKind::Field { target, .. } => collect_struct_names_rvalue(target, names),
-        MirRvalueKind::UnaryOp(_, e) => collect_struct_names_rvalue(e, names),
-        MirRvalueKind::Call { args, .. } => {
-            for a in args { collect_struct_names_rvalue(a, names); }
-        }
-        MirRvalueKind::If { cond, .. } => collect_struct_names_rvalue(cond, names),
-        MirRvalueKind::IfExpr { cond, then_val, else_val } => {
-            collect_struct_names_rvalue(cond, names);
-            collect_struct_names_rvalue(then_val, names);
-            collect_struct_names_rvalue(else_val, names);
-        }
-        _ => {}
-    }
-}
-
-fn ftype_str_to_c(t: &str) -> &str {
-    match t {
-        "I32" | "I64" | "i32" | "i64" => "int64_t",
-        "F64" | "f64" => "double",
-        "Str" | "str" => "const char*",
-        "Bool" | "bool" => "bool",
-        _ => "void*",
-    }
-}
 
 fn escape_c_string(s: &str) -> String {
     s.replace('\\', "\\\\")

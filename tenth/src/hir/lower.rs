@@ -230,7 +230,7 @@ impl Lowerer {
                     if var_info.is_none() && fn_info.is_none() {
                         match ident.name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
-                            | "read_file" | "write_file" | "Vec::new" | "HashMap::new" => {
+                            | "read_file" | "write_file" | "str_at" | "Vec::new" | "HashMap::new" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)
                             }
                             _ => {
@@ -791,6 +791,7 @@ impl Lowerer {
             "tensor" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
             "rand" | "randn" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
             "read_file" => Ok(Type::str_()),
+            "str_at" => Ok(Type::str_()),
             "write_file" => Ok(Type::unit()),
             "Vec::new" | "HashMap::new" => Ok(Type::Unknown),
             _ => Ok(Type::Unknown),
@@ -843,13 +844,7 @@ impl Lowerer {
                     .collect::<TenthResult<_>>()?;
                 HirStmtKind::Loop { body: lowered_body }
             }
-            _ => {
-                return Err(TenthError::ParseError {
-                    line: span.line,
-                    col: span.col,
-                    message: "unsupported statement in lowering".into(),
-                });
-            }
+
         };
 
         Ok(HirStmt { kind, span })

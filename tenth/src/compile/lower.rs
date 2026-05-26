@@ -151,8 +151,8 @@ impl MirLowerer {
                 if !ts.is_empty() || !es.is_empty() {
                     // Only create temp if there's a non-unit value to capture
                     let is_not_unit = |v: &MirRvalue| !matches!(&v.ty, Type::Base(crate::hir::types::BaseType::Unit));
-                    let result_tmp = if (tv.as_ref().map_or(false, is_not_unit) ||
-                                         ev.as_ref().map_or(false, is_not_unit)) {
+                    let result_tmp = if tv.as_ref().map_or(false, is_not_unit) ||
+                                         ev.as_ref().map_or(false, is_not_unit) {
                         Some(self.new_local("ifv", ty.clone()))
                     } else {
                         None
@@ -194,12 +194,20 @@ impl MirLowerer {
                     // Return Use of the outer temp variable
                     Ok((stmts, result_tmp.map(|n| rv(ty.clone(), MirRvalueKind::Use(n)))))
                 } else {
-                    // Pure expression branches — use ternary IfExpr
+                    // Pure expression branches — use ternary IfExpr, or IfElse for if-without-else
                     Ok(match (tv, ev) {
                         (Some(tv), Some(ev)) => {
                             (stmts, Some(rv(ty.clone(), MirRvalueKind::IfExpr { cond: Box::new(cv), then_val: Box::new(tv), else_val: Box::new(ev) })))
                         }
-                        (Some(tv), None) => (stmts, Some(tv)),
+                        (Some(tv), None) => {
+                            // If without else — must preserve condition, emit as IfElse with empty else
+                            stmts.push(MirStmt::IfElse {
+                                cond: cv,
+                                then_body: vec![MirStmt::Expr(tv)],
+                                else_body: vec![],
+                            });
+                            (stmts, None)
+                        }
                         _ => (stmts, None),
                     })
                 }
@@ -222,7 +230,7 @@ impl MirLowerer {
             }
 
             HirExprKind::Field { target, field } => {
-                let (mut s, t) = self.lower_expr_rvalue(target)?;
+                let (s, t) = self.lower_expr_rvalue(target)?;
                 Ok((s, Some(rv(ty, MirRvalueKind::Field { target: Box::new(t), field: field.clone() }))))
             }
 
