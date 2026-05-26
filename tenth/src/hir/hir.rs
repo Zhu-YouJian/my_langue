@@ -104,6 +104,11 @@ pub enum HirExprKind {
         value: Box<HirExpr>,
     },
     Move(Box<HirExpr>),
+    FieldAssign {
+        target: Box<HirExpr>,
+        field: String,
+        value: Box<HirExpr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

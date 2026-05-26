@@ -460,6 +460,39 @@ impl Interpreter {
                 }
             }
 
+            HirExprKind::FieldAssign { target, field, value } => {
+                let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "field-assign target is void".into(),
+                })?;
+                let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
+                    message: "field-assign value is void".into(),
+                })?;
+                match &target_val {
+                    Value::MutRef(rc) => {
+                        let mut inner = rc.borrow_mut();
+                        match &mut *inner {
+                            Value::Struct { fields, .. } => {
+                                for (fname, fval) in &mut *fields {
+                                    if fname == field {
+                                        *fval = rhs;
+                                        return Ok(Some(Value::Unit));
+                                    }
+                                }
+                                Err(TenthError::RuntimeError {
+                                    message: format!("struct has no field '{}'", field),
+                                })
+                            }
+                            _ => Err(TenthError::RuntimeError {
+                                message: "field assignment only supported on structs".into(),
+                            }),
+                        }
+                    }
+                    _ => Err(TenthError::RuntimeError {
+                        message: "can only assign fields through mutable reference".into(),
+                    }),
+                }
+            }
+
             HirExprKind::Move(inner) => {
                 let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
                     message: "move operand is void".into(),

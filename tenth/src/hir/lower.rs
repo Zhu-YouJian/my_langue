@@ -452,6 +452,14 @@ impl Lowerer {
                         let inner_hir = self.lower_expr(inner)?;
                         (HirExprKind::DerefAssign { target: Box::new(inner_hir), value: Box::new(v) }, Type::unit())
                     }
+                    ExprKind::Field { target: field_target, field } => {
+                        let inner_hir = self.lower_expr(field_target)?;
+                        (HirExprKind::FieldAssign {
+                            target: Box::new(inner_hir),
+                            field: field.name.clone(),
+                            value: Box::new(v),
+                        }, Type::unit())
+                    }
                     _ => {
                         return Err(TenthError::ParseError {
                             line: span.line,

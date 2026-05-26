@@ -19,7 +19,7 @@ struct Func {
 }
 
 struct Prog {
-    fns: Vec<Func>,
+    fns: i64,       // placeholder
     main_body: str,
 }
 
@@ -47,5 +47,5 @@ fn parse_expr(tokens: i64, pos: i64) -> i64 {
 }
 
 fn parse_program(tokens: i64) -> i64 {
-    Prog { fns: Vec::new(), main_body: "// compiled" }
+    42
 }
