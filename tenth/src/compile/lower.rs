@@ -122,15 +122,40 @@ impl MirLowerer {
                     .transpose()?
                     .unwrap_or((vec![], None));
                 let mut stmts = cs;
-                // If branches have side-effect statements, use IfElse
+                // If branches have side-effect statements, use IfElse with outer temp
                 if !ts.is_empty() || !es.is_empty() {
+                    let result_tmp = if tv.is_some() || ev.is_some() {
+                        Some(self.new_local("ifv", ty.clone()))
+                    } else {
+                        None
+                    };
+                    // Declare outer temp before IfElse
+                    if let Some(tmp_name) = &result_tmp {
+                        // Use the then-value's type for better type resolution
+                        let init_ty = tv.as_ref().map(|v| v.ty.clone()).unwrap_or_else(|| ty.clone());
+                        let val = rv(init_ty.clone(), MirRvalueKind::Literal(LiteralValue::Int(0)));
+                        stmts.push(MirStmt::Let {
+                            name: tmp_name.clone(),
+                            ty: init_ty,
+                            value: val,
+                        });
+                    }
+                    // Append the values to the branch bodies as assignments to temp
+                    let mut then_body = ts;
+                    if let (Some(tmp_name), Some(tv)) = (&result_tmp, tv) {
+                        then_body.push(MirStmt::Assign { name: tmp_name.clone(), value: tv });
+                    }
+                    let mut else_body = es;
+                    if let (Some(tmp_name), Some(ev)) = (&result_tmp, ev) {
+                        else_body.push(MirStmt::Assign { name: tmp_name.clone(), value: ev });
+                    }
                     stmts.push(MirStmt::IfElse {
                         cond: cv,
-                        then_body: ts,
-                        else_body: es,
+                        then_body,
+                        else_body,
                     });
-                    // The result is the then-value or else-value (if any), else unit
-                    Ok((stmts, tv.or(ev)))
+                    // Return Use of the outer temp variable
+                    Ok((stmts, result_tmp.map(|n| rv(ty.clone(), MirRvalueKind::Use(n)))))
                 } else {
                     // Pure expression branches — use ternary IfExpr
                     Ok(match (tv, ev) {

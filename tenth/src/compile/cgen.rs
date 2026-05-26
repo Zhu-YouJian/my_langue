@@ -40,6 +40,11 @@ impl CGenerator {
         self.emit("    memcpy(r, a, la); memcpy(r + la, b, lb); r[la + lb] = 0;");
         self.emit("    return r;");
         self.emit("}");
+        self.emit("// Int-to-string helper");
+        self.emit("static char* str_int(int64_t n) {");
+        self.emit("    char buf[32]; snprintf(buf, 32, \"%lld\", (long long)n);");
+        self.emit("    return strdup(buf);");
+        self.emit("}");
         self.emit("");
 
         // Declare built-in functions
@@ -114,17 +119,6 @@ impl CGenerator {
         self.emit(&format!("{} {}({}) {{", ret_c, func.name, params.join(", ")));
         self.indent_level = 1;
 
-        // Declare locals
-        for local in &func.locals {
-            if !func.params.iter().any(|(n, _)| n == &local.name) {
-                self.emit(&format!("{} {};", c_type_name(&local.ty, &self.struct_names), local.name));
-            }
-        }
-
-        if !func.locals.is_empty() {
-            self.emit("");
-        }
-
         // Generate blocks
         for block in &func.blocks {
             if block.id != 0 {
@@ -144,14 +138,6 @@ impl CGenerator {
     fn generate_main(&mut self, func: &MirFunction) {
         self.emit("int main(void) {");
         self.indent_level = 1;
-
-        for local in &func.locals {
-            self.emit(&format!("{} {};", c_type_name(&local.ty, &self.struct_names), local.name));
-        }
-
-        if !func.locals.is_empty() {
-            self.emit("");
-        }
 
         for block in &func.blocks {
             for stmt in &block.stmts {
@@ -298,7 +284,11 @@ impl CGenerator {
                     matches!(&rvalue.ty, Type::TypeParam { name } if name == "str")
                 );
                 if is_str_op {
-                    format!("str_add({}, {})", l, r)
+                    // If operands are integer types, convert to string first
+                    let is_int = |v: &MirRvalue| matches!(&v.ty, Type::Base(BaseType::I64 | BaseType::I32 | BaseType::I8 | BaseType::I16));
+                    let l_str = if is_int(left) { format!("str_int({})", l) } else { l };
+                    let r_str = if is_int(right) { format!("str_int({})", r) } else { r };
+                    format!("str_add({}, {})", l_str, r_str)
                 } else {
                     let op_str = c_binop(op);
                     format!("({} {} {})", l, op_str, r)
