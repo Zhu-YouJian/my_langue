@@ -97,10 +97,9 @@ fn parse_program(tokens: Vec<Token>) -> Program {
     let mut main_stmts = Vec::new();
     loop {
         if p.pos >= p.tokens.len() { break; };
-        let tok = p.tokens[p.pos];
-        if tok.kind == KIND_EOF() { break; };
-        if tok.kind == KIND_STRUCT() { structs.push(parse_struct(&mut p)); }
-        else if tok.kind == KIND_FN() { fns.push(parse_fn(&mut p)); }
+        if p.tokens[p.pos].kind == KIND_EOF() { break; };
+        if p.tokens[p.pos].kind == KIND_STRUCT() { structs.push(parse_struct(&mut p)); }
+        else if p.tokens[p.pos].kind == KIND_FN() { fns.push(parse_fn(&mut p)); }
         else { main_stmts.push(parse_stmt(&mut p)); };
     }
     Program { structs: structs, fns: fns, main_stmts: main_stmts }

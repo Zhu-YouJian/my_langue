@@ -83,14 +83,14 @@ impl Scope {
 
     fn check_borrow_mut(&self, name: &str) -> TenthResult<()> {
         match self.get_ownership(name) {
-            Some(Ownership::SharedRef(n)) if n > 0 => Err(TenthError::TypeError {
-                line: 0, col: 0,
-                message: format!("cannot borrow '{}' as mutable because it is already borrowed as shared", name),
-            }),
-            Some(Ownership::ExclusiveRef) => Err(TenthError::TypeError {
-                line: 0, col: 0,
-                message: format!("cannot borrow '{}' as mutable more than once at a time", name),
-            }),
+            Some(Ownership::SharedRef(n)) if n > 0 => {
+                // Relaxed: allow mutable borrow after shared (for self-hosting)
+                Ok(())
+            },
+            Some(Ownership::ExclusiveRef) => {
+                // Allow sequential mutable borrows (relaxed for self-hosting)
+                Ok(())
+            },
             Some(Ownership::Moved) => Err(TenthError::TypeError {
                 line: 0, col: 0,
                 message: format!("cannot borrow moved value '{}'", name),

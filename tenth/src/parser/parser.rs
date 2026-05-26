@@ -1043,9 +1043,8 @@ impl Parser {
             }
             TokenKind::Loop => {
                 self.advance();
-                self.match_token(TokenKind::LBrace);
+                self.expect(TokenKind::LBrace)?;
                 let stmts = self.parse_block_stmts()?;
-                self.expect(TokenKind::RBrace)?;
                 Ok(Stmt {
                     kind: StmtKind::Loop { body: stmts },
                     span,
