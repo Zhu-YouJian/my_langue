@@ -1,5 +1,61 @@
-// Minimal C codegen
+// Self-hosting Codegen — v0.3.1
+// Program → C code
 
-fn gen_program(prog: i64) -> str {
-    "#include <stdio.h>\n\nint main(void) {\n    printf(\"tenthc ok\\n\");\n    return 0;\n}\n"
+fn cgen_expr(expr: &Expr) -> str {
+    if expr.kind == "int" { expr.sval }
+    else if expr.kind == "ident" { expr.sval }
+    else if expr.kind == "binary" { "(" + expr.sval + " " + expr.op + " " + "" + expr.right + ")" }
+    else { "0" }
+}
+
+fn cgen_stmt(stmt: &Stmt) -> str {
+    if stmt.kind == "let" {
+        "int " + stmt.name + " = " + cgen_expr(&Expr { kind: "int", ival: stmt.ival, sval: stmt.sval, op: "", left: 0, right: 0 }) + ";\n"
+    } else if stmt.kind == "return" {
+        "return " + cgen_expr(&Expr { kind: "int", ival: stmt.ival, sval: stmt.sval, op: "", left: 0, right: 0 }) + ";\n"
+    } else { ";\n" }
+}
+
+fn cgen_struct(s: &StructDef) -> str {
+    let mut out = "typedef struct {\n";
+    let mut i = 0;
+    while i < s.fields.len() {
+        let f = s.fields[i];
+        out = out + "    int " + f.name + ";\n";
+        i = i + 1;
+    };
+    out = out + "} " + s.name + ";\n\n";
+    out
+}
+
+fn cgen_fn(f: &FnDef) -> str {
+    let mut out = "int " + f.name + "(";
+    let mut i = 0;
+    while i < f.params.len() {
+        let p = f.params[i];
+        if i > 0 { out = out + ", "; };
+        out = out + "int " + p.name;
+        i = i + 1;
+    };
+    out = out + ") {\n";
+    i = 0;
+    while i < f.body.len() {
+        out = out + "    " + cgen_stmt(&f.body[i]);
+        i = i + 1;
+    };
+    out = out + "}\n\n";
+    out
+}
+
+fn cgen_program(prog: &Program) -> str {
+    let mut out = "#include <stdio.h>\n\n";
+    let mut i = 0;
+    while i < prog.structs.len() { out = out + cgen_struct(&prog.structs[i]); i = i + 1; };
+    i = 0;
+    while i < prog.fns.len() { out = out + cgen_fn(&prog.fns[i]); i = i + 1; };
+    out = out + "int main(void) {\n";
+    i = 0;
+    while i < prog.main_stmts.len() { out = out + "    " + cgen_stmt(&prog.main_stmts[i]); i = i + 1; };
+    out = out + "    return 0;\n}\n";
+    out
 }

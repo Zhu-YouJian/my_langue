@@ -1,51 +1,150 @@
-// Minimal parser for bootstrap
+// Self-hosting Parser — v0.3.1 flat AST
 
 struct Expr {
-    tag: i64,
+    kind: str,    // "int", "ident", "binary", "call", "block"
     ival: i64,
     sval: str,
+    op: str,
+    left: i64,    // index into node array (simplified: use sval for now)
+    right: i64,
 }
 
 struct Stmt {
-    tag: i64,
+    kind: str,    // "let", "return", "expr"
     name: str,
     ival: i64,
     sval: str,
 }
 
-struct Func {
+struct Param {
     name: str,
-    body_src: str,
+    type_ann: str,
 }
 
-struct Prog {
-    fns: i64,       // placeholder
-    main_body: str,
+struct FnDef {
+    name: str,
+    params: Vec<Param>,
+    return_type: str,
+    body: Vec<Stmt>,
 }
 
-fn parse_expr(tokens: i64, pos: i64) -> i64 {
-    let idx = *pos;
-    let t = tokens[idx];
-    *pos = idx + 1;
+struct StructDef {
+    name: str,
+    fields: Vec<Param>,
+}
 
+struct Program {
+    structs: Vec<StructDef>,
+    fns: Vec<FnDef>,
+    main_stmts: Vec<Stmt>,
+}
+
+// Parser instance
+struct Parser {
+    tokens: Vec<Token>,
+    pos: i64,
+}
+
+fn parser_new(tokens: Vec<Token>) -> Parser { Parser { tokens: tokens, pos: 0 } }
+
+fn parser_peek(p: &Parser) -> Token {
+    if p.pos < p.tokens.len() { p.tokens[p.pos] }
+    else { make_token(KIND_EOF(), "", 0, 0) }
+}
+
+fn parser_advance(p: &mut Parser) -> Token { let t = parser_peek(p); p.pos = p.pos + 1; t }
+
+fn parser_expect(p: &mut Parser, kind: str) -> Token { parser_advance(p) }
+
+// Expression parsing
+fn parse_expr(p: &mut Parser) -> Expr {
+    let t = parser_advance(p);
     if t.kind == KIND_INT() {
-        Expr { tag: 0, ival: 0, sval: t.value }
+        Expr { kind: "int", ival: 0, sval: t.value, op: "", left: 0, right: 0 }
     } else if t.kind == KIND_IDENT() {
         let name = t.value;
-        if *pos < tokens.len() {
-            let next = tokens[*pos];
-            if next.kind == KIND_PLUS() {
-                *pos = *pos + 1;
-                parse_expr(tokens, pos);
-                return Expr { tag: 2, ival: 0, sval: name };
-            };
-        };
-        Expr { tag: 1, ival: 0, sval: name }
+        let next = parser_peek(p);
+        if (next.kind == KIND_PLUS()) || (next.kind == KIND_MINUS()) || (next.kind == KIND_STAR()) || (next.kind == KIND_SLASH()) {
+            let op_tok = parser_advance(p);
+            let right = parse_expr(p);
+            Expr { kind: "binary", ival: 0, sval: name, op: op_tok.kind, left: 0, right: right.ival }
+        } else {
+            Expr { kind: "ident", ival: 0, sval: name, op: "", left: 0, right: 0 }
+        }
     } else {
-        0
+        Expr { kind: "int", ival: 0, sval: "0", op: "", left: 0, right: 0 }
     }
 }
 
-fn parse_program(tokens: i64) -> i64 {
-    42
+fn parse_stmt(p: &mut Parser) -> Stmt {
+    let t = parser_peek(p);
+    if t.kind == KIND_LET() {
+        parser_advance(p);
+        let name = parser_advance(p).value;
+        parser_expect(p, KIND_ASSIGN());
+        let val = parse_expr(p);
+        parser_expect(p, KIND_SEMICOLON());
+        Stmt { kind: "let", name: name, ival: val.ival, sval: val.sval }
+    } else if t.kind == KIND_RETURN() {
+        parser_advance(p);
+        let val = parse_expr(p);
+        parser_expect(p, KIND_SEMICOLON());
+        Stmt { kind: "return", name: "", ival: val.ival, sval: val.sval }
+    } else {
+        parser_advance(p);
+        parser_expect(p, KIND_SEMICOLON());
+        Stmt { kind: "expr", name: "", ival: 0, sval: "" }
+    }
+}
+
+fn parse_fn(p: &mut Parser) -> FnDef {
+    parser_advance(p);
+    let name = parser_advance(p).value;
+    parser_expect(p, KIND_LPAREN());
+    let mut params = Vec::new();
+    while parser_peek(p).kind != KIND_RPAREN() {
+        let pname = parser_advance(p).value;
+        parser_expect(p, KIND_COLON());
+        let ptype = parser_advance(p).value;
+        params.push(Param { name: pname, type_ann: ptype });
+        if parser_peek(p).kind == KIND_COMMA() { parser_advance(p); };
+    };
+    parser_expect(p, KIND_RPAREN());
+    let ret = if parser_peek(p).kind == KIND_ARROW() { parser_advance(p); parser_advance(p).value } else { "" };
+    parser_expect(p, KIND_LBRACE());
+    let mut body = Vec::new();
+    while parser_peek(p).kind != KIND_RBRACE() { body.push(parse_stmt(p)); };
+    parser_expect(p, KIND_RBRACE());
+    FnDef { name: name, params: params, return_type: ret, body: body }
+}
+
+fn parse_struct(p: &mut Parser) -> StructDef {
+    parser_advance(p);
+    let name = parser_advance(p).value;
+    parser_expect(p, KIND_LBRACE());
+    let mut fields = Vec::new();
+    while parser_peek(p).kind != KIND_RBRACE() {
+        let fname = parser_advance(p).value;
+        parser_expect(p, KIND_COLON());
+        let ftype = parser_advance(p).value;
+        fields.push(Param { name: fname, type_ann: ftype });
+        if parser_peek(p).kind == KIND_COMMA() { parser_advance(p); };
+    };
+    parser_expect(p, KIND_RBRACE());
+    StructDef { name: name, fields: fields }
+}
+
+fn parse_program(tokens: Vec<Token>) -> Program {
+    let mut p = parser_new(tokens);
+    let mut structs = Vec::new();
+    let mut fns = Vec::new();
+    let mut main_stmts = Vec::new();
+    while p.pos < p.tokens.len() {
+        let t = parser_peek(&p);
+        if t.kind == KIND_EOF() { break; };
+        if t.kind == KIND_STRUCT() { structs.push(parse_struct(&mut p)); }
+        else if t.kind == KIND_FN() { fns.push(parse_fn(&mut p)); }
+        else { main_stmts.push(parse_stmt(&mut p)); };
+    };
+    Program { structs: structs, fns: fns, main_stmts: main_stmts }
 }

@@ -1,4 +1,4 @@
-// Self-hosting Lexer for bootstrap — with type annotations
+// Self-hosting Lexer — v0.3.1
 
 struct Lexer {
     source: str,
@@ -11,116 +11,118 @@ fn lexer_new(source: str) -> Lexer {
     Lexer { source: source, pos: 0, line: 1, col: 1 }
 }
 
-fn is_digit(ch: str) -> bool {
-    (ch >= "0") && (ch <= "9")
+fn is_digit(ch: str) -> bool { (ch >= "0") && (ch <= "9") }
+fn is_alpha(ch: str) -> bool { ((ch >= "a") && (ch <= "z")) || ((ch >= "A") && (ch <= "Z")) || (ch == "_") }
+fn is_alnum(ch: str) -> bool { is_alpha(ch) || is_digit(ch) }
+fn is_ws(ch: str) -> bool { (ch == " ") || (ch == "\n") || (ch == "\t") || (ch == "\r") }
+
+fn lexer_peek(lexer: &Lexer) -> str {
+    if lexer.pos < lexer.source.len() { lexer.source[lexer.pos] } else { "" }
 }
 
-fn is_alpha(ch: str) -> bool {
-    ((ch >= "a") && (ch <= "z")) || ((ch >= "A") && (ch <= "Z")) || (ch == "_")
-}
-
-fn is_ws(ch: str) -> bool {
-    (ch == " ") || (ch == "\n") || (ch == "\t")
-}
-
-fn lexer_peek(lexer: i64) -> str {
-    let pos = lexer.pos;
-    if pos < lexer.source.len() {
-        lexer.source[pos]
-    } else {
-        ""
-    }
-}
-
-fn lexer_advance(lexer: i64) -> str {
+fn lexer_advance(lexer: &mut Lexer) -> str {
     let ch = lexer_peek(lexer);
     if ch == "" { return ""; };
     lexer.pos = lexer.pos + 1;
-    if ch == "\n" {
-        lexer.line = lexer.line + 1;
-        lexer.col = 1;
-    } else {
-        lexer.col = lexer.col + 1;
-    };
+    if ch == "\n" { lexer.line = lexer.line + 1; lexer.col = 1; }
+    else { lexer.col = lexer.col + 1; };
     ch
 }
 
+fn make_span(line: i64, col: i64) -> Span { Span { line: line, col: col } }
+
 fn make_token(kind: str, value: str, line: i64, col: i64) -> Token {
-    let span = Span { line: line, col: col };
+    let span = make_span(line, col);
     Token { kind: kind, value: value, span: span }
 }
 
-fn lexer_next(lexer: i64) -> Token {
-    let ch = lexer_peek(lexer);
+fn lexer_next(lexer: &mut Lexer) -> Token {
+    let mut ch = lexer_peek(lexer);
 
-    while (ch != "") && is_ws(ch) {
-        ch = lexer_advance(lexer);
+    // Skip whitespace and comments
+    while ch != "" {
+        if is_ws(ch) { ch = lexer_advance(lexer); ch = lexer_peek(lexer); }
+        else if ch == "/" {
+            let next_pos = lexer.pos + 1;
+            if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") {
+                lexer_advance(lexer); lexer_advance(lexer);
+                ch = lexer_peek(lexer);
+                while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+            } else { break; };
+        } else { break; };
         ch = lexer_peek(lexer);
     };
 
     let line = lexer.line;
     let col = lexer.col;
 
-    if ch == "" {
-        return make_token(KIND_EOF(), "", line, col);
-    };
+    if ch == "" { return make_token(KIND_EOF(), "", line, col); };
 
+    // Numbers
     if is_digit(ch) {
-        let num = "";
-        while (ch != "") && is_digit(ch) {
-            num = num + ch;
-            ch = lexer_advance(lexer);
-            ch = lexer_peek(lexer);
+        let mut num_str = "";
+        while is_digit(ch) {
+            num_str = num_str + ch;
+            ch = lexer_advance(lexer); ch = lexer_peek(lexer);
         };
-        return make_token(KIND_INT(), num, line, col);
+        return make_token(KIND_INT(), num_str, line, col);
     };
 
+    // Identifiers
     if is_alpha(ch) {
-        let ident = "";
-        while (ch != "") && (is_alpha(ch) || is_digit(ch)) {
+        let mut ident = "";
+        while (ch != "") && is_alnum(ch) {
             ident = ident + ch;
-            ch = lexer_advance(lexer);
-            ch = lexer_peek(lexer);
+            ch = lexer_advance(lexer); ch = lexer_peek(lexer);
         };
+
+        // Keywords
+        if ident == "fn" { return make_token(KIND_FN(), ident, line, col); };
+        if ident == "let" { return make_token(KIND_LET(), ident, line, col); };
+        if ident == "if" { return make_token(KIND_IF(), ident, line, col); };
+        if ident == "else" { return make_token(KIND_ELSE(), ident, line, col); };
+        if ident == "return" { return make_token(KIND_RETURN(), ident, line, col); };
+        if ident == "struct" { return make_token(KIND_STRUCT(), ident, line, col); };
+
         return make_token(KIND_IDENT(), ident, line, col);
     };
 
-    ch = lexer_advance(lexer);
+    // Strings
+    if ch == "\"" {
+        lexer_advance(lexer);
+        let mut s = "";
+        ch = lexer_peek(lexer);
+        while (ch != "") && (ch != "\"") { s = s + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+        if ch == "\"" { lexer_advance(lexer); };
+        return make_token(KIND_IDENT(), s, line, col);
+    };
+
+    // Single-char tokens
+    lexer_advance(lexer);
 
     if ch == "(" { return make_token(KIND_LPAREN(), "(", line, col); };
     if ch == ")" { return make_token(KIND_RPAREN(), ")", line, col); };
     if ch == "{" { return make_token(KIND_LBRACE(), "{", line, col); };
     if ch == "}" { return make_token(KIND_RBRACE(), "}", line, col); };
     if ch == "+" { return make_token(KIND_PLUS(), "+", line, col); };
-    if ch == "-" { return make_token(KIND_MINUS(), "-", line, col); };
+    if ch == "-" { if lexer_peek(lexer) == ">" { lexer_advance(lexer); return make_token(KIND_ARROW(), "->", line, col); }; return make_token(KIND_MINUS(), "-", line, col); };
     if ch == "*" { return make_token(KIND_STAR(), "*", line, col); };
     if ch == "/" { return make_token(KIND_SLASH(), "/", line, col); };
     if ch == ";" { return make_token(KIND_SEMICOLON(), ";", line, col); };
-    if ch == ":" { return make_token(KIND_COLON(), ":", line, col); };
+    if ch == ":" { if lexer_peek(lexer) == ":" { lexer_advance(lexer); return make_token(KIND_COLON2(), "::", line, col); }; return make_token(KIND_COLON(), ":", line, col); };
     if ch == "," { return make_token(KIND_COMMA(), ",", line, col); };
-    if ch == "." { return make_token(KIND_DOT(), ".", line, col); };
-    if ch == "=" {
-        if lexer_peek(lexer) == "=" {
-            lexer_advance(lexer);
-            return make_token(KIND_EQEQ(), "==", line, col);
-        };
-        return make_token(KIND_ASSIGN(), "=", line, col);
-    };
+    if ch == "=" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return make_token(KIND_EQEQ(), "==", line, col); }; return make_token(KIND_ASSIGN(), "=", line, col); };
 
-    make_token("Unknown", ch, line, col)
+    make_token(KIND_IDENT(), ch, line, col)
 }
 
-fn lexer_tokenize(lexer: i64) -> i64 {
-    let tokens = Vec::new();
-    let done = false;
+fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {
+    let mut tokens = Vec::new();
+    let mut done = false;
     while !done {
         let t = lexer_next(lexer);
-        if t.kind == KIND_EOF() {
-            tokens.push(t);
-            done = true;
-        } else {
-            tokens.push(t);
-        };
+        if t.kind == KIND_EOF() { tokens.push(t); done = true; }
+        else { tokens.push(t); };
     };
-    tokens.len()
+    tokens
 }

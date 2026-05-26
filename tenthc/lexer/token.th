@@ -1,4 +1,4 @@
-// Token types for the self-hosting Lexer (simplified for bootstrap)
+// Token definitions — v0.3.1 with struct defaults
 
 struct Span {
     line: i64,
@@ -6,26 +6,32 @@ struct Span {
 }
 
 struct Token {
-    kind: str,
-    value: str,
+    kind: str,      // "Int", "Ident", "Fn", "Let", "Plus", ...
+    value: str,     // lexeme text
     span: Span,
 }
 
 fn KIND_EOF() -> str { "Eof" }
-fn KIND_INT() -> str { "IntLiteral" }
-fn KIND_IDENT() -> str { "Identifier" }
+fn KIND_INT() -> str { "Int" }
+fn KIND_IDENT() -> str { "Ident" }
+fn KIND_FN() -> str { "Fn" }
+fn KIND_LET() -> str { "Let" }
+fn KIND_IF() -> str { "If" }
+fn KIND_ELSE() -> str { "Else" }
+fn KIND_RETURN() -> str { "Return" }
+fn KIND_STRUCT() -> str { "Struct" }
 fn KIND_PLUS() -> str { "Plus" }
 fn KIND_MINUS() -> str { "Minus" }
 fn KIND_STAR() -> str { "Star" }
 fn KIND_SLASH() -> str { "Slash" }
-fn KIND_EQEQ() -> str { "EqEq" }
 fn KIND_ASSIGN() -> str { "Assign" }
+fn KIND_EQEQ() -> str { "EqEq" }
 fn KIND_LPAREN() -> str { "LParen" }
 fn KIND_RPAREN() -> str { "RParen" }
 fn KIND_LBRACE() -> str { "LBrace" }
 fn KIND_RBRACE() -> str { "RBrace" }
-fn KIND_SEMICOLON() -> str { "Semicolon" }
 fn KIND_COLON() -> str { "Colon" }
-fn KIND_ARROW() -> str { "Arrow" }
 fn KIND_COMMA() -> str { "Comma" }
-fn KIND_DOT() -> str { "Dot" }
+fn KIND_SEMICOLON() -> str { "Semicolon" }
+fn KIND_ARROW() -> str { "Arrow" }
+fn KIND_COLON2() -> str { "Colon2" }

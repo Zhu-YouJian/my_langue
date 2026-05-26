@@ -1,14 +1,15 @@
-// Self-hosting Tenth compiler v0.3.0
+// Self-hosting Tenth compiler v0.3.1
 
 fn compile(src: str) -> str {
-    let lex = lexer_new(src);
+    let mut lex = lexer_new(src);
     let tokens = lexer_tokenize(&mut lex);
-    let prog = parse_program(&tokens);
-    gen_program(&prog)
+    let prog = parse_program(tokens);
+    cgen_program(&prog)
 }
 
 fn main() -> i64 {
-    let c = compile("42");
+    let src = read_file("tenthc/lexer/token.th");
+    let c = compile(src);
     write_file("tenthc_output.c", c);
-    c.len()
+    42
 }
