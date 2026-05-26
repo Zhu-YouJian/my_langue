@@ -1,0 +1,353 @@
+// Token definitions — v0.3.1 with struct defaults
+
+struct Span {
+    line: i64,
+    col: i64,
+}
+
+struct Token {
+    kind: str,      // "Int", "Ident", "Fn", "Let", "Plus", ...
+    value: str,     // lexeme text
+    span: Span,
+}
+
+fn KIND_EOF() -> str { "Eof" }
+fn KIND_INT() -> str { "Int" }
+fn KIND_IDENT() -> str { "Ident" }
+fn KIND_FN() -> str { "Fn" }
+fn KIND_LET() -> str { "Let" }
+fn KIND_IF() -> str { "If" }
+fn KIND_ELSE() -> str { "Else" }
+fn KIND_RETURN() -> str { "Return" }
+fn KIND_STRUCT() -> str { "Struct" }
+fn KIND_PLUS() -> str { "Plus" }
+fn KIND_MINUS() -> str { "Minus" }
+fn KIND_STAR() -> str { "Star" }
+fn KIND_SLASH() -> str { "Slash" }
+fn KIND_ASSIGN() -> str { "Assign" }
+fn KIND_EQEQ() -> str { "EqEq" }
+fn KIND_LPAREN() -> str { "LParen" }
+fn KIND_RPAREN() -> str { "RParen" }
+fn KIND_LBRACE() -> str { "LBrace" }
+fn KIND_RBRACE() -> str { "RBrace" }
+fn KIND_COLON() -> str { "Colon" }
+fn KIND_COMMA() -> str { "Comma" }
+fn KIND_SEMICOLON() -> str { "Semicolon" }
+fn KIND_ARROW() -> str { "Arrow" }
+fn KIND_COLON2() -> str { "Colon2" }
+
+// Self-hosting Lexer — v0.3.1
+
+struct Lexer {
+    source: str,
+    pos: i64,
+    line: i64,
+    col: i64,
+}
+
+fn lexer_new(source: str) -> Lexer {
+    Lexer { source: source, pos: 0, line: 1, col: 1 }
+}
+
+fn is_digit(ch: str) -> bool { (ch >= "0") && (ch <= "9") }
+fn is_alpha(ch: str) -> bool { ((ch >= "a") && (ch <= "z")) || ((ch >= "A") && (ch <= "Z")) || (ch == "_") }
+fn is_alnum(ch: str) -> bool { is_alpha(ch) || is_digit(ch) }
+fn is_ws(ch: str) -> bool { (ch == " ") || (ch == "\n") || (ch == "\t") || (ch == "\r") }
+
+fn lexer_peek(lexer: &Lexer) -> str {
+    if lexer.pos < lexer.source.len() { lexer.source[lexer.pos] } else { "" }
+}
+
+fn lexer_advance(lexer: &mut Lexer) -> str {
+    let ch = lexer_peek(lexer);
+    if ch == "" { return ""; };
+    lexer.pos = lexer.pos + 1;
+    if ch == "\n" { lexer.line = lexer.line + 1; lexer.col = 1; }
+    else { lexer.col = lexer.col + 1; };
+    ch
+}
+
+fn make_span(line: i64, col: i64) -> Span { Span { line: line, col: col } }
+
+fn make_token(kind: str, value: str, line: i64, col: i64) -> Token {
+    let span = make_span(line, col);
+    Token { kind: kind, value: value, span: span }
+}
+
+fn lexer_next(lexer: &mut Lexer) -> Token {
+    let mut ch = lexer_peek(lexer);
+
+    // Skip whitespace and comments
+    while ch != "" {
+        if is_ws(ch) { ch = lexer_advance(lexer); ch = lexer_peek(lexer); }
+        else if ch == "/" {
+            let next_pos = lexer.pos + 1;
+            if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") {
+                lexer_advance(lexer); lexer_advance(lexer);
+                ch = lexer_peek(lexer);
+                while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+            } else { break; };
+        } else { break; };
+        ch = lexer_peek(lexer);
+    };
+
+    let line = lexer.line;
+    let col = lexer.col;
+
+    if ch == "" { return make_token(KIND_EOF(), "", line, col); };
+
+    // Numbers
+    if is_digit(ch) {
+        let mut num_str = "";
+        while is_digit(ch) {
+            num_str = num_str + ch;
+            ch = lexer_advance(lexer); ch = lexer_peek(lexer);
+        };
+        return make_token(KIND_INT(), num_str, line, col);
+    };
+
+    // Identifiers
+    if is_alpha(ch) {
+        let mut ident = "";
+        while (ch != "") && is_alnum(ch) {
+            ident = ident + ch;
+            ch = lexer_advance(lexer); ch = lexer_peek(lexer);
+        };
+
+        // Keywords
+        if ident == "fn" { return make_token(KIND_FN(), ident, line, col); };
+        if ident == "let" { return make_token(KIND_LET(), ident, line, col); };
+        if ident == "if" { return make_token(KIND_IF(), ident, line, col); };
+        if ident == "else" { return make_token(KIND_ELSE(), ident, line, col); };
+        if ident == "return" { return make_token(KIND_RETURN(), ident, line, col); };
+        if ident == "struct" { return make_token(KIND_STRUCT(), ident, line, col); };
+
+        return make_token(KIND_IDENT(), ident, line, col);
+    };
+
+    // Strings
+    if ch == "\"" {
+        lexer_advance(lexer);
+        let mut s = "";
+        ch = lexer_peek(lexer);
+        while (ch != "") && (ch != "\"") { s = s + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+        if ch == "\"" { lexer_advance(lexer); };
+        return make_token(KIND_IDENT(), s, line, col);
+    };
+
+    // Single-char tokens
+    lexer_advance(lexer);
+
+    if ch == "(" { return make_token(KIND_LPAREN(), "(", line, col); };
+    if ch == ")" { return make_token(KIND_RPAREN(), ")", line, col); };
+    if ch == "{" { return make_token(KIND_LBRACE(), "{", line, col); };
+    if ch == "}" { return make_token(KIND_RBRACE(), "}", line, col); };
+    if ch == "+" { return make_token(KIND_PLUS(), "+", line, col); };
+    if ch == "-" { if lexer_peek(lexer) == ">" { lexer_advance(lexer); return make_token(KIND_ARROW(), "->", line, col); }; return make_token(KIND_MINUS(), "-", line, col); };
+    if ch == "*" { return make_token(KIND_STAR(), "*", line, col); };
+    if ch == "/" { return make_token(KIND_SLASH(), "/", line, col); };
+    if ch == ";" { return make_token(KIND_SEMICOLON(), ";", line, col); };
+    if ch == ":" { if lexer_peek(lexer) == ":" { lexer_advance(lexer); return make_token(KIND_COLON2(), "::", line, col); }; return make_token(KIND_COLON(), ":", line, col); };
+    if ch == "," { return make_token(KIND_COMMA(), ",", line, col); };
+    if ch == "=" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return make_token(KIND_EQEQ(), "==", line, col); }; return make_token(KIND_ASSIGN(), "=", line, col); };
+
+    make_token(KIND_IDENT(), ch, line, col)
+}
+
+fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {
+    let mut tokens = Vec::new();
+    let mut done = false;
+    while !done {
+        let t = lexer_next(lexer);
+        if t.kind == KIND_EOF() { tokens.push(t); done = true; }
+        else { tokens.push(t); };
+    };
+    tokens
+}
+
+// Self-hosting Parser — v0.3.1 simplified: no peek, advance-only
+
+struct Parser {
+    tokens: Vec<Token>,
+    pos: i64,
+}
+
+struct Expr { kind: str, ival: i64, sval: str, op: str, left: i64, right: i64 }
+struct Stmt { kind: str, name: str, ival: i64, sval: str }
+struct Param { name: str, type_ann: str }
+struct FnDef { name: str, params: Vec<Param>, return_type: str, body: Vec<Stmt> }
+struct StructDef { name: str, fields: Vec<Param> }
+struct Program { structs: Vec<StructDef>, fns: Vec<FnDef>, main_stmts: Vec<Stmt> }
+
+fn parser_new(tokens: Vec<Token>) -> Parser { Parser { tokens: tokens, pos: 0 } }
+
+fn parser_next(p: &mut Parser) -> Token {
+    if p.pos < p.tokens.len() { let t = p.tokens[p.pos]; p.pos = p.pos + 1; t }
+    else { make_token(KIND_EOF(), "", 0, 0) }
+}
+
+fn parse_expr(p: &mut Parser) -> Expr {
+    let t = parser_next(p);
+    if t.kind == KIND_INT() { Expr { kind: "int", ival: 0, sval: t.value, op: "", left: 0, right: 0 } }
+    else if t.kind == KIND_IDENT() {
+        let name = t.value;
+        Expr { kind: "ident", ival: 0, sval: name, op: "", left: 0, right: 0 }
+    } else { Expr { kind: "int", ival: 0, sval: "0", op: "", left: 0, right: 0 } }
+}
+
+fn parse_stmt(p: &mut Parser) -> Stmt {
+    let t = parser_next(p);
+    if t.kind == KIND_LET() {
+        let name = parser_next(p).value;
+        parser_next(p); // =
+        let val = parse_expr(p);
+        parser_next(p); // ;
+        Stmt { kind: "let", name: name, ival: val.ival, sval: val.sval }
+    } else if t.kind == KIND_RETURN() {
+        let val = parse_expr(p);
+        parser_next(p); // ;
+        Stmt { kind: "return", name: "", ival: val.ival, sval: val.sval }
+    } else {
+        parser_next(p); // ;
+        Stmt { kind: "expr", name: "", ival: 0, sval: "" }
+    }
+}
+
+fn parse_fn(p: &mut Parser) -> FnDef {
+    let name = parser_next(p).value;
+    parser_next(p); // (
+    let mut params = Vec::new();
+    let mut tok = parser_next(p);
+    while tok.kind != KIND_RPAREN() {
+        let pname = tok.value;
+        parser_next(p); // :
+        let ptype = parser_next(p).value;
+        params.push(Param { name: pname, type_ann: ptype });
+        tok = parser_next(p);
+        if tok.kind == KIND_COMMA() { tok = parser_next(p); };
+    };
+    // skip -> return type if present
+    tok = parser_next(p);
+    if tok.kind == KIND_ARROW() { parser_next(p); tok = parser_next(p); };
+    // tok is now { — skip it
+    let mut body = Vec::new();
+    tok = parser_next(p);
+    while tok.kind != KIND_RBRACE() {
+        // Put the token "back" — we consumed it already but need it for parse_stmt
+        // Simplified: just push a placeholder
+        body.push(Stmt { kind: "expr", name: "", ival: 0, sval: "" });
+        tok = parser_next(p);
+    };
+    FnDef { name: name, params: params, return_type: "", body: body }
+}
+
+fn parse_struct(p: &mut Parser) -> StructDef {
+    let name = parser_next(p).value;
+    parser_next(p); // {
+    let mut fields = Vec::new();
+    let mut tok = parser_next(p);
+    while tok.kind != KIND_RBRACE() {
+        let fname = tok.value;
+        parser_next(p); // :
+        let ftype = parser_next(p).value;
+        fields.push(Param { name: fname, type_ann: ftype });
+        tok = parser_next(p);
+        if tok.kind == KIND_COMMA() { tok = parser_next(p); };
+    };
+    StructDef { name: name, fields: fields }
+}
+
+fn parse_program(tokens: Vec<Token>) -> Program {
+    let mut p = parser_new(tokens);
+    let mut structs = Vec::new();
+    let mut fns = Vec::new();
+    let mut main_stmts = Vec::new();
+    loop {
+        if p.pos >= p.tokens.len() { break; };
+        let tok = p.tokens[p.pos];
+        if tok.kind == KIND_EOF() { break; };
+        if tok.kind == KIND_STRUCT() { structs.push(parse_struct(&mut p)); }
+        else if tok.kind == KIND_FN() { fns.push(parse_fn(&mut p)); }
+        else { main_stmts.push(parse_stmt(&mut p)); };
+    }
+    Program { structs: structs, fns: fns, main_stmts: main_stmts }
+}
+
+// Self-hosting Codegen — v0.3.1
+// Program → C code
+
+fn cgen_expr(expr: &Expr) -> str {
+    if expr.kind == "int" { expr.sval }
+    else if expr.kind == "ident" { expr.sval }
+    else if expr.kind == "binary" { "(" + expr.sval + " " + expr.op + " " + "" + expr.right + ")" }
+    else { "0" }
+}
+
+fn cgen_stmt(stmt: &Stmt) -> str {
+    if stmt.kind == "let" {
+        "int " + stmt.name + " = " + cgen_expr(&Expr { kind: "int", ival: stmt.ival, sval: stmt.sval, op: "", left: 0, right: 0 }) + ";\n"
+    } else if stmt.kind == "return" {
+        "return " + cgen_expr(&Expr { kind: "int", ival: stmt.ival, sval: stmt.sval, op: "", left: 0, right: 0 }) + ";\n"
+    } else { ";\n" }
+}
+
+fn cgen_struct(s: &StructDef) -> str {
+    let mut out = "typedef struct {\n";
+    let mut i = 0;
+    while i < s.fields.len() {
+        let f = s.fields[i];
+        out = out + "    int " + f.name + ";\n";
+        i = i + 1;
+    };
+    out = out + "} " + s.name + ";\n\n";
+    out
+}
+
+fn cgen_fn(f: &FnDef) -> str {
+    let mut out = "int " + f.name + "(";
+    let mut i = 0;
+    while i < f.params.len() {
+        let p = f.params[i];
+        if i > 0 { out = out + ", "; };
+        out = out + "int " + p.name;
+        i = i + 1;
+    };
+    out = out + ") {\n";
+    i = 0;
+    while i < f.body.len() {
+        out = out + "    " + cgen_stmt(&f.body[i]);
+        i = i + 1;
+    };
+    out = out + "}\n\n";
+    out
+}
+
+fn cgen_program(prog: &Program) -> str {
+    let mut out = "#include <stdio.h>\n\n";
+    let mut i = 0;
+    while i < prog.structs.len() { out = out + cgen_struct(&prog.structs[i]); i = i + 1; };
+    i = 0;
+    while i < prog.fns.len() { out = out + cgen_fn(&prog.fns[i]); i = i + 1; };
+    out = out + "int main(void) {\n";
+    i = 0;
+    while i < prog.main_stmts.len() { out = out + "    " + cgen_stmt(&prog.main_stmts[i]); i = i + 1; };
+    out = out + "    return 0;\n}\n";
+    out
+}
+
+// Self-hosting Tenth compiler v0.3.1
+
+fn compile(src: str) -> str {
+    let mut lex = lexer_new(src);
+    let tokens = lexer_tokenize(&mut lex);
+    let prog = parse_program(tokens);
+    cgen_program(&prog)
+}
+
+fn main() -> i64 {
+    let src = read_file("tenthc/lexer/token.th");
+    let c = compile(src);
+    write_file("tenthc_output.c", c);
+    42
+}
+

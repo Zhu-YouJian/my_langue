@@ -811,6 +811,20 @@ impl Parser {
     fn parse_type(&mut self) -> TenthResult<TypeAnnotation> {
         let span = self.span();
         match self.peek_kind() {
+            TokenKind::Ampersand => {
+                self.advance();
+                let is_mut = matches!(self.peek_kind(), TokenKind::Mut);
+                if is_mut { self.advance(); }
+                let inner = self.parse_type()?;
+                let name_str = match &inner {
+                    TypeAnnotation::Named(id) => {
+                        if is_mut { format!("&mut {}", id.name) }
+                        else { format!("&{}", id.name) }
+                    }
+                    _ => if is_mut { "&mut _".to_string() } else { "&_".to_string() },
+                };
+                Ok(TypeAnnotation::Named(Ident { name: name_str, span }))
+            }
             TokenKind::Identifier(name) => {
                 let name = name.clone();
                 self.advance();
@@ -1008,6 +1022,32 @@ impl Parser {
                 self.match_token(TokenKind::Semicolon);
                 Ok(Stmt {
                     kind: StmtKind::Return(value),
+                    span,
+                })
+            }
+            TokenKind::Break => {
+                self.advance();
+                self.match_token(TokenKind::Semicolon);
+                Ok(Stmt {
+                    kind: StmtKind::Break,
+                    span,
+                })
+            }
+            TokenKind::Continue => {
+                self.advance();
+                self.match_token(TokenKind::Semicolon);
+                Ok(Stmt {
+                    kind: StmtKind::Continue,
+                    span,
+                })
+            }
+            TokenKind::Loop => {
+                self.advance();
+                self.match_token(TokenKind::LBrace);
+                let stmts = self.parse_block_stmts()?;
+                self.expect(TokenKind::RBrace)?;
+                Ok(Stmt {
+                    kind: StmtKind::Loop { body: stmts },
                     span,
                 })
             }

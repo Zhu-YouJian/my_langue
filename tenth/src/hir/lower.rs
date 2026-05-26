@@ -819,6 +819,14 @@ impl Lowerer {
                 let b = self.lower_stmt(body)?;
                 HirStmtKind::For { var: var.name.clone(), iter: it, body: Box::new(b) }
             }
+            StmtKind::Break => HirStmtKind::Break,
+            StmtKind::Continue => HirStmtKind::Continue,
+            StmtKind::Loop { body } => {
+                let lowered_body: Vec<HirStmt> = body.iter()
+                    .map(|s| self.lower_stmt(s))
+                    .collect::<TenthResult<_>>()?;
+                HirStmtKind::Loop { body: lowered_body }
+            }
             _ => {
                 return Err(TenthError::ParseError {
                     line: span.line,

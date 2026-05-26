@@ -1234,6 +1234,15 @@ impl Interpreter {
                 Ok(())
             }
             HirStmtKind::Return(_) => Ok(()),
+            HirStmtKind::Break => Ok(()),
+            HirStmtKind::Continue => Ok(()),
+            HirStmtKind::Loop { body } => {
+                loop {
+                    for s in body {
+                        self.eval_stmt(s)?;
+                    }
+                }
+            }
             HirStmtKind::While { cond, body } => {
                 loop {
                     let c = self.eval_expr(cond)?.ok_or_else(|| TenthError::RuntimeError {

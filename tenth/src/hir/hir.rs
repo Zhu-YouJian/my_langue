@@ -184,6 +184,11 @@ pub enum HirStmtKind {
         iter: HirExpr,
         body: Box<HirStmt>,
     },
+    Break,
+    Continue,
+    Loop {
+        body: Vec<HirStmt>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
