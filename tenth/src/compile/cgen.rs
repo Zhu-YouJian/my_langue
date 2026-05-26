@@ -176,6 +176,19 @@ impl CGenerator {
                 self.emit(&format!("/* Let {} declared={:?} val_ty={:?} */", name, ty, value.ty));
                 self.emit(&format!("{} {} = {};", type_str, name, val_str));
             }
+            MirStmt::FieldAssign { target, field, value } => {
+                // Emit target->field = value (or target.field = value)
+                let t_str = self.rvalue_to_c(target);
+                let v_str = self.rvalue_to_c(value);
+                // Check if target is a deref → use ->
+                if matches!(&target.kind, MirRvalueKind::Deref(_) | MirRvalueKind::Ref(_) | MirRvalueKind::MutRef(_)) {
+                    self.emit(&format!("{}->{} = {};", t_str, field, v_str));
+                } else if matches!(&target.ty, Type::Ref(_) | Type::MutRef(_)) {
+                    self.emit(&format!("{}->{} = {};", t_str, field, v_str));
+                } else {
+                    self.emit(&format!("({}).{} = {};", t_str, field, v_str));
+                }
+            }
             MirStmt::Assign { name, value } => {
                 let val_str = self.rvalue_to_c(value);
                 // If the target is a struct type and the value is void*, dereference
@@ -315,11 +328,15 @@ impl CGenerator {
                 let l = self.rvalue_to_c(left);
                 let r = self.rvalue_to_c(right);
                 // Use str_add for string concatenation
+                // Check if operands are strings (need strcmp/str_add instead of C operators)
+                let is_str = |v: &MirRvalue| {
+                    matches!(&v.ty, Type::Base(BaseType::Str)) ||
+                    matches!(&v.ty, Type::TypeParam { name } if name == "str")
+                };
                 let is_str_op = matches!(op, BinOp::Add) && (
                     l.starts_with('"') || r.starts_with('"') ||
                     l.starts_with("str_add") || r.starts_with("str_add") ||
-                    matches!(&rvalue.ty, Type::Base(BaseType::Str)) ||
-                    matches!(&rvalue.ty, Type::TypeParam { name } if name == "str")
+                    is_str(rvalue) || is_str(left) || is_str(right)
                 );
                 if is_str_op {
                     // If operands are integer types, convert to string first
@@ -327,6 +344,19 @@ impl CGenerator {
                     let l_str = if is_int(left) { format!("str_int({})", l) } else { l };
                     let r_str = if is_int(right) { format!("str_int({})", r) } else { r };
                     format!("str_add({}, {})", l_str, r_str)
+                } else if matches!(op, BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq)
+                    && (is_str(left) || is_str(right) || l.starts_with('"') || r.starts_with('"'))
+                {
+                    // String comparison — use strcmp, not pointer comparison
+                    match op {
+                        BinOp::Eq => format!("(strcmp({}, {}) == 0)", l, r),
+                        BinOp::NotEq => format!("(strcmp({}, {}) != 0)", l, r),
+                        BinOp::Lt => format!("(strcmp({}, {}) < 0)", l, r),
+                        BinOp::Gt => format!("(strcmp({}, {}) > 0)", l, r),
+                        BinOp::LtEq => format!("(strcmp({}, {}) <= 0)", l, r),
+                        BinOp::GtEq => format!("(strcmp({}, {}) >= 0)", l, r),
+                        _ => unreachable!(),
+                    }
                 } else {
                     let op_str = c_binop(op);
                     format!("({} {} {})", l, op_str, r)
@@ -385,6 +415,8 @@ impl CGenerator {
                 }).collect();
                 let func_name = match func.as_str() {
                     "Vec::new" => "Vec_new", "HashMap::new" => "HashMap_new",
+                    "Vec::len" => "Vec_len", "Vec::push" => "Vec_push",
+                    "Vec::get" => "Vec_get",
                     "read_file" => "read_file", "write_file" => "write_file",
                     other => other,
                 };
@@ -478,7 +510,15 @@ impl CGenerator {
                     } else { s }
                 }).collect();
                 match method.as_str() {
-                    "len" => format!("Vec_len({})", recv),
+                    "len" => {
+                        // Use strlen for strings, Vec_len for Vecs
+                        if matches!(&receiver.ty, Type::Base(BaseType::Str)) ||
+                           matches!(&receiver.ty, Type::TypeParam { name } if name == "str") {
+                            format!("((int64_t)strlen({}))", recv)
+                        } else {
+                            format!("Vec_len({})", recv)
+                        }
+                    }
                     "push" => format!("Vec_push({}, {})", recv, args_str.join(", ")),
                     "get" => format!("Vec_get({}, {})", recv, args_str.join(", ")),
                     _ => format!("/* method {} not found */ 0", method),

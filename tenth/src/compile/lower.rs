@@ -212,6 +212,15 @@ impl MirLowerer {
                 Ok((stmts, None))
             }
 
+            HirExprKind::FieldAssign { target, field, value } => {
+                let (s, val) = self.lower_expr_rvalue(value)?;
+                let (ts, tv) = self.lower_expr_rvalue(target)?;
+                let mut stmts = s;
+                stmts.extend(ts);
+                stmts.push(MirStmt::FieldAssign { target: tv, field: field.clone(), value: val });
+                Ok((stmts, None))
+            }
+
             HirExprKind::Field { target, field } => {
                 let (mut s, t) = self.lower_expr_rvalue(target)?;
                 Ok((s, Some(rv(ty, MirRvalueKind::Field { target: Box::new(t), field: field.clone() }))))

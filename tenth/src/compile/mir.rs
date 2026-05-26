@@ -29,6 +29,7 @@ pub struct BasicBlock {
 pub enum MirStmt {
     Let { name: String, ty: Type, value: MirRvalue },
     Assign { name: String, value: MirRvalue },
+    FieldAssign { target: MirRvalue, field: String, value: MirRvalue },
     Expr(MirRvalue),
     Return(Option<MirRvalue>),
     IfElse { cond: MirRvalue, then_body: Vec<MirStmt>, else_body: Vec<MirStmt> },
