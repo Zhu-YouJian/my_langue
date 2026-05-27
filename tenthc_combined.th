@@ -473,94 +473,97 @@ fn add_stmt(p: &mut Parser, kind: str) -> i64 {
 
 fn parse_primary(p: &mut Parser) -> i64 {
     let tok = parser_advance(p);
+    let d = tok.disc;
 
-    match tok.kind {
-        TokenKind::IntLiteral(value: n) => {
-            let n = tok.ival;
-            let idx = add_expr(p, "int");
-            p.expr_nodes[idx - 1].ival = n;
-            idx
-        },
-        TokenKind::FloatLiteral(value: n) => {
-            let n = tok.ival;
-            let idx = add_expr(p, "float");
-            p.expr_nodes[idx - 1].fval = n;
-            idx
-        },
-        TokenKind::StringLiteral(value: s) => {
-            let s = tok.sval;
-            let idx = add_expr(p, "str");
-            p.expr_nodes[idx - 1].sval = s;
-            idx
-        },
-        TokenKind::True => {
-            let idx = add_expr(p, "bool");
-            p.expr_nodes[idx - 1].ival = 1;
-            idx
-        },
-        TokenKind::False => {
-            let idx = add_expr(p, "bool");
-            p.expr_nodes[idx - 1].ival = 0;
-            idx
-        },
-        TokenKind::Identifier(name: s) => {
-            let s = tok.sval;
-            let idx = add_expr(p, "ident");
-            p.expr_nodes[idx - 1].sval = s;
-            idx
-        },
-        TokenKind::Self_ => {
-            let idx = add_expr(p, "ident");
-            p.expr_nodes[idx - 1].sval = "self";
-            idx
-        },
-        TokenKind::LParen => {
-            let expr_idx = parse_expr(p);
-            parser_advance(p); // expect RParen
-            expr_idx
-        },
-        TokenKind::LBrace => {
-            parse_block_expr(p)
-        },
-        TokenKind::If => {
-            parse_if_expr(p)
-        },
-        TokenKind::Match => {
-            parse_match_expr(p)
-        },
-        TokenKind::Ampersand => {
-            let inner = parse_unary(p);
-            let idx = add_expr(p, "ref");
-            p.expr_nodes[idx - 1].left = inner;
-            idx
-        },
-        TokenKind::Star => {
-            let inner = parse_unary(p);
-            let idx = add_expr(p, "deref");
-            p.expr_nodes[idx - 1].left = inner;
-            idx
-        },
-        TokenKind::Minus => {
-            let inner = parse_unary(p);
-            let idx = add_expr(p, "unary");
-            p.expr_nodes[idx - 1].sval = "-";
-            p.expr_nodes[idx - 1].left = inner;
-            idx
-        },
-        TokenKind::Not => {
-            let inner = parse_unary(p);
-            let idx = add_expr(p, "unary");
-            p.expr_nodes[idx - 1].sval = "!";
-            p.expr_nodes[idx - 1].left = inner;
-            idx
-        },
-        // Default: return an error expr
-        _ => {
-            let idx = add_expr(p, "int");
-            p.expr_nodes[idx - 1].ival = 0;
-            idx
-        },
-    }
+    // IntLiteral (0)
+    if d == 0 {
+        let n = tok.ival;
+        let idx = add_expr(p, "int");
+        p.expr_nodes[idx - 1].ival = n;
+        return idx;
+    };
+    // FloatLiteral (1)
+    if d == 1 {
+        let idx = add_expr(p, "float");
+        p.expr_nodes[idx - 1].fval = tok.ival;
+        return idx;
+    };
+    // StringLiteral (2)
+    if d == 2 {
+        let idx = add_expr(p, "str");
+        p.expr_nodes[idx - 1].sval = tok.sval;
+        return idx;
+    };
+    // Identifier (3)
+    if d == 3 {
+        let idx = add_expr(p, "ident");
+        p.expr_nodes[idx - 1].sval = tok.sval;
+        return idx;
+    };
+    // True (22)
+    if d == 22 {
+        let idx = add_expr(p, "bool");
+        p.expr_nodes[idx - 1].ival = 1;
+        return idx;
+    };
+    // False (23)
+    if d == 23 {
+        let idx = add_expr(p, "bool");
+        p.expr_nodes[idx - 1].ival = 0;
+        return idx;
+    };
+    // Self_ (25)
+    if d == 25 {
+        let idx = add_expr(p, "ident");
+        p.expr_nodes[idx - 1].sval = "self";
+        return idx;
+    };
+    // LParen (47)
+    if d == 47 {
+        let expr_idx = parse_expr(p);
+        parser_advance(p); // expect RParen
+        return expr_idx;
+    };
+    // LBrace (49)
+    if d == 49 { return parse_block_expr(p); };
+    // If (7)
+    if d == 7 { return parse_if_expr(p); };
+    // Match (9)
+    if d == 9 { return parse_match_expr(p); };
+    // Ampersand (40)
+    if d == 40 {
+        let inner = parse_unary(p);
+        let idx = add_expr(p, "ref");
+        p.expr_nodes[idx - 1].left = inner;
+        return idx;
+    };
+    // Star (28) — deref
+    if d == 28 {
+        let inner = parse_unary(p);
+        let idx = add_expr(p, "deref");
+        p.expr_nodes[idx - 1].left = inner;
+        return idx;
+    };
+    // Minus (27)
+    if d == 27 {
+        let inner = parse_unary(p);
+        let idx = add_expr(p, "unary");
+        p.expr_nodes[idx - 1].sval = "-";
+        p.expr_nodes[idx - 1].left = inner;
+        return idx;
+    };
+    // Not (39)
+    if d == 39 {
+        let inner = parse_unary(p);
+        let idx = add_expr(p, "unary");
+        p.expr_nodes[idx - 1].sval = "!";
+        p.expr_nodes[idx - 1].left = inner;
+        return idx;
+    };
+    // Default
+    let idx = add_expr(p, "int");
+    p.expr_nodes[idx - 1].ival = 0;
+    return idx;
 }
 
 fn parse_unary(p: &mut Parser) -> i64 {
@@ -572,35 +575,27 @@ fn parse_postfix(p: &mut Parser) -> i64 {
 
     loop {
         let tok = parser_peek(p);
+        let d = tok.disc;
 
-        match tok.kind {
-            TokenKind::LParen => {
-                parser_advance(p); // skip (
-                let start = p.expr_nodes.len() + 1; // arg indices will be stored as separate exprs
-                let mut count: i64 = 0;
-                // Parse args as expressions, but we can't easily track indices.
-                // Instead: store args in a simpler way — just count and skip for now.
-                // Full implementation would parse and store each arg.
-                count = parse_arg_list(p);
-                // Update the call node
-                p.expr_nodes[expr_idx - 1].kind = "call";
-                p.expr_nodes[expr_idx - 1].arg_start = start;
-                p.expr_nodes[expr_idx - 1].arg_count = count;
-            },
-            TokenKind::Dot => {
-                parser_advance(p); // skip .
-                let field_tok = parser_advance(p);
-                let mut field_name = "";
-                match field_tok.kind {
-                    TokenKind::Identifier(name: s) => { field_name = field_tok.sval; },
-                    _ => {},
-                };
-                let idx = add_expr(p, "field");
-                p.expr_nodes[idx - 1].left = expr_idx;
-                p.expr_nodes[idx - 1].sval = field_name;
-                expr_idx = idx;
-            },
-            _ => { break; },
+        // LParen (47) — function call
+        if d == 47 {
+            parser_advance(p); // skip (
+            let start = p.expr_nodes.len() + 1;
+            let count = parse_arg_list(p);
+            p.expr_nodes[expr_idx - 1].kind = "call";
+            p.expr_nodes[expr_idx - 1].arg_start = start;
+            p.expr_nodes[expr_idx - 1].arg_count = count;
+        } else if d == 56 {
+            // Dot (56) — field access
+            parser_advance(p); // skip .
+            let field_tok = parser_advance(p);
+            let field_name = field_tok.sval;
+            let idx = add_expr(p, "field");
+            p.expr_nodes[idx - 1].left = expr_idx;
+            p.expr_nodes[idx - 1].sval = field_name;
+            expr_idx = idx;
+        } else {
+            break;
         };
     };
 
@@ -933,8 +928,15 @@ fn parse_fn(p: &mut Parser) -> FnDef {
         let pname_tok = parser_advance(p);
         let pname = pname_tok.sval;
         parser_advance(p); // skip :
-        let ptype_tok = parser_advance(p);
-        let ptype = ptype_tok.sval;
+        // Skip type tokens until , or ) (handles &Vec<Expr>, &mut Lexer, etc.)
+        let mut ptype = "";
+        loop {
+            let tt = parser_peek(p);
+            if tt.disc == 53 || tt.disc == 48 { break; }; // Comma or RParen
+            let type_tok = parser_advance(p);
+            if ptype != "" { ptype = ptype + " "; };
+            ptype = ptype + type_tok.sval;
+        };
         params.push(Param { name: pname, type_ann: ptype });
         let t2 = parser_peek(p);
         if t2.disc == 53 { parser_advance(p); }
@@ -946,8 +948,14 @@ fn parse_fn(p: &mut Parser) -> FnDef {
     let t3 = parser_peek(p);
     if t3.disc == 58 {
         parser_advance(p);
-        let ret_tok = parser_advance(p);
-        return_type = ret_tok.sval;
+        // Skip return type tokens until { (handles &Vec<Expr>, etc.)
+        loop {
+            let tt = parser_peek(p);
+            if tt.disc == 49 || tt.disc == 61 { break; }; // LBrace or Eof
+            let ret_tok = parser_advance(p);
+            if return_type != "" { return_type = return_type + " "; };
+            return_type = return_type + ret_tok.sval;
+        };
     };
 
     parser_advance(p); // skip {
@@ -979,8 +987,15 @@ fn parse_struct_def(p: &mut Parser) -> StructDef {
         let fname_tok = parser_advance(p);
         let fname = fname_tok.sval;
         parser_advance(p); // skip :
-        let ftype_tok = parser_advance(p);
-        let ftype = ftype_tok.sval;
+        // Skip type tokens until , or } (handles &Vec<Expr>, etc.)
+        let mut ftype = "";
+        loop {
+            let tt = parser_peek(p);
+            if tt.disc == 53 || tt.disc == 50 { break; }; // Comma or RBrace
+            let type_tok = parser_advance(p);
+            if ftype != "" { ftype = ftype + " "; };
+            ftype = ftype + type_tok.sval;
+        };
         fields.push(StructField { name: fname, type_ann: ftype });
         let t2 = parser_peek(p);
         if t2.disc == 53 { parser_advance(p); }
@@ -1328,7 +1343,7 @@ fn compile(src: str) -> str {
 }
 
 fn main() -> i64 {
-    let src = read_file("test_fn7.th");
+    let src = read_file("test_4files.th");
     let mut lex = lexer_new(src);
     let tokens = lexer_tokenize(&mut lex);
     let prog = parse_program(tokens);
