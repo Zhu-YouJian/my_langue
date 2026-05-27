@@ -46,8 +46,8 @@ set PATH=%PATH%;C:\Users\史蒂夫\.cargo\bin
 `set` 环境变量方式（关终端即失效，不影响系统全局）：
 
 ```cmd
-set HTTP_PROXY=http://127.0.0.1:6454
-set HTTPS_PROXY=http://127.0.0.1:6454
+set HTTP_PROXY=http://127.0.0.1:7892
+set HTTPS_PROXY=http://127.0.0.1:7892
 ```
 
 设置后 `cargo build`（下载 crate）走代理。**注意：此方式对 git push 不生效。**
@@ -57,8 +57,8 @@ set HTTPS_PROXY=http://127.0.0.1:6454
 git 需直接配置代理（持久生效，仅当前仓库）：
 
 ```cmd
-git config http.proxy http://127.0.0.1:6454
-git config https.proxy http://127.0.0.1:6454
+git config http.proxy http://127.0.0.1:7892
+git config https.proxy http://127.0.0.1:7892
 ```
 
 设置后 `git push` / `git clone` 走代理。
