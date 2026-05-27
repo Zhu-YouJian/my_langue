@@ -210,19 +210,19 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
             ch = lexer_advance(lexer); ch = lexer_peek(lexer);
         };
         // Keywords
-        if ident == "fn" { println("LEX:fn"); return Token { kind: TokenKind::Fn, span: span, disc: 4, ival: 0, sval: "" }; };
-        if ident == "let" { println("LEX:let"); return Token { kind: TokenKind::Let, span: span, disc: 5, ival: 0, sval: "" }; };
+        if ident == "fn" { return Token { kind: TokenKind::Fn, span: span, disc: 4, ival: 0, sval: "" }; };
+        if ident == "let" { return Token { kind: TokenKind::Let, span: span, disc: 5, ival: 0, sval: "" }; };
         if ident == "mut" { return Token { kind: TokenKind::Mut, span: span, disc: 6, ival: 0, sval: "" }; };
         if ident == "if" { return Token { kind: TokenKind::If, span: span, disc: 7, ival: 0, sval: "" }; };
         if ident == "else" { return Token { kind: TokenKind::Else, span: span, disc: 8, ival: 0, sval: "" }; };
         if ident == "match" { return Token { kind: TokenKind::Match, span: span, disc: 9, ival: 0, sval: "" }; };
-        if ident == "return" { println("LEX:return"); return Token { kind: TokenKind::Return, span: span, disc: 10, ival: 0, sval: "" }; };
-        if ident == "while" { println("LEX:while"); return Token { kind: TokenKind::While, span: span, disc: 11, ival: 0, sval: "" }; };
+        if ident == "return" { return Token { kind: TokenKind::Return, span: span, disc: 10, ival: 0, sval: "" }; };
+        if ident == "while" { return Token { kind: TokenKind::While, span: span, disc: 11, ival: 0, sval: "" }; };
         if ident == "for" { return Token { kind: TokenKind::For, span: span, disc: 12, ival: 0, sval: "" }; };
         if ident == "loop" { return Token { kind: TokenKind::Loop, span: span, disc: 13, ival: 0, sval: "" }; };
         if ident == "break" { return Token { kind: TokenKind::Break, span: span, disc: 14, ival: 0, sval: "" }; };
         if ident == "continue" { return Token { kind: TokenKind::Continue, span: span, disc: 15, ival: 0, sval: "" }; };
-        if ident == "struct" { println("LEX:struct"); return Token { kind: TokenKind::Struct, span: span, disc: 16, ival: 0, sval: "" }; };
+        if ident == "struct" { return Token { kind: TokenKind::Struct, span: span, disc: 16, ival: 0, sval: "" }; };
         if ident == "enum" { return Token { kind: TokenKind::Enum, span: span, disc: 17, ival: 0, sval: "" }; };
         if ident == "impl" { return Token { kind: TokenKind::Impl, span: span, disc: 18, ival: 0, sval: "" }; };
         if ident == "trait" { return Token { kind: TokenKind::Trait, span: span, disc: 19, ival: 0, sval: "" }; };
@@ -821,10 +821,6 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
 fn parse_stmt(p: &mut Parser) -> i64 {
     let tok = parser_peek(p);
     let disc = tok.disc;
-    if disc == 10 { println("DISC=10_OK"); };
-    if disc != 10 { println("DISC_NOT10"); };
-    if tok.ival == 0 { println("IVAL=0"); };
-    if tok.ival != 0 { println("IVAL!=0"); };
 
     // Let (5)
     if disc == 5 {
@@ -858,7 +854,7 @@ fn parse_stmt(p: &mut Parser) -> i64 {
         let t2 = parser_peek(p);
         let mut expr_idx: i64 = 0;
         if !is_stmt_end(t2) { expr_idx = parse_expr(p); };
-        let idx = add_stmt(p, "P_RETURN");
+        let idx = add_stmt(p, "return");
         p.stmt_nodes[idx - 1].expr_idx = expr_idx;
         return idx;
     };
@@ -927,7 +923,6 @@ fn parse_stmt(p: &mut Parser) -> i64 {
 // ── Top-level parsing ──
 
 fn parse_fn(p: &mut Parser) -> FnDef {
-    println("PARSE_FN");
     parser_advance(p); // skip fn
     let name_tok = parser_advance(p);
     let mut name = "";
@@ -1122,9 +1117,6 @@ fn parse_program(tokens: Vec<Token>) -> Program {
         if parser_at_eof(&p) { break; };
         let tok = parser_peek(&p);
         let d = tok.disc;
-        if d == 4 { println("TOP:fn"); };
-        if d == 16 { println("TOP:struct"); };
-        if d == 10 { println("TOP:return"); };
 
         // Struct (16)
         if d == 16 {
@@ -1248,11 +1240,11 @@ fn cgen_stmt(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>, idx: i64) -> 
         return "int " + s.name + " = " + init + ";\n";
     };
     if s.kind == "return" {
-        return "RETURN_STMT;\n";
-    };
-    if s.kind == "expr" {
-        let val = cgen_expr(prog, exprs, stmts, s.expr_idx);
-        return "EXPR(" + s.kind + "):" + val + ";\n";
+        if s.expr_idx > 0 {
+            let val = cgen_expr(prog, exprs, stmts, s.expr_idx);
+            return "return " + val + ";\n";
+        };
+        return "return;\n";
     };
     if s.kind == "expr" {
         let val = cgen_expr(prog, exprs, stmts, s.expr_idx);
@@ -1281,7 +1273,7 @@ fn cgen_stmt(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>, idx: i64) -> 
     };
     if s.kind == "break" { return "break;\n"; };
     if s.kind == "continue" { return "continue;\n"; };
-    "UNKNOWN(" + s.kind + ");\n"
+    ";\n"
 }
 
 fn cgen_struct(s: &StructDef) -> str {
@@ -1384,22 +1376,19 @@ fn float_to_str(n: f64) -> str {
     int_to_str(n) + ".0"
 }
 
-// Self-hosting Tenth compiler — bootstrap entry point (INTERP TEST)
+// Self-hosting Tenth compiler — bootstrap entry point
 
 fn compile(src: str) -> str {
-    println("COMPILE_START");
     let mut lex = lexer_new(src);
     let tokens = lexer_tokenize(&mut lex);
-    println("LEX_DONE");
     let prog = parse_program(tokens);
-    println("PARSE_DONE");
     cgen_program(&prog, &prog.expr_nodes, &prog.stmt_nodes)
 }
 
 fn main() -> i64 {
-    let src = "return";
+    let src = "fn add(a: i64, b: i64) -> i64 { return a + b; }\nfn main() -> i64 { return add(10, 20); }\n";
     let c = compile(src);
-    write_file("tenthc_interp.c", c);
+    write_file("tenthc_output.c", c);
     0
 }
 

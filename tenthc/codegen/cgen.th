@@ -80,11 +80,11 @@ fn cgen_stmt(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>, idx: i64) -> 
         return "int " + s.name + " = " + init + ";\n";
     };
     if s.kind == "return" {
-        return "RETURN_STMT;\n";
-    };
-    if s.kind == "expr" {
-        let val = cgen_expr(prog, exprs, stmts, s.expr_idx);
-        return "EXPR(" + s.kind + "):" + val + ";\n";
+        if s.expr_idx > 0 {
+            let val = cgen_expr(prog, exprs, stmts, s.expr_idx);
+            return "return " + val + ";\n";
+        };
+        return "return;\n";
     };
     if s.kind == "expr" {
         let val = cgen_expr(prog, exprs, stmts, s.expr_idx);
@@ -113,7 +113,7 @@ fn cgen_stmt(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>, idx: i64) -> 
     };
     if s.kind == "break" { return "break;\n"; };
     if s.kind == "continue" { return "continue;\n"; };
-    "UNKNOWN(" + s.kind + ");\n"
+    ";\n"
 }
 
 fn cgen_struct(s: &StructDef) -> str {
@@ -152,7 +152,7 @@ fn cgen_fn(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>, f: &FnDef) -> s
 }
 
 fn cgen_program(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>) -> str {
-    let mut out = "// CODEGEN_V2\n#include <stdio.h>\n";
+    let mut out = "#include <stdio.h>\n";
     out = out + "#include <stdint.h>\n";
     out = out + "#include <stdbool.h>\n";
     out = out + "#include <stdlib.h>\n";

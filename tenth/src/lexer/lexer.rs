@@ -183,6 +183,7 @@ impl Lexer {
                 self.advance();
                 match self.peek() {
                     Some('n') => { self.advance(); s.push('\n'); }
+                    Some('r') => { self.advance(); s.push('\r'); }
                     Some('t') => { self.advance(); s.push('\t'); }
                     Some('\\') => { self.advance(); s.push('\\'); }
                     Some('"') => { self.advance(); s.push('"'); }

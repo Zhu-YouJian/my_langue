@@ -527,7 +527,7 @@ fn parse_stmt(p: &mut Parser) -> i64 {
         let t2 = parser_peek(p);
         let mut expr_idx: i64 = 0;
         if !is_stmt_end(t2) { expr_idx = parse_expr(p); };
-        let idx = add_stmt(p, "P_RETURN");
+        let idx = add_stmt(p, "return");
         p.stmt_nodes[idx - 1].expr_idx = expr_idx;
         return idx;
     };
