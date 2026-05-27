@@ -639,27 +639,26 @@ fn binop_prec(op: str) -> i64 {
 }
 
 fn token_to_binop_str(tok: Token) -> str {
-    match tok.kind {
-        TokenKind::Plus => "+",
-        TokenKind::Minus => "-",
-        TokenKind::Star => "*",
-        TokenKind::Slash => "/",
-        TokenKind::Percent => "%",
-        TokenKind::EqEq => "==",
-        TokenKind::NotEq => "!=",
-        TokenKind::Lt => "<",
-        TokenKind::Gt => ">",
-        TokenKind::LtEq => "<=",
-        TokenKind::GtEq => ">=",
-        TokenKind::AndAnd => "&&",
-        TokenKind::OrOr => "||",
-        _ => "",
-    }
+    let d = tok.disc;
+    if d == 26 { "+" }
+    else if d == 27 { "-" }
+    else if d == 28 { "*" }
+    else if d == 29 { "/" }
+    else if d == 30 { "%" }
+    else if d == 31 { "==" }
+    else if d == 32 { "!=" }
+    else if d == 33 { "<" }
+    else if d == 34 { ">" }
+    else if d == 35 { "<=" }
+    else if d == 36 { ">=" }
+    else if d == 37 { "&&" }
+    else if d == 38 { "||" }
+    else { "" }
 }
 
 fn is_binop(tok: Token) -> bool {
-    let op = token_to_binop_str(tok);
-    op != ""
+    let d = tok.disc;
+    d == 26 || d == 27 || d == 28 || d == 29 || d == 30 || d == 31 || d == 32 || d == 33 || d == 34 || d == 35 || d == 36 || d == 37 || d == 38
 }
 
 fn parse_binary(p: &mut Parser, min_prec: i64) -> i64 {
@@ -1312,7 +1311,7 @@ fn cgen_fn(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>, f: &FnDef) -> s
 }
 
 fn cgen_program(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>) -> str {
-    let mut out = "// CODEGEN_V2\n#include <stdio.h>\n";
+    let mut out = "#include <stdio.h>\n";
     out = out + "#include <stdint.h>\n";
     out = out + "#include <stdbool.h>\n";
     out = out + "#include <stdlib.h>\n";
@@ -1386,9 +1385,10 @@ fn compile(src: str) -> str {
 }
 
 fn main() -> i64 {
-    let src = "fn add(a: i64, b: i64) -> i64 { return a + b; }\nfn main() -> i64 { return add(10, 20); }\n";
-    let c = compile(src);
-    write_file("tenthc_output.c", c);
-    0
+    let src = read_file("tenthc/lexer/token.th");
+    let mut lex = lexer_new(src);
+    let tokens = lexer_tokenize(&mut lex);
+    let prog = parse_program(tokens);
+    return 0;
 }
 

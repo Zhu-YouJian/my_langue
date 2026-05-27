@@ -312,27 +312,26 @@ fn binop_prec(op: str) -> i64 {
 }
 
 fn token_to_binop_str(tok: Token) -> str {
-    match tok.kind {
-        TokenKind::Plus => "+",
-        TokenKind::Minus => "-",
-        TokenKind::Star => "*",
-        TokenKind::Slash => "/",
-        TokenKind::Percent => "%",
-        TokenKind::EqEq => "==",
-        TokenKind::NotEq => "!=",
-        TokenKind::Lt => "<",
-        TokenKind::Gt => ">",
-        TokenKind::LtEq => "<=",
-        TokenKind::GtEq => ">=",
-        TokenKind::AndAnd => "&&",
-        TokenKind::OrOr => "||",
-        _ => "",
-    }
+    let d = tok.disc;
+    if d == 26 { "+" }
+    else if d == 27 { "-" }
+    else if d == 28 { "*" }
+    else if d == 29 { "/" }
+    else if d == 30 { "%" }
+    else if d == 31 { "==" }
+    else if d == 32 { "!=" }
+    else if d == 33 { "<" }
+    else if d == 34 { ">" }
+    else if d == 35 { "<=" }
+    else if d == 36 { ">=" }
+    else if d == 37 { "&&" }
+    else if d == 38 { "||" }
+    else { "" }
 }
 
 fn is_binop(tok: Token) -> bool {
-    let op = token_to_binop_str(tok);
-    op != ""
+    let d = tok.disc;
+    d == 26 || d == 27 || d == 28 || d == 29 || d == 30 || d == 31 || d == 32 || d == 33 || d == 34 || d == 35 || d == 36 || d == 37 || d == 38
 }
 
 fn parse_binary(p: &mut Parser, min_prec: i64) -> i64 {
