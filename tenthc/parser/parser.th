@@ -527,7 +527,7 @@ fn parse_stmt(p: &mut Parser) -> i64 {
         let t2 = parser_peek(p);
         let mut expr_idx: i64 = 0;
         if !is_stmt_end(t2) { expr_idx = parse_expr(p); };
-        let idx = add_stmt(p, "return");
+        let idx = add_stmt(p, "P_RETURN");
         p.stmt_nodes[idx - 1].expr_idx = expr_idx;
         return idx;
     };
@@ -544,6 +544,7 @@ fn parse_stmt(p: &mut Parser) -> i64 {
             if is_end_of_block(t2) { break; };
             parse_stmt(p);
             body_count = body_count + 1;
+            let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
         };
         parser_advance(p); // skip }
         let idx = add_stmt(p, "while");
@@ -576,6 +577,7 @@ fn parse_stmt(p: &mut Parser) -> i64 {
             if is_end_of_block(t2) { break; };
             parse_stmt(p);
             body_count = body_count + 1;
+            let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
         };
         parser_advance(p); // skip }
         let idx = add_stmt(p, "loop");
@@ -650,6 +652,9 @@ fn parse_fn(p: &mut Parser) -> FnDef {
         if is_end_of_block(t4) { break; };
         parse_stmt(p);
         body_count = body_count + 1;
+        // skip optional semicolon
+        let ts = parser_peek(p);
+        if ts.disc == 54 { parser_advance(p); };
     };
     parser_advance(p); // skip }
 
@@ -778,8 +783,8 @@ fn parse_program(tokens: Vec<Token>) -> Program {
     let mut structs = Vec::new();
     let mut enums = Vec::new();
     let mut fns = Vec::new();
-    let main_stmts_start = 1; // stmt indexing starts at 1
-    let mut stmts_before_top_level = p.stmt_nodes.len();
+    let mut main_stmts_start: i64 = 1;
+    let mut main_count: i64 = 0;
 
     loop {
         if parser_at_eof(&p) { break; };
@@ -805,13 +810,14 @@ fn parse_program(tokens: Vec<Token>) -> Program {
             // Eof (61)
             break;
         } else {
+            // Top-level expression statement
+            if main_stmts_start == 1 { main_stmts_start = p.stmt_nodes.len() + 1; };
             parse_stmt(&mut p);
+            main_count = main_count + 1;
             let t2 = parser_peek(&p);
             if t2.disc == 54 { parser_advance(&mut p); };
         };
     };
-
-    let main_count = p.stmt_nodes.len() - stmts_before_top_level;
 
     Program {
         structs: structs,

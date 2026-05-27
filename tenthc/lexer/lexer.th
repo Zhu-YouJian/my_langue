@@ -66,18 +66,18 @@ fn parse_float(whole: str, frac: str) -> f64 {
 fn lexer_next(lexer: &mut Lexer) -> Token {
     let mut ch = lexer_peek(lexer);
 
-    // Skip whitespace and comments
-    while ch != "" {
-        if is_ws(ch) { ch = lexer_advance(lexer); ch = lexer_peek(lexer); }
-        else if ch == "/" {
-            let next_pos = lexer.pos + 1;
-            if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") {
-                lexer_advance(lexer); lexer_advance(lexer);
-                ch = lexer_peek(lexer);
-                while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
-            } else { break; };
-        } else { break; };
-        ch = lexer_peek(lexer);
+    // Skip whitespace
+    while (ch != "") && is_ws(ch) {
+        ch = lexer_advance(lexer); ch = lexer_peek(lexer);
+    };
+    // Skip line comments
+    if (ch != "") && (ch == "/") {
+        let next_pos = lexer.pos + 1;
+        if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") {
+            lexer_advance(lexer); lexer_advance(lexer);
+            ch = lexer_peek(lexer);
+            while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+        };
     };
 
     let line = lexer.line;
@@ -119,7 +119,7 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
             ident = ident + ch;
             ch = lexer_advance(lexer); ch = lexer_peek(lexer);
         };
-
+        // Keywords
         if ident == "fn" { return Token { kind: TokenKind::Fn, span: span, disc: 4, ival: 0, sval: "" }; };
         if ident == "let" { return Token { kind: TokenKind::Let, span: span, disc: 5, ival: 0, sval: "" }; };
         if ident == "mut" { return Token { kind: TokenKind::Mut, span: span, disc: 6, ival: 0, sval: "" }; };
@@ -127,8 +127,6 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         if ident == "else" { return Token { kind: TokenKind::Else, span: span, disc: 8, ival: 0, sval: "" }; };
         if ident == "match" { return Token { kind: TokenKind::Match, span: span, disc: 9, ival: 0, sval: "" }; };
         if ident == "return" { return Token { kind: TokenKind::Return, span: span, disc: 10, ival: 0, sval: "" }; };
-        if ident == "struct" { return Token { kind: TokenKind::Struct, span: span, disc: 16, ival: 0, sval: "" }; };
-        if ident == "fn" { return Token { kind: TokenKind::Fn, span: span, disc: 4, ival: 0, sval: "" }; };
         if ident == "while" { return Token { kind: TokenKind::While, span: span, disc: 11, ival: 0, sval: "" }; };
         if ident == "for" { return Token { kind: TokenKind::For, span: span, disc: 12, ival: 0, sval: "" }; };
         if ident == "loop" { return Token { kind: TokenKind::Loop, span: span, disc: 13, ival: 0, sval: "" }; };
