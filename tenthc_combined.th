@@ -924,50 +924,30 @@ fn parse_stmt(p: &mut Parser) -> i64 {
 fn parse_fn(p: &mut Parser) -> FnDef {
     parser_advance(p); // skip fn
     let name_tok = parser_advance(p);
-    let mut name = "";
-    match name_tok.kind {
-        TokenKind::Identifier(name: s) => { name = name_tok.sval; },
-        _ => {},
-    };
+    let name = name_tok.sval;
     parser_advance(p); // skip (
     let mut params = Vec::new();
     loop {
         let t = parser_peek(p);
         if is_end_of_paren(t) { break; };
         let pname_tok = parser_advance(p);
-        let mut pname = "";
-        match pname_tok.kind {
-            TokenKind::Identifier(name: s) => { pname = pname_tok.sval; },
-            _ => {},
-        };
+        let pname = pname_tok.sval;
         parser_advance(p); // skip :
         let ptype_tok = parser_advance(p);
-        let mut ptype = "";
-        match ptype_tok.kind {
-            TokenKind::Identifier(name: s) => { ptype = ptype_tok.sval; },
-            _ => {},
-        };
+        let ptype = ptype_tok.sval;
         params.push(Param { name: pname, type_ann: ptype });
         let t2 = parser_peek(p);
-        match t2.kind {
-            TokenKind::Comma => { parser_advance(p); },
-            _ => { break; },
-        };
+        if t2.disc == 53 { parser_advance(p); }
+        else { break; };
     };
     parser_advance(p); // skip )
 
     let mut return_type = "";
     let t3 = parser_peek(p);
-    match t3.kind {
-        TokenKind::Arrow => {
-            parser_advance(p);
-            let ret_tok = parser_advance(p);
-            match ret_tok.kind {
-                TokenKind::Identifier(name: s) => { return_type = ret_tok.sval; },
-                _ => {},
-            };
-        },
-        _ => {},
+    if t3.disc == 58 {
+        parser_advance(p);
+        let ret_tok = parser_advance(p);
+        return_type = ret_tok.sval;
     };
 
     parser_advance(p); // skip {
@@ -990,35 +970,21 @@ fn parse_fn(p: &mut Parser) -> FnDef {
 fn parse_struct_def(p: &mut Parser) -> StructDef {
     parser_advance(p); // skip struct
     let name_tok = parser_advance(p);
-    let mut name = "";
-    match name_tok.kind {
-        TokenKind::Identifier(name: s) => { name = name_tok.sval; },
-        _ => {},
-    };
+    let mut name = name_tok.sval;
     parser_advance(p); // skip {
     let mut fields = Vec::new();
     loop {
         let t = parser_peek(p);
         if is_end_of_block(t) { break; };
         let fname_tok = parser_advance(p);
-        let mut fname = "";
-        match fname_tok.kind {
-            TokenKind::Identifier(name: s) => { fname = fname_tok.sval; },
-            _ => {},
-        };
+        let fname = fname_tok.sval;
         parser_advance(p); // skip :
         let ftype_tok = parser_advance(p);
-        let mut ftype = "";
-        match ftype_tok.kind {
-            TokenKind::Identifier(name: s) => { ftype = ftype_tok.sval; },
-            _ => {},
-        };
+        let ftype = ftype_tok.sval;
         fields.push(StructField { name: fname, type_ann: ftype });
         let t2 = parser_peek(p);
-        match t2.kind {
-            TokenKind::Comma => { parser_advance(p); },
-            _ => { break; },
-        };
+        if t2.disc == 53 { parser_advance(p); }
+        else { break; };
     };
     parser_advance(p); // skip }
     StructDef { name: name, fields: fields }
@@ -1027,60 +993,37 @@ fn parse_struct_def(p: &mut Parser) -> StructDef {
 fn parse_enum_def(p: &mut Parser) -> EnumDef {
     parser_advance(p); // skip enum
     let name_tok = parser_advance(p);
-    let mut name = "";
-    match name_tok.kind {
-        TokenKind::Identifier(name: s) => { name = name_tok.sval; },
-        _ => {},
-    };
+    let name = name_tok.sval;
     parser_advance(p); // skip {
     let mut variants = Vec::new();
     loop {
         let t = parser_peek(p);
         if is_end_of_block(t) { break; };
         let vname_tok = parser_advance(p);
-        let mut vname = "";
-        match vname_tok.kind {
-            TokenKind::Identifier(name: s) => { vname = vname_tok.sval; },
-            _ => {},
-        };
+        let vname = vname_tok.sval;
         let mut vfields = Vec::new();
         let t2 = parser_peek(p);
-        match t2.kind {
-            TokenKind::LParen => {
+        if t2.disc == 47 {
                 parser_advance(p);
                 loop {
                     let t3 = parser_peek(p);
                     if is_end_of_paren(t3) { break; };
                     let fname_tok = parser_advance(p);
-                    let mut fname = "";
-                    match fname_tok.kind {
-                        TokenKind::Identifier(name: s) => { fname = fname_tok.sval; },
-                        _ => {},
-                    };
+                    let fname = fname_tok.sval;
                     parser_advance(p); // skip :
                     let ftype_tok = parser_advance(p);
-                    let mut ftype = "";
-                    match ftype_tok.kind {
-                        TokenKind::Identifier(name: s) => { ftype = ftype_tok.sval; },
-                        _ => {},
-                    };
+                    let ftype = ftype_tok.sval;
                     vfields.push(StructField { name: fname, type_ann: ftype });
                     let t4 = parser_peek(p);
-                    match t4.kind {
-                        TokenKind::Comma => { parser_advance(p); },
-                        _ => { break; },
-                    };
+                    if t4.disc == 53 { parser_advance(p); }
+                    else { break; };
                 };
                 parser_advance(p); // skip )
-            },
-            _ => {},
         };
         variants.push(EnumVariant { name: vname, fields: vfields });
         let t5 = parser_peek(p);
-        match t5.kind {
-            TokenKind::Comma => { parser_advance(p); },
-            _ => { break; },
-        };
+        if t5.disc == 53 { parser_advance(p); }
+        else { break; };
     };
     parser_advance(p); // skip }
     EnumDef { name: name, variants: variants }
@@ -1385,10 +1328,12 @@ fn compile(src: str) -> str {
 }
 
 fn main() -> i64 {
-    let src = read_file("tenthc/lexer/token.th");
+    let src = read_file("test_fn7.th");
     let mut lex = lexer_new(src);
     let tokens = lexer_tokenize(&mut lex);
     let prog = parse_program(tokens);
+    let c = cgen_program(&prog, &prog.expr_nodes, &prog.stmt_nodes);
+    write_file("tenthc_output.c", c);
     return 0;
 }
 

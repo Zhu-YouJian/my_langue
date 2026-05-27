@@ -8,8 +8,11 @@ fn compile(src: str) -> str {
 }
 
 fn main() -> i64 {
-    let src = read_file("tenthc_combined.th");
-    let c = compile(src);
+    let src = read_file("test_fn7.th");
+    let mut lex = lexer_new(src);
+    let tokens = lexer_tokenize(&mut lex);
+    let prog = parse_program(tokens);
+    let c = cgen_program(&prog, &prog.expr_nodes, &prog.stmt_nodes);
     write_file("tenthc_output.c", c);
-    0
+    return 0;
 }
