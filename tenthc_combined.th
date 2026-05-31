@@ -932,7 +932,7 @@ fn parse_fn(p: &mut Parser) -> FnDef {
         let mut ptype = "";
         loop {
             let tt = parser_peek(p);
-            if tt.disc == 53 || tt.disc == 48 { break; }; // Comma or RParen
+            if tt.disc == 53 || tt.disc == 48 || tt.disc == 61 { break; }; // Comma/RParen/Eof
             let type_tok = parser_advance(p);
             if ptype != "" { ptype = ptype + " "; };
             ptype = ptype + type_tok.sval;
@@ -991,7 +991,7 @@ fn parse_struct_def(p: &mut Parser) -> StructDef {
         let mut ftype = "";
         loop {
             let tt = parser_peek(p);
-            if tt.disc == 53 || tt.disc == 50 { break; }; // Comma or RBrace
+            if tt.disc == 53 || tt.disc == 50 || tt.disc == 61 { break; }; // Comma/RBrace/Eof
             let type_tok = parser_advance(p);
             if ftype != "" { ftype = ftype + " "; };
             ftype = ftype + type_tok.sval;
@@ -1343,12 +1343,10 @@ fn compile(src: str) -> str {
 }
 
 fn main() -> i64 {
-    let src = read_file("test_4files.th");
+    let src = read_file("test_tlp.th");
     let mut lex = lexer_new(src);
     let tokens = lexer_tokenize(&mut lex);
     let prog = parse_program(tokens);
-    let c = cgen_program(&prog, &prog.expr_nodes, &prog.stmt_nodes);
-    write_file("tenthc_output.c", c);
     return 0;
 }
 
