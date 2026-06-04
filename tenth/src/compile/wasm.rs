@@ -58,7 +58,7 @@ fn is_struct_kind(kind: &HirExprKind) -> bool {
 // ── Compiler state ─────────────────────────────────────────────────────────
 
 /// First user-function index (after all host imports).
-const IMPORT_COUNT: u32 = 7; // 6 original + tenth_alloc
+const IMPORT_COUNT: u32 = 11; // 7 original + tenth_alloc + Vec_new + Vec_push + Vec_len + Vec_get
 
 pub struct WasmCompiler {
     type_cache: HashMap<(Vec<ValType>, Vec<ValType>), u32>,
@@ -176,7 +176,11 @@ impl WasmCompiler {
         reg(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         reg(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         reg(vec![ValType::I64], vec![ValType::I32]);
-        reg(vec![ValType::I32], vec![ValType::I32]); // tenth_alloc
+        reg(vec![ValType::I32], vec![ValType::I32]); // 6: tenth_alloc
+        reg(vec![], vec![ValType::I64]);             // 7: Vec_new -> i64
+        reg(vec![ValType::I64, ValType::I64], vec![ValType::I64]); // 8: Vec_push(i64, i64) -> i64
+        reg(vec![ValType::I64], vec![ValType::I64]); // 9: Vec_len(i64) -> i64
+        reg(vec![ValType::I64, ValType::I64], vec![ValType::I64]); // 10: Vec_get(i64, i64) -> i64 -> i64
         // User functions
         for func in &program.functions {
             let p: Vec<ValType> = func.params.iter().filter_map(|(_, t)| to_val_type(t)).collect();
@@ -201,6 +205,10 @@ impl WasmCompiler {
         imports.import("host", "str_eq", EntityType::Function(ti(vec![ValType::I32, ValType::I32], vec![ValType::I32])));
         imports.import("host", "str_int", EntityType::Function(ti(vec![ValType::I64], vec![ValType::I32])));
         imports.import("host", "tenth_alloc", EntityType::Function(ti(vec![ValType::I32], vec![ValType::I32])));
+        imports.import("host", "Vec_new", EntityType::Function(ti(vec![], vec![ValType::I64])));
+        imports.import("host", "Vec_push", EntityType::Function(ti(vec![ValType::I64, ValType::I64], vec![ValType::I64])));
+        imports.import("host", "Vec_len", EntityType::Function(ti(vec![ValType::I64], vec![ValType::I64])));
+        imports.import("host", "Vec_get", EntityType::Function(ti(vec![ValType::I64, ValType::I64], vec![ValType::I64])));
         module.section(&imports);
     }
 
@@ -306,6 +314,10 @@ impl WasmCompiler {
             "str_eq" => Ok(4),
             "str_int" => Ok(5),
             "tenth_alloc" => Ok(6),
+            "Vec::new" | "Vec_new" => Ok(7),
+            "Vec::push" | "Vec_push" => Ok(8),
+            "Vec::len" | "Vec_len" => Ok(9),
+            "Vec::get" | "Vec_get" => Ok(10),
             _ => self.func_map.get(name).copied()
                 .ok_or_else(|| TenthError::RuntimeError {
                     message: format!("WASM: undefined function '{}'", name),
@@ -367,6 +379,9 @@ impl WasmCompiler {
                             self.compile_string_arg(body, a)?;
                             body.instruction(&Instruction::Call(2));
                         }
+                    }
+                    "Vec::new" | "Vec_new" => {
+                        body.instruction(&Instruction::Call(7)); // Vec_new() -> i64
                     }
                     _ => {
                         for a in args { self.compile_expr(body, a)?; }
@@ -458,7 +473,7 @@ impl WasmCompiler {
 
             HirExprKind::FieldAssign { target, field, value } => {
                 self.compile_expr(body, target)?;
-                body.instruction(&Instruction::I32WrapI64); // pointer i64 -> i32
+                body.instruction(&Instruction::I32WrapI64);
                 let hint = self.infer_struct_name(&target.ty);
                 let (_, offset, _, vt) = self.resolve_field(&hint, field)?;
                 self.compile_expr(body, value)?;
@@ -468,6 +483,36 @@ impl WasmCompiler {
                     ValType::I32 => { body.instruction(&Instruction::I32Store(arg)); }
                     ValType::F64 => { body.instruction(&Instruction::F64Store(arg)); }
                     _ => {}
+                }
+            }
+
+            HirExprKind::MethodCall { receiver, method, args, .. } => {
+                self.compile_expr(body, receiver)?;
+                // Receiver is i64 (all values are i64 in locals)
+                match method.as_str() {
+                    "len" => {
+                        body.instruction(&Instruction::Call(9)); // Vec_len(i64) -> i64
+                    }
+                    "push" => {
+                        if let Some(a) = args.first() {
+                            self.compile_expr(body, a)?;
+                        } else {
+                            body.instruction(&Instruction::I64Const(0));
+                        }
+                        body.instruction(&Instruction::Call(8)); // Vec_push -> i64
+                        body.instruction(&Instruction::Drop);     // discard returned vec ptr
+                    }
+                    "get" => {
+                        if let Some(a) = args.first() {
+                            self.compile_expr(body, a)?;
+                        } else {
+                            body.instruction(&Instruction::I64Const(0));
+                        }
+                        body.instruction(&Instruction::Call(10)); // Vec_get(i64, i64) -> i64
+                    }
+                    _ => return Err(TenthError::RuntimeError {
+                        message: format!("WASM: unsupported method '{}'", method),
+                    }),
                 }
             }
 
@@ -749,12 +794,83 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
             } else { 0 }
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
-    // tenth_alloc(size: i32) -> i32 — bump allocator in linear memory
+    // tenth_alloc(size: i32) -> i32
     linker.func_wrap("host", "tenth_alloc",
         |mut caller: Caller<'_, u32>, size: i32| -> i32 {
             let ptr = *caller.data();
             *caller.data_mut() = ptr + size as u32;
             ptr as i32
+    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+
+    // Vec_new() -> i64 (pointer extended to i64)
+    linker.func_wrap("host", "Vec_new",
+        |mut caller: Caller<'_, u32>| -> i64 {
+            let ptr = *caller.data();
+            *caller.data_mut() = ptr + 24;
+            ptr as i64
+    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+
+    // Vec_len(vec: i64) -> i64
+    linker.func_wrap("host", "Vec_len",
+        |caller: Caller<'_, u32>, vec: i64| -> i64 {
+            let vec_ptr = vec as i32 as usize;
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let data = mem.data(&caller);
+            if vec_ptr + 16 <= data.len() {
+                i64::from_le_bytes(data[vec_ptr+8..vec_ptr+16].try_into().unwrap())
+            } else { 0 }
+    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+
+    // Vec_get(vec: i64, idx: i64) -> i64
+    linker.func_wrap("host", "Vec_get",
+        |caller: Caller<'_, u32>, vec: i64, idx: i64| -> i64 {
+            let vec_ptr = vec as i32 as usize;
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let data = mem.data(&caller);
+            if vec_ptr + 20 > data.len() { return 0; }
+            let dp = i32::from_le_bytes(data[vec_ptr+16..vec_ptr+20].try_into().unwrap()) as usize;
+            let pos = dp + idx as usize * 8;
+            if pos + 8 <= data.len() {
+                i64::from_le_bytes(data[pos..pos+8].try_into().unwrap())
+            } else { 0 }
+    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+
+    // Vec_push(vec: i64, item: i64) -> i64
+    linker.func_wrap("host", "Vec_push",
+        |mut caller: Caller<'_, u32>, vec: i64, item: i64| -> i64 {
+            let vec_ptr = vec as i32 as usize;
+            // Phase 1: read header
+            let (cap, len, dp) = {
+                let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+                let data = mem.data(&caller);
+                let vp = vec_ptr;
+                let cap = if vp+8 <= data.len() { i64::from_le_bytes(data[vp..vp+8].try_into().unwrap()) } else { 0 };
+                let len = if vp+16 <= data.len() { i64::from_le_bytes(data[vp+8..vp+16].try_into().unwrap()) } else { 0 };
+                let dp = if vp+20 <= data.len() { i32::from_le_bytes(data[vp+16..vp+20].try_into().unwrap()) } else { 0 };
+                (cap, len, dp)
+            };
+            // Phase 2: allocate if needed
+            let (new_cap, new_dp) = if len >= cap || dp == 0 {
+                let nc = if cap == 0 { 4 } else { cap * 2 };
+                let new_sz = nc as usize * 8;
+                let np = *caller.data();
+                *caller.data_mut() = np + new_sz as u32;
+                (nc, np as i32)
+            } else {
+                (cap, dp)
+            };
+            // Phase 3: write
+            {
+                let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+                let data = mem.data_mut(&mut caller);
+                let vp = vec_ptr;
+                data[vp..vp+8].copy_from_slice(&new_cap.to_le_bytes());
+                data[vp+8..vp+16].copy_from_slice(&(len + 1).to_le_bytes());
+                data[vp+16..vp+20].copy_from_slice(&new_dp.to_le_bytes());
+                let pos = new_dp as usize + len as usize * 8;
+                data[pos..pos+8].copy_from_slice(&item.to_le_bytes());
+            }
+            vec
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     let instance = linker.instantiate(&mut store, &module)
