@@ -7,6 +7,10 @@ use crate::hir::types::{BaseType, Dim, Type};
 use super::value::Value;
 use super::tensor::Tensor;
 use super::limits::RuntimeLimits;
+use super::arena::Arena;
+
+/// Default arena capacity when no explicit limit is configured.
+const DEFAULT_ARENA_CAPACITY: usize = 64 * 1024; // 64K f64 slots = 512 KB
 
 pub struct Interpreter {
     pub variables: HashMap<String, Value>,
@@ -17,6 +21,9 @@ pub struct Interpreter {
     trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
     /// Resource limits — when set, allocations are checked against caps.
     pub limits: Option<RuntimeLimits>,
+    /// Arena for temporary tensor/computation data.
+    /// Reset via scope around each top-level evaluation.
+    pub arena: Arena,
 }
 
 impl Interpreter {
@@ -29,13 +36,18 @@ impl Interpreter {
             modules: program.modules.clone(),
             trait_impls: program.trait_impls.clone(),
             limits: None,
+            arena: Arena::new(DEFAULT_ARENA_CAPACITY),
         }
     }
 
     /// Create an interpreter with resource limits enforced.
+    /// The arena capacity is derived from max_arena_bytes.
     pub fn with_limits(program: &HirProgram, limits: RuntimeLimits) -> Self {
+        let arena_elems = limits.config.max_arena_bytes / std::mem::size_of::<f64>();
+        let arena_cap = arena_elems.min(usize::MAX / 2).max(1024);
         let mut interp = Interpreter::new(program);
         interp.limits = Some(limits);
+        interp.arena = Arena::new(arena_cap);
         interp
     }
 
@@ -88,6 +100,10 @@ impl Interpreter {
                 }
             }
         }
+
+        // Reset arena at the start of each top-level evaluation.
+        // Any temporary allocations from previous evaluations are freed.
+        self.arena.reset();
 
         if let Some(ref expr) = program.main_expr {
             self.eval_expr(expr)
