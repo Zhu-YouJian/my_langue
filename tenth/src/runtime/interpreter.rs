@@ -861,6 +861,21 @@ impl Interpreter {
                 items.borrow_mut().push(args[0].clone());
                 Ok(Some(Value::Unit))
             }
+            "get" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "get() takes 1 argument".into(),
+                    });
+                }
+                let idx = args[0].as_int().unwrap_or(0) as usize;
+                let vec = items.borrow();
+                match vec.get(idx) {
+                    Some(v) => Ok(Some(v.clone())),
+                    None => Err(TenthError::RuntimeError {
+                        message: format!("Vec index {} out of bounds", idx),
+                    }),
+                }
+            }
             _ => Err(TenthError::RuntimeError {
                 message: format!("Vec has no method '{}'", method),
             }),
