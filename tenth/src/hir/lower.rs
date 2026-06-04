@@ -738,6 +738,22 @@ impl Lowerer {
         }
     }
 
+    /// Resolve TypeParam to Struct/Enum if the name matches a known definition.
+    fn resolve_struct_type(&self, ty: Type) -> Type {
+        match &ty {
+            Type::TypeParam { name } => {
+                if self.structs.contains_key(name) {
+                    Type::Struct(name.clone())
+                } else if self.enums.contains_key(name) {
+                    Type::Enum(name.clone())
+                } else {
+                    ty
+                }
+            }
+            _ => ty,
+        }
+    }
+
     fn resolve_call_type(&self, func: &HirExpr, args: &[HirExpr], span: &Span) -> TenthResult<Type> {
         match &func.kind {
             HirExprKind::Var(name) => {
@@ -752,7 +768,7 @@ impl Lowerer {
                             ),
                         });
                     }
-                    return Ok(ret);
+                    return Ok(self.resolve_struct_type(ret));
                 }
                 self.resolve_builtin(name, args, span)
             }
@@ -917,6 +933,7 @@ impl Lowerer {
                     let ret_ty = return_type.as_ref()
                         .map(|rt| Type::from_annotation(rt))
                         .unwrap_or(Type::unit());
+                    let ret_ty = self.resolve_struct_type(ret_ty);
                     self.scope.define_fn(name.name.clone(), param_types, ret_ty);
                 }
                 _ => {}

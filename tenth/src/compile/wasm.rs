@@ -53,11 +53,6 @@ fn field_size_and_type(ty: &Type) -> (u32, ValType) {
     }
 }
 
-/// Check if an expression kind produces a struct pointer (i32).
-fn is_struct_kind(kind: &HirExprKind) -> bool {
-    matches!(kind, HirExprKind::StructLiteral { .. })
-}
-
 // ── Compiler state ─────────────────────────────────────────────────────────
 
 /// First user-function index (after all host imports).
@@ -301,7 +296,7 @@ impl WasmCompiler {
         } else if let Some(mf) = program.functions.iter().find(|f| f.name == "main") {
             let fi = self.resolve_func("main")?;
             body.instruction(&Instruction::Call(fi));
-            if matches!(mf.return_type, Type::Base(BaseType::I64)) {
+            if !matches!(mf.return_type, Type::Base(BaseType::Unit)) {
                 body.instruction(&Instruction::Drop);
             }
         }
@@ -432,9 +427,9 @@ impl WasmCompiler {
                 body.instruction(&Instruction::I32Const(sz as i32));
                 body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32
                 body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
-                // Use dedicated temp slot (first extra local = params count, or index 1 minimum)
+                // Save in temp, then push copy for result
                 let tmp = if self.local_count > 0 { self.local_count } else { 1 };
-                body.instruction(&Instruction::LocalTee(tmp));
+                body.instruction(&Instruction::LocalSet(tmp));
                 let layout = self.struct_layouts.get(name).cloned()
                     .ok_or_else(|| TenthError::RuntimeError {
                         message: format!("WASM: unknown struct '{}'", name),
