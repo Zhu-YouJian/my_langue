@@ -1,10 +1,50 @@
 // Tenth runtime library — provides built-in functions for compiled C code
+//
+// Memory management: uses a global arena for string operations.
+// Call str_arena_reset() at the end of main to free all accumulated strings.
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+
+// === Arena allocator ========================================================
+// All string concatenation results live in this arena.
+// The arena grows as needed and is freed in one shot by str_arena_reset().
+
+#define ARENA_BLOCK_SIZE (64 * 1024)  // 64 KB per block
+
+typedef struct ArenaBlock {
+    char* data;
+    size_t used;
+    struct ArenaBlock* next;
+} ArenaBlock;
+
+static ArenaBlock* g_arena_head = NULL;
+
+static void* arena_alloc(size_t sz) {
+    // First allocation or current block full → allocate new block
+    if (!g_arena_head || g_arena_head->used + sz > ARENA_BLOCK_SIZE) {
+        size_t block_sz = sz > ARENA_BLOCK_SIZE ? sz : ARENA_BLOCK_SIZE;
+        ArenaBlock* blk = (ArenaBlock*)malloc(sizeof(ArenaBlock) + block_sz);
+        blk->data = (char*)(blk + 1);
+        blk->used = 0;
+        blk->next = g_arena_head;
+        g_arena_head = blk;
+    }
+    void* ptr = g_arena_head->data + g_arena_head->used;
+    g_arena_head->used += sz;
+    return ptr;
+}
+
+void str_arena_reset(void) {
+    while (g_arena_head) {
+        ArenaBlock* next = g_arena_head->next;
+        free(g_arena_head);
+        g_arena_head = next;
+    }
+}
 
 // === Vec (dynamic array) ====================================================
 //
@@ -47,6 +87,13 @@ void* Vec_get(void* vec, int64_t idx) {
     return v->data[idx];
 }
 
+void Vec_free(void* vec) {
+    if (!vec) return;
+    Vec* v = (Vec*)vec;
+    free(v->data);
+    free(v);
+}
+
 // === HashMap ================================================================
 
 void* HashMap_new(void) {
@@ -83,16 +130,38 @@ void println(const char* s) {
 
 // === Utilities ==============================================================
 
+// str_add — arena-allocated string concatenation
+// All results live in the global arena; call str_arena_reset() to free.
 char* str_add(const char* a, const char* b) {
-    if (!a && !b) return strdup("");
-    if (!a) return strdup(b);
-    if (!b) return strdup(a);
+    if (!a && !b) { char* r = (char*)arena_alloc(1); r[0] = 0; return r; }
+    if (!a) {
+        size_t lb = strlen(b);
+        char* r = (char*)arena_alloc(lb + 1);
+        memcpy(r, b, lb + 1);
+        return r;
+    }
+    if (!b) {
+        size_t la = strlen(a);
+        char* r = (char*)arena_alloc(la + 1);
+        memcpy(r, a, la + 1);
+        return r;
+    }
     size_t la = strlen(a), lb = strlen(b);
-    char* r = malloc(la + lb + 1);
+    char* r = (char*)arena_alloc(la + lb + 1);
     memcpy(r, a, la);
     memcpy(r + la, b, lb);
     r[la + lb] = 0;
     return r;
+}
+
+// str_int — int64 to string using a rotating static buffer
+// Safe for up to 16 nested calls
+static char _str_int_buf[16][32];
+static int _str_int_idx = 0;
+const char* str_int(int64_t n) {
+    int i = (_str_int_idx++) & 15;
+    snprintf(_str_int_buf[i], 32, "%lld", (long long)n);
+    return _str_int_buf[i];
 }
 
 // === String helpers for Tenth compiled code ==================================
@@ -105,12 +174,12 @@ bool str_eq(const char* a, const char* b) {
 }
 
 // str_at — get a 1-char string at position, returns "" if out of bounds
-// Uses rotating buffers to survive nested calls
-static char _str_at_buf[4][2] = {{0}};
+// Uses rotating buffers to survive nested calls (16 slots)
+static char _str_at_buf[16][2] = {{0}};
 static int _str_at_idx = 0;
 const char* str_at(const char* s, int64_t pos) {
     if (!s || pos < 0 || (size_t)pos >= strlen(s)) return "";
-    int i = (_str_at_idx++) & 3;
+    int i = (_str_at_idx++) & 15;
     _str_at_buf[i][0] = s[pos];
     _str_at_buf[i][1] = 0;
     return _str_at_buf[i];
