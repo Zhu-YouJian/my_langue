@@ -25,6 +25,9 @@ fn to_val_type(ty: &Type) -> Option<ValType> {
             BaseType::Unit => None,
             _ => None,
         },
+        Type::Ref(_) | Type::MutRef(_) => Some(ValType::I64),
+        Type::Struct(_) => Some(ValType::I64),
+        Type::TypeParam { .. } => Some(ValType::I64), // unresolved generic/struct → i64
         Type::Unknown => Some(ValType::I64),
         _ => None,
     }
@@ -131,6 +134,7 @@ impl WasmCompiler {
     fn infer_struct_name(&self, ty: &Type) -> String {
         match ty {
             Type::Struct(name) => name.clone(),
+            Type::TypeParam { name } if self.struct_layouts.contains_key(name) => name.clone(),
             Type::Ref(inner) | Type::MutRef(inner) => self.infer_struct_name(inner),
             _ => String::new(),
         }
@@ -276,7 +280,7 @@ impl WasmCompiler {
             self.local_map.insert(name.clone(), self.local_count);
             self.local_count += 1;
         }
-        let locals: Vec<ValType> = (0..64).map(|_| ValType::I64).collect();
+        let locals: Vec<ValType> = (0..16).map(|_| ValType::I64).collect();
         let mut body = Function::new_with_locals_types(locals);
         self.compile_expr(&mut body, &func.body)?;
         if matches!(&func.return_type, Type::Base(BaseType::Unit)) {
@@ -289,10 +293,11 @@ impl WasmCompiler {
     fn compile_main(&mut self, program: &HirProgram) -> TenthResult<Function> {
         self.local_map.clear();
         self.local_count = 0;
-        let locals: Vec<ValType> = (0..64).map(|_| ValType::I64).collect();
+        let locals: Vec<ValType> = (0..16).map(|_| ValType::I64).collect();
         let mut body = Function::new_with_locals_types(locals);
         if let Some(ref expr) = program.main_expr {
             self.compile_expr(&mut body, expr)?;
+            body.instruction(&Instruction::Drop);
         } else if let Some(mf) = program.functions.iter().find(|f| f.name == "main") {
             let fi = self.resolve_func("main")?;
             body.instruction(&Instruction::Call(fi));
@@ -413,10 +418,6 @@ impl WasmCompiler {
 
             HirExprKind::Assign { target, value } => {
                 self.compile_expr(body, value)?;
-                // If value is a struct pointer (i32), extend to i64 for uniform local storage
-                if is_struct_kind(&value.kind) {
-                    body.instruction(&Instruction::I64ExtendI32U);
-                }
                 if let Some(&idx) = self.local_map.get(target) {
                     body.instruction(&Instruction::LocalSet(idx));
                 } else {
@@ -429,11 +430,11 @@ impl WasmCompiler {
             HirExprKind::StructLiteral { name, fields } => {
                 let sz = self.struct_size(name);
                 body.instruction(&Instruction::I32Const(sz as i32));
-                body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32 ptr
-                body.instruction(&Instruction::I64ExtendI32U);
-                let tmp = self.local_count;
-                self.local_count += 1;
-                body.instruction(&Instruction::LocalSet(tmp));
+                body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32
+                body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
+                // Use dedicated temp slot (first extra local = params count, or index 1 minimum)
+                let tmp = if self.local_count > 0 { self.local_count } else { 1 };
+                body.instruction(&Instruction::LocalTee(tmp));
                 let layout = self.struct_layouts.get(name).cloned()
                     .ok_or_else(|| TenthError::RuntimeError {
                         message: format!("WASM: unknown struct '{}'", name),
@@ -452,9 +453,8 @@ impl WasmCompiler {
                         }
                     }
                 }
-                // Push i32 pointer as result
+                // Push i64 pointer as result
                 body.instruction(&Instruction::LocalGet(tmp));
-                body.instruction(&Instruction::I32WrapI64);
             }
 
             HirExprKind::Field { target, field } => {
@@ -516,6 +516,13 @@ impl WasmCompiler {
                 }
             }
 
+            // Ref/MutRef/Deref are identity ops for struct pointers (stored as i64)
+            HirExprKind::Ref(inner)
+            | HirExprKind::MutRef(inner)
+            | HirExprKind::Deref(inner) => {
+                self.compile_expr(body, inner)?;
+            }
+
             _ => return Err(TenthError::RuntimeError {
                 message: format!("WASM: unsupported expr {:?}", expr.kind),
             }),
@@ -535,9 +542,6 @@ impl WasmCompiler {
             HirStmtKind::Let { name, init, .. } => {
                 if let Some(e) = init {
                     self.compile_expr(body, e)?;
-                    if is_struct_kind(&e.kind) {
-                        body.instruction(&Instruction::I64ExtendI32U);
-                    }
                 } else {
                     body.instruction(&Instruction::I64Const(0));
                 }
