@@ -1,15 +1,22 @@
 use std::collections::HashMap;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
-use crate::error::TenthResult;
+use crate::error::{TenthError, TenthResult};
 use crate::lexer::lexer::Lexer;
 use crate::parser::parser::Parser;
 use crate::hir::lower::Lowerer;
 use crate::hir::hir::HirProgram;
 use crate::runtime::interpreter::Interpreter;
 use crate::runtime::value::Value;
+use crate::runtime::limits::{RuntimeLimits, MemoryConfig, LiveCounter};
 
 pub fn run_repl() -> TenthResult<()> {
+    run_repl_with_limits(MemoryConfig::default())
+}
+
+/// Run REPL with explicit resource limits.
+pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
+    let limits = RuntimeLimits::new(config);
     let mut rl = DefaultEditor::new().unwrap();
     println!("Tenth v0.1.0 REPL");
     println!("Type expressions, ':q' to quit, ':h' for help");
@@ -29,6 +36,7 @@ pub fn run_repl() -> TenthResult<()> {
         trait_impls: HashMap::new(),
     };
     let mut variables: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    let mut def_count: usize = 0; // track accumulated definitions
 
     loop {
         let prompt = "tenth> ";
@@ -51,8 +59,8 @@ pub fn run_repl() -> TenthResult<()> {
                     println!("  :q         quit");
                     println!("  :h         help");
                     println!("  :vars      show variables");
-                    println!("  :break N   set breakpoint at step N");
-                    println!("  :step      single-step execution");
+                    println!("  :clear     reset all state (functions, vars)");
+                    println!("  :mem       show memory / limits snapshot");
                     println!("  :print V   print variable value");
                     println!();
                     println!("Examples:");
@@ -65,6 +73,37 @@ pub fn run_repl() -> TenthResult<()> {
                     for (name, val) in &variables {
                         println!("  {} = {}", name, val);
                     }
+                    continue;
+                }
+                if trimmed == ":clear" {
+                    accumulated_program = HirProgram {
+                        functions: Vec::new(),
+                        generic_funcs: Vec::new(),
+                        main_expr: None,
+                        modules: HashMap::new(),
+                        uses: Vec::new(),
+                        methods: HashMap::new(),
+                        structs: HashMap::new(),
+                        generic_structs: HashMap::new(),
+                        enums: HashMap::new(),
+                        trait_defs: HashMap::new(),
+                        trait_impls: HashMap::new(),
+                    };
+                    variables.clear();
+                    def_count = 0;
+                    LiveCounter::reset();
+                    println!("  State cleared.");
+                    continue;
+                }
+                if trimmed == ":mem" {
+                    let snap = LiveCounter::snapshot();
+                    println!("  ── Memory snapshot ──");
+                    println!("  arena bytes : {}", snap.arena_alloc_bytes);
+                    println!("  tensors     : {}", snap.tensor_count);
+                    println!("  variables   : {} (limit: {})",
+                        variables.len(), limits.config.max_variables);
+                    println!("  definitions : {} (limit: {})",
+                        def_count, limits.config.max_accumulated_defs);
                     continue;
                 }
                 if trimmed.starts_with(":print ") {
@@ -82,7 +121,22 @@ pub fn run_repl() -> TenthResult<()> {
 
                 rl.add_history_entry(trimmed).ok();
 
-                match execute_line(trimmed, &mut accumulated_program, &mut variables) {
+                // Guard: check definition count before parsing
+                if let Err(msg) = limits.guard_defs(def_count) {
+                    eprintln!("[limits] {}", msg);
+                    if cfg!(feature = "mem-strict") {
+                        panic!("definition limit exceeded: {}", msg);
+                    }
+                    continue;
+                }
+
+                match execute_line_with_limits(
+                    trimmed,
+                    &mut accumulated_program,
+                    &mut variables,
+                    &limits,
+                    &mut def_count,
+                ) {
                     Ok(Some(val)) => {
                         match val {
                             Value::Unit => {}
@@ -113,10 +167,12 @@ pub fn run_repl() -> TenthResult<()> {
     Ok(())
 }
 
-fn execute_line(
+fn execute_line_with_limits(
     line: &str,
     accumulated_program: &mut crate::hir::hir::HirProgram,
     variables: &mut std::collections::HashMap<String, Value>,
+    limits: &RuntimeLimits,
+    def_count: &mut usize,
 ) -> TenthResult<Option<Value>> {
     let mut lexer = Lexer::new(line);
     let tokens = lexer.tokenize()?;
@@ -126,6 +182,21 @@ fn execute_line(
 
     let mut lowerer = Lowerer::new();
     let hir_program = lowerer.lower_program(&program)?;
+
+    // Track new definitions
+    let new_defs = hir_program.functions.len()
+        + hir_program.generic_funcs.len()
+        + hir_program.methods.len()
+        + hir_program.trait_defs.len()
+        + hir_program.trait_impls.len();
+    *def_count += new_defs;
+
+    // Guard against unbounded accumulation
+    if let Err(msg) = limits.guard_defs(*def_count) {
+        // Roll back count if we're rejecting
+        *def_count -= new_defs;
+        return Err(TenthError::RuntimeError { message: msg });
+    }
 
     accumulated_program.functions.extend(hir_program.functions.clone());
     accumulated_program.generic_funcs.extend(hir_program.generic_funcs.clone());
@@ -137,7 +208,7 @@ fn execute_line(
     accumulated_program.trait_impls.extend(hir_program.trait_impls.clone());
     accumulated_program.main_expr = hir_program.main_expr;
 
-    let mut interpreter = Interpreter::new(accumulated_program);
+    let mut interpreter = Interpreter::with_limits(accumulated_program, limits.clone());
     interpreter.variables.extend(variables.clone());
     let result = interpreter.execute_program(accumulated_program)?;
 

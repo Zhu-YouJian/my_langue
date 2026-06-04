@@ -1,10 +1,18 @@
+use super::limits;
+
 /// Arena allocator for tensor data.
 /// Pre-allocates a pool of f64 values and hands out slices.
 /// All allocations are batch-freed when the arena is reset.
+///
+/// When compiled with `mem-debug` feature, arena allocations update
+/// the global live counters so that `:mem` in the REPL reflects
+/// actual arena usage.
 pub struct Arena {
     pool: Vec<f64>,
     offset: usize,
     capacity: usize,
+    /// Tracked bytes for limits integration
+    tracked_bytes: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -22,6 +30,7 @@ impl Arena {
             pool: vec![0.0; capacity],
             offset: 0,
             capacity,
+            tracked_bytes: 0,
         }
     }
 
@@ -33,6 +42,9 @@ impl Arena {
             return None;
         }
         self.offset = start + count;
+        let byte_size = count * std::mem::size_of::<f64>();
+        self.tracked_bytes += byte_size;
+        limits::inc_arena_bytes(byte_size);
         Some(ArenaSlice { offset: start, len: count })
     }
 
@@ -57,7 +69,10 @@ impl Arena {
     }
 
     /// Reset the arena, freeing all allocations.
+    /// Also decrements the global counter.
     pub fn reset(&mut self) {
+        limits::dec_arena_bytes(self.tracked_bytes);
+        self.tracked_bytes = 0;
         self.offset = 0;
     }
 
@@ -68,14 +83,19 @@ impl Arena {
         F: FnOnce(&mut Arena) -> R,
     {
         let saved = self.offset;
+        let saved_tracked = self.tracked_bytes;
         let result = f(self);
+        // Roll back the global counter for scoped allocations
+        let diff = self.tracked_bytes - saved_tracked;
+        limits::dec_arena_bytes(diff);
+        self.tracked_bytes = saved_tracked;
         self.offset = saved;
         result
     }
 
     /// Bytes used / total capacity.
     pub fn usage(&self) -> (usize, usize) {
-        (self.offset, self.capacity)
+        (self.offset * std::mem::size_of::<f64>(), self.capacity * std::mem::size_of::<f64>())
     }
 
     /// Number of remaining f64 slots.

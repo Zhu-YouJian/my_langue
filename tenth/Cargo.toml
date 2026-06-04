@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2024"
 description = "Tenth language bootstrap compiler"
 
+[features]
+# Enable memory tracking counters and hard-limit enforcement.
+# Adds ~2% overhead from atomic operations.
+mem-debug = []
+# Strict mode: panics on limit violations instead of soft warnings.
+# Implies mem-debug.
+mem-strict = ["mem-debug"]
+
 [dependencies]
 ndarray = "0.16"
 rustyline = "15"

@@ -6,6 +6,7 @@ use crate::hir::hir::*;
 use crate::hir::types::{BaseType, Dim, Type};
 use super::value::Value;
 use super::tensor::Tensor;
+use super::limits::RuntimeLimits;
 
 pub struct Interpreter {
     pub variables: HashMap<String, Value>,
@@ -14,6 +15,8 @@ pub struct Interpreter {
     methods: HashMap<String, HashMap<String, HirFnDef>>,
     modules: HashMap<String, HirProgram>,
     trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
+    /// Resource limits — when set, allocations are checked against caps.
+    pub limits: Option<RuntimeLimits>,
 }
 
 impl Interpreter {
@@ -25,7 +28,15 @@ impl Interpreter {
             methods: program.methods.clone(),
             modules: program.modules.clone(),
             trait_impls: program.trait_impls.clone(),
+            limits: None,
         }
+    }
+
+    /// Create an interpreter with resource limits enforced.
+    pub fn with_limits(program: &HirProgram, limits: RuntimeLimits) -> Self {
+        let mut interp = Interpreter::new(program);
+        interp.limits = Some(limits);
+        interp
     }
 
     pub fn execute_program(&mut self, program: &HirProgram) -> TenthResult<Option<Value>> {
@@ -97,6 +108,19 @@ impl Interpreter {
     }
 
     fn set_var(&mut self, name: String, val: Value) {
+        // Guard: check variable count before inserting a new one
+        if let Some(ref limits) = self.limits {
+            if !self.variables.contains_key(&name) {
+                if let Err(msg) = limits.guard_vars(self.variables.len()) {
+                    // In mem-strict mode, this would panic; in default, warn
+                    eprintln!("[limits] variable limit: {}", msg);
+                    if cfg!(feature = "mem-strict") {
+                        panic!("variable limit exceeded: {}", msg);
+                    }
+                    // Otherwise, proceed but warn
+                }
+            }
+        }
         match self.variables.get(&name) {
             Some(Value::Shared(rc)) => {
                 *rc.borrow_mut() = val;
@@ -105,6 +129,17 @@ impl Interpreter {
                 self.variables.insert(name, val);
             }
         }
+    }
+
+    /// Guarded tensor creation: checks element count against limits.
+    pub fn make_tensor(&self, data: Vec<f64>, shape: Vec<usize>) -> TenthResult<Tensor> {
+        let elements = data.len();
+        if let Some(ref limits) = self.limits {
+            if let Err(msg) = limits.guard_tensor(elements) {
+                return Err(TenthError::RuntimeError { message: msg });
+            }
+        }
+        Ok(Tensor::from_vec(data, shape))
     }
 
     fn eval_expr(&mut self, expr: &HirExpr) -> TenthResult<Option<Value>> {
@@ -323,7 +358,7 @@ impl Interpreter {
                 let nrows = rows.len();
                 let ncols = rows.first().map(|r| r.len()).unwrap_or(0);
                 let flat: Vec<f64> = rows.into_iter().flatten().collect();
-                let tensor = Tensor::from_vec(flat, vec![nrows, ncols]);
+                let tensor = self.make_tensor(flat, vec![nrows, ncols])?;
                 Ok(Some(Value::Tensor(Rc::new(RefCell::new(tensor)))))
             }
 
