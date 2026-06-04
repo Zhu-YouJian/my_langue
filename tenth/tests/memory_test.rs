@@ -96,7 +96,6 @@ mod limits_tests {
     #[test]
     fn arena_tracks_bytes() {
         LiveCounter::reset();
-        let snap0 = LiveCounter::snapshot();
         // Note: global counters may be affected by parallel tests.
         // We check the delta, not absolute value.
 
@@ -131,7 +130,7 @@ mod limits_tests {
         LiveCounter::reset();
         let mut arena = Arena::new(1024);
         let base = LiveCounter::snapshot().arena_alloc_bytes;
-        let a1 = arena.alloc(10).unwrap(); // 80 bytes permanent
+        let _a1 = arena.alloc(10).unwrap(); // 80 bytes permanent
         let after_perm = LiveCounter::snapshot().arena_alloc_bytes;
         assert_eq!(after_perm - base, 80);
 
