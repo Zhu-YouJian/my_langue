@@ -1,18 +1,10 @@
-// Self-hosting Tenth compiler — bootstrap entry point
-
-fn compile(src: str) -> str {
-    let mut lex = lexer_new(src);
-    let tokens = lexer_tokenize(&mut lex);
-    let prog = parse_program(tokens);
-    cgen_program(&prog, &prog.expr_nodes, &prog.stmt_nodes)
-}
+// Self-hosting Tenth compiler — lexer/parser demo entry point
+// (C codegen removed; compiler runs via Rust interpreter)
 
 fn main() -> i64 {
-    let src = read_file("tenthc_combined.th");
+    let src = read_file("tenthc/lexer/token.th");
     let mut lex = lexer_new(src);
     let tokens = lexer_tokenize(&mut lex);
-    let prog = parse_program(tokens);
-    let c = cgen_program(&prog, &prog.expr_nodes, &prog.stmt_nodes);
-    write_file("tenthc_v2.c", c);
+    println("Lexer tokenized token.th successfully");
     return 0;
 }

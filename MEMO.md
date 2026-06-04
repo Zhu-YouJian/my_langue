@@ -2,39 +2,26 @@
 
 > 各类待办、跳过项、环境依赖、注意事项均记录于此。
 >
-> **当前阶段：v0.3.0 — Phase 7 (标准库) ✅ 完成，Phase 8 (自举) 🚧 各层补全完毕，端到端待验证**
-> 详见：`docs/superpowers/plans/2026-05-26-v0.3.0-standard-library-and-self-hosting.md`
-
-## 自举阻塞项（全部解决 ✅）
-
-~~自举编译器（tenthc/）的 Lexer + Parser + Codegen 已在 Tenth 中大致编写，但遇到以下限制：~~
-
-1. ~~**结构体初始化**~~ ✅ `..` 默认值语法 (`Point { x: 1.0, .. }`)
-2. ~~**泛型类型在表达式中**~~ ✅ Rust parser `parse_type` 已修复，`TypeAnnotation::Generic` + `Type::Generic` 传播完整
-3. ~~**无 `enum` 元组变体**~~ ✅ `Option::Some(42)` 可构造
-4. ~~**无闭包 / 高阶函数**~~ ✅ `|x| x + 1` 闭包可用
-
-**语言阻塞项：0 项。**
+> **当前阶段：v0.3.0 — C 编译后端已移除，聚焦 Rust 解释器路径**
+>
+> **2026-06-04 重大变更**：`tenth/src/compile/`（MIR→C 编译管线）、`tenthc/codegen/`、`tenthc/runtime.c` 已删除。
+> 原因：生成的 C 代码无内存管理（12 处 malloc / 0 处 free），导致系统级内存耗尽。详见 `SECURITY.md`。
+> 自举编译器改为通过 Rust 解释器执行。
 
 ## 自举编译器现状
 
-tenthc/ 各层已从骨架补全为实实现：
+tenthc/ 保留 Tenth 编写的词法分析器和语法分析器（通过 Rust 解释器运行）：
 
 | 层 | 文件 | 状态 |
 |----|------|------|
 | Token | `tenthc/lexer/token.th` | ✅ enum TokenKind (50+ 变体) |
-| Lexer | `tenthc/lexer/lexer.th` | ✅ 完整词法分析 (无 == 比较) |
+| Lexer | `tenthc/lexer/lexer.th` | ✅ 完整词法分析 |
 | Parser | `tenthc/parser/parser.th` | ✅ 递归下降 + 优先级爬山 + arena AST |
-| Codegen | `tenthc/codegen/cgen.th` | ✅ 完整 C 代码生成 (表达式/语句/函数/结构体) |
-
-Rust 编译器改进：
-- `is_known_enum` 硬编码 → 动态 `known_enums` 集合 (parse_item 时注册)
-- `TypeAnnotation::Generic` + `Type::Generic` 泛型参数不再丢弃
-- `Name::Variant { fields }` 正确解析为 `EnumLiteral` 而非 `StructLiteral`
+| ~~Codegen~~ | ~~`tenthc/codegen/cgen.th`~~ | ❌ 已移除 |
 
 待完成：
-- [ ] 端到端自举验证 (Rust → tenthc.c → tenthc.exe → tenthc_v2.c)
-- [ ] tenthc 实际编译自身并输出一致
+- [ ] 端到端自举验证（Rust 解释器执行 Tenth 编译器）
+- [ ] 自举输出方式待定（WASM / 直接解释执行）
 
 ---
 
@@ -108,5 +95,4 @@ cargo test --manifest-path tenth/Cargo.toml -- autodiff
 
 # 编译运行
 cargo run --manifest-path tenth/Cargo.toml
-cargo run --manifest-path tenth/Cargo.toml -- compile input.th -o output.exe
 ```

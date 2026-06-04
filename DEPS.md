@@ -141,10 +141,8 @@ git config --unset https.proxy
 │       │   └── 2026-05-22-phase3b-mlir-compilation.md
 │       └── specs/
 │           └── 2026-05-22-tenth-language-design.md
-├── tenthc/          ← C 运行时库（编译为 .exe 时链接）
+├── tenthc/          ← Tenth 自举编译器 (.th 源码，通过 Rust 解释器运行)
 │   ├── main.th
-│   ├── runtime.c
-│   ├── codegen/
 │   ├── lexer/
 │   └── parser/
 └── tenth/
@@ -158,22 +156,15 @@ git config --unset https.proxy
     │   ├── lexer/
     │   ├── parser/
     │   ├── hir/
-    │   ├── compile/     ← MIR → C 代码生成
-    │   │   ├── mod.rs
-    │   │   ├── mir.rs
-    │   │   ├── lower.rs
-    │   │   ├── cgen.rs
-    │   │   ├── shape.rs
-    │   │   ├── optimize.rs
-    │   │   └── docgen.rs
-    │   └── runtime/     ← 解释器 + 值系统 + 内存管理
-    │       ├── mod.rs
-    │       ├── value.rs
-    │       ├── tensor.rs
-    │       ├── interpreter.rs
-    │       ├── arena.rs
-    │       ├── autodiff.rs
-    │       └── limits.rs    ← 🆕 资源限制 + 原子计数器
+│   │   ├── runtime/     ← 解释器 + 值系统 + 内存管理
+│   │   │   ├── mod.rs
+│   │   │   ├── value.rs
+│   │   │   ├── tensor.rs
+│   │   │   ├── interpreter.rs
+│   │   │   ├── arena.rs
+│   │   │   ├── autodiff.rs
+│   │   │   └── limits.rs    ← 🆕 资源限制 + 原子计数器
+│   │   └── repl.rs       ← 交互环境
     └── tests/          ← 集成测试 + 内存专项测试
         ├── integration_test.rs
         ├── memory_test.rs   ← 🆕 17 个内存护栏测试
@@ -214,33 +205,12 @@ cargo run --features mem-debug --manifest-path tenth/Cargo.toml
 
 | 参数 | 说明 |
 |------|------|
-| `compile <file>` | 编译 .th 源文件 |
-| `-o <out>` | 输出文件（默认 `out.exe`） |
-| `--opt` | 启用 MIR 优化（常量折叠 + 死代码消除） |
-| `--sanitize` | 编译 C 时注入 AddressSanitizer + LeakSanitizer |
 | `--max-memory <MB>` | 限制最大内存（arena + tensor 元素数上限） |
 
 ```bash
-# 编译带内存消毒
-cargo run -- compile test.th --sanitize
-
 # REPL 限制 256MB
 cargo run -- --max-memory 256
 ```
-
----
-
-## GCC / MinGW-w64（C 编译阶段）
-
-编译 `.th → .exe` 时需要 GCC 链接 `tenthc/runtime.c`。
-
-| 项目 | 版本 | 位置 |
-|------|------|------|
-| gcc | 15.2.0 (MinGW-w64) | `D:\msys64\mingw64\bin\gcc.exe` |
-
-> 启用 `--sanitize` 需要 GCC 支持 `-fsanitize=address` 和 `-fsanitize=leak`。
-> 编译产物运行时若发生内存错误（use-after-free / buffer overflow / leak），
-> ASan 会打印详细报告并中止。
 
 ---
 

@@ -1,12 +1,12 @@
 # 项目总览与审计报告
 
-> 日期：2026-05-27 | 版本：v0.3.0-pre | 86 测试全绿
+> 日期：2026-06-04 | 版本：v0.3.0-pre | C 编译后端已移除
 
 ---
 
 ## 一、项目全景
 
-Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写的 bootstrap 编译器 + Tenth 编写的自举编译器（进行中）。
+Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写的 bootstrap 编译器 + Tenth 编写的自举编译器（通过 Rust 解释器执行）。
 
 ### 目录地图
 
@@ -14,38 +14,30 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 ├── tenth/                    ← Rust bootstrap 编译器
 │   ├── Cargo.toml            ← ndarray, rustyline, thiserror, rand
 │   ├── src/
-│   │   ├── main.rs           ← CLI: REPL / compile 命令
-│   │   ├── lib.rs            ← 导出 7 个顶层模块
+│   │   ├── main.rs           ← CLI: REPL 入口
+│   │   ├── lib.rs            ← 导出 6 个顶层模块
 │   │   ├── error.rs          ← TenthError 统一错误类型
 │   │   ├── lexer/            ← 词法分析 (token.rs + lexer.rs)
 │   │   ├── parser/           ← 递归下降解析 (ast.rs + parser.rs)
 │   │   ├── hir/              ← HIR + 类型推断 + 借用检查 (hir.rs + types.rs + lower.rs)
-│   │   ├── runtime/          ← 解释器 (interpreter.rs + value.rs + tensor.rs + arena.rs + autodiff.rs)
-│   │   ├── compile/          ← MIR→C 编译 (mir.rs + lower.rs + cgen.rs + optimize.rs + shape.rs* + docgen.rs*)
+│   │   ├── runtime/          ← 解释器 (interpreter.rs + value.rs + tensor.rs + arena.rs + autodiff.rs + limits.rs)
 │   │   └── repl.rs           ← 交互环境
-│   ├── tests/                ← 86 项测试 (12 文件)
+│   ├── tests/                ← 测试
 │   ├── std/                  ← Tenth 标准库 (.th 源码: nn/, optim/)
 │   └── target/               ← (gitignored)
-├── tenthc/                   ← Tenth 自举编译器 (.th 源码)
+├── tenthc/                   ← Tenth 自举编译器 (.th 源码，通过解释器运行)
 │   ├── main.th               ← 入口
 │   ├── lexer/token.th        ← TokenKind 枚举 (50+ 变体)
 │   ├── lexer/lexer.th        ← 手写词法分析器
-│   ├── parser/parser.th      ← 递归下降解析器 (arena AST)
-│   ├── codegen/cgen.th       ← C 代码生成器
-│   └── runtime.c             ← C 运行时 (Vec, I/O, 字符串)
-├── tenthc_combined.th        ← 上述 .th 文件的拼接版 (43KB, 自举输入)
+│   └── parser/parser.th      ← 递归下降解析器 (arena AST)
 ├── docs/                     ← 设计文档与实施计划
-├── README.md / MEMO.md / DEPS.md
-└── .gitignore                ← 已更新
+├── README.md / MEMO.md / DEPS.md / SECURITY.md
+└── .gitignore
 ```
-
-*标记: `shape.rs` 和 `docgen.rs` 未被编译管线调用。
 
 ---
 
-## 二、编译器管线
-
-### 2.1 Rust bootstrap 编译器 (解释器路径)
+## 二、编译器管线（仅解释器路径）
 
 ```
 源码 (.th)
@@ -59,30 +51,7 @@ HIR + 类型推断 + 借用检查
 运行时值 (Value) / 张量 (Tensor)
 ```
 
-### 2.2 Rust bootstrap 编译器 (C 编译路径)
-
-```
-源码 (.th)
-  ↓ Lexer → Parser → HIR
-  ↓ MirLowerer (compile/lower.rs)
-MIR (mir.rs)
-  ↓ [Optimize (optimize.rs)]
-CGenerator (compile/cgen.rs)
-  ↓
-C 代码 → GCC → .exe
-```
-
-### 2.3 自举编译器 (Tenth → C)
-
-```
-tenthc_combined.th
-  ↓ Rust bootstrap (compile 命令)
-tenthc.c → GCC → tenthc.exe
-  ↓ (理想状态)
-tenthc.exe 编译 tenthc_combined.th → tenthc_v2.c → GCC → tenthc_v2.exe
-  ↓ (验证)
-diff tenthc.c tenthc_v2.c → 一致 = 自举闭环
-```
+> ~~C 编译路径 (MIR → C → GCC → .exe) 已于 2026-06-04 移除。原因：生成的 C 代码无内存管理，导致系统级内存耗尽。详见 SECURITY.md。~~
 
 ---
 
@@ -92,42 +61,49 @@ diff tenthc.c tenthc_v2.c → 一致 = 自举闭环
 |----------|------|------|
 | `lexer_test.rs` | 6 | 整数/标识符/关键字/字符串/运算符/注释 |
 | `parser_test.rs` | 5 | 字面量/二元表达式/函数定义/if/tensor |
-| `compile_test.rs` | 6 | 算术/变量/if-else/函数/结构体/常量折叠 |
 | `integration_test.rs` | 14 | 全管线: 算术/布尔/比较/函数/闭包/while/tensor |
 | `enum_test.rs` | 5 | 枚举定义/字段/match/通配 |
 | `generic_test.rs` | 5 | 泛型函数/泛型结构体/trait bound |
 | `struct_test.rs` | 5 | 结构体/嵌套/impl/默认字段 |
 | `trait_test.rs` | 4 | trait 定义/builtin bound/inherent impl |
 | `module_test.rs` | 2 | mod/use |
-| `ownership_test.rs` | 11 | 移动/借用/引用/解引用 (已放宽) |
+| `ownership_test.rs` | 11 | 移动/借用/引用/解引用 |
 | `stdlib_test.rs` | 8 | Vec/HashMap/String/Option/文件 I/O |
-| `tenthc_test.rs` | 3 | token.th/lexer.th/pipeline 解析通过 |
-| **总计** | **86** | |
+| `memory_test.rs` | 17 | 内存护栏: arena/limits/计数器 |
+| **总计** | **82** | |
 
 ---
 
-## 四、死代码 & 未使用模块
+## 四、已移除模块
 
+| 模块 | 说明 |
+|------|------|
+| ~~`tenth/src/compile/` (7 文件)~~ | MIR→C 编译管线，因内存安全问题于 2026-06-04 移除 |
+| ~~`tenthc/codegen/cgen.th`~~ | C 代码生成器（Tenth 编写），随上移除 |
+| ~~`tenthc/runtime.c`~~ | C 运行时库，随上移除 |
+| ~~`tenth/tests/compile_test.rs`~~ | C 编译测试 (6 项) |
+| ~~`tenth/tests/tenthc_test.rs`~~ | 自举编译器测试 (3 项) |
+
+保留但暂未集成：
 | 模块 | 位置 | 说明 |
 |------|------|------|
-| `compile/shape.rs` | `tenth/src/compile/` | 张量形状推断引擎，编译管线未调用 |
-| `compile/docgen.rs` | `tenth/src/compile/` | Markdown API 文档生成，无入口点 |
-| `runtime/arena.rs` | `tenth/src/runtime/` | 池化分配器，解释器/Tensor 均未使用 |
-| `runtime/autodiff.rs` | `tenth/src/runtime/` | 计算图自动微分，解释器未集成 |
-
-这 4 个模块有完整实现和测试，但缺少管线入口。属于 Phase 4-5 的预留基础设施，暂保留。
+| `runtime/arena.rs` | 池化分配器 | 已接入 limits 追踪 |
+| `runtime/autodiff.rs` | 计算图自动微分 | 解释器未集成 |
 
 ---
 
 ## 五、已知缺陷与不完整
 
-### 5.1 致命 (阻断自举)
+### 5.1 自举编译器 Tenth 源码中的已知问题
 
 | # | 位置 | 问题 |
 |---|------|------|
-| 1 | `tenthc/codegen/cgen.th:23-25` | **函数调用参数全部丢弃** — `if e.kind == "call"` 分支 `args = ""` 后直接返回，所有参数丢失 |
-| 2 | `tenthc/lexer/lexer.th:98,105` | **字面量值不解析** — 整数和浮点数 token 的 value 硬编码为 0 |
-| 3 | `tenthc/parser/parser.th:269` | **字段名不存储** — `parse_postfix` 的 `.field` 访问把字段名丢了 |
+| 1 | `tenthc/lexer/lexer.th:98,105` | **字面量值不解析** — 整数和浮点数 token 的 value 硬编码为 0 |
+| 2 | `tenthc/parser/parser.th:269` | **字段名不存储** — `parse_postfix` 的 `.field` 访问把字段名丢了 |
+
+> ~~原 #1 (cgen 函数调用参数丢弃) 随 codegen 移除而消除。~~
+
+### 5.2 语言功能缺口
 | 4 | `tenth/src/compile/lower.rs` | **Match pattern binding 未生成** — `TokenKind::Identifier(name: s) => { ... s ... }` 中 `s` 变量在 C 中未声明 |
 
 ### 5.2 高优
