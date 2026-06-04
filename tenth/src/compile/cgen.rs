@@ -34,7 +34,7 @@ impl CGenerator {
             self.enum_names.insert(ename.clone());
         }
 
-        // Preamble
+        // Preamble — all string/heap ops delegated to runtime.c arena
         self.emit("#include <stdio.h>");
         self.emit("#include <stdint.h>");
         self.emit("#include <stdbool.h>");
@@ -42,31 +42,22 @@ impl CGenerator {
         self.emit("#include <string.h>");
         self.emit("#include <math.h>");
         self.emit("");
-        self.emit("// String concatenation helper");
-        self.emit("static char* str_add(const char* a, const char* b) {");
-        self.emit("    size_t la = strlen(a), lb = strlen(b);");
-        self.emit("    char* r = malloc(la + lb + 1);");
-        self.emit("    memcpy(r, a, la); memcpy(r + la, b, lb); r[la + lb] = 0;");
-        self.emit("    return r;");
-        self.emit("}");
-        self.emit("// Int-to-string helper");
-        self.emit("static char* str_int(int64_t n) {");
-        self.emit("    char buf[32]; snprintf(buf, 32, \"%lld\", (long long)n);");
-        self.emit("    return strdup(buf);");
-        self.emit("}");
-        self.emit("");
 
-        // Declare built-in functions
-        self.emit("// Tenth built-in declarations");
+        // Declare built-in functions (provided by runtime.c)
+        self.emit("// Tenth built-in declarations (arena-backed, see runtime.c)");
         self.emit("extern void* read_file(const char* path);");
         self.emit("extern void write_file(const char* path, const char* content);");
         self.emit("extern void* Vec_new(void);");
         self.emit("extern void* Vec_push(void* v, void* item);");
         self.emit("extern int64_t Vec_len(void* v);");
         self.emit("extern void* Vec_get(void* v, int64_t idx);");
+        self.emit("extern void Vec_free(void* v);");
+        self.emit("extern char* str_add(const char* a, const char* b);");
+        self.emit("extern const char* str_int(int64_t n);");
         self.emit("extern const char* str_at(const char* s, int64_t pos);");
         self.emit("extern bool str_eq(const char* a, const char* b);");
         self.emit("extern void println(const char* s);");
+        self.emit("extern void str_arena_reset(void);");
         self.emit("extern void* HashMap_new(void);");
         self.emit("");
 
@@ -163,6 +154,9 @@ impl CGenerator {
     fn generate_main(&mut self, func: &MirFunction) {
         self.emit("int main(void) {");
         self.indent_level = 1;
+
+        // Ensure arena cleanup on any exit path
+        self.emit("    atexit(str_arena_reset);");
 
         for block in &func.blocks {
             for stmt in &block.stmts {
