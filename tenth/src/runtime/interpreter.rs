@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
@@ -417,7 +417,10 @@ impl Interpreter {
                     message: "deref-assign value is void".into(),
                 })?;
                 match &target_val {
-                    Value::MutRef(rc) => {
+                    Value::MutRef(weak) => {
+                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
+                            message: "cannot assign through dangling &mut reference".into(),
+                        })?;
                         *rc.borrow_mut() = rhs;
                         Ok(Some(Value::Unit))
                     }
@@ -449,7 +452,10 @@ impl Interpreter {
                     message: "deref-assignop value is void".into(),
                 })?;
                 match &target_val {
-                    Value::MutRef(rc) => {
+                    Value::MutRef(weak) => {
+                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
+                            message: "cannot assign through dangling &mut reference".into(),
+                        })?;
                         let current = rc.borrow().clone();
                         let result = self.eval_binary(op, &current, &rhs)?;
                         *rc.borrow_mut() = result;
@@ -491,9 +497,13 @@ impl Interpreter {
                             cell
                         }
                     };
-                    Ok(Some(Value::MutRef(rc)))
+                    // Weak reference: does NOT contribute to Rc strong count.
+                    // This prevents cycles when structs hold &mut references.
+                    Ok(Some(Value::MutRef(Rc::downgrade(&rc))))
                 } else {
-                    Ok(Some(Value::MutRef(Rc::new(RefCell::new(val)))))
+                    // Non-variable &mut expr: fall back to immutable Ref
+                    // (Weak would dangle immediately without an owner)
+                    Ok(Some(Value::Ref(Rc::new(RefCell::new(val)))))
                 }
             }
 
@@ -502,7 +512,13 @@ impl Interpreter {
                     message: "deref operand is void".into(),
                 })?;
                 match &val {
-                    Value::Ref(rc) | Value::MutRef(rc) => Ok(Some(rc.borrow().clone())),
+                    Value::Ref(rc) => Ok(Some(rc.borrow().clone())),
+                    Value::MutRef(weak) => {
+                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
+                            message: "cannot dereference dangling &mut reference".into(),
+                        })?;
+                        Ok(Some(rc.borrow().clone()))
+                    }
                     _ => Err(TenthError::RuntimeError {
                         message: "cannot dereference non-reference value".into(),
                     }),
@@ -517,7 +533,10 @@ impl Interpreter {
                     message: "field-assign value is void".into(),
                 })?;
                 match &target_val {
-                    Value::MutRef(rc) => {
+                    Value::MutRef(weak) => {
+                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
+                            message: "cannot assign field through dangling &mut reference".into(),
+                        })?;
                         let mut inner = rc.borrow_mut();
                         match &mut *inner {
                             Value::Struct { fields, .. } => {

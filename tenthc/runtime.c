@@ -103,10 +103,71 @@ void Vec_free(void* vec) {
 }
 
 // === HashMap ================================================================
+//
+//  Simple string-keyed hash map using separate chaining.
+//  Keys and values are arena-allocated (no per-entry free needed).
+
+#define HMAP_BUCKETS 64
+
+typedef struct HMapEntry {
+    const char* key;
+    void* value;
+    struct HMapEntry* next;
+} HMapEntry;
+
+typedef struct {
+    HMapEntry* buckets[HMAP_BUCKETS];
+    size_t len;
+} HMap;
+
+static unsigned hmap_hash(const char* s) {
+    unsigned h = 5381;
+    while (*s) h = ((h << 5) + h) + (unsigned char)*s++;
+    return h % HMAP_BUCKETS;
+}
 
 void* HashMap_new(void) {
-    // Minimal stub — returns a Vec-like structure for "insert"
-    return Vec_new();
+    HMap* m = (HMap*)calloc(1, sizeof(HMap));
+    return m;
+}
+
+/// Insert or update a key-value pair. Returns the map handle.
+void* HashMap_insert(void* map, const char* key, void* value) {
+    if (!map || !key) return map;
+    HMap* m = (HMap*)map;
+    unsigned b = hmap_hash(key);
+    HMapEntry* e = m->buckets[b];
+    while (e) {
+        if (strcmp(e->key, key) == 0) {
+            e->value = value;
+            return map;
+        }
+        e = e->next;
+    }
+    HMapEntry* ne = (HMapEntry*)calloc(1, sizeof(HMapEntry));
+    ne->key = key;
+    ne->value = value;
+    ne->next = m->buckets[b];
+    m->buckets[b] = ne;
+    m->len++;
+    return map;
+}
+
+/// Look up a key. Returns NULL if not found.
+void* HashMap_get(void* map, const char* key) {
+    if (!map || !key) return NULL;
+    HMap* m = (HMap*)map;
+    HMapEntry* e = m->buckets[hmap_hash(key)];
+    while (e) {
+        if (strcmp(e->key, key) == 0) return e->value;
+        e = e->next;
+    }
+    return NULL;
+}
+
+int64_t HashMap_len(void* map) {
+    if (!map) return 0;
+    return (int64_t)((HMap*)map)->len;
 }
 
 // === I/O ====================================================================

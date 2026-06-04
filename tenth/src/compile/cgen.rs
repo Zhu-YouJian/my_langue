@@ -60,6 +60,9 @@ impl CGenerator {
         self.emit("extern void println(const char* s);");
         self.emit("extern void str_arena_reset(void);");
         self.emit("extern void* HashMap_new(void);");
+        self.emit("extern void* HashMap_insert(void* map, const char* key, void* value);");
+        self.emit("extern void* HashMap_get(void* map, const char* key);");
+        self.emit("extern int64_t HashMap_len(void* map);");
         self.emit("");
 
         // Emit struct typedefs from program metadata
@@ -493,6 +496,9 @@ impl CGenerator {
                     "Vec::new" => "Vec_new", "HashMap::new" => "HashMap_new",
                     "Vec::len" => "Vec_len", "Vec::push" => "Vec_push",
                     "Vec::get" => "Vec_get",
+                    "HashMap::insert" => "HashMap_insert",
+                    "HashMap::get" => "HashMap_get",
+                    "HashMap::len" => "HashMap_len",
                     "read_file" => "read_file", "write_file" => "write_file",
                     other => other,
                 };

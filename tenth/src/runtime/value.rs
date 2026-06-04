@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -34,7 +34,7 @@ pub enum Value {
         fields: Rc<RefCell<Vec<(String, Value)>>>,
     },
     Ref(Rc<RefCell<Value>>),
-    MutRef(Rc<RefCell<Value>>),
+    MutRef(Weak<RefCell<Value>>),
     Shared(Rc<RefCell<Value>>),
     Moved,
     Vec(Rc<RefCell<Vec<Value>>>),
@@ -70,7 +70,12 @@ impl Value {
             Value::Struct { name, .. } => Type::Struct(name.clone()),
             Value::Enum { enum_name, .. } => Type::Enum(enum_name.clone()),
             Value::Ref(v) => Type::Ref(Box::new(v.borrow().type_of())),
-            Value::MutRef(v) => Type::MutRef(Box::new(v.borrow().type_of())),
+            Value::MutRef(v) => {
+                match v.upgrade() {
+                    Some(rc) => Type::MutRef(Box::new(rc.borrow().type_of())),
+                    None => Type::Unknown,
+                }
+            }
             Value::Shared(v) => v.borrow().type_of(),
             Value::Moved => Type::unit(),
             Value::Vec(_) => Type::Unknown,
@@ -100,7 +105,7 @@ impl Value {
             Value::Int(n) => *n != 0,
             Value::Float(f) => *f != 0.0,
             Value::Ref(v) => v.borrow().is_truthy(),
-            Value::MutRef(v) => v.borrow().is_truthy(),
+            Value::MutRef(v) => v.upgrade().map_or(false, |rc| rc.borrow().is_truthy()),
             Value::Shared(v) => v.borrow().is_truthy(),
             Value::Moved => false,
             Value::Vec(v) => !v.borrow().is_empty(),
@@ -141,7 +146,12 @@ impl fmt::Display for Value {
                 write!(f, " }}")
             }
             Value::Ref(v) => write!(f, "&{}", v.borrow()),
-            Value::MutRef(v) => write!(f, "&mut {}", v.borrow()),
+            Value::MutRef(v) => {
+                match v.upgrade() {
+                    Some(rc) => write!(f, "&mut {}", rc.borrow()),
+                    None => write!(f, "&mut <dangling>"),
+                }
+            }
             Value::Shared(v) => write!(f, "{}", v.borrow()),
             Value::Moved => write!(f, "<moved>"),
             Value::Vec(items) => {
