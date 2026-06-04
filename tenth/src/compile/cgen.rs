@@ -130,6 +130,11 @@ impl CGenerator {
         self.emit(&format!("{} {}({}) {{", ret_c, func.name, params.join(", ")));
         self.indent_level = 1;
 
+        // Inject arena cleanup guard for the main entry point
+        if is_main {
+            self.emit("    atexit(str_arena_reset);");
+        }
+
         // Generate blocks
         for block in &func.blocks {
             if block.id != 0 {
