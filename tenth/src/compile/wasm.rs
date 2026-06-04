@@ -36,7 +36,29 @@ fn to_val_type_required(ty: &Type) -> TenthResult<ValType> {
     })
 }
 
+/// Compute byte size and WASM type for a struct field. All fields are 8 bytes.
+fn field_size_and_type(ty: &Type) -> (u32, ValType) {
+    match ty {
+        Type::Base(b) => match b {
+            BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64 => (8, ValType::I64),
+            BaseType::F32 | BaseType::F64 => (8, ValType::F64),
+            BaseType::Bool => (8, ValType::I32),
+            BaseType::Str => (8, ValType::I64),
+            _ => (8, ValType::I64),
+        },
+        _ => (8, ValType::I64),
+    }
+}
+
+/// Check if an expression kind produces a struct pointer (i32).
+fn is_struct_kind(kind: &HirExprKind) -> bool {
+    matches!(kind, HirExprKind::StructLiteral { .. })
+}
+
 // ── Compiler state ─────────────────────────────────────────────────────────
+
+/// First user-function index (after all host imports).
+const IMPORT_COUNT: u32 = 7; // 6 original + tenth_alloc
 
 pub struct WasmCompiler {
     type_cache: HashMap<(Vec<ValType>, Vec<ValType>), u32>,
@@ -44,6 +66,9 @@ pub struct WasmCompiler {
     hir_funcs: Vec<HirFnDef>,
     string_data: Vec<u8>,
     string_offsets: HashMap<String, u32>,
+    /// Struct name -> field name -> (byte offset, field size, WASM type)
+    struct_layouts: HashMap<String, HashMap<String, (u32, u32, ValType)>>,
+    /// Variable name -> local index (all i64 typed)
     local_map: HashMap<String, u32>,
     local_count: u32,
 }
@@ -56,6 +81,7 @@ impl WasmCompiler {
             hir_funcs: Vec::new(),
             string_data: Vec::new(),
             string_offsets: HashMap::new(),
+            struct_layouts: HashMap::new(),
             local_map: HashMap::new(),
             local_count: 0,
         }
@@ -63,6 +89,7 @@ impl WasmCompiler {
 
     pub fn compile(&mut self, program: &HirProgram) -> TenthResult<Vec<u8>> {
         self.hir_funcs = program.functions.clone();
+        self.build_struct_layouts(program);
         self.collect_strings(program);
 
         let mut module = Module::new();
@@ -78,6 +105,56 @@ impl WasmCompiler {
         }
 
         Ok(module.finish())
+    }
+
+    // ── Struct layout ───────────────────────────────────────────────────
+
+    fn build_struct_layouts(&mut self, program: &HirProgram) {
+        for (sname, fields) in &program.structs {
+            let mut offset = 0u32;
+            let mut layout = HashMap::new();
+            for (fname, fty) in fields {
+                let (size, vt) = field_size_and_type(fty);
+                layout.insert(fname.clone(), (offset, size, vt));
+                offset += size;
+            }
+            self.struct_layouts.insert(sname.clone(), layout);
+        }
+    }
+
+    fn struct_size(&self, name: &str) -> u32 {
+        self.struct_layouts.get(name).map_or(0, |layout| {
+            layout.values().map(|(off, sz, _)| off + sz).max().unwrap_or(0)
+        })
+    }
+
+    fn infer_struct_name(&self, ty: &Type) -> String {
+        match ty {
+            Type::Struct(name) => name.clone(),
+            Type::Ref(inner) | Type::MutRef(inner) => self.infer_struct_name(inner),
+            _ => String::new(),
+        }
+    }
+
+    /// Find a struct that contains the given field. Returns (struct_name, offset, size, vt).
+    fn resolve_field(&self, struct_hint: &str, field: &str) -> TenthResult<(String, u32, u32, ValType)> {
+        // First try the hinted struct
+        if !struct_hint.is_empty() {
+            if let Some(layout) = self.struct_layouts.get(struct_hint) {
+                if let Some(&info) = layout.get(field) {
+                    return Ok((struct_hint.to_string(), info.0, info.1, info.2));
+                }
+            }
+        }
+        // Search all structs
+        for (sname, layout) in &self.struct_layouts {
+            if let Some(&info) = layout.get(field) {
+                return Ok((sname.clone(), info.0, info.1, info.2));
+            }
+        }
+        Err(TenthError::RuntimeError {
+            message: format!("WASM: no struct has field '{}'", field),
+        })
     }
 
     // ── Section builders ────────────────────────────────────────────────
@@ -99,6 +176,7 @@ impl WasmCompiler {
         reg(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         reg(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
         reg(vec![ValType::I64], vec![ValType::I32]);
+        reg(vec![ValType::I32], vec![ValType::I32]); // tenth_alloc
         // User functions
         for func in &program.functions {
             let p: Vec<ValType> = func.params.iter().filter_map(|(_, t)| to_val_type(t)).collect();
@@ -122,12 +200,13 @@ impl WasmCompiler {
         imports.import("host", "str_add", EntityType::Function(ti(vec![ValType::I32, ValType::I32], vec![ValType::I32])));
         imports.import("host", "str_eq", EntityType::Function(ti(vec![ValType::I32, ValType::I32], vec![ValType::I32])));
         imports.import("host", "str_int", EntityType::Function(ti(vec![ValType::I64], vec![ValType::I32])));
+        imports.import("host", "tenth_alloc", EntityType::Function(ti(vec![ValType::I32], vec![ValType::I32])));
         module.section(&imports);
     }
 
     fn emit_function_section(&mut self, module: &mut Module, program: &HirProgram) -> u32 {
         let mut funcs = FunctionSection::new();
-        let mut idx = 6u32;
+        let mut idx = IMPORT_COUNT;
         for func in &program.functions {
             self.func_map.insert(func.name.clone(), idx);
             let p: Vec<ValType> = func.params.iter().filter_map(|(_, t)| to_val_type(t)).collect();
@@ -158,7 +237,7 @@ impl WasmCompiler {
                 }
             }
         }
-        let mi = self.func_map.len() as u32 + 6;
+        let mi = self.func_map.len() as u32 + IMPORT_COUNT;
         exports.export("main", ExportKind::Func, mi);
         exports.export("memory", ExportKind::Memory, 0);
         module.section(&exports);
@@ -189,7 +268,6 @@ impl WasmCompiler {
             self.local_map.insert(name.clone(), self.local_count);
             self.local_count += 1;
         }
-        // Reserve 64 i64 locals for let-bindings
         let locals: Vec<ValType> = (0..64).map(|_| ValType::I64).collect();
         let mut body = Function::new_with_locals_types(locals);
         self.compile_expr(&mut body, &func.body)?;
@@ -227,6 +305,7 @@ impl WasmCompiler {
             "str_add" => Ok(3),
             "str_eq" => Ok(4),
             "str_int" => Ok(5),
+            "tenth_alloc" => Ok(6),
             _ => self.func_map.get(name).copied()
                 .ok_or_else(|| TenthError::RuntimeError {
                     message: format!("WASM: undefined function '{}'", name),
@@ -319,12 +398,76 @@ impl WasmCompiler {
 
             HirExprKind::Assign { target, value } => {
                 self.compile_expr(body, value)?;
+                // If value is a struct pointer (i32), extend to i64 for uniform local storage
+                if is_struct_kind(&value.kind) {
+                    body.instruction(&Instruction::I64ExtendI32U);
+                }
                 if let Some(&idx) = self.local_map.get(target) {
                     body.instruction(&Instruction::LocalSet(idx));
                 } else {
                     self.local_map.insert(target.clone(), self.local_count);
                     body.instruction(&Instruction::LocalSet(self.local_count));
                     self.local_count += 1;
+                }
+            }
+
+            HirExprKind::StructLiteral { name, fields } => {
+                let sz = self.struct_size(name);
+                body.instruction(&Instruction::I32Const(sz as i32));
+                body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32 ptr
+                body.instruction(&Instruction::I64ExtendI32U);
+                let tmp = self.local_count;
+                self.local_count += 1;
+                body.instruction(&Instruction::LocalSet(tmp));
+                let layout = self.struct_layouts.get(name).cloned()
+                    .ok_or_else(|| TenthError::RuntimeError {
+                        message: format!("WASM: unknown struct '{}'", name),
+                    })?;
+                for (fname, fexpr) in fields {
+                    if let Some(&(offset, _size, vt)) = layout.get(fname) {
+                        body.instruction(&Instruction::LocalGet(tmp));
+                        body.instruction(&Instruction::I32WrapI64);
+                        self.compile_expr(body, fexpr)?;
+                        let arg = wasm_encoder::MemArg { offset: offset as u64, align: 0, memory_index: 0 };
+                        match vt {
+                            ValType::I64 => { body.instruction(&Instruction::I64Store(arg)); }
+                            ValType::I32 => { body.instruction(&Instruction::I32Store(arg)); }
+                            ValType::F64 => { body.instruction(&Instruction::F64Store(arg)); }
+                            _ => {}
+                        }
+                    }
+                }
+                // Push i32 pointer as result
+                body.instruction(&Instruction::LocalGet(tmp));
+                body.instruction(&Instruction::I32WrapI64);
+            }
+
+            HirExprKind::Field { target, field } => {
+                self.compile_expr(body, target)?;
+                body.instruction(&Instruction::I32WrapI64); // pointer i64 -> i32
+                let hint = self.infer_struct_name(&target.ty);
+                let (_, offset, _, vt) = self.resolve_field(&hint, field)?;
+                let arg = wasm_encoder::MemArg { offset: offset as u64, align: 0, memory_index: 0 };
+                match vt {
+                    ValType::I64 => { body.instruction(&Instruction::I64Load(arg)); }
+                    ValType::I32 => { body.instruction(&Instruction::I32Load(arg)); }
+                    ValType::F64 => { body.instruction(&Instruction::F64Load(arg)); }
+                    _ => {}
+                }
+            }
+
+            HirExprKind::FieldAssign { target, field, value } => {
+                self.compile_expr(body, target)?;
+                body.instruction(&Instruction::I32WrapI64); // pointer i64 -> i32
+                let hint = self.infer_struct_name(&target.ty);
+                let (_, offset, _, vt) = self.resolve_field(&hint, field)?;
+                self.compile_expr(body, value)?;
+                let arg = wasm_encoder::MemArg { offset: offset as u64, align: 0, memory_index: 0 };
+                match vt {
+                    ValType::I64 => { body.instruction(&Instruction::I64Store(arg)); }
+                    ValType::I32 => { body.instruction(&Instruction::I32Store(arg)); }
+                    ValType::F64 => { body.instruction(&Instruction::F64Store(arg)); }
+                    _ => {}
                 }
             }
 
@@ -345,8 +488,14 @@ impl WasmCompiler {
                 }
             }
             HirStmtKind::Let { name, init, .. } => {
-                if let Some(e) = init { self.compile_expr(body, e)?; }
-                else { body.instruction(&Instruction::I64Const(0)); }
+                if let Some(e) = init {
+                    self.compile_expr(body, e)?;
+                    if is_struct_kind(&e.kind) {
+                        body.instruction(&Instruction::I64ExtendI32U);
+                    }
+                } else {
+                    body.instruction(&Instruction::I64Const(0));
+                }
                 self.local_map.insert(name.clone(), self.local_count);
                 body.instruction(&Instruction::LocalSet(self.local_count));
                 self.local_count += 1;
@@ -533,10 +682,10 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
         TenthError::RuntimeError { message: format!("WASM module parse error: {}", e) }
     })?;
 
-    let mut store = Store::new(&engine, ());
+    let mut store = Store::new(&engine, 8192u32);
     let mut linker = Linker::new(&engine);
 
-    linker.func_wrap("host", "println", |caller: Caller<'_, ()>, ptr: i32| {
+    linker.func_wrap("host", "println", |caller: Caller<'_, u32>, ptr: i32| {
         let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
         let data = mem.data(&caller);
         let end = data[ptr as usize..].iter().position(|&b| b == 0).unwrap_or(0);
@@ -544,7 +693,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     linker.func_wrap("host", "write_file",
-        |caller: Caller<'_, ()>, path_ptr: i32, content_ptr: i32| {
+        |caller: Caller<'_, u32>, path_ptr: i32, content_ptr: i32| {
             let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
             let data = mem.data(&caller);
             let rs = |p: i32| -> &str {
@@ -555,7 +704,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     linker.func_wrap("host", "read_file",
-        |caller: Caller<'_, ()>, path_ptr: i32| -> i32 {
+        |caller: Caller<'_, u32>, path_ptr: i32| -> i32 {
             let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
             let data = mem.data(&caller);
             let end = data[path_ptr as usize..].iter().position(|&b| b == 0).unwrap_or(0);
@@ -564,7 +713,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     linker.func_wrap("host", "str_add",
-        |caller: Caller<'_, ()>, a_ptr: i32, b_ptr: i32| -> i32 {
+        |caller: Caller<'_, u32>, a_ptr: i32, b_ptr: i32| -> i32 {
             let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
             let data = mem.data(&caller);
             let rs = |p: i32| -> &str {
@@ -576,7 +725,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     linker.func_wrap("host", "str_eq",
-        |caller: Caller<'_, ()>, a_ptr: i32, b_ptr: i32| -> i32 {
+        |caller: Caller<'_, u32>, a_ptr: i32, b_ptr: i32| -> i32 {
             let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
             let data = mem.data(&caller);
             let rs = |p: i32| -> &str {
@@ -587,7 +736,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     linker.func_wrap("host", "str_int",
-        |mut caller: Caller<'_, ()>, n: i64| -> i32 {
+        |mut caller: Caller<'_, u32>, n: i64| -> i32 {
             let s = n.to_string();
             let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
             let data = mem.data_mut(&mut caller);
@@ -598,6 +747,14 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 data[off as usize + b.len()] = 0;
                 off
             } else { 0 }
+    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+
+    // tenth_alloc(size: i32) -> i32 — bump allocator in linear memory
+    linker.func_wrap("host", "tenth_alloc",
+        |mut caller: Caller<'_, u32>, size: i32| -> i32 {
+            let ptr = *caller.data();
+            *caller.data_mut() = ptr + size as u32;
+            ptr as i32
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     let instance = linker.instantiate(&mut store, &module)
