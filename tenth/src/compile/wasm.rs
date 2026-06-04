@@ -56,7 +56,7 @@ fn field_size_and_type(ty: &Type) -> (u32, ValType) {
 // ── Compiler state ─────────────────────────────────────────────────────────
 
 /// First user-function index (after all host imports).
-const IMPORT_COUNT: u32 = 11; // 7 original + tenth_alloc + Vec_new + Vec_push + Vec_len + Vec_get
+const IMPORT_COUNT: u32 = 12; // + compile_host
 
 pub struct WasmCompiler {
     type_cache: HashMap<(Vec<ValType>, Vec<ValType>), u32>,
@@ -179,8 +179,8 @@ impl WasmCompiler {
         reg(vec![], vec![ValType::I64]);             // 7: Vec_new -> i64
         reg(vec![ValType::I64, ValType::I64], vec![ValType::I64]); // 8: Vec_push(i64, i64) -> i64
         reg(vec![ValType::I64], vec![ValType::I64]); // 9: Vec_len(i64) -> i64
-        reg(vec![ValType::I64, ValType::I64], vec![ValType::I64]); // 10: Vec_get(i64, i64) -> i64 -> i64
-        // User functions
+        reg(vec![ValType::I64, ValType::I64], vec![ValType::I64]); // 10: Vec_get
+        reg(vec![ValType::I32, ValType::I32], vec![ValType::I32]); // 11: compile_host(src, out) -> exit_code
         for func in &program.functions {
             let p: Vec<ValType> = func.params.iter().filter_map(|(_, t)| to_val_type(t)).collect();
             let r: Vec<ValType> = to_val_type(&func.return_type).into_iter().collect();
@@ -208,6 +208,7 @@ impl WasmCompiler {
         imports.import("host", "Vec_push", EntityType::Function(ti(vec![ValType::I64, ValType::I64], vec![ValType::I64])));
         imports.import("host", "Vec_len", EntityType::Function(ti(vec![ValType::I64], vec![ValType::I64])));
         imports.import("host", "Vec_get", EntityType::Function(ti(vec![ValType::I64, ValType::I64], vec![ValType::I64])));
+        imports.import("host", "compile_host", EntityType::Function(ti(vec![ValType::I32, ValType::I32], vec![ValType::I32])));
         module.section(&imports);
     }
 
@@ -318,6 +319,7 @@ impl WasmCompiler {
             "Vec::push" | "Vec_push" => Ok(8),
             "Vec::len" | "Vec_len" => Ok(9),
             "Vec::get" | "Vec_get" => Ok(10),
+            "compile_host" => Ok(11),
             _ => self.func_map.get(name).copied()
                 .ok_or_else(|| TenthError::RuntimeError {
                     message: format!("WASM: undefined function '{}'", name),
@@ -378,6 +380,15 @@ impl WasmCompiler {
                         if let Some(a) = args.first() {
                             self.compile_string_arg(body, a)?;
                             body.instruction(&Instruction::Call(2));
+                            body.instruction(&Instruction::I64ExtendI32U); // i32 ptr -> i64
+                        }
+                    }
+                    "compile_host" => {
+                        if args.len() >= 2 {
+                            self.compile_string_arg(body, &args[0])?;
+                            self.compile_string_arg(body, &args[1])?;
+                            body.instruction(&Instruction::Call(11));
+                            body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                         }
                     }
                     "Vec::new" | "Vec_new" => {
@@ -658,8 +669,11 @@ impl WasmCompiler {
             }
             _ => {
                 self.compile_expr(body, expr)?;
-                if matches!(&expr.ty, Type::Base(BaseType::I64)) {
-                    body.instruction(&Instruction::Call(5));
+                // If value is a string (stored as i64 in locals), wrap to i32
+                if matches!(&expr.ty, Type::Base(BaseType::Str)) {
+                    body.instruction(&Instruction::I32WrapI64);
+                } else if matches!(&expr.ty, Type::Base(BaseType::I64)) {
+                    body.instruction(&Instruction::Call(5)); // str_int
                 }
             }
         }
@@ -747,13 +761,29 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
             let _ = std::fs::write(rs(path_ptr), rs(content_ptr));
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
+    // read_file(path: i32) -> i32
     linker.func_wrap("host", "read_file",
-        |caller: Caller<'_, u32>, path_ptr: i32| -> i32 {
+        |mut caller: Caller<'_, u32>, path_ptr: i32| -> i32 {
             let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
             let data = mem.data(&caller);
             let end = data[path_ptr as usize..].iter().position(|&b| b == 0).unwrap_or(0);
-            let _path = std::str::from_utf8(&data[path_ptr as usize..path_ptr as usize + end]).unwrap_or("");
-            0i32
+            let path = std::str::from_utf8(&data[path_ptr as usize..path_ptr as usize + end]).unwrap_or("");
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    let bump = *caller.data();
+                    let bytes = content.as_bytes();
+                    let needed = bytes.len() + 1;
+                    *caller.data_mut() = bump + needed as u32;
+                    let dest = mem.data_mut(&mut caller);
+                    let off = bump as usize;
+                    if off + needed <= dest.len() {
+                        dest[off..off + bytes.len()].copy_from_slice(bytes);
+                        dest[off + bytes.len()] = 0;
+                        bump as i32
+                    } else { 0i32 }
+                }
+                Err(_) => 0i32,
+            }
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     linker.func_wrap("host", "str_add",
@@ -870,6 +900,33 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 data[pos..pos+8].copy_from_slice(&item.to_le_bytes());
             }
             vec
+    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+
+    // compile_host(src: i64, out_path: i64) -> i32
+    // Reads source from WASM memory, compiles it via Rust pipeline, writes .wasm.
+    linker.func_wrap("host", "compile_host",
+        |caller: Caller<'_, u32>, src_ptr: i32, out_ptr: i32| -> i32 {
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let data = mem.data(&caller);
+            let read_str = |p: i32| -> String {
+                let off = p as usize;
+                let end = data[off..].iter().position(|&b| b == 0).unwrap_or(0);
+                std::str::from_utf8(&data[off..off+end]).unwrap_or("").to_string()
+            };
+            let src = read_str(src_ptr);
+            let out = read_str(out_ptr);
+            // Compile via Rust pipeline
+            match crate::lexer::lexer::Lexer::new(&src).tokenize()
+                .and_then(|tokens| crate::parser::parser::Parser::new(tokens).parse_program())
+                .and_then(|prog| crate::hir::lower::Lowerer::new().lower_program(&prog))
+                .and_then(|hir| crate::compile::compile_to_wasm(&hir))
+            {
+                Ok(wasm_bytes) => {
+                    let _ = std::fs::write(&out, &wasm_bytes);
+                    0i32
+                }
+                Err(_) => 1i32,
+            }
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     let instance = linker.instantiate(&mut store, &module)

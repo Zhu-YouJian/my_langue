@@ -230,7 +230,8 @@ impl Lowerer {
                     if var_info.is_none() && fn_info.is_none() {
                         match ident.name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
-                            | "read_file" | "write_file" | "str_at" | "Vec::new" | "HashMap::new" => {
+                            | "read_file" | "write_file" | "str_at" | "Vec::new" | "HashMap::new"
+                            | "compile_host" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)
                             }
                             _ => {
@@ -819,6 +820,7 @@ impl Lowerer {
             "str_at" => Ok(Type::str_()),
             "write_file" => Ok(Type::unit()),
             "Vec::new" | "HashMap::new" => Ok(Type::Unknown),
+            "compile_host" => Ok(Type::Base(BaseType::I32)),
             _ => Ok(Type::Unknown),
         }
     }

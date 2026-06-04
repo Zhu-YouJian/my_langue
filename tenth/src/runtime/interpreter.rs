@@ -1229,6 +1229,26 @@ impl Interpreter {
             }
             "Vec::new" => return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new()))))),
             "HashMap::new" => return Ok(Some(Value::Map(Rc::new(RefCell::new(HashMap::new()))))),
+            "compile_host" => {
+                if args.len() >= 2 {
+                    if let (Value::String(src), Value::String(out)) = (&args[0], &args[1]) {
+                        match crate::lexer::lexer::Lexer::new(src).tokenize()
+                            .and_then(|tokens| crate::parser::parser::Parser::new(tokens).parse_program())
+                            .and_then(|prog| crate::hir::lower::Lowerer::new().lower_program(&prog))
+                            .and_then(|hir| crate::compile::compile_to_wasm(&hir))
+                        {
+                            Ok(wasm_bytes) => {
+                                let _ = std::fs::write(out, &wasm_bytes);
+                                return Ok(Some(Value::Int(0)));
+                            }
+                            Err(_) => return Ok(Some(Value::Int(1))),
+                        }
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "compile_host(src, out) expects two string args".into(),
+                });
+            }
             _ => {}
         }
 

@@ -1,10 +1,15 @@
-// Self-hosting Tenth compiler — lexer/parser demo entry point
-// (C codegen removed; compiler runs via Rust interpreter)
+// Self-hosting Tenth compiler — complete pipeline
+// Lexer + Parser in Tenth, codegen via host function.
 
 fn main() -> i64 {
+    // Read source file
     let src = read_file("tenthc/lexer/token.th");
-    let mut lex = lexer_new(src);
-    let tokens = lexer_tokenize(&mut lex);
-    println("Lexer tokenized token.th successfully");
-    return 0;
+    // Compile via host (Rust pipeline: lex→parse→lower→wasm)
+    let ok = compile_host(src, "tenthc_token.wasm");
+    if ok == 0 {
+        println("Compiled tenthc/lexer/token.th -> tenthc_token.wasm");
+    } else {
+        println("Compilation failed");
+    };
+    0
 }
