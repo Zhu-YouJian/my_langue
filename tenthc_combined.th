@@ -1,4 +1,4 @@
-// Token definitions — v0.3.1 with enum TokenKind
+// Token definitions ??v0.3.1 with enum TokenKind
 
 struct Span {
     line: i64,
@@ -87,8 +87,7 @@ struct Token {
     ival: i64,
     sval: str,
 }
-
-// Self-hosting Lexer — v0.3.1 enum-based
+// Self-hosting Lexer ??v0.3.1 enum-based
 
 struct Lexer {
     source: str,
@@ -121,7 +120,7 @@ fn lexer_advance(lexer: &mut Lexer) -> str {
 
 fn make_span(line: i64, col: i64) -> Span { Span { line: line, col: col } }
 
-// ── String→number helpers ──
+// ???? String??umber helpers ????
 
 fn char_to_digit(ch: str) -> i64 {
     if ch == "0" { 0 } else if ch == "1" { 1 }
@@ -310,7 +309,7 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         return Token { kind: TokenKind::Pipe, span: span, disc: 41, ival: 0, sval: "" };
     };
 
-    // Unknown char — treat as identifier
+    // Unknown char ??treat as identifier
     Token { kind: TokenKind::Identifier(name: ch), span: span, ival: 0, sval: "" }
 }
 
@@ -324,10 +323,9 @@ fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {
     tokens.push(lexer_next(lexer)); // push EOF
     tokens
 }
+// Self-hosting Parser ??v0.3.1 recursive descent
 
-// Self-hosting Parser — v0.3.1 recursive descent
-
-// ── AST arena types ──
+// ???? AST arena types ????
 
 struct Expr {
     kind: str,    // "int", "float", "str", "ident", "binary", "unary",
@@ -410,7 +408,7 @@ struct Program {
     match_arms: Vec<MatchArm>,
 }
 
-// ── Parser state ──
+// ???? Parser state ????
 
 struct Parser {
     tokens: Vec<Token>,
@@ -431,7 +429,7 @@ fn parser_new(tokens: Vec<Token>) -> Parser {
     }
 }
 
-// ── Token access ──
+// ???? Token access ????
 
 fn parser_peek(p: &Parser) -> Token {
     if p.pos < p.tokens.len() { p.tokens[p.pos] }
@@ -447,7 +445,7 @@ fn parser_advance(p: &mut Parser) -> Token {
     else { Token { kind: TokenKind::Eof, span: Span { line: 0, col: 0 } } }
 }
 
-// ── Helper: add expr node, return index (1-based, 0 = nil) ──
+// ???? Helper: add expr node, return index (1-based, 0 = nil) ????
 
 fn add_expr(p: &mut Parser, kind: str) -> i64 {
     let e = Expr {
@@ -469,7 +467,7 @@ fn add_stmt(p: &mut Parser, kind: str) -> i64 {
     p.stmt_nodes.len()
 }
 
-// ── Expression parsing ──
+// ???? Expression parsing ????
 
 fn parse_primary(p: &mut Parser) -> i64 {
     let tok = parser_advance(p);
@@ -537,7 +535,7 @@ fn parse_primary(p: &mut Parser) -> i64 {
         p.expr_nodes[idx - 1].left = inner;
         return idx;
     };
-    // Star (28) — deref
+    // Star (28) ??deref
     if d == 28 {
         let inner = parse_unary(p);
         let idx = add_expr(p, "deref");
@@ -577,7 +575,7 @@ fn parse_postfix(p: &mut Parser) -> i64 {
         let tok = parser_peek(p);
         let d = tok.disc;
 
-        // LParen (47) — function call
+        // LParen (47) ??function call
         if d == 47 {
             parser_advance(p); // skip (
             let start = p.expr_nodes.len() + 1;
@@ -586,7 +584,7 @@ fn parse_postfix(p: &mut Parser) -> i64 {
             p.expr_nodes[expr_idx - 1].arg_start = start;
             p.expr_nodes[expr_idx - 1].arg_count = count;
         } else if d == 56 {
-            // Dot (56) — field access
+            // Dot (56) ??field access
             parser_advance(p); // skip .
             let field_tok = parser_advance(p);
             let field_name = field_tok.sval;
@@ -810,7 +808,7 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
     idx
 }
 
-// ── Statement parsing ──
+// ???? Statement parsing ????
 
 fn parse_stmt(p: &mut Parser) -> i64 {
     let tok = parser_peek(p);
@@ -914,7 +912,7 @@ fn parse_stmt(p: &mut Parser) -> i64 {
     return idx;
 }
 
-// ── Top-level parsing ──
+// ???? Top-level parsing ????
 
 fn parse_fn(p: &mut Parser) -> FnDef {
     parser_advance(p); // skip fn
@@ -1044,7 +1042,7 @@ fn parse_enum_def(p: &mut Parser) -> EnumDef {
     EnumDef { name: name, variants: variants }
 }
 
-// ── Pattern helpers (avoids OR-patterns) ──
+// ???? Pattern helpers (avoids OR-patterns) ????
 
 fn is_end_of_block(tok: Token) -> bool {
     let d = tok.disc;
@@ -1114,8 +1112,7 @@ fn parse_program(tokens: Vec<Token>) -> Program {
         match_arms: p.match_arms,
     }
 }
-
-// Self-hosting Codegen — v0.3.1
+// Self-hosting Codegen ??v0.3.1
 // Walks Program AST (arena-based) and emits C code
 
 fn cgen_expr(prog: &Program, exprs: &Vec<Expr>, stmts: &Vec<Stmt>, idx: i64) -> str {
@@ -1332,8 +1329,7 @@ fn int_to_str(n: i64) -> str {
 fn float_to_str(n: f64) -> str {
     int_to_str(n) + ".0"
 }
-
-// Self-hosting Tenth compiler — bootstrap entry point
+// Self-hosting Tenth compiler ??bootstrap entry point
 
 fn compile(src: str) -> str {
     let mut lex = lexer_new(src);
@@ -1343,10 +1339,11 @@ fn compile(src: str) -> str {
 }
 
 fn main() -> i64 {
-    let src = read_file("test_tlp.th");
+    let src = read_file("tenthc_combined.th");
     let mut lex = lexer_new(src);
     let tokens = lexer_tokenize(&mut lex);
     let prog = parse_program(tokens);
+    let c = cgen_program(&prog, &prog.expr_nodes, &prog.stmt_nodes);
+    write_file("tenthc_v2.c", c);
     return 0;
 }
-
