@@ -52,6 +52,7 @@ impl CGenerator {
         self.emit("extern int64_t Vec_len(void* v);");
         self.emit("extern void* Vec_get(void* v, int64_t idx);");
         self.emit("extern void Vec_free(void* v);");
+        self.emit("extern void* tenth_alloc(size_t sz);");
         self.emit("extern char* str_add(const char* a, const char* b);");
         self.emit("extern const char* str_int(int64_t n);");
         self.emit("extern const char* str_at(const char* s, int64_t pos);");
@@ -445,7 +446,7 @@ impl CGenerator {
                             let var_name = base[1..].to_string();
                             let type_name = self.local_types.get(&var_name).map(|t| t.as_str()).unwrap_or("void");
                             if type_name != "void*" && type_name != "void" && type_name != "int64_t" && type_name != "int32_t" && type_name != "const char*" && type_name != "bool" && type_name != "double" && type_name != "float" {
-                                format!("({{ {}* _cp = malloc(sizeof({})); *_cp = {}; _cp; }})", type_name, type_name, var_name)
+                                format!("({{ {}* _cp = tenth_alloc(sizeof({})); *_cp = {}; _cp; }})", type_name, type_name, var_name)
                             } else { base }
                         } else { base }
                     } else if matches!(&a.kind, MirRvalueKind::Call { .. }) && (func.as_str().starts_with("Vec_push") || func.as_str() == "Vec::push") {
@@ -601,10 +602,10 @@ impl CGenerator {
                         // First determine the base value (add & if needed)
                         let base = if s.starts_with("&") || s.starts_with("*") { s.clone() }
                         else if matches!(&a.kind, MirRvalueKind::StructLiteral { .. }) {
-                            // Heap-allocate: ({ Type* _cp = malloc(sizeof(Type)); *_cp = literal; _cp; })
+                            // Arena-allocate: ({ Type* _cp = tenth_alloc(sizeof(Type)); *_cp = literal; _cp; })
                             let name = match &a.kind { MirRvalueKind::StructLiteral { name, .. } => name.clone(), _ => String::new() };
                             if !name.is_empty() {
-                                format!("({{ {}* _cp = malloc(sizeof({})); *_cp = {}; _cp; }})", name, name, s)
+                                format!("({{ {}* _cp = tenth_alloc(sizeof({})); *_cp = {}; _cp; }})", name, name, s)
                             } else { format!("&{}", s) }
                         }
                         else if matches!(&a.kind, MirRvalueKind::Call { .. }) {
@@ -614,18 +615,18 @@ impl CGenerator {
                                 _ => None,
                             };
                             if let Some(name) = struct_name {
-                                // Heap-allocate to avoid dangling: ({ Type* _t = malloc(sizeof(Type)); *_t = call; _t; })
-                                format!("({{ {}* _t = malloc(sizeof({})); *_t = {}; _t; }})", name, name, s)
+                                // Arena-allocate to avoid dangling: ({ Type* _t = tenth_alloc(sizeof(Type)); *_t = call; _t; })
+                                format!("({{ {}* _t = tenth_alloc(sizeof({})); *_t = {}; _t; }})", name, name, s)
                             } else { format!("&({})", s) }
                         }
                         else if matches!(&a.kind, MirRvalueKind::Use(_) | MirRvalueKind::Deref(_)) { format!("&{}", s) }
                         else { s.clone() };
-                        // If passing &struct, heap-allocate to avoid dangling pointer
+                        // If passing &struct, arena-allocate to avoid dangling pointer
                         if base.starts_with("&") && !base.starts_with("&(") && !base.starts_with("&*") && !base.contains("_t =") {
                             let var_name = base[1..].to_string();
                             let type_name = self.local_types.get(&var_name).map(|t| t.as_str()).unwrap_or("void");
                             if type_name != "void*" && type_name != "void" && type_name != "int64_t" && type_name != "int32_t" && type_name != "const char*" && type_name != "bool" && type_name != "double" && type_name != "float" {
-                                format!("({{ {}* _cp = malloc(sizeof({})); *_cp = {}; _cp; }})", type_name, type_name, var_name)
+                                format!("({{ {}* _cp = tenth_alloc(sizeof({})); *_cp = {}; _cp; }})", type_name, type_name, var_name)
                             } else { base }
                         } else { base }
                     } else { s }

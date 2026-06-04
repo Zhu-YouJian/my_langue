@@ -46,6 +46,14 @@ void str_arena_reset(void) {
     }
 }
 
+/// General-purpose arena allocation (not limited to strings).
+/// All memory returned by tenth_alloc lives until str_arena_reset().
+/// Use this instead of malloc() for any object whose lifetime matches
+/// the program run (e.g. structs pushed into Vec, file contents).
+void* tenth_alloc(size_t sz) {
+    return arena_alloc(sz);
+}
+
 // === Vec (dynamic array) ====================================================
 //
 //  Vec struct layout (hidden — users see void*):
@@ -109,7 +117,7 @@ void* read_file(const char* path) {
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* buf = malloc(size + 1);
+    char* buf = (char*)arena_alloc(size + 1);
     fread(buf, 1, size, f);
     buf[size] = 0;
     fclose(f);
@@ -154,14 +162,14 @@ char* str_add(const char* a, const char* b) {
     return r;
 }
 
-// str_int — int64 to string using a rotating static buffer
-// Safe for up to 16 nested calls
-static char _str_int_buf[16][32];
-static int _str_int_idx = 0;
+// str_int — int64 to arena-allocated string
+// Result lives in the global arena; safe for unlimited nested calls.
 const char* str_int(int64_t n) {
-    int i = (_str_int_idx++) & 15;
-    snprintf(_str_int_buf[i], 32, "%lld", (long long)n);
-    return _str_int_buf[i];
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%lld", (long long)n);
+    char* r = (char*)arena_alloc(len + 1);
+    memcpy(r, buf, len + 1);
+    return r;
 }
 
 // === String helpers for Tenth compiled code ==================================
@@ -173,16 +181,13 @@ bool str_eq(const char* a, const char* b) {
     return strcmp(a, b) == 0;
 }
 
-// str_at — get a 1-char string at position, returns "" if out of bounds
-// Uses rotating buffers to survive nested calls (16 slots)
-static char _str_at_buf[16][2] = {{0}};
-static int _str_at_idx = 0;
+// str_at — get a 1-char arena-allocated string at position, returns "" if out of bounds
 const char* str_at(const char* s, int64_t pos) {
     if (!s || pos < 0 || (size_t)pos >= strlen(s)) return "";
-    int i = (_str_at_idx++) & 15;
-    _str_at_buf[i][0] = s[pos];
-    _str_at_buf[i][1] = 0;
-    return _str_at_buf[i];
+    char* r = (char*)arena_alloc(2);
+    r[0] = s[pos];
+    r[1] = 0;
+    return r;
 }
 
 // str_to_int — parse string to int64
