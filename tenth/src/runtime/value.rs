@@ -13,7 +13,7 @@ pub enum Value {
     String(String),
     Tensor(Rc<RefCell<Tensor>>),
     Unit,
-    Array(Vec<Value>),
+    Array(Rc<RefCell<Vec<Value>>>),
     FnRef {
         name: String,
         params: Vec<(String, Type)>,
@@ -26,12 +26,12 @@ pub enum Value {
     },
     Struct {
         name: String,
-        fields: Vec<(String, Value)>,
+        fields: Rc<RefCell<Vec<(String, Value)>>>,
     },
     Enum {
         enum_name: String,
         variant: String,
-        fields: Vec<(String, Value)>,
+        fields: Rc<RefCell<Vec<(String, Value)>>>,
     },
     Ref(Rc<RefCell<Value>>),
     MutRef(Rc<RefCell<Value>>),
@@ -121,6 +121,7 @@ impl fmt::Display for Value {
             Value::Tensor(t) => write!(f, "{}", t.borrow()),
             Value::Unit => write!(f, "()"),
             Value::Array(items) => {
+                let items = items.borrow();
                 write!(f, "[")?;
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 { write!(f, ", ")?; }
@@ -131,6 +132,7 @@ impl fmt::Display for Value {
             Value::FnRef { name, .. } => write!(f, "<fn {}>", name),
             Value::Closure { .. } => write!(f, "<closure>"),
             Value::Struct { name, fields } => {
+                let fields = fields.borrow();
                 write!(f, "{} {{ ", name)?;
                 for (i, (fname, fval)) in fields.iter().enumerate() {
                     if i > 0 { write!(f, ", ")?; }
@@ -161,6 +163,7 @@ impl fmt::Display for Value {
                 write!(f, "}}")
             }
             Value::Enum { enum_name, variant, fields } => {
+                let fields = fields.borrow();
                 if fields.is_empty() {
                     write!(f, "{}::{}", enum_name, variant)
                 } else {

@@ -307,7 +307,7 @@ impl Interpreter {
                 })?;
                 match &t {
                     Value::Struct { fields, .. } => {
-                        for (fname, fval) in fields {
+                        for (fname, fval) in fields.borrow().iter() {
                             if fname == field {
                                 return Ok(Some(fval.clone()));
                             }
@@ -317,7 +317,7 @@ impl Interpreter {
                         })
                     }
                     Value::Enum { fields, .. } => {
-                        for (fname, fval) in fields {
+                        for (fname, fval) in fields.borrow().iter() {
                             if fname == field {
                                 return Ok(Some(fval.clone()));
                             }
@@ -505,7 +505,7 @@ impl Interpreter {
                         let mut inner = rc.borrow_mut();
                         match &mut *inner {
                             Value::Struct { fields, .. } => {
-                                for (fname, fval) in &mut *fields {
+                                for (fname, fval) in fields.borrow_mut().iter_mut() {
                                     if fname == field {
                                         *fval = rhs;
                                         return Ok(Some(Value::Unit));
@@ -544,7 +544,7 @@ impl Interpreter {
                     })?;
                     field_vals.push((fname.clone(), v));
                 }
-                Ok(Some(Value::Struct { name: name.clone(), fields: field_vals }))
+                Ok(Some(Value::Struct { name: name.clone(), fields: Rc::new(RefCell::new(field_vals)) }))
             }
 
             HirExprKind::EnumLiteral { enum_name, variant, fields } => {
@@ -558,7 +558,7 @@ impl Interpreter {
                 Ok(Some(Value::Enum {
                     enum_name: enum_name.clone(),
                     variant: variant.clone(),
-                    fields: field_vals,
+                    fields: Rc::new(RefCell::new(field_vals)),
                 }))
             }
 
@@ -572,7 +572,7 @@ impl Interpreter {
                         if let HirPattern::EnumVariant { field_bind, .. } = &arm.pattern {
                             if let Some((_fname, bname)) = field_bind {
                                 if let Value::Enum { fields, .. } = &val {
-                                    if let Some((_, v)) = fields.first() {
+                                    if let Some((_, v)) = fields.borrow().first() {
                                         self.variables.insert(bname.clone(), v.clone());
                                     }
                                 }

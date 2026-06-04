@@ -80,7 +80,7 @@ fn test_option_some() {
         Some(Value::Enum { enum_name, variant, fields }) => {
             assert_eq!(enum_name, "Option");
             assert_eq!(variant, "Some");
-            assert!(fields.iter().any(|(n, _)| n == "_0"));
+            assert!(fields.borrow().iter().any(|(n, _)| n == "_0"));
         }
         v => panic!("expected Option::Some, got {:?}", v),
     }

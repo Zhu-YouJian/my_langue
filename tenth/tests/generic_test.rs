@@ -84,6 +84,7 @@ fn test_generic_with_bound() {
     match result {
         Some(Value::Struct { name, fields }) => {
             assert_eq!(name, "Point");
+            let fields = fields.borrow();
             let x = fields.iter().find(|(n,_)| n=="x").map(|(_,v)| match v { Value::Float(f) => *f, _ => panic!() }).unwrap();
             let y = fields.iter().find(|(n,_)| n=="y").map(|(_,v)| match v { Value::Float(f) => *f, _ => panic!() }).unwrap();
             assert!((x - 4.0).abs() < 0.001);
