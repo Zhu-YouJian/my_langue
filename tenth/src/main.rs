@@ -12,15 +12,12 @@ fn main() -> TenthResult<()> {
 
     if args.len() >= 2 {
         match args[1].as_str() {
-            // "build <file.th>" — compile .th to .wasm
             "build" if args.len() >= 3 => {
                 return build_wasm(&args[2]);
             }
-            // "run <file.th>" — interpret a .th source file
             "run" if args.len() >= 3 => {
                 return run_file(&args[2]);
             }
-            // "wasm <file.th>" — compile to WASM then execute via wasmi
             "wasm" if args.len() >= 3 => {
                 return run_wasm(&args[2]);
             }
@@ -28,7 +25,7 @@ fn main() -> TenthResult<()> {
         }
     }
 
-    // Default: REPL mode — parse optional --max-memory flag
+    // Default: REPL mode
     let max_memory_mb: usize = args.iter()
         .position(|a| a == "--max-memory")
         .and_then(|i| args.get(i + 1))

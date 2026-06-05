@@ -34,6 +34,16 @@ pub enum TenthError {
     /// Propagated up through blocks/statements to the enclosing function call.
     #[error("return")]
     ReturnValue(Value),
+
+    /// Non-error signal: a break statement was executed.
+    /// Propagated up through blocks/statements to the enclosing loop.
+    #[error("break")]
+    BreakSignal,
+
+    /// Non-error signal: a continue statement was executed.
+    /// Propagated up through blocks/statements to the enclosing loop.
+    #[error("continue")]
+    ContinueSignal,
 }
 
 pub type TenthResult<T> = Result<T, TenthError>;

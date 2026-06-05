@@ -331,7 +331,8 @@ impl Interpreter {
                     let v = self.eval_expr(elem)?.ok_or_else(|| TenthError::RuntimeError {
                         message: "array element is void".into(),
                     })?;
-                    vals.push(v);
+                    // Wrap in Shared so elements can be mutated via indexed assignment
+                    vals.push(Value::Shared(Rc::new(RefCell::new(v))));
                 }
                 Ok(Some(Value::Vec(Rc::new(RefCell::new(vals)))))
             }
@@ -514,6 +515,26 @@ impl Interpreter {
                         let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
                             message: "cannot assign field through dangling &mut reference".into(),
                         })?;
+                        let mut inner = rc.borrow_mut();
+                        match &mut *inner {
+                            Value::Struct { fields, .. } => {
+                                for (fname, fval) in fields.borrow_mut().iter_mut() {
+                                    if fname == field {
+                                        *fval = rhs;
+                                        return Ok(Some(Value::Unit));
+                                    }
+                                }
+                                Err(TenthError::RuntimeError {
+                                    message: format!("struct has no field '{}'", field),
+                                })
+                            }
+                            _ => Err(TenthError::RuntimeError {
+                                message: "field assignment only supported on structs".into(),
+                            }),
+                        }
+                    }
+                    // Shared reference from Vec indexing: mutate through the RefCell
+                    Value::Shared(rc) => {
                         let mut inner = rc.borrow_mut();
                         match &mut *inner {
                             Value::Struct { fields, .. } => {
@@ -906,7 +927,8 @@ impl Interpreter {
                         message: "push() takes 1 argument".into(),
                     });
                 }
-                items.borrow_mut().push(args[0].clone());
+                // Wrap in Shared so elements can be mutated via indexed assignment
+                items.borrow_mut().push(Value::Shared(Rc::new(RefCell::new(args[0].clone()))));
                 Ok(Some(Value::Unit))
             }
             "get" => {
@@ -1180,11 +1202,15 @@ impl Interpreter {
                             message: "index is void".into(),
                         })?;
                         let idx = v.as_int().unwrap_or(0) as usize;
-                        items.borrow().get(idx).cloned().ok_or_else(|| {
-                            TenthError::RuntimeError {
+                        // Elements are stored as Shared; return the Shared so
+                        // field assignment can mutate through it.
+                        match items.borrow().get(idx) {
+                            Some(Value::Shared(rc)) => Ok(Value::Shared(rc.clone())),
+                            Some(other) => Ok(other.clone()),
+                            None => Err(TenthError::RuntimeError {
                                 message: format!("Vec index {} out of bounds", idx),
-                            }
-                        })
+                            }),
+                        }
                     }
                     _ => Err(TenthError::RuntimeError {
                         message: "Vec index must be an integer".into(),
@@ -1391,14 +1417,21 @@ impl Interpreter {
                 };
                 Err(TenthError::ReturnValue(val))
             }
-            HirStmtKind::Break => Ok(()),
-            HirStmtKind::Continue => Ok(()),
+            HirStmtKind::Break => Err(TenthError::BreakSignal),
+            HirStmtKind::Continue => Err(TenthError::ContinueSignal),
             HirStmtKind::Loop { body } => {
                 loop {
+                    let mut should_break = false;
                     for s in body {
-                        self.eval_stmt(s)?;
+                        match self.eval_stmt(s) {
+                            Err(TenthError::BreakSignal) => { should_break = true; break; }
+                            Err(TenthError::ContinueSignal) => continue,
+                            other => { other?; }
+                        }
                     }
+                    if should_break { break; }
                 }
+                Ok(())
             }
             HirStmtKind::While { cond, body } => {
                 loop {
@@ -1408,7 +1441,11 @@ impl Interpreter {
                     if !c.is_truthy() {
                         break;
                     }
-                    self.eval_stmt(body)?;
+                    match self.eval_stmt(body) {
+                        Err(TenthError::BreakSignal) => break,
+                        Err(TenthError::ContinueSignal) => continue,
+                        other => { other?; }
+                    }
                 }
                 Ok(())
             }
