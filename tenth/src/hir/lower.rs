@@ -733,6 +733,9 @@ impl Lowerer {
                     (Type::Tensor { dtype, .. }, _) | (_, Type::Tensor { dtype, .. }) => {
                         Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] }
                     }
+                    // Mixed int/float: promote to float
+                    (Type::Base(_), Type::Base(rb)) if matches!(rb, BaseType::F16 | BaseType::F32 | BaseType::F64 | BaseType::BF16) => r.clone(),
+                    (Type::Base(lb), Type::Base(_)) if matches!(lb, BaseType::F16 | BaseType::F32 | BaseType::F64 | BaseType::BF16) => l.clone(),
                     _ => l.clone(),
                 }
             }

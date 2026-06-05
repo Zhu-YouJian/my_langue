@@ -362,10 +362,12 @@ impl WasmCompiler {
                 if let Some(&idx) = self.local_map.get(name) {
                     body.instruction(&Instruction::LocalGet(idx));
                     // Extra locals (index >= param_count) are stored as i64.
-                    // f64 values in extra locals need reinterpretation.
+                    // Convert back to the expression's actual type.
                     if idx >= self.param_count {
                         if matches!(&expr.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
                             body.instruction(&Instruction::F64ReinterpretI64);
+                        } else if matches!(&expr.ty, Type::Base(BaseType::Bool)) {
+                            body.instruction(&Instruction::I32WrapI64);
                         }
                     }
                 } else if !["println","eprintln","write_file","read_file"].contains(&name.as_str()) {
@@ -483,9 +485,11 @@ impl WasmCompiler {
 
             HirExprKind::Assign { target, value } => {
                 self.compile_expr(body, value)?;
-                // f64 values must be stored as i64 (all locals are i64)
+                // f64/bool values must be stored as i64 (all locals are i64)
                 if matches!(&value.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
                     body.instruction(&Instruction::I64ReinterpretF64);
+                } else if matches!(&value.ty, Type::Base(BaseType::Bool)) {
+                    body.instruction(&Instruction::I64ExtendI32U);
                 }
                 if let Some(&idx) = self.local_map.get(target) {
                     body.instruction(&Instruction::LocalSet(idx));
@@ -666,14 +670,17 @@ impl WasmCompiler {
                     // Convert/Reinterpret based on declared type vs expression type
                     let target_f = matches!(type_ann, Some(Type::Base(BaseType::F64 | BaseType::F32)));
                     let expr_f = matches!(&e.ty, Type::Base(BaseType::F64 | BaseType::F32));
+                    let expr_bool = matches!(&e.ty, Type::Base(BaseType::Bool));
                     if target_f && !expr_f {
                         // i64 → f64 conversion (not reinterpret)
                         body.instruction(&Instruction::F64ConvertI64S);
-                        // Then store as i64 (all locals are i64)
                         body.instruction(&Instruction::I64ReinterpretF64);
                     } else if expr_f {
                         // f64 → store as i64 bits
                         body.instruction(&Instruction::I64ReinterpretF64);
+                    } else if expr_bool {
+                        // bool (i32) → i64 for local storage
+                        body.instruction(&Instruction::I64ExtendI32U);
                     }
                 } else {
                     body.instruction(&Instruction::I64Const(0));
