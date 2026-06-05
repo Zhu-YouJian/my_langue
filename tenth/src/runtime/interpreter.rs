@@ -202,7 +202,8 @@ impl Interpreter {
                     .or_else(|| {
                         match name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
-                            | "read_file" | "write_file" | "Vec::new" | "HashMap::new" => {
+                            | "read_file" | "write_file" | "compile_host"
+                            | "Vec::new" | "HashMap::new" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),
