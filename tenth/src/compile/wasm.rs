@@ -615,7 +615,7 @@ impl WasmCompiler {
                             body.instruction(&Instruction::I64Const(0));
                         }
                         body.instruction(&Instruction::Call(8)); // Vec_push -> i64
-                        body.instruction(&Instruction::Drop);     // discard returned vec ptr
+                        body.instruction(&Instruction::Drop);     // push returns Unit
                     }
                     "get" => {
                         if let Some(a) = args.first() {
