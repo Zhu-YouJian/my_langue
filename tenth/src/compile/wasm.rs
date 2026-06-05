@@ -835,6 +835,14 @@ impl WasmCompiler {
     }
 
     fn collect_strings(&mut self, p: &HirProgram) {
+        // Pre-intern all single ASCII characters so str_at can return
+        // pointers to pre-allocated strings without heap allocation.
+        for byte in 1u8..128u8 {
+            if let Some(c) = char::from_u32(byte as u32) {
+                let s = c.to_string();
+                self.intern_string(&s);
+            }
+        }
         for f in &p.functions { self.cs_expr(&f.body); }
         if let Some(ref e) = p.main_expr { self.cs_expr(e); }
     }
@@ -1116,6 +1124,8 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     // str_at(s: i32, idx: i64) -> i32  — returns single-char string at index
+    // Characters are pre-interned as "X\0" in the data section, so we
+    // can return a direct pointer without heap allocation.
     linker.func_wrap("host", "str_at",
         |mut caller: Caller<'_, u32>, ptr: i32, idx: i64| -> i32 {
             let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
@@ -1126,12 +1136,17 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 std::str::from_utf8(&data[off..off+end]).unwrap_or("")
             };
             let ch = s.chars().nth(idx as usize).unwrap_or('\0');
+            // Pre-interned ASCII: characters 1..127 are stored as "X\0" 
+            // at offset (ch-1)*2 in the data section.
+            let cu = ch as u32;
+            if cu >= 1 && cu < 128 {
+                return ((cu - 1) * 2) as i32;
+            }
+            // Non-ASCII fallback: allocate from bump allocator (rare)
             let ch_str = ch.to_string();
             let ch_bytes = ch_str.as_bytes();
-            // Allocate from bump allocator for the result string (max 4 bytes for UTF-8)
             let np = *caller.data();
             let needed = np as usize + ch_bytes.len() + 1;
-            // Grow memory if needed
             let current_len = mem.data(&caller).len();
             if needed > current_len {
                 let pages = ((needed - current_len + 65535) / 65536) as u32;
