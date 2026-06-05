@@ -469,16 +469,19 @@ impl WasmCompiler {
 
             HirExprKind::If { cond, then_branch, else_branch, .. } => {
                 self.compile_expr(body, cond)?;
-                let has_result = !matches!(&then_branch.ty, Type::Base(BaseType::Unit));
-                if has_result {
+                // Detect if this if-expression produces a value.
+                // If both branches end with a value (not just return), use Result type.
+                let has_value = !matches!(&then_branch.ty, Type::Base(BaseType::Unit))
+                    && (else_branch.is_none() || !matches!(&else_branch.as_ref().unwrap().ty, Type::Base(BaseType::Unit)));
+                if has_value {
                     body.instruction(&Instruction::If(BlockType::Result(to_val_type_required(&then_branch.ty)?)));
                 } else {
                     body.instruction(&Instruction::If(BlockType::Empty));
                 }
                 self.compile_expr(body, then_branch)?;
-                if else_branch.is_some() {
+                if let Some(eb) = else_branch {
                     body.instruction(&Instruction::Else);
-                    self.compile_expr(body, else_branch.as_ref().unwrap())?;
+                    self.compile_expr(body, eb)?;
                 }
                 body.instruction(&Instruction::End);
             }
