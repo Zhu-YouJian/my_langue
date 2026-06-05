@@ -221,7 +221,7 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
     };
 
     // Unknown char — treat as identifier
-    Token { kind: TokenKind::Identifier(name: ch), span: span, ival: 0, sval: "" }
+    Token { kind: TokenKind::Identifier(name: ch), span: span, disc: 3, ival: 0, sval: "" }
 }
 
 fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {
