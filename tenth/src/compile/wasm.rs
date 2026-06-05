@@ -69,6 +69,8 @@ pub struct WasmCompiler {
     /// Variable name -> local index (all i64 typed)
     local_map: HashMap<String, u32>,
     local_count: u32,
+    /// Number of function parameters (params use correct WASM types, not i64)
+    param_count: u32,
 }
 
 impl WasmCompiler {
@@ -82,6 +84,7 @@ impl WasmCompiler {
             struct_layouts: HashMap::new(),
             local_map: HashMap::new(),
             local_count: 0,
+            param_count: 0,
         }
     }
 
@@ -296,6 +299,7 @@ impl WasmCompiler {
             self.local_map.insert(name.clone(), self.local_count);
             self.local_count += 1;
         }
+        self.param_count = self.local_count; // parameters use correct types
         let locals: Vec<ValType> = (0..16).map(|_| ValType::I64).collect();
         let mut body = Function::new_with_locals_types(locals);
         self.compile_expr(&mut body, &func.body)?;
@@ -357,9 +361,12 @@ impl WasmCompiler {
             HirExprKind::Var(name) => {
                 if let Some(&idx) = self.local_map.get(name) {
                     body.instruction(&Instruction::LocalGet(idx));
-                    // f64 values stored as i64: reinterpret back
-                    if matches!(&expr.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
-                        body.instruction(&Instruction::F64ReinterpretI64);
+                    // Extra locals (index >= param_count) are stored as i64.
+                    // f64 values in extra locals need reinterpretation.
+                    if idx >= self.param_count {
+                        if matches!(&expr.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
+                            body.instruction(&Instruction::F64ReinterpretI64);
+                        }
                     }
                 } else if !["println","eprintln","write_file","read_file"].contains(&name.as_str()) {
                     return Err(TenthError::RuntimeError {
@@ -653,11 +660,19 @@ impl WasmCompiler {
                     body.instruction(&Instruction::Drop);
                 }
             }
-            HirStmtKind::Let { name, init, .. } => {
+            HirStmtKind::Let { name, type_ann, init, .. } => {
                 if let Some(e) = init {
                     self.compile_expr(body, e)?;
-                    // f64 values stored as i64
-                    if matches!(&e.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
+                    // Convert/Reinterpret based on declared type vs expression type
+                    let target_f = matches!(type_ann, Some(Type::Base(BaseType::F64 | BaseType::F32)));
+                    let expr_f = matches!(&e.ty, Type::Base(BaseType::F64 | BaseType::F32));
+                    if target_f && !expr_f {
+                        // i64 → f64 conversion (not reinterpret)
+                        body.instruction(&Instruction::F64ConvertI64S);
+                        // Then store as i64 (all locals are i64)
+                        body.instruction(&Instruction::I64ReinterpretF64);
+                    } else if expr_f {
+                        // f64 → store as i64 bits
                         body.instruction(&Instruction::I64ReinterpretF64);
                     }
                 } else {
