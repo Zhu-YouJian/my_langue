@@ -21,7 +21,7 @@ fn to_val_type(ty: &Type) -> Option<ValType> {
             BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64 => Some(ValType::I64),
             BaseType::F32 | BaseType::F64 => Some(ValType::F64),
             BaseType::Bool => Some(ValType::I32),
-            BaseType::Str => Some(ValType::I32),
+            BaseType::Str => Some(ValType::I64), // stored as i64 internally, converted at host boundary
             BaseType::Unit => None,
             _ => None,
         },
@@ -56,7 +56,7 @@ fn field_size_and_type(ty: &Type) -> (u32, ValType) {
 // ── Compiler state ─────────────────────────────────────────────────────────
 
 /// First user-function index (after all host imports).
-const IMPORT_COUNT: u32 = 12; // + compile_host
+const IMPORT_COUNT: u32 = 15; // 0-11 original + str_len(12) + str_at(13) + str_cmp(14)
 
 pub struct WasmCompiler {
     type_cache: HashMap<(Vec<ValType>, Vec<ValType>), u32>,
@@ -118,6 +118,20 @@ impl WasmCompiler {
             }
             self.struct_layouts.insert(sname.clone(), layout);
         }
+        // Also build layouts for enum variants (keyed as "EnumName::VariantName")
+        for (ename, variants) in &program.enums {
+            for (vname, vfields) in variants {
+                let mut offset = 0u32;
+                let mut layout = HashMap::new();
+                for (fname, fty) in vfields {
+                    let (size, vt) = field_size_and_type(fty);
+                    layout.insert(fname.clone(), (offset, size, vt));
+                    offset += size;
+                }
+                let key = format!("{}::{}", ename, vname);
+                self.struct_layouts.insert(key, layout);
+            }
+        }
     }
 
     fn struct_size(&self, name: &str) -> u32 {
@@ -169,18 +183,21 @@ impl WasmCompiler {
             })
         };
         // Host imports
-        reg(vec![ValType::I32], vec![]);
-        reg(vec![ValType::I32, ValType::I32], vec![]);
-        reg(vec![ValType::I32], vec![ValType::I32]);
-        reg(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        reg(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-        reg(vec![ValType::I64], vec![ValType::I32]);
-        reg(vec![ValType::I32], vec![ValType::I32]); // 6: tenth_alloc
-        reg(vec![], vec![ValType::I64]);             // 7: Vec_new -> i64
-        reg(vec![ValType::I64, ValType::I64], vec![ValType::I64]); // 8: Vec_push(i64, i64) -> i64
-        reg(vec![ValType::I64], vec![ValType::I64]); // 9: Vec_len(i64) -> i64
-        reg(vec![ValType::I64, ValType::I64], vec![ValType::I64]); // 10: Vec_get
-        reg(vec![ValType::I32, ValType::I32], vec![ValType::I32]); // 11: compile_host(src, out) -> exit_code
+        reg(vec![ValType::I32], vec![]);                                    // 0: println
+        reg(vec![ValType::I32, ValType::I32], vec![]);                      // 1: write_file
+        reg(vec![ValType::I32], vec![ValType::I32]);                        // 2: read_file
+        reg(vec![ValType::I32, ValType::I32], vec![ValType::I32]);          // 3: str_add
+        reg(vec![ValType::I32, ValType::I32], vec![ValType::I32]);          // 4: str_eq
+        reg(vec![ValType::I64], vec![ValType::I32]);                        // 5: str_int
+        reg(vec![ValType::I32], vec![ValType::I32]);                        // 6: tenth_alloc
+        reg(vec![], vec![ValType::I64]);                                    // 7: Vec_new
+        reg(vec![ValType::I64, ValType::I64], vec![ValType::I64]);          // 8: Vec_push
+        reg(vec![ValType::I64], vec![ValType::I64]);                        // 9: Vec_len
+        reg(vec![ValType::I64, ValType::I64], vec![ValType::I64]);          // 10: Vec_get
+        reg(vec![ValType::I32, ValType::I32], vec![ValType::I32]);          // 11: compile_host
+        reg(vec![ValType::I32], vec![ValType::I32]);                        // 12: str_len
+        reg(vec![ValType::I32, ValType::I64], vec![ValType::I32]);          // 13: str_at
+        reg(vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]); // 14: str_cmp(op, a, b) -> bool
         for func in &program.functions {
             let p: Vec<ValType> = func.params.iter().filter_map(|(_, t)| to_val_type(t)).collect();
             let r: Vec<ValType> = to_val_type(&func.return_type).into_iter().collect();
@@ -209,6 +226,9 @@ impl WasmCompiler {
         imports.import("host", "Vec_len", EntityType::Function(ti(vec![ValType::I64], vec![ValType::I64])));
         imports.import("host", "Vec_get", EntityType::Function(ti(vec![ValType::I64, ValType::I64], vec![ValType::I64])));
         imports.import("host", "compile_host", EntityType::Function(ti(vec![ValType::I32, ValType::I32], vec![ValType::I32])));
+        imports.import("host", "str_len", EntityType::Function(ti(vec![ValType::I32], vec![ValType::I32])));
+        imports.import("host", "str_at", EntityType::Function(ti(vec![ValType::I32, ValType::I64], vec![ValType::I32])));
+        imports.import("host", "str_cmp", EntityType::Function(ti(vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])));
         module.section(&imports);
     }
 
@@ -337,6 +357,10 @@ impl WasmCompiler {
             HirExprKind::Var(name) => {
                 if let Some(&idx) = self.local_map.get(name) {
                     body.instruction(&Instruction::LocalGet(idx));
+                    // f64 values stored as i64: reinterpret back
+                    if matches!(&expr.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
+                        body.instruction(&Instruction::F64ReinterpretI64);
+                    }
                 } else if !["println","eprintln","write_file","read_file"].contains(&name.as_str()) {
                     return Err(TenthError::RuntimeError {
                         message: format!("WASM: undefined variable '{}'", name),
@@ -345,9 +369,37 @@ impl WasmCompiler {
             }
 
             HirExprKind::Binary { op, left, right, .. } => {
-                self.compile_expr(body, left)?;
-                self.compile_expr(body, right)?;
-                self.compile_binop(body, op, &left.ty, &right.ty)?;
+                // String comparisons: emit str_cmp host call
+                let is_str_cmp = matches!(&left.ty, Type::Base(BaseType::Str))
+                    && matches!(op, BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq);
+                if is_str_cmp {
+                    self.compile_string_arg(body, left)?;
+                    self.compile_string_arg(body, right)?;
+                    let op_code: i32 = match op {
+                        BinOp::Lt => 0,
+                        BinOp::Gt => 1,
+                        BinOp::LtEq => 2,
+                        BinOp::GtEq => 3,
+                        _ => 0,
+                    };
+                    body.instruction(&Instruction::I32Const(op_code));
+                    body.instruction(&Instruction::Call(14)); // str_cmp(op, a, b) -> i32
+                } else {
+                    self.compile_expr(body, left)?;
+                    // Convert i64 to f64 if the operation involves float
+                    let left_is_int = matches!(&left.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64));
+                    let right_is_float = matches!(&right.ty, Type::Base(BaseType::F32 | BaseType::F64));
+                    if left_is_int && right_is_float {
+                        body.instruction(&Instruction::F64ConvertI64S);
+                    }
+                    self.compile_expr(body, right)?;
+                    let left_is_float = matches!(&left.ty, Type::Base(BaseType::F32 | BaseType::F64));
+                    let right_is_int = matches!(&right.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64));
+                    if right_is_int && left_is_float {
+                        body.instruction(&Instruction::F64ConvertI64S);
+                    }
+                    self.compile_binop(body, op, &left.ty, &right.ty)?;
+                }
             }
 
             HirExprKind::Unary { op, expr: inner, .. } => {
@@ -424,6 +476,10 @@ impl WasmCompiler {
 
             HirExprKind::Assign { target, value } => {
                 self.compile_expr(body, value)?;
+                // f64 values must be stored as i64 (all locals are i64)
+                if matches!(&value.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
+                    body.instruction(&Instruction::I64ReinterpretF64);
+                }
                 if let Some(&idx) = self.local_map.get(target) {
                     body.instruction(&Instruction::LocalSet(idx));
                 } else {
@@ -431,6 +487,37 @@ impl WasmCompiler {
                     body.instruction(&Instruction::LocalSet(self.local_count));
                     self.local_count += 1;
                 }
+            }
+
+            HirExprKind::EnumLiteral { enum_name, variant, fields } => {
+                // Enum variants are stored like structs — allocate and write fields.
+                // Layout keyed as "EnumName::VariantName".
+                let layout_key = format!("{}::{}", enum_name, variant);
+                let sz = self.struct_size(&layout_key);
+                body.instruction(&Instruction::I32Const(sz as i32));
+                body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32
+                body.instruction(&Instruction::I64ExtendI32U);
+                let tmp = if self.local_count > 0 { self.local_count } else { 1 };
+                body.instruction(&Instruction::LocalSet(tmp));
+                let layout = self.struct_layouts.get(&layout_key).cloned()
+                    .ok_or_else(|| TenthError::RuntimeError {
+                        message: format!("WASM: unknown enum variant '{}/{}'", enum_name, variant),
+                    })?;
+                for (fname, fexpr) in fields {
+                    if let Some(&(offset, _size, vt)) = layout.get(fname) {
+                        body.instruction(&Instruction::LocalGet(tmp));
+                        body.instruction(&Instruction::I32WrapI64);
+                        self.compile_expr(body, fexpr)?;
+                        let arg = wasm_encoder::MemArg { offset: offset as u64, align: 0, memory_index: 0 };
+                        match vt {
+                            ValType::I64 => { body.instruction(&Instruction::I64Store(arg)); }
+                            ValType::I32 => { body.instruction(&Instruction::I32Store(arg)); }
+                            ValType::F64 => { body.instruction(&Instruction::F64Store(arg)); }
+                            _ => {}
+                        }
+                    }
+                }
+                body.instruction(&Instruction::LocalGet(tmp));
             }
 
             HirExprKind::StructLiteral { name, fields } => {
@@ -494,10 +581,18 @@ impl WasmCompiler {
 
             HirExprKind::MethodCall { receiver, method, args, .. } => {
                 self.compile_expr(body, receiver)?;
-                // Receiver is i64 (all values are i64 in locals)
+                // Receiver is i64; for string methods we need to convert to i32 (ptr)
                 match method.as_str() {
                     "len" => {
-                        body.instruction(&Instruction::Call(9)); // Vec_len(i64) -> i64
+                        // Check if receiver is String type
+                        let is_string = matches!(&receiver.ty, Type::Base(BaseType::Str));
+                        if is_string {
+                            body.instruction(&Instruction::I32WrapI64); // i64 -> i32 pointer
+                            body.instruction(&Instruction::Call(12));    // str_len(i32) -> i32
+                            body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
+                        } else {
+                            body.instruction(&Instruction::Call(9)); // Vec_len(i64) -> i64
+                        }
                     }
                     "push" => {
                         if let Some(a) = args.first() {
@@ -529,6 +624,19 @@ impl WasmCompiler {
                 self.compile_expr(body, inner)?;
             }
 
+            HirExprKind::Index { target, indices } => {
+                // String indexing: target is a string pointer (i32 after conversion)
+                self.compile_expr(body, target)?;
+                body.instruction(&Instruction::I32WrapI64); // pointer i64 -> i32
+                if let Some(Index::Single(idx)) = indices.first() {
+                    self.compile_expr(body, idx)?; // compile index expression (i64)
+                } else {
+                    body.instruction(&Instruction::I64Const(0));
+                }
+                body.instruction(&Instruction::Call(13)); // str_at(i32, i64) -> i32
+                body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
+            }
+
             _ => return Err(TenthError::RuntimeError {
                 message: format!("WASM: unsupported expr {:?}", expr.kind),
             }),
@@ -548,6 +656,10 @@ impl WasmCompiler {
             HirStmtKind::Let { name, init, .. } => {
                 if let Some(e) = init {
                     self.compile_expr(body, e)?;
+                    // f64 values stored as i64
+                    if matches!(&e.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
+                        body.instruction(&Instruction::I64ReinterpretF64);
+                    }
                 } else {
                     body.instruction(&Instruction::I64Const(0));
                 }
@@ -574,7 +686,12 @@ impl WasmCompiler {
                 body.instruction(&Instruction::End);
                 body.instruction(&Instruction::End);
             }
-            HirStmtKind::Return(_) => { body.instruction(&Instruction::Return); }
+            HirStmtKind::Return(expr) => {
+                if let Some(e) = expr {
+                    self.compile_expr(body, e)?;
+                }
+                body.instruction(&Instruction::Return);
+            }
             HirStmtKind::Break => { body.instruction(&Instruction::Br(1)); }
             HirStmtKind::Continue => { body.instruction(&Instruction::Br(0)); }
             _ => return Err(TenthError::RuntimeError {
@@ -594,6 +711,7 @@ impl WasmCompiler {
             Literal::String(s) => {
                 let off = self.intern_string(s);
                 body.instruction(&Instruction::I32Const(off as i32));
+                body.instruction(&Instruction::I64ExtendI32U); // strings are stored as i64 in locals
             }
         }
         Ok(())
@@ -927,6 +1045,59 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 }
                 Err(_) => 1i32,
             }
+    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+
+    // str_len(s: i32) -> i32  — returns length of null-terminated string
+    linker.func_wrap("host", "str_len",
+        |caller: Caller<'_, u32>, ptr: i32| -> i32 {
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let data = mem.data(&caller);
+            let off = ptr as usize;
+            data[off..].iter().position(|&b| b == 0).unwrap_or(0) as i32
+    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+
+    // str_at(s: i32, idx: i64) -> i32  — returns single-char string at index
+    linker.func_wrap("host", "str_at",
+        |mut caller: Caller<'_, u32>, ptr: i32, idx: i64| -> i32 {
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let data = mem.data(&caller);
+            let off = ptr as usize;
+            let s = {
+                let end = data[off..].iter().position(|&b| b == 0).unwrap_or(0);
+                std::str::from_utf8(&data[off..off+end]).unwrap_or("")
+            };
+            let ch = s.chars().nth(idx as usize).unwrap_or('\0');
+            let ch_str = ch.to_string();
+            let ch_bytes = ch_str.as_bytes();
+            // Allocate from bump allocator for the result string (max 4 bytes for UTF-8)
+            let np = *caller.data();
+            *caller.data_mut() = np + ch_bytes.len() as u32 + 1;
+            let d = mem.data_mut(&mut caller);
+            d[np as usize..np as usize + ch_bytes.len()].copy_from_slice(ch_bytes);
+            d[np as usize + ch_bytes.len()] = 0;
+            np as i32
+    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+
+    // str_cmp(op: i32, a: i32, b: i32) -> i32  — op: 0=LT,1=GT,2=LE,3=GE; returns 0 or 1
+    linker.func_wrap("host", "str_cmp",
+        |caller: Caller<'_, u32>, op: i32, a: i32, b: i32| -> i32 {
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let data = mem.data(&caller);
+            let read = |p: i32| -> String {
+                let off = p as usize;
+                let end = data[off..].iter().position(|&b| b == 0).unwrap_or(0);
+                std::str::from_utf8(&data[off..off+end]).unwrap_or("").to_string()
+            };
+            let sa = read(a);
+            let sb = read(b);
+            let result = match op {
+                0 => sa < sb,
+                1 => sa > sb,
+                2 => sa <= sb,
+                3 => sa >= sb,
+                _ => false,
+            };
+            result as i32
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     let instance = linker.instantiate(&mut store, &module)
