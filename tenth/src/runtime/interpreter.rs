@@ -663,6 +663,14 @@ impl Interpreter {
         }
     }
 
+    /// Convert a ReturnValue error back into a normal Ok result.
+    fn unwrap_return(result: TenthResult<Option<Value>>) -> TenthResult<Option<Value>> {
+        match result {
+            Err(TenthError::ReturnValue(v)) => Ok(Some(v)),
+            other => other,
+        }
+    }
+
     fn pattern_matches(&self, pattern: &HirPattern, val: &Value) -> bool {
         match pattern {
             HirPattern::Wildcard => true,
@@ -1329,7 +1337,7 @@ impl Interpreter {
                             self.variables.insert(n, v);
                         }
 
-                        return result;
+                        return Self::unwrap_return(result);
                     }
                 }
                 return Err(TenthError::RuntimeError {
@@ -1354,7 +1362,7 @@ impl Interpreter {
                 self.variables.insert(n, v);
             }
 
-            return result;
+            return Self::unwrap_return(result);
         }
 
         Err(TenthError::RuntimeError {
@@ -1376,7 +1384,13 @@ impl Interpreter {
                 self.variables.insert(name.clone(), val);
                 Ok(())
             }
-            HirStmtKind::Return(_) => Ok(()),
+            HirStmtKind::Return(expr) => {
+                let val = match expr {
+                    Some(e) => self.eval_expr(e)?.unwrap_or(Value::Unit),
+                    None => Value::Unit,
+                };
+                Err(TenthError::ReturnValue(val))
+            }
             HirStmtKind::Break => Ok(()),
             HirStmtKind::Continue => Ok(()),
             HirStmtKind::Loop { body } => {
