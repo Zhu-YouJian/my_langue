@@ -254,7 +254,7 @@ impl WasmCompiler {
 
     fn emit_memory_section(&self, module: &mut Module) {
         let mut mem = MemorySection::new();
-        mem.memory(MemoryType { minimum: 1, maximum: Some(256), memory64: false, shared: false, page_size_log2: None });
+        mem.memory(MemoryType { minimum: 16, maximum: Some(256), memory64: false, shared: false, page_size_log2: None });
         module.section(&mem);
     }
 
@@ -855,6 +855,29 @@ impl WasmCompiler {
                 if let Some(e) = else_branch { self.cs_expr(e); }
             }
             HirExprKind::Assign { value, .. } => self.cs_expr(value),
+            HirExprKind::StructLiteral { fields, .. } => {
+                for (_, e) in fields { self.cs_expr(e); }
+            }
+            HirExprKind::EnumLiteral { fields, .. } => {
+                for (_, e) in fields { self.cs_expr(e); }
+            }
+            HirExprKind::MethodCall { receiver, args, .. } => {
+                self.cs_expr(receiver);
+                for a in args { self.cs_expr(a); }
+            }
+            HirExprKind::Index { target, indices } => {
+                self.cs_expr(target);
+                for idx in indices {
+                    match idx {
+                        Index::Single(e) => self.cs_expr(e),
+                        Index::Range { start, end } => {
+                            if let Some(s) = start { self.cs_expr(s); }
+                            if let Some(e) = end { self.cs_expr(e); }
+                        }
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -867,6 +890,7 @@ impl WasmCompiler {
             HirStmtKind::While { cond, body } => { self.cs_expr(cond); self.cs_stmt(body); }
             HirStmtKind::Loop { body } => { for s in body { self.cs_stmt(s); } }
             HirStmtKind::For { body, .. } => { self.cs_stmt(body); }
+            HirStmtKind::Return(expr) => { if let Some(e) = expr { self.cs_expr(e); } }
             _ => {}
         }
     }
@@ -970,6 +994,16 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
     linker.func_wrap("host", "tenth_alloc",
         |mut caller: Caller<'_, u32>, size: i32| -> i32 {
             let ptr = *caller.data();
+            let needed = ptr as usize + size as usize;
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let current_len = mem.data(&caller).len();
+            // Grow memory if needed (each page is 64KiB)
+            while needed > current_len {
+                let pages_needed = (needed - current_len + 65535) / 65536;
+                mem.grow(&mut caller, pages_needed as u32).ok();
+                let new_len = mem.data(&caller).len();
+                if new_len == current_len { break; } // couldn't grow
+            }
             *caller.data_mut() = ptr + size as u32;
             ptr as i32
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
@@ -1096,6 +1130,13 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
             let ch_bytes = ch_str.as_bytes();
             // Allocate from bump allocator for the result string (max 4 bytes for UTF-8)
             let np = *caller.data();
+            let needed = np as usize + ch_bytes.len() + 1;
+            // Grow memory if needed
+            let current_len = mem.data(&caller).len();
+            if needed > current_len {
+                let pages = ((needed - current_len + 65535) / 65536) as u32;
+                mem.grow(&mut caller, pages).ok();
+            }
             *caller.data_mut() = np + ch_bytes.len() as u32 + 1;
             let d = mem.data_mut(&mut caller);
             d[np as usize..np as usize + ch_bytes.len()].copy_from_slice(ch_bytes);
