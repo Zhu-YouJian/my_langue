@@ -322,31 +322,7 @@ impl Interpreter {
                 let t = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
                     message: "field access target is void".into(),
                 })?;
-                match &t {
-                    Value::Struct { fields, .. } => {
-                        for (fname, fval) in fields.borrow().iter() {
-                            if fname == field {
-                                return Ok(Some(fval.clone()));
-                            }
-                        }
-                        Err(TenthError::RuntimeError {
-                            message: format!("struct has no field '{}'", field),
-                        })
-                    }
-                    Value::Enum { fields, .. } => {
-                        for (fname, fval) in fields.borrow().iter() {
-                            if fname == field {
-                                return Ok(Some(fval.clone()));
-                            }
-                        }
-                        Err(TenthError::RuntimeError {
-                            message: format!("enum variant has no field '{}'", field),
-                        })
-                    }
-                    _ => Err(TenthError::RuntimeError {
-                        message: format!("cannot access field '{}' on {:?}", field, t),
-                    }),
-                }
+                self.eval_field(&t, field)
             }
 
             HirExprKind::ArrayLiteral { elements, .. } => {
@@ -628,6 +604,65 @@ impl Interpreter {
         }
     }
 
+    fn eval_field(&self, val: &Value, field: &str) -> TenthResult<Option<Value>> {
+        // Auto-dereference Ref/MutRef/Shared to reach the struct/enum
+        let v = match val {
+            Value::Ref(rc) => {
+                let inner = rc.borrow();
+                return self.eval_field(&inner, field);
+            }
+            Value::MutRef(weak) => {
+                if let Some(rc) = weak.upgrade() {
+                    let inner = rc.borrow();
+                    return self.eval_field(&inner, field);
+                }
+                return Err(TenthError::RuntimeError {
+                    message: format!("cannot access field '{}' on dangling &mut reference", field),
+                });
+            }
+            Value::Shared(rc) => {
+                let inner = rc.borrow();
+                return self.eval_field(&inner, field);
+            }
+            v => v,
+        };
+
+        match v {
+            Value::Struct { fields, .. } => {
+                for (fname, fval) in fields.borrow().iter() {
+                    if fname == field {
+                        return Ok(Some(fval.clone()));
+                    }
+                }
+                Err(TenthError::RuntimeError {
+                    message: format!("struct has no field '{}'", field),
+                })
+            }
+            Value::Enum { fields, .. } => {
+                for (fname, fval) in fields.borrow().iter() {
+                    if fname == field {
+                        return Ok(Some(fval.clone()));
+                    }
+                }
+                Err(TenthError::RuntimeError {
+                    message: format!("enum variant has no field '{}'", field),
+                })
+            }
+            Value::Vec(items) => {
+                // Allow .len() on Vec — handled in MethodCall, but also allow field-style access
+                if field == "len" {
+                    return Ok(Some(Value::Int(items.borrow().len() as i64)));
+                }
+                Err(TenthError::RuntimeError {
+                    message: format!("Vec has no field '{}'", field),
+                })
+            }
+            _ => Err(TenthError::RuntimeError {
+                message: format!("cannot access field '{}' on {:?}", field, v),
+            }),
+        }
+    }
+
     fn pattern_matches(&self, pattern: &HirPattern, val: &Value) -> bool {
         match pattern {
             HirPattern::Wildcard => true,
@@ -726,6 +761,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) < *b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a < *b as f64)),
+                (Value::String(a), Value::String(b)) => Ok(Value::Bool(a < b)),
                 _ => Err(TenthError::RuntimeError {
                     message: "comparison requires numeric types".into(),
                 }),
@@ -735,6 +771,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) > *b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a > *b as f64)),
+                (Value::String(a), Value::String(b)) => Ok(Value::Bool(a > b)),
                 _ => Err(TenthError::RuntimeError {
                     message: "comparison requires numeric types".into(),
                 }),
@@ -744,6 +781,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) <= *b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a <= *b as f64)),
+                (Value::String(a), Value::String(b)) => Ok(Value::Bool(a <= b)),
                 _ => Err(TenthError::RuntimeError {
                     message: "comparison requires numeric types".into(),
                 }),
@@ -753,6 +791,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) >= *b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a >= *b as f64)),
+                (Value::String(a), Value::String(b)) => Ok(Value::Bool(a >= b)),
                 _ => Err(TenthError::RuntimeError {
                     message: "comparison requires numeric types".into(),
                 }),
