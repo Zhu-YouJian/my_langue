@@ -1,98 +1,17 @@
 // Self-hosting Parser — v0.3.1 recursive descent
 
-// ── AST arena types ──
+struct Expr { kind: str, ival: i64, fval: f64, sval: str, left: i64, right: i64, arg_start: i64, arg_count: i64, extra_start: i64, extra_count: i64 }
+struct Stmt { kind: str, name: str, expr_idx: i64, body_start: i64, body_count: i64, else_start: i64, else_count: i64 }
+struct Param { name: str, type_ann: str }
+struct StructField { name: str, type_ann: str }
+struct EnumVariant { name: str, fields: Vec<StructField> }
+struct FnDef { name: str, params: Vec<Param>, return_type: str, body_start: i64, body_count: i64 }
+struct StructDef { name: str, fields: Vec<StructField> }
+struct EnumDef { name: str, variants: Vec<EnumVariant> }
+struct MatchArm { pat_kind: str, pat_name: str, pat_bind: str, body_expr: i64 }
+struct Program { structs: Vec<StructDef>, enums: Vec<EnumDef>, fns: Vec<FnDef>, main_stmts_start: i64, main_stmts_count: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm> }
 
-struct Expr {
-    kind: str,    // "int", "float", "str", "ident", "binary", "unary",
-                  // "call", "field", "if", "block", "struct_lit",
-                  // "assign", "ref", "deref", "match"
-    ival: i64,
-    fval: f64,
-    sval: str,    // identifier name, string value, or operator
-    left: i64,    // index into expr_nodes (or 0 for none)
-    right: i64,   // index into expr_nodes (or 0 for none)
-    // For calls: arg count + first arg index stored in stmt_nodes
-    arg_start: i64,
-    arg_count: i64,
-    // For struct literals: field names and values stored in parallel
-    // For match: arm count + first arm index
-    extra_start: i64,
-    extra_count: i64,
-}
-
-struct Stmt {
-    kind: str,    // "let", "return", "expr", "while", "if",
-                  // "break", "continue", "loop", "block"
-    name: str,    // variable name for let
-    expr_idx: i64,// index into expr_nodes
-    body_start: i64, // for while/loop/block: first stmt index
-    body_count: i64,
-    else_start: i64, // for if: else block first stmt
-    else_count: i64,
-}
-
-struct Param {
-    name: str,
-    type_ann: str,
-}
-
-struct StructField {
-    name: str,
-    type_ann: str,
-}
-
-struct EnumVariant {
-    name: str,
-    fields: Vec<StructField>,
-}
-
-struct FnDef {
-    name: str,
-    params: Vec<Param>,
-    return_type: str,
-    body_start: i64,
-    body_count: i64,
-}
-
-struct StructDef {
-    name: str,
-    fields: Vec<StructField>,
-}
-
-struct EnumDef {
-    name: str,
-    variants: Vec<EnumVariant>,
-}
-
-struct MatchArm {
-    pat_kind: str,     // "enum_variant", "wildcard", "literal"
-    pat_name: str,     // enum/variant name
-    pat_bind: str,     // binding name
-    body_expr: i64,    // index into expr_nodes
-}
-
-struct Program {
-    structs: Vec<StructDef>,
-    enums: Vec<EnumDef>,
-    fns: Vec<FnDef>,
-    main_stmts_start: i64,
-    main_stmts_count: i64,
-    // Arena data
-    expr_nodes: Vec<Expr>,
-    stmt_nodes: Vec<Stmt>,
-    match_arms: Vec<MatchArm>,
-}
-
-// ── Parser state ──
-
-struct Parser {
-    tokens: Vec<Token>,
-    pos: i64,
-    // Arena arrays (global, indexed by the parser output)
-    expr_nodes: Vec<Expr>,
-    stmt_nodes: Vec<Stmt>,
-    match_arms: Vec<MatchArm>,
-}
+struct Parser { tokens: Vec<Token>, pos: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm> }
 
 fn parser_new(tokens: Vec<Token>) -> Parser {
     Parser {

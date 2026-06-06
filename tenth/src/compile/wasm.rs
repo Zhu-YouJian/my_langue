@@ -28,6 +28,7 @@ fn to_val_type(ty: &Type) -> Option<ValType> {
         Type::Ref(_) | Type::MutRef(_) => Some(ValType::I64),
         Type::Struct(_) => Some(ValType::I64),
         Type::TypeParam { .. } => Some(ValType::I64), // unresolved generic/struct → i64
+        Type::Generic { .. } => Some(ValType::I64),   // Vec<T>, etc. → i64 pointer
         Type::Unknown => Some(ValType::I64),
         _ => None,
     }
@@ -638,6 +639,10 @@ impl WasmCompiler {
                 let hint = self.infer_struct_name(&target.ty);
                 let (_, offset, _, vt) = self.resolve_field(&hint, field)?;
                 self.compile_expr(body, value)?;
+                // Convert i64→f64 if assigning to f64 field
+                if matches!(vt, ValType::F64) && matches!(&value.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
+                    body.instruction(&Instruction::F64ConvertI64S);
+                }
                 let arg = wasm_encoder::MemArg { offset: offset as u64, align: 0, memory_index: 0 };
                 match vt {
                     ValType::I64 => { body.instruction(&Instruction::I64Store(arg)); }
