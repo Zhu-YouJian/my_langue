@@ -382,8 +382,6 @@ impl WasmCompiler {
                 let is_str_cmp = matches!(&left.ty, Type::Base(BaseType::Str))
                     && matches!(op, BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq);
                 if is_str_cmp {
-                    self.compile_string_arg(body, left)?;
-                    self.compile_string_arg(body, right)?;
                     let op_code: i32 = match op {
                         BinOp::Lt => 0,
                         BinOp::Gt => 1,
@@ -392,6 +390,8 @@ impl WasmCompiler {
                         _ => 0,
                     };
                     body.instruction(&Instruction::I32Const(op_code));
+                    self.compile_string_arg(body, left)?;
+                    self.compile_string_arg(body, right)?;
                     body.instruction(&Instruction::Call(14)); // str_cmp(op, a, b) -> i32
                 } else {
                     self.compile_expr(body, left)?;
@@ -962,15 +962,27 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     linker.func_wrap("host", "str_add",
-        |caller: Caller<'_, u32>, a_ptr: i32, b_ptr: i32| -> i32 {
+        |mut caller: Caller<'_, u32>, a_ptr: i32, b_ptr: i32| -> i32 {
             let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
             let data = mem.data(&caller);
             let rs = |p: i32| -> &str {
                 let end = data[p as usize..].iter().position(|&b| b == 0).unwrap_or(0);
                 std::str::from_utf8(&data[p as usize..p as usize + end]).unwrap_or("")
             };
-            let _ = format!("{}{}", rs(a_ptr), rs(b_ptr));
-            a_ptr
+            let result = format!("{}{}", rs(a_ptr), rs(b_ptr));
+            let bytes = result.as_bytes();
+            let np = *caller.data();
+            let needed = np as usize + bytes.len() + 1;
+            let current_len = mem.data(&caller).len();
+            if needed > current_len {
+                let pages = ((needed - current_len + 65535) / 65536) as u32;
+                mem.grow(&mut caller, pages).ok();
+            }
+            *caller.data_mut() = np + bytes.len() as u32 + 1;
+            let d = mem.data_mut(&mut caller);
+            d[np as usize..np as usize + bytes.len()].copy_from_slice(bytes);
+            d[np as usize + bytes.len()] = 0;
+            np as i32
     }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
 
     linker.func_wrap("host", "str_eq",
