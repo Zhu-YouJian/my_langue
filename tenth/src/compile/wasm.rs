@@ -300,7 +300,7 @@ impl WasmCompiler {
             self.local_count += 1;
         }
         self.param_count = self.local_count; // parameters use correct types
-        let locals: Vec<ValType> = (0..16).map(|_| ValType::I64).collect();
+        let locals: Vec<ValType> = (0..64).map(|_| ValType::I64).collect();
         let mut body = Function::new_with_locals_types(locals);
         self.compile_expr(&mut body, &func.body)?;
         if matches!(&func.return_type, Type::Base(BaseType::Unit)) {
