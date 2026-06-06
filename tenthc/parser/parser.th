@@ -279,18 +279,14 @@ fn parse_arg_list(p: &mut Parser) -> i64 {
     let mut count: i64 = 0;
     loop {
         let tok = parser_peek(p);
-        match tok.kind {
-            TokenKind::RParen => { break; },
-            TokenKind::Eof => { break; },
-            _ => {},
-        };
+        let d = tok.disc;
+        if d == 48 { break; };
+        if d == 61 { break; };
         parse_expr(p);
         count = count + 1;
         let tok2 = parser_peek(p);
-        match tok2.kind {
-            TokenKind::Comma => { parser_advance(p); },
-            _ => { break; },
-        };
+        if tok2.disc == 53 { parser_advance(p); }
+        else { break; };
     };
     parser_advance(p); // skip )
     count
@@ -360,17 +356,14 @@ fn parse_expr(p: &mut Parser) -> i64 {
 
     // Check for =
     let tok2 = parser_peek(p);
-    match tok2.kind {
-        TokenKind::Assign => {
-            parser_advance(p);
-            let rhs = parse_expr(p);
-            let idx = add_expr(p, "assign");
-            p.expr_nodes[idx - 1].left = expr;
-            p.expr_nodes[idx - 1].right = rhs;
-            idx
-        },
-        _ => expr,
-    }
+    if tok2.disc == 42 {
+        parser_advance(p);
+        let rhs = parse_expr(p);
+        let idx = add_expr(p, "assign");
+        p.expr_nodes[idx - 1].left = expr;
+        p.expr_nodes[idx - 1].right = rhs;
+        idx
+    } else { expr }
 }
 
 fn parse_block_expr(p: &mut Parser) -> i64 {
@@ -378,11 +371,9 @@ fn parse_block_expr(p: &mut Parser) -> i64 {
     let mut count: i64 = 0;
     loop {
         let tok = parser_peek(p);
-        match tok.kind {
-            TokenKind::RBrace => { break; },
-            TokenKind::Eof => { break; },
-            _ => {},
-        };
+        let d = tok.disc;
+        if d == 50 { break; };
+        if d == 61 { break; };
         parse_stmt(p);
         count = count + 1;
     };
@@ -400,12 +391,9 @@ fn parse_if_expr(p: &mut Parser) -> i64 {
 
     let mut else_idx: i64 = 0;
     let tok = parser_peek(p);
-    match tok.kind {
-        TokenKind::Else => {
-            parser_advance(p);
-            else_idx = parse_expr(p);
-        },
-        _ => {},
+    if tok.disc == 8 {
+        parser_advance(p);
+        else_idx = parse_expr(p);
     };
 
     let idx = add_expr(p, "if");
@@ -424,11 +412,9 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
 
     loop {
         let tok = parser_peek(p);
-        match tok.kind {
-            TokenKind::RBrace => { break; },
-            TokenKind::Eof => { break; },
-            _ => {},
-        };
+        let d = tok.disc;
+        if d == 50 { break; };
+        if d == 61 { break; };
 
         // Parse pattern
         let pat_tok = parser_advance(p);
@@ -436,25 +422,16 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
         let mut pat_name = "";
         let mut pat_bind = "";
 
-        match pat_tok.kind {
-            TokenKind::Identifier(name: s) => {
-                pat_kind = "enum_variant";
-                pat_name = pat_tok.sval;
-                // Check for ::Variant
-                let next = parser_peek(p);
-                match next.kind {
-                    TokenKind::ColonColon => {
-                        parser_advance(p);
-                        let variant_tok = parser_advance(p);
-                        match variant_tok.kind {
-                            TokenKind::Identifier(name: vs) => { pat_name = variant_tok.sval; },
-                            _ => {},
-                        };
-                    },
-                    _ => {},
-                };
-            },
-            _ => {},
+        if pat_tok.disc == 3 {
+            pat_kind = "enum_variant";
+            pat_name = pat_tok.sval;
+            // Check for ::Variant
+            let next = parser_peek(p);
+            if next.disc == 60 {
+                parser_advance(p);
+                let variant_tok = parser_advance(p);
+                if variant_tok.disc == 3 { pat_name = variant_tok.sval; };
+            };
         };
 
         parser_advance(p); // skip =>
@@ -468,10 +445,7 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
         arm_count = arm_count + 1;
 
         let t = parser_peek(p);
-        match t.kind {
-            TokenKind::Comma => { parser_advance(p); },
-            _ => {},
-        };
+        if t.disc == 53 { parser_advance(p); };
     };
 
     parser_advance(p); // skip }
