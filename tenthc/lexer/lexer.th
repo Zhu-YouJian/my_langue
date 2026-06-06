@@ -1,125 +1,26 @@
-// Self-hosting Lexer — v0.3.1 enum-based
+// Self-hosting Lexer — v0.3.1 compact (WASM-validated)
 
-struct Lexer {
-    source: str,
-    pos: i64,
-    line: i64,
-    col: i64,
-}
-
-fn lexer_new(source: str) -> Lexer {
-    Lexer { source: source, pos: 0, line: 1, col: 1 }
-}
-
+struct Lexer { source: str, pos: i64, line: i64, col: i64 }
+fn lexer_new(source: str) -> Lexer { Lexer { source: source, pos: 0, line: 1, col: 1 } }
 fn is_digit(ch: str) -> bool { (ch >= "0") && (ch <= "9") }
 fn is_alpha(ch: str) -> bool { ((ch >= "a") && (ch <= "z")) || ((ch >= "A") && (ch <= "Z")) || (ch == "_") }
 fn is_alnum(ch: str) -> bool { is_alpha(ch) || is_digit(ch) }
 fn is_ws(ch: str) -> bool { (ch == " ") || (ch == "\n") || (ch == "\t") || (ch == "\r") }
-
-fn lexer_peek(lexer: &Lexer) -> str {
-    if lexer.pos < lexer.source.len() { lexer.source[lexer.pos] } else { "" }
-}
-
-fn lexer_advance(lexer: &mut Lexer) -> str {
-    let ch = lexer_peek(lexer);
-    if ch == "" { return ""; };
-    lexer.pos = lexer.pos + 1;
-    if ch == "\n" { lexer.line = lexer.line + 1; lexer.col = 1; }
-    else { lexer.col = lexer.col + 1; };
-    ch
-}
-
+fn lexer_peek(lexer: &Lexer) -> str { if lexer.pos < lexer.source.len() { lexer.source[lexer.pos] } else { "" } }
+fn lexer_advance(lexer: &mut Lexer) -> str { let ch = lexer_peek(lexer); if ch == "" { return ""; }; lexer.pos = lexer.pos + 1; if ch == "\n" { lexer.line = lexer.line + 1; lexer.col = 1; } else { lexer.col = lexer.col + 1; }; ch }
 fn make_span(line: i64, col: i64) -> Span { Span { line: line, col: col } }
-
-// ── String→number helpers ──
-
-fn char_to_digit(ch: str) -> i64 {
-    if ch == "0" { 0 } else if ch == "1" { 1 }
-    else if ch == "2" { 2 } else if ch == "3" { 3 }
-    else if ch == "4" { 4 } else if ch == "5" { 5 }
-    else if ch == "6" { 6 } else if ch == "7" { 7 }
-    else if ch == "8" { 8 } else if ch == "9" { 9 }
-    else { 0 }
-}
-
-fn parse_int(s: str) -> i64 {
-    let mut result: i64 = 0;
-    let mut i: i64 = 0;
-    let len = s.len();
-    while i < len {
-        let ch = s[i];
-        result = result * 10 + char_to_digit(ch);
-        i = i + 1;
-    };
-    result
-}
-
-fn parse_float(whole: str, frac: str) -> f64 {
-    let w = parse_int(whole);
-    let f = parse_int(frac);
-    let mut div: f64 = 1.0;
-    let mut i: i64 = 0;
-    while i < frac.len() { div = div * 10.0; i = i + 1; };
-    w + (f / div)
-}
+fn char_to_digit(ch: str) -> i64 { if ch == "0" { 0 } else if ch == "1" { 1 } else if ch == "2" { 2 } else if ch == "3" { 3 } else if ch == "4" { 4 } else if ch == "5" { 5 } else if ch == "6" { 6 } else if ch == "7" { 7 } else if ch == "8" { 8 } else if ch == "9" { 9 } else { 0 } }
+fn parse_int(s: str) -> i64 { let mut result: i64 = 0; let mut i: i64 = 0; let len = s.len(); while i < len { let ch = s[i]; result = result * 10 + char_to_digit(ch); i = i + 1; }; result }
+fn parse_float(whole: str, frac: str) -> f64 { let w = parse_int(whole); let f = parse_int(frac); let mut div: f64 = 1.0; let mut i: i64 = 0; while i < frac.len() { div = div * 10.0; i = i + 1; }; w + (f / div) }
 
 fn lexer_next(lexer: &mut Lexer) -> Token {
     let mut ch = lexer_peek(lexer);
-
-    // Skip whitespace
-    while (ch != "") && is_ws(ch) {
-        ch = lexer_advance(lexer); ch = lexer_peek(lexer);
-    };
-    // Skip line comments
-    if (ch != "") && (ch == "/") {
-        let next_pos = lexer.pos + 1;
-        if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") {
-            lexer_advance(lexer); lexer_advance(lexer);
-            ch = lexer_peek(lexer);
-            while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
-        };
-    };
-
-    let line = lexer.line;
-    let col = lexer.col;
-    let span = make_span(line, col);
-
-    if ch == "" {
-        return Token { kind: TokenKind::Eof, span: span, disc: 61, ival: 0, sval: "" };
-    };
-
-    // Numbers
-    if is_digit(ch) {
-        let mut int_part = "";
-        let mut frac_part = "";
-        let mut is_float = false;
-        while is_digit(ch) {
-            int_part = int_part + ch;
-            ch = lexer_advance(lexer); ch = lexer_peek(lexer);
-        };
-        if ch == "." {
-            is_float = true;
-            ch = lexer_advance(lexer); ch = lexer_peek(lexer);
-            while is_digit(ch) {
-                frac_part = frac_part + ch;
-                ch = lexer_advance(lexer); ch = lexer_peek(lexer);
-            };
-        };
-        if is_float {
-            return Token { kind: TokenKind::FloatLiteral(value: parse_float(int_part, frac_part)), span: span, disc: 1, ival: 0, sval: int_part };
-        };
-        let iv = parse_int(int_part);
-        return Token { kind: TokenKind::IntLiteral(value: iv), span: span, disc: 0, ival: iv, sval: "" };
-    };
-
-    // Identifiers and keywords
-    if is_alpha(ch) {
-        let mut ident = "";
-        while (ch != "") && is_alnum(ch) {
-            ident = ident + ch;
-            ch = lexer_advance(lexer); ch = lexer_peek(lexer);
-        };
-        // Keywords
+    while (ch != "") && is_ws(ch) { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+    if (ch != "") && (ch == "/") { let next_pos = lexer.pos + 1; if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") { lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer); while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; }; };
+    let line = lexer.line; let col = lexer.col; let span = make_span(line, col);
+    if ch == "" { return Token { kind: TokenKind::Eof, span: span, disc: 61, ival: 0, sval: "" }; };
+    if is_digit(ch) { let mut int_part = ""; let mut frac_part = ""; let mut is_float = false; while is_digit(ch) { int_part = int_part + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; if ch == "." { is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer); while is_digit(ch) { frac_part = frac_part + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; }; if is_float { return Token { kind: TokenKind::FloatLiteral(value: parse_float(int_part, frac_part)), span: span, disc: 1, ival: 0, sval: int_part }; }; let iv = parse_int(int_part); return Token { kind: TokenKind::IntLiteral(value: iv), span: span, disc: 0, ival: iv, sval: "" }; };
+    if is_alpha(ch) { let mut ident = ""; while (ch != "") && is_alnum(ch) { ident = ident + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
         if ident == "fn" { return Token { kind: TokenKind::Fn, span: span, disc: 4, ival: 0, sval: "" }; };
         if ident == "let" { return Token { kind: TokenKind::Let, span: span, disc: 5, ival: 0, sval: "" }; };
         if ident == "mut" { return Token { kind: TokenKind::Mut, span: span, disc: 6, ival: 0, sval: "" }; };
@@ -142,23 +43,10 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         if ident == "false" { return Token { kind: TokenKind::False, span: span, disc: 23, ival: 0, sval: "" }; };
         if ident == "move" { return Token { kind: TokenKind::Move, span: span, disc: 24, ival: 0, sval: "" }; };
         if ident == "self" { return Token { kind: TokenKind::Self_, span: span, disc: 25, ival: 0, sval: "" }; };
-
         return Token { kind: TokenKind::Identifier(name: ident), span: span, disc: 3, ival: 0, sval: ident };
     };
-
-    // Strings
-    if ch == "\"" {
-        lexer_advance(lexer);
-        let mut s = "";
-        ch = lexer_peek(lexer);
-        while (ch != "") && (ch != "\"") { s = s + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
-        if ch == "\"" { lexer_advance(lexer); };
-        return Token { kind: TokenKind::StringLiteral(value: s), span: span, disc: 2, ival: 0, sval: s };
-    };
-
-    // Single-char tokens and multi-char operators
+    if ch == "\"" { lexer_advance(lexer); let mut s = ""; ch = lexer_peek(lexer); while (ch != "") && (ch != "\"") { s = s + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; if ch == "\"" { lexer_advance(lexer); }; return Token { kind: TokenKind::StringLiteral(value: s), span: span, disc: 2, ival: 0, sval: s }; };
     lexer_advance(lexer);
-
     if ch == "(" { return Token { kind: TokenKind::LParen, span: span, disc: 47, ival: 0, sval: "" }; };
     if ch == ")" { return Token { kind: TokenKind::RParen, span: span, disc: 48, ival: 0, sval: "" }; };
     if ch == "{" { return Token { kind: TokenKind::LBrace, span: span, disc: 49, ival: 0, sval: "" }; };
@@ -167,70 +55,25 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
     if ch == "]" { return Token { kind: TokenKind::RBracket, span: span, disc: 52, ival: 0, sval: "" }; };
     if ch == "," { return Token { kind: TokenKind::Comma, span: span, disc: 53, ival: 0, sval: "" }; };
     if ch == ";" { return Token { kind: TokenKind::Semicolon, span: span, disc: 54, ival: 0, sval: "" }; };
-
-    if ch == "." {
-        if lexer_peek(lexer) == "." { lexer_advance(lexer); return Token { kind: TokenKind::DotDot, span: span, disc: 57, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Dot, span: span, disc: 56, ival: 0, sval: "" };
-    };
-    if ch == ":" {
-        if lexer_peek(lexer) == ":" { lexer_advance(lexer); return Token { kind: TokenKind::ColonColon, span: span, disc: 60, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Colon, span: span, disc: 55, ival: 0, sval: "" };
-    };
-    if ch == "+" {
-        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::PlusAssign, span: span, disc: 43, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Plus, span: span, disc: 26, ival: 0, sval: "" };
-    };
-    if ch == "-" {
-        if lexer_peek(lexer) == ">" { lexer_advance(lexer); return Token { kind: TokenKind::Arrow, span: span, disc: 58, ival: 0, sval: "" }; };
-        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::MinusAssign, span: span, disc: 44, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Minus, span: span, disc: 27, ival: 0, sval: "" };
-    };
-    if ch == "*" {
-        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::StarAssign, span: span, disc: 45, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Star, span: span, disc: 28, ival: 0, sval: "" };
-    };
-    if ch == "/" {
-        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::SlashAssign, span: span, disc: 46, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Slash, span: span, disc: 29, ival: 0, sval: "" };
-    };
+    if ch == "." { if lexer_peek(lexer) == "." { lexer_advance(lexer); return Token { kind: TokenKind::DotDot, span: span, disc: 57, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Dot, span: span, disc: 56, ival: 0, sval: "" }; };
+    if ch == ":" { if lexer_peek(lexer) == ":" { lexer_advance(lexer); return Token { kind: TokenKind::ColonColon, span: span, disc: 60, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Colon, span: span, disc: 55, ival: 0, sval: "" }; };
+    if ch == "+" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::PlusAssign, span: span, disc: 43, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Plus, span: span, disc: 26, ival: 0, sval: "" }; };
+    if ch == "-" { if lexer_peek(lexer) == ">" { lexer_advance(lexer); return Token { kind: TokenKind::Arrow, span: span, disc: 58, ival: 0, sval: "" }; }; if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::MinusAssign, span: span, disc: 44, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Minus, span: span, disc: 27, ival: 0, sval: "" }; };
+    if ch == "*" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::StarAssign, span: span, disc: 45, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Star, span: span, disc: 28, ival: 0, sval: "" }; };
+    if ch == "/" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::SlashAssign, span: span, disc: 46, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Slash, span: span, disc: 29, ival: 0, sval: "" }; };
     if ch == "%" { return Token { kind: TokenKind::Percent, span: span, disc: 30, ival: 0, sval: "" }; };
-    if ch == "=" {
-        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::EqEq, span: span, disc: 31, ival: 0, sval: "" }; };
-        if lexer_peek(lexer) == ">" { lexer_advance(lexer); return Token { kind: TokenKind::FatArrow, span: span, disc: 59, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Assign, span: span, disc: 42, ival: 0, sval: "" };
-    };
-    if ch == "!" {
-        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::NotEq, span: span, disc: 32, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Not, span: span, disc: 39, ival: 0, sval: "" };
-    };
-    if ch == "<" {
-        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::LtEq, span: span, disc: 35, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Lt, span: span, disc: 33, ival: 0, sval: "" };
-    };
-    if ch == ">" {
-        if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::GtEq, span: span, disc: 36, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Gt, span: span, disc: 34, ival: 0, sval: "" };
-    };
-    if ch == "&" {
-        if lexer_peek(lexer) == "&" { lexer_advance(lexer); return Token { kind: TokenKind::AndAnd, span: span, disc: 37, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Ampersand, span: span, disc: 40, ival: 0, sval: "" };
-    };
-    if ch == "|" {
-        if lexer_peek(lexer) == "|" { lexer_advance(lexer); return Token { kind: TokenKind::OrOr, span: span, disc: 38, ival: 0, sval: "" }; };
-        return Token { kind: TokenKind::Pipe, span: span, disc: 41, ival: 0, sval: "" };
-    };
-
-    // Unknown char — treat as identifier
+    if ch == "=" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::EqEq, span: span, disc: 31, ival: 0, sval: "" }; }; if lexer_peek(lexer) == ">" { lexer_advance(lexer); return Token { kind: TokenKind::FatArrow, span: span, disc: 59, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Assign, span: span, disc: 42, ival: 0, sval: "" }; };
+    if ch == "!" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::NotEq, span: span, disc: 32, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Not, span: span, disc: 39, ival: 0, sval: "" }; };
+    if ch == "<" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::LtEq, span: span, disc: 35, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Lt, span: span, disc: 33, ival: 0, sval: "" }; };
+    if ch == ">" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::GtEq, span: span, disc: 36, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Gt, span: span, disc: 34, ival: 0, sval: "" }; };
+    if ch == "&" { if lexer_peek(lexer) == "&" { lexer_advance(lexer); return Token { kind: TokenKind::AndAnd, span: span, disc: 37, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Ampersand, span: span, disc: 40, ival: 0, sval: "" }; };
+    if ch == "|" { if lexer_peek(lexer) == "|" { lexer_advance(lexer); return Token { kind: TokenKind::OrOr, span: span, disc: 38, ival: 0, sval: "" }; }; return Token { kind: TokenKind::Pipe, span: span, disc: 41, ival: 0, sval: "" }; };
     Token { kind: TokenKind::Identifier(name: ch), span: span, disc: 3, ival: 0, sval: "" }
 }
 
 fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {
     let mut tokens = Vec::new();
     let src_len = lexer.source.len();
-    while lexer.pos < src_len {
-        let t = lexer_next(lexer);
-        tokens.push(t);
-    };
-    tokens.push(lexer_next(lexer)); // push EOF
+    while lexer.pos < src_len { let t = lexer_next(lexer); tokens.push(t); };
     tokens
 }
