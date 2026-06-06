@@ -410,11 +410,17 @@ impl WasmCompiler {
             }
 
             HirExprKind::Binary { op, left, right, .. } => {
-                // String comparisons: emit str_cmp or str_eq host call
+                // String operations: emit str_add, str_eq, or str_cmp host call
                 let is_str_op = matches!(&left.ty, Type::Base(BaseType::Str));
+                let is_str_add = is_str_op && matches!(op, BinOp::Add);
                 let is_str_eq = is_str_op && matches!(op, BinOp::Eq | BinOp::NotEq);
                 let is_str_cmp = is_str_op && matches!(op, BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq);
-                if is_str_eq {
+                if is_str_add {
+                    self.compile_string_arg(body, left)?;
+                    self.compile_string_arg(body, right)?;
+                    body.instruction(&Instruction::Call(3)); // str_add(a, b) -> i32
+                    body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64 for local storage
+                } else if is_str_eq {
                     self.compile_string_arg(body, left)?;
                     self.compile_string_arg(body, right)?;
                     body.instruction(&Instruction::Call(4)); // str_eq(a, b) -> i32
