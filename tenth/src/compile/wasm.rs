@@ -317,17 +317,46 @@ impl WasmCompiler {
         let mut body = Function::new_with_locals_types(locals);
         if let Some(ref expr) = program.main_expr {
             self.compile_expr(&mut body, expr)?;
-            body.instruction(&Instruction::Drop);
+            self.wrap_to_i32(&mut body, &expr.ty);
         } else if let Some(mf) = program.functions.iter().find(|f| f.name == "main") {
             let fi = self.resolve_func("main")?;
             body.instruction(&Instruction::Call(fi));
-            if !matches!(mf.return_type, Type::Base(BaseType::Unit)) {
+            if matches!(mf.return_type, Type::Base(BaseType::Unit)) {
                 body.instruction(&Instruction::Drop);
+                body.instruction(&Instruction::I32Const(0));
+            } else {
+                self.wrap_to_i32(&mut body, &mf.return_type);
             }
+        } else {
+            body.instruction(&Instruction::I32Const(0));
         }
-        body.instruction(&Instruction::I32Const(0));
         body.instruction(&Instruction::End);
         Ok(body)
+    }
+
+    /// Emit conversion from a value type to i32 (for main's exit code).
+    fn wrap_to_i32(&self, body: &mut Function, ty: &Type) {
+        match ty {
+            Type::Base(b) => match b {
+                BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64 => {
+                    body.instruction(&Instruction::I32WrapI64);
+                }
+                BaseType::Bool => {
+                    // Already i32, no conversion needed
+                }
+                BaseType::F32 | BaseType::F64 => {
+                    body.instruction(&Instruction::I32TruncF64S);
+                }
+                _ => {
+                    body.instruction(&Instruction::Drop);
+                    body.instruction(&Instruction::I32Const(0));
+                }
+            },
+            _ => {
+                // Struct pointers, etc. → i64 → i32
+                body.instruction(&Instruction::I32WrapI64);
+            }
+        }
     }
 
     fn resolve_func(&self, name: &str) -> TenthResult<u32> {
@@ -378,10 +407,18 @@ impl WasmCompiler {
             }
 
             HirExprKind::Binary { op, left, right, .. } => {
-                // String comparisons: emit str_cmp host call
-                let is_str_cmp = matches!(&left.ty, Type::Base(BaseType::Str))
-                    && matches!(op, BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq);
-                if is_str_cmp {
+                // String comparisons: emit str_cmp or str_eq host call
+                let is_str_op = matches!(&left.ty, Type::Base(BaseType::Str));
+                let is_str_eq = is_str_op && matches!(op, BinOp::Eq | BinOp::NotEq);
+                let is_str_cmp = is_str_op && matches!(op, BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq);
+                if is_str_eq {
+                    self.compile_string_arg(body, left)?;
+                    self.compile_string_arg(body, right)?;
+                    body.instruction(&Instruction::Call(4)); // str_eq(a, b) -> i32
+                    if matches!(op, BinOp::NotEq) {
+                        body.instruction(&Instruction::I32Eqz); // negate
+                    }
+                } else if is_str_cmp {
                     let op_code: i32 = match op {
                         BinOp::Lt => 0,
                         BinOp::Gt => 1,
