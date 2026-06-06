@@ -515,19 +515,27 @@ impl WasmCompiler {
 
             HirExprKind::If { cond, then_branch, else_branch, .. } => {
                 self.compile_expr(body, cond)?;
-                // Detect if this if-expression produces a value.
-                // If both branches end with a value (not just return), use Result type.
-                let has_value = !matches!(&then_branch.ty, Type::Base(BaseType::Unit))
-                    && (else_branch.is_none() || !matches!(&else_branch.as_ref().unwrap().ty, Type::Base(BaseType::Unit)));
+                // WASM requires BOTH branches for Result type.
+                // If-without-else must use Empty (value handled by caller).
+                let has_value = else_branch.is_some()
+                    && !matches!(&then_branch.ty, Type::Base(BaseType::Unit))
+                    && !matches!(&else_branch.as_ref().unwrap().ty, Type::Base(BaseType::Unit));
                 if has_value {
                     body.instruction(&Instruction::If(BlockType::Result(to_val_type_required(&then_branch.ty)?)));
                 } else {
                     body.instruction(&Instruction::If(BlockType::Empty));
                 }
                 self.compile_expr(body, then_branch)?;
+                // If the If block is Empty but then_branch produces a value, drop it.
+                if !has_value && !matches!(&then_branch.ty, Type::Base(BaseType::Unit)) {
+                    body.instruction(&Instruction::Drop);
+                }
                 if let Some(eb) = else_branch {
                     body.instruction(&Instruction::Else);
                     self.compile_expr(body, eb)?;
+                    if !has_value && !matches!(&eb.ty, Type::Base(BaseType::Unit)) {
+                        body.instruction(&Instruction::Drop);
+                    }
                 }
                 body.instruction(&Instruction::End);
             }
