@@ -360,6 +360,10 @@ impl WasmCompiler {
     }
 
     fn resolve_func(&self, name: &str) -> TenthResult<u32> {
+        // User-defined functions take priority over host functions
+        if let Some(&idx) = self.func_map.get(name) {
+            return Ok(idx);
+        }
         match name {
             "println" | "eprintln" => Ok(0),
             "write_file" => Ok(1),
@@ -373,8 +377,7 @@ impl WasmCompiler {
             "Vec::len" | "Vec_len" => Ok(9),
             "Vec::get" | "Vec_get" => Ok(10),
             "compile_host" => Ok(11),
-            _ => self.func_map.get(name).copied()
-                .ok_or_else(|| TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError {
                     message: format!("WASM: undefined function '{}'", name),
                 }),
         }
