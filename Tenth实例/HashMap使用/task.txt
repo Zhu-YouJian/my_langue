@@ -1,0 +1,7 @@
+# HashMap 使用
+
+Tenth 内置 HashMap<K,V> 的增删查操作示例。
+
+## 操作
+
+- insert / get / 键存在检查

@@ -1,0 +1,30 @@
+// 单向链表 — 枚举实现（传值风格）
+
+enum List {
+    Cons(value: i64, next: List),
+    Nil,
+}
+
+fn push_front(head: List, val: i64) -> List {
+    List::Cons(value: val, next: head)
+}
+
+fn print_list(list: List) {
+    match list {
+        List::Nil => {},
+        _ => {
+            println(list.value);
+            print_list(list.next);
+        },
+    };
+}
+
+fn main() {
+    let mut list = List::Nil;
+    list = push_front(list, 30);
+    list = push_front(list, 20);
+    list = push_front(list, 10);
+
+    println("Linked list (10 -> 20 -> 30):");
+    print_list(list);
+}

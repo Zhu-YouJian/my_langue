@@ -1,0 +1,8 @@
+# 神经网络层 (Neural Network Layer)
+
+用 Tenth 的 tensor 实现简单的前向传播。
+
+## 功能
+
+- ReLU 激活函数
+- 简单线性层 y = Wx + b（张量广播）

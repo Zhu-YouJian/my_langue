@@ -1,0 +1,14 @@
+# 链表 (Linked List)
+
+用枚举和结构体实现单向链表，支持插入和遍历。
+
+## 结构
+
+```
+Node = Cons(value, next) | Nil
+```
+
+## 操作
+
+- `push_front` — 头插
+- `print_list` — 遍历打印

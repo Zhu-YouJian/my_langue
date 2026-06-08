@@ -766,7 +766,7 @@ impl Interpreter {
                 }),
             },
             BinOp::Div => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Float(*a as f64 / *b as f64)),
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
@@ -928,8 +928,13 @@ impl Interpreter {
                         message: "push() takes 1 argument".into(),
                     });
                 }
-                // Wrap in Shared so elements can be mutated via indexed assignment
-                items.borrow_mut().push(Value::Shared(Rc::new(RefCell::new(args[0].clone()))));
+                // Wrap in Shared so elements can be mutated via indexed assignment.
+                // If the value is already Shared, use it directly to avoid double-wrapping.
+                let elem = match &args[0] {
+                    Value::Shared(rc) => Value::Shared(rc.clone()),
+                    other => Value::Shared(Rc::new(RefCell::new(other.clone()))),
+                };
+                items.borrow_mut().push(elem);
                 Ok(Some(Value::Unit))
             }
             "get" => {
@@ -953,10 +958,9 @@ impl Interpreter {
         }
     }
 
-    fn eval_map_method(&self, m: &Rc<RefCell<HashMap<String, Value>>>, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
-        let map = m.borrow();
+    fn eval_map_method(&mut self, m: &Rc<RefCell<HashMap<String, Value>>>, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
         match method {
-            "len" => Ok(Some(Value::Int(map.len() as i64))),
+            "len" => Ok(Some(Value::Int(m.borrow().len() as i64))),
             "get" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
@@ -964,7 +968,22 @@ impl Interpreter {
                     });
                 }
                 if let Value::String(key) = &args[0] {
-                    Ok(map.get(key).cloned())
+                    Ok(m.borrow().get(key).cloned())
+                } else {
+                    Err(TenthError::RuntimeError {
+                        message: "HashMap key must be a string".into(),
+                    })
+                }
+            }
+            "insert" => {
+                if args.len() != 2 {
+                    return Err(TenthError::RuntimeError {
+                        message: "insert() takes 2 arguments".into(),
+                    });
+                }
+                if let Value::String(key) = &args[0] {
+                    m.borrow_mut().insert(key.clone(), args[1].clone());
+                    Ok(Some(Value::Unit))
                 } else {
                     Err(TenthError::RuntimeError {
                         message: "HashMap key must be a string".into(),

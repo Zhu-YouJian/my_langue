@@ -1,0 +1,31 @@
+// 神经网络基础层 — 使用 Tenth 原生 tensor
+
+// ReLU 激活
+fn my_relu(x: f64) -> f64 {
+    if x > 0.0 { x }
+    else { 0.0 }
+}
+
+// 对 tensor 逐元素应用函数（手动遍历）
+fn apply_scalar(t: Tensor[f64, ..], f: fn(f64) -> f64) -> Tensor[f64, ..] {
+    // Tenth 暂不支持高阶函数，此处演示直接调用
+    t.relu()
+}
+
+fn main() {
+    // 创建输入张量
+    let input = tensor[[1.0, -2.0], [3.0, -4.0]];
+    println("Input tensor:");
+    println(input.sum());
+
+    // ReLU 激活
+    let activated = input.relu();
+    println("After ReLU (sum):");
+    println(activated.sum());
+
+    // 模拟线性层: output = W*x + b
+    // 用广播加法模拟
+    let biased = activated + 1.0;
+    println("After bias+1.0 (sum):");
+    println(biased.sum());
+}

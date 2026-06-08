@@ -1,0 +1,36 @@
+// 二分查找 — 在有序 Vec 中搜索目标值
+
+fn binary_search(arr: Vec<i64>, target: i64) -> i64 {
+    let mut left: i64 = 0;
+    let mut right: i64 = arr.len() - 1;
+
+    while left <= right {
+        let mid = (left + right) / 2;
+        let val = arr[mid];
+        if val == target {
+            return mid;
+        } else if val < target {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        };
+    };
+
+    -1
+}
+
+fn main() {
+    let mut arr = Vec::new();
+    arr.push(1); arr.push(3); arr.push(5);
+    arr.push(7); arr.push(9); arr.push(11);
+
+    // 查找存在的元素
+    let idx = binary_search(arr, 7);
+    println("Search 7, index:");
+    println(idx);
+
+    // 查找不存在的元素
+    let idx2 = binary_search(arr, 4);
+    println("Search 4, index:");
+    println(idx2);
+}

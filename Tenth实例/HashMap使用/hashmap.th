@@ -1,0 +1,33 @@
+// HashMap 使用示例
+
+fn main() {
+    // 创建 HashMap
+    let mut map = HashMap::new();
+
+    // 插入键值对
+    map.insert("apple", 3);
+    map.insert("banana", 5);
+    map.insert("cherry", 2);
+
+    println("HashMap created with 3 entries");
+
+    // 获取值
+    let apple_count = map.get("apple");
+    println("apple count:");
+    println(apple_count);
+
+    let banana_count = map.get("banana");
+    println("banana count:");
+    println(banana_count);
+
+    // 不存在的键
+    let missing = map.get("grape");
+    println("grape (missing):");
+    println(missing);
+
+    // 更新值
+    map.insert("apple", 10);
+    let updated = map.get("apple");
+    println("apple after update:");
+    println(updated);
+}

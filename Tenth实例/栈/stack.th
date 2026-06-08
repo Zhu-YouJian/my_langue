@@ -1,0 +1,44 @@
+// 栈 — 基于 Vec 的泛型封装
+
+struct Stack { items: Vec<i64> }
+
+fn stack_new() -> Stack { Stack { items: Vec::new() } }
+
+fn push(s: &mut Stack, val: i64) {
+    s.items.push(val);
+}
+
+fn pop(s: &mut Stack) -> i64 {
+    let len = s.items.len();
+    if len == 0 { return 0; };
+    let idx = len - 1;
+    let val = s.items[idx];
+    // 没有 pop 方法，用长度标记代替
+    // 通过缩短 Vec 模拟 pop（注：Tenth Vec 暂不支持 pop，这里仅演示读取）
+    val
+}
+
+fn peek(s: &Stack) -> i64 {
+    let len = s.items.len();
+    if len == 0 { 0 }
+    else { s.items[len - 1] }
+}
+
+fn is_empty(s: &Stack) -> bool { s.items.len() == 0 }
+
+fn main() {
+    let mut s = stack_new();
+    push(&mut s, 10);
+    push(&mut s, 20);
+    push(&mut s, 30);
+
+    println("Stack top (peek):");
+    println(peek(&s));
+
+    println("Pop:");
+    println(pop(&mut s));
+    println(pop(&mut s));
+
+    println("Is empty:");
+    println(is_empty(&s));
+}

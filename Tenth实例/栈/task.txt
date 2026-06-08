@@ -1,0 +1,12 @@
+# 栈 (Stack)
+
+基于 Vec 实现的 LIFO 栈。
+
+## 操作
+
+- push / peek / is_empty
+
+## 已知限制
+
+Tenth 的 Vec 暂不支持 `pop` 删除元素，本实现以读取末尾元素模拟 pop。
+真实的 pop 需要 Vec::pop 或截断支持。

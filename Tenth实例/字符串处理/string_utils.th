@@ -1,0 +1,50 @@
+// 字符串工具
+
+// 反转字符串
+fn reverse(s: str) -> str {
+    let len = s.len();
+    let mut result = "";
+    let mut i: i64 = len - 1;
+    while i >= 0 {
+        result = result + s[i];
+        i = i - 1;
+    };
+    result
+}
+
+// 判断回文
+fn is_palindrome(s: str) -> bool {
+    reverse(s) == s
+}
+
+// 统计字符出现次数
+fn count_char(s: str, ch: str) -> i64 {
+    let mut count: i64 = 0;
+    let mut i: i64 = 0;
+    while i < s.len() {
+        if s[i] == ch { count = count + 1; };
+        i = i + 1;
+    };
+    count
+}
+
+fn main() {
+    let text = "hello";
+
+    println("Original:");
+    println(text);
+
+    println("Reversed:");
+    println(reverse(text));
+
+    let pal = "racecar";
+    println("Is 'racecar' palindrome:");
+    println(is_palindrome(pal));
+
+    let pal2 = "hello";
+    println("Is 'hello' palindrome:");
+    println(is_palindrome(pal2));
+
+    println("Count 'l' in 'hello':");
+    println(count_char("hello", "l"));
+}

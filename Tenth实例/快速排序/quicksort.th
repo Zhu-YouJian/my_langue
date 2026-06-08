@@ -1,0 +1,83 @@
+// 快速排序 — Tenth 实现
+// 原地不可变风格：返回新 Vec
+
+fn quicksort(arr: Vec<i64>) -> Vec<i64> {
+    let len = arr.len();
+    if len <= 1 {
+        return arr;
+    };
+
+    // 取第一个元素为基准
+    let pivot = arr[0];
+    let mut less = Vec::new();
+    let mut equal = Vec::new();
+    let mut greater = Vec::new();
+
+    let mut i: i64 = 0;
+    while i < len {
+        let elem = arr[i];
+        if elem < pivot {
+            less.push(elem);
+        } else if elem > pivot {
+            greater.push(elem);
+        } else {
+            equal.push(elem);
+        };
+        i = i + 1;
+    };
+
+    let sorted_less = quicksort(less);
+    let sorted_greater = quicksort(greater);
+
+    // 合并 sorted_less + equal + sorted_greater
+    let mut result = Vec::new();
+    i = 0;
+    while i < sorted_less.len() {
+        result.push(sorted_less[i]);
+        i = i + 1;
+    };
+    i = 0;
+    while i < equal.len() {
+        result.push(equal[i]);
+        i = i + 1;
+    };
+    i = 0;
+    while i < sorted_greater.len() {
+        result.push(sorted_greater[i]);
+        i = i + 1;
+    };
+
+    result
+}
+
+// 打印 Vec 元素
+fn print_vec(v: Vec<i64>, label: str) {
+    println(label);
+    let mut i: i64 = 0;
+    let len = v.len();
+    while i < len {
+        print("  ");
+        println(v[i]);
+        i = i + 1;
+    };
+}
+
+fn print(s: str) { println(s); }
+
+fn main() {
+    let mut input = Vec::new();
+    input.push(3);
+    input.push(1);
+    input.push(4);
+    input.push(1);
+    input.push(5);
+    input.push(9);
+    input.push(2);
+    input.push(6);
+
+    print_vec(input, "Input:");
+
+    let sorted = quicksort(input);
+
+    print_vec(sorted, "Sorted:");
+}
