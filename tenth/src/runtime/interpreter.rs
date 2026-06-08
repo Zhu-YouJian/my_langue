@@ -203,6 +203,7 @@ impl Interpreter {
                         match name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
                             | "read_file" | "write_file" | "compile_host"
+                            | "compile_program"
                             | "Vec::new" | "HashMap::new" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
@@ -1231,9 +1232,7 @@ impl Interpreter {
                 self.call_named_fn(name, args, span)
             }
             Value::Closure { params, body, captures } => {
-                let saved: HashMap<String, Value> = params.iter()
-                    .filter_map(|(n, _)| self.variables.get(n).cloned().map(|v| (n.clone(), v)))
-                    .collect();
+                let saved: HashMap<String, Value> = self.variables.clone();
 
                 for ((pname, _), arg) in params.iter().zip(args.iter()) {
                     self.variables.insert(pname.clone(), arg.clone());
@@ -1245,9 +1244,7 @@ impl Interpreter {
 
                 let result = self.eval_expr(body);
 
-                for (n, v) in saved {
-                    self.variables.insert(n, v);
-                }
+                self.variables = saved;
 
                 result
             }
@@ -1338,6 +1335,27 @@ impl Interpreter {
                     message: "compile_host(src, out) expects two string args".into(),
                 });
             }
+            "compile_program" => {
+                // Takes (program: Program, out_path: str) -> i64
+                // Program is the struct produced by the self-hosting parser.
+                if args.len() >= 2 {
+                    if let Value::String(out) = &args[1] {
+                        match crate::compile::compile_program_to_wasm(&args[0]) {
+                            Ok(wasm_bytes) => {
+                                let _ = std::fs::write(out, &wasm_bytes);
+                                return Ok(Some(Value::Int(0)));
+                            }
+                            Err(e) => {
+                                eprintln!("[compile_program] error: {}", e);
+                                return Ok(Some(Value::Int(1)));
+                            }
+                        }
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "compile_program(program, out) expects Program struct and string path".into(),
+                });
+            }
             _ => {}
         }
 
@@ -1349,9 +1367,7 @@ impl Interpreter {
                 if let Some(module) = self.modules.get(mod_name) {
                     if let Some(fn_def) = module.functions.iter().find(|f| f.name == fn_name) {
                         let fn_def = fn_def.clone();
-                        let saved: HashMap<String, Value> = fn_def.params.iter()
-                            .filter_map(|(n, _)| self.variables.get(n).cloned().map(|v| (n.clone(), v)))
-                            .collect();
+                        let saved: HashMap<String, Value> = self.variables.clone();
 
                         for ((pname, _), arg) in fn_def.params.iter().zip(args.iter()) {
                             self.variables.insert(pname.clone(), arg.clone());
@@ -1359,9 +1375,7 @@ impl Interpreter {
 
                         let result = self.eval_expr(&fn_def.body);
 
-                        for (n, v) in saved {
-                            self.variables.insert(n, v);
-                        }
+                        self.variables = saved;
 
                         return Self::unwrap_return(result);
                     }
@@ -1374,9 +1388,10 @@ impl Interpreter {
 
         let func_def = self.functions.iter().find(|f| f.name == name).cloned();
         if let Some(fd) = func_def {
-            let saved: HashMap<String, Value> = fd.params.iter()
-                .filter_map(|(n, _)| self.variables.get(n).cloned().map(|v| (n.clone(), v)))
-                .collect();
+            // Save ALL current variables to support recursion.
+            // The old approach only saved variables matching parameter names,
+            // which caused local variables to be lost when a function calls itself.
+            let saved: HashMap<String, Value> = self.variables.clone();
 
             for ((pname, _), arg) in fd.params.iter().zip(args.iter()) {
                 self.variables.insert(pname.clone(), arg.clone());
@@ -1384,9 +1399,10 @@ impl Interpreter {
 
             let result = self.eval_expr(&fd.body);
 
-            for (n, v) in saved {
-                self.variables.insert(n, v);
-            }
+            // Restore all saved variables. New variables created inside the
+            // function (locals) are removed; variables that were overwritten
+            // (parameters, globals) are restored to their pre-call values.
+            self.variables = saved;
 
             return Self::unwrap_return(result);
         }

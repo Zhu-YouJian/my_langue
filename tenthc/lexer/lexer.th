@@ -15,8 +15,11 @@ fn parse_float(whole: str, frac: str) -> f64 { let w = parse_int(whole); let f =
 
 fn lexer_next(lexer: &mut Lexer) -> Token {
     let mut ch = lexer_peek(lexer);
-    while (ch != "") && is_ws(ch) { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
-    if (ch != "") && (ch == "/") { let next_pos = lexer.pos + 1; if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") { lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer); while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; }; };
+    loop {
+        while (ch != "") && is_ws(ch) { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+        if (ch != "") && (ch == "/") { let next_pos = lexer.pos + 1; if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") { lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer); while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; }; }
+        else { break; };
+    };
     let line = lexer.line; let col = lexer.col; let span = make_span(line, col);
     if ch == "" { return Token { kind: TokenKind::Eof, span: span, disc: 61, ival: 0, sval: "" }; };
     if is_digit(ch) { let mut int_part = ""; let mut frac_part = ""; let mut is_float = false; while is_digit(ch) { int_part = int_part + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; if ch == "." { is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer); while is_digit(ch) { frac_part = frac_part + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; }; if is_float { return Token { kind: TokenKind::FloatLiteral(value: parse_float(int_part, frac_part)), span: span, disc: 1, ival: 0, sval: int_part }; }; let iv = parse_int(int_part); return Token { kind: TokenKind::IntLiteral(value: iv), span: span, disc: 0, ival: iv, sval: "" }; };

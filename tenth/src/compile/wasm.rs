@@ -294,6 +294,7 @@ impl WasmCompiler {
     // ── Function compilation ─────────────────────────────────────────────
 
     fn compile_function(&mut self, func: &HirFnDef) -> TenthResult<Function> {
+        eprintln!("[WASM] compile {}", func.name);
         self.local_map.clear();
         self.local_count = 0;
         for (name, _) in &func.params {
