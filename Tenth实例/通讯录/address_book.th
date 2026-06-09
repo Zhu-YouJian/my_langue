@@ -1,0 +1,52 @@
+// 通讯录 — struct + Vec 综合
+
+struct Contact { name: str, phone: str }
+
+struct AddressBook { contacts: Vec<Contact> }
+
+fn book_new() -> AddressBook {
+    AddressBook { contacts: Vec::new() }
+}
+
+fn add_contact(book: &mut AddressBook, name: str, phone: str) {
+    let c = Contact { name: name, phone: phone };
+    book.contacts.push(c);
+}
+
+fn find_by_name(book: &AddressBook, name: str) -> str {
+    let mut i: i64 = 0;
+    while i < book.contacts.len() {
+        let c = book.contacts[i];
+        if c.name == name {
+            return c.phone;
+        };
+        i = i + 1;
+    };
+    "Not found"
+}
+
+fn list_all(book: &AddressBook) {
+    let mut i: i64 = 0;
+    while i < book.contacts.len() {
+        let c = book.contacts[i];
+        println("  ", c.name, ": ", c.phone);
+        i = i + 1;
+    };
+}
+
+fn main() {
+    let mut book = book_new();
+
+    add_contact(&mut book, "Alice", "111-0001");
+    add_contact(&mut book, "Bob", "222-0002");
+    add_contact(&mut book, "Carol", "333-0003");
+
+    println("All contacts:");
+    list_all(&book);
+
+    println("Find Alice:");
+    println(find_by_name(&book, "Alice"));
+
+    println("Find Dave:");
+    println(find_by_name(&book, "Dave"));
+}

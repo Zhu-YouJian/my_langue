@@ -1,0 +1,30 @@
+// Trait 示例
+
+trait Shape {
+    fn area(self) -> f64;
+    fn name(self) -> str;
+}
+
+struct Circle { radius: f64 }
+struct Rectangle { width: f64, height: f64 }
+
+impl Shape for Circle {
+    fn area(self) -> f64 { 3.14159 * self.radius * self.radius }
+    fn name(self) -> str { "Circle" }
+}
+
+impl Shape for Rectangle {
+    fn area(self) -> f64 { self.width * self.height }
+    fn name(self) -> str { "Rectangle" }
+}
+
+fn main() {
+    let c = Circle { radius: 5.0 };
+    let r = Rectangle { width: 4.0, height: 6.0 };
+
+    println("Circle area (~78.54):");
+    println(c.area());
+
+    println("Rectangle area (24):");
+    println(r.area());
+}

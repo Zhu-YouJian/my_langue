@@ -1,0 +1,51 @@
+// 队列 — 基于 Vec 封装
+
+struct Queue { items: Vec<i64>, front: i64 }
+
+fn queue_new() -> Queue { Queue { items: Vec::new(), front: 0 } }
+
+fn enqueue(q: &mut Queue, val: i64) {
+    q.items.push(val);
+}
+
+fn dequeue(q: &mut Queue) -> i64 {
+    if q.front >= q.items.len() { return 0; };
+    let val = q.items[q.front];
+    q.front = q.front + 1;
+    val
+}
+
+fn peek(q: &Queue) -> i64 {
+    if q.front >= q.items.len() { 0 }
+    else { q.items[q.front] }
+}
+
+fn size(q: &Queue) -> i64 { q.items.len() - q.front }
+
+fn is_empty(q: &Queue) -> bool { size(q) == 0 }
+
+fn main() {
+    let mut q = queue_new();
+    enqueue(&mut q, 10);
+    enqueue(&mut q, 20);
+    enqueue(&mut q, 30);
+
+    println("Queue size:");
+    println(size(&q));
+
+    println("Peek:");
+    println(peek(&q));
+
+    println("Dequeue:");
+    println(dequeue(&mut q));
+    println(dequeue(&mut q));
+
+    println("Remaining size:");
+    println(size(&q));
+
+    println("Dequeue last:");
+    println(dequeue(&mut q));
+
+    println("Empty:");
+    println(is_empty(&q));
+}

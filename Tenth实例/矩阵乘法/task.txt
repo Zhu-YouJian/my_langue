@@ -1,0 +1,10 @@
+# 张量运算 (Tensor Operations)
+
+展示 Tenth 原生 tensor 的常用运算。
+
+## 功能
+
+- 逐元素加减乘
+- 广播
+- ReLU / exp
+- flatten / softmax

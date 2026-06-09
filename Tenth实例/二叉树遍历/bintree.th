@@ -1,0 +1,38 @@
+// 二叉树 — 简化版，用 match 直接处理
+
+enum Tree {
+    Node(value: i64, left: Tree, right: Tree),
+    Leaf,
+}
+
+// 把结果存入外部 Vec（通过可变引用）
+fn inorder_into(tree: Tree, result: &mut Vec<i64>) {
+    match tree {
+        Tree::Leaf => {},
+        _ => {
+            inorder_into(tree.left, result);
+            result.push(tree.value);
+            inorder_into(tree.right, result);
+        },
+    };
+}
+
+fn main() {
+    let leaf = Tree::Leaf;
+    let tree = Tree::Node(value: 4,
+        left: Tree::Node(value: 2,
+            left: Tree::Node(value: 1, left: leaf, right: leaf),
+            right: Tree::Node(value: 3, left: leaf, right: leaf),
+        ),
+        right: Tree::Node(value: 6,
+            left: Tree::Node(value: 5, left: leaf, right: leaf),
+            right: Tree::Node(value: 7, left: leaf, right: leaf),
+        ),
+    );
+
+    println("Inorder traversal (1-7):");
+    let mut result = Vec::new();
+    inorder_into(tree, &mut result);
+    let mut i: i64 = 0;
+    while i < result.len() { println(result[i]); i = i + 1; };
+}

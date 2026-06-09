@@ -860,6 +860,27 @@ impl Interpreter {
     }
 
     fn eval_method_call(&mut self, recv: &Value, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
+        // Auto-dereference Ref/MutRef/Shared to reach the inner value
+        let recv = match recv {
+            Value::Ref(rc) => {
+                let inner = rc.borrow();
+                return self.eval_method_call(&inner, method, args);
+            }
+            Value::MutRef(weak) => {
+                if let Some(rc) = weak.upgrade() {
+                    let inner = rc.borrow();
+                    return self.eval_method_call(&inner, method, args);
+                }
+                return Err(TenthError::RuntimeError {
+                    message: format!("method '{}' on dangling &mut reference", method),
+                });
+            }
+            Value::Shared(rc) => {
+                let inner = rc.borrow();
+                return self.eval_method_call(&inner, method, args);
+            }
+            other => other,
+        };
         match recv {
             Value::Struct { name, .. } => {
                 if let Some(type_methods) = self.find_methods_for_type(name) {

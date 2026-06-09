@@ -1,0 +1,22 @@
+// 闭包合集 — 当前 Tenth 支持的功能
+
+fn main() {
+    // 简单闭包
+    let double = |x| x * 2;
+    println("double(21):");
+    println(double(21));
+
+    let square = |x| x * x;
+    println("square(7):");
+    println(square(7));
+
+    // 嵌套调用
+    let triple = |x| x * 3;
+    println("triple(9):");
+    println(triple(9));
+
+    // 闭包类型: 可作为变量传递
+    let op = double;
+    println("op(50):");
+    println(op(50));
+}

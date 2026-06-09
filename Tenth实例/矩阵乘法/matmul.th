@@ -1,0 +1,35 @@
+// 张量运算演示
+
+fn main() {
+    let a = tensor[[1.0, 2.0], [3.0, 4.0]];
+    println("Tensor A (sum=10):");
+    println(a.sum());
+
+    // 广播标量
+    let b = a + 10.0;
+    println("A + 10 broadcast (sum=50):");
+    println(b.sum());
+
+    let c = a * 2.0;
+    println("A * 2 (sum=20):");
+    println(c.sum());
+
+    // 一元运算
+    let d = a.relu();
+    println("ReLU(A) sum:");
+    println(d.sum());
+
+    let e = a.exp();
+    println("exp(A) sum:");
+    println(e.sum());
+
+    // softmax
+    let f = a.softmax();
+    println("softmax(A) sum (~1 per row):");
+    println(f.sum());
+
+    // reshape
+    let g = a.flatten();
+    println("flatten(A) sum:");
+    println(g.sum());
+}

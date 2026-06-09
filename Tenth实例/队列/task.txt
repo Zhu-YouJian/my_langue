@@ -1,0 +1,7 @@
+# 队列 (Queue)
+
+基于 Vec 实现的 FIFO 队列。两端操作：enqueue 尾部添加，dequeue 头部取出。
+
+## 操作
+
+- enqueue / dequeue / peek / size / is_empty

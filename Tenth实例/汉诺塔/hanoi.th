@@ -1,0 +1,16 @@
+// 汉诺塔 — 纯递归解法
+
+fn hanoi(n: i64, from: str, to: str, via: str) {
+    if n == 1 {
+        println("Move 1 from ", from, " to ", to);
+    } else {
+        hanoi(n - 1, from, via, to);
+        println("Move ", n, " from ", from, " to ", to);
+        hanoi(n - 1, via, to, from);
+    };
+}
+
+fn main() {
+    println("Tower of Hanoi (3 disks):");
+    hanoi(3, "A", "C", "B");
+}

@@ -1,0 +1,44 @@
+// 梯度下降 — 手动迭代解 y = 2x + 1
+
+fn main() {
+    // 目标: 学习 y = 2x + 1
+    // 数据: (1,3) (2,5) (3,7) (4,9)
+
+    // 使用标量手动计算（避免 tensor 运算限制）
+    let mut w = 0.0;
+    let mut b = 0.0;
+    let lr = 0.02;
+    let n = 4.0;
+
+    let x1 = 1.0; let y1 = 3.0;
+    let x2 = 2.0; let y2 = 5.0;
+    let x3 = 3.0; let y3 = 7.0;
+    let x4 = 4.0; let y4 = 9.0;
+
+    let mut step: i64 = 0;
+    while step < 500 {
+        // 预测
+        let p1 = w * x1 + b;
+        let p2 = w * x2 + b;
+        let p3 = w * x3 + b;
+        let p4 = w * x4 + b;
+
+        // 梯度: dL/dw = -2/n * sum(x_i * (y_i - p_i))
+        let gw = -2.0 / n * (x1*(y1-p1) + x2*(y2-p2) + x3*(y3-p3) + x4*(y4-p4));
+        let gb = -2.0 / n * ((y1-p1) + (y2-p2) + (y3-p3) + (y4-p4));
+
+        w = w - lr * gw;
+        b = b - lr * gb;
+
+        step = step + 1;
+    };
+
+    println("Learned w (should be ~2):");
+    println(w);
+    println("Learned b (should be ~1):");
+    println(b);
+
+    // 验证
+    println("Predict x=5:");
+    println(w * 5.0 + b);
+}

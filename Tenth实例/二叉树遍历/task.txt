@@ -1,0 +1,13 @@
+# 二叉树遍历 (Binary Tree Traversal)
+
+用枚举定义二叉树，实现中序遍历。
+
+## 结构
+
+```
+Tree = Node(val, left, right) | Leaf
+```
+
+## 遍历
+
+中序 (inorder): 左 → 根 → 右

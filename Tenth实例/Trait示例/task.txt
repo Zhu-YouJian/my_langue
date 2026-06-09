@@ -1,0 +1,8 @@
+# Trait 示例
+
+展示 Tenth 的 trait 定义和实现。
+
+## 示例
+
+- trait Shape { area / perimeter }
+- Circle 和 Rectangle 实现 Shape

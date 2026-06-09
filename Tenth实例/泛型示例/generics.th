@@ -1,0 +1,29 @@
+// 泛型示例
+
+// 泛型 identity
+fn id<T>(x: T) -> T { x }
+
+// 泛型结构体
+struct Pair<T> { first: T, second: T }
+
+// 泛型 swap
+fn swap_pair<T>(p: Pair<T>) -> Pair<T> {
+    Pair { first: p.second, second: p.first }
+}
+
+fn main() {
+    // identity
+    println("id(42):");
+    println(id(42));
+
+    println("id('hello'):");
+    println(id("hello"));
+
+    // Pair
+    let p = Pair { first: 1, second: 2 };
+    let swapped = swap_pair(p);
+    println("swapped pair first:");
+    println(swapped.first);
+    println("swapped pair second:");
+    println(swapped.second);
+}

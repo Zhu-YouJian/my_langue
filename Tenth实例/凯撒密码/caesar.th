@@ -1,0 +1,54 @@
+// 凯撒密码 — 查表法
+
+fn shift_char(ch: str, offset: i64) -> str {
+    let lower = "abcdefghijklmnopqrstuvwxyz";
+    let upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+    // 在小写字母表中查找
+    let mut i: i64 = 0;
+    while i < lower.len() {
+        if lower[i] == ch {
+            let new_idx = (i + offset) % 26;
+            return lower[new_idx];
+        };
+        i = i + 1;
+    };
+
+    // 在大写字母表中查找
+    i = 0;
+    while i < upper.len() {
+        if upper[i] == ch {
+            let new_idx = (i + offset) % 26;
+            return upper[new_idx];
+        };
+        i = i + 1;
+    };
+
+    ch  // 非字母原样返回
+}
+
+fn caesar(text: str, offset: i64) -> str {
+    let mut result = "";
+    let mut i: i64 = 0;
+    while i < text.len() {
+        let ch = text[i];
+        result = result + shift_char(ch, offset);
+        i = i + 1;
+    };
+    result
+}
+
+fn main() {
+    let plain = "hello";
+    let enc = caesar(plain, 3);
+    println("Caesar('hello', 3):");
+    println(enc);
+
+    let dec = caesar(enc, 26 - 3);
+    println("Decrypt back:");
+    println(dec);
+
+    // 测试大写
+    println("Caesar('XYZ', 3):");
+    println(caesar("XYZ", 3));
+}
