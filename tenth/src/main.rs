@@ -104,7 +104,7 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
         }
     }
 
-    if vm.functions.contains_key("main") {
+    if vm.has_fn("main") {
         vm.call("main")
     } else if let Some(ref expr) = hir.main_expr {
         let compiler = BytecodeCompiler::new();

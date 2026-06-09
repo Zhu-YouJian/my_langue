@@ -80,8 +80,11 @@ impl Chunk {
 
     pub fn read_op(&self, ip: &mut usize) -> Op {
         use Op::*;
+        if *ip >= self.code.len() {
+            return Ret; // graceful exit on overrun
+        }
         let b = self.code[*ip]; *ip += 1;
-        macro_rules! r { ($t:ty) => {{ let mut buf = [0u8; std::mem::size_of::<$t>()]; let n = std::mem::size_of::<$t>(); buf.copy_from_slice(&self.code[*ip..*ip+n]); *ip += n; <$t>::from_le_bytes(buf) }}; }
+        macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if *ip + n > self.code.len() { return Ret; } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&self.code[*ip..*ip+n]); *ip += n; <$t>::from_le_bytes(buf) }}; }
         match b {
             0 => PushInt(r!(i64)), 1 => PushFloat(r!(f64)),
             2 => PushBool(self.code[*ip] != 0),
@@ -108,13 +111,14 @@ impl Chunk {
 
 struct Frame {
     ip: usize,
-    chunk: Chunk,
+    chunk_idx: usize,
     locals: Vec<Value>,
     stack_base: usize,
 }
 
 pub struct Vm {
-    pub functions: HashMap<String, Chunk>,
+    pub functions: HashMap<String, usize>,
+    chunks: Vec<Chunk>,
     pub natives: HashMap<String, NativeFn>,
     globals: HashMap<String, Value>,
     stack: Vec<Value>,
@@ -123,11 +127,17 @@ pub struct Vm {
 
 impl Vm {
     pub fn new() -> Self {
-        Vm { functions: HashMap::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new() }
+        Vm { functions: HashMap::new(), chunks: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new() }
     }
 
     pub fn add_fn(&mut self, name: String, chunk: Chunk) {
-        self.functions.insert(name, chunk);
+        let idx = self.chunks.len();
+        self.chunks.push(chunk);
+        self.functions.insert(name, idx);
+    }
+
+    pub fn has_fn(&self, name: &str) -> bool {
+        self.functions.contains_key(name)
     }
 
     pub fn add_native(&mut self, name: String, f: NativeFn) {
@@ -148,31 +158,63 @@ impl Vm {
     }
 
     pub fn call(&mut self, name: &str) -> TenthResult<Value> {
-        let chunk = self.functions.get(name).cloned()
+        let idx = self.functions.get(name).copied()
             .ok_or_else(|| TenthError::RuntimeError { message: format!("VM: undefined '{name}'") })?;
-        self.run(chunk)
+        self.run(idx)
     }
 
-    fn run(&mut self, mut chunk: Chunk) -> TenthResult<Value> {
+    fn run(&mut self, mut chunk_idx: usize) -> TenthResult<Value> {
         let mut ip: usize = 0;
         let base = self.stack.len();
-        let mut locals = vec![Value::Unit; chunk.num_locals.max(chunk.num_args)];
+        // Copy chunk data to avoid borrow conflicts with self
+        let code = self.chunks[chunk_idx].code.clone();
+        let strings = self.chunks[chunk_idx].strings.clone();
+        let num_args = self.chunks[chunk_idx].num_args;
+        let num_locals = self.chunks[chunk_idx].num_locals;
+        let mut locals = vec![Value::Unit; num_locals.max(num_args)];
 
         // Pop args into locals (args were pushed right-to-left, so pop in reverse)
-        for i in (0..chunk.num_args).rev() {
+        for i in (0..num_args).rev() {
             if self.stack.len() > base {
                 locals[i] = self.stack.pop().unwrap();
             }
         }
 
+        // Helper to read ops from the local code copy
+        let read_op = |ip: &mut usize| -> Op {
+            use Op::*;
+            if *ip >= code.len() { return Ret; }
+            let b = code[*ip]; *ip += 1;
+            macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if *ip + n > code.len() { return Ret; } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&code[*ip..*ip+n]); *ip += n; <$t>::from_le_bytes(buf) }}; }
+            match b {
+                0 => PushInt(r!(i64)), 1 => PushFloat(r!(f64)),
+                2 => PushBool(code[*ip] != 0),
+                3 => PushStr(r!(u64) as usize),
+                4 => PushUnit, 5 => Pop, 6 => Dup,
+                7 => Load(r!(u64) as usize), 8 => Store(r!(u64) as usize),
+                9 => LoadGlobal(r!(u64) as usize), 10 => StoreGlobal(r!(u64) as usize),
+                11 => Add, 12 => Sub, 13 => Mul, 14 => Div, 15 => Mod,
+                16 => Neg, 17 => Not,
+                18 => Eq, 19 => Neq, 20 => Lt, 21 => Gt, 22 => Lte, 23 => Gte,
+                24 => Jump(r!(i32)), 25 => JmpFalse(r!(i32)), 26 => JmpTrue(r!(i32)),
+                27 => Call(r!(u64) as usize), 28 => CallN(r!(u64) as usize, r!(u64) as usize),
+                29 => MethodCall(r!(u64) as usize, r!(u64) as usize), 30 => Ret,
+                31 => MakeVec(r!(u64) as usize), 32 => MakeMap(r!(u64) as usize),
+                33 => NewStruct(r!(u64) as usize, r!(u64) as usize),
+                34 => LoadField(r!(u64) as usize),
+                35 => IndexGet,
+                _ => Ret,
+            }
+        };
+
         loop {
-            let op = chunk.read_op(&mut ip);
+            let op = read_op(&mut ip);
             match op {
                 Op::PushInt(n) => self.stack.push(Value::Int(n)),
                 Op::PushFloat(f) => self.stack.push(Value::Float(f)),
                 Op::PushBool(b) => self.stack.push(Value::Bool(b)),
                 Op::PushStr(i) => {
-                    let s = chunk.strings.get(i).cloned().unwrap_or_default();
+                    let s = strings.get(i).cloned().unwrap_or_default();
                     self.stack.push(Value::String(s));
                 }
                 Op::PushUnit => self.stack.push(Value::Unit),
@@ -192,12 +234,12 @@ impl Vm {
                     locals[i] = v;
                 }
                 Op::LoadGlobal(i) => {
-                    let name = chunk.strings.get(i).cloned().unwrap_or_default();
+                    let name = strings.get(i).cloned().unwrap_or_default();
                     let v = self.globals.get(&name).cloned().unwrap_or(Value::Unit);
                     self.stack.push(v);
                 }
                 Op::StoreGlobal(i) => {
-                    let name = chunk.strings.get(i).cloned().unwrap_or_default();
+                    let name = strings.get(i).cloned().unwrap_or_default();
                     let v = self.stack.pop().unwrap_or(Value::Unit);
                     self.globals.insert(name, v);
                 }
@@ -244,7 +286,7 @@ impl Vm {
                 }
 
                 Op::Call(i) => {
-                    let name = chunk.strings.get(i).cloned().unwrap_or_default();
+                    let name = strings[i].clone();
                     // Try native first (legacy: uses stack depth as arg count)
                     if let Some(native_fn) = self.natives.get(&name).copied() {
                         let n = self.stack.len() - base;
@@ -252,13 +294,14 @@ impl Vm {
                         for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
                         let result = native_fn(self, &args)?;
                         self.stack.push(result);
-                    } else if let Some(callee) = self.functions.get(&name).cloned() {
-                        // Save current frame ... (existing bytecode logic)
-                        self.frames.push(Frame { ip, chunk: chunk.clone(), locals: locals.clone(), stack_base: base });
-                        chunk = callee;
+                    } else if let Some(&callee_idx) = self.functions.get(&name) {
+                        let callee_args = self.chunks[callee_idx].num_args;
+                        let callee_locals = self.chunks[callee_idx].num_locals;
+                        self.frames.push(Frame { ip, chunk_idx, locals: locals.clone(), stack_base: base });
+                        chunk_idx = callee_idx;
                         ip = 0;
-                        locals = vec![Value::Unit; chunk.num_locals.max(chunk.num_args)];
-                        for i in (0..chunk.num_args).rev() {
+                        locals = vec![Value::Unit; callee_locals.max(callee_args)];
+                        for i in (0..callee_args).rev() {
                             if self.stack.len() > base { locals[i] = self.stack.pop().unwrap(); }
                         }
                     } else {
@@ -266,28 +309,25 @@ impl Vm {
                     }
                 }
                 Op::CallN(i, num_args) => {
-                    let name = chunk.strings.get(i).cloned().unwrap_or_default();
+                    let name = strings.get(i).cloned().unwrap_or_default();
                     let n = num_args;
-                    // Pop args from stack (shared by both native and bytecode paths)
                     let mut args = vec![Value::Unit; n];
                     for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
                     if let Some(native_fn) = self.natives.get(&name).copied() {
                         let result = native_fn(self, &args)?;
                         self.stack.push(result);
-                    } else if let Some(callee) = self.functions.get(&name).cloned() {
-                        // Save current frame
-                        self.frames.push(Frame { ip, chunk: chunk.clone(), locals: locals.clone(), stack_base: base });
-                        // Switch to callee, using already-popped args as locals
-                        chunk = callee;
+                    } else if let Some(&callee_idx) = self.functions.get(&name) {
+                        self.frames.push(Frame { ip, chunk_idx, locals: locals.clone(), stack_base: base });
+                        chunk_idx = callee_idx;
                         ip = 0;
                         locals = args;
-                        locals.resize(chunk.num_locals.max(locals.len()), Value::Unit);
+                        locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
                     } else {
                         return Err(TenthError::RuntimeError { message: format!("VM: undefined '{name}'") });
                     }
                 }
                 Op::MethodCall(i, num_args) => {
-                    let name = chunk.strings.get(i).cloned().unwrap_or_default();
+                    let name = strings.get(i).cloned().unwrap_or_default();
                     let n = num_args;
                     let mut args = vec![Value::Unit; n];
                     for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
@@ -302,9 +342,8 @@ impl Vm {
                     if let Some(f) = self.frames.pop() {
                         self.stack.push(result);
                         ip = f.ip;
-                        chunk = f.chunk;
+                        chunk_idx = f.chunk_idx;
                         locals = f.locals;
-                        // base stays as the original caller's base
                     } else {
                         return Ok(result);
                     }
@@ -330,7 +369,7 @@ impl Vm {
                 }
 
                 Op::NewStruct(name_i, n) => {
-                    let name = chunk.strings.get(name_i).cloned().unwrap_or_default();
+                    let name = strings.get(name_i).cloned().unwrap_or_default();
                     let mut fields = Vec::new();
                     for _ in 0..n {
                         // Compiler pushes value then name (name on top); pop name first
@@ -346,7 +385,7 @@ impl Vm {
                 }
 
                 Op::LoadField(i) => {
-                    let fname = chunk.strings.get(i).cloned().unwrap_or_default();
+                    let fname = strings.get(i).cloned().unwrap_or_default();
                     let val = self.stack.pop().unwrap_or(Value::Unit);
                     let v = self.get_field(&val, &fname)?;
                     self.stack.push(v);
