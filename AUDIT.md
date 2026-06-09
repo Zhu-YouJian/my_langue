@@ -1,57 +1,68 @@
 # 项目总览与审计报告
 
-> 日期：2026-06-04 | 版本：v0.3.0-pre | C 编译后端已移除
+> 日期：2026-06-09 | 版本：v0.3.0-pre | 自举完成 | 82 项测试全过
 
 ---
 
 ## 一、项目全景
 
-Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写的 bootstrap 编译器 + Tenth 编写的自举编译器（通过 Rust 解释器执行）。
+Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写的 bootstrap 编译器 + Tenth 编写的自举编译器 + 字节码 VM + WASM 编译。
 
 ### 目录地图
 
 ```
 ├── tenth/                    ← Rust bootstrap 编译器
-│   ├── Cargo.toml            ← ndarray, rustyline, thiserror, rand
+│   ├── Cargo.toml            ← ndarray, rustyline, thiserror, rand, wasm-encoder, wasmi
 │   ├── src/
-│   │   ├── main.rs           ← CLI: REPL 入口
-│   │   ├── lib.rs            ← 导出 6 个顶层模块
+│   │   ├── main.rs           ← CLI: REPL / run / build / wasm
+│   │   ├── lib.rs            ← 导出 7 个顶层模块
 │   │   ├── error.rs          ← TenthError 统一错误类型
 │   │   ├── lexer/            ← 词法分析 (token.rs + lexer.rs)
 │   │   ├── parser/           ← 递归下降解析 (ast.rs + parser.rs)
 │   │   ├── hir/              ← HIR + 类型推断 + 借用检查 (hir.rs + types.rs + lower.rs)
-│   │   ├── runtime/          ← 解释器 (interpreter.rs + value.rs + tensor.rs + arena.rs + autodiff.rs + limits.rs)
+│   │   ├── compile/          ← WASM 编译 + 字节码编译 (wasm.rs + bytecode.rs + bridge.rs)
+│   │   ├── runtime/          ← 解释器 + VM + 值系统 (interpreter.rs + vm.rs + value.rs + tensor.rs + arena.rs + autodiff.rs + limits.rs)
 │   │   └── repl.rs           ← 交互环境
-│   ├── tests/                ← 测试
+│   ├── tests/                ← 测试 (11 文件, 82 项)
 │   ├── std/                  ← Tenth 标准库 (.th 源码: nn/, optim/)
 │   └── target/               ← (gitignored)
-├── tenthc/                   ← Tenth 自举编译器 (.th 源码，通过解释器运行)
-│   ├── main.th               ← 入口
+├── tenthc/                   ← Tenth 自举编译器 (.th 源码, 自举验证通过)
+│   ├── main.th               ← 入口 (编排脚本, ~500B)
 │   ├── lexer/token.th        ← TokenKind 枚举 (50+ 变体)
-│   ├── lexer/lexer.th        ← 手写词法分析器
-│   └── parser/parser.th      ← 递归下降解析器 (arena AST)
-├── docs/                     ← 设计文档与实施计划
-├── README.md / MEMO.md / DEPS.md / SECURITY.md
+│   ├── lexer/lexer.th        ← O(1) 源切片词法分析器
+│   └── parser/parser.th      ← 递归下降解析器 (method_call 支持)
+├── docs/                     ← 语言参考手册 + 实施计划
+├── Tenth实例/                ← 21 个语言示例程序
+├── README.md / MEMO.md / DEPS.md / SECURITY.md / AUDIT.md
 └── .gitignore
 ```
 
 ---
 
-## 二、编译器管线（仅解释器路径）
+## 二、编译器管线
 
+### 路径 A：VM 字节码执行（默认）
 ```
-源码 (.th)
-  ↓ Lexer (lexer.rs)
-Token 流
-  ↓ Parser (parser.rs)
-AST (ast.rs)
-  ↓ Lowerer (hir/lower.rs)
-HIR + 类型推断 + 借用检查
-  ↓ Interpreter (runtime/interpreter.rs)
-运行时值 (Value) / 张量 (Tensor)
+源码 (.th) → Lexer → Parser → AST → Lowerer → HIR
+  → BytecodeCompiler → Chunk (字节码)
+  → Vm::run() → 运行时值
+  (不支持的特性自动回退到路径 C)
 ```
 
-> ~~C 编译路径 (MIR → C → GCC → .exe) 已于 2026-06-04 移除。原因：生成的 C 代码无内存管理，导致系统级内存耗尽。详见 SECURITY.md。~~
+### 路径 B：WASM 编译
+```
+源码 (.th) → Lexer → Parser → AST → Lowerer → HIR
+  → WasmCompiler → .wasm 文件
+  → wasmi 加载执行
+```
+
+### 路径 C：树遍历解释器（兼容性保障）
+```
+源码 (.th) → Lexer → Parser → AST → Lowerer → HIR
+  → Interpreter (tree-walk) → 运行时值
+```
+
+> ~~C 编译路径 (MIR → C → GCC → .exe)~~ 已于 2026-06-04 移除。原因：生成的 C 代码无内存管理，详见 SECURITY.md。
 
 ---
 
@@ -74,21 +85,40 @@ HIR + 类型推断 + 借用检查
 
 ---
 
-## 四、已移除模块
+## 四、自举状态
 
-| 模块 | 说明 |
+Tenth 编译器由 Tenth 自身编写，三路径验证通过：
+
+| 路径 | 词法 | 语法 | 编译 | 速度 | 验证 |
+|------|------|------|------|------|------|
+| A (VM) | Rust | Rust | compile_host | 秒级 | 36 函数 → WASM ✅ |
+| B (真正) | Tenth | Tenth | compile_program | ~30s | 14 tokens → WASM ✅ |
+| C (wasmi) | WASM | wasmi | 内嵌编译 | 秒级 | 36 函数闭环 ✅ |
+
+---
+
+## 五、已移除 / 已修复
+
+| 项目 | 状态 |
 |------|------|
-| ~~`tenth/src/compile/` (7 文件)~~ | MIR→C 编译管线，因内存安全问题于 2026-06-04 移除 |
-| ~~`tenthc/codegen/cgen.th`~~ | C 代码生成器（Tenth 编写），随上移除 |
-| ~~`tenthc/runtime.c`~~ | C 运行时库，随上移除 |
-| ~~`tenth/tests/compile_test.rs`~~ | C 编译测试 (6 项) |
-| ~~`tenth/tests/tenthc_test.rs`~~ | 自举编译器测试 (3 项) |
+| ~~C 编译管线~~ | ❌ 已移除 (2026-06-04) |
+| ~~tenthc lexer 字面量硬编码 0~~ | ✅ 已修复 (Token 新增 fval) |
+| ~~tenthc parser method_call 丢失 receiver~~ | ✅ 已修复 (Dot+LParen 产生 method_call) |
+| ~~VM chunk clone 内存泄漏~~ | ✅ 已修复 (chunk_idx 索引引用) |
+| ~~VM StoreField/code 切换死循环~~ | ✅ 已修复 (CallN/Ret 同步更新 code/strings) |
+| `runtime/autodiff.rs` | ⚠️ 标量级可用，未集成解释器 |
+| Lowerer 大文件性能 | ⚠️ 实际不慢 (release 39 函数 <0.01s)，之前误判为瓶颈 |
 
-保留但暂未集成：
-| 模块 | 位置 | 说明 |
-|------|------|------|
-| `runtime/arena.rs` | 池化分配器 | 已接入 limits 追踪 |
-| `runtime/autodiff.rs` | 计算图自动微分 | 解释器未集成 |
+---
+
+## 六、已知限制
+
+| # | 问题 | 影响 |
+|---|------|------|
+| 1 | VM 不支持字符串切片/闭包/match/for | 自动回退到树遍历解释器 |
+| 2 | 树遍历解释器大文件慢 (debug build) | release build 即解决 |
+| 3 | WASM codegen 个别边界情况 | wasmi 执行偶有 type mismatch |
+| 4 | 无 GPU 后端 | Phase 4 待 CUDA 环境就绪 |
 
 ---
 
