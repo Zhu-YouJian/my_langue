@@ -1,8 +1,9 @@
+// Token definitions — v0.3.1 compact
 struct Span { line: i64, col: i64 }
 enum TokenKind { IntLiteral(value: i64), FloatLiteral(value: f64), StringLiteral(value: str), Identifier(name: str), Fn, Let, Mut, If, Else, Match, Return, While, For, Loop, Break, Continue, Struct, Enum, Impl, Trait, Use, Mod, True, False, Move, Self_, Plus, Minus, Star, Slash, Percent, EqEq, NotEq, Lt, Gt, LtEq, GtEq, AndAnd, OrOr, Not, Ampersand, Pipe, Assign, PlusAssign, MinusAssign, StarAssign, SlashAssign, LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semicolon, Colon, Dot, DotDot, Arrow, FatArrow, ColonColon, Eof }
 struct Token { kind: TokenKind, span: Span, disc: i64, ival: i64, fval: f64, sval: str }
 
-
+// Self-hosting Lexer — v0.3.2 perf-optimized (source slicing)
 struct Lexer { source: str, pos: i64, line: i64, col: i64 }
 fn lexer_new(source: str) -> Lexer { Lexer { source: source, pos: 0, line: 1, col: 1 } }
 fn is_digit(ch: str) -> bool { (ch >= "0") && (ch <= "9") }
@@ -14,7 +15,6 @@ fn lexer_advance(lexer: &mut Lexer) -> str { let ch = lexer_peek(lexer); if ch =
 fn make_span(line: i64, col: i64) -> Span { Span { line: line, col: col } }
 fn char_to_digit(ch: str) -> i64 { if ch == "0" { 0 } else if ch == "1" { 1 } else if ch == "2" { 2 } else if ch == "3" { 3 } else if ch == "4" { 4 } else if ch == "5" { 5 } else if ch == "6" { 6 } else if ch == "7" { 7 } else if ch == "8" { 8 } else if ch == "9" { 9 } else { 0 } }
 fn parse_int(s: str) -> i64 { let mut result: i64 = 0; let mut i: i64 = 0; let len = s.len(); while i < len { let ch = s[i]; result = result * 10 + char_to_digit(ch); i = i + 1; }; result }
-fn parse_float(whole: str, frac: str) -> f64 { let w = parse_int(whole); let f = parse_int(frac); let mut div: f64 = 1.0; let mut i: i64 = 0; while i < frac.len() { div = div * 10.0; i = i + 1; }; w + (f / div) }
 
 fn lexer_next(lexer: &mut Lexer) -> Token {
     let mut ch = lexer_peek(lexer);
@@ -25,8 +25,24 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
     };
     let line = lexer.line; let col = lexer.col; let span = make_span(line, col);
     if ch == "" { return Token { kind: TokenKind::Eof, span: span, disc: 61, ival: 0, fval: 0.0, sval: "" }; };
-    if is_digit(ch) { let mut int_part = ""; let mut frac_part = ""; let mut is_float = false; while is_digit(ch) { int_part = int_part + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; if ch == "." { is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer); while is_digit(ch) { frac_part = frac_part + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; }; if is_float { return Token { kind: TokenKind::FloatLiteral(value: parse_float(int_part, frac_part)), span: span, disc: 1, ival: 0, fval: parse_float(int_part, frac_part), sval: int_part }; }; let iv = parse_int(int_part); return Token { kind: TokenKind::IntLiteral(value: iv), span: span, disc: 0, ival: iv, fval: 0.0, sval: "" }; };
-    if is_alpha(ch) { let mut ident = ""; while (ch != "") && is_alnum(ch) { ident = ident + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+
+    // Number — incremental arithmetic (no string building)
+    if is_digit(ch) {
+        let mut ival: i64 = 0;
+        let mut is_float = false;
+        let mut frac_val: i64 = 0;
+        let mut frac_len: i64 = 0;
+        while is_digit(ch) { ival = ival * 10 + char_to_digit(ch); ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+        if ch == "." { is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer); while is_digit(ch) { frac_val = frac_val * 10 + char_to_digit(ch); frac_len = frac_len + 1; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; let mut div: f64 = 1.0; let mut i: i64 = 0; while i < frac_len { div = div * 10.0; i = i + 1; }; let fv: f64 = ival; let ff: f64 = frac_val; return Token { kind: TokenKind::FloatLiteral(value: fv + (ff / div)), span: span, disc: 1, ival: ival, fval: fv + (ff / div), sval: "" }; };
+        return Token { kind: TokenKind::IntLiteral(value: ival), span: span, disc: 0, ival: ival, fval: 0.0, sval: "" };
+    };
+
+    // Identifier — source slice (O(1))
+    if is_alpha(ch) {
+        let start = lexer.pos;
+        while (ch != "") && is_alnum(ch) { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+        let end_pos = lexer.pos;
+        let ident = lexer.source[start..end_pos];
         if ident == "fn" { return Token { kind: TokenKind::Fn, span: span, disc: 4, ival: 0, fval: 0.0, sval: "" }; };
         if ident == "let" { return Token { kind: TokenKind::Let, span: span, disc: 5, ival: 0, fval: 0.0, sval: "" }; };
         if ident == "mut" { return Token { kind: TokenKind::Mut, span: span, disc: 6, ival: 0, fval: 0.0, sval: "" }; };
@@ -51,7 +67,19 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         if ident == "self" { return Token { kind: TokenKind::Self_, span: span, disc: 25, ival: 0, fval: 0.0, sval: "" }; };
         return Token { kind: TokenKind::Identifier(name: ident), span: span, disc: 3, ival: 0, fval: 0.0, sval: ident };
     };
-    if ch == "\"" { lexer_advance(lexer); let mut s = ""; ch = lexer_peek(lexer); while (ch != "") && (ch != "\"") { s = s + ch; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; if ch == "\"" { lexer_advance(lexer); }; return Token { kind: TokenKind::StringLiteral(value: s), span: span, disc: 2, ival: 0, fval: 0.0, sval: s }; };
+
+    // String literal — source slice (O(1))
+    if ch == "\"" {
+        lexer_advance(lexer); // skip opening quote
+        let start = lexer.pos;
+        ch = lexer_peek(lexer);
+        while (ch != "") && (ch != "\"") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+        let end_pos = lexer.pos;
+        if ch == "\"" { lexer_advance(lexer); }; // skip closing quote
+        let s = lexer.source[start..end_pos];
+        return Token { kind: TokenKind::StringLiteral(value: s), span: span, disc: 2, ival: 0, fval: 0.0, sval: s };
+    };
+
     lexer_advance(lexer);
     if ch == "(" { return Token { kind: TokenKind::LParen, span: span, disc: 47, ival: 0, fval: 0.0, sval: "" }; };
     if ch == ")" { return Token { kind: TokenKind::RParen, span: span, disc: 48, ival: 0, fval: 0.0, sval: "" }; };
@@ -83,7 +111,7 @@ fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {
     while lexer.pos < src_len { let t = lexer_next(lexer); tokens.push(t); };
     tokens
 }
-
+// Self-hosting Parser — v0.3.1 recursive descent
 
 struct Expr { kind: str, ival: i64, fval: f64, sval: str, left: i64, right: i64, arg_start: i64, arg_count: i64, extra_start: i64, extra_count: i64 }
 struct Stmt { kind: str, name: str, expr_idx: i64, body_start: i64, body_count: i64, else_start: i64, else_count: i64 }
@@ -766,10 +794,6 @@ fn parse_program(tokens: Vec<Token>) -> Program {
     }
 }
 
-
-
-
-
 fn main() -> i64 {
     let src = read_file("tenthc/lexer/token.th");
     let mut lex = lexer_new(src);
@@ -777,9 +801,9 @@ fn main() -> i64 {
     let prog = parse_program(tokens);
     let ok = compile_program(prog, "tenthc_token.wasm");
     if ok == 0 {
-        println("Self-hosting: compiled token.th -> tenthc_token.wasm");
+        println("Self-hosting: token.th -> tenthc_token.wasm");
     } else {
-        println("Self-hosting compilation failed");
+        println("Self-hosting FAILED");
     };
     0
 }

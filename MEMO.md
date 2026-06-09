@@ -30,8 +30,10 @@ tenthc/ 保留 Tenth 编写的词法分析器和语法分析器（通过 Rust �
 - [x] 小函数自举验证通过："fn add" 18 tokens → 解析 → WASM 631 bytes
 
 **已知限制：**
-- [ ] 树遍历解释器性能：大文件 (~11000 字符) 的自举解析超时，需优化或分批处理
-- [ ] WASM 执行验证：generated .wasm 的 wasmi 执行待测试
+- [ ] 树遍历解释器 Lowerer 性能：合并后的大文件 (~33K 字符) Lowering 超时（瓶颈在 HIR lowering 而非词法分析）
+- [ ] 已优化 lexer: 数字递增解析 + 标识符/字符串源切片 (O(1))，纯词法分析性能正常
+- [ ] 拆分为独立模块 (token/lexer/parser 分别 mod) 可解决 Lowerer 瓶颈
+- [ ] WASM 产物执行验证 (wasmi) 待测试
 
 ---
 
