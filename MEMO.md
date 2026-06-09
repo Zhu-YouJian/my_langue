@@ -10,30 +10,36 @@
 
 ## 自举编译器现状
 
-tenthc/ 保留 Tenth 编写的词法分析器和语法分析器（通过 Rust 解释器运行）。
-`tenthc/main.th` 已合并全部源码，实现自举管线：Tenth Lexer → Parser → compile_program → WASM。
+tenthc/ 保留 Tenth 编写的词法分析器、语法分析器和引导入口。
+自举通过两条路径验证：
+
+**路径 A（快速引导）：** `tenth run tenthc/main.th`
+→ VM 字节码执行 → `compile_host` (Rust 原生编译) → 36 函数 → WASM
+
+**路径 B（真正自举）：** 合并文件 + `tenth run` (tree-walk fallback)
+→ **Tenth Lexer** 词法分析 → **Tenth Parser** 语法分析 → `compile_program` → WASM
+→ 验证: `"fn add(a:i64,b:i64)->i64{a+b}"` → 18 tokens → WASM 631 bytes ✅
 
 | 层 | 文件 | 状态 |
 |----|------|------|
 | Token | `tenthc/lexer/token.th` | ✅ enum TokenKind (50+ 变体) |
-| Lexer | `tenthc/lexer/lexer.th` | ✅ 完整词法分析，字面量值正确解析 |
-| Parser | `tenthc/parser/parser.th` | ✅ 递归下降 + 优先级爬山 + method_call 支持 |
+| Lexer | `tenthc/lexer/lexer.th` | ✅ O(1) 源切片 + 递增算术，值正确解析 |
+| Parser | `tenthc/parser/parser.th` | ✅ 递归下降 + method_call 支持 |
 | ~~Codegen~~ | ~~`tenthc/codegen/cgen.th`~~ | ❌ 已移除 |
-| WASM 编译 | `tenth/src/compile/` | ✅ HIR→WASM |
+| WASM 编译 | `tenth/src/compile/wasm.rs` | ✅ HIR→WASM, wasmi 闭环验证通过 |
 | Bridge | `tenth/src/compile/bridge.rs` | ✅ compact→AST (含 method_call) |
+| **字节码 VM** | `tenth/src/runtime/vm.rs` | ✅ 33 指令 + native 函数, 默认执行路径 |
+| VM 编译器 | `tenth/src/compile/bytecode.rs` | ✅ HIR→bytecode |
 
-**2026-06 进展：**
-- [x] Lexer: Token 新增 fval 字段，FloatLiteral 值不再丢失
-- [x] Parser: 修复 method_call — Dot+LParen 产生 "method_call" 节点 (含 receiver)
-- [x] Bridge: 新增 "method_call" → ast::MethodCall 转换
-- [x] 自举管线闭环：tenthc/main.th 通过 Rust 解释器编译 token.th → WASM (614 bytes)
-- [x] 小函数自举验证通过："fn add" 18 tokens → 解析 → WASM 631 bytes
+**自举验证（2026-06-09）：**
+- [x] 路径 A: VM 自举 36 函数 → WASM (via compile_host)
+- [x] 路径 B: Tenth Lexer+Parser 自举编译小函数 → WASM 631 bytes ✅
+- [x] wasmi 闭环: 编译产物 → wasmi 加载 → 成功执行全部 36 函数
+- [x] VM 成为默认执行路径，tree-walk fallback
 
 **已知限制：**
-- [ ] 树遍历解释器 Lowerer 性能：合并后的大文件 (~33K 字符) Lowering 超时（瓶颈在 HIR lowering 而非词法分析）
-- [ ] 已优化 lexer: 数字递增解析 + 标识符/字符串源切片 (O(1))，纯词法分析性能正常
-- [ ] 拆分为独立模块 (token/lexer/parser 分别 mod) 可解决 Lowerer 瓶颈
-- [ ] WASM 产物执行验证 (wasmi) 待测试
+- [ ] Lowerer 大文件性能 (~33K 字符合并文件 ~200s)，需模块拆分
+- [ ] VM 不支持 struct 字段访问、方法调用、闭包（tree-walk fallback 兜底）
 
 ---
 
