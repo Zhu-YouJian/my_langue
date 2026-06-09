@@ -795,13 +795,19 @@ fn parse_program(tokens: Vec<Token>) -> Program {
 }
 
 fn main() -> i64 {
-    let src = read_file("tenthc/lexer/token.th");
+    let src = read_file("tenthc/lexer/lexer.th");
+    println("Src:");
+    println(src.len());
     let mut lex = lexer_new(src);
     let tokens = lexer_tokenize(&mut lex);
+    println("Tokens:");
+    println(tokens.len());
     let prog = parse_program(tokens);
-    let ok = compile_program(prog, "tenthc_token.wasm");
+    println("Fns:");
+    println(prog.fns.len());
+    let ok = compile_program(prog, "tenthc_lexer.wasm");
     if ok == 0 {
-        println("Self-hosting: token.th -> tenthc_token.wasm");
+        println("Self-hosting OK: lexer.th -> tenthc_lexer.wasm");
     } else {
         println("Self-hosting FAILED");
     };
