@@ -8,6 +8,9 @@ use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use super::value::Value;
 
+/// Native Rust function callable from VM bytecode.
+pub type NativeFn = fn(&mut Vm, &[Value]) -> TenthResult<Value>;
+
 // ── Opcode ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -109,6 +112,7 @@ struct Frame {
 
 pub struct Vm {
     pub functions: HashMap<String, Chunk>,
+    pub natives: HashMap<String, NativeFn>,
     globals: HashMap<String, Value>,
     stack: Vec<Value>,
     frames: Vec<Frame>,
@@ -116,15 +120,28 @@ pub struct Vm {
 
 impl Vm {
     pub fn new() -> Self {
-        Vm { functions: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new() }
+        Vm { functions: HashMap::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new() }
     }
 
     pub fn add_fn(&mut self, name: String, chunk: Chunk) {
         self.functions.insert(name, chunk);
     }
 
+    pub fn add_native(&mut self, name: String, f: NativeFn) {
+        self.natives.insert(name, f);
+    }
+
     pub fn set_global(&mut self, name: String, val: Value) {
         self.globals.insert(name, val);
+    }
+
+    /// Push arguments and call a native function.
+    pub fn call_native(&mut self, name: &str, args: &[Value]) -> TenthResult<Value> {
+        if let Some(f) = self.natives.get(name).copied() {
+            f(self, args)
+        } else {
+            Err(TenthError::RuntimeError { message: format!("VM: undefined native '{name}'") })
+        }
     }
 
     pub fn call(&mut self, name: &str) -> TenthResult<Value> {
@@ -225,18 +242,29 @@ impl Vm {
 
                 Op::Call(i) => {
                     let name = chunk.strings.get(i).cloned().unwrap_or_default();
-                    let callee = self.functions.get(&name).cloned()
-                        .ok_or_else(|| TenthError::RuntimeError { message: format!("VM: undefined '{name}'") })?;
-                    // Save current frame
-                    self.frames.push(Frame { ip, chunk: chunk.clone(), locals: locals.clone(), stack_base: base });
-                    // Switch
-                    chunk = callee;
-                    ip = 0;
-                    locals = vec![Value::Unit; chunk.num_locals.max(chunk.num_args)];
-                    for i in (0..chunk.num_args).rev() {
-                        if self.stack.len() > base {
-                            locals[i] = self.stack.pop().unwrap();
+                    // Try native first
+                    if let Some(native_fn) = self.natives.get(&name).copied() {
+                        // Args pushed in reverse by compiler; pop in same order as bytecode functions
+                        let mut args = vec![Value::Unit; self.stack.len() - base];
+                        for i in (0..args.len()).rev() {
+                            args[i] = self.stack.pop().unwrap_or(Value::Unit);
                         }
+                        let result = native_fn(self, &args)?;
+                        self.stack.push(result);
+                    } else if let Some(callee) = self.functions.get(&name).cloned() {
+                        // Save current frame
+                        self.frames.push(Frame { ip, chunk: chunk.clone(), locals: locals.clone(), stack_base: base });
+                        // Switch
+                        chunk = callee;
+                        ip = 0;
+                        locals = vec![Value::Unit; chunk.num_locals.max(chunk.num_args)];
+                        for i in (0..chunk.num_args).rev() {
+                            if self.stack.len() > base {
+                                locals[i] = self.stack.pop().unwrap();
+                            }
+                        }
+                    } else {
+                        return Err(TenthError::RuntimeError { message: format!("VM: undefined '{name}'") });
                     }
                 }
 

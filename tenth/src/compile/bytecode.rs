@@ -115,8 +115,8 @@ impl BytecodeCompiler {
             }
 
             Call { func, args, .. } => {
-                // Push args right-to-left (so they pop in correct order)
-                for a in args.iter().rev() {
+                // Push args left-to-right; VM pops in reverse into locals
+                for a in args.iter() {
                     self.compile_expr(a)?;
                 }
                 match &func.kind {

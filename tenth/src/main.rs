@@ -1,3 +1,5 @@
+use std::rc::Rc;
+use std::cell::RefCell;
 use tenth::error::TenthResult;
 use tenth::repl;
 use tenth::runtime::limits::MemoryConfig;
@@ -118,8 +120,52 @@ fn vm_run(path: &str) -> TenthResult<()> {
     let mut vm = Vm::new();
 
     // Register native functions
-    vm.set_global("println".into(), Value::FnRef {
-        name: "println".into(), params: vec![], return_type: tenth::hir::types::Type::unit(),
+    vm.add_native("println".into(), |_vm, args| {
+        for a in args { print!("{a}"); }
+        println!();
+        Ok(Value::Unit)
+    });
+    vm.add_native("read_file".into(), |_vm, args| {
+        if let Some(Value::String(path)) = args.first() {
+            match std::fs::read_to_string(path) {
+                Ok(s) => Ok(Value::String(s)),
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("read_file: {e}") }),
+            }
+        } else {
+            Ok(Value::String(String::new()))
+        }
+    });
+    vm.add_native("Vec::new".into(), |_vm, _args| {
+        Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))))
+    });
+    vm.add_native("compile_host".into(), |_vm, args| {
+        if args.len() >= 2 {
+            if let (Value::String(src), Value::String(out)) = (&args[0], &args[1]) {
+                match tenth::lexer::lexer::Lexer::new(src).tokenize()
+                    .and_then(|tokens| tenth::parser::parser::Parser::new(tokens).parse_program())
+                    .and_then(|prog| tenth::hir::lower::Lowerer::new().lower_program(&prog))
+                    .and_then(|hir| tenth::compile::compile_to_wasm(&hir))
+                {
+                    Ok(bytes) => { let _ = std::fs::write(out, &bytes); return Ok(Value::Int(0)); }
+                    Err(_) => return Ok(Value::Int(1)),
+                }
+            }
+        }
+        Ok(Value::Int(1))
+    });
+    vm.add_native("compile_program".into(), |_vm, args| {
+        if args.len() >= 2 {
+            if let Value::String(out) = &args[1] {
+                match tenth::compile::compile_program_to_wasm(&args[0]) {
+                    Ok(bytes) => {
+                        let _ = std::fs::write(out, &bytes);
+                        return Ok(Value::Int(0));
+                    }
+                    Err(_) => return Ok(Value::Int(1)),
+                }
+            }
+        }
+        Ok(Value::Int(1))
     });
 
     // Compile each function to bytecode
