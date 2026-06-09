@@ -324,7 +324,7 @@ impl WasmCompiler {
             let fi = self.resolve_func("main")?;
             body.instruction(&Instruction::Call(fi));
             if matches!(mf.return_type, Type::Base(BaseType::Unit)) {
-                body.instruction(&Instruction::Drop);
+                // main() returns void — nothing to drop, just push exit code
                 body.instruction(&Instruction::I32Const(0));
             } else {
                 self.wrap_to_i32(&mut body, &mf.return_type);
