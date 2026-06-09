@@ -222,6 +222,15 @@ impl BytecodeCompiler {
                 }
             }
 
+            MethodCall { receiver, method, args, .. } => {
+                self.compile_expr(receiver)?;
+                for a in args.iter() {
+                    self.compile_expr(a)?;
+                }
+                let mi = self.chunk.add_string(method);
+                self.chunk.emit(Op::MethodCall(mi, args.len()));
+            }
+
             ArrayLiteral { elements, .. } => {
                 for e in elements.iter().rev() {
                     self.compile_expr(e)?;
@@ -229,9 +238,13 @@ impl BytecodeCompiler {
                 self.chunk.emit(Op::MakeVec(elements.len()));
             }
 
+            Ref(inner) | MutRef(inner) => {
+                // VM doesn't track ownership; treat as pass-through
+                self.compile_expr(inner)?;
+            }
+
             // Fallback to tree-walk for complex constructs
             _ => {
-                // For now, just push a placeholder and let it be handled by tree-walk
                 self.chunk.emit(Op::PushUnit);
             }
         }

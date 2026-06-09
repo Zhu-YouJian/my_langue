@@ -22,7 +22,7 @@ pub enum Op {
     Add, Sub, Mul, Div, Mod, Neg, Not,
     Eq, Neq, Lt, Gt, Lte, Gte,
     Jump(i32), JmpFalse(i32), JmpTrue(i32),
-    Call(usize), CallN(usize, usize), Ret,
+    Call(usize), CallN(usize, usize), MethodCall(usize, usize), Ret,
     MakeVec(usize), MakeMap(usize),
     NewStruct(usize, usize), LoadField(usize),
     IndexGet,
@@ -56,10 +56,10 @@ impl Chunk {
             Neg => 16, Not => 17,
             Eq => 18, Neq => 19, Lt => 20, Gt => 21, Lte => 22, Gte => 23,
             Jump(_) => 24, JmpFalse(_) => 25, JmpTrue(_) => 26,
-            Call(_) => 27, CallN(..) => 28, Ret => 29,
-            MakeVec(_) => 30, MakeMap(_) => 31,
-            NewStruct(..) => 32, LoadField(_) => 33,
-            IndexGet => 34,
+            Call(_) => 27, CallN(..) => 28, MethodCall(..) => 29, Ret => 30,
+            MakeVec(_) => 31, MakeMap(_) => 32,
+            NewStruct(..) => 33, LoadField(_) => 34,
+            IndexGet => 35,
         });
 
         // Emit operands
@@ -69,6 +69,7 @@ impl Chunk {
             PushBool(b) => self.code.push(if *b {1} else {0}),
             PushStr(i) | LoadGlobal(i) | StoreGlobal(i) | Call(i) | LoadField(i) => w!(*i, u64),
             CallN(i, n) => { w!(*i, u64); w!(*n, u64); }
+            MethodCall(i, n) => { w!(*i, u64); w!(*n, u64); }
             Load(i) | Store(i) => w!(*i, u64),
             Jump(o) | JmpFalse(o) | JmpTrue(o) => w!(*o, i32),
             MakeVec(n) | MakeMap(n) => w!(*n, u64),
@@ -92,11 +93,12 @@ impl Chunk {
             16 => Neg, 17 => Not,
             18 => Eq, 19 => Neq, 20 => Lt, 21 => Gt, 22 => Lte, 23 => Gte,
             24 => Jump(r!(i32)), 25 => JmpFalse(r!(i32)), 26 => JmpTrue(r!(i32)),
-            27 => Call(r!(u64) as usize), 28 => CallN(r!(u64) as usize, r!(u64) as usize), 29 => Ret,
-            30 => MakeVec(r!(u64) as usize), 31 => MakeMap(r!(u64) as usize),
-            32 => NewStruct(r!(u64) as usize, r!(u64) as usize),
-            33 => LoadField(r!(u64) as usize),
-            34 => IndexGet,
+            27 => Call(r!(u64) as usize), 28 => CallN(r!(u64) as usize, r!(u64) as usize),
+            29 => MethodCall(r!(u64) as usize, r!(u64) as usize), 30 => Ret,
+            31 => MakeVec(r!(u64) as usize), 32 => MakeMap(r!(u64) as usize),
+            33 => NewStruct(r!(u64) as usize, r!(u64) as usize),
+            34 => LoadField(r!(u64) as usize),
+            35 => IndexGet,
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -224,10 +226,10 @@ impl Vm {
 
                 Op::Eq => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.vm_eq(&a,&b))); }
                 Op::Neq => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(!self.vm_eq(&a,&b))); }
-                Op::Lt => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.cmp(&a,&b,|x,y|x<y)?)); }
-                Op::Gt => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.cmp(&a,&b,|x,y|x>y)?)); }
-                Op::Lte => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.cmp(&a,&b,|x,y|x<=y)?)); }
-                Op::Gte => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.cmp(&a,&b,|x,y|x>=y)?)); }
+                Op::Lt => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x<y,|x,y|x<y)?)); }
+                Op::Gt => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x>y,|x,y|x>y)?)); }
+                Op::Lte => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x<=y,|x,y|x<=y)?)); }
+                Op::Gte => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x>=y,|x,y|x>=y)?)); }
 
                 Op::Jump(o) => { ip = (ip as i32 + o) as usize; }
                 Op::JmpFalse(o) => {
@@ -265,8 +267,8 @@ impl Vm {
                 }
                 Op::CallN(i, num_args) => {
                     let name = chunk.strings.get(i).cloned().unwrap_or_default();
-                    // Native call with explicit arg count
                     let n = num_args;
+                    // Pop args from stack (shared by both native and bytecode paths)
                     let mut args = vec![Value::Unit; n];
                     for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
                     if let Some(native_fn) = self.natives.get(&name).copied() {
@@ -275,18 +277,23 @@ impl Vm {
                     } else if let Some(callee) = self.functions.get(&name).cloned() {
                         // Save current frame
                         self.frames.push(Frame { ip, chunk: chunk.clone(), locals: locals.clone(), stack_base: base });
-                        // Switch
+                        // Switch to callee, using already-popped args as locals
                         chunk = callee;
                         ip = 0;
-                        locals = vec![Value::Unit; chunk.num_locals.max(chunk.num_args)];
-                        for i in (0..chunk.num_args).rev() {
-                            if self.stack.len() > base {
-                                locals[i] = self.stack.pop().unwrap();
-                            }
-                        }
+                        locals = args;
+                        locals.resize(chunk.num_locals.max(locals.len()), Value::Unit);
                     } else {
                         return Err(TenthError::RuntimeError { message: format!("VM: undefined '{name}'") });
                     }
+                }
+                Op::MethodCall(i, num_args) => {
+                    let name = chunk.strings.get(i).cloned().unwrap_or_default();
+                    let n = num_args;
+                    let mut args = vec![Value::Unit; n];
+                    for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
+                    let receiver = self.stack.pop().unwrap_or(Value::Unit);
+                    let result = self.call_method(&receiver, &name, &args)?;
+                    self.stack.push(result);
                 }
 
                 Op::Ret => {
@@ -326,11 +333,12 @@ impl Vm {
                     let name = chunk.strings.get(name_i).cloned().unwrap_or_default();
                     let mut fields = Vec::new();
                     for _ in 0..n {
-                        let val = self.stack.pop().unwrap_or(Value::Unit);
+                        // Compiler pushes value then name (name on top); pop name first
                         let fname = match self.stack.pop().unwrap_or(Value::Unit) {
                             Value::String(s) => s,
                             _ => String::new(),
                         };
+                        let val = self.stack.pop().unwrap_or(Value::Unit);
                         fields.push((fname, val));
                     }
                     fields.reverse();
@@ -423,14 +431,69 @@ impl Vm {
         })
     }
 
-    fn cmp(&self, a: &Value, b: &Value, f: fn(f64, f64) -> bool) -> TenthResult<bool> {
+    fn compare(&self, a: &Value, b: &Value, nf: fn(f64, f64) -> bool, sf: fn(&str, &str) -> bool) -> TenthResult<bool> {
         Ok(match (a, b) {
-            (Value::Int(x), Value::Int(y)) => f(*x as f64, *y as f64),
-            (Value::Float(x), Value::Float(y)) => f(*x, *y),
-            (Value::Int(x), Value::Float(y)) => f(*x as f64, *y),
-            (Value::Float(x), Value::Int(y)) => f(*x, *y as f64),
+            (Value::Int(x), Value::Int(y)) => nf(*x as f64, *y as f64),
+            (Value::Float(x), Value::Float(y)) => nf(*x, *y),
+            (Value::Int(x), Value::Float(y)) => nf(*x as f64, *y),
+            (Value::Float(x), Value::Int(y)) => nf(*x, *y as f64),
+            (Value::String(x), Value::String(y)) => sf(x, y),
             _ => return err("cannot compare"),
         })
+    }
+
+    fn call_method(&mut self, receiver: &Value, method: &str, args: &[Value]) -> TenthResult<Value> {
+        // Auto-deref via cloning (avoids borrow issues)
+        let recv = match receiver {
+            Value::Ref(rc) => rc.borrow().clone(),
+            Value::MutRef(w) => w.upgrade().map(|rc| rc.borrow().clone()).unwrap_or(Value::Moved),
+            Value::Shared(rc) => rc.borrow().clone(),
+            v => v.clone(),
+        };
+        match recv {
+            Value::String(s) => match method {
+                "len" => Ok(Value::Int(s.chars().count() as i64)),
+                _ => err(&format!("String has no method '{method}'")),
+            },
+            Value::Vec(items) => match method {
+                "len" => Ok(Value::Int(items.borrow().len() as i64)),
+                "push" => {
+                    if args.len() == 1 {
+                        items.borrow_mut().push(args[0].clone());
+                        Ok(Value::Unit)
+                    } else { err("push takes 1 arg") }
+                }
+                "get" => {
+                    if args.len() == 1 {
+                        let idx = args[0].as_int().unwrap_or(0) as usize;
+                        Ok(items.borrow().get(idx).cloned().unwrap_or(Value::Unit))
+                    } else { err("get takes 1 arg") }
+                }
+                _ => err(&format!("Vec has no method '{method}'")),
+            },
+            Value::Map(m) => match method {
+                "len" => Ok(Value::Int(m.borrow().len() as i64)),
+                _ => err(&format!("Map has no method '{method}'")),
+            },
+            Value::Tensor(t) => {
+                let tensor = t.borrow();
+                match method {
+                    "sum" => Ok(Value::Float(tensor.sum())),
+                    "mean" => Ok(Value::Float(tensor.mean())),
+                    "relu" => Ok(Value::Tensor(Rc::new(RefCell::new(tensor.relu())))),
+                    "flatten" => Ok(Value::Tensor(Rc::new(RefCell::new(tensor.flatten())))),
+                    _ => err(&format!("Tensor has no method '{method}'")),
+                }
+            }
+            Value::Struct { name: _, fields } => {
+                // Try field-like access (e.g. .len on Vec field)
+                for (fname, fval) in fields.borrow().iter() {
+                    if fname == method { return Ok(fval.clone()); }
+                }
+                err(&format!("no method '{method}'"))
+            }
+            _ => err(&format!("no method '{method}'")),
+        }
     }
 
     fn get_field(&self, val: &Value, field: &str) -> TenthResult<Value> {

@@ -3,7 +3,6 @@
 fn main() {
     println("=== Tenth Self-Hosting Bootstrap ===");
     
-    // Compile all three files together (lexer+parser depend on token types)
     let src = read_file("tenthc/lexer/token.th");
     let src = src + "\n" + read_file("tenthc/lexer/lexer.th");
     let src = src + "\n" + read_file("tenthc/parser/parser.th");
