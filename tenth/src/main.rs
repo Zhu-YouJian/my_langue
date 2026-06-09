@@ -26,9 +26,6 @@ fn main() -> TenthResult<()> {
             "wasm" if args.len() >= 3 => {
                 return run_wasm(&args[2]);
             }
-            "vm" if args.len() >= 3 => {
-                return vm_run(&args[2]);
-            }
             _ => {}
         }
     }
@@ -67,19 +64,104 @@ fn source_to_hir(source: &str) -> TenthResult<tenth::hir::hir::HirProgram> {
     lowerer.lower_program(&program)
 }
 
-/// Interpret a .th source file via the tree-walk interpreter.
+/// Run a .th source file — try VM first, fall back to tree-walk interpreter.
 fn run_file(path: &str) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| tenth::error::TenthError::RuntimeError {
             message: format!("cannot read {}: {}", path, e),
         })?;
     let hir = source_to_hir(&source)?;
+
+    // Try VM path first
+    match vm_execute(&hir) {
+        Ok(val) => {
+            if !matches!(val, Value::Unit) { println!("= {}", val); }
+            return Ok(());
+        }
+        Err(e) => {
+            eprintln!("[vm] {} — falling back to interpreter", e);
+        }
+    }
+
+    // Fallback to tree-walk
     let mut interpreter = Interpreter::new(&hir);
     match interpreter.execute_program(&hir)? {
         Some(val) => println!("= {}", val),
         None => {}
     }
     Ok(())
+}
+
+/// Execute a HirProgram via the VM. Returns the result or an error.
+fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
+    let mut vm = Vm::new();
+    register_natives(&mut vm);
+
+    for func in &hir.functions {
+        let compiler = BytecodeCompiler::new();
+        if let Ok(chunk) = compiler.compile(func) {
+            vm.add_fn(func.name.clone(), chunk);
+        }
+    }
+
+    if vm.functions.contains_key("main") {
+        vm.call("main")
+    } else if let Some(ref expr) = hir.main_expr {
+        let compiler = BytecodeCompiler::new();
+        let chunk = compiler.compile_main(expr)
+            .map_err(|_| tenth::error::TenthError::RuntimeError { message: "VM compile failed".into() })?;
+        vm.add_fn("main".into(), chunk);
+        vm.call("main")
+    } else {
+        Ok(Value::Unit)
+    }
+}
+
+fn register_natives(vm: &mut Vm) {
+    vm.add_native("println".into(), |_vm, args| {
+        for a in args { print!("{a}"); }
+        println!();
+        Ok(Value::Unit)
+    });
+    vm.add_native("read_file".into(), |_vm, args| {
+        if let Some(Value::String(path)) = args.first() {
+            match std::fs::read_to_string(path) {
+                Ok(s) => Ok(Value::String(s)),
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("read_file: {e}") }),
+            }
+        } else {
+            Ok(Value::String(String::new()))
+        }
+    });
+    vm.add_native("Vec::new".into(), |_vm, _args| {
+        Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))))
+    });
+    vm.add_native("compile_host".into(), |_vm, args| {
+        if args.len() >= 2 {
+            if let (Value::String(src), Value::String(out)) = (&args[0], &args[1]) {
+                match tenth::lexer::lexer::Lexer::new(src).tokenize()
+                    .and_then(|tokens| tenth::parser::parser::Parser::new(tokens).parse_program())
+                    .and_then(|prog| tenth::hir::lower::Lowerer::new().lower_program(&prog))
+                    .and_then(|hir| tenth::compile::compile_to_wasm(&hir))
+                {
+                    Ok(bytes) => { let _ = std::fs::write(out, &bytes); return Ok(Value::Int(0)); }
+                    Err(_) => return Ok(Value::Int(1)),
+                }
+            }
+        }
+        Ok(Value::Int(1))
+    });
+    vm.add_native("compile_program".into(), |_vm, args| {
+        if args.len() >= 2 {
+            if let Value::String(out) = &args[1] {
+                match tenth::compile::compile_program_to_wasm(&args[0]) {
+                    Ok(bytes) => { let _ = std::fs::write(out, &bytes); return Ok(Value::Int(0)); }
+                    Err(_) => return Ok(Value::Int(1)),
+                }
+            }
+        }
+        Ok(Value::Int(1))
+    });
 }
 
 /// Compile a .th file to a .wasm binary.
@@ -111,6 +193,7 @@ fn run_wasm(path: &str) -> TenthResult<()> {
 }
 
 /// Compile a .th file to bytecode and execute via the stack VM.
+#[allow(dead_code)]
 fn vm_run(path: &str) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| tenth::error::TenthError::RuntimeError {
