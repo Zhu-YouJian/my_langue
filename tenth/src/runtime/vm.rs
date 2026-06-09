@@ -167,9 +167,6 @@ impl Vm {
     fn run(&mut self, mut chunk_idx: usize) -> TenthResult<Value> {
         let mut ip: usize = 0;
         let base = self.stack.len();
-        // Copy chunk data to avoid borrow conflicts with self
-        let code = self.chunks[chunk_idx].code.clone();
-        let strings = self.chunks[chunk_idx].strings.clone();
         let num_args = self.chunks[chunk_idx].num_args;
         let num_locals = self.chunks[chunk_idx].num_locals;
         let mut locals = vec![Value::Unit; num_locals.max(num_args)];
@@ -181,35 +178,37 @@ impl Vm {
             }
         }
 
-        // Helper to read ops from the local code copy
-        let read_op = |ip: &mut usize| -> Op {
-            use Op::*;
-            if *ip >= code.len() { return Ret; }
-            let b = code[*ip]; *ip += 1;
-            macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if *ip + n > code.len() { return Ret; } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&code[*ip..*ip+n]); *ip += n; <$t>::from_le_bytes(buf) }}; }
-            match b {
-                0 => PushInt(r!(i64)), 1 => PushFloat(r!(f64)),
-                2 => PushBool(code[*ip] != 0),
-                3 => PushStr(r!(u64) as usize),
-                4 => PushUnit, 5 => Pop, 6 => Dup,
-                7 => Load(r!(u64) as usize), 8 => Store(r!(u64) as usize),
-                9 => LoadGlobal(r!(u64) as usize), 10 => StoreGlobal(r!(u64) as usize),
-                11 => Add, 12 => Sub, 13 => Mul, 14 => Div, 15 => Mod,
-                16 => Neg, 17 => Not,
-                18 => Eq, 19 => Neq, 20 => Lt, 21 => Gt, 22 => Lte, 23 => Gte,
-                24 => Jump(r!(i32)), 25 => JmpFalse(r!(i32)), 26 => JmpTrue(r!(i32)),
-                27 => Call(r!(u64) as usize), 28 => CallN(r!(u64) as usize, r!(u64) as usize),
-                29 => MethodCall(r!(u64) as usize, r!(u64) as usize), 30 => Ret,
-                31 => MakeVec(r!(u64) as usize), 32 => MakeMap(r!(u64) as usize),
-                33 => NewStruct(r!(u64) as usize, r!(u64) as usize),
-                34 => LoadField(r!(u64) as usize),
-                35 => IndexGet,
-                _ => Ret,
-            }
-        };
+        // Load initial chunk data
+        let mut code = self.chunks[chunk_idx].code.clone();
+        let mut strings = self.chunks[chunk_idx].strings.clone();
 
         loop {
-            let op = read_op(&mut ip);
+            // Inline opcode read (no closure, so code/strings can be reassigned)
+            let op: Op = {
+                use Op::*;
+                if ip >= code.len() { return Ok(Value::Unit); }
+                let b = code[ip]; ip += 1;
+                macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if ip + n > code.len() { return Ok(Value::Unit); } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&code[ip..ip+n]); ip += n; <$t>::from_le_bytes(buf) }}; }
+                match b {
+                    0 => PushInt(r!(i64)), 1 => PushFloat(r!(f64)),
+                    2 => PushBool(code[ip] != 0),
+                    3 => PushStr(r!(u64) as usize),
+                    4 => PushUnit, 5 => Pop, 6 => Dup,
+                    7 => Load(r!(u64) as usize), 8 => Store(r!(u64) as usize),
+                    9 => LoadGlobal(r!(u64) as usize), 10 => StoreGlobal(r!(u64) as usize),
+                    11 => Add, 12 => Sub, 13 => Mul, 14 => Div, 15 => Mod,
+                    16 => Neg, 17 => Not,
+                    18 => Eq, 19 => Neq, 20 => Lt, 21 => Gt, 22 => Lte, 23 => Gte,
+                    24 => Jump(r!(i32)), 25 => JmpFalse(r!(i32)), 26 => JmpTrue(r!(i32)),
+                    27 => Call(r!(u64) as usize), 28 => CallN(r!(u64) as usize, r!(u64) as usize),
+                    29 => MethodCall(r!(u64) as usize, r!(u64) as usize), 30 => Ret,
+                    31 => MakeVec(r!(u64) as usize), 32 => MakeMap(r!(u64) as usize),
+                    33 => NewStruct(r!(u64) as usize, r!(u64) as usize),
+                    34 => LoadField(r!(u64) as usize),
+                    35 => IndexGet,
+                    _ => Ret,
+                }
+            };
             match op {
                 Op::PushInt(n) => self.stack.push(Value::Int(n)),
                 Op::PushFloat(f) => self.stack.push(Value::Float(f)),
@@ -300,6 +299,8 @@ impl Vm {
                         let callee_locals = self.chunks[callee_idx].num_locals;
                         self.frames.push(Frame { ip, chunk_idx, locals: locals.clone(), stack_base: base });
                         chunk_idx = callee_idx;
+                        code = self.chunks[chunk_idx].code.clone();
+                        strings = self.chunks[chunk_idx].strings.clone();
                         ip = 0;
                         locals = vec![Value::Unit; callee_locals.max(callee_args)];
                         for i in (0..callee_args).rev() {
@@ -320,6 +321,8 @@ impl Vm {
                     } else if let Some(&callee_idx) = self.functions.get(&name) {
                         self.frames.push(Frame { ip, chunk_idx, locals: locals.clone(), stack_base: base });
                         chunk_idx = callee_idx;
+                        code = self.chunks[chunk_idx].code.clone();
+                        strings = self.chunks[chunk_idx].strings.clone();
                         ip = 0;
                         locals = args;
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
@@ -344,6 +347,8 @@ impl Vm {
                         self.stack.push(result);
                         ip = f.ip;
                         chunk_idx = f.chunk_idx;
+                        code = self.chunks[chunk_idx].code.clone();
+                        strings = self.chunks[chunk_idx].strings.clone();
                         locals = f.locals;
                     } else {
                         return Ok(result);
