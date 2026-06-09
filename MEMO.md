@@ -18,10 +18,11 @@ tenthc/ 保留 Tenth 编写的词法分析器和语法分析器（通过 Rust �
 | Lexer | `tenthc/lexer/lexer.th` | ✅ 完整词法分析 |
 | Parser | `tenthc/parser/parser.th` | ✅ 递归下降 + 优先级爬山 + arena AST |
 | ~~Codegen~~ | ~~`tenthc/codegen/cgen.th`~~ | ❌ 已移除 |
+| WASM 编译 | `tenth/src/compile/` | ✅ HIR→WASM 可输出 .wasm 并内嵌执行 |
 
 待完成：
-- [ ] 端到端自举验证（Rust 解释器执行 Tenth 编译器）
-- [ ] 自举输出方式待定（WASM / 直接解释执行）
+- [ ] 端到端自举验证（Rust 解释器执行 Tenth 编译器 → 编译自身到 WASM）
+- [ ] 自举输出方式定型（WASM via wasmi 已可运行）
 
 ---
 
@@ -70,16 +71,16 @@ tenthc/ 保留 Tenth 编写的词法分析器和语法分析器（通过 Rust �
 
 ## 网络代理
 
-Clash `127.0.0.1:6454`
+Clash `127.0.0.1:7892`
 
 ```cmd
 # cargo / curl
-set HTTP_PROXY=http://127.0.0.1:6454
-set HTTPS_PROXY=http://127.0.0.1:6454
+set HTTP_PROXY=http://127.0.0.1:7892
+set HTTPS_PROXY=http://127.0.0.1:7892
 
 # git（已配好）
-git config http.proxy http://127.0.0.1:6454
-git config https.proxy http://127.0.0.1:6454
+git config http.proxy http://127.0.0.1:7892
+git config https.proxy http://127.0.0.1:7892
 ```
 
 ---

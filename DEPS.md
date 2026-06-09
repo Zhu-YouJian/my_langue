@@ -39,7 +39,7 @@ set PATH=%PATH%;C:\Users\史蒂夫\.cargo\bin
 
 国内网络直连 GitHub 经常超时，需要通过代理。
 
-**代理地址**：`http://127.0.0.1:6454`（Clash）
+**代理地址**：`http://127.0.0.1:7892`（Clash）
 
 ### Cargo / curl
 
@@ -83,6 +83,8 @@ git config --unset https.proxy
 | `thiserror` | 2 | 错误类型派生宏 |
 | `rand` | 0.8 | 随机数生成 |
 | `rand_distr` | 0.4 | 分布采样（正态分布等，用于 `randn`） |
+| `wasm-encoder` | 0.215 | WASM 二进制编码（`.th` → `.wasm`） |
+| `wasmi` | 0.39 | WASM 内嵌解释器（wasm run） |
 
 ### 传递依赖树
 
@@ -132,15 +134,18 @@ git config --unset https.proxy
 ├── AUDIT.md
 ├── MEMO.md
 ├── docs/            ← 设计文档和实施计划
-│   ├── tenth-language-reference.md
+│   ├── 语言参考手册.md   ← 权威语言参考
 │   └── superpowers/
-│       ├── plans/
-│       │   ├── 2026-05-22-phase1-bootstrap-compiler.md
-│       │   ├── 2026-05-22-phase2-interpreter-hardening.md
-│       │   ├── 2026-05-22-phase3a-type-system.md
-│       │   └── 2026-05-22-phase3b-mlir-compilation.md
-│       └── specs/
-│           └── 2026-05-22-tenth-language-design.md
+│       └── plans/
+│           ├── 2026-05-22-phase1-bootstrap-compiler.md
+│           ├── 2026-05-22-phase2-interpreter-hardening.md
+│           ├── 2026-05-22-phase3a-type-system.md
+│           ├── 2026-05-22-phase3b-mlir-compilation.md
+│           ├── 2026-05-26-phase4-gpu-performance.md
+│           ├── 2026-05-26-phase5-ai-fullstack.md
+│           ├── 2026-05-26-phase6-ecosystem-tools.md
+│           ├── 2026-05-26-v0.3.0-standard-library-and-self-hosting.md
+│           └── 2026-05-26-v0.3.1-language-gaps.md
 ├── tenthc/          ← Tenth 自举编译器 (.th 源码，通过 Rust 解释器运行)
 │   ├── main.th
 │   ├── lexer/
@@ -156,6 +161,10 @@ git config --unset https.proxy
     │   ├── lexer/
     │   ├── parser/
     │   ├── hir/
+│   │   ├── compile/    ← WASM 编译后端
+│   │   │   ├── mod.rs
+│   │   │   ├── wasm.rs
+│   │   │   └── bridge.rs
 │   │   ├── runtime/     ← 解释器 + 值系统 + 内存管理
 │   │   │   ├── mod.rs
 │   │   │   ├── value.rs
@@ -163,21 +172,22 @@ git config --unset https.proxy
 │   │   │   ├── interpreter.rs
 │   │   │   ├── arena.rs
 │   │   │   ├── autodiff.rs
-│   │   │   └── limits.rs    ← 🆕 资源限制 + 原子计数器
+│   │   │   └── limits.rs    ← 资源限制 + 原子计数器
 │   │   └── repl.rs       ← 交互环境
-    └── tests/          ← 集成测试 + 内存专项测试
+│   ├── std/             ← Tenth 标准库 (.th 源码)
+│   │   ├── nn/
+│   │   └── optim/
+    └── tests/          ← 82 项测试（11 文件）
         ├── integration_test.rs
-        ├── memory_test.rs   ← 🆕 17 个内存护栏测试
+        ├── memory_test.rs
         ├── lexer_test.rs
         ├── parser_test.rs
-        ├── compile_test.rs
         ├── enum_test.rs
         ├── generic_test.rs
         ├── module_test.rs
         ├── ownership_test.rs
         ├── stdlib_test.rs
         ├── struct_test.rs
-        ├── tenthc_test.rs
         ├── trait_test.rs
         └── fixtures/
 ```

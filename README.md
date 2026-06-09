@@ -16,9 +16,12 @@
 | 引用 / 移动语义 | ✅ |
 | 编译期借用检查 | ✅ |
 | ~~MIR → C 编译~~ | ❌ 已移除 |
-| Shape 推导引擎 | ✅ |
+| ~~Shape 推导引擎~~ | ❌ 随 C 后端移除 |
 | REPL 交互环境 | ✅ |
 | 内存护栏 (arena + limits) | ✅ |
+| WASM 编译 (wasm-encoder + wasmi) | ✅ |
+| 自动微分 (标量级 tape) | ✅ |
+| Vec / HashMap / String 标准库 | ✅ |
 
 ## 快速开始
 
@@ -29,7 +32,13 @@ cargo build --manifest-path tenth/Cargo.toml
 # 运行 REPL
 cargo run --manifest-path tenth/Cargo.toml
 
-# 运行测试
+# 运行 .th 文件
+cargo run --manifest-path tenth/Cargo.toml run path/to/file.th
+
+# 编译到 WASM
+cargo run --manifest-path tenth/Cargo.toml build path/to/file.th
+
+# 运行测试（82 项，11 个测试文件）
 cargo test --manifest-path tenth/Cargo.toml
 ```
 
