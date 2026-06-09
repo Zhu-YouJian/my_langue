@@ -1,5 +1,6 @@
 pub mod wasm;
 pub mod bridge;
+pub mod bytecode;
 
 use crate::error::TenthResult;
 use crate::hir::hir::HirProgram;

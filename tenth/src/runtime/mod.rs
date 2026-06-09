@@ -4,3 +4,4 @@ pub mod interpreter;
 pub mod arena;
 pub mod autodiff;
 pub mod limits;
+pub mod vm;
