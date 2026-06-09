@@ -22,7 +22,7 @@ pub enum Op {
     Add, Sub, Mul, Div, Mod, Neg, Not,
     Eq, Neq, Lt, Gt, Lte, Gte,
     Jump(i32), JmpFalse(i32), JmpTrue(i32),
-    Call(usize), Ret,
+    Call(usize), CallN(usize, usize), Ret,
     MakeVec(usize), MakeMap(usize),
     NewStruct(usize, usize), LoadField(usize),
     IndexGet,
@@ -56,10 +56,10 @@ impl Chunk {
             Neg => 16, Not => 17,
             Eq => 18, Neq => 19, Lt => 20, Gt => 21, Lte => 22, Gte => 23,
             Jump(_) => 24, JmpFalse(_) => 25, JmpTrue(_) => 26,
-            Call(_) => 27, Ret => 28,
-            MakeVec(_) => 29, MakeMap(_) => 30,
-            NewStruct(..) => 31, LoadField(_) => 32,
-            IndexGet => 33,
+            Call(_) => 27, CallN(..) => 28, Ret => 29,
+            MakeVec(_) => 30, MakeMap(_) => 31,
+            NewStruct(..) => 32, LoadField(_) => 33,
+            IndexGet => 34,
         });
 
         // Emit operands
@@ -68,6 +68,7 @@ impl Chunk {
             PushInt(n) => w!(*n, i64), PushFloat(f) => w!(*f, f64),
             PushBool(b) => self.code.push(if *b {1} else {0}),
             PushStr(i) | LoadGlobal(i) | StoreGlobal(i) | Call(i) | LoadField(i) => w!(*i, u64),
+            CallN(i, n) => { w!(*i, u64); w!(*n, u64); }
             Load(i) | Store(i) => w!(*i, u64),
             Jump(o) | JmpFalse(o) | JmpTrue(o) => w!(*o, i32),
             MakeVec(n) | MakeMap(n) => w!(*n, u64),
@@ -91,11 +92,11 @@ impl Chunk {
             16 => Neg, 17 => Not,
             18 => Eq, 19 => Neq, 20 => Lt, 21 => Gt, 22 => Lte, 23 => Gte,
             24 => Jump(r!(i32)), 25 => JmpFalse(r!(i32)), 26 => JmpTrue(r!(i32)),
-            27 => Call(r!(u64) as usize), 28 => Ret,
-            29 => MakeVec(r!(u64) as usize), 30 => MakeMap(r!(u64) as usize),
-            31 => NewStruct(r!(u64) as usize, r!(u64) as usize),
-            32 => LoadField(r!(u64) as usize),
-            33 => IndexGet,
+            27 => Call(r!(u64) as usize), 28 => CallN(r!(u64) as usize, r!(u64) as usize), 29 => Ret,
+            30 => MakeVec(r!(u64) as usize), 31 => MakeMap(r!(u64) as usize),
+            32 => NewStruct(r!(u64) as usize, r!(u64) as usize),
+            33 => LoadField(r!(u64) as usize),
+            34 => IndexGet,
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -242,13 +243,33 @@ impl Vm {
 
                 Op::Call(i) => {
                     let name = chunk.strings.get(i).cloned().unwrap_or_default();
-                    // Try native first
+                    // Try native first (legacy: uses stack depth as arg count)
                     if let Some(native_fn) = self.natives.get(&name).copied() {
-                        // Args pushed in reverse by compiler; pop in same order as bytecode functions
-                        let mut args = vec![Value::Unit; self.stack.len() - base];
-                        for i in (0..args.len()).rev() {
-                            args[i] = self.stack.pop().unwrap_or(Value::Unit);
+                        let n = self.stack.len() - base;
+                        let mut args = vec![Value::Unit; n];
+                        for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
+                        let result = native_fn(self, &args)?;
+                        self.stack.push(result);
+                    } else if let Some(callee) = self.functions.get(&name).cloned() {
+                        // Save current frame ... (existing bytecode logic)
+                        self.frames.push(Frame { ip, chunk: chunk.clone(), locals: locals.clone(), stack_base: base });
+                        chunk = callee;
+                        ip = 0;
+                        locals = vec![Value::Unit; chunk.num_locals.max(chunk.num_args)];
+                        for i in (0..chunk.num_args).rev() {
+                            if self.stack.len() > base { locals[i] = self.stack.pop().unwrap(); }
                         }
+                    } else {
+                        return Err(TenthError::RuntimeError { message: format!("VM: undefined '{name}'") });
+                    }
+                }
+                Op::CallN(i, num_args) => {
+                    let name = chunk.strings.get(i).cloned().unwrap_or_default();
+                    // Native call with explicit arg count
+                    let n = num_args;
+                    let mut args = vec![Value::Unit; n];
+                    for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
+                    if let Some(native_fn) = self.natives.get(&name).copied() {
                         let result = native_fn(self, &args)?;
                         self.stack.push(result);
                     } else if let Some(callee) = self.functions.get(&name).cloned() {

@@ -122,7 +122,7 @@ impl BytecodeCompiler {
                 match &func.kind {
                     Var(name) => {
                         let i = self.chunk.add_string(name);
-                        self.chunk.emit(Op::Call(i));
+                        self.chunk.emit(Op::CallN(i, args.len()));
                     }
                     _ => {
                         // Indirect call — compile func as expression, then we'd need CallIndirect
