@@ -16,6 +16,8 @@ pub struct BytecodeCompiler {
     /// Labels: (label_id, code_offset)
     labels: HashMap<usize, usize>,
     next_label: usize,
+    /// Loop context stack: (loop_start_code_offset, break_label, continue_label)
+    loop_stack: Vec<(usize, usize, usize)>,
 }
 
 impl BytecodeCompiler {
@@ -26,6 +28,7 @@ impl BytecodeCompiler {
             patches: Vec::new(),
             labels: HashMap::new(),
             next_label: 0,
+            loop_stack: Vec::new(),
         }
     }
 
@@ -277,18 +280,46 @@ impl BytecodeCompiler {
             }
             HirStmtKind::While { cond, body } => {
                 let loop_start = self.chunk.code.len();
+                let break_label = self.new_label();
+                let continue_label = self.new_label();
+                self.label(continue_label); // continue: re-evaluate cond
+                self.loop_stack.push((loop_start, break_label, continue_label));
                 self.compile_expr(cond)?;
-                let exit_label = self.new_label();
                 self.chunk.emit(Op::JmpFalse(0));
-                self.patch_jump(exit_label);
+                self.patch_jump(break_label);
                 self.compile_stmt(body)?;
-                // Jump back to loop start
-                let offset = loop_start as i32 - self.chunk.code.len() as i32;
-                self.chunk.emit(Op::Jump(offset - 5)); // approximate
-                self.label(exit_label);
+                // Jump back to condition (continue_label)
+                let offset = loop_start as i32 - self.chunk.code.len() as i32 - 5;
+                self.chunk.emit(Op::Jump(offset));
+                self.label(break_label);
+                self.loop_stack.pop();
+            }
+            HirStmtKind::Loop { body } => {
+                let loop_start = self.chunk.code.len();
+                let break_label = self.new_label();
+                let continue_label = self.new_label();
+                self.label(continue_label); // continue jumps here
+                self.loop_stack.push((loop_start, break_label, continue_label));
+                for s in body {
+                    self.compile_stmt(s)?;
+                }
+                // Unconditional jump back to loop start
+                let offset = loop_start as i32 - self.chunk.code.len() as i32 - 5;
+                self.chunk.emit(Op::Jump(offset));
+                self.label(break_label); // break jumps here
+                self.loop_stack.pop();
             }
             HirStmtKind::Break => {
-                self.chunk.emit(Op::Jump(0)); // patched by enclosing loop
+                if let Some(&(_, break_label, _)) = self.loop_stack.last() {
+                    self.chunk.emit(Op::Jump(0));
+                    self.patches.push((self.chunk.code.len() - 4, break_label));
+                }
+            }
+            HirStmtKind::Continue => {
+                if let Some(&(_, _, continue_label)) = self.loop_stack.last() {
+                    self.chunk.emit(Op::Jump(0));
+                    self.patches.push((self.chunk.code.len() - 4, continue_label));
+                }
             }
             _ => {}
         }
