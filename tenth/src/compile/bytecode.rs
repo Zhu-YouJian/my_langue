@@ -35,7 +35,10 @@ impl BytecodeCompiler {
             self.locals.push(name.clone());
         }
         self.compile_expr(&func.body)?;
-        self.chunk.emit(Op::PushUnit);
+        // Only push Unit for void functions
+        if matches!(func.return_type, crate::hir::types::Type::Base(crate::hir::types::BaseType::Unit)) {
+            self.chunk.emit(Op::PushUnit);
+        }
         self.chunk.emit(Op::Ret);
         self.resolve_patches();
         Ok(self.chunk)

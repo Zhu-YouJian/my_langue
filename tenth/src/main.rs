@@ -5,7 +5,10 @@ use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::hir::lower::Lowerer;
 use tenth::runtime::interpreter::Interpreter;
+use tenth::runtime::vm::Vm;
+use tenth::runtime::value::Value;
 use tenth::compile;
+use tenth::compile::bytecode::BytecodeCompiler;
 
 fn main() -> TenthResult<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -20,6 +23,9 @@ fn main() -> TenthResult<()> {
             }
             "wasm" if args.len() >= 3 => {
                 return run_wasm(&args[2]);
+            }
+            "vm" if args.len() >= 3 => {
+                return vm_run(&args[2]);
             }
             _ => {}
         }
@@ -100,4 +106,78 @@ fn run_wasm(path: &str) -> TenthResult<()> {
         })?;
     let hir = source_to_hir(&source)?;
     compile::run_wasm(&hir)
+}
+
+/// Compile a .th file to bytecode and execute via the stack VM.
+fn vm_run(path: &str) -> TenthResult<()> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| tenth::error::TenthError::RuntimeError {
+            message: format!("cannot read {}: {}", path, e),
+        })?;
+    let hir = source_to_hir(&source)?;
+    let mut vm = Vm::new();
+
+    // Register native functions
+    vm.set_global("println".into(), Value::FnRef {
+        name: "println".into(), params: vec![], return_type: tenth::hir::types::Type::unit(),
+    });
+
+    // Compile each function to bytecode
+    for func in &hir.functions {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile(func) {
+            Ok(chunk) => {
+                vm.add_fn(func.name.clone(), chunk);
+                // Also set as global so it can be called
+                vm.set_global(func.name.clone(), Value::FnRef {
+                    name: func.name.clone(),
+                    params: func.params.clone(),
+                    return_type: func.return_type.clone(),
+                });
+            }
+            Err(_) => {
+                // Fallback to tree-walk if compilation fails
+            }
+        }
+    }
+
+    // Execute main
+    if vm.functions.contains_key("main") {
+        match vm.call("main") {
+            Ok(val) => {
+                if !matches!(val, Value::Unit) {
+                    println!("= {}", val);
+                }
+            }
+            Err(e) => {
+                // Fallback to tree-walk interpreter
+                eprintln!("[vm] error: {} — falling back to interpreter", e);
+                let mut interpreter = Interpreter::new(&hir);
+                match interpreter.execute_program(&hir)? {
+                    Some(val) => println!("= {}", val),
+                    None => {}
+                }
+            }
+        }
+    } else if let Some(ref expr) = hir.main_expr {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile_main(expr) {
+            Ok(chunk) => {
+                vm.add_fn("main".into(), chunk);
+                let val = vm.call("main")?;
+                if !matches!(val, Value::Unit) {
+                    println!("= {}", val);
+                }
+            }
+            Err(_) => {
+                let mut interpreter = Interpreter::new(&hir);
+                match interpreter.execute_program(&hir)? {
+                    Some(val) => println!("= {}", val),
+                    None => {}
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

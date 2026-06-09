@@ -108,7 +108,7 @@ struct Frame {
 }
 
 pub struct Vm {
-    functions: HashMap<String, Chunk>,
+    pub functions: HashMap<String, Chunk>,
     globals: HashMap<String, Value>,
     stack: Vec<Value>,
     frames: Vec<Frame>,
