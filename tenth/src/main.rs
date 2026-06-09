@@ -72,18 +72,13 @@ fn run_file(path: &str) -> TenthResult<()> {
         })?;
     let hir = source_to_hir(&source)?;
 
-    // Try VM path first
     match vm_execute(&hir) {
         Ok(val) => {
             if !matches!(val, Value::Unit) { println!("= {}", val); }
             return Ok(());
         }
-        Err(e) => {
-            eprintln!("[vm] {} — falling back to interpreter", e);
-        }
+        Err(_) => {}
     }
-
-    // Fallback to tree-walk
     let mut interpreter = Interpreter::new(&hir);
     match interpreter.execute_program(&hir)? {
         Some(val) => println!("= {}", val),
