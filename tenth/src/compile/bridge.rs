@@ -542,6 +542,24 @@ fn convert_expr_depth(
                 span: span.clone(),
             })
         }
+        "method_call" => {
+            let receiver = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let method = ast::Ident { name: sval, span: span.clone() };
+            let mut args = Vec::new();
+            if arg_count > 0 {
+                let start = arg_start.max(1) as usize;
+                let end = start + arg_count as usize;
+                for i in start..end {
+                    if i > 0 && i <= expr_nodes.len() {
+                        args.push(convert_expr_depth(i, expr_nodes, stmt_nodes, span, depth + 1)?);
+                    }
+                }
+            }
+            Ok(ast::Expr {
+                kind: ast::ExprKind::MethodCall { receiver: Box::new(receiver), method, args },
+                span: span.clone(),
+            })
+        }
         "field" => {
             let target = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
             Ok(ast::Expr {

@@ -10,19 +10,28 @@
 
 ## 自举编译器现状
 
-tenthc/ 保留 Tenth 编写的词法分析器和语法分析器（通过 Rust 解释器运行）：
+tenthc/ 保留 Tenth 编写的词法分析器和语法分析器（通过 Rust 解释器运行）。
+`tenthc/main.th` 已合并全部源码，实现自举管线：Tenth Lexer → Parser → compile_program → WASM。
 
 | 层 | 文件 | 状态 |
 |----|------|------|
 | Token | `tenthc/lexer/token.th` | ✅ enum TokenKind (50+ 变体) |
-| Lexer | `tenthc/lexer/lexer.th` | ✅ 完整词法分析 |
-| Parser | `tenthc/parser/parser.th` | ✅ 递归下降 + 优先级爬山 + arena AST |
+| Lexer | `tenthc/lexer/lexer.th` | ✅ 完整词法分析，字面量值正确解析 |
+| Parser | `tenthc/parser/parser.th` | ✅ 递归下降 + 优先级爬山 + method_call 支持 |
 | ~~Codegen~~ | ~~`tenthc/codegen/cgen.th`~~ | ❌ 已移除 |
-| WASM 编译 | `tenth/src/compile/` | ✅ HIR→WASM 可输出 .wasm 并内嵌执行 |
+| WASM 编译 | `tenth/src/compile/` | ✅ HIR→WASM |
+| Bridge | `tenth/src/compile/bridge.rs` | ✅ compact→AST (含 method_call) |
 
-待完成：
-- [ ] 端到端自举验证（Rust 解释器执行 Tenth 编译器 → 编译自身到 WASM）
-- [ ] 自举输出方式定型（WASM via wasmi 已可运行）
+**2026-06 进展：**
+- [x] Lexer: Token 新增 fval 字段，FloatLiteral 值不再丢失
+- [x] Parser: 修复 method_call — Dot+LParen 产生 "method_call" 节点 (含 receiver)
+- [x] Bridge: 新增 "method_call" → ast::MethodCall 转换
+- [x] 自举管线闭环：tenthc/main.th 通过 Rust 解释器编译 token.th → WASM (614 bytes)
+- [x] 小函数自举验证通过："fn add" 18 tokens → 解析 → WASM 631 bytes
+
+**已知限制：**
+- [ ] 树遍历解释器性能：大文件 (~11000 字符) 的自举解析超时，需优化或分批处理
+- [ ] WASM 执行验证：generated .wasm 的 wasmi 执行待测试
 
 ---
 
