@@ -214,6 +214,24 @@ impl BytecodeCompiler {
                 self.chunk.emit(Op::LoadField(fi));
             }
 
+            FieldAssign { target, field, value } => {
+                self.compile_expr(target)?;
+                self.compile_expr(value)?;
+                let fi = self.chunk.add_string(field);
+                self.chunk.emit(Op::StoreField(fi));
+            }
+
+            DerefAssign { target, value } => {
+                self.compile_expr(target)?;
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::Store(0));
+            }
+            DerefAssignOp { target, value, .. } => {
+                self.compile_expr(target)?;
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::Store(0));
+            }
+
             Index { target, indices } => {
                 self.compile_expr(target)?;
                 for idx in indices {
@@ -241,7 +259,7 @@ impl BytecodeCompiler {
                 self.chunk.emit(Op::MakeVec(elements.len()));
             }
 
-            Ref(inner) | MutRef(inner) => {
+            Ref(inner) | MutRef(inner) | Deref(inner) => {
                 // VM doesn't track ownership; treat as pass-through
                 self.compile_expr(inner)?;
             }

@@ -24,7 +24,7 @@ pub enum Op {
     Jump(i32), JmpFalse(i32), JmpTrue(i32),
     Call(usize), CallN(usize, usize), MethodCall(usize, usize), Ret,
     MakeVec(usize), MakeMap(usize),
-    NewStruct(usize, usize), LoadField(usize),
+    NewStruct(usize, usize), LoadField(usize), StoreField(usize),
     IndexGet,
 }
 
@@ -58,8 +58,8 @@ impl Chunk {
             Jump(_) => 24, JmpFalse(_) => 25, JmpTrue(_) => 26,
             Call(_) => 27, CallN(..) => 28, MethodCall(..) => 29, Ret => 30,
             MakeVec(_) => 31, MakeMap(_) => 32,
-            NewStruct(..) => 33, LoadField(_) => 34,
-            IndexGet => 35,
+            NewStruct(..) => 33, LoadField(_) => 34, StoreField(_) => 35,
+            IndexGet => 36,
         });
 
         // Emit operands
@@ -67,7 +67,7 @@ impl Chunk {
         match &op {
             PushInt(n) => w!(*n, i64), PushFloat(f) => w!(*f, f64),
             PushBool(b) => self.code.push(if *b {1} else {0}),
-            PushStr(i) | LoadGlobal(i) | StoreGlobal(i) | Call(i) | LoadField(i) => w!(*i, u64),
+            PushStr(i) | LoadGlobal(i) | StoreGlobal(i) | Call(i) | LoadField(i) | StoreField(i) => w!(*i, u64),
             CallN(i, n) => { w!(*i, u64); w!(*n, u64); }
             MethodCall(i, n) => { w!(*i, u64); w!(*n, u64); }
             Load(i) | Store(i) => w!(*i, u64),
@@ -101,7 +101,8 @@ impl Chunk {
             31 => MakeVec(r!(u64) as usize), 32 => MakeMap(r!(u64) as usize),
             33 => NewStruct(r!(u64) as usize, r!(u64) as usize),
             34 => LoadField(r!(u64) as usize),
-            35 => IndexGet,
+            35 => StoreField(r!(u64) as usize),
+            36 => IndexGet,
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -391,6 +392,13 @@ impl Vm {
                     self.stack.push(v);
                 }
 
+                Op::StoreField(i) => {
+                    let fname = strings.get(i).cloned().unwrap_or_default();
+                    let new_val = self.stack.pop().unwrap_or(Value::Unit);
+                    let target = self.stack.pop().unwrap_or(Value::Unit);
+                    self.set_field(&target, &fname, new_val)?;
+                }
+
                 Op::IndexGet => {
                     let idx = self.stack.pop().unwrap_or(Value::Unit);
                     let target = self.stack.pop().unwrap_or(Value::Unit);
@@ -532,6 +540,20 @@ impl Vm {
                 err(&format!("no method '{method}'"))
             }
             _ => err(&format!("no method '{method}'")),
+        }
+    }
+
+    fn set_field(&self, val: &Value, field: &str, new_val: Value) -> TenthResult<()> {
+        match val {
+            Value::Struct { fields, .. } => {
+                for (n, v) in fields.borrow_mut().iter_mut() {
+                    if n == field { *v = new_val; return Ok(()); }
+                }
+                err(&format!("no field '{field}'"))
+            }
+            Value::Shared(rc) => self.set_field(&rc.borrow(), field, new_val),
+            Value::Ref(rc) => self.set_field(&rc.borrow(), field, new_val),
+            _ => err("cannot set field"),
         }
     }
 
