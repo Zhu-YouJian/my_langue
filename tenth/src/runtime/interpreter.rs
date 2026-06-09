@@ -13,7 +13,9 @@ use super::arena::Arena;
 const DEFAULT_ARENA_CAPACITY: usize = 64 * 1024; // 64K f64 slots = 512 KB
 
 pub struct Interpreter {
-    pub variables: HashMap<String, Value>,
+    /// Scope chain: scopes[0] is global, pushed/popped on function entry/exit.
+    /// Variable lookup walks from the last scope backward.
+    pub scopes: Vec<HashMap<String, Value>>,
     functions: Vec<HirFnDef>,
     generic_funcs: HashMap<String, HirFnDef>,
     methods: HashMap<String, HashMap<String, HirFnDef>>,
@@ -29,7 +31,7 @@ pub struct Interpreter {
 impl Interpreter {
     pub fn new(program: &HirProgram) -> Self {
         Interpreter {
-            variables: HashMap::new(),
+            scopes: vec![HashMap::new()],
             functions: program.functions.clone(),
             generic_funcs: HashMap::new(),
             methods: program.methods.clone(),
@@ -38,6 +40,16 @@ impl Interpreter {
             limits: None,
             arena: Arena::new(DEFAULT_ARENA_CAPACITY),
         }
+    }
+
+    /// Convenience: access the global (bottom) scope.
+    pub fn globals(&self) -> &HashMap<String, Value> {
+        &self.scopes[0]
+    }
+
+    /// Convenience: mutable access to the current (top) scope.
+    fn current_scope(&mut self) -> &mut HashMap<String, Value> {
+        self.scopes.last_mut().unwrap()
     }
 
     /// Create an interpreter with resource limits enforced.
@@ -52,7 +64,7 @@ impl Interpreter {
     }
 
     pub fn execute_program(&mut self, program: &HirProgram) -> TenthResult<Option<Value>> {
-        self.variables.insert(
+        self.current_scope().insert(
             "tensor".to_string(),
             Value::FnRef {
                 name: "tensor".to_string(),
@@ -67,7 +79,7 @@ impl Interpreter {
         for func in &program.functions {
             let params = func.params.clone();
             let ret = func.return_type.clone();
-            self.variables.insert(
+            self.current_scope().insert(
                 func.name.clone(),
                 Value::FnRef {
                     name: func.name.clone(),
@@ -87,13 +99,15 @@ impl Interpreter {
                 let fn_name = &use_path[1];
                 if let Some(module) = self.modules.get(mod_name) {
                     if let Some(fn_def) = module.functions.iter().find(|f| &f.name == fn_name) {
+                        let params = fn_def.params.clone();
+                        let ret = fn_def.return_type.clone();
                         self.functions.push(fn_def.clone());
-                        self.variables.insert(
+                        self.current_scope().insert(
                             alias.clone(),
                             Value::FnRef {
                                 name: alias.clone(),
-                                params: fn_def.params.clone(),
-                                return_type: fn_def.return_type.clone(),
+                                params,
+                                return_type: ret,
                             },
                         );
                     }
@@ -116,35 +130,39 @@ impl Interpreter {
     }
 
     fn resolve_var(&self, name: &str) -> Option<Value> {
-        match self.variables.get(name) {
-            Some(Value::Shared(rc)) => Some(rc.borrow().clone()),
-            Some(Value::Moved) => None,
-            other => other.cloned(),
+        for scope in self.scopes.iter().rev() {
+            match scope.get(name) {
+                Some(Value::Shared(rc)) => return Some(rc.borrow().clone()),
+                Some(Value::Moved) => return None,
+                Some(other) => return Some(other.clone()),
+                None => continue,
+            }
         }
+        None
     }
 
     fn set_var(&mut self, name: String, val: Value) {
         // Guard: check variable count before inserting a new one
+        let total_vars: usize = self.scopes.iter().map(|s| s.len()).sum();
         if let Some(ref limits) = self.limits {
-            if !self.variables.contains_key(&name) {
-                if let Err(msg) = limits.guard_vars(self.variables.len()) {
-                    // In mem-strict mode, this would panic; in default, warn
+            if !self.scopes.iter().any(|s| s.contains_key(&name)) {
+                if let Err(msg) = limits.guard_vars(total_vars) {
                     eprintln!("[limits] variable limit: {}", msg);
                     if cfg!(feature = "mem-strict") {
                         panic!("variable limit exceeded: {}", msg);
                     }
-                    // Otherwise, proceed but warn
                 }
             }
         }
-        match self.variables.get(&name) {
-            Some(Value::Shared(rc)) => {
+        // Check all scopes for Shared to update in-place
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(Value::Shared(rc)) = scope.get(&name) {
                 *rc.borrow_mut() = val;
-            }
-            _ => {
-                self.variables.insert(name, val);
+                return;
             }
         }
+        // Otherwise, insert/overwrite in current scope
+        self.current_scope().insert(name, val);
     }
 
     /// Guarded tensor creation: checks element count against limits.
@@ -193,7 +211,7 @@ impl Interpreter {
                         return_type: Type::Unknown,
                     }));
                 }
-                if matches!(self.variables.get(name), Some(Value::Moved)) {
+                if self.scopes.iter().any(|s| matches!(s.get(name), Some(Value::Moved))) {
                     return Err(TenthError::RuntimeError {
                         message: format!("use of moved value '{}'", name),
                     });
@@ -280,20 +298,14 @@ impl Interpreter {
                     })?);
                 }
 
-                let saved: HashMap<String, Value> = template.params.iter()
-                    .filter_map(|(n, _)| self.variables.get(n).cloned().map(|v| (n.clone(), v)))
-                    .collect();
-
+                self.scopes.push(HashMap::new());
                 for ((pname, _), arg) in template.params.iter().zip(arg_values.iter()) {
-                    self.variables.insert(pname.clone(), arg.clone());
+                    self.current_scope().insert(pname.clone(), arg.clone());
                 }
 
                 let result = self.eval_expr(&template.body);
 
-                for (n, v) in saved {
-                    self.variables.insert(n, v);
-                }
-
+                self.scopes.pop();
                 result
             }
 
@@ -468,13 +480,13 @@ impl Interpreter {
                     message: "mut ref operand is void".into(),
                 })?;
                 if let HirExprKind::Var(var_name) = &inner.kind {
-                    let rc = match self.variables.get(var_name) {
-                        Some(Value::Shared(existing)) => existing.clone(),
-                        _ => {
-                            let cell = Rc::new(RefCell::new(val));
-                            self.variables.insert(var_name.clone(), Value::Shared(cell.clone()));
-                            cell
-                        }
+                    // Reuse existing Shared wrapper, or create new one in current scope
+                    let rc = if let Some(Value::Shared(existing)) = self.resolve_var(var_name) {
+                        existing
+                    } else {
+                        let cell = Rc::new(RefCell::new(val));
+                        self.current_scope().insert(var_name.clone(), Value::Shared(cell.clone()));
+                        cell
                     };
                     // Weak reference: does NOT contribute to Rc strong count.
                     // This prevents cycles when structs hold &mut references.
@@ -565,7 +577,7 @@ impl Interpreter {
                     message: "move operand is void".into(),
                 })?;
                 if let HirExprKind::Var(var_name) = &inner.kind {
-                    self.variables.insert(var_name.clone(), Value::Moved);
+                    self.current_scope().insert(var_name.clone(), Value::Moved);
                 }
                 Ok(Some(val))
             }
@@ -607,7 +619,7 @@ impl Interpreter {
                             if let Some((_fname, bname)) = field_bind {
                                 if let Value::Enum { fields, .. } = &val {
                                     if let Some((_, v)) = fields.borrow().first() {
-                                        self.variables.insert(bname.clone(), v.clone());
+                                        self.current_scope().insert(bname.clone(), v.clone());
                                     }
                                 }
                             }
@@ -615,7 +627,7 @@ impl Interpreter {
                         let result = self.eval_expr(&arm.body);
                         if let HirPattern::EnumVariant { field_bind, .. } = &arm.pattern {
                             if let Some((_, bname)) = field_bind {
-                                self.variables.remove(bname);
+                                self.current_scope().remove(bname);
                             }
                         }
                         return result;
@@ -1034,29 +1046,16 @@ impl Interpreter {
     }
 
     fn call_method_impl(&mut self, receiver: &Value, method_fn: &HirFnDef, args: &[Value]) -> TenthResult<Option<Value>> {
-        let saved: HashMap<String, Value> = method_fn.params.iter()
-            .filter_map(|(n, _)| self.variables.get(n).cloned().map(|v| (n.clone(), v)))
-            .collect();
-
-        let self_saved = self.variables.get("self").cloned();
-
-        self.variables.insert("self".to_string(), receiver.clone());
+        self.scopes.push(HashMap::new());
+        self.current_scope().insert("self".to_string(), receiver.clone());
 
         for ((pname, _), arg) in method_fn.params.iter().skip(1).zip(args.iter()) {
-            self.variables.insert(pname.clone(), arg.clone());
+            self.current_scope().insert(pname.clone(), arg.clone());
         }
 
         let result = self.eval_expr(&method_fn.body);
 
-        for (n, v) in saved {
-            self.variables.insert(n, v);
-        }
-
-        if let Some(v) = self_saved {
-            self.variables.insert("self".to_string(), v);
-        } else {
-            self.variables.remove("self");
-        }
+        self.scopes.pop();
 
         result
     }
@@ -1272,19 +1271,19 @@ impl Interpreter {
                 self.call_named_fn(name, args, span)
             }
             Value::Closure { params, body, captures } => {
-                let saved: HashMap<String, Value> = self.variables.clone();
+                self.scopes.push(HashMap::new());
 
                 for ((pname, _), arg) in params.iter().zip(args.iter()) {
-                    self.variables.insert(pname.clone(), arg.clone());
+                    self.current_scope().insert(pname.clone(), arg.clone());
                 }
 
                 for (cap_name, cap_val) in captures {
-                    self.variables.insert(cap_name.clone(), cap_val.clone());
+                    self.current_scope().insert(cap_name.clone(), cap_val.clone());
                 }
 
                 let result = self.eval_expr(body);
 
-                self.variables = saved;
+                self.scopes.pop();
 
                 result
             }
@@ -1407,15 +1406,15 @@ impl Interpreter {
                 if let Some(module) = self.modules.get(mod_name) {
                     if let Some(fn_def) = module.functions.iter().find(|f| f.name == fn_name) {
                         let fn_def = fn_def.clone();
-                        let saved: HashMap<String, Value> = self.variables.clone();
+                        self.scopes.push(HashMap::new());
 
                         for ((pname, _), arg) in fn_def.params.iter().zip(args.iter()) {
-                            self.variables.insert(pname.clone(), arg.clone());
+                            self.current_scope().insert(pname.clone(), arg.clone());
                         }
 
                         let result = self.eval_expr(&fn_def.body);
 
-                        self.variables = saved;
+                        self.scopes.pop();
 
                         return Self::unwrap_return(result);
                     }
@@ -1428,21 +1427,17 @@ impl Interpreter {
 
         let func_def = self.functions.iter().find(|f| f.name == name).cloned();
         if let Some(fd) = func_def {
-            // Save ALL current variables to support recursion.
-            // The old approach only saved variables matching parameter names,
-            // which caused local variables to be lost when a function calls itself.
-            let saved: HashMap<String, Value> = self.variables.clone();
+            // Push a new scope for function-local variables.
+            // Parameters and locals are isolated; globals remain visible via scope chain.
+            self.scopes.push(HashMap::new());
 
             for ((pname, _), arg) in fd.params.iter().zip(args.iter()) {
-                self.variables.insert(pname.clone(), arg.clone());
+                self.current_scope().insert(pname.clone(), arg.clone());
             }
 
             let result = self.eval_expr(&fd.body);
 
-            // Restore all saved variables. New variables created inside the
-            // function (locals) are removed; variables that were overwritten
-            // (parameters, globals) are restored to their pre-call values.
-            self.variables = saved;
+            self.scopes.pop();
 
             return Self::unwrap_return(result);
         }
@@ -1463,7 +1458,7 @@ impl Interpreter {
                     Some(e) => self.eval_expr(e)?.unwrap_or(Value::Unit),
                     None => Value::Unit,
                 };
-                self.variables.insert(name.clone(), val);
+                self.current_scope().insert(name.clone(), val);
                 Ok(())
             }
             HirStmtKind::Return(expr) => {
@@ -1520,7 +1515,7 @@ impl Interpreter {
                                 Some(v) => Value::Float(v),
                                 None => Value::Unit,
                             };
-                            self.variables.insert(var.clone(), val);
+                            self.current_scope().insert(var.clone(), val);
                             self.eval_stmt(body)?;
                         }
                     }
