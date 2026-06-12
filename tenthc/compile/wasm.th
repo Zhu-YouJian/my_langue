@@ -674,7 +674,7 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
             ci = ci + 1;
         };
         export_sec.push(0); // export kind: function
-        leb128_u(fi, &mut export_sec);
+        leb128_u(fi + 7, &mut export_sec);
         fi = fi + 1;
     };
     
