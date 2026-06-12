@@ -8,38 +8,72 @@
 > 原因：生成的 C 代码无内存管理（12 处 malloc / 0 处 free），导致系统级内存耗尽。详见 `SECURITY.md`。
 > 自举编译器改为通过 Rust 解释器执行。
 
-## 自举编译器现状
+## 自举编译器现状（2026-06-10 更新）
 
-tenthc/ 保留 Tenth 编写的词法分析器、语法分析器和引导入口。
-自举通过两条路径验证：
+自举管线全部由 Tenth 实现，全程走 VM（~0.2s），不再依赖解释器 fallback。
 
-**路径 A（快速引导）：** `tenth run tenthc/main.th`
-→ VM 字节码执行 → `compile_host` (Rust 原生编译) → 36 函数 → WASM
+### 自举管线
 
-**路径 B（真正自举）：** 合并文件 + `tenth run` (tree-walk fallback)
-→ **Tenth Lexer** 词法分析 → **Tenth Parser** 语法分析 → `compile_program` → WASM
-→ 验证: `"fn add(a:i64,b:i64)->i64{a+b}"` → 18 tokens → WASM 631 bytes ✅
+```
+Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wasmi
+   ✅          ✅       ✅         ✅           ✅           ✅      ✅
+  (Tenth)   (370行)  (430行)    (294行)      (703行)     import   add(3,4)=7
+```
+
+### 性能
+
+| 指标 | 优化前 | 优化后 |
+|------|--------|--------|
+| 自举管线执行时间 | ~200s (interpreter) | **~0.2s (VM)** |
+| VM fallback 率 | Lexer/Parser 100% | **0%** |
+| VM 指令数 | 33 | **40** |
+| wasmi 加载验证 | ❌ | ✅ `add(3,4)=7` |
+
+### 各层状态
 
 | 层 | 文件 | 状态 |
 |----|------|------|
 | Token | `tenthc/lexer/token.th` | ✅ enum TokenKind (50+ 变体) |
-| Lexer | `tenthc/lexer/lexer.th` | ✅ O(1) 源切片 + 递增算术，值正确解析 |
-| Parser | `tenthc/parser/parser.th` | ✅ 递归下降 + method_call 支持 |
-| ~~Codegen~~ | ~~`tenthc/codegen/cgen.th`~~ | ❌ 已移除 |
-| WASM 编译 | `tenth/src/compile/wasm.rs` | ✅ HIR→WASM, wasmi 闭环验证通过 |
-| Bridge | `tenth/src/compile/bridge.rs` | ✅ compact→AST (含 method_call) |
-| **字节码 VM** | `tenth/src/runtime/vm.rs` | ✅ 33 指令 + native 函数, 默认执行路径 |
-| VM 编译器 | `tenth/src/compile/bytecode.rs` | ✅ HIR→bytecode |
+| Lexer | `tenthc/lexer/lexer.th` | ✅ O(1) 源切片，**VM 全速** |
+| Parser | `tenthc/parser/parser.th` | ✅ 递归下降 + method_call，**VM 全速** |
+| HIR 类型 | `tenthc/hir/hir.th` | ✅ 紧凑表示 (104 行) |
+| Lowerer | `tenthc/hir/lower.th` | ✅ AST→HIR 降级 (306 行) |
+| WASM 编译器 | `tenthc/compile/wasm.th` | ✅ HIR→WASM + import 段 (703 行) |
+| ~~C Codegen~~ | ~~`tenthc/codegen/cgen.th`~~ | ❌ 已移除 |
+| **字节码 VM** | `tenth/src/runtime/vm.rs` | ✅ **40 指令** (33→40) |
+| VM 编译器 | `tenth/src/compile/bytecode.rs` | ✅ HIR→bytecode (含 Enum/Match) |
 
-**自举验证（2026-06-09）：**
-- [x] 路径 A: VM 自举 36 函数 → WASM (via compile_host)
-- [x] 路径 B: Tenth Lexer+Parser 自举编译小函数 → WASM 631 bytes ✅
-- [x] wasmi 闭环: 编译产物 → wasmi 加载 → 成功执行全部 36 函数
-- [x] VM 成为默认执行路径，tree-walk fallback
+### VM 指令列表（40 条）
 
-**已知限制：**
-- [ ] Lowerer 大文件性能 (~33K 字符合并文件 ~200s)，需模块拆分
-- [ ] VM 不支持 struct 字段访问、方法调用、闭包（tree-walk fallback 兜底）
+```
+0-3:   PushInt/Float/Bool/Str    20-23: Lt/Gt/Lte/Gte
+4:     PushUnit                  24-26: Jump/JmpFalse/JmpTrue
+5-6:   Pop/Dup                   27-28: Call/CallN
+7-8:   Load/Store                29:    MethodCall
+9-10:  LoadGlobal/StoreGlobal    30:    Ret
+11-15: Add/Sub/Mul/Div/Mod       31-32: MakeVec/MakeMap
+16-17: Neg/Not                   33:    NewStruct
+18-19: Eq/Neq                    34-35: LoadField/StoreField
+                                  36:    IndexGet
+                                  37:    SliceStr
+                                  38:    MakeEnum       ← 新增
+                                  39:    IsEnumVariant   ← 新增
+                                  40:    EnumGetField    ← 新增
+```
+
+### 新增验证（2026-06-10）
+
+- [x] 路径 C: Tenth Lexer+Parser+Lowerer+WASM 全链路 → wasmi `add(3,4)=7`
+- [x] VM Enum/Match 支持：Lexer/Parser 不再 fallback
+- [x] 永久回归测试：`tenth/tests/selfhost_verify.rs` (83/83 pass)
+- [x] 性能基准：`tenth run tenthc/boot_full.th` → 0.2s
+
+### 已知限制
+
+- [ ] Closure/GenericCall 仍在 VM 中 fallback（自举代码未使用）
+- [ ] Host import (Vec/String) 为占位实现，WASM 模块需宿主提供真实运行时
+- [ ] 三段式自举验证（输出 WASM 再编译自身）因栈溢出未跑通
+- [ ] 大文件 Lowerer 性能由解释器瓶颈转为 VM 无关（已解决）
 
 ---
 

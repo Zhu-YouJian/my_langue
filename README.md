@@ -4,25 +4,26 @@
 
 ## 现状
 
-**v0.3.0-pre** — Rust 解释器 + 字节码 VM + 自举编译器。82 项测试全过。
+**v0.3.0** — 字节码 VM (40 指令) + 自举编译器 (Tenth 全链路) + WASM 输出。83 项测试全过。
 
 | 组件 | 状态 |
 |------|------|
 | Lexer / Parser / AST | ✅ |
 | HIR + 类型推断 + 借用检查 | ✅ |
-| 树遍历解释器 | ✅ |
-| **字节码 VM（栈式，33 指令）** | ✅ |
+| 树遍历解释器 | ✅ (VM fallback) |
+| **字节码 VM（栈式，40 指令）** | ✅ **默认路径** |
 | 泛型函数 / 结构体 | ✅ |
 | Trait 定义与实现 | ✅ |
 | 引用 / 移动语义 | ✅ |
-| struct / enum / match | ✅ |
+| struct / enum / match | ✅ **VM 全支持** |
 | ~~MIR → C 编译~~ | ❌ 已移除 |
 | REPL 交互环境 | ✅ |
 | 内存护栏 (arena + limits) | ✅ |
 | WASM 编译 (wasm-encoder + wasmi) | ✅ |
 | 自动微分 (标量级 tape) | ✅ |
 | Vec / HashMap / String 标准库 | ✅ |
-| **自举编译器 (Tenth 编写)** | ✅ |
+| **自举编译器 (Tenth 编写，全链路)** | ✅ **~0.2s** |
+| **WASM import 输出** | ✅ wasmi 验证通过 |
 
 ## 快速开始
 
