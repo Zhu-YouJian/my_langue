@@ -279,6 +279,60 @@ impl BytecodeCompiler {
                 self.compile_expr(inner)?;
             }
 
+            EnumLiteral { enum_name, variant, fields } => {
+                let name_i = self.chunk.add_string(enum_name);
+                let variant_i = self.chunk.add_string(variant);
+                for (fname, fexpr) in fields.iter().rev() {
+                    self.compile_expr(fexpr)?;
+                    let fi = self.chunk.add_string(fname);
+                    self.chunk.emit(Op::PushStr(fi));
+                }
+                self.chunk.emit(Op::MakeEnum(name_i, variant_i, fields.len()));
+            }
+
+            Match { scrutinee, arms } => {
+                self.compile_expr(scrutinee)?;
+                let end_label = self.new_label();
+                for arm in arms {
+                    self.chunk.emit(Op::Dup);
+                    match &arm.pattern {
+                        HirPattern::EnumVariant { enum_name: _, variant, field_bind } => {
+                            let variant_i = self.chunk.add_string(variant);
+                            self.chunk.emit(Op::IsEnumVariant(variant_i));
+                            let next_label = self.new_label();
+                            self.chunk.emit(Op::JmpFalse(0));
+                            self.patch_jump(next_label);
+                            if let Some((bind_name, field_name)) = field_bind {
+                                self.chunk.emit(Op::Pop); // drop scrutinee dup
+                                let fi = self.chunk.add_string(field_name);
+                                self.chunk.emit(Op::EnumGetField(fi));
+                                let pos = self.locals.len();
+                                self.locals.push(bind_name.clone());
+                                self.chunk.emit(Op::Store(pos));
+                            } else {
+                                self.chunk.emit(Op::Pop); // drop scrutinee dup
+                            }
+                            self.compile_expr(&arm.body)?;
+                            self.chunk.emit(Op::Jump(0));
+                            self.patch_jump(end_label);
+                            self.label(next_label);
+                        }
+                        HirPattern::Wildcard => {
+                            self.chunk.emit(Op::Pop); // drop scrutinee dup
+                            self.compile_expr(&arm.body)?;
+                            self.chunk.emit(Op::Jump(0));
+                            self.patch_jump(end_label);
+                        }
+                        _ => {
+                            self.chunk.emit(Op::Pop); // drop dup, fall through
+                        }
+                    }
+                }
+                self.chunk.emit(Op::Pop); // drop scrutinee
+                self.chunk.emit(Op::PushUnit); // fallback result
+                self.label(end_label);
+            }
+
             // Fallback to tree-walk for complex constructs
             _ => {
                 self.chunk.emit(Op::PushUnit);

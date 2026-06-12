@@ -27,6 +27,9 @@ pub enum Op {
     NewStruct(usize, usize), LoadField(usize), StoreField(usize),
     IndexGet,
     SliceStr,
+    MakeEnum(usize, usize, usize),
+    IsEnumVariant(usize),
+    EnumGetField(usize),
 }
 
 // ── Chunk ──────────────────────────────────────────────────────────────────
@@ -61,6 +64,7 @@ impl Chunk {
             MakeVec(_) => 31, MakeMap(_) => 32,
             NewStruct(..) => 33, LoadField(_) => 34, StoreField(_) => 35,
             IndexGet => 36, SliceStr => 37,
+            MakeEnum(..) => 38, IsEnumVariant(_) => 39, EnumGetField(_) => 40,
         });
 
         // Emit operands
@@ -75,6 +79,9 @@ impl Chunk {
             Jump(o) | JmpFalse(o) | JmpTrue(o) => w!(*o, i32),
             MakeVec(n) | MakeMap(n) => w!(*n, u64),
             NewStruct(n, f) => { w!(*n, u64); w!(*f, u64); }
+            MakeEnum(n, v, f) => { w!(*n, u64); w!(*v, u64); w!(*f, u64); }
+            IsEnumVariant(v) => w!(*v, u64),
+            EnumGetField(f) => w!(*f, u64),
             _ => {}
         }
     }
@@ -105,6 +112,9 @@ impl Chunk {
             35 => StoreField(r!(u64) as usize),
             36 => IndexGet,
             37 => SliceStr,
+            38 => MakeEnum(r!(u64) as usize, r!(u64) as usize, r!(u64) as usize),
+            39 => IsEnumVariant(r!(u64) as usize),
+            40 => EnumGetField(r!(u64) as usize),
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -210,6 +220,9 @@ impl Vm {
                     35 => StoreField(r!(u64) as usize),
                     36 => IndexGet,
                     37 => SliceStr,
+                    38 => MakeEnum(r!(u64) as usize, r!(u64) as usize, r!(u64) as usize),
+                    39 => IsEnumVariant(r!(u64) as usize),
+                    40 => EnumGetField(r!(u64) as usize),
                     _ => Ret,
                 }
             };
@@ -443,6 +456,58 @@ impl Vm {
                             self.stack.push(Value::String(slice));
                         }
                         _ => return err("SliceStr requires string target"),
+                    }
+                }
+
+                Op::MakeEnum(name_i, variant_i, n) => {
+                    let enum_name = strings.get(name_i).cloned().unwrap_or_default();
+                    let variant = strings.get(variant_i).cloned().unwrap_or_default();
+                    let mut fields = Vec::new();
+                    for _ in 0..n {
+                        let fname = match self.stack.pop().unwrap_or(Value::Unit) {
+                            Value::String(s) => s,
+                            _ => String::new(),
+                        };
+                        let val = self.stack.pop().unwrap_or(Value::Unit);
+                        fields.push((fname, val));
+                    }
+                    fields.reverse();
+                    self.stack.push(Value::Enum {
+                        enum_name,
+                        variant,
+                        fields: Rc::new(RefCell::new(fields)),
+                    });
+                }
+
+                Op::IsEnumVariant(variant_i) => {
+                    let variant_name = strings.get(variant_i).cloned().unwrap_or_default();
+                    let val = self.stack.pop().unwrap_or(Value::Unit);
+                    let matches = match &val {
+                        Value::Enum { variant, .. } => variant == &variant_name,
+                        _ => false,
+                    };
+                    self.stack.push(Value::Bool(matches));
+                }
+
+                Op::EnumGetField(field_i) => {
+                    let field_name = strings.get(field_i).cloned().unwrap_or_default();
+                    let val = self.stack.pop().unwrap_or(Value::Unit);
+                    let found = match val {
+                        Value::Enum { fields, .. } => {
+                            let mut result = None;
+                            for (n, v) in fields.borrow().iter() {
+                                if n == &field_name {
+                                    result = Some(v.clone());
+                                    break;
+                                }
+                            }
+                            result
+                        }
+                        _ => None,
+                    };
+                    match found {
+                        Some(v) => self.stack.push(v),
+                        None => self.stack.push(Value::Unit),
                     }
                 }
             }
