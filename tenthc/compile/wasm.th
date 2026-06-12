@@ -283,23 +283,30 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 8 {
-        // MethodCall — minimal placeholder
-        // Compile receiver and args (discard them)
+        // MethodCall — route Vec/String methods to imports
+        let method = e.name;
         if e.left > 0 { compile_expr(ctx, out, hir, e.left); };
         if e.args_count > 0 {
             let mut ai = e.args_start;
             let end = e.args_start + e.args_count;
-            while ai < end {
-                compile_expr(ctx, out, hir, ai);
-                ai = ai + 1;
-            };
+            while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
         };
-        // Drop args (they're on stack in reverse order)
+        if method == "len" {
+            wasm_call(out, 2); // import 2: env.vec_len
+            return;
+        };
+        if method == "push" {
+            wasm_call(out, 3); // import 3: env.vec_push
+            return;
+        };
+        if method == "get" {
+            wasm_call(out, 4); // import 4: env.vec_get
+            return;
+        };
+        // Unknown method: drop everything, return 0
         let mut dc = e.args_count;
         while dc > 0 { wasm_drop(out); dc = dc - 1; };
-        // Drop receiver
         wasm_drop(out);
-        // Push placeholder result
         wasm_i64_const(out, 0);
         return;
     };
@@ -358,51 +365,44 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 7 {
-        // Call
+        // Call — route to import or local function
         let func_name = hir.expr_nodes[e.left - 1].name;
-        // Check for native/built-in functions
-        if func_name == "Vec::new" || func_name == "HashMap::new" {
-            // Allocate an empty Vec/HashMap struct and return pointer
-            // For now: return 0 as placeholder
+        if func_name == "println" {
             if e.args_count > 0 {
                 let mut ai = e.args_start;
                 let end = e.args_start + e.args_count;
                 while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
-                // Drop args
-                let mut dc = e.args_count;
-                while dc > 0 { wasm_drop(out); dc = dc - 1; };
             };
-            wasm_i64_const(out, 0);
+            wasm_call(out, 0); // import 0: env.println
             return;
         };
-        if func_name == "println" {
-            // Compile args and drop them (no-op in WASM)
-            if e.args_count > 0 {
-                let mut ai = e.args_start;
-                let end = e.args_start + e.args_count;
-                while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
-                let mut dc = e.args_count;
-                while dc > 0 { wasm_drop(out); dc = dc - 1; };
-            };
+        if func_name == "Vec::new" || func_name == "HashMap::new" {
+            wasm_call(out, 1); // import 1: env.vec_new
             return;
         };
         if func_name == "read_file" {
-            // Placeholder: return 0 (null string pointer)
             if e.args_count > 0 {
                 let mut ai = e.args_start;
                 let end = e.args_start + e.args_count;
                 while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
-                let mut dc = e.args_count;
-                while dc > 0 { wasm_drop(out); dc = dc - 1; };
             };
-            wasm_i64_const(out, 0);
+            wasm_call(out, 5); // import 5: env.read_file
             return;
         };
-        // Regular function call
-        let mut call_idx: i64 = 0;
+        if func_name == "write_bytes" {
+            if e.args_count > 0 {
+                let mut ai = e.args_start;
+                let end = e.args_start + e.args_count;
+                while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+            };
+            wasm_call(out, 6); // import 6: env.write_bytes
+            return;
+        };
+        // Regular function call (indices offset by 7 imports)
+        let mut call_idx: i64 = 7;
         let mut fi: i64 = 0;
         while fi < hir.fns.len() {
-            if hir.fns[fi].name == func_name { call_idx = fi; break; };
+            if hir.fns[fi].name == func_name { call_idx = 7 + fi; break; };
             fi = fi + 1;
         };
         if e.args_count > 0 {
@@ -487,38 +487,114 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
 
 fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     let mut ctx = ctx_new();
-    
-    // Count functions
     let num_funcs = hir.fns.len();
     ctx.func_count = num_funcs;
     
+    // Import count
+    let num_imports: i64 = 7;
+    
     // ---- Build type section ----
+    // Import types come first: 5 signatures
+    // Type 0: (i64) -> ()    — println
+    // Type 1: () -> i64      — read_file, Vec::new
+    // Type 2: (i64) -> i64   — vec_len, str_len
+    // Type 3: (i64,i64) -> () — vec_push
+    // Type 4: (i64,i64) -> i64 — vec_get, write_bytes
     let mut types: Vec<i64> = Vec::new();
-    leb128_u(num_funcs, &mut types); // type count
+    leb128_u(5 + num_funcs, &mut types); // total type count
+    
+    // Type 0: (i64) -> ()
+    types.push(96); leb128_u(1, &mut types); types.push(126); // params
+    leb128_u(0, &mut types); // results
+    
+    // Type 1: () -> i64
+    types.push(96); leb128_u(0, &mut types); // params
+    leb128_u(1, &mut types); types.push(126); // results
+    
+    // Type 2: (i64) -> i64
+    types.push(96); leb128_u(1, &mut types); types.push(126);
+    leb128_u(1, &mut types); types.push(126);
+    
+    // Type 3: (i64,i64) -> ()
+    types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
+    leb128_u(0, &mut types);
+    
+    // Type 4: (i64,i64) -> i64
+    types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
+    leb128_u(1, &mut types); types.push(126);
+    
+    // Function types (type index 5+)
     let mut fi: i64 = 0;
     while fi < num_funcs {
         let f = hir.fns[fi];
-        types.push(96); // functype
-        // params
+        types.push(96);
         leb128_u(f.params.len(), &mut types);
         let mut pi: i64 = 0;
-        while pi < f.params.len() { types.push(126); pi = pi + 1; }; // i64
-        // results
-        types.push(1); // 1 result
-        types.push(126); // i64
+        while pi < f.params.len() { types.push(126); pi = pi + 1; };
+        leb128_u(1, &mut types); types.push(126); // 1 result: i64
         fi = fi + 1;
     };
     let mut type_sec: Vec<i64> = Vec::new();
     let mut ti: i64 = 0;
     while ti < types.len() { type_sec.push(types[ti]); ti = ti + 1; };
     
+    // ---- Build import section ----
+    // Helper to emit a string as LEB128 length + ASCII bytes
+    let mut import_sec: Vec<i64> = Vec::new();
+    leb128_u(num_imports, &mut import_sec);
+    
+    // Import 0: env.println (type 0)
+    // module ''env''
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    // field ''println''
+    import_sec.push(7);
+    import_sec.push(112);import_sec.push(114);import_sec.push(105);import_sec.push(110);import_sec.push(116);import_sec.push(108);import_sec.push(110);
+    import_sec.push(0); leb128_u(0, &mut import_sec); // func, type 0
+    
+    // Import 1: env.vec_new (type 1)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(7);
+    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(110);import_sec.push(101);import_sec.push(119);
+    import_sec.push(0); leb128_u(1, &mut import_sec);
+    
+    // Import 2: env.vec_len (type 2)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(7);
+    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(108);import_sec.push(101);import_sec.push(110);
+    import_sec.push(0); leb128_u(2, &mut import_sec);
+    
+    // Import 3: env.vec_push (type 3)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(8);
+    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(112);import_sec.push(117);import_sec.push(115);import_sec.push(104);
+    import_sec.push(0); leb128_u(3, &mut import_sec);
+    
+    // Import 4: env.vec_get (type 4)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(7);
+    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(103);import_sec.push(101);import_sec.push(116);
+    import_sec.push(0); leb128_u(4, &mut import_sec);
+    
+    // Import 5: env.read_file (type 2 — same as vec_len: (i64)->i64)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(9);
+    import_sec.push(114);import_sec.push(101);import_sec.push(97);import_sec.push(100);import_sec.push(95);import_sec.push(102);import_sec.push(105);import_sec.push(108);import_sec.push(101);
+    import_sec.push(0); leb128_u(2, &mut import_sec);
+    
+    // Import 6: env.write_bytes (type 4 — same as vec_get: (i64,i64)->i64)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(11);
+    import_sec.push(119);import_sec.push(114);import_sec.push(105);import_sec.push(116);import_sec.push(101);import_sec.push(95);import_sec.push(98);import_sec.push(121);import_sec.push(116);import_sec.push(101);import_sec.push(115);
+    import_sec.push(0); leb128_u(4, &mut import_sec);
+    
     // ---- Build function section ----
+    // Function indices start after imports: index 7+
     let mut func_sec: Vec<i64> = Vec::new();
     leb128_u(num_funcs, &mut func_sec);
     let mut idx: i64 = 0;
-    while idx < num_funcs { leb128_u(idx, &mut func_sec); idx = idx + 1; };
+    while idx < num_funcs { leb128_u(idx + 5, &mut func_sec); idx = idx + 1; };
     
-    // ---- Build global section ----
+    // ---- Build global section ----    // ---- Build global section ----
     let mut glob_sec: Vec<i64> = Vec::new();
     leb128_u(1, &mut glob_sec); // 1 global
     glob_sec.push(127); // type: i32
@@ -610,6 +686,8 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     
     // Type section (1)
     emit_section(&mut ctx.out, 1, type_sec);
+    // Import section (2)
+    emit_section(&mut ctx.out, 2, import_sec);
     // Function section (3)
     emit_section(&mut ctx.out, 3, func_sec);
     // Memory section (5)
