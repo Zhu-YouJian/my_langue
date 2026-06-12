@@ -236,10 +236,25 @@ impl BytecodeCompiler {
                 self.compile_expr(target)?;
                 for idx in indices {
                     match idx {
-                        crate::hir::hir::Index::Single(e) => self.compile_expr(e)?,
-                        _ => {} // ranges not supported in VM yet
+                        crate::hir::hir::Index::Single(e) => {
+                            self.compile_expr(e)?;
+                            self.chunk.emit(Op::IndexGet);
+                        }
+                        crate::hir::hir::Index::Range { start, end } => {
+                            if let Some(s) = start {
+                                self.compile_expr(s)?;
+                            } else {
+                                self.chunk.emit(Op::PushInt(0));
+                            }
+                            if let Some(e) = end {
+                                self.compile_expr(e)?;
+                            } else {
+                                self.chunk.emit(Op::PushInt(i64::MAX));
+                            }
+                            self.chunk.emit(Op::SliceStr);
+                        }
+                        _ => {}
                     }
-                    self.chunk.emit(Op::IndexGet);
                 }
             }
 

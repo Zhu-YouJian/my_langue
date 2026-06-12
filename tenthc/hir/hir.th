@@ -1,0 +1,104 @@
+// HIR data structures — compact flat representation for self-hosting compiler
+// Based on tenth/src/hir/hir.rs + types.rs, adapted for Tenth's type system
+
+// ── Base type discriminants ──
+// 0:I64 1:I32 2:F64 3:F32 4:Bool 5:Str 6:Unit 7:Char
+// 8:I8 9:I16 10:U8 11:U16 12:U32 13:U64 14:F16 15:BF16
+
+// ── HirType (flattened) ──
+// disc: 0=Base 1=Tensor 2=Array 3=FnType 4=TypeParam 5=Generic 6=Ref 7=MutRef 8=Struct 9=Enum 10=Unknown 11=Unit
+struct HirType {
+    disc: i64,
+    sub: i64,         // BaseType discriminant, or inner type index
+    name: str,        // for TypeParam/Struct/Enum
+    params_start: i64, // start in type_args / type_params flat arrays
+    params_count: i64,
+    ret_ty: i64,      // return type index (for FnType)
+}
+
+// ── HirExpr node (flat, all fields) ──
+// disc values:
+//   0: IntLiteral   1: FloatLiteral  2: BoolLiteral  3: StringLiteral
+//   4: Var          5: Binary        6: Unary         7: Call
+//   8: MethodCall   9: Index        10: Field        11: FieldAssign
+//  12: If          13: Block        14: Assign       15: StructLiteral
+//  16: EnumLiteral 17: Match        18: Ref          19: MutRef
+//  20: Deref       21: Return       22: ArrayLiteral 23: Closure
+//  24: AssignOp    25: GenericCall  26: DerefAssign
+struct HirExpr {
+    disc: i64,
+    // Literal values
+    lit_ival: i64,
+    lit_fval: f64,
+    lit_sval: str,
+    lit_bval: bool,
+    // References to other exprs (1-based, 0=nil)
+    left: i64,
+    right: i64,
+    cond: i64,
+    body: i64,
+    alt: i64,        // else_branch
+    // Flat sub-arrays
+    args_start: i64,
+    args_count: i64,
+    stmts_start: i64,
+    stmts_count: i64,
+    fields_start: i64,
+    fields_count: i64,
+    generics_start: i64,
+    generics_count: i64,
+    params_start: i64,
+    params_count: i64,
+    // Names
+    op: str,         // Binary/Unary operator: "add","sub","mul","div","mod","eq","neq","lt","gt","lte","gte","and","or","neg","not"
+    name: str,       // Var name, field name, method name, struct name
+    variant: str,    // Enum variant name
+    // Type
+    ty: i64,         // type index in program.type_nodes (1-based, 0=unknown)
+}
+
+// ── HirStmt (flattened) ──
+// disc: 0=Let 1=Expr 2=Return 3=While 4=For 5=Break 6=Continue 7=Loop
+struct HirStmt {
+    disc: i64,
+    name: str,       // let variable name / for loop var
+    expr: i64,       // expr index
+    cond: i64,       // while condition expr index
+    body_start: i64, // start in stmt_nodes for While/For/Loop body
+    body_count: i64,
+    init: i64,       // let initializer expr index
+    mutable: bool,
+}
+
+// ── Fn param ──
+struct HirParam { name: str, ty: i64 }
+
+// ── Match arm ──
+struct HirMatchArm {
+    pat_disc: i64,   // 0=EnumVariant 1=Wildcard 2=Literal
+    pat_enum: str,
+    pat_variant: str,
+    pat_bind: str,
+    body_expr: i64,  // expr index
+}
+
+// ── HirFnDef ──
+struct HirFnDef {
+    name: str,
+    params: Vec<HirParam>,
+    return_type: i64,  // type index
+    body: i64,         // expr index
+    generics: Vec<str>,
+}
+
+// ── HirProgram ──
+struct HirProgram {
+    fns: Vec<HirFnDef>,
+    main_expr: i64,     // 0 = none
+    expr_nodes: Vec<HirExpr>,
+    stmt_nodes: Vec<HirStmt>,
+    type_nodes: Vec<HirType>,
+    type_args: Vec<i64>,    // flat: type indices referenced by HirType.params
+    type_params: Vec<i64>,  // flat: type indices for FnType params
+    match_arms: Vec<HirMatchArm>,
+}

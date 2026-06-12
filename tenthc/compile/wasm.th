@@ -1,0 +1,326 @@
+// Minimal WASM emitter — compiles HirProgram to WASM binary bytes
+// Output: Vec<i64> where each element is a byte (0-255)
+
+// ── LEB128 encoding ──
+
+fn leb128_u(value: i64, out: &mut Vec<i64>) {
+    let mut v = value;
+    loop {
+        let mut byte = v % 128;
+        v = v / 128;
+        if v != 0 { byte = byte + 128; };
+        out.push(byte);
+        if v == 0 { break; };
+    };
+}
+
+fn leb128_s(value: i64, out: &mut Vec<i64>) {
+    let mut v = value;
+    loop {
+        let mut byte = v % 128;
+        v = v / 128;
+        if (v == 0) && (byte < 64) { out.push(byte); break; };
+        if (v == -1) && (byte >= 64) { out.push(byte); break; };
+        byte = byte + 128;
+        out.push(byte);
+    };
+}
+
+// ── Section helpers ──
+
+fn emit_section(out: &mut Vec<i64>, section_id: i64, body: &mut Vec<i64>) {
+    out.push(section_id);
+    leb128_u(body.len(), out);
+    let mut i: i64 = 0;
+    while i < body.len() { out.push(body[i]); i = i + 1; };
+}
+
+// ── WASM opcodes ──
+
+fn wasm_unreachable(out: &mut Vec<i64>) { out.push(0); }
+fn wasm_nop(out: &mut Vec<i64>) { out.push(1); }
+fn wasm_end(out: &mut Vec<i64>) { out.push(11); }
+fn wasm_return(out: &mut Vec<i64>) { out.push(15); }
+fn wasm_local_get(out: &mut Vec<i64>, idx: i64) { out.push(32); leb128_u(idx, out); }
+fn wasm_local_set(out: &mut Vec<i64>, idx: i64) { out.push(33); leb128_u(idx, out); }
+fn wasm_i64_const(out: &mut Vec<i64>, val: i64) {
+    out.push(66);
+    leb128_s(val, out);
+}
+fn wasm_i64_add(out: &mut Vec<i64>) { out.push(124); }
+fn wasm_i64_sub(out: &mut Vec<i64>) { out.push(125); }
+fn wasm_i64_mul(out: &mut Vec<i64>) { out.push(126); }
+fn wasm_i64_div_s(out: &mut Vec<i64>) { out.push(127); }
+fn wasm_call(out: &mut Vec<i64>, func_idx: i64) { out.push(16); leb128_u(func_idx, out); }
+
+// ── Compiler state ──
+
+struct WasmCtx {
+    out: Vec<i64>,       // final output bytes
+    code_out: Vec<i64>,  // code section body
+    func_count: i64,     // number of functions
+}
+
+fn ctx_new() -> WasmCtx {
+    WasmCtx {
+        out: Vec::new(),
+        code_out: Vec::new(),
+        func_count: 0,
+    }
+}
+
+// ── Compile one function body ──
+
+fn compile_fn_body(ctx: &mut WasmCtx, hir: HirProgram, fn_idx: i64) {
+    let f = hir.fns[fn_idx];
+    
+    // Count locals (params + let bindings)
+    let num_params = f.params.len();
+    let num_locals = num_params; // simplified: no extra locals
+    
+    // Function body header
+    let mut body: Vec<i64> = Vec::new();
+    
+    // Local declaration count
+    leb128_u(0, &mut body); // no additional locals beyond params
+    
+    // Compile body expression
+    compile_expr(ctx, &mut body, hir, f.body);
+    
+    wasm_end(&mut body);
+    
+    // Emit function body size + body
+    leb128_u(body.len(), &mut ctx.code_out);
+    let mut i: i64 = 0;
+    while i < body.len() { ctx.code_out.push(body[i]); i = i + 1; };
+}
+
+fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64) {
+    if idx <= 0 || idx > hir.expr_nodes.len() { return; };
+    let e = hir.expr_nodes[idx - 1];
+    let d = e.disc;
+    
+    if d == 0 {
+        // IntLiteral
+        wasm_i64_const(out, e.lit_ival);
+        return;
+    };
+    if d == 4 {
+        // Var — look up local index by name
+        let name = e.name;
+        // Simple: var index = position in params (0-based)
+        // For now: crude lookup
+        let mut local_idx: i64 = 0;
+        // Search params of current function
+        let mut found: bool = false;
+        let mut fi: i64 = 0;
+        while fi < hir.fns.len() {
+            let func = hir.fns[fi];
+            let mut pi: i64 = 0;
+            while pi < func.params.len() {
+                if func.params[pi].name == name {
+                    local_idx = pi;
+                    found = true;
+                    break;
+                };
+                pi = pi + 1;
+            };
+            if found { break; };
+            fi = fi + 1;
+        };
+        wasm_local_get(out, local_idx);
+        return;
+    };
+    if d == 5 {
+        // Binary
+        compile_expr(ctx, out, hir, e.left);
+        compile_expr(ctx, out, hir, e.right);
+        let op = e.op;
+        if op == "+" { wasm_i64_add(out); return; };
+        if op == "-" { wasm_i64_sub(out); return; };
+        if op == "*" { wasm_i64_mul(out); return; };
+        if op == "/" { wasm_i64_div_s(out); return; };
+        return;
+    };
+    if d == 13 {
+        // Block — compile statements, then final expr
+        if e.stmts_count > 0 {
+            let mut s = e.stmts_start;
+            let end = e.stmts_start + e.stmts_count;
+            while s < end {
+                compile_stmt(ctx, out, hir, s);
+                s = s + 1;
+            };
+        };
+        return;
+    };
+    if d == 21 {
+        // Return
+        if e.left > 0 { compile_expr(ctx, out, hir, e.left); }
+        else { wasm_i64_const(out, 0); };
+        wasm_return(out);
+        return;
+    };
+    if d == 7 {
+        // Call
+        let func_name = hir.expr_nodes[e.left - 1].name;
+        // Find function index by name
+        let mut call_idx: i64 = 0;
+        let mut fi: i64 = 0;
+        while fi < hir.fns.len() {
+            if hir.fns[fi].name == func_name { call_idx = fi; break; };
+            fi = fi + 1;
+        };
+        if e.args_count > 0 {
+            let mut ai = e.args_start;
+            let end = e.args_start + e.args_count;
+            while ai < end {
+                compile_expr(ctx, out, hir, ai);
+                ai = ai + 1;
+            };
+        };
+        wasm_call(out, call_idx);
+        return;
+    };
+    // Default: unreachable
+    wasm_unreachable(out);
+}
+
+fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64) {
+    if idx <= 0 || idx > hir.stmt_nodes.len() { return; };
+    let s = hir.stmt_nodes[idx - 1];
+    let d = s.disc;
+    
+    if d == 2 {
+        // Return
+        if s.expr > 0 { compile_expr(ctx, out, hir, s.expr); }
+        else { wasm_i64_const(out, 0); };
+        wasm_return(out);
+        return;
+    };
+    if d == 1 {
+        // Expr statement
+        if s.expr > 0 { compile_expr(ctx, out, hir, s.expr); };
+        return;
+    };
+}
+
+// ── Main compilation entry ──
+
+fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
+    let mut ctx = ctx_new();
+    
+    // Count functions
+    let num_funcs = hir.fns.len();
+    ctx.func_count = num_funcs;
+    
+    // ---- Build type section ----
+    let mut types: Vec<i64> = Vec::new();
+    leb128_u(num_funcs, &mut types); // type count
+    let mut fi: i64 = 0;
+    while fi < num_funcs {
+        let f = hir.fns[fi];
+        types.push(96); // functype
+        // params
+        leb128_u(f.params.len(), &mut types);
+        let mut pi: i64 = 0;
+        while pi < f.params.len() { types.push(126); pi = pi + 1; }; // i64
+        // results
+        types.push(1); // 1 result
+        types.push(126); // i64
+        fi = fi + 1;
+    };
+    let mut type_sec: Vec<i64> = Vec::new();
+    let mut ti: i64 = 0;
+    while ti < types.len() { type_sec.push(types[ti]); ti = ti + 1; };
+    
+    // ---- Build function section ----
+    let mut func_sec: Vec<i64> = Vec::new();
+    leb128_u(num_funcs, &mut func_sec);
+    let mut idx: i64 = 0;
+    while idx < num_funcs { leb128_u(idx, &mut func_sec); idx = idx + 1; };
+    
+    // ---- Build code section ----
+    fi = 0;
+    while fi < num_funcs {
+        compile_fn_body(&mut ctx, hir, fi);
+        fi = fi + 1;
+    };
+    
+    // ---- Build export section ----
+    let mut export_sec: Vec<i64> = Vec::new();
+    leb128_u(num_funcs, &mut export_sec);
+    fi = 0;
+    while fi < num_funcs {
+        let f = hir.fns[fi];
+        // Export name
+        leb128_u(f.name.len(), &mut export_sec);
+        let mut ci: i64 = 0;
+        while ci < f.name.len() {
+            let ch = f.name[ci];
+            // Simple ASCII byte
+            let mut byte: i64 = 0;
+            if ch == "a" { byte = 97; }
+            else if ch == "b" { byte = 98; }
+            else if ch == "c" { byte = 99; }
+            else if ch == "d" { byte = 100; }
+            else if ch == "e" { byte = 101; }
+            else if ch == "f" { byte = 102; }
+            else if ch == "g" { byte = 103; }
+            else if ch == "h" { byte = 104; }
+            else if ch == "i" { byte = 105; }
+            else if ch == "j" { byte = 106; }
+            else if ch == "k" { byte = 107; }
+            else if ch == "l" { byte = 108; }
+            else if ch == "m" { byte = 109; }
+            else if ch == "n" { byte = 110; }
+            else if ch == "o" { byte = 111; }
+            else if ch == "p" { byte = 112; }
+            else if ch == "q" { byte = 113; }
+            else if ch == "r" { byte = 114; }
+            else if ch == "s" { byte = 115; }
+            else if ch == "t" { byte = 116; }
+            else if ch == "u" { byte = 117; }
+            else if ch == "v" { byte = 118; }
+            else if ch == "w" { byte = 119; }
+            else if ch == "x" { byte = 120; }
+            else if ch == "y" { byte = 121; }
+            else if ch == "z" { byte = 122; }
+            else if ch == "A" { byte = 65; }
+            else if ch == "0" { byte = 48; }
+            else if ch == "1" { byte = 49; }
+            else if ch == "2" { byte = 50; }
+            else if ch == "3" { byte = 51; }
+            else if ch == "4" { byte = 52; }
+            else if ch == "5" { byte = 53; }
+            else if ch == "6" { byte = 54; }
+            else if ch == "7" { byte = 55; }
+            else if ch == "8" { byte = 56; }
+            else if ch == "9" { byte = 57; }
+            else if ch == "_" { byte = 95; }
+            else { byte = 63; }; // '?' for unknown chars
+            export_sec.push(byte);
+            ci = ci + 1;
+        };
+        export_sec.push(0); // export kind: function
+        leb128_u(fi, &mut export_sec);
+        fi = fi + 1;
+    };
+    
+    // ---- Assemble module ----
+    // Magic header
+    ctx.out.push(0); ctx.out.push(97); ctx.out.push(115); ctx.out.push(109);
+    // Version
+    ctx.out.push(1); ctx.out.push(0); ctx.out.push(0); ctx.out.push(0);
+    
+    // Type section (1)
+    emit_section(&mut ctx.out, 1, &mut type_sec);
+    // Function section (3)
+    emit_section(&mut ctx.out, 3, &mut func_sec);
+    // Export section (7)
+    emit_section(&mut ctx.out, 7, &mut export_sec);
+    // Code section (10)
+    emit_section(&mut ctx.out, 10, &mut ctx.code_out);
+    
+    ctx.out
+}

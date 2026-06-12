@@ -131,6 +131,18 @@ fn register_natives(vm: &mut Vm) {
     vm.add_native("Vec::new".into(), |_vm, _args| {
         Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))))
     });
+    vm.add_native("write_bytes".into(), |_vm, args| {
+        if args.len() >= 2 {
+            if let Value::String(path) = &args[1] {
+                if let Value::Vec(items) = &args[0] {
+                    let bytes: Vec<u8> = items.borrow().iter().map(|v| v.as_int().unwrap_or(0) as u8).collect();
+                    let _ = std::fs::write(path, &bytes);
+                    return Ok(Value::Int(0));
+                }
+            }
+        }
+        Ok(Value::Int(1))
+    });
     vm.add_native("compile_host".into(), |_vm, args| {
         if args.len() >= 2 {
             if let (Value::String(src), Value::String(out)) = (&args[0], &args[1]) {

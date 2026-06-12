@@ -231,7 +231,9 @@ impl Lowerer {
                         match ident.name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
                             | "read_file" | "write_file" | "str_at" | "Vec::new" | "HashMap::new"
-                            | "compile_host" | "compile_program" => {
+                            | "compile_host" | "compile_program" | "write_bytes"
+                            | "lexer_new" | "lexer_tokenize" | "parse_program"
+                            | "lower_program" | "compile_to_wasm" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)
                             }
                             _ => {

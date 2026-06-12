@@ -26,6 +26,7 @@ pub enum Op {
     MakeVec(usize), MakeMap(usize),
     NewStruct(usize, usize), LoadField(usize), StoreField(usize),
     IndexGet,
+    SliceStr,
 }
 
 // ── Chunk ──────────────────────────────────────────────────────────────────
@@ -59,7 +60,7 @@ impl Chunk {
             Call(_) => 27, CallN(..) => 28, MethodCall(..) => 29, Ret => 30,
             MakeVec(_) => 31, MakeMap(_) => 32,
             NewStruct(..) => 33, LoadField(_) => 34, StoreField(_) => 35,
-            IndexGet => 36,
+            IndexGet => 36, SliceStr => 37,
         });
 
         // Emit operands
@@ -103,6 +104,7 @@ impl Chunk {
             34 => LoadField(r!(u64) as usize),
             35 => StoreField(r!(u64) as usize),
             36 => IndexGet,
+            37 => SliceStr,
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -205,7 +207,9 @@ impl Vm {
                     31 => MakeVec(r!(u64) as usize), 32 => MakeMap(r!(u64) as usize),
                     33 => NewStruct(r!(u64) as usize, r!(u64) as usize),
                     34 => LoadField(r!(u64) as usize),
-                    35 => IndexGet,
+                    35 => StoreField(r!(u64) as usize),
+                    36 => IndexGet,
+                    37 => SliceStr,
                     _ => Ret,
                 }
             };
@@ -419,6 +423,26 @@ impl Vm {
                             self.stack.push(Value::String(c));
                         }
                         _ => return err("cannot index"),
+                    }
+                }
+
+                Op::SliceStr => {
+                    let end_idx = self.pop_int()? as usize;
+                    let start_idx = self.pop_int()? as usize;
+                    let target = self.stack.pop().unwrap_or(Value::Unit);
+                    match target {
+                        Value::String(s) => {
+                            let chars: Vec<char> = s.chars().collect();
+                            let len = chars.len();
+                            let si = start_idx.min(len);
+                            let ei = end_idx.min(len);
+                            if si > ei {
+                                return err("string slice start > end");
+                            }
+                            let slice: String = chars[si..ei].iter().collect();
+                            self.stack.push(Value::String(slice));
+                        }
+                        _ => return err("SliceStr requires string target"),
                     }
                 }
             }
