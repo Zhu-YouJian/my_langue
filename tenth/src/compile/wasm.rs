@@ -810,13 +810,7 @@ impl WasmCompiler {
             BinOp::Sub => self.emit_if(body, is_f, Instruction::F64Sub, Instruction::I64Sub),
             BinOp::Mul => self.emit_if(body, is_f, Instruction::F64Mul, Instruction::I64Mul),
             BinOp::Div => {
-                if !is_f {
-                    body.instruction(&Instruction::F64ConvertI64S);
-                    body.instruction(&Instruction::LocalSet(self.local_count));
-                    body.instruction(&Instruction::F64ConvertI64S);
-                    body.instruction(&Instruction::LocalGet(self.local_count));
-                }
-                body.instruction(&Instruction::F64Div);
+                self.emit_if(body, is_f, Instruction::F64Div, Instruction::I64DivS);
             }
             BinOp::Mod => { body.instruction(&Instruction::I64RemS); }
             BinOp::Eq => self.emit_if(body, is_f, Instruction::F64Eq, Instruction::I64Eq),
