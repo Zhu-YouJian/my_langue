@@ -294,23 +294,23 @@ impl BytecodeCompiler {
                 self.compile_expr(scrutinee)?;
                 let end_label = self.new_label();
                 for arm in arms {
-                    self.chunk.emit(Op::Dup);
                     match &arm.pattern {
                         HirPattern::EnumVariant { enum_name: _, variant, field_bind } => {
+                            self.chunk.emit(Op::Dup); // dup for IsEnumVariant check
                             let variant_i = self.chunk.add_string(variant);
                             self.chunk.emit(Op::IsEnumVariant(variant_i));
                             let next_label = self.new_label();
                             self.chunk.emit(Op::JmpFalse(0));
                             self.patch_jump(next_label);
+                            // IsEnumVariant consumed the dup; scrutinee remains
                             if let Some((bind_name, field_name)) = field_bind {
-                                self.chunk.emit(Op::Pop); // drop scrutinee dup
                                 let fi = self.chunk.add_string(field_name);
-                                self.chunk.emit(Op::EnumGetField(fi));
+                                self.chunk.emit(Op::EnumGetField(fi)); // pops scrutinee, pushes field
                                 let pos = self.locals.len();
                                 self.locals.push(bind_name.clone());
-                                self.chunk.emit(Op::Store(pos));
+                                self.chunk.emit(Op::Store(pos)); // pops field
                             } else {
-                                self.chunk.emit(Op::Pop); // drop scrutinee dup
+                                self.chunk.emit(Op::Pop); // drop scrutinee (no field needed)
                             }
                             self.compile_expr(&arm.body)?;
                             self.chunk.emit(Op::Jump(0));
@@ -318,17 +318,17 @@ impl BytecodeCompiler {
                             self.label(next_label);
                         }
                         HirPattern::Wildcard => {
-                            self.chunk.emit(Op::Pop); // drop scrutinee dup
+                            self.chunk.emit(Op::Pop); // drop scrutinee (wildcard ignores value)
                             self.compile_expr(&arm.body)?;
                             self.chunk.emit(Op::Jump(0));
                             self.patch_jump(end_label);
                         }
                         _ => {
-                            self.chunk.emit(Op::Pop); // drop dup, fall through
+                            // Other patterns: ignore for now
                         }
                     }
                 }
-                self.chunk.emit(Op::Pop); // drop scrutinee
+                self.chunk.emit(Op::Pop); // drop scrutinee if no arm matched
                 self.chunk.emit(Op::PushUnit); // fallback result
                 self.label(end_label);
             }
