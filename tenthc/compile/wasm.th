@@ -28,11 +28,11 @@ fn leb128_s(value: i64, out: &mut Vec<i64>) {
 
 // ── Section helpers ──
 
-fn emit_section(out: &mut Vec<i64>, section_id: i64, body: &mut Vec<i64>) {
+fn emit_section(out: &mut Vec<i64>, section_id: i64, body: Vec<i64>) {
     out.push(section_id);
     leb128_u(body.len(), out);
     let mut i: i64 = 0;
-    while i < body.len() { out.push(body[i]); i = i + 1; };
+    while i < body.len() { out.push(body.get(i)); i = i + 1; };
 }
 
 // ── WASM opcodes ──
@@ -51,7 +51,22 @@ fn wasm_i64_add(out: &mut Vec<i64>) { out.push(124); }
 fn wasm_i64_sub(out: &mut Vec<i64>) { out.push(125); }
 fn wasm_i64_mul(out: &mut Vec<i64>) { out.push(126); }
 fn wasm_i64_div_s(out: &mut Vec<i64>) { out.push(127); }
+fn wasm_i64_eq(out: &mut Vec<i64>) { out.push(81); }
+fn wasm_i64_ne(out: &mut Vec<i64>) { out.push(82); }
+fn wasm_i64_lt_s(out: &mut Vec<i64>) { out.push(83); }
+fn wasm_i64_gt_s(out: &mut Vec<i64>) { out.push(85); }
+fn wasm_i64_le_s(out: &mut Vec<i64>) { out.push(87); }
+fn wasm_i64_ge_s(out: &mut Vec<i64>) { out.push(89); }
 fn wasm_call(out: &mut Vec<i64>, func_idx: i64) { out.push(16); leb128_u(func_idx, out); }
+fn wasm_block(out: &mut Vec<i64>, blocktype: i64) { out.push(2); out.push(blocktype); }
+fn wasm_loop(out: &mut Vec<i64>, blocktype: i64) { out.push(3); out.push(blocktype); }
+fn wasm_if(out: &mut Vec<i64>, blocktype: i64) { out.push(4); out.push(blocktype); }
+fn wasm_else(out: &mut Vec<i64>) { out.push(5); }
+fn wasm_br(out: &mut Vec<i64>, idx: i64) { out.push(12); leb128_u(idx, out); }
+fn wasm_br_if(out: &mut Vec<i64>, idx: i64) { out.push(13); leb128_u(idx, out); }
+fn wasm_i32_eqz(out: &mut Vec<i64>) { out.push(69); }
+fn wasm_i64_eqz(out: &mut Vec<i64>) { out.push(80); }
+fn wasm_i32_wrap_i64(out: &mut Vec<i64>) { out.push(167); }
 
 // ── Compiler state ──
 
@@ -140,6 +155,24 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if op == "-" { wasm_i64_sub(out); return; };
         if op == "*" { wasm_i64_mul(out); return; };
         if op == "/" { wasm_i64_div_s(out); return; };
+        if op == "==" { wasm_i64_eq(out); return; };
+        if op == "!=" { wasm_i64_ne(out); return; };
+        if op == "<" { wasm_i64_lt_s(out); return; };
+        if op == ">" { wasm_i64_gt_s(out); return; };
+        if op == "<=" { wasm_i64_le_s(out); return; };
+        if op == ">=" { wasm_i64_ge_s(out); return; };
+        return;
+    };
+    if d == 12 {
+        // If
+        compile_expr(ctx, out, hir, e.cond);
+        wasm_if(out, 64); // i64 result type (0x40 = empty, 0x7E = i64)
+        compile_expr(ctx, out, hir, e.body);
+        if e.alt > 0 {
+            wasm_else(out);
+            compile_expr(ctx, out, hir, e.alt);
+        };
+        wasm_end(out);
         return;
     };
     if d == 13 {
@@ -198,6 +231,28 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_return(out);
         return;
     };
+    if d == 3 {
+        // While — WASM: block $break { loop $continue { cond; i64.eqz; br_if $break; body; br $continue; } }
+        wasm_block(out, 64);
+        wasm_loop(out, 64);
+        if s.cond > 0 {
+            compile_expr(ctx, out, hir, s.cond);
+            wasm_i64_eqz(out);
+            wasm_br_if(out, 1); // break to block (label idx 1 = outer block)
+        };
+        if s.body_count > 0 {
+            let mut bi = s.body_start;
+            let bend = s.body_start + s.body_count;
+            while bi < bend {
+                compile_stmt(ctx, out, hir, bi);
+                bi = bi + 1;
+            };
+        };
+        wasm_br(out, 0); // continue loop
+        wasm_end(out);   // end loop
+        wasm_end(out);   // end block
+        return;
+    };
     if d == 1 {
         // Expr statement
         if s.expr > 0 { compile_expr(ctx, out, hir, s.expr); };
@@ -241,6 +296,7 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     while idx < num_funcs { leb128_u(idx, &mut func_sec); idx = idx + 1; };
     
     // ---- Build code section ----
+    leb128_u(num_funcs, &mut ctx.code_out);
     fi = 0;
     while fi < num_funcs {
         compile_fn_body(&mut ctx, hir, fi);
@@ -314,13 +370,13 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     ctx.out.push(1); ctx.out.push(0); ctx.out.push(0); ctx.out.push(0);
     
     // Type section (1)
-    emit_section(&mut ctx.out, 1, &mut type_sec);
+    emit_section(&mut ctx.out, 1, type_sec);
     // Function section (3)
-    emit_section(&mut ctx.out, 3, &mut func_sec);
+    emit_section(&mut ctx.out, 3, func_sec);
     // Export section (7)
-    emit_section(&mut ctx.out, 7, &mut export_sec);
+    emit_section(&mut ctx.out, 7, export_sec);
     // Code section (10)
-    emit_section(&mut ctx.out, 10, &mut ctx.code_out);
+    emit_section(&mut ctx.out, 10, ctx.code_out);
     
     ctx.out
 }

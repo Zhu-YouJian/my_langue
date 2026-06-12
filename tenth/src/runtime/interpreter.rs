@@ -221,7 +221,7 @@ impl Interpreter {
                         match name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
                             | "read_file" | "write_file" | "compile_host"
-                            | "compile_program"
+                            | "compile_program" | "write_bytes"
                             | "Vec::new" | "HashMap::new" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
@@ -523,7 +523,38 @@ impl Interpreter {
                 let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
                     message: "field-assign value is void".into(),
                 })?;
+                let target_var_name = if let HirExprKind::Var(vn) = &target.kind {
+                    Some(vn.clone())
+                } else {
+                    None
+                };
                 match &target_val {
+                    // Direct struct — mutate fields and update scope
+                    Value::Struct { name: _, fields } => {
+                        let mut found = false;
+                        for (fname, fval) in fields.borrow_mut().iter_mut() {
+                            if fname == field {
+                                *fval = rhs.clone();
+                                found = true;
+                                break;
+                            }
+                        }
+                        if !found {
+                            return Err(TenthError::RuntimeError {
+                                message: format!("struct has no field '{}'", field),
+                            });
+                        }
+                        // Update scope so subsequent reads see the change
+                        if let Some(vn) = target_var_name {
+                            // Re-read the struct from fields to get updated value
+                            let updated = Value::Struct {
+                                name: String::new(),
+                                fields: fields.clone(),
+                            };
+                            self.current_scope().insert(vn, updated);
+                        }
+                        return Ok(Some(Value::Unit));
+                    }
                     Value::MutRef(weak) => {
                         let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
                             message: "cannot assign field through dangling &mut reference".into(),
@@ -1394,6 +1425,24 @@ impl Interpreter {
                 return Err(TenthError::RuntimeError {
                     message: "compile_program(program, out) expects Program struct and string path".into(),
                 });
+            }
+            "write_bytes" => {
+                if args.len() >= 2 {
+                    if let Value::String(out) = &args[1] {
+                        if let Value::Vec(items) = &args[0] {
+                            let borrowed = items.borrow();
+                            let bytes: Vec<u8> = borrowed.iter().map(|v| {
+                                match v {
+                                    Value::Shared(rc) => rc.borrow().as_int().unwrap_or(0) as u8,
+                                    other => other.as_int().unwrap_or(0) as u8,
+                                }
+                            }).collect();
+                            let _ = std::fs::write(out, &bytes);
+                            return Ok(Some(Value::Int(0)));
+                        }
+                    }
+                }
+                return Ok(Some(Value::Int(1)));
             }
             _ => {}
         }
