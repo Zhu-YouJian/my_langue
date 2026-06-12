@@ -132,6 +132,7 @@ struct Frame {
 pub struct Vm {
     pub functions: HashMap<String, usize>,
     chunks: Vec<Chunk>,
+    chunk_names: Vec<String>,
     pub natives: HashMap<String, NativeFn>,
     globals: HashMap<String, Value>,
     stack: Vec<Value>,
@@ -140,12 +141,13 @@ pub struct Vm {
 
 impl Vm {
     pub fn new() -> Self {
-        Vm { functions: HashMap::new(), chunks: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new() }
+        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new() }
     }
 
     pub fn add_fn(&mut self, name: String, chunk: Chunk) {
         let idx = self.chunks.len();
         self.chunks.push(chunk);
+        self.chunk_names.push(name.clone());
         self.functions.insert(name, idx);
     }
 
