@@ -1,0 +1,67 @@
+// N皇后 II — 力扣 52 题等价
+// 计算 N 皇后问题的解数量（回溯法）
+// 输入: n = 8
+// 预期输出: 92
+
+fn abs_diff(a: i64, b: i64) -> i64 {
+    if a > b { a - b } else { b - a }
+}
+
+// board[i] = 第 i 行皇后所在的列号
+// row 是当前尝试放置的行号（等于 board.len()）
+fn solve(board: Vec<i64>, n: i64) -> i64 {
+    let row = board.len();
+    if row == n { return 1; };
+
+    let mut total: i64 = 0;
+    let mut col: i64 = 0;
+    while col < n {
+        // 检查 (row, col) 是否与已放置的皇后冲突
+        let mut safe = true;
+        let mut r: i64 = 0;
+        while r < row {
+            // 同列冲突
+            if board[r] == col {
+                safe = false;
+            };
+            // 对角线冲突
+            if abs_diff(board[r], col) == row - r {
+                safe = false;
+            };
+            r = r + 1;
+        };
+
+        if safe {
+            // 复制棋盘并添加新皇后
+            let mut next = Vec::new();
+            let mut k: i64 = 0;
+            while k < row {
+                next.push(board[k]);
+                k = k + 1;
+            };
+            next.push(col);
+
+            total = total + solve(next, n);
+        };
+
+        col = col + 1;
+    };
+
+    total
+}
+
+fn main() {
+    let n: i64 = 8;
+    let empty = Vec::new();
+    let result = solve(empty, n);
+
+    println("N-Queens n=8 solution count:");
+    println(result);
+
+    // 验证小规模
+    println("n=4 (expect 2):");
+    println(solve(Vec::new(), 4));
+
+    println("n=1 (expect 1):");
+    println(solve(Vec::new(), 1));
+}

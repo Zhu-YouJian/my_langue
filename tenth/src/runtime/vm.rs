@@ -205,7 +205,7 @@ impl Vm {
                 macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if ip + n > code.len() { return Ok(Value::Unit); } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&code[ip..ip+n]); ip += n; <$t>::from_le_bytes(buf) }}; }
                 match b {
                     0 => PushInt(r!(i64)), 1 => PushFloat(r!(f64)),
-                    2 => PushBool(code[ip] != 0),
+                    2 => PushBool({ let v = code[ip] != 0; ip += 1; v }),
                     3 => PushStr(r!(u64) as usize),
                     4 => PushUnit, 5 => Pop, 6 => Dup,
                     7 => Load(r!(u64) as usize), 8 => Store(r!(u64) as usize),
@@ -338,7 +338,7 @@ impl Vm {
                         let result = native_fn(self, &args)?;
                         self.stack.push(result);
                     } else if let Some(&callee_idx) = self.functions.get(&name) {
-                        self.frames.push(Frame { ip, chunk_idx, locals: locals.clone(), stack_base: base });
+                        self.frames.push(Frame { ip, chunk_idx, locals: locals.clone(), stack_base: self.stack.len() });
                         chunk_idx = callee_idx;
                         code = self.chunks[chunk_idx].code.clone();
                         strings = self.chunks[chunk_idx].strings.clone();
@@ -361,8 +361,8 @@ impl Vm {
 
                 Op::Ret => {
                     let result = self.stack.pop().unwrap_or(Value::Unit);
-                    self.stack.truncate(base);
                     if let Some(f) = self.frames.pop() {
+                        self.stack.truncate(f.stack_base);
                         self.stack.push(result);
                         ip = f.ip;
                         chunk_idx = f.chunk_idx;

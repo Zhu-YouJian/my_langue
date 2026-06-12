@@ -107,8 +107,13 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
             .map_err(|_| tenth::error::TenthError::RuntimeError { message: "VM compile failed".into() })?;
         vm.add_fn("main".into(), chunk);
         vm.call("main")
-    } else {
+    } else if hir.functions.is_empty() {
         Ok(Value::Unit)
+    } else {
+        // Functions exist but none could be compiled for VM → signal fallback
+        Err(tenth::error::TenthError::RuntimeError {
+            message: "VM: main not compiled (unsupported constructs, falling back to interpreter)".into(),
+        })
     }
 }
 

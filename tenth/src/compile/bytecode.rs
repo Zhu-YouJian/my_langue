@@ -44,6 +44,7 @@ impl BytecodeCompiler {
         }
         self.chunk.emit(Op::Ret);
         self.resolve_patches();
+        self.chunk.num_locals = self.locals.len();
         Ok(self.chunk)
     }
 
@@ -51,6 +52,7 @@ impl BytecodeCompiler {
         self.compile_expr(expr)?;
         self.chunk.emit(Op::Ret);
         self.resolve_patches();
+        self.chunk.num_locals = self.locals.len();
         Ok(self.chunk)
     }
 
@@ -333,10 +335,13 @@ impl BytecodeCompiler {
                 self.label(end_label);
             }
 
-            // Fallback to tree-walk for complex constructs
-            _ => {
-                self.chunk.emit(Op::PushUnit);
+            // Unsupported constructs — signal error so VM falls back to interpreter
+            GenericCall { .. } | Closure { .. } | TensorLiteral { .. } | Move { .. } | Range { .. } => {
+                return Err(crate::error::TenthError::RuntimeError {
+                    message: "bytecode: unsupported construct (fallback to interpreter)".into(),
+                });
             }
+
         }
         Ok(())
     }

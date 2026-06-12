@@ -12,16 +12,16 @@ fn swap_pair<T>(p: Pair<T>) -> Pair<T> {
 }
 
 fn main() {
-    // identity
-    println("id(42):");
-    println(id(42));
+    // identity — 泛型函数需要显式类型参数: id<i64>(42)
+    println("id<i64>(42):");
+    println(id<i64>(42));
 
-    println("id('hello'):");
-    println(id("hello"));
+    println("id<str>(\"hello\"):");
+    println(id<str>("hello"));
 
-    // Pair
-    let p = Pair { first: 1, second: 2 };
-    let swapped = swap_pair(p);
+    // Pair — 泛型结构体同样需要显式类型参数
+    let p = Pair<i64> { first: 1, second: 2 };
+    let swapped = swap_pair<i64>(p);
     println("swapped pair first:");
     println(swapped.first);
     println("swapped pair second:");

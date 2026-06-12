@@ -1,0 +1,75 @@
+// 打家劫舍 II — 力扣 213 题等价
+// 房屋围成一圈，不能偷相邻的，求最大收益
+
+fn max(a: i64, b: i64) -> i64 {
+    if a > b { a } else { b }
+}
+
+fn rob(nums: Vec<i64>) -> i64 {
+    let n = nums.len();
+    if n == 0 { return 0; };
+    if n == 1 { return nums[0]; };
+    if n == 2 { return max(nums[0], nums[1]); };
+
+    // 情况1: 不偷最后一间 [0, n-2]
+    let mut prev2_1 = nums[0];
+    let mut prev1_1 = max(nums[0], nums[1]);
+    let mut i: i64 = 2;
+    while i < n - 1 {
+        let curr = max(prev2_1 + nums[i], prev1_1);
+        prev2_1 = prev1_1;
+        prev1_1 = curr;
+        i = i + 1;
+    };
+    let case1 = prev1_1;
+
+    // 情况2: 不偷第一间 [1, n-1]
+    let mut prev2_2 = nums[1];
+    let mut prev1_2 = max(nums[1], nums[2]);
+    i = 3;
+    while i < n {
+        let curr = max(prev2_2 + nums[i], prev1_2);
+        prev2_2 = prev1_2;
+        prev1_2 = curr;
+        i = i + 1;
+    };
+    let case2 = prev1_2;
+
+    max(case1, case2)
+}
+
+fn main() {
+    // 示例 1: [2,3,2] → 3
+    let mut nums1 = Vec::new();
+    nums1.push(2);
+    nums1.push(3);
+    nums1.push(2);
+    println("rob([2,3,2]) = 3:");
+    println(rob(nums1));
+
+    // 示例 2: [1,2,3,1] → 4
+    let mut nums2 = Vec::new();
+    nums2.push(1);
+    nums2.push(2);
+    nums2.push(3);
+    nums2.push(1);
+    println("rob([1,2,3,1]) = 4:");
+    println(rob(nums2));
+
+    // 示例 3: [1,2,3] → 3
+    let mut nums3 = Vec::new();
+    nums3.push(1);
+    nums3.push(2);
+    nums3.push(3);
+    println("rob([1,2,3]) = 3:");
+    println(rob(nums3));
+
+    // 复杂: [10,1,1,10] → 11
+    let mut nums4 = Vec::new();
+    nums4.push(10);
+    nums4.push(1);
+    nums4.push(1);
+    nums4.push(10);
+    println("rob([10,1,1,10]) = 11:");
+    println(rob(nums4));
+}
