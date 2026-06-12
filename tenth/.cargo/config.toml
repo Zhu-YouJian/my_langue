@@ -1,0 +1,4 @@
+[target.'cfg(test)']
+# Increase stack size for tests (32 MB) to avoid overflow
+# during Lowerer processing of large self-hosting source
+rustflags = ["-C", "link-args=/STACK:33554432"]
