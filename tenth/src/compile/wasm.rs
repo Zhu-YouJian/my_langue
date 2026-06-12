@@ -841,7 +841,7 @@ impl WasmCompiler {
             UnaryOp::Neg => if is_f {
                 body.instruction(&Instruction::F64Neg);
             } else {
-                body.instruction(&Instruction::LocalTee(self.local_count));
+                body.instruction(&Instruction::LocalSet(self.local_count));
                 body.instruction(&Instruction::I64Const(0));
                 body.instruction(&Instruction::LocalGet(self.local_count));
                 body.instruction(&Instruction::I64Sub);

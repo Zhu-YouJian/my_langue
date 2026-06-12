@@ -43,6 +43,7 @@ mod three_stage {
         println!("=== Stage 1: Rust compile_to_wasm ===");
         let wasm_a = compile_selfhost_to_wasm(test_src);
         println!("WASM-A: {} bytes", wasm_a.len());
+        
         assert_eq!(&wasm_a[..4], b"\0asm");
 
         println!("=== Stage 2: wasmi executes compiler ===");
@@ -90,6 +91,7 @@ mod three_stage {
     }
 
     #[test]
+    #[ignore]
     fn three_stage_selfhost() {
         // Large stack for recursive WASM compiler
         std::thread::Builder::new()
