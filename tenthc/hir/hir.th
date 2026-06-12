@@ -91,6 +91,12 @@ struct HirFnDef {
     generics: Vec<str>,
 }
 
+// ── Struct field definition ──
+struct HirStructField { name: str, ty: i64 }
+
+// ── Struct definition ──
+struct HirStructDef { name: str, fields: Vec<HirStructField> }
+
 // ── HirProgram ──
 struct HirProgram {
     fns: Vec<HirFnDef>,
@@ -101,4 +107,5 @@ struct HirProgram {
     type_args: Vec<i64>,    // flat: type indices referenced by HirType.params
     type_params: Vec<i64>,  // flat: type indices for FnType params
     match_arms: Vec<HirMatchArm>,
+    structs: Vec<HirStructDef>,
 }

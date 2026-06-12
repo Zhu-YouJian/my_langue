@@ -248,6 +248,23 @@ fn lower_program(program: Program) -> HirProgram {
         type_args: Vec::new(),
         type_params: Vec::new(),
         match_arms: Vec::new(),
+        structs: Vec::new(),
+    };
+    
+    // Lower struct definitions
+    let mut si: i64 = 0;
+    while si < program.structs.len() {
+        let sd = program.structs[si];
+        let mut fields = Vec::new();
+        let mut fi: i64 = 0;
+        while fi < sd.fields.len() {
+            let sf = sd.fields[fi];
+            let fty = parse_type(&mut p, sf.type_ann);
+            fields.push(HirStructField { name: sf.name, ty: fty });
+            fi = fi + 1;
+        };
+        p.structs.push(HirStructDef { name: sd.name, fields: fields });
+        si = si + 1;
     };
     
     let mut i: i64 = 0;

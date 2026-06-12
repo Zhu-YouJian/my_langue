@@ -67,6 +67,12 @@ fn wasm_br_if(out: &mut Vec<i64>, idx: i64) { out.push(13); leb128_u(idx, out); 
 fn wasm_i32_eqz(out: &mut Vec<i64>) { out.push(69); }
 fn wasm_i64_eqz(out: &mut Vec<i64>) { out.push(80); }
 fn wasm_i32_wrap_i64(out: &mut Vec<i64>) { out.push(167); }
+fn wasm_i32_const(out: &mut Vec<i64>, val: i64) { out.push(65); leb128_s(val, out); }
+fn wasm_i32_add(out: &mut Vec<i64>) { out.push(106); }
+fn wasm_i64_load(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(41); leb128_u(align, out); leb128_u(offset, out); }
+fn wasm_i64_store(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(55); leb128_u(align, out); leb128_u(offset, out); }
+fn wasm_i32_load(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(40); leb128_u(align, out); leb128_u(offset, out); }
+fn wasm_i32_store(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(54); leb128_u(align, out); leb128_u(offset, out); }
 
 // ── Compiler state ──
 
@@ -108,6 +114,34 @@ fn compile_fn_body(ctx: &mut WasmCtx, hir: HirProgram, fn_idx: i64) {
     leb128_u(body.len(), &mut ctx.code_out);
     let mut i: i64 = 0;
     while i < body.len() { ctx.code_out.push(body[i]); i = i + 1; };
+}
+
+// ── Struct offset lookup ──
+
+fn type_struct_name(hir: HirProgram, ty_idx: i64) -> str {
+    if ty_idx <= 0 || ty_idx > hir.type_nodes.len() { return ""; };
+    let t = hir.type_nodes[ty_idx - 1];
+    if t.disc == 4 || t.disc == 8 { return t.name; }; // TypeParam or Struct
+    ""
+}
+
+fn struct_field_offset(hir: HirProgram, struct_name: str, field_name: str) -> i64 {
+    let mut si: i64 = 0;
+    while si < hir.structs.len() {
+        let sd = hir.structs[si];
+        if sd.name == struct_name {
+            let mut offset: i64 = 0;
+            let mut fi: i64 = 0;
+            while fi < sd.fields.len() {
+                if sd.fields[fi].name == field_name { return offset; };
+                offset = offset + 8; // each i64 field is 8 bytes
+                fi = fi + 1;
+            };
+            return offset; // field not found, return end offset
+        };
+        si = si + 1;
+    };
+    0
 }
 
 fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64) {
@@ -161,6 +195,29 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if op == ">" { wasm_i64_gt_s(out); return; };
         if op == "<=" { wasm_i64_le_s(out); return; };
         if op == ">=" { wasm_i64_ge_s(out); return; };
+        return;
+    };
+    if d == 10 {
+        // Field access
+        compile_expr(ctx, out, hir, e.left);
+        wasm_i32_wrap_i64(out);
+        let sname = type_struct_name(hir, e.ty);
+        let offset = struct_field_offset(hir, sname, e.name);
+        wasm_i32_const(out, offset);
+        wasm_i32_add(out);
+        wasm_i64_load(out, 3, 0);
+        return;
+    };
+    if d == 11 {
+        // FieldAssign
+        compile_expr(ctx, out, hir, e.left);
+        wasm_i32_wrap_i64(out);
+        let sname = type_struct_name(hir, e.ty);
+        let offset = struct_field_offset(hir, sname, e.name);
+        wasm_i32_const(out, offset);
+        wasm_i32_add(out);
+        compile_expr(ctx, out, hir, e.right);
+        wasm_i64_store(out, 3, 0);
         return;
     };
     if d == 12 {
@@ -295,6 +352,12 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     let mut idx: i64 = 0;
     while idx < num_funcs { leb128_u(idx, &mut func_sec); idx = idx + 1; };
     
+    // ---- Build memory section ----
+    let mut mem_sec: Vec<i64> = Vec::new();
+    leb128_u(1, &mut mem_sec); // 1 memory
+    mem_sec.push(0); // flags: no max
+    leb128_u(1, &mut mem_sec); // min: 1 page (64KB)
+    
     // ---- Build code section ----
     leb128_u(num_funcs, &mut ctx.code_out);
     fi = 0;
@@ -375,6 +438,8 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     emit_section(&mut ctx.out, 3, func_sec);
     // Export section (7)
     emit_section(&mut ctx.out, 7, export_sec);
+    // Memory section (5)
+    emit_section(&mut ctx.out, 5, mem_sec);
     // Code section (10)
     emit_section(&mut ctx.out, 10, ctx.code_out);
     
