@@ -73,6 +73,11 @@ fn wasm_i64_load(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(41); le
 fn wasm_i64_store(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(55); leb128_u(align, out); leb128_u(offset, out); }
 fn wasm_i32_load(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(40); leb128_u(align, out); leb128_u(offset, out); }
 fn wasm_i32_store(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(54); leb128_u(align, out); leb128_u(offset, out); }
+fn wasm_i64_extend_i32_u(out: &mut Vec<i64>) { out.push(173); }
+fn wasm_drop(out: &mut Vec<i64>) { out.push(26); }
+fn wasm_local_tee(out: &mut Vec<i64>, idx: i64) { out.push(34); leb128_u(idx, out); }
+fn wasm_global_get(out: &mut Vec<i64>, idx: i64) { out.push(35); leb128_u(idx, out); }
+fn wasm_global_set(out: &mut Vec<i64>, idx: i64) { out.push(36); leb128_u(idx, out); }
 
 // ── Compiler state ──
 
@@ -102,8 +107,13 @@ fn compile_fn_body(ctx: &mut WasmCtx, hir: HirProgram, fn_idx: i64) {
     // Function body header
     let mut body: Vec<i64> = Vec::new();
     
-    // Local declaration count
-    leb128_u(0, &mut body); // no additional locals beyond params
+    // Local declaration count: 1 temp local (i64)
+    leb128_u(1, &mut body); // 1 additional local group
+    leb128_u(1, &mut body); // 1 local of type
+    body.push(0x7E); // i64
+    
+    // Set temp local index
+    ctx.temp_local = num_params;
     
     // Compile body expression
     compile_expr(ctx, &mut body, hir, f.body);
@@ -195,6 +205,90 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if op == ">" { wasm_i64_gt_s(out); return; };
         if op == "<=" { wasm_i64_le_s(out); return; };
         if op == ">=" { wasm_i64_ge_s(out); return; };
+        return;
+    };
+    if d == 6 {
+        // Unary
+        compile_expr(ctx, out, hir, e.left);
+        let op = e.op;
+        if op == "-" {
+            wasm_i64_const(out, 0);
+            wasm_i64_sub(out);
+        } else {
+            // ! or other: eqz
+            wasm_i64_eqz(out);
+        };
+        return;
+    };
+    if d == 14 {
+        // Assign — target is a variable name, value is compiled
+        // We need local.set — find the local index by name
+        compile_expr(ctx, out, hir, e.right);
+        let name = e.name;
+        let mut local_idx: i64 = 0;
+        let mut found: bool = false;
+        let mut fi: i64 = 0;
+        while fi < hir.fns.len() {
+            let func = hir.fns[fi];
+            let mut pi: i64 = 0;
+            while pi < func.params.len() {
+                if func.params[pi].name == name {
+                    local_idx = pi;
+                    found = true;
+                    break;
+                };
+                pi = pi + 1;
+            };
+            if found { break; };
+            fi = fi + 1;
+        };
+        wasm_local_set(out, local_idx);
+        return;
+    };
+    if d == 15 {
+        // StructLiteral — allocate using global bump pointer
+        let sname = e.name;
+        let mut size: i64 = 0;
+        let mut si: i64 = 0;
+        while si < hir.structs.len() {
+            if hir.structs[si].name == sname {
+                size = hir.structs[si].fields.len() * 8;
+                break;
+            };
+            si = si + 1;
+        };
+        // global.get $bump (idx 0) → local.tee $temp (idx = num_params)
+        wasm_global_get(out, 0);
+        let temp_idx = ctx.temp_local;
+        wasm_local_tee(out, temp_idx);
+        // i32.const size → i32.add → global.set $bump
+        wasm_i32_const(out, size);
+        wasm_i32_add(out);
+        wasm_global_set(out, 0);
+        // Return allocated address as i64
+        wasm_local_get(out, temp_idx);
+        wasm_i64_extend_i32_u(out);
+        return;
+    };
+    if d == 8 {
+        // MethodCall — minimal placeholder
+        // Compile receiver and args (discard them)
+        if e.left > 0 { compile_expr(ctx, out, hir, e.left); };
+        if e.args_count > 0 {
+            let mut ai = e.args_start;
+            let end = e.args_start + e.args_count;
+            while ai < end {
+                compile_expr(ctx, out, hir, ai);
+                ai = ai + 1;
+            };
+        };
+        // Drop args (they're on stack in reverse order)
+        let mut dc = e.args_count;
+        while dc > 0 { wasm_drop(out); dc = dc - 1; };
+        // Drop receiver
+        wasm_drop(out);
+        // Push placeholder result
+        wasm_i64_const(out, 0);
         return;
     };
     if d == 10 {
@@ -352,6 +446,16 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     let mut idx: i64 = 0;
     while idx < num_funcs { leb128_u(idx, &mut func_sec); idx = idx + 1; };
     
+    // ---- Build global section ----
+    let mut glob_sec: Vec<i64> = Vec::new();
+    leb128_u(1, &mut glob_sec); // 1 global
+    glob_sec.push(0x7F); // type: i32
+    glob_sec.push(1); // mutable: true
+    // init: i32.const 4
+    glob_sec.push(65); // i32.const
+    leb128_s(4, &mut glob_sec);
+    glob_sec.push(11); // end
+    
     // ---- Build memory section ----
     let mut mem_sec: Vec<i64> = Vec::new();
     leb128_u(1, &mut mem_sec); // 1 memory
@@ -438,6 +542,8 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     emit_section(&mut ctx.out, 3, func_sec);
     // Export section (7)
     emit_section(&mut ctx.out, 7, export_sec);
+    // Global section (6)
+    emit_section(&mut ctx.out, 6, glob_sec);
     // Memory section (5)
     emit_section(&mut ctx.out, 5, mem_sec);
     // Code section (10)
