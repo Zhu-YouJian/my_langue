@@ -161,14 +161,16 @@ git config --unset https.proxy
     │   ├── lexer/
     │   ├── parser/
     │   ├── hir/
-│   │   ├── compile/    ← WASM 编译后端
+│   │   ├── compile/    ← WASM 编译后端 + 字节码编译器
 │   │   │   ├── mod.rs
 │   │   │   ├── wasm.rs
+│   │   │   ├── bytecode.rs    ← HIR→字节码编译器
 │   │   │   └── bridge.rs
-│   │   ├── runtime/     ← 解释器 + 值系统 + 内存管理
+│   │   ├── runtime/     ← 解释器 + VM + 值系统 + 内存管理
 │   │   │   ├── mod.rs
 │   │   │   ├── value.rs
 │   │   │   ├── tensor.rs
+│   │   │   ├── vm.rs         ← 字节码 VM（41 指令，默认路径）
 │   │   │   ├── interpreter.rs
 │   │   │   ├── arena.rs
 │   │   │   ├── autodiff.rs
@@ -177,7 +179,7 @@ git config --unset https.proxy
 │   ├── std/             ← Tenth 标准库 (.th 源码)
 │   │   ├── nn/
 │   │   └── optim/
-    └── tests/          ← 82 项测试（11 文件）
+    └── tests/          ← 84 项测试（13 文件，83 激活 + 1 忽略）
         ├── integration_test.rs
         ├── memory_test.rs
         ├── lexer_test.rs
@@ -189,6 +191,8 @@ git config --unset https.proxy
         ├── stdlib_test.rs
         ├── struct_test.rs
         ├── trait_test.rs
+        ├── selfhost_verify.rs
+        ├── three_stage.rs
         └── fixtures/
 ```
 

@@ -1,7 +1,8 @@
 # Phase 3B: MLIR 原生编译 实施计划
 
 > **✅ COMPLETED** — 2026-05-22  
-> 交付物：MIR 定义与 HIR→MIR lowering (compile/mir.rs + compile/lower.rs)，C 代码生成器 (compile/cgen.rs)，Shape 推导引擎 (compile/shape.rs)，CLI compile 命令 (main.rs)。  
+> **⚠️ 注意**：C 代码生成路径已于 2026-06-04 移除（详见 `MEMO.md` 和 `SECURITY.md`）。编译后端现为字节码 VM + WASM。  
+> 原交付物：MIR 定义与 HIR→MIR lowering (compile/mir.rs + compile/lower.rs)，C 代码生成器 (compile/cgen.rs)，Shape 推导引擎 (compile/shape.rs)，CLI compile 命令 (main.rs)。  
 > 5 项 compile_test 全部通过。  
 > 偏差：原计划用 inkwell/LLVM 直接生成原生二进制。实现改为 C 代码生成方案——MIR→C→调用系统 C 编译器（gcc/clang），降低了 LLVM 安装依赖。LLVM 直编留在远期计划。
 

@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-06-09 | 版本：v0.3.0-pre | 自举完成 | 82 项测试全过
+> 日期：2026-06-10 | 版本：v0.3.0 | 自举完成 | 83 项测试全过（共 84 项/13 文件，1 项忽略）
 
 ---
 
@@ -23,7 +23,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 │   │   ├── compile/          ← WASM 编译 + 字节码编译 (wasm.rs + bytecode.rs + bridge.rs)
 │   │   ├── runtime/          ← 解释器 + VM + 值系统 (interpreter.rs + vm.rs + value.rs + tensor.rs + arena.rs + autodiff.rs + limits.rs)
 │   │   └── repl.rs           ← 交互环境
-│   ├── tests/                ← 测试 (11 文件, 82 项)
+│   ├── tests/                ← 测试 (13 文件, 84 项 — 83 激活 + 1 忽略)
 │   ├── std/                  ← Tenth 标准库 (.th 源码: nn/, optim/)
 │   └── target/               ← (gitignored)
 ├── tenthc/                   ← Tenth 自举编译器 (.th 源码, 自举验证通过)
@@ -81,7 +81,9 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `ownership_test.rs` | 11 | 移动/借用/引用/解引用 |
 | `stdlib_test.rs` | 8 | Vec/HashMap/String/Option/文件 I/O |
 | `memory_test.rs` | 17 | 内存护栏: arena/limits/计数器 |
-| **总计** | **82** | |
+| `selfhost_verify.rs` | 1 | WASM 自举闭环验证 |
+| `three_stage.rs` | 1 | 三段式自举（忽略 — wasmi 慢） |
+| **总计** | **84** | 83 激活 + 1 忽略 |
 
 ---
 
@@ -122,7 +124,7 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 
 ---
 
-## 五、已知缺陷与不完整
+## 七、已知缺陷与不完整（历史参考 — C 后端已移除）
 
 ### 5.1 自举编译器 Tenth 源码中的已知问题
 
@@ -134,15 +136,17 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 > ~~原 #1 (cgen 函数调用参数丢弃) 随 codegen 移除而消除。~~
 
 ### 5.2 语言功能缺口
-| 4 | `tenth/src/compile/lower.rs` | **Match pattern binding 未生成** — `TokenKind::Identifier(name: s) => { ... s ... }` 中 `s` 变量在 C 中未声明 |
+| 3 | `tenth/src/compile/lower.rs` | **Match pattern binding 未生成**  |
 
-### 5.2 高优
+> ~~以下条目 (#5-#8) 引用已删除的 C 代码生成文件 (`tenthc/codegen/`, `tenthc/runtime.c`)，保留作为历史记录。~~
+
+### 5.2 高优（已废弃 — C 后端移除）
 
 | # | 位置 | 问题 |
 |---|------|------|
-| 5 | `tenthc/runtime.c:50-54` | **HashMap 纯桩** — `HashMap_new` 返回 Vec，无 insert/get |
-| 6 | `tenthc/codegen/cgen.th:178` | **结构体字段类型硬编码 int** — 忽略 `type_ann` |
-| 7 | `tenthc/codegen/cgen.th:123` | **变量类型硬编码 int** — 忽略类型标注 |
+| 5 | ~~`tenthc/runtime.c:50-54`~~ | ~~HashMap 纯桩~~ — 文件已删除 |
+| 6 | ~~`tenthc/codegen/cgen.th:178`~~ | ~~结构体字段类型硬编码 int~~ — 文件已删除 |
+| 7 | ~~`tenthc/codegen/cgen.th:123`~~ | ~~变量类型硬编码 int~~ — 文件已删除 |
 | 8 | `tenthc/main.th:11` | **依赖 tenthc_combined.th** — 需在编译前手动拼接 |
 
 ### 5.3 中优
@@ -150,17 +154,17 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 | # | 位置 | 问题 |
 |---|------|------|
 | 9 | `tenthc/parser/parser.th:631` | **无 for 循环解析** — lexer 识别 `for` 但 parser 未处理 |
-| 10 | `tenthc/codegen/cgen.th:209` | **float_to_str 截断** — 浮点数被截为整数 |
+| 10 | ~~`tenthc/codegen/cgen.th:209`~~ | ~~float_to_str 截断~~ — 文件已删除 |
 | 11 | `tenthc/parser/parser.th:180` | **parse_unary 纯透传** — 一元运算在 parse_primary 内处理，此函数冗余 |
-| 12 | `tenthc/runtime.c` | **Vec_push 未检查 realloc 失败** — 失败时泄漏旧内存 |
+| 12 | ~~`tenthc/runtime.c`~~ | ~~Vec_push 未检查 realloc~~ — 文件已删除 |
 
 ### 5.4 架构债务
 
 | # | 问题 |
 |---|------|
-| 13 | **解释器与 C 编译路径分歧** — interpreter 支持 match on enum，但 MIR→C 的 match 降低仍有 bug (#4) |
+| 13 | ~~解释器与 C 编译路径分歧~~ — C 后端已移除，不再适用 |
 | 14 | **borrow checker 双向放宽** — `check_borrow_shared` 和 `check_borrow_mut` 均跳过 ExclusiveRef/SharedRef 检查，为自举临时放宽 |
-| 15 | **C 类型系统薄弱** — `c_type_name` 大量依赖启发式 (`void*` → 查 struct_fields → `int64_t`)，应为 MIR 值附加精确类型 |
+| 15 | ~~C 类型系统薄弱~~ — C 后端已移除，不再适用 |
 | 16 | **Test 覆盖盲区** — `tenthc_test.rs` 只测解析，未测执行；tenthc 子编译器的正确性无自动化验证 |
 
 ---
@@ -171,14 +175,13 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 
 - **修复致命缺陷 #1-#4** → 自举闭环可达
 - **添加 `tenthc_combined.th` 自动生成** — build script 或 Makefile，而非手动拼接
-- **`tenthc_test.rs` 加执行测试** — 编译简单 .th → C → GCC → 运行验证
+- **`tenthc_test.rs` 加执行测试** — 改为 VM/WASM 路径验证
 
 ### 6.2 中期 (质量加固)
 
-- **消除解释器/C 编译路径分歧** — 将 match/enum 支持统一到 MIR 层
+- **VM 补全** — closure/generic call/match 仍偶有 fallback
 - **恢复 borrow checker** — 自举完成后移除去掉的检查
-- **泛型类型传播到 C 代码** — `Type::Generic` 的信息当前在 C 输出中被丢弃
-- **HashMap 真实现** — `runtime.c` 和解释器都需要
+- **WASM Host import 真实现** — Vec/String 在 WASM 模块中以占位形式存在
 
 ### 6.3 长期 (生态)
 

@@ -1,8 +1,8 @@
 # 安全审查报告：C 编译路径已移除
 
 > **审查日期**：2026-06-04  
-> **决议**：`tenth/src/compile/`、`tenthc/codegen/`、`tenthc/runtime.c` 已删除。  
-> **当前状态**：✅ 项目仅保留 Rust 解释器路径，0 处 `unsafe`，内存安全由 Rust 保证。
+> **决议**：`tenth/src/compile/` 中原 C 代码生成管线、`tenthc/codegen/`、`tenthc/runtime.c` 已删除。`tenth/src/compile/` 现保留 WASM 编译（`wasm.rs`）和字节码编译（`bytecode.rs`）两个安全后端。  
+> **当前状态**：✅ 项目仅保留 Rust 解释器 + VM + WASM 路径，0 处 `unsafe`，内存安全由 Rust 保证。
 
 ---
 

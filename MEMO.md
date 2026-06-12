@@ -26,7 +26,7 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 |------|--------|--------|
 | 自举管线执行时间 | ~200s (interpreter) | **~0.2s (VM)** |
 | VM fallback 率 | Lexer/Parser 100% | **0%** |
-| VM 指令数 | 33 | **40** |
+| VM 指令数 | 33 | **41** |
 | wasmi 加载验证 | ❌ | ✅ `add(3,4)=7` |
 
 ### 各层状态
@@ -40,10 +40,10 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 | Lowerer | `tenthc/hir/lower.th` | ✅ AST→HIR 降级 (306 行) |
 | WASM 编译器 | `tenthc/compile/wasm.th` | ✅ HIR→WASM + import 段 (703 行) |
 | ~~C Codegen~~ | ~~`tenthc/codegen/cgen.th`~~ | ❌ 已移除 |
-| **字节码 VM** | `tenth/src/runtime/vm.rs` | ✅ **40 指令** (33→40) |
+| **字节码 VM** | `tenth/src/runtime/vm.rs` | ✅ **41 指令** (33→41) |
 | VM 编译器 | `tenth/src/compile/bytecode.rs` | ✅ HIR→bytecode (含 Enum/Match) |
 
-### VM 指令列表（40 条）
+### VM 指令列表（41 条）
 
 ```
 0-3:   PushInt/Float/Bool/Str    20-23: Lt/Gt/Lte/Gte
