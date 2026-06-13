@@ -30,6 +30,8 @@ pub enum Op {
     MakeEnum(usize, usize, usize),
     IsEnumVariant(usize),
     EnumGetField(usize),
+    PushRange(i64, i64, bool),  // start, end, inclusive
+    MoveOp,                     // no-op marker for move semantics
 }
 
 // ── Chunk ──────────────────────────────────────────────────────────────────
@@ -65,6 +67,7 @@ impl Chunk {
             NewStruct(..) => 33, LoadField(_) => 34, StoreField(_) => 35,
             IndexGet => 36, SliceStr => 37,
             MakeEnum(..) => 38, IsEnumVariant(_) => 39, EnumGetField(_) => 40,
+            PushRange(..) => 41, MoveOp => 42,
         });
 
         // Emit operands
@@ -82,6 +85,8 @@ impl Chunk {
             MakeEnum(n, v, f) => { w!(*n, u64); w!(*v, u64); w!(*f, u64); }
             IsEnumVariant(v) => w!(*v, u64),
             EnumGetField(f) => w!(*f, u64),
+            PushRange(s, e, inc) => { w!(*s, i64); w!(*e, i64); self.code.push(if *inc {1} else {0}); }
+            MoveOp => {}
             _ => {}
         }
     }
@@ -115,6 +120,8 @@ impl Chunk {
             38 => MakeEnum(r!(u64) as usize, r!(u64) as usize, r!(u64) as usize),
             39 => IsEnumVariant(r!(u64) as usize),
             40 => EnumGetField(r!(u64) as usize),
+            41 => PushRange(r!(i64), r!(i64), { let b = self.code[*ip]; *ip += 1; b != 0 }),
+            42 => MoveOp,
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -511,6 +518,14 @@ impl Vm {
                         Some(v) => self.stack.push(v),
                         None => self.stack.push(Value::Unit),
                     }
+                }
+
+                Op::PushRange(start, end, inclusive) => {
+                    self.stack.push(Value::Range { start, end, inclusive });
+                }
+
+                Op::MoveOp => {
+                    // no-op: move semantics are checked at HIR level
                 }
             }
         }

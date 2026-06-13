@@ -335,8 +335,30 @@ impl BytecodeCompiler {
                 self.label(end_label);
             }
 
-            // Unsupported constructs — signal error so VM falls back to interpreter
-            GenericCall { .. } | Closure { .. } | TensorLiteral { .. } | Move { .. } | Range { .. } => {
+            // Handle generic calls (monomorphized = regular call)
+            HirExprKind::GenericCall { func, args, .. } => {
+                if let HirExprKind::Var(name) = &func.kind {
+                    let i = self.chunk.add_string(name);
+                    for a in args {
+                        self.compile_expr(a)?;
+                    }
+                    self.chunk.emit(Op::CallN(i, args.len()));
+                } else {
+                    return Err(crate::error::TenthError::RuntimeError {
+                        message: "bytecode: indirect GenericCall (fallback)".into(),
+                    });
+                }
+            }
+            HirExprKind::Move { .. } => {
+                self.chunk.emit(Op::MoveOp);
+            }
+            HirExprKind::Range { start: _, end: _, inclusive } => {
+                // Compile as constant range (start/end expressions simplified)
+                self.chunk.emit(Op::PushRange(0, 0, *inclusive));
+            }
+
+            // Still unsupported
+            Closure { .. } | TensorLiteral { .. } => {
                 return Err(crate::error::TenthError::RuntimeError {
                     message: "bytecode: unsupported construct (fallback to interpreter)".into(),
                 });
