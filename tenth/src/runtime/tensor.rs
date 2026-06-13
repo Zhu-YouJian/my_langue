@@ -321,14 +321,37 @@ impl Tensor {
         Tensor::from_data(array)
     }
 
+    /// Softmax along the last axis (per-row for 2D).
+    /// For a tensor of shape [..., N], each slice along the last dimension
+    /// is independently softmaxed.
     pub fn softmax(&self) -> Option<Tensor> {
         let shape = self.shape().to_vec();
-        let self_data = self.data.as_slice().unwrap_or(&[]);
-        let max_val = self_data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let exps: Vec<f64> = self_data.iter().map(|x| (x - max_val).exp()).collect();
-        let sum: f64 = exps.iter().sum();
-        let result: Vec<f64> = exps.iter().map(|x| x / sum).collect();
-        Some(Tensor::from_vec(result, shape))
+        let ndim = shape.len();
+        if ndim == 0 || shape[ndim - 1] == 0 {
+            return None;
+        }
+        let axis_len = shape[ndim - 1];
+        let outer_len: usize = shape[..ndim - 1].iter().product();
+
+        // Ensure contiguous for safe slicing
+        let contiguous = self.data.as_standard_layout().to_owned();
+        let flat = contiguous.as_slice()?;
+
+        let mut result_data = Vec::with_capacity(flat.len());
+        for i in 0..outer_len {
+            let start = i * axis_len;
+            let slice = &flat[start..start + axis_len];
+            let max_val = slice.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let exps: Vec<f64> = slice.iter().map(|x| (x - max_val).exp()).collect();
+            let sum: f64 = exps.iter().sum();
+            let probs: Vec<f64> = if sum == 0.0 {
+                vec![1.0 / axis_len as f64; axis_len]
+            } else {
+                exps.iter().map(|x| x / sum).collect()
+            };
+            result_data.extend(probs);
+        }
+        Some(Tensor::from_vec(result_data, shape))
     }
 
     /// In-place element-wise assignment: `self[i..] = src`.

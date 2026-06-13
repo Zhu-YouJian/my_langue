@@ -1400,10 +1400,14 @@ impl Interpreter {
                         Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                     }
                     "softmax" => {
-                        let result = tensor.softmax().ok_or_else(|| TenthError::RuntimeError {
+                        let result_tensor = tensor.softmax().ok_or_else(|| TenthError::RuntimeError {
                             message: "softmax failed".into(),
                         })?;
-                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording {
+                            self.record_unary(TapeOp::Softmax, t, &result);
+                        }
+                        Ok(Value::Tensor(result))
                     }
                     _ => Err(TenthError::RuntimeError {
                         message: format!("unknown tensor method: {}", method),

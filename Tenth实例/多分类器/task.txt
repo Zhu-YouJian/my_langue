@@ -1,0 +1,23 @@
+# 多分类器
+
+用 Tenth 内置 autodiff 训练一个 2 层 MLP（16 隐藏神经元）对 6 个二维点做 3 分类。
+
+## 综合演示
+
+- matmul：矩阵乘法
+- 广播 bias：`h @ w + b`
+- relu 激活
+- softmax（逐行归一化）
+- one-hot 目标编码
+- MSE loss + mean()
+- 完整 autodiff 训练循环（new_grad / param / backward / stop_grad / zero_grad / grad）
+
+## 运行
+
+```bash
+tenth run Tenth实例/多分类器/classifier.th
+```
+
+## 预期输出
+
+6 行预测概率，每行 argmax 应为 0, 0, 1, 1, 2, 2，对应三个类别的点全部正确分类。

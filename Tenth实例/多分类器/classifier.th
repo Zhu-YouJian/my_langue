@@ -1,0 +1,77 @@
+// 多分类器 — 2层 MLP + softmax，用 autodiff 训练
+//
+// 综合演示: matmul、广播 bias、relu、softmax、mean、
+// one-hot 编码、完整 autodiff 训练循环
+//
+// 网络: input(2) → hidden(16) relu → output(3) softmax
+// 数据: 6 个二维点，分 3 类
+
+fn main() {
+    // ── 训练数据（6×2） ──────────────────────────────────
+    let x = tensor[
+        [1.0, 1.0], [2.0, 1.0],   // 类0: 左下
+        [5.0, 1.0], [5.0, 2.0],   // 类1: 右下
+        [3.0, 5.0], [4.0, 5.0]    // 类2: 顶部
+    ];
+
+    // One-hot 目标（6×3）
+    let target = tensor[
+        [1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0]
+    ];
+
+    // ── 参数初始化 ──────────────────────────────────────
+    let mut w1 = randn(2, 16);
+    let mut b1 = tensor[[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]];
+    let mut w2 = randn(16, 3);
+    let mut b2 = tensor[[0.0, 0.0, 0.0]];
+
+    let lr = 0.0005;
+
+    // ── 训练 ────────────────────────────────────────────
+    let mut epoch: i64 = 0;
+    while epoch < 20000 {
+        new_grad();
+        zero_grad();
+        w1 = param(w1);  b1 = param(b1);
+        w2 = param(w2);  b2 = param(b2);
+
+        // 前向: logits = relu(x @ w1 + b1) @ w2 + b2
+        let h = (x.matmul(w1) + b1).relu();
+        let logits = h.matmul(w2) + b2;
+
+        // MSE loss（训练用 logits，推理时加 softmax）
+        let diff = logits - target;
+        let loss = (diff * diff).mean();
+
+        backward(loss);
+
+        // SGD 更新
+        stop_grad();
+        w1 = w1 - lr * grad(w1);  b1 = b1 - lr * grad(b1);
+        w2 = w2 - lr * grad(w2);  b2 = b2 - lr * grad(b2);
+
+        epoch = epoch + 1;
+    };
+
+    // ── 验证 ────────────────────────────────────────────
+    stop_grad();
+    let h = (x.matmul(w1) + b1).relu();
+    let logits = h.matmul(w2) + b2;
+    let pred = logits.softmax();
+
+    println("=== 预测概率 (6行×3类) ===");
+    println("期望: [1,0,0; 1,0,0; 0,1,0; 0,1,0; 0,0,1; 0,0,1]");
+    println(pred);
+
+    println("\n=== 最终 MSE ===");
+    let diff = logits - target;
+    println((diff * diff).mean());
+
+    println("\n每行 argmax 应依次为: 0, 0, 1, 1, 2, 2");
+}
