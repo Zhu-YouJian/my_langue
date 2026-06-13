@@ -1,0 +1,47 @@
+// 多项式回归 — 用 autodiff 拟合 y = ax² + bx + c
+//
+// 演示: autodiff 在数值优化上的应用
+// 数据归一化到 [0,1] 范围，提升收敛速度
+
+fn main() {
+    // 真实: y = 3x² - 2x + 1, x 归一化到 [0, 1]
+    let x = tensor[[0.0, 0.2, 0.4, 0.6, 0.8, 1.0]];
+    // y = 3*(x)² - 2*(x) + 1
+    let y = tensor[[1.0, 0.72, 0.68, 0.88, 1.32, 2.0]];
+
+    let mut a = tensor[[0.0]];
+    let mut b = tensor[[0.0]];
+    let mut c = tensor[[0.0]];
+    let lr = 0.1;
+
+    for epoch in 0..3000 {
+        new_grad();
+        zero_grad();
+        a = param(a);  b = param(b);  c = param(c);
+
+        let x2 = x * x;
+        let pred = a * x2 + b * x + c;
+        let loss = ((pred - y) * (pred - y)).mean();
+
+        backward(loss);
+
+        stop_grad();
+        a = a - lr * grad(a);
+        b = b - lr * grad(b);
+        c = c - lr * grad(c);
+    };
+
+    println("拟合结果 (真实: a=3, b=-2, c=1):");
+    println("a:");
+    println(a.sum());
+    println("b:");
+    println(b.sum());
+    println("c:");
+    println(c.sum());
+
+    // 验证: x=0.5 → 3*0.25 - 2*0.5 + 1 = 0.75
+    stop_grad();
+    let p = a * 0.25 + b * 0.5 + c;
+    println("\nx=0.5 预测 (真实=0.75):");
+    println(p.sum());
+}

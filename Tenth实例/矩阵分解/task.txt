@@ -1,0 +1,9 @@
+# 矩阵分解
+
+用 autodiff + SGD 将矩阵 M 分解为 U @ V。
+
+演示 autodiff 在数值线性代数上的应用。
+
+```bash
+tenth run Tenth实例/矩阵分解/matfact.th
+```

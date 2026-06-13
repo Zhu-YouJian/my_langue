@@ -1,0 +1,56 @@
+// 矩阵分解 — 用 autodiff 将矩阵 M 分解为 U @ V
+//
+// 演示: autodiff 在数值优化上的应用 (非 ML)
+// M (4×3) ≈ U (4×2) @ V (2×3)
+
+fn main() {
+    // 目标矩阵 M
+    let m = tensor[
+        [1.0, 2.0, 3.0],
+        [4.0, 5.0, 6.0],
+        [7.0, 8.0, 9.0],
+        [10.0, 11.0, 12.0]
+    ];
+
+    // 待优化的因子
+    let mut u = randn(4, 2);
+    let mut v = randn(2, 3);
+    let lr = 0.01;
+
+    for epoch in 0..5000 {
+        new_grad();
+        zero_grad();
+        u = param(u);
+        v = param(v);
+
+        // 前向: 重建 M_hat = U @ V
+        let m_hat = u.matmul(v);
+        let diff = m_hat - m;
+        let loss = (diff * diff).mean();
+
+        backward(loss);
+
+        stop_grad();
+        u = u - lr * grad(u);
+        v = v - lr * grad(v);
+    };
+
+    // 验证重建误差
+    stop_grad();
+    let m_hat = u.matmul(v);
+    let diff = m_hat - m;
+    let err = (diff * diff).mean();
+
+    println("=== 原始矩阵 M (4×3) ===");
+    for row in m {
+        println(row);
+    };
+
+    println("\n=== 重建 M_hat = U@V ===");
+    for row in m_hat {
+        println(row);
+    };
+
+    println("\n=== 重建 MSE (应趋近 0) ===");
+    println(err);
+}

@@ -1,0 +1,9 @@
+# Sobel 边缘检测
+
+用 conv2d 做图像处理——对 5×5 测试图像应用 Sobel 水平算子检测竖直边缘。
+
+演示 conv2d 作为通用卷积工具，不限于神经网络训练。
+
+```bash
+tenth run Tenth实例/边缘检测/sobel.th
+```

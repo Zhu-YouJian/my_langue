@@ -1,0 +1,9 @@
+# 多项式回归
+
+用 autodiff 拟合二次曲线 y = ax² + bx + c。
+
+演示 autodiff 在非 ML 数值优化问题上的应用。
+
+```bash
+tenth run Tenth实例/多项式回归/polyfit.th
+```
