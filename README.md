@@ -1,6 +1,9 @@
 # Tenth — 为 AI 研究而生的语言
 
 > 代号 Tenth = Tensor + Zenith，意为「张量之巅」
+>
+> [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+> [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 ## 现状
 
