@@ -1,0 +1,19 @@
+# 微型 CNN
+
+用 Tenth 内置 autodiff 训练一个微型卷积神经网络。
+
+## 网络结构
+
+```
+Conv2D(1→4, 2×2) → ReLU → Flatten → Linear(4→2) → Softmax
+```
+
+## 运行
+
+```bash
+tenth run Tenth实例/微型CNN/cnn.th
+```
+
+## 预期输出
+
+4 个样本全部 >99% 置信度正确分类，CE loss < 0.01。

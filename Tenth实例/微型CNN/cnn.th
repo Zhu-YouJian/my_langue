@@ -1,0 +1,72 @@
+// 微型 CNN — conv2d + relu + linear + autodiff
+//
+// 网络: Conv(1→2, 2×2) → ReLU → Flatten → Linear(2→2) → softmax
+// 输入: 4 张 2×2 灰度图（通过 2D→4D reshape），分 2 类
+// 演示: conv2d、reshape、for-in、autodiff
+
+fn main() {
+    // 4 samples × 4 pixels (will reshape to 4×1×2×2)
+    let x_2d = tensor[
+        [1.0, 2.0, 3.0, 4.0],   // 类0: 梯度↘
+        [2.0, 3.0, 4.0, 5.0],   // 类0
+        [4.0, 3.0, 2.0, 1.0],   // 类1: 梯度↖
+        [5.0, 4.0, 3.0, 2.0]    // 类1
+    ];
+    let x = x_2d.reshape(4, 1, 2, 2);
+
+    let target = tensor[
+        [1.0, 0.0],
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [0.0, 1.0]
+    ];
+
+    // Conv: 4 filters of 2×2 (C_out, C_in, kH, kW)
+    let mut conv_w = randn(4, 1, 2, 2);
+    // Linear: 4→2
+    let mut fc_w = randn(4, 2);
+    let mut fc_b = tensor[[0.0, 0.0]];
+
+    let lr = 0.01;
+    let mut epoch: i64 = 0;
+
+    while epoch < 5000 {
+        new_grad();
+        zero_grad();
+        conv_w = param(conv_w);
+        fc_w = param(fc_w);
+        fc_b = param(fc_b);
+
+        // Conv2D: (4,1,2,2) @ (4,1,2,2) → (4,4,1,1)
+        let h = x.conv2d(conv_w, 2, 2, 1, 0).relu();
+        // Flatten → (4,4)
+        let h_flat = h.reshape(4, 4);
+        // Linear: (4,2) @ (2,2) + (1,2) → (4,2)
+        let logits = h_flat.matmul(fc_w) + fc_b;
+        let loss = cross_entropy(logits, target);
+
+        backward(loss);
+
+        stop_grad();
+        conv_w = conv_w - lr * grad(conv_w);
+        fc_w = fc_w - lr * grad(fc_w);
+        fc_b = fc_b - lr * grad(fc_b);
+
+        epoch = epoch + 1;
+    };
+
+    // 验证
+    stop_grad();
+    let h = x.conv2d(conv_w, 2, 2, 1, 0).relu();
+    let logits = h.reshape(4, 4).matmul(fc_w) + fc_b;
+    let pred = logits.softmax();
+
+    println("=== CNN 预测 ===");
+    println("期待: [1,0; 1,0; 0,1; 0,1]");
+    for row in pred {
+        println(row);
+    };
+
+    println("\n=== CE loss ===");
+    println(cross_entropy(logits, target).sum());
+}
