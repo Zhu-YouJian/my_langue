@@ -1,20 +1,21 @@
 // Math functions
 //
-// Scalar math (no tensor needed):
-//   abs(x)    — absolute value
-//   sqrt(x)   — square root
-//   pow(b, e) — b^e (planned builtin)
-//   ln(x)     — natural log (planned builtin)
-//   sin/cos   — trigonometry (planned builtins)
+// Scalar math (builtins):
+//   abs(x)   — absolute value (Int → Int, Float → Float)
+//   sqrt(x)  — square root (Float → Float)
+//   sin(x)   — sine (Float → Float)
+//   cos(x)   — cosine (Float → Float)
+//   ln(x)    — natural log, x > 0
+//   pow(b,e) — b^e (Float → Float)
 //
-// Tensor math (available as tensor methods):
+// Tensor creation:
+//   zeros(d0, d1, ...)  — tensor of zeros
+//   ones(d0, d1, ...)   — tensor of ones
+//   rand(d0, d1, ...)   — uniform [0, 1)
+//   randn(d0, d1, ...)  — normal(0, 1)
+//
+// Tensor math (methods):
 //   x.abs(), x.sqrt(), x.exp(), x.log()
 //   x.relu(), x.sigmoid(), x.tanh(), x.softmax()
-//
-// Reductions:
 //   x.sum(), x.mean(), x.sum_axis(axis)
-//
-// Linear algebra:
 //   x.matmul(y), x.transpose()
-//
-// TODO: add scalar math builtins (abs, sqrt, sin, cos, ln)

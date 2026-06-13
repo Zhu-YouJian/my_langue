@@ -127,6 +127,39 @@ impl Interpreter {
                 return_type: Type::Unknown,
             },
         );
+        // Scalar math
+        for name in &["abs", "sqrt", "sin", "cos", "ln", "pow"] {
+            self.current_scope().insert(
+                name.to_string(),
+                Value::FnRef {
+                    name: name.to_string(),
+                    params: vec![("x".to_string(), Type::Unknown)],
+                    return_type: Type::Unknown,
+                },
+            );
+        }
+        // Tensor creation
+        for name in &["zeros", "ones"] {
+            self.current_scope().insert(
+                name.to_string(),
+                Value::FnRef {
+                    name: name.to_string(),
+                    params: vec![("dims".to_string(), Type::Unknown)],
+                    return_type: Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] },
+                },
+            );
+        }
+        // Serialization
+        for name in &["save_weights", "load_weights"] {
+            self.current_scope().insert(
+                name.to_string(),
+                Value::FnRef {
+                    name: name.to_string(),
+                    params: vec![("path".to_string(), Type::Unknown)],
+                    return_type: Type::Unknown,
+                },
+            );
+        }
         self.current_scope().insert(
             "param".to_string(),
             Value::FnRef {
@@ -301,7 +334,10 @@ impl Interpreter {
                             | "Vec::new" | "HashMap::new"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
-                            | "cross_entropy" => {
+                            | "cross_entropy"
+                            | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
+                            | "zeros" | "ones"
+                            | "save_weights" | "load_weights" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),
@@ -1809,6 +1845,83 @@ impl Interpreter {
                 }
                 return Ok(Some(Value::Unit));
             }
+            "abs" => {
+                if let Some(arg) = args.first() {
+                    return Ok(Some(match arg {
+                        Value::Int(n) => Value::Int(n.abs()),
+                        Value::Float(n) => Value::Float(n.abs()),
+                        _ => return Err(TenthError::RuntimeError {
+                            message: "abs() expects a numeric argument".into(),
+                        }),
+                    }));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "abs() expects 1 argument".into(),
+                });
+            }
+            "sqrt" => {
+                if let Some(arg) = args.first() {
+                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+                        message: "sqrt() expects a numeric argument".into(),
+                    })?;
+                    return Ok(Some(Value::Float(n.sqrt())));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "sqrt() expects 1 argument".into(),
+                });
+            }
+            "sin" => {
+                if let Some(arg) = args.first() {
+                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+                        message: "sin() expects a numeric argument".into(),
+                    })?;
+                    return Ok(Some(Value::Float(n.sin())));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "sin() expects 1 argument".into(),
+                });
+            }
+            "cos" => {
+                if let Some(arg) = args.first() {
+                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+                        message: "cos() expects a numeric argument".into(),
+                    })?;
+                    return Ok(Some(Value::Float(n.cos())));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "cos() expects 1 argument".into(),
+                });
+            }
+            "ln" => {
+                if let Some(arg) = args.first() {
+                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+                        message: "ln() expects a numeric argument".into(),
+                    })?;
+                    if n <= 0.0 {
+                        return Err(TenthError::RuntimeError {
+                            message: "ln() argument must be > 0".into(),
+                        });
+                    }
+                    return Ok(Some(Value::Float(n.ln())));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "ln() expects 1 argument".into(),
+                });
+            }
+            "pow" => {
+                if args.len() >= 2 {
+                    let base = args[0].as_float().ok_or_else(|| TenthError::RuntimeError {
+                        message: "pow() expects numeric arguments".into(),
+                    })?;
+                    let exp = args[1].as_float().ok_or_else(|| TenthError::RuntimeError {
+                        message: "pow() expects numeric arguments".into(),
+                    })?;
+                    return Ok(Some(Value::Float(base.powf(exp))));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "pow() expects 2 arguments".into(),
+                });
+            }
             "cross_entropy" => {
                 if args.len() >= 2 {
                     if let (Value::Tensor(logits), Value::Tensor(target)) = (&args[0], &args[1]) {
@@ -1892,6 +2005,127 @@ impl Interpreter {
                     .collect();
                 let t = Tensor::randn(&shape);
                 return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
+            }
+            "zeros" => {
+                let shape: Vec<usize> = args.iter()
+                    .map(|a| a.as_int().unwrap_or(1) as usize)
+                    .collect();
+                let t = Tensor::zeros(&shape);
+                return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
+            }
+            "ones" => {
+                let shape: Vec<usize> = args.iter()
+                    .map(|a| a.as_int().unwrap_or(1) as usize)
+                    .collect();
+                let t = Tensor::ones(&shape);
+                return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
+            }
+            "save_weights" => {
+                if args.len() >= 2 {
+                    if let Value::String(path) = &args[0] {
+                        // args[1] can be Array or Vec of tensors
+                        let tensors: &Rc<RefCell<Vec<Value>>> = match &args[1] {
+                            Value::Vec(v) => v,
+                            Value::Array(a) => a,
+                            _ => {
+                                return Err(TenthError::RuntimeError {
+                                    message: "save_weights expects a list of tensors".into(),
+                                });
+                            }
+                        };
+                            let tensors_ref = tensors.borrow();
+                            let mut bytes: Vec<u8> = Vec::new();
+                            // Header: number of tensors (i32)
+                            bytes.extend(&(tensors_ref.len() as i32).to_le_bytes());
+                            for val in tensors_ref.iter() {
+                                // Unwrap Shared wrapper (Vec::push wraps elements in Shared)
+                                let tensor_rc = match val {
+                                    Value::Tensor(t) => Some(t.clone()),
+                                    Value::Shared(rc) => {
+                                        if let Value::Tensor(t) = &*rc.borrow() {
+                                            Some(t.clone())
+                                        } else { None }
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(t) = tensor_rc {
+                                    let t_ref = t.borrow();
+                                    let shape = t_ref.shape();
+                                    let ndim = shape.len() as i32;
+                                    bytes.extend(&ndim.to_le_bytes());
+                                    for &d in &shape {
+                                        bytes.extend(&(d as i32).to_le_bytes());
+                                    }
+                                    let flat = t_ref.data.as_standard_layout().to_owned();
+                                    if let Some(slice) = flat.as_slice() {
+                                        for &x in slice {
+                                            bytes.extend(&x.to_le_bytes());
+                                        }
+                                    }
+                                }
+                            }
+                            let _ = std::fs::write(path, &bytes);
+                            return Ok(Some(Value::Unit));
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "save_weights(path, vec_of_tensors)".into(),
+                });
+            }
+            "load_weights" => {
+                if let Some(Value::String(path)) = args.first() {
+                    match std::fs::read(path) {
+                        Ok(bytes) => {
+                            if bytes.len() < 4 {
+                                return Err(TenthError::RuntimeError {
+                                    message: "load_weights: file too short".into(),
+                                });
+                            }
+                            let num = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+                            let mut offset: usize = 4;
+                            let mut result: Vec<Value> = Vec::new();
+                            for _ in 0..num {
+                                if offset + 4 > bytes.len() { break; }
+                                let ndim = i32::from_le_bytes([
+                                    bytes[offset], bytes[offset+1], bytes[offset+2], bytes[offset+3]
+                                ]) as usize;
+                                offset += 4;
+                                let mut shape = Vec::new();
+                                for _ in 0..ndim {
+                                    if offset + 4 > bytes.len() { break; }
+                                    let d = i32::from_le_bytes([
+                                        bytes[offset], bytes[offset+1], bytes[offset+2], bytes[offset+3]
+                                    ]) as usize;
+                                    shape.push(d);
+                                    offset += 4;
+                                }
+                                let nel: usize = shape.iter().product();
+                                let data_len = nel * 8; // f64 = 8 bytes
+                                if offset + data_len > bytes.len() { break; }
+                                let mut data = Vec::with_capacity(nel);
+                                for i in 0..nel {
+                                    let start = offset + i * 8;
+                                    let val = f64::from_le_bytes([
+                                        bytes[start], bytes[start+1], bytes[start+2], bytes[start+3],
+                                        bytes[start+4], bytes[start+5], bytes[start+6], bytes[start+7],
+                                    ]);
+                                    data.push(val);
+                                }
+                                offset += data_len;
+                                result.push(Value::Tensor(Rc::new(RefCell::new(
+                                    Tensor::from_vec(data, shape)
+                                ))));
+                            }
+                            return Ok(Some(Value::Vec(Rc::new(RefCell::new(result)))));
+                        }
+                        Err(e) => return Err(TenthError::RuntimeError {
+                            message: format!("load_weights: {}", e),
+                        }),
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "load_weights(path)".into(),
+                });
             }
             "read_file" => {
                 if let Some(Value::String(path)) = args.first() {

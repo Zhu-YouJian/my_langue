@@ -235,6 +235,9 @@ impl Lowerer {
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
                             | "cross_entropy"
+                            | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
+                            | "zeros" | "ones"
+                            | "save_weights" | "load_weights"
                             | "lexer_new" | "lexer_tokenize" | "parse_program"
                             | "lower_program" | "compile_to_wasm" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)
