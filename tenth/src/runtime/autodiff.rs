@@ -67,6 +67,9 @@ pub enum TapeOp {
     /// 2D convolution (im2col + matmul).
     /// input_tensors = [input, weight, im2col_result, output]
     Conv2D,
+    /// Batch normalization.
+    /// Forward stores normalized x, std, gamma, beta; backward is standard BN grad.
+    BatchNorm,
 }
 
 // ── Tape ──────────────────────────────────────────────────────────────
@@ -370,6 +373,33 @@ impl Tape {
                         &grad * y * &y.mapv(|v| 1.0 - v)
                     };
                     propagate_grad(node, 0, &g_a, &mut node_grads);
+                }
+                TapeOp::BatchNorm => {
+                    // Simplified BN backward:
+                    // d(gamma) = sum(dY * x_hat), d(beta) = sum(dY)
+                    // dX = (gamma / std) * (dY - mean(dY) - x_hat * mean(dY * x_hat))
+                    // input_tensors = [input, gamma, beta, x_hat, std_inv, result]
+                    if node.input_tensors.len() >= 5 {
+                        let gamma_ref = node.input_tensors[1].borrow();
+                        let x_hat_ref = node.input_tensors[3].borrow();
+                        let std_inv_ref = node.input_tensors[4].borrow();
+
+                        // d(gamma)
+                        let d_gamma = &grad * &x_hat_ref.data;
+                        // d(beta)
+                        let d_beta = grad.clone();
+
+                        // dX = gamma * std_inv * (dY - mean(dY) - x_hat * mean(dY * x_hat))
+                        let n = grad.len() as f64;
+                        let mean_dy = grad.sum() / n;
+                        let mean_dy_xhat = (&grad * &x_hat_ref.data).sum() / n;
+                        let d_x = &std_inv_ref.data * &gamma_ref.data *
+                            &(&grad - mean_dy - &(&x_hat_ref.data * mean_dy_xhat));
+
+                        propagate_grad(node, 0, &d_x, &mut node_grads);
+                        propagate_grad(node, 1, &d_gamma, &mut node_grads);
+                        propagate_grad(node, 2, &d_beta, &mut node_grads);
+                    }
                 }
                 TapeOp::Conv2D => {
                     // input_tensors = [input, weight, im2col, output]
