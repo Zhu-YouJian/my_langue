@@ -29,7 +29,7 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 |------|--------|--------|
 | 自举管线执行时间 | ~200s (interpreter) | **~0.2s (VM)** |
 | VM fallback 率 | Lexer/Parser 100% | **0%** |
-| VM 指令数 | 33 | **41** |
+| VM 指令数 | 33 | **43** (41→43, PushRange+MoveOp) |
 | wasmi 加载验证 | ❌ | ✅ `add(3,4)=7` |
 
 ### 各层状态
@@ -73,7 +73,7 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 
 ### 已知限制
 
-- [ ] Closure/GenericCall 仍在 VM 中 fallback（自举代码未使用）
+- [x] ~~Closure/GenericCall VM fallback~~ → GenericCall/Move/Range 已补全，仅剩 Closure/TensorLiteral
 - [ ] Host import (Vec/String) 为占位实现，WASM 模块需宿主提供真实运行时
 - [ ] 三段式自举验证（输出 WASM 再编译自身）因栈溢出未跑通
 - [x] ~~大文件 Lowerer 性能~~ → 已解决 (VM ~0.2s)
@@ -124,7 +124,7 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 | REPL 多行输入 (自动续行) | ✅ |
 | 错误源码上下文显示 | ✅ |
 | 数组字面量 [1,2,3] | ✅ 已原生存在 |
-| for-in 循环 | ⏸ 推迟 |
+| for-in 循环 (Range/Vec/Tensor) | ✅ |
 
 ---
 
