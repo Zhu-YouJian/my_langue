@@ -109,6 +109,14 @@ impl Interpreter {
             },
         );
         self.current_scope().insert(
+            "zero_grad".to_string(),
+            Value::FnRef {
+                name: "zero_grad".to_string(),
+                params: vec![],
+                return_type: Type::unit(),
+            },
+        );
+        self.current_scope().insert(
             "param".to_string(),
             Value::FnRef {
                 name: "param".to_string(),
@@ -281,7 +289,7 @@ impl Interpreter {
                             | "compile_program" | "write_bytes"
                             | "Vec::new" | "HashMap::new"
                             | "start_grad" | "new_grad" | "stop_grad"
-                            | "param" | "backward" | "grad" => {
+                            | "param" | "backward" | "grad" | "zero_grad" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),
@@ -1263,14 +1271,35 @@ impl Interpreter {
                 match method {
                     "sum" => {
                         if args.is_empty() {
-                            Ok(Value::Float(tensor.sum()))
+                            if self.recording {
+                                // Return a 1-element tensor so it can be recorded
+                                let scalar = tensor.sum();
+                                let result = Rc::new(RefCell::new(
+                                    Tensor::from_vec(vec![scalar], vec![1])
+                                ));
+                                self.record_unary(TapeOp::Sum, t, &result);
+                                Ok(Value::Tensor(result))
+                            } else {
+                                Ok(Value::Float(tensor.sum()))
+                            }
                         } else {
                             let axis = args[0].as_int().unwrap_or(0) as usize;
                             let result = tensor.sum_axis(axis);
                             Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                         }
                     }
-                    "mean" => Ok(Value::Float(tensor.mean())),
+                    "mean" => {
+                        if self.recording {
+                            let scalar = tensor.mean();
+                            let result = Rc::new(RefCell::new(
+                                Tensor::from_vec(vec![scalar], vec![1])
+                            ));
+                            self.record_unary(TapeOp::Mean, t, &result);
+                            Ok(Value::Tensor(result))
+                        } else {
+                            Ok(Value::Float(tensor.mean()))
+                        }
+                    }
                     "abs" => {
                         let result_tensor = tensor.abs();
                         let result = Rc::new(RefCell::new(result_tensor));
@@ -1598,6 +1627,12 @@ impl Interpreter {
             "new_grad" => {
                 self.tape = Some(Tape::new());
                 self.recording = true;
+                return Ok(Some(Value::Unit));
+            }
+            "zero_grad" => {
+                if let Some(ref tape) = self.tape {
+                    tape.zero_grad();
+                }
                 return Ok(Some(Value::Unit));
             }
             "grad" => {

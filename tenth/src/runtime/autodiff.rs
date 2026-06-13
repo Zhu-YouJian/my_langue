@@ -48,6 +48,8 @@ pub enum TapeOp {
     Transpose,
     /// Sum over all elements → scalar.
     Sum,
+    /// Mean over all elements → scalar.
+    Mean,
     /// Exponential: exp(a)
     Exp,
     /// Natural log: ln(a)
@@ -261,7 +263,17 @@ impl Tape {
                     let g_a = {
                         let a = node.input_tensors[0].borrow();
                         let a_shape = a.shape();
-                        let s: f64 = grad.iter().sum();
+                        let s: f64 = grad.iter().sum::<f64>();
+                        ArrayD::from_elem(IxDyn(&a_shape), s)
+                    };
+                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                }
+                TapeOp::Mean => {
+                    let g_a = {
+                        let a = node.input_tensors[0].borrow();
+                        let a_shape = a.shape();
+                        let n = a.size() as f64;
+                        let s: f64 = grad.iter().sum::<f64>() / n;
                         ArrayD::from_elem(IxDyn(&a_shape), s)
                     };
                     propagate_grad(node, 0, &g_a, &mut node_grads);
@@ -289,12 +301,13 @@ impl Tape {
                     propagate_grad(node, 0, &g_a, &mut node_grads);
                 }
                 TapeOp::Softmax => {
+                    // d(softmax(x)_i)/dx_j = y_i * (δ_ij - y_j)
+                    // Chain rule: g_i = y_i * (grad_i - sum_j(grad_j * y_j))
                     let g_a = {
                         let result_ref = node.input_tensors[1].borrow();
                         let y = &result_ref.data;
                         let sum_term = (&grad * y).sum();
-                        let n = y.len() as f64;
-                        &grad * y - &(y * (sum_term / n))
+                        &grad * y - &(y.mapv(|v| v * sum_term))
                     };
                     propagate_grad(node, 0, &g_a, &mut node_grads);
                 }
@@ -306,6 +319,15 @@ impl Tape {
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.counter = 0;
+    }
+
+    /// Zero out the `.grad` field of every Input (leaf) tensor on the tape.
+    pub fn zero_grad(&self) {
+        for node in &self.nodes {
+            if node.op == TapeOp::Input && !node.input_tensors.is_empty() {
+                node.input_tensors[0].borrow_mut().zero_grad();
+            }
+        }
     }
 }
 
