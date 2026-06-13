@@ -52,6 +52,7 @@ impl Lexer {
             if ch.is_whitespace() {
                 self.advance();
             } else if ch == '/' && self.peek_next() == Some('/') {
+                // Line comment: skip to end of line
                 self.advance();
                 self.advance();
                 while let Some(c) = self.peek() {
@@ -59,6 +60,32 @@ impl Lexer {
                         break;
                     }
                     self.advance();
+                }
+            } else if ch == '/' && self.peek_next() == Some('*') {
+                // Block comment: skip until */
+                self.advance(); // skip /
+                self.advance(); // skip *
+                let mut depth: i32 = 1;
+                while depth > 0 {
+                    match (self.peek(), self.peek_next()) {
+                        (Some('/'), Some('*')) => {
+                            self.advance();
+                            self.advance();
+                            depth += 1;
+                        }
+                        (Some('*'), Some('/')) => {
+                            self.advance();
+                            self.advance();
+                            depth -= 1;
+                        }
+                        (Some(_), _) => {
+                            self.advance();
+                        }
+                        (None, _) => {
+                            // Reached EOF inside block comment — let parser handle the error
+                            break;
+                        }
+                    }
                 }
             } else {
                 break;

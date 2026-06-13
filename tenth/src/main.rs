@@ -12,7 +12,16 @@ use tenth::runtime::value::Value;
 use tenth::compile;
 use tenth::compile::bytecode::BytecodeCompiler;
 
-fn main() -> TenthResult<()> {
+fn main() {
+    if let Err(e) = run_main() {
+        // Errors from lexer/parser/runtime are already formatted by run_file.
+        // For other errors (e.g. file-not-found), print a plain message.
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+}
+
+fn run_main() -> TenthResult<()> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() >= 2 {
@@ -70,7 +79,13 @@ fn run_file(path: &str) -> TenthResult<()> {
         .map_err(|e| tenth::error::TenthError::RuntimeError {
             message: format!("cannot read {}: {}", path, e),
         })?;
-    let hir = source_to_hir(&source)?;
+    let hir = match source_to_hir(&source) {
+        Ok(hir) => hir,
+        Err(e) => {
+            eprintln!("{}", e.display_with_source(Some(&source)));
+            std::process::exit(1);
+        }
+    };
 
     match vm_execute(&hir) {
         Ok(val) => {

@@ -47,3 +47,27 @@ pub enum TenthError {
 }
 
 pub type TenthResult<T> = Result<T, TenthError>;
+
+impl TenthError {
+    /// Pretty-print the error with source context (if source is provided).
+    pub fn display_with_source(&self, source: Option<&str>) -> String {
+        let base = self.to_string();
+        let (line_num, _col) = self.location();
+        if let (Some(src), Some(ln)) = (source, line_num) {
+            let source_line = src.lines().nth(ln.saturating_sub(1)).unwrap_or("");
+            format!("Error: {}\n  |\n{:>3} | {}\n  |", base, ln, source_line)
+        } else {
+            format!("Error: {}", base)
+        }
+    }
+
+    /// Return (line, col) if the error carries position info.
+    pub fn location(&self) -> (Option<usize>, Option<usize>) {
+        match self {
+            TenthError::LexerError { line, col, .. }
+            | TenthError::ParseError { line, col, .. }
+            | TenthError::TypeError { line, col, .. } => (Some(*line), Some(*col)),
+            _ => (None, None),
+        }
+    }
+}

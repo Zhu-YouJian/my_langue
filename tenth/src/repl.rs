@@ -119,7 +119,22 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                     continue;
                 }
 
-                rl.add_history_entry(trimmed).ok();
+                // Multi-line input: if braces are unbalanced, keep reading
+                let mut full_input = trimmed.to_string();
+                while !is_balanced(&full_input) {
+                    match rl.readline("...     ") {
+                        Ok(cont) => {
+                            full_input.push('\n');
+                            full_input.push_str(&cont);
+                        }
+                        Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+
+                rl.add_history_entry(&full_input).ok();
 
                 // Guard: check definition count before parsing
                 if let Err(msg) = limits.guard_defs(def_count) {
@@ -131,7 +146,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                 }
 
                 match execute_line_with_limits(
-                    trimmed,
+                    &full_input,
                     &mut accumulated_program,
                     &mut variables,
                     &limits,
@@ -165,6 +180,27 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
     }
 
     Ok(())
+}
+
+/// Check if braces/brackets/parens are balanced. Returns true if all openers are closed.
+fn is_balanced(s: &str) -> bool {
+    let mut stack: Vec<char> = Vec::new();
+    for ch in s.chars() {
+        match ch {
+            '{' | '(' | '[' => stack.push(ch),
+            '}' => {
+                if stack.pop() != Some('{') { return false; }
+            }
+            ')' => {
+                if stack.pop() != Some('(') { return false; }
+            }
+            ']' => {
+                if stack.pop() != Some('[') { return false; }
+            }
+            _ => {}
+        }
+    }
+    stack.is_empty()
 }
 
 fn execute_line_with_limits(

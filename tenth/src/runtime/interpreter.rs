@@ -1159,9 +1159,46 @@ impl Interpreter {
         }
     }
 
-    fn eval_string_method(&self, s: &str, method: &str, _args: &[Value]) -> TenthResult<Option<Value>> {
+    fn eval_string_method(&self, s: &str, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
         match method {
             "len" => Ok(Some(Value::Int(s.chars().count() as i64))),
+            "trim" => Ok(Some(Value::String(s.trim().to_string()))),
+            "to_upper" => Ok(Some(Value::String(s.to_uppercase()))),
+            "to_lower" => Ok(Some(Value::String(s.to_lowercase()))),
+            "replace" => {
+                if args.len() >= 2 {
+                    if let (Value::String(from), Value::String(to)) = (&args[0], &args[1]) {
+                        return Ok(Some(Value::String(s.replace(from.as_str(), to.as_str()))));
+                    }
+                }
+                Err(TenthError::RuntimeError {
+                    message: "replace() takes 2 string arguments".into(),
+                })
+            }
+            "split" => {
+                if let Some(Value::String(delim)) = args.first() {
+                    let parts: Vec<Value> = s.split(delim.as_str())
+                        .map(|p| Value::String(p.to_string()))
+                        .collect();
+                    return Ok(Some(Value::Vec(Rc::new(RefCell::new(parts)))));
+                }
+                Err(TenthError::RuntimeError {
+                    message: "split() takes a string delimiter".into(),
+                })
+            }
+            "substring" => {
+                if args.len() >= 2 {
+                    let start = args[0].as_int().unwrap_or(0).max(0) as usize;
+                    let len = args[1].as_int().unwrap_or(0).max(0) as usize;
+                    let chars: Vec<char> = s.chars().collect();
+                    let end = (start + len).min(chars.len());
+                    let sub: String = chars[start..end].iter().collect();
+                    return Ok(Some(Value::String(sub)));
+                }
+                Err(TenthError::RuntimeError {
+                    message: "substring() takes start and length".into(),
+                })
+            }
             _ => Err(TenthError::RuntimeError {
                 message: format!("String has no method '{}'", method),
             }),
@@ -1200,6 +1237,39 @@ impl Interpreter {
                         message: format!("Vec index {} out of bounds", idx),
                     }),
                 }
+            }
+            "pop" => {
+                let mut vec = items.borrow_mut();
+                match vec.pop() {
+                    Some(v) => Ok(Some(v)),
+                    None => Err(TenthError::RuntimeError {
+                        message: "pop() on empty Vec".into(),
+                    }),
+                }
+            }
+            "set" => {
+                if args.len() != 2 {
+                    return Err(TenthError::RuntimeError {
+                        message: "set() takes 2 arguments (index, value)".into(),
+                    });
+                }
+                let idx = args[0].as_int().unwrap_or(0) as usize;
+                let mut vec = items.borrow_mut();
+                if idx < vec.len() {
+                    vec[idx] = match &args[1] {
+                        Value::Shared(rc) => Value::Shared(rc.clone()),
+                        other => Value::Shared(Rc::new(RefCell::new(other.clone()))),
+                    };
+                    Ok(Some(Value::Unit))
+                } else {
+                    Err(TenthError::RuntimeError {
+                        message: format!("Vec index {} out of bounds", idx),
+                    })
+                }
+            }
+            "clear" => {
+                items.borrow_mut().clear();
+                Ok(Some(Value::Unit))
             }
             _ => Err(TenthError::RuntimeError {
                 message: format!("Vec has no method '{}'", method),
