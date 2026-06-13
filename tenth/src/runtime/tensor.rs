@@ -354,6 +354,48 @@ impl Tensor {
         Some(Tensor::from_vec(result_data, shape))
     }
 
+    // ── conv2d helpers ───────────────────────────────────────────────
+
+    /// im2col: extract sliding windows from a 4D tensor (N, C, H, W)
+    /// into a 2D matrix (N*H_out*W_out, C*K_H*K_W).
+    /// Returns (col_matrix, output_height, output_width).
+    pub fn im2col(&self, kernel_h: usize, kernel_w: usize, stride: usize, pad: usize) -> Option<(Tensor, usize, usize)> {
+        let shape = self.shape();
+        if shape.len() != 4 { return None; }
+        let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
+        let h_out = (h + 2 * pad - kernel_h) / stride + 1;
+        let w_out = (w + 2 * pad - kernel_w) / stride + 1;
+
+        let mut cols = Vec::with_capacity(n * h_out * w_out * c * kernel_h * kernel_w);
+        let flat = self.data.as_standard_layout().to_owned();
+        let slice = flat.as_slice()?;
+
+        for ni in 0..n {
+            for hi in 0..h_out {
+                for wi in 0..w_out {
+                    for ci in 0..c {
+                        for kh in 0..kernel_h {
+                            let ih = hi * stride + kh;
+                            for kw in 0..kernel_w {
+                                let iw = wi * stride + kw;
+                                if ih >= pad && ih < h + pad && iw >= pad && iw < w + pad {
+                                    let ih_adj = ih - pad;
+                                    let iw_adj = iw - pad;
+                                    let idx = ((ni * c + ci) * h + ih_adj) * w + iw_adj;
+                                    cols.push(slice.get(idx).copied().unwrap_or(0.0));
+                                } else {
+                                    cols.push(0.0); // zero padding
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let col_tensor = Tensor::from_vec(cols, vec![n * h_out * w_out, c * kernel_h * kernel_w]);
+        Some((col_tensor, h_out, w_out))
+    }
+
     /// In-place element-wise assignment: `self[i..] = src`.
     /// This mutates the underlying ArrayD in-place.
     pub fn assign_(&mut self, src: &Tensor) {

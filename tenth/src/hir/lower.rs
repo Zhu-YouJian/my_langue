@@ -234,6 +234,7 @@ impl Lowerer {
                             | "compile_host" | "compile_program" | "write_bytes"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
+                            | "cross_entropy"
                             | "lexer_new" | "lexer_tokenize" | "parse_program"
                             | "lower_program" | "compile_to_wasm" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)

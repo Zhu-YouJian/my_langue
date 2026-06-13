@@ -1,0 +1,59 @@
+// 多分类器 — CE loss 版
+// 对比 MSE 版（classifier.th），本版使用 cross_entropy(logits, target)
+// 梯度 = softmax − target，收敛更快更稳定
+
+fn main() {
+    let x = tensor[
+        [1.0, 1.0], [2.0, 1.0],
+        [5.0, 1.0], [5.0, 2.0],
+        [3.0, 5.0], [4.0, 5.0]
+    ];
+    let target = tensor[
+        [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0], [0.0, 0.0, 1.0]
+    ];
+
+    let mut w1 = randn(2, 16);
+    let mut b1 = tensor[[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]];
+    let mut w2 = randn(16, 3);
+    let mut b2 = tensor[[0.0, 0.0, 0.0]];
+
+    let lr = 0.01;  // CE 梯度比 MSE 大，lr 可以更小
+    let mut epoch: i64 = 0;
+
+    while epoch < 5000 {
+        new_grad();
+        zero_grad();
+        w1 = param(w1);  b1 = param(b1);
+        w2 = param(w2);  b2 = param(b2);
+
+        let h = (x.matmul(w1) + b1).relu();
+        let logits = h.matmul(w2) + b2;
+
+        // Cross-entropy loss（融合 softmax）
+        let loss = cross_entropy(logits, target);
+
+        backward(loss);
+
+        stop_grad();
+        w1 = w1 - lr * grad(w1);  b1 = b1 - lr * grad(b1);
+        w2 = w2 - lr * grad(w2);  b2 = b2 - lr * grad(b2);
+
+        epoch = epoch + 1;
+    };
+
+    // 验证
+    stop_grad();
+    let h = (x.matmul(w1) + b1).relu();
+    let logits = h.matmul(w2) + b2;
+    let pred = logits.softmax();
+
+    println("=== 预测概率 (6行×3类) ===");
+    println("期望: [1,0,0; 1,0,0; 0,1,0; 0,1,0; 0,0,1; 0,0,1]");
+    println(pred);
+
+    println("\n=== CE loss ===");
+    println(cross_entropy(logits, target).sum());
+}

@@ -58,6 +58,15 @@ pub enum TapeOp {
     Sigmoid,
     /// Softmax (over last dim, treated as flatten).
     Softmax,
+    /// Cross-entropy loss: -sum(target * log(softmax(logits))).
+    /// Forward stores softmax(logits); backward = softmax - target.
+    CrossEntropy,
+    /// Dropout: randomly zeroes elements during training.
+    /// Forward stores the mask; backward multiplies gradient by mask.
+    Dropout,
+    /// 2D convolution (im2col + matmul).
+    /// input_tensors = [input, weight, im2col_result, output]
+    Conv2D,
 }
 
 // ── Tape ──────────────────────────────────────────────────────────────
@@ -127,6 +136,68 @@ impl Tape {
             op,
             inputs: vec![],
             input_tensors: vec![input_tensor, result],
+        });
+        id
+    }
+
+    /// Record a cross-entropy loss node.
+    /// `logits_id` — upstream node id for the logits tensor.
+    /// `softmax` — pre-computed softmax(logits) (needed by backward).
+    /// `target` — one-hot target tensor.
+    /// `result` — scalar loss tensor.
+    pub fn cross_entropy(
+        &mut self,
+        logits_id: usize,
+        logits: Rc<RefCell<Tensor>>,
+        softmax: Rc<RefCell<Tensor>>,
+        target: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+    ) -> usize {
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::CrossEntropy,
+            inputs: vec![logits_id],
+            input_tensors: vec![logits, softmax, target, result],
+        });
+        id
+    }
+
+    /// Record a conv2d node.
+    pub fn conv2d(
+        &mut self, x_id: usize, x: Rc<RefCell<Tensor>>,
+        w_id: usize, w: Rc<RefCell<Tensor>>,
+        im2col: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+    ) -> usize {
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::Conv2D,
+            inputs: vec![x_id, w_id],
+            input_tensors: vec![x, w, im2col, result],
+        });
+        id
+    }
+
+    /// Record a dropout node.
+    /// `input_id` — upstream node id for the input tensor.
+    /// `input` — the input tensor.
+    /// `mask` — the dropout mask (1/(1-rate) for kept, 0 for dropped).
+    /// `result` — the output tensor (input * mask).
+    pub fn dropout(
+        &mut self,
+        input_id: usize,
+        input: Rc<RefCell<Tensor>>,
+        mask: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+    ) -> usize {
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::Dropout,
+            inputs: vec![input_id],
+            input_tensors: vec![input, mask, result],
         });
         id
     }
@@ -299,6 +370,54 @@ impl Tape {
                         &grad * y * &y.mapv(|v| 1.0 - v)
                     };
                     propagate_grad(node, 0, &g_a, &mut node_grads);
+                }
+                TapeOp::Conv2D => {
+                    // input_tensors = [input, weight, im2col, output]
+                    // dY = upstream gradient (same shape as output: N*H_out*W_out, C_out)
+                    // dW = im2col^T @ dY
+                    // d(im2col) = dY @ W^T → then col2im back to input shape
+                    if node.input_tensors.len() >= 3 {
+                        let d_w = {
+                            let col_ref = node.input_tensors[2].borrow();
+                            let col_t = col_ref.transpose().map(|t| t.data).unwrap_or_default();
+                            matmul_2d(&col_t, &grad)
+                        };
+                        let d_x = {
+                            let w_ref = node.input_tensors[1].borrow();
+                            let w_t = w_ref.transpose();
+                            if let Some(w_t) = w_t {
+                                let d_col = matmul_2d(&grad, &w_t.data);
+                                d_col
+                            } else {
+                                ArrayD::zeros(IxDyn(&[1, 1]))
+                            }
+                        };
+                        propagate_grad(node, 0, &d_x, &mut node_grads);
+                        propagate_grad(node, 1, &d_w, &mut node_grads);
+                    }
+                }
+                TapeOp::Dropout => {
+                    // d(dropout(x))/dx = mask * dY
+                    // input_tensors = [input, mask, result]
+                    if node.input_tensors.len() >= 2 {
+                        let g_a = {
+                            let mask_ref = node.input_tensors[1].borrow();
+                            &grad * &mask_ref.data
+                        };
+                        propagate_grad(node, 0, &g_a, &mut node_grads);
+                    }
+                }
+                TapeOp::CrossEntropy => {
+                    // d(CE)/d(logits) = softmax - target
+                    // input_tensors = [logits, softmax_output, target]
+                    if node.input_tensors.len() >= 3 {
+                        let g_a = {
+                            let sm_ref = node.input_tensors[1].borrow();
+                            let tgt_ref = node.input_tensors[2].borrow();
+                            &sm_ref.data - &tgt_ref.data
+                        };
+                        propagate_grad(node, 0, &g_a, &mut node_grads);
+                    }
                 }
                 TapeOp::Softmax => {
                     // d(softmax(x)_i)/dx_j = y_i * (δ_ij - y_j)

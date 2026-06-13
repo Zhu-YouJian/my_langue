@@ -117,6 +117,17 @@ impl Interpreter {
             },
         );
         self.current_scope().insert(
+            "cross_entropy".to_string(),
+            Value::FnRef {
+                name: "cross_entropy".to_string(),
+                params: vec![
+                    ("logits".to_string(), Type::Unknown),
+                    ("target".to_string(), Type::Unknown),
+                ],
+                return_type: Type::Unknown,
+            },
+        );
+        self.current_scope().insert(
             "param".to_string(),
             Value::FnRef {
                 name: "param".to_string(),
@@ -289,7 +300,8 @@ impl Interpreter {
                             | "compile_program" | "write_bytes"
                             | "Vec::new" | "HashMap::new"
                             | "start_grad" | "new_grad" | "stop_grad"
-                            | "param" | "backward" | "grad" | "zero_grad" => {
+                            | "param" | "backward" | "grad" | "zero_grad"
+                            | "cross_entropy" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),
@@ -1399,6 +1411,94 @@ impl Interpreter {
                         let result = tensor.flatten();
                         Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                     }
+                    "conv2d" => {
+                        // x.conv2d(w, kernel_h, kernel_w, stride, pad)
+                        if args.len() < 5 {
+                            return Err(TenthError::RuntimeError {
+                                message: "conv2d() takes 5 args: w, kH, kW, stride, pad".into(),
+                            });
+                        }
+                        let k_h = args[1].as_int().unwrap_or(3) as usize;
+                        let k_w = args[2].as_int().unwrap_or(3) as usize;
+                        let stride = args[3].as_int().unwrap_or(1) as usize;
+                        let pad = args[4].as_int().unwrap_or(0) as usize;
+                        if let Value::Tensor(w_rc) = &args[0] {
+                            let w_data = w_rc.borrow();
+                            // im2col: (N,C,H,W) → (N*H_out*W_out, C*kH*kW)
+                            let (cols, h_out, w_out) = tensor.im2col(k_h, k_w, stride, pad)
+                                .ok_or_else(|| TenthError::RuntimeError {
+                                    message: "im2col failed (input must be 4D)".into(),
+                                })?;
+                            // Reshape weight: (C_out, C_in, kH, kW) → (C_out, C_in*kH*kW)
+                            let w_shape = w_data.shape();
+                            let c_out = w_shape[0];
+                            // matmul: cols @ w_flat^T → (N*H_out*W_out, C_out)
+                            let w_flat = w_data.reshape(&[c_out, w_shape[1] * w_shape[2] * w_shape[3]])
+                                .ok_or_else(|| TenthError::RuntimeError {
+                                    message: "weight reshape failed".into(),
+                                })?;
+                            let output_2d = cols.matmul(&w_flat.transpose()
+                                .ok_or_else(|| TenthError::RuntimeError {
+                                    message: "weight transpose failed".into(),
+                                })?).map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            // Reshape output to (N, C_out, H_out, W_out)
+                            let n = tensor.shape()[0];
+                            let result = output_2d.reshape(&[n, c_out, h_out, w_out])
+                                .ok_or_else(|| TenthError::RuntimeError {
+                                    message: "output reshape failed".into(),
+                                })?;
+                            let result_rc = Rc::new(RefCell::new(result));
+                            if self.recording {
+                                let cols_rc = Rc::new(RefCell::new(cols));
+                                if let Some(ref mut tape) = self.tape {
+                                    let x_id = t.borrow().tape_id
+                                        .unwrap_or_else(|| tape.input(t.clone()));
+                                    let w_id = w_rc.borrow().tape_id
+                                        .unwrap_or_else(|| tape.input(w_rc.clone()));
+                                    let node_id = tape.conv2d(
+                                        x_id, t.clone(),
+                                        w_id, w_rc.clone(),
+                                        cols_rc, result_rc.clone(),
+                                    );
+                                    result_rc.borrow_mut().tape_id = Some(node_id);
+                                }
+                            }
+                            return Ok(Value::Tensor(result_rc));
+                        }
+                        return Err(TenthError::RuntimeError {
+                            message: "conv2d: weight must be a tensor".into(),
+                        });
+                    }
+                    "dropout" => {
+                        if args.is_empty() {
+                            return Err(TenthError::RuntimeError {
+                                message: "dropout() takes 1 argument (rate)".into(),
+                            });
+                        }
+                        let rate = args[0].as_float().unwrap_or(0.5);
+                        // Generate inverted dropout mask
+                        use rand::Rng;
+                        let mut rng = rand::thread_rng();
+                        let scale = 1.0 / (1.0 - rate);
+                        let mask_data = tensor.data.mapv(|_| {
+                            if rng.r#gen::<f64>() < rate { 0.0 } else { scale }
+                        });
+                        let mask = Rc::new(RefCell::new(Tensor::from_data(mask_data)));
+                        let result_tensor = Tensor::from_data(&tensor.data * &mask.borrow().data);
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording {
+                            let node_id = if let Some(ref mut tape) = self.tape {
+                                let input_id = t.borrow().tape_id
+                                    .unwrap_or_else(|| tape.input(t.clone()));
+                                let _mask_id = tape.input(mask.clone());
+                                tape.dropout(input_id, t.clone(), mask.clone(), result.clone())
+                            } else {
+                                0
+                            };
+                            result.borrow_mut().tape_id = Some(node_id);
+                        }
+                        Ok(Value::Tensor(result))
+                    }
                     "softmax" => {
                         let result_tensor = tensor.softmax().ok_or_else(|| TenthError::RuntimeError {
                             message: "softmax failed".into(),
@@ -1638,6 +1738,60 @@ impl Interpreter {
                     tape.zero_grad();
                 }
                 return Ok(Some(Value::Unit));
+            }
+            "cross_entropy" => {
+                if args.len() >= 2 {
+                    if let (Value::Tensor(logits), Value::Tensor(target)) = (&args[0], &args[1]) {
+                        let logits_data = logits.borrow();
+                        let target_data = target.borrow();
+
+                        // Compute softmax along last axis
+                        let sm = logits_data.softmax().ok_or_else(|| {
+                            TenthError::RuntimeError { message: "softmax failed in cross_entropy".into() }
+                        })?;
+
+                        // CE loss: -mean(sum(target * log(softmax + ε)))
+                        let eps = 1e-10;
+                        let sm_data = sm.data.as_standard_layout().to_owned();
+                        let tgt_flat = target_data.data.as_standard_layout().to_owned();
+                        let sm_slice = sm_data.as_slice().unwrap_or(&[]);
+                        let tgt_slice = tgt_flat.as_slice().unwrap_or(&[]);
+
+                        let mut loss_val = 0.0f64;
+                        let n = sm_slice.len() as f64;
+                        for i in 0..sm_slice.len().min(tgt_slice.len()) {
+                            let p = sm_slice[i].max(eps);
+                            loss_val -= tgt_slice[i] * p.ln();
+                        }
+                        loss_val /= n.max(1.0); // mean over all elements
+
+                        let loss_tensor = Tensor::from_vec(vec![loss_val], vec![1]);
+                        let result = Rc::new(RefCell::new(loss_tensor));
+
+                        if self.recording {
+                            // Record: input_tensors = [logits, softmax, target]
+                            let sm_rc = Rc::new(RefCell::new(sm));
+                            if let Some(ref mut tape) = self.tape {
+                                let logits_id = logits.borrow().tape_id
+                                    .unwrap_or_else(|| tape.input(logits.clone()));
+                                let _sm_id = tape.input(sm_rc.clone());
+                                // Create CrossEntropy node manually
+                                let node_id = tape.cross_entropy(
+                                    logits_id, logits.clone(),
+                                    sm_rc,
+                                    target.clone(),
+                                    result.clone(),
+                                );
+                                result.borrow_mut().tape_id = Some(node_id);
+                            }
+                        }
+
+                        return Ok(Some(Value::Tensor(result)));
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "cross_entropy(logits, target) expects two tensors".into(),
+                });
             }
             "grad" => {
                 if let Some(Value::Tensor(param)) = args.first() {

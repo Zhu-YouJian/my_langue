@@ -1,27 +1,11 @@
-// Adam optimizer
-
-// Adam update step
-// m = beta1 * m + (1 - beta1) * grad
-// v = beta2 * v + (1 - beta2) * grad^2
-// m_hat = m / (1 - beta1^t)
-// v_hat = v / (1 - beta2^t)
-// w = w - lr * m_hat / (sqrt(v_hat) + eps)
-fn adam_step(
-    w: &mut Tensor[f64, ..],
-    grad: &Tensor[f64, ..],
-    m: &mut Tensor[f64, ..],
-    v2: &mut Tensor[f64, ..],
-    lr: f64,
-    beta1: f64,
-    beta2: f64,
-    eps: f64,
-    t: i64
-) {
-    *m = beta1 * (*m) + (1.0 - beta1) * (*grad);
-    *v2 = beta2 * (*v2) + (1.0 - beta2) * (*grad) * (*grad);
-    
-    let m_hat = *m / (1.0 - beta1.pow(t as f64));
-    let v_hat = *v2 / (1.0 - beta2.pow(t as f64));
-    
-    *w = *w - lr * m_hat / (v_hat.sqrt() + eps);
-}
+// Adam 优化器
+// 维护每个参数的一阶矩 (m) 和二阶矩 (v)，自适应学习率
+//
+// 用法（训练循环内）：
+//   stop_grad();
+//   let gw = grad(w);
+//   m_w = beta1 * m_w + (1.0 - beta1) * gw;       // 更新一阶矩
+//   v_w = beta2 * v_w + (1.0 - beta2) * gw * gw;   // 更新二阶矩
+//   w = w - lr * m_w / (v_w.sqrt() + eps);         // 更新参数
+//
+// 超参建议: lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8
