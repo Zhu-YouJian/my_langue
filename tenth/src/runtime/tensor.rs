@@ -3,24 +3,52 @@ use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct Tensor {
-    data: ArrayD<f64>,
+    pub data: ArrayD<f64>,
+    /// Accumulated gradient (populated by autodiff backward pass).
+    pub grad: Option<ArrayD<f64>>,
+    /// Tape node id set by the interpreter during recording mode.
+    /// Used to link tensors back to their computation-graph nodes.
+    pub tape_id: Option<usize>,
 }
 
 impl Tensor {
+    // ── helpers ────────────────────────────────────────────────────────
+
+    pub(crate) fn from_data(data: ArrayD<f64>) -> Self {
+        Tensor { data, grad: None, tape_id: None }
+    }
+
+    /// Zero-initialise the gradient buffer to match the tensor shape.
+    pub fn zero_grad(&mut self) {
+        self.grad = None;
+    }
+
+    /// Accumulate `g` into `self.grad` (broadcasting if needed).
+    pub fn acc_grad(&mut self, g: &ArrayD<f64>) {
+        match &mut self.grad {
+            Some(cur) => {
+                *cur = &*cur + g;
+            }
+            None => {
+                self.grad = Some(g.clone());
+            }
+        }
+    }
+
+    // ── constructors ───────────────────────────────────────────────────
+
     pub fn from_vec(data: Vec<f64>, shape: Vec<usize>) -> Self {
         let array = ArrayD::from_shape_vec(IxDyn(&shape), data)
             .expect("invalid tensor shape");
-        Tensor { data: array }
+        Tensor::from_data(array)
     }
 
     pub fn zeros(shape: &[usize]) -> Self {
-        let array = ArrayD::zeros(IxDyn(shape));
-        Tensor { data: array }
+        Tensor::from_data(ArrayD::zeros(IxDyn(shape)))
     }
 
     pub fn ones(shape: &[usize]) -> Self {
-        let array = ArrayD::ones(IxDyn(shape));
-        Tensor { data: array }
+        Tensor::from_data(ArrayD::ones(IxDyn(shape)))
     }
 
     pub fn rand(shape: &[usize]) -> Self {
@@ -41,8 +69,7 @@ impl Tensor {
     }
 
     pub fn full(shape: &[usize], value: f64) -> Self {
-        let array = ArrayD::from_elem(IxDyn(shape), value);
-        Tensor { data: array }
+        Tensor::from_data(ArrayD::from_elem(IxDyn(shape), value))
     }
 
     pub fn eye(n: usize) -> Self {
@@ -50,7 +77,7 @@ impl Tensor {
         for i in 0..n {
             array[[i, i]] = 1.0;
         }
-        Tensor { data: array }
+        Tensor::from_data(array)
     }
 
     pub fn arange(start: f64, end: f64, step: f64) -> Self {
@@ -64,84 +91,234 @@ impl Tensor {
         Tensor::from_vec(data, vec![len])
     }
 
+    // ── shape / access ─────────────────────────────────────────────────
+
     pub fn shape(&self) -> Vec<usize> {
         self.data.shape().to_vec()
+    }
+
+    pub fn ndim(&self) -> usize {
+        self.data.ndim()
+    }
+
+    pub fn size(&self) -> usize {
+        self.data.len()
     }
 
     pub fn get(&self, index: &[usize]) -> Option<f64> {
         self.data.get(IxDyn(index)).copied()
     }
 
+    // ── reductions ─────────────────────────────────────────────────────
+
     pub fn sum(&self) -> f64 {
         self.data.sum()
     }
 
     pub fn sum_axis(&self, axis: usize) -> Tensor {
-        let summed = self.data.sum_axis(ndarray::Axis(axis));
-        Tensor { data: summed }
+        Tensor::from_data(self.data.sum_axis(ndarray::Axis(axis)))
     }
 
     pub fn mean(&self) -> f64 {
         self.data.mean().unwrap_or(0.0)
     }
 
+    pub fn max_val(&self) -> f64 {
+        *self.data.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0.0)
+    }
+
+    // ── scalar ops (keep for compatibility) ────────────────────────────
+
     pub fn add_scalar(&self, scalar: f64) -> Tensor {
-        Tensor { data: &self.data + scalar }
+        Tensor::from_data(&self.data + scalar)
     }
 
     pub fn sub_scalar(&self, scalar: f64) -> Tensor {
-        Tensor { data: &self.data - scalar }
+        Tensor::from_data(&self.data - scalar)
     }
 
     pub fn mul_scalar(&self, scalar: f64) -> Tensor {
-        Tensor { data: &self.data * scalar }
+        Tensor::from_data(&self.data * scalar)
     }
 
     pub fn div_scalar(&self, scalar: f64) -> Tensor {
-        Tensor { data: &self.data / scalar }
+        Tensor::from_data(&self.data / scalar)
     }
 
+    // ── tensor-tensor element-wise ops (with broadcasting) ─────────────
+
+    /// Element-wise addition with broadcasting.  Errors if shapes are incompatible.
+    pub fn add_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
+        let a = self.data.view();
+        let b = other.data.view();
+        if a.broadcast(b.shape()).is_some() {
+            let a_br = a.broadcast(b.shape()).unwrap();
+            Ok(Tensor::from_data(a_br.to_owned() + &b))
+        } else if b.broadcast(a.shape()).is_some() {
+            let b_br = b.broadcast(a.shape()).unwrap();
+            Ok(Tensor::from_data(&a + b_br.to_owned()))
+        } else {
+            Err(format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))
+        }
+    }
+
+    pub fn sub_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
+        let a = self.data.view();
+        let b = other.data.view();
+        if a.broadcast(b.shape()).is_some() {
+            let a_br = a.broadcast(b.shape()).unwrap();
+            Ok(Tensor::from_data(a_br.to_owned() - &b))
+        } else if b.broadcast(a.shape()).is_some() {
+            let b_br = b.broadcast(a.shape()).unwrap();
+            Ok(Tensor::from_data(&a - b_br.to_owned()))
+        } else {
+            Err(format!("cannot broadcast shapes {:?} - {:?}", self.shape(), other.shape()))
+        }
+    }
+
+    pub fn mul_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
+        let a = self.data.view();
+        let b = other.data.view();
+        if a.broadcast(b.shape()).is_some() {
+            let a_br = a.broadcast(b.shape()).unwrap();
+            Ok(Tensor::from_data(a_br.to_owned() * &b))
+        } else if b.broadcast(a.shape()).is_some() {
+            let b_br = b.broadcast(a.shape()).unwrap();
+            Ok(Tensor::from_data(&a * b_br.to_owned()))
+        } else {
+            Err(format!("cannot broadcast shapes {:?} * {:?}", self.shape(), other.shape()))
+        }
+    }
+
+    pub fn div_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
+        let a = self.data.view();
+        let b = other.data.view();
+        if a.broadcast(b.shape()).is_some() {
+            let a_br = a.broadcast(b.shape()).unwrap();
+            Ok(Tensor::from_data(a_br.to_owned() / &b))
+        } else if b.broadcast(a.shape()).is_some() {
+            let b_br = b.broadcast(a.shape()).unwrap();
+            Ok(Tensor::from_data(&a / b_br.to_owned()))
+        } else {
+            Err(format!("cannot broadcast shapes {:?} / {:?}", self.shape(), other.shape()))
+        }
+    }
+
+    // ── matrix multiplication ─────────────────────────────────────────
+
+    /// Matrix multiplication.  Supports 2D @ 2D and 1D @ 2D / 2D @ 1D.
+    pub fn matmul(&self, other: &Tensor) -> Result<Tensor, String> {
+        let a_ndim = self.ndim();
+        let b_ndim = other.ndim();
+
+        if a_ndim == 2 && b_ndim == 2 {
+            let a = self.data.view().into_dimensionality::<ndarray::Ix2>()
+                .map_err(|_| "matmul: self must be 2D")?;
+            let b = other.data.view().into_dimensionality::<ndarray::Ix2>()
+                .map_err(|_| "matmul: other must be 2D")?;
+            if a.shape()[1] != b.shape()[0] {
+                return Err(format!(
+                    "matmul shape mismatch: {:?} @ {:?}",
+                    a.shape(), b.shape()
+                ));
+            }
+            let result = a.dot(&b);
+            Ok(Tensor::from_data(result.into_dyn()))
+        } else if a_ndim == 1 && b_ndim == 2 {
+            // vector @ matrix  →  broadcast row-vector to match
+            let a = self.data.view().into_dimensionality::<ndarray::Ix1>()
+                .map_err(|_| "matmul: self must be 1D")?;
+            let b = other.data.view().into_dimensionality::<ndarray::Ix2>()
+                .map_err(|_| "matmul: other must be 2D")?;
+            if a.shape()[0] != b.shape()[0] {
+                return Err(format!("matmul shape mismatch: {:?} @ {:?}", a.shape(), b.shape()));
+            }
+            // a (k,) → (1,k); b (k,n); result (1,n) → (n,)
+            let a_2d = a.insert_axis(ndarray::Axis(0)); // (1, k)
+            let result = a_2d.dot(&b);
+            let squeezed = result.index_axis_move(ndarray::Axis(0), 0);
+            Ok(Tensor::from_data(squeezed.into_dyn()))
+        } else if a_ndim == 2 && b_ndim == 1 {
+            let a = self.data.view().into_dimensionality::<ndarray::Ix2>()
+                .map_err(|_| "matmul: self must be 2D")?;
+            let b = other.data.view().into_dimensionality::<ndarray::Ix1>()
+                .map_err(|_| "matmul: other must be 1D")?;
+            if a.shape()[1] != b.shape()[0] {
+                return Err(format!("matmul shape mismatch: {:?} @ {:?}", a.shape(), b.shape()));
+            }
+            let result = a.dot(&b);
+            Ok(Tensor::from_data(result.into_dyn()))
+        } else {
+            Err(format!("matmul requires 1D/2D tensors, got {:?}D and {:?}D", a_ndim, b_ndim))
+        }
+    }
+
+    // ── transpose ─────────────────────────────────────────────────────
+
+    /// Transpose last two dimensions.  For 2D tensors this is the usual matrix transpose.
+    pub fn transpose(&self) -> Option<Tensor> {
+        if self.ndim() < 2 {
+            return None;
+        }
+        let mut perm: Vec<usize> = (0..self.ndim()).collect();
+        let last = perm.len() - 1;
+        perm.swap(last - 1, last);
+        let result = self.data.view().permuted_axes(perm);
+        Some(Tensor::from_data(result.to_owned()))
+    }
+
+    // ── broadcasting / reshaping ───────────────────────────────────────
+
+    /// Broadcast to a target shape.  Returns None if not broadcastable.
+    pub fn broadcast_to(&self, target_shape: &[usize]) -> Option<Tensor> {
+        let view = self.data.view();
+        let broadcasted = view.broadcast(target_shape)?;
+        Some(Tensor::from_data(broadcasted.to_owned()))
+    }
+
+    // ── unary elementwise ──────────────────────────────────────────────
+
     pub fn neg(&self) -> Tensor {
-        Tensor { data: -&self.data }
+        Tensor::from_data(-&self.data)
     }
 
     pub fn abs(&self) -> Tensor {
-        Tensor { data: self.data.mapv(|x| x.abs()) }
+        Tensor::from_data(self.data.mapv(|x| x.abs()))
     }
 
     pub fn sqrt(&self) -> Tensor {
-        Tensor { data: self.data.mapv(|x| x.sqrt()) }
+        Tensor::from_data(self.data.mapv(|x| x.sqrt()))
     }
 
     pub fn exp(&self) -> Tensor {
-        Tensor { data: self.data.mapv(|x| x.exp()) }
+        Tensor::from_data(self.data.mapv(|x| x.exp()))
     }
 
     pub fn log(&self) -> Tensor {
-        Tensor { data: self.data.mapv(|x| x.ln()) }
+        Tensor::from_data(self.data.mapv(|x| x.ln()))
     }
 
     pub fn relu(&self) -> Tensor {
-        Tensor { data: self.data.mapv(|x| if x > 0.0 { x } else { 0.0 }) }
+        Tensor::from_data(self.data.mapv(|x| if x > 0.0 { x } else { 0.0 }))
     }
 
     pub fn sigmoid(&self) -> Tensor {
-        Tensor { data: self.data.mapv(|x| 1.0 / (1.0 + (-x).exp())) }
+        Tensor::from_data(self.data.mapv(|x| 1.0 / (1.0 + (-x).exp())))
     }
 
     pub fn tanh(&self) -> Tensor {
-        Tensor { data: self.data.mapv(|x| x.tanh()) }
+        Tensor::from_data(self.data.mapv(|x| x.tanh()))
     }
 
     pub fn reshape(&self, shape: &[usize]) -> Option<Tensor> {
         let array = self.data.clone().into_shape_with_order(IxDyn(shape)).ok()?;
-        Some(Tensor { data: array })
+        Some(Tensor::from_data(array))
     }
 
     pub fn flatten(&self) -> Tensor {
         let size = self.data.len();
         let array = self.data.clone().into_shape_with_order(IxDyn(&[size])).unwrap();
-        Tensor { data: array }
+        Tensor::from_data(array)
     }
 
     pub fn softmax(&self) -> Option<Tensor> {
@@ -152,6 +329,18 @@ impl Tensor {
         let sum: f64 = exps.iter().sum();
         let result: Vec<f64> = exps.iter().map(|x| x / sum).collect();
         Some(Tensor::from_vec(result, shape))
+    }
+
+    /// In-place element-wise assignment: `self[i..] = src`.
+    /// This mutates the underlying ArrayD in-place.
+    pub fn assign_(&mut self, src: &Tensor) {
+        // Use zip_mut_with for element-wise assignment with broadcasting
+        if self.shape() == src.shape() {
+            self.data.zip_mut_with(&src.data, |s, &x| *s = x);
+        } else if let Some(src_br) = src.data.view().broadcast(self.shape().as_slice()) {
+            self.data.zip_mut_with(&src_br, |s, &x| *s = x);
+        }
+        // otherwise no-op (shapes incompatible)
     }
 }
 

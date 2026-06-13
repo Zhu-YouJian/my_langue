@@ -1,0 +1,23 @@
+# 自动微分
+
+Tenth 内置自动微分功能。通过 `start_grad()`, `param()`, `backward()`, `grad()` 四个内置函数，
+可以自动计算任意计算图的梯度，无需手动推导链式法则。
+
+## 运行
+
+```bash
+tenth run Tenth实例/自动微分/linear_regression.th
+```
+
+## 对比
+
+旧版本 `Tenth实例/梯度下降/gradient_descent.th` 需要手动计算梯度公式：
+```
+let gw = -2.0 / n * (x1*(y1-p1) + x2*(y2-p2) + ...);
+```
+
+新版本使用 autodiff，只需：
+```
+backward(loss);
+let gw = grad(w);
+```

@@ -1,0 +1,46 @@
+// 自动微分示例：用 SGD 学习 y = 2x + 1
+// 使用 new_grad / stop_grad 标准化训练循环
+
+fn main() {
+    // 数据：x = [1, 2, 3, 4], y = [3, 5, 7, 9]
+    let x = tensor[[1.0, 2.0, 3.0, 4.0]];
+    let target = tensor[[3.0, 5.0, 7.0, 9.0]];
+
+    // 初始化参数
+    let mut w = tensor[[0.0]];
+    let mut b = tensor[[0.0]];
+    let lr = 0.02;
+    let mut epoch: i64 = 0;
+
+    while epoch < 500 {
+        // ① 开启新计算图，注册参数
+        new_grad();
+        w = param(w);
+        b = param(b);
+
+        // ② 前向传播（自动记录计算图）
+        let pred = w * x + b;
+        let diff = pred - target;
+        let loss = diff * diff;
+
+        // ③ 反向传播
+        backward(loss);
+
+        // ④ 关闭梯度记录，更新参数
+        stop_grad();
+        w = w - lr * grad(w);
+        b = b - lr * grad(b);
+
+        epoch = epoch + 1;
+    };
+
+    println("Learned w (should be ~2):");
+    println(w.sum());
+    println("Learned b (should be ~1):");
+    println(b.sum());
+
+    // 预测 x=5
+    let pred = w * 5.0 + b;
+    println("Predict x=5 (should be ~11):");
+    println(pred.sum());
+}

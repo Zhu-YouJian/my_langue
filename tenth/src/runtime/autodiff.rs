@@ -1,287 +1,535 @@
-use std::collections::HashMap;
-use std::cell::RefCell;
-use crate::runtime::value::Value;
+//! Tensor-level automatic differentiation via a Wengert tape.
+//!
+//! Records operations on `Tensor`s during forward execution, then replays
+//! the chain rule backward to populate each parameter tensor's `.grad` field.
 
-/// A node in the computation graph (tape).
+use std::rc::Rc;
+use std::cell::RefCell;
+use ndarray::{ArrayD, IxDyn};
+use super::tensor::Tensor;
+
+// ── Tape node ─────────────────────────────────────────────────────────
+
+/// A node in the computation graph.
 #[derive(Debug, Clone)]
 pub struct TapeNode {
-    /// Unique ID for this node
+    /// Unique node id (index into Tape::nodes).
     pub id: usize,
-    /// The operation that produced this node
+    /// The operation that produced this node.
     pub op: TapeOp,
-    /// Input node IDs that this operation depends on
+    /// IDs of the input nodes (these are the *nodes* that fed this op).
     pub inputs: Vec<usize>,
-    /// The value computed during forward pass (cached)
-    pub value: Value,
+    /// `Rc` references to the input *tensors* — kept alive so backward
+    /// can read their data and write gradients.
+    pub input_tensors: Vec<Rc<RefCell<Tensor>>>,
 }
 
-#[derive(Debug, Clone)]
+// ── Operations ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum TapeOp {
-    /// Leaf: a parameter or input (no inputs)
+    /// Leaf parameter (no inputs).  Gradient accumulated here.
     Input,
-    /// Addition: a + b
+    /// Element-wise addition (with broadcasting).
     Add,
-    /// Subtraction: a - b
+    /// Element-wise subtraction.
     Sub,
-    /// Multiplication: a * b
+    /// Element-wise multiplication.
     Mul,
-    /// Division: a / b
+    /// Element-wise division.
     Div,
     /// Negation: -a
     Neg,
     /// ReLU: max(0, a)
     ReLU,
-    /// Sum over all elements
-    Sum,
     /// Matrix multiplication: a @ b
     MatMul,
+    /// Transpose last two dims.
+    Transpose,
+    /// Sum over all elements → scalar.
+    Sum,
     /// Exponential: exp(a)
     Exp,
     /// Natural log: ln(a)
     Log,
+    /// Sigmoid: 1 / (1 + exp(-a))
+    Sigmoid,
+    /// Softmax (over last dim, treated as flatten).
+    Softmax,
 }
 
-/// A computation tape (Wengert tape).
+// ── Tape ──────────────────────────────────────────────────────────────
+
 pub struct Tape {
     nodes: Vec<TapeNode>,
-    counter: RefCell<usize>,
+    counter: usize,
 }
 
 impl Tape {
     pub fn new() -> Self {
-        Tape {
-            nodes: Vec::new(),
-            counter: RefCell::new(0),
-        }
+        Tape { nodes: Vec::new(), counter: 0 }
     }
 
-    /// Record an input/leaf node.
-    pub fn input(&mut self, value: Value) -> TapeNode {
+    /// Number of recorded nodes.
+    pub fn len(&self) -> usize { self.nodes.len() }
+
+    /// Register a leaf (parameter) tensor.  Returns the node id.
+    pub fn input(&mut self, tensor: Rc<RefCell<Tensor>>) -> usize {
         let id = self.next_id();
-        let node = TapeNode {
+        self.nodes.push(TapeNode {
             id,
             op: TapeOp::Input,
             inputs: vec![],
-            value,
-        };
-        self.nodes.push(node.clone());
-        node
-    }
-
-    /// Record a unary operation.
-    pub fn unary(&mut self, op: TapeOp, input: &TapeNode, value: Value) -> TapeNode {
-        let id = self.next_id();
-        let node = TapeNode {
-            id,
-            op,
-            inputs: vec![input.id],
-            value,
-        };
-        self.nodes.push(node.clone());
-        node
-    }
-
-    /// Record a binary operation.
-    pub fn binary(&mut self, op: TapeOp, a: &TapeNode, b: &TapeNode, value: Value) -> TapeNode {
-        let id = self.next_id();
-        let node = TapeNode {
-            id,
-            op,
-            inputs: vec![a.id, b.id],
-            value,
-        };
-        self.nodes.push(node.clone());
-        node
-    }
-
-    fn next_id(&self) -> usize {
-        let mut c = self.counter.borrow_mut();
-        let id = *c;
-        *c += 1;
+            input_tensors: vec![tensor],
+        });
         id
     }
 
-    /// Run backward pass: compute gradients of `loss` w.r.t all inputs.
-    /// Returns a map from node id to gradient.
-    pub fn backward(&self, loss_node: &TapeNode) -> HashMap<usize, f64> {
-        let mut grads: HashMap<usize, f64> = HashMap::new();
-        // Initialize loss gradient to 1.0
-        grads.insert(loss_node.id, 1.0);
+    /// Record a unary operation.
+    /// `input_id` — upstream node id (for chain-rule traversal).
+    /// `input_tensor` — the tensor that was the *input* to this op (needed
+    ///   by backward to read saved values).
+    /// `result` — the output tensor (the forward result).
+    pub fn unary(&mut self, op: TapeOp, input_id: usize, input_tensor: Rc<RefCell<Tensor>>, result: Rc<RefCell<Tensor>>) -> usize {
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op,
+            inputs: vec![input_id],
+            input_tensors: vec![input_tensor, result],
+        });
+        id
+    }
 
-        // Process nodes in reverse topological order
+    /// Record a binary operation.
+    /// `a_id` / `b_id` — upstream node ids.
+    /// `a` / `b` — the actual input tensors (for reading values in backward).
+    /// `result` — the output tensor.
+    pub fn binary(&mut self, op: TapeOp, a_id: usize, b_id: usize, a: Rc<RefCell<Tensor>>, b: Rc<RefCell<Tensor>>, result: Rc<RefCell<Tensor>>) -> usize {
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op,
+            inputs: vec![a_id, b_id],
+            input_tensors: vec![a, b, result],
+        });
+        id
+    }
+
+    /// Record a unary operation that has no upstream tape node
+    /// (e.g. a leaf tensor is passed directly).
+    pub fn unary_direct(&mut self, op: TapeOp, input_tensor: Rc<RefCell<Tensor>>, result: Rc<RefCell<Tensor>>) -> usize {
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op,
+            inputs: vec![],
+            input_tensors: vec![input_tensor, result],
+        });
+        id
+    }
+
+    /// Record a binary operation with no upstream tape nodes.
+    pub fn binary_direct(&mut self, op: TapeOp, a: Rc<RefCell<Tensor>>, b: Rc<RefCell<Tensor>>, result: Rc<RefCell<Tensor>>) -> usize {
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op,
+            inputs: vec![],
+            input_tensors: vec![a, b, result],
+        });
+        id
+    }
+
+    fn next_id(&mut self) -> usize {
+        let id = self.counter;
+        self.counter += 1;
+        id
+    }
+
+    // ── backward pass ─────────────────────────────────────────────────
+
+    /// Run backward pass starting from `loss_node_id`.
+    /// Writes gradients into the `.grad` field of every `TapeOp::Input` tensor.
+    pub fn backward(&self, loss_node_id: usize) {
+        let n = self.nodes.len();
+        // Per-node upstream gradient (Option so we can .take() it).
+        let mut node_grads: Vec<Option<ArrayD<f64>>> = vec![None; n];
+
+        // Seed: ∂loss/∂loss = 1 (or ones if loss is a tensor).
+        // The result tensor is always the LAST entry in input_tensors.
+        let result_idx = self.nodes[loss_node_id].input_tensors.len() - 1;
+        let loss_tensor = &self.nodes[loss_node_id].input_tensors[result_idx].borrow();
+        let loss_shape = loss_tensor.shape();
+        node_grads[loss_node_id] = Some(ArrayD::ones(IxDyn(&loss_shape)));
+
+        // Walk nodes in reverse order (topological by construction).
         for node in self.nodes.iter().rev() {
-            let grad = *grads.get(&node.id).unwrap_or(&0.0);
-            if grad == 0.0 {
-                continue;
-            }
+            let grad = match node_grads[node.id].take() {
+                Some(g) => g,
+                None => continue,
+            };
 
             match &node.op {
                 TapeOp::Input => {
-                    // Input nodes don't need additional accumulation — 
-                    // their gradient is already accumulated from downstream uses.
-                    // Only pass through if there are no downstream nodes.
-                    if node.inputs.is_empty() {
-                        // Leaf: gradient already set by downstream
-                    }
+                    // Leaf: accumulate gradient into the parameter tensor.
+                    node.input_tensors[0].borrow_mut().acc_grad(&grad);
                 }
-                TapeOp::Add => {
-                    // d(a+b)/da = 1, d(a+b)/db = 1
-                    for &input_id in &node.inputs {
-                        *grads.entry(input_id).or_insert(0.0) += grad;
-                    }
-                }
-                TapeOp::Sub => {
-                    // d(a-b)/da = 1, d(a-b)/db = -1
-                    if node.inputs.len() == 2 {
-                        *grads.entry(node.inputs[0]).or_insert(0.0) += grad;
-                        *grads.entry(node.inputs[1]).or_insert(0.0) -= grad;
+                TapeOp::Add | TapeOp::Sub => {
+                    let sign: f64 = if node.op == TapeOp::Add { 1.0 } else { -1.0 };
+                    let shapes: Vec<Vec<usize>> = (0..node.input_tensors.len().min(2))
+                        .map(|i| node.input_tensors[i].borrow().shape())
+                        .collect();
+                    for (i, input_shape) in shapes.iter().enumerate() {
+                        let g_i = if i == 0 {
+                            unbroadcast(&grad, input_shape)
+                        } else {
+                            unbroadcast(&grad, input_shape).mapv(|v| v * sign)
+                        };
+                        propagate_grad(node, i, &g_i, &mut node_grads);
                     }
                 }
                 TapeOp::Mul => {
-                    if node.inputs.len() == 2 {
-                        let a_val = self.get_node_value(node.inputs[0]);
-                        let b_val = self.get_node_value(node.inputs[1]);
-                        // d(a*b)/da = b, d(a*b)/db = a
-                        *grads.entry(node.inputs[0]).or_insert(0.0) += grad * b_val;
-                        *grads.entry(node.inputs[1]).or_insert(0.0) += grad * a_val;
-                    }
+                    // Clone input data first to avoid holding RefCell borrows.
+                    let (a_data, a_shape, b_data, b_shape) = {
+                        let a = node.input_tensors[0].borrow();
+                        let b = node.input_tensors[1].borrow();
+                        (a.data.clone(), a.shape(), b.data.clone(), b.shape())
+                    };
+                    let ga = unbroadcast(&(&grad * &b_data), &a_shape);
+                    let gb = unbroadcast(&(&grad * &a_data), &b_shape);
+                    propagate_grad(node, 0, &ga, &mut node_grads);
+                    propagate_grad(node, 1, &gb, &mut node_grads);
                 }
                 TapeOp::Div => {
-                    if node.inputs.len() == 2 {
-                        let a_val = self.get_node_value(node.inputs[0]);
-                        let b_val = self.get_node_value(node.inputs[1]);
-                        // d(a/b)/da = 1/b, d(a/b)/db = -a/b²
-                        *grads.entry(node.inputs[0]).or_insert(0.0) += grad / b_val;
-                        *grads.entry(node.inputs[1]).or_insert(0.0) -= grad * a_val / (b_val * b_val);
-                    }
+                    let (a_data, a_shape, b_data, b_shape) = {
+                        let a = node.input_tensors[0].borrow();
+                        let b = node.input_tensors[1].borrow();
+                        (a.data.clone(), a.shape(), b.data.clone(), b.shape())
+                    };
+                    let ga = unbroadcast(&(&grad / &b_data), &a_shape);
+                    let gb = unbroadcast(&(-&grad * &a_data / (&b_data * &b_data)), &b_shape);
+                    propagate_grad(node, 0, &ga, &mut node_grads);
+                    propagate_grad(node, 1, &gb, &mut node_grads);
                 }
                 TapeOp::Neg => {
-                    // d(-a)/da = -1
-                    for &input_id in &node.inputs {
-                        *grads.entry(input_id).or_insert(0.0) -= grad;
-                    }
+                    let g = -&grad;
+                    propagate_grad(node, 0, &g, &mut node_grads);
                 }
                 TapeOp::ReLU => {
-                    // d(relu(a))/da = 1 if a > 0 else 0
-                    if !node.inputs.is_empty() {
-                        let a_val = self.get_node_value(node.inputs[0]);
-                        if a_val > 0.0 {
-                            *grads.entry(node.inputs[0]).or_insert(0.0) += grad;
-                        }
-                    }
-                }
-                TapeOp::Sum => {
-                    // d(sum(a))/da = 1 for each element
-                    for &input_id in &node.inputs {
-                        *grads.entry(input_id).or_insert(0.0) += grad;
-                    }
-                }
-                TapeOp::Exp => {
-                    // d(exp(a))/da = exp(a) = node.value
-                    for &input_id in &node.inputs {
-                        *grads.entry(input_id).or_insert(0.0) += grad * self.get_node_value(node.id);
-                    }
-                }
-                TapeOp::Log => {
-                    // d(ln(a))/da = 1/a
-                    if !node.inputs.is_empty() {
-                        let a_val = self.get_node_value(node.inputs[0]);
-                        if a_val != 0.0 {
-                            *grads.entry(node.inputs[0]).or_insert(0.0) += grad / a_val;
-                        }
-                    }
+                    let mask = {
+                        let a = node.input_tensors[0].borrow();
+                        a.data.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 })
+                    };
+                    let g_a = &grad * &mask;
+                    propagate_grad(node, 0, &g_a, &mut node_grads);
                 }
                 TapeOp::MatMul => {
-                    // Simplified: treat matmul like mul for now
-                    // Real implementation needs tensor shapes
-                    for &input_id in &node.inputs {
-                        *grads.entry(input_id).or_insert(0.0) += grad;
+                    if node.input_tensors.len() >= 3 {
+                        let result = {
+                            let a = node.input_tensors[0].borrow();
+                            let b = node.input_tensors[1].borrow();
+                            let b_t = b.transpose();
+                            let a_t = a.transpose();
+                            match (b_t, a_t) {
+                                (Some(b_t), Some(a_t)) => {
+                                    let d_a = matmul_2d(&grad, &b_t.data);
+                                    let d_b = matmul_2d(&a_t.data, &grad);
+                                    Some((d_a, d_b))
+                                }
+                                _ => None,
+                            }
+                        };
+                        if let Some((d_a, d_b)) = result {
+                            propagate_grad(node, 0, &d_a, &mut node_grads);
+                            propagate_grad(node, 1, &d_b, &mut node_grads);
+                        }
                     }
+                }
+                TapeOp::Transpose => {
+                    let g_a = {
+                        let mut perm: Vec<usize> = (0..grad.ndim()).collect();
+                        if perm.len() >= 2 {
+                            let last = perm.len() - 1;
+                            perm.swap(last - 1, last);
+                        }
+                        grad.view().permuted_axes(perm).to_owned()
+                    };
+                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                }
+                TapeOp::Sum => {
+                    let g_a = {
+                        let a = node.input_tensors[0].borrow();
+                        let a_shape = a.shape();
+                        let s: f64 = grad.iter().sum();
+                        ArrayD::from_elem(IxDyn(&a_shape), s)
+                    };
+                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                }
+                TapeOp::Exp => {
+                    let g_a = {
+                        let result_ref = node.input_tensors[1].borrow();
+                        &grad * &result_ref.data
+                    };
+                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                }
+                TapeOp::Log => {
+                    let g_a = {
+                        let a_ref = node.input_tensors[0].borrow();
+                        &grad / &a_ref.data
+                    };
+                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                }
+                TapeOp::Sigmoid => {
+                    let g_a = {
+                        let result_ref = node.input_tensors[1].borrow();
+                        let y = &result_ref.data;
+                        &grad * y * &y.mapv(|v| 1.0 - v)
+                    };
+                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                }
+                TapeOp::Softmax => {
+                    let g_a = {
+                        let result_ref = node.input_tensors[1].borrow();
+                        let y = &result_ref.data;
+                        let sum_term = (&grad * y).sum();
+                        let n = y.len() as f64;
+                        &grad * y - &(y * (sum_term / n))
+                    };
+                    propagate_grad(node, 0, &g_a, &mut node_grads);
                 }
             }
         }
-        grads
     }
 
-    fn get_node_value(&self, id: usize) -> f64 {
-        self.nodes.iter()
-            .find(|n| n.id == id)
-            .and_then(|n| n.value.as_float())
-            .unwrap_or(0.0)
+    /// Clear all nodes and reset the counter.
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.counter = 0;
     }
 }
 
-/// Compute the gradient of a scalar function f(x) at point x.
-/// Returns (f(x), df/dx).
-pub fn grad_scalar<F>(f: F, x: f64) -> (f64, f64)
-where
-    F: Fn(&mut Tape, &TapeNode) -> TapeNode,
-{
-    let mut tape = Tape::new();
-    let x_node = tape.input(Value::Float(x));
-    let y_node = f(&mut tape, &x_node);
-    let y_val = y_node.value.as_float().unwrap_or(0.0);
-    let grads = tape.backward(&y_node);
-    let dx = *grads.get(&x_node.id).unwrap_or(&0.0);
-    (y_val, dx)
+// ── helpers ───────────────────────────────────────────────────────────
+
+/// Accumulate `g` into `node_grads[id]`, adding if a gradient already exists.
+fn acc_node_grad(node_grads: &mut [Option<ArrayD<f64>>], id: usize, g: &ArrayD<f64>) {
+    match &mut node_grads[id] {
+        Some(existing) => {
+            *existing = &*existing + g;
+        }
+        slot @ None => {
+            *slot = Some(g.clone());
+        }
+    }
+}
+
+/// Propagate gradient to input `input_idx` of a node.
+/// If the node has upstream node ids, write to `node_grads` so DAG traversal
+/// continues.  Otherwise, write directly to the tensor's `.grad` field
+/// (used by `_direct` variants that bypass the node-graph).
+fn propagate_grad(
+    node: &TapeNode,
+    input_idx: usize,
+    g: &ArrayD<f64>,
+    node_grads: &mut [Option<ArrayD<f64>>],
+) {
+    if input_idx < node.inputs.len() {
+        acc_node_grad(node_grads, node.inputs[input_idx], g);
+    } else {
+        if let Some(t) = node.input_tensors.get(input_idx) {
+            t.borrow_mut().acc_grad(g);
+        }
+    }
+}
+
+/// Reduce `grad` from the output shape down to `target_shape` by summing
+/// over broadcast dimensions.  Follows numpy-style broadcasting rules.
+fn unbroadcast(grad: &ArrayD<f64>, target_shape: &[usize]) -> ArrayD<f64> {
+    let grad_shape = grad.shape();
+    if grad_shape == target_shape {
+        return grad.clone();
+    }
+
+    let mut result = grad.clone();
+
+    // Align shapes from the right.
+    let g_ndim = grad_shape.len();
+    let t_ndim = target_shape.len();
+
+    // Pad target shape with 1s on the left to match grad ndim.
+    let mut padded_target: Vec<usize> = vec![1; g_ndim.saturating_sub(t_ndim)];
+    padded_target.extend_from_slice(target_shape);
+
+    // For each axis where target is 1 and grad > 1, sum over that axis.
+    for axis in (0..g_ndim).rev() {
+        if padded_target[axis] == 1 && grad_shape[axis] > 1 {
+            result = result.sum_axis(ndarray::Axis(axis));
+        }
+    }
+
+    // Reshape to target if needed (sum_axis may keep trailing dims).
+    let current_shape: Vec<usize> = result.shape().to_vec();
+    if current_shape != target_shape {
+        let total: usize = target_shape.iter().product();
+        if total == result.len() {
+            result = result.clone().into_shape_with_order(IxDyn(target_shape)).unwrap_or(result);
+        }
+    }
+
+    result
+}
+
+/// Pure 2-D matrix multiplication returning an owned ArrayD.
+fn matmul_2d(a: &ArrayD<f64>, b: &ArrayD<f64>) -> ArrayD<f64> {
+    let a2 = a.view().into_dimensionality::<ndarray::Ix2>().unwrap();
+    let b2 = b.view().into_dimensionality::<ndarray::Ix2>().unwrap();
+    a2.dot(&b2).into_dyn()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_grad_square() {
-        // f(x) = x * x, df/dx = 2x
-        let (y, dx) = grad_scalar(|tape: &mut Tape, x| {
-            tape.binary(TapeOp::Mul, x, x, Value::Float(x.value.as_float().unwrap() * x.value.as_float().unwrap()))
-        }, 3.0);
-        assert!((y - 9.0).abs() < 1e-10, "f(3) should be 9.0, got {}", y);
-        assert!((dx - 6.0).abs() < 1e-10, "f'(3) should be 6.0, got {}", dx);
+    fn make_tensor(data: Vec<f64>, shape: Vec<usize>) -> Rc<RefCell<Tensor>> {
+        Rc::new(RefCell::new(Tensor::from_vec(data, shape)))
     }
 
     #[test]
-    fn test_grad_add_mul() {
-        // f(x) = x * x + x, df/dx = 2x + 1
-        let (y, dx) = grad_scalar(|tape: &mut Tape, x| {
-            let x2 = tape.binary(TapeOp::Mul, x, x,
-                Value::Float(x.value.as_float().unwrap() * x.value.as_float().unwrap()));
-            tape.binary(TapeOp::Add, &x2, x,
-                Value::Float(x2.value.as_float().unwrap() + x.value.as_float().unwrap()))
-        }, 3.0);
-        assert!((y - 12.0).abs() < 1e-10, "f(3) should be 12.0, got {}", y);
-        assert!((dx - 7.0).abs() < 1e-10, "f'(3) should be 7.0, got {}", dx);
+    fn test_backward_mul_same_shape() {
+        // f(a, b) = a * b (element-wise)
+        let a = make_tensor(vec![2.0, 3.0], vec![2]);
+        let b = make_tensor(vec![4.0, 5.0], vec![2]);
+
+        let mut tape = Tape::new();
+        let _a_id = tape.input(a.clone());
+        let _b_id = tape.input(b.clone());
+
+        // Compute a * b
+        let a_data = a.borrow().data.clone();
+        let b_data = b.borrow().data.clone();
+        let result_data = &a_data * &b_data;
+        let result = Rc::new(RefCell::new(Tensor::from_data(result_data)));
+        let r_id = tape.binary_direct(TapeOp::Mul, a.clone(), b.clone(), result.clone());
+
+        tape.backward(r_id);
+
+        // d(a*b)/da = b = [4, 5]
+        let a_grad = a.borrow().grad.clone().unwrap();
+        assert!((a_grad[[0]] - 4.0).abs() < 1e-10, "a grad[0] = {}", a_grad[[0]]);
+        assert!((a_grad[[1]] - 5.0).abs() < 1e-10, "a grad[1] = {}", a_grad[[1]]);
+
+        // d(a*b)/db = a = [2, 3]
+        let b_grad = b.borrow().grad.clone().unwrap();
+        assert!((b_grad[[0]] - 2.0).abs() < 1e-10, "b grad[0] = {}", b_grad[[0]]);
+        assert!((b_grad[[1]] - 3.0).abs() < 1e-10, "b grad[1] = {}", b_grad[[1]]);
     }
 
     #[test]
-    fn test_grad_relu() {
-        // f(x) = relu(x), df/dx = 1 if x > 0 else 0
-        let (y, dx) = grad_scalar(|tape: &mut Tape, x| {
-            let v = x.value.as_float().unwrap();
-            let r = if v > 0.0 { v } else { 0.0 };
-            tape.unary(TapeOp::ReLU, x, Value::Float(r))
-        }, 3.0);
-        assert!((y - 3.0).abs() < 1e-10);
-        assert!((dx - 1.0).abs() < 1e-10);
+    fn test_backward_add_broadcast() {
+        // f(w, b) = w + b where w=[2,3], b=[1] (broadcast)
+        let w = make_tensor(vec![10.0, 20.0], vec![2]);
+        let b = make_tensor(vec![5.0], vec![1]);
 
-        let (y2, dx2) = grad_scalar(|tape: &mut Tape, x| {
-            let v = x.value.as_float().unwrap();
-            let r = if v > 0.0 { v } else { 0.0 };
-            tape.unary(TapeOp::ReLU, x, Value::Float(r))
-        }, -2.0);
-        assert!((y2 - 0.0).abs() < 1e-10);
-        assert!((dx2 - 0.0).abs() < 1e-10);
+        let mut tape = Tape::new();
+        tape.input(w.clone());
+        tape.input(b.clone());
+
+        let w_data = w.borrow().data.clone();
+        let b_data = b.borrow().data.clone();
+        let b_br = b_data.broadcast(w_data.shape()).unwrap();
+        let result_data = &w_data + &b_br;
+        let result = Rc::new(RefCell::new(Tensor::from_data(result_data)));
+        let r_id = tape.binary_direct(TapeOp::Add, w.clone(), b.clone(), result.clone());
+
+        tape.backward(r_id);
+
+        let w_grad = w.borrow().grad.clone().unwrap();
+        assert!((w_grad[[0]] - 1.0).abs() < 1e-10);
+        assert!((w_grad[[1]] - 1.0).abs() < 1e-10);
+
+        // b had shape [1], gradient should be sum of upstream over broadcast dim: 1+1=2
+        let b_grad = b.borrow().grad.clone().unwrap();
+        assert!((b_grad[[0]] - 2.0).abs() < 1e-10, "b_grad = {}", b_grad[[0]]);
     }
 
     #[test]
-    fn test_grad_exp() {
-        // f(x) = exp(x), df/dx = exp(x)
-        let x = 1.0;
-        let (y, dx) = grad_scalar(|tape: &mut Tape, x_node| {
-            let v = x_node.value.as_float().unwrap();
-            tape.unary(TapeOp::Exp, x_node, Value::Float(v.exp()))
-        }, x);
-        assert!((y - x.exp()).abs() < 1e-10);
-        assert!((dx - x.exp()).abs() < 1e-10);
+    fn test_backward_relu() {
+        let x = make_tensor(vec![-1.0, 2.0, -3.0, 4.0], vec![4]);
+
+        let mut tape = Tape::new();
+        tape.input(x.clone());
+
+        let x_data = x.borrow().data.clone();
+        let relu_data = x_data.mapv(|v| if v > 0.0 { v } else { 0.0 });
+        let result = Rc::new(RefCell::new(Tensor::from_data(relu_data)));
+        let r_id = tape.unary_direct(TapeOp::ReLU, x.clone(), result.clone());
+
+        tape.backward(r_id);
+
+        let grad = x.borrow().grad.clone().unwrap();
+        assert!((grad[[0]] - 0.0).abs() < 1e-10);
+        assert!((grad[[1]] - 1.0).abs() < 1e-10);
+        assert!((grad[[2]] - 0.0).abs() < 1e-10);
+        assert!((grad[[3]] - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_backward_matmul() {
+        // a (2x3), b (3x2), result (2x2)
+        let a = make_tensor(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        let b = make_tensor(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]);
+
+        let mut tape = Tape::new();
+        tape.input(a.clone());
+        tape.input(b.clone());
+
+        let a_data = a.borrow().data.clone();
+        let b_data = b.borrow().data.clone();
+        let a2 = a_data.view().into_dimensionality::<ndarray::Ix2>().unwrap();
+        let b2 = b_data.view().into_dimensionality::<ndarray::Ix2>().unwrap();
+        let result_data = a2.dot(&b2).into_dyn();
+        let result = Rc::new(RefCell::new(Tensor::from_data(result_data)));
+        let r_id = tape.binary_direct(TapeOp::MatMul, a.clone(), b.clone(), result.clone());
+
+        tape.backward(r_id);
+
+        // d(a @ b)/da = 1 @ b^T (since upstream grad is ones)
+        // b^T is (2x3), so da/dy (2x2) @ b^T (2x3) → should give (2x3)
+        let a_grad = a.borrow().grad.clone().unwrap();
+        assert_eq!(a_grad.shape(), &[2, 3]);
+
+        // d(a @ b)/db = a^T @ 1, a^T (3x2) @ 1 (2x2) → (3x2)
+        let b_grad = b.borrow().grad.clone().unwrap();
+        assert_eq!(b_grad.shape(), &[3, 2]);
+    }
+
+    #[test]
+    fn test_backward_chain() {
+        // f(x) = relu(x) * 2, x = [-2, 3]
+        // Expected: df/dx = [0, 2]
+        let x = make_tensor(vec![-2.0, 3.0], vec![2]);
+
+        let mut tape = Tape::new();
+        let x_id = tape.input(x.clone());
+
+        // relu(x)
+        let x_data = x.borrow().data.clone();
+        let relu_data = x_data.mapv(|v| if v > 0.0 { v } else { 0.0 });
+        let relu = Rc::new(RefCell::new(Tensor::from_data(relu_data)));
+        let relu_id = tape.unary(TapeOp::ReLU, x_id, x.clone(), relu.clone());
+
+        // relu * 2 — two is constant (not a parameter), register as input then ignore its grad
+        let two = make_tensor(vec![2.0, 2.0], vec![2]);
+        let two_id = tape.input(two.clone());
+        let r_data = &relu.borrow().data * &two.borrow().data;
+        let result = Rc::new(RefCell::new(Tensor::from_data(r_data)));
+        let r_id = tape.binary(TapeOp::Mul, relu_id, two_id, relu.clone(), two.clone(), result);
+
+        tape.backward(r_id);
+
+        let grad = x.borrow().grad.clone().unwrap();
+        // d(relu(x)*2)/dx = 2 if x > 0 else 0
+        assert!((grad[[0]] - 0.0).abs() < 1e-10, "x[0] grad = {}", grad[[0]]);
+        assert!((grad[[1]] - 2.0).abs() < 1e-10, "x[1] grad = {}", grad[[1]]);
     }
 }

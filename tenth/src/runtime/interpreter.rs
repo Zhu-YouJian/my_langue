@@ -8,6 +8,7 @@ use super::value::Value;
 use super::tensor::Tensor;
 use super::limits::RuntimeLimits;
 use super::arena::Arena;
+use super::autodiff::{Tape, TapeOp};
 
 /// Default arena capacity when no explicit limit is configured.
 const DEFAULT_ARENA_CAPACITY: usize = 64 * 1024; // 64K f64 slots = 512 KB
@@ -26,6 +27,10 @@ pub struct Interpreter {
     /// Arena for temporary tensor/computation data.
     /// Reset via scope around each top-level evaluation.
     pub arena: Arena,
+    /// Autodiff computation tape (active when `recording` is true).
+    pub tape: Option<Tape>,
+    /// Whether tensor operations should be recorded on the tape.
+    pub recording: bool,
 }
 
 impl Interpreter {
@@ -39,6 +44,8 @@ impl Interpreter {
             trait_impls: program.trait_impls.clone(),
             limits: None,
             arena: Arena::new(DEFAULT_ARENA_CAPACITY),
+            tape: None,
+            recording: false,
         }
     }
 
@@ -73,6 +80,56 @@ impl Interpreter {
                     dtype: BaseType::F64,
                     dims: vec![Dim::Any],
                 },
+            },
+        );
+
+        // Autodiff builtins
+        self.current_scope().insert(
+            "start_grad".to_string(),
+            Value::FnRef {
+                name: "start_grad".to_string(),
+                params: vec![],
+                return_type: Type::unit(),
+            },
+        );
+        self.current_scope().insert(
+            "new_grad".to_string(),
+            Value::FnRef {
+                name: "new_grad".to_string(),
+                params: vec![],
+                return_type: Type::unit(),
+            },
+        );
+        self.current_scope().insert(
+            "stop_grad".to_string(),
+            Value::FnRef {
+                name: "stop_grad".to_string(),
+                params: vec![],
+                return_type: Type::unit(),
+            },
+        );
+        self.current_scope().insert(
+            "param".to_string(),
+            Value::FnRef {
+                name: "param".to_string(),
+                params: vec![("t".to_string(), Type::Unknown)],
+                return_type: Type::Unknown,
+            },
+        );
+        self.current_scope().insert(
+            "backward".to_string(),
+            Value::FnRef {
+                name: "backward".to_string(),
+                params: vec![("loss".to_string(), Type::Unknown)],
+                return_type: Type::unit(),
+            },
+        );
+        self.current_scope().insert(
+            "grad".to_string(),
+            Value::FnRef {
+                name: "grad".to_string(),
+                params: vec![("param".to_string(), Type::Unknown)],
+                return_type: Type::Unknown,
             },
         );
 
@@ -222,7 +279,9 @@ impl Interpreter {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
                             | "read_file" | "write_file" | "compile_host"
                             | "compile_program" | "write_bytes"
-                            | "Vec::new" | "HashMap::new" => {
+                            | "Vec::new" | "HashMap::new"
+                            | "start_grad" | "new_grad" | "stop_grad"
+                            | "param" | "backward" | "grad" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),
@@ -758,7 +817,43 @@ impl Interpreter {
         }
     }
 
-    fn eval_binary(&self, op: &BinOp, l: &Value, r: &Value) -> TenthResult<Value> {
+    // ── autodiff recording helpers ───────────────────────────────────
+
+    fn record_binary(&mut self, op: TapeOp, t1: &Rc<RefCell<Tensor>>, t2: &Rc<RefCell<Tensor>>, result: &Rc<RefCell<Tensor>>) {
+        if let Some(ref mut tape) = self.tape {
+            let id1 = t1.borrow().tape_id;
+            let id2 = t2.borrow().tape_id;
+            let node_id = match (id1, id2) {
+                (Some(a), Some(b)) => tape.binary(op, a, b, t1.clone(), t2.clone(), result.clone()),
+                (Some(a), None) => {
+                    let dummy = tape.input(t2.clone());
+                    tape.binary(op, a, dummy, t1.clone(), t2.clone(), result.clone())
+                }
+                (None, Some(b)) => {
+                    let dummy = tape.input(t1.clone());
+                    tape.binary(op, dummy, b, t1.clone(), t2.clone(), result.clone())
+                }
+                (None, None) => tape.binary_direct(op, t1.clone(), t2.clone(), result.clone()),
+            };
+            result.borrow_mut().tape_id = Some(node_id);
+        }
+    }
+
+    fn record_unary(&mut self, op: TapeOp, input: &Rc<RefCell<Tensor>>, result: &Rc<RefCell<Tensor>>) {
+        if let Some(ref mut tape) = self.tape {
+            let node_id = match input.borrow().tape_id {
+                Some(input_id) => tape.unary(op, input_id, input.clone(), result.clone()),
+                None => {
+                    // Create dummy input so the DAG stays connected
+                    let dummy = tape.input(input.clone());
+                    tape.unary(op, dummy, input.clone(), result.clone())
+                }
+            };
+            result.borrow_mut().tape_id = Some(node_id);
+        }
+    }
+
+    fn eval_binary(&mut self, op: &BinOp, l: &Value, r: &Value) -> TenthResult<Value> {
         match op {
             BinOp::Add => match (l, r) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
@@ -766,13 +861,30 @@ impl Interpreter {
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
+                (Value::Tensor(t1), Value::Tensor(t2)) => {
+                    let result_tensor = t1.borrow().add_tensor(&t2.borrow())
+                        .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                    let result = Rc::new(RefCell::new(result_tensor));
+                    if self.recording {
+                        self.record_binary(TapeOp::Add, t1, t2, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
                 (Value::Tensor(t), Value::Float(s)) => {
-                    let result = t.borrow().add_scalar(*s);
-                    Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                    let result = Rc::new(RefCell::new(t.borrow().add_scalar(*s)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), *s)));
+                        self.record_binary(TapeOp::Add, t, &scalar_tensor, &result);
+                    }
+                    Ok(Value::Tensor(result))
                 }
                 (Value::Float(s), Value::Tensor(t)) => {
-                    let result = t.borrow().add_scalar(*s);
-                    Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                    let result = Rc::new(RefCell::new(t.borrow().add_scalar(*s)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), *s)));
+                        self.record_binary(TapeOp::Add, &scalar_tensor, t, &result);
+                    }
+                    Ok(Value::Tensor(result))
                 }
                 _ => Err(TenthError::RuntimeError {
                     message: "type mismatch in addition".into(),
@@ -783,9 +895,32 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
+                (Value::Tensor(t1), Value::Tensor(t2)) => {
+                    let result_tensor = t1.borrow().sub_tensor(&t2.borrow())
+                        .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                    let result = Rc::new(RefCell::new(result_tensor));
+                    if self.recording {
+                        self.record_binary(TapeOp::Sub, t1, t2, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
                 (Value::Tensor(t), Value::Float(s)) => {
-                    let result = t.borrow().sub_scalar(*s);
-                    Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                    let result = Rc::new(RefCell::new(t.borrow().sub_scalar(*s)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), *s)));
+                        self.record_binary(TapeOp::Sub, t, &scalar_tensor, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
+                (Value::Float(s), Value::Tensor(t)) => {
+                    // s - t: compute as -(t - s) but record as Sub(scalar, t)
+                    // because d(s-t)/dt = -1 = d(scalar - t)/dt
+                    let result = Rc::new(RefCell::new(t.borrow().sub_scalar(*s).neg()));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), *s)));
+                        self.record_binary(TapeOp::Sub, &scalar_tensor, t, &result);
+                    }
+                    Ok(Value::Tensor(result))
                 }
                 _ => Err(TenthError::RuntimeError {
                     message: "type mismatch in subtraction".into(),
@@ -796,13 +931,30 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
+                (Value::Tensor(t1), Value::Tensor(t2)) => {
+                    let result_tensor = t1.borrow().mul_tensor(&t2.borrow())
+                        .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                    let result = Rc::new(RefCell::new(result_tensor));
+                    if self.recording {
+                        self.record_binary(TapeOp::Mul, t1, t2, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
                 (Value::Tensor(t), Value::Float(s)) => {
-                    let result = t.borrow().mul_scalar(*s);
-                    Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                    let result = Rc::new(RefCell::new(t.borrow().mul_scalar(*s)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), *s)));
+                        self.record_binary(TapeOp::Mul, t, &scalar_tensor, &result);
+                    }
+                    Ok(Value::Tensor(result))
                 }
                 (Value::Float(s), Value::Tensor(t)) => {
-                    let result = t.borrow().mul_scalar(*s);
-                    Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                    let result = Rc::new(RefCell::new(t.borrow().mul_scalar(*s)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), *s)));
+                        self.record_binary(TapeOp::Mul, &scalar_tensor, t, &result);
+                    }
+                    Ok(Value::Tensor(result))
                 }
                 _ => Err(TenthError::RuntimeError {
                     message: "type mismatch in multiplication".into(),
@@ -813,9 +965,22 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
+                (Value::Tensor(t1), Value::Tensor(t2)) => {
+                    let result_tensor = t1.borrow().div_tensor(&t2.borrow())
+                        .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                    let result = Rc::new(RefCell::new(result_tensor));
+                    if self.recording {
+                        self.record_binary(TapeOp::Div, t1, t2, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
                 (Value::Tensor(t), Value::Float(s)) => {
-                    let result = t.borrow().div_scalar(*s);
-                    Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                    let result = Rc::new(RefCell::new(t.borrow().div_scalar(*s)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), *s)));
+                        self.record_binary(TapeOp::Div, t, &scalar_tensor, &result);
+                    }
+                    Ok(Value::Tensor(result))
                 }
                 _ => Err(TenthError::RuntimeError {
                     message: "type mismatch in division".into(),
@@ -1091,7 +1256,7 @@ impl Interpreter {
         result
     }
 
-    fn eval_tensor_method(&self, recv: &Value, method: &str, args: &[Value]) -> TenthResult<Value> {
+    fn eval_tensor_method(&mut self, recv: &Value, method: &str, args: &[Value]) -> TenthResult<Value> {
         match recv {
             Value::Tensor(t) => {
                 let tensor = t.borrow();
@@ -1107,32 +1272,88 @@ impl Interpreter {
                     }
                     "mean" => Ok(Value::Float(tensor.mean())),
                     "abs" => {
-                        let result = tensor.abs();
-                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                        let result_tensor = tensor.abs();
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        Ok(Value::Tensor(result))
                     }
                     "sqrt" => {
-                        let result = tensor.sqrt();
-                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                        let result_tensor = tensor.sqrt();
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        Ok(Value::Tensor(result))
                     }
                     "exp" => {
-                        let result = tensor.exp();
-                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                        let result_tensor = tensor.exp();
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording {
+                            self.record_unary(TapeOp::Exp, t, &result);
+                        }
+                        Ok(Value::Tensor(result))
                     }
                     "log" => {
-                        let result = tensor.log();
-                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                        let result_tensor = tensor.log();
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording {
+                            self.record_unary(TapeOp::Log, t, &result);
+                        }
+                        Ok(Value::Tensor(result))
                     }
                     "relu" => {
-                        let result = tensor.relu();
-                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                        let result_tensor = tensor.relu();
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording {
+                            self.record_unary(TapeOp::ReLU, t, &result);
+                        }
+                        Ok(Value::Tensor(result))
                     }
                     "sigmoid" => {
-                        let result = tensor.sigmoid();
-                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                        let result_tensor = tensor.sigmoid();
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording {
+                            self.record_unary(TapeOp::Sigmoid, t, &result);
+                        }
+                        Ok(Value::Tensor(result))
                     }
                     "tanh" => {
-                        let result = tensor.tanh();
-                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                        let result_tensor = tensor.tanh();
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        Ok(Value::Tensor(result))
+                    }
+                    "matmul" => {
+                        if args.len() != 1 {
+                            return Err(TenthError::RuntimeError {
+                                message: "matmul() takes 1 argument".into(),
+                            });
+                        }
+                        if let Value::Tensor(other) = &args[0] {
+                            let result_tensor = tensor.matmul(&other.borrow())
+                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            let result = Rc::new(RefCell::new(result_tensor));
+                            if self.recording {
+                                self.record_binary(TapeOp::MatMul, t, other, &result);
+                            }
+                            Ok(Value::Tensor(result))
+                        } else {
+                            Err(TenthError::RuntimeError {
+                                message: "matmul() argument must be a tensor".into(),
+                            })
+                        }
+                    }
+                    "transpose" => {
+                        if !args.is_empty() {
+                            return Err(TenthError::RuntimeError {
+                                message: "transpose() takes no arguments".into(),
+                            });
+                        }
+                        let result_tensor = tensor.transpose().ok_or_else(|| {
+                            TenthError::RuntimeError {
+                                message: "transpose requires at least 2 dimensions".into(),
+                            }
+                        })?;
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording {
+                            self.record_unary(TapeOp::Transpose, t, &result);
+                        }
+                        Ok(Value::Tensor(result))
                     }
                     "reshape" | "view" => {
                         let shape: Vec<usize> = args.iter()
@@ -1340,6 +1561,60 @@ impl Interpreter {
                     return Ok(Some(arg.clone()));
                 }
                 return Ok(Some(Value::Unit));
+            }
+            "start_grad" => {
+                self.tape = Some(Tape::new());
+                self.recording = true;
+                return Ok(Some(Value::Unit));
+            }
+            "param" => {
+                if let Some(Value::Tensor(t)) = args.first() {
+                    // Register this tensor as a leaf parameter on the tape
+                    if let Some(ref mut tape) = self.tape {
+                        let node_id = tape.input(t.clone());
+                        t.borrow_mut().tape_id = Some(node_id);
+                    }
+                    return Ok(Some(Value::Tensor(t.clone())));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "param() expects a tensor argument".into(),
+                });
+            }
+            "backward" => {
+                if let Some(Value::Tensor(loss)) = args.first() {
+                    if let (Some(tape), Some(loss_id)) = (&self.tape, loss.borrow().tape_id) {
+                        tape.backward(loss_id);
+                    }
+                    return Ok(Some(Value::Unit));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "backward() expects a tensor argument".into(),
+                });
+            }
+            "stop_grad" => {
+                self.recording = false;
+                return Ok(Some(Value::Unit));
+            }
+            "new_grad" => {
+                self.tape = Some(Tape::new());
+                self.recording = true;
+                return Ok(Some(Value::Unit));
+            }
+            "grad" => {
+                if let Some(Value::Tensor(param)) = args.first() {
+                    let p = param.borrow();
+                    if let Some(ref grad) = p.grad {
+                        let grad_tensor = Tensor::from_data(grad.clone());
+                        return Ok(Some(Value::Tensor(Rc::new(RefCell::new(grad_tensor)))));
+                    }
+                    // No gradient → return zeros
+                    let shape = p.shape();
+                    let zeros = Tensor::zeros(&shape);
+                    return Ok(Some(Value::Tensor(Rc::new(RefCell::new(zeros)))));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "grad() expects a tensor argument".into(),
+                });
             }
             "rand" => {
                 let shape: Vec<usize> = args.iter()

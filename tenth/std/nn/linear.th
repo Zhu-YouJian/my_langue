@@ -1,18 +1,5 @@
 // NN: Linear layer
-// y = x * W^T + b
-
-fn linear(x: Tensor[f64, B, D_in], w: Tensor[f64, D_out, D_in], b: Tensor[f64, D_out]) -> Tensor[f64, B, D_out] {
-    // matmul(x, w^T) + b  — simplified as (x * w) + b for now
-    // This is a placeholder; real matmul requires tensor ops
-    x
-}
-
-// NN: ReLU activation
-fn relu(x: Tensor[f64, ..]) -> Tensor[f64, ..] {
-    x.relu()
-}
-
-// NN: Sigmoid activation
-fn sigmoid(x: Tensor[f64, ..]) -> Tensor[f64, ..] {
-    x.sigmoid()
+// y = x @ W^T + b
+fn linear(x: Tensor[f64, ..], w: Tensor[f64, ..], b: Tensor[f64, ..]) -> Tensor[f64, ..] {
+    x.matmul(w.transpose()) + b
 }

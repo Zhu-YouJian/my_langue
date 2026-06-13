@@ -7,7 +7,13 @@ fn mse(pred: Tensor[f64, ..], target: Tensor[f64, ..]) -> f64 {
     sq.mean()
 }
 
-// Binary Cross Entropy
+// Mean Squared Error (returns scalar tensor for autodiff)
+fn mse_loss(pred: Tensor[f64, ..], target: Tensor[f64, ..]) -> Tensor[f64, ..] {
+    let diff = pred - target;
+    diff * diff
+}
+
+// Binary Cross Entropy (scalar version)
 fn binary_cross_entropy(pred: f64, target: f64) -> f64 {
     -(target * pred.log() + (1.0 - target) * (1.0 - pred).log())
 }
