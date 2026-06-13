@@ -4,6 +4,9 @@
 >
 > **当前阶段：v0.3.0 — C 编译后端已移除，聚焦 Rust 解释器路径**
 >
+> **2026-06-14 更新**：张量级自动微分 (19 算子) + 张量间运算 (matmul/广播/Conv2D) + 标准库扩展 (16 文件)。
+> 88 项测试全过（89 项，1 忽略）。
+>
 > **2026-06-04 重大变更**：`tenth/src/compile/`（MIR→C 编译管线）、`tenthc/codegen/`、`tenthc/runtime.c` 已删除。
 > 原因：生成的 C 代码无内存管理（12 处 malloc / 0 处 free），导致系统级内存耗尽。详见 `SECURITY.md`。
 > 自举编译器改为通过 Rust 解释器执行。
@@ -73,7 +76,55 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 - [ ] Closure/GenericCall 仍在 VM 中 fallback（自举代码未使用）
 - [ ] Host import (Vec/String) 为占位实现，WASM 模块需宿主提供真实运行时
 - [ ] 三段式自举验证（输出 WASM 再编译自身）因栈溢出未跑通
-- [ ] 大文件 Lowerer 性能由解释器瓶颈转为 VM 无关（已解决）
+- [x] ~~大文件 Lowerer 性能~~ → 已解决 (VM ~0.2s)
+
+### v0.3.0 后期新增（2026-06-14）
+
+#### 自动微分
+
+| 组件 | 状态 |
+|------|------|
+| 张量级 Wengert tape (19 算子) | ✅ |
+| Backward 全链路 (DAG 遍历 + broadcast grad) | ✅ |
+| 解释器 recording 模式 | ✅ |
+| 7 个内置函数 (new_grad/param/backward/grad/stop_grad/zero_grad/cross_entropy) | ✅ |
+| Mean/Sum 录制 (返回张量) | ✅ |
+| Scalar-tensor 录制 (标量自动包装) | ✅ |
+
+#### 张量运算
+
+| 组件 | 状态 |
+|------|------|
+| 张量间四则运算 (广播语义) | ✅ |
+| MatMul (1D/2D) | ✅ |
+| Transpose | ✅ |
+| Conv2D (im2col + backward) | ✅ |
+| Dropout (inverted + backward) | ✅ |
+| Softmax (逐行) | ✅ |
+| BatchNorm (backward 就绪, forward 待包装) | 🚧 |
+
+#### 标准库
+
+| 模块 | 文件数 | 状态 |
+|------|--------|------|
+| nn/ | 7 | linear/loss/activations/dropout 可运行, conv/batchnorm/embedding 占位 |
+| optim/ | 4 | sgd 可运行, adam/adagrad/rmsprop 用法指南 |
+| data/ | 1 | DataLoader 占位 (需要迭代器) |
+| init/ | 1 | 初始化指南 |
+| utils/ | 1 | 序列化占位 |
+| math/ | 1 | 数学函数参考 |
+
+#### 语言打磨
+
+| 组件 | 状态 |
+|------|------|
+| 块注释 /* */ (支持嵌套) | ✅ |
+| Vec: pop/set/clear | ✅ |
+| String: trim/split/replace/substring/to_upper/to_lower | ✅ |
+| REPL 多行输入 (自动续行) | ✅ |
+| 错误源码上下文显示 | ✅ |
+| 数组字面量 [1,2,3] | ✅ 已原生存在 |
+| for-in 循环 | ⏸ 推迟 |
 
 ---
 

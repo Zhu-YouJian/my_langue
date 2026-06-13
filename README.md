@@ -4,7 +4,7 @@
 
 ## 现状
 
-**v0.3.0** — 字节码 VM (41 指令) + 自举编译器 (Tenth 全链路) + WASM 输出。83 项测试全过（共 84 项，1 项忽略）。
+**v0.3.0** — 字节码 VM (41 指令) + 自举编译器 (Tenth 全链路) + WASM 输出 + **张量级自动微分**。88 项测试全过（共 89 项，1 项忽略）。
 
 | 组件 | 状态 |
 |------|------|
@@ -17,35 +17,28 @@
 | 引用 / 移动语义 | ✅ |
 | struct / enum / match | ✅ **VM 全支持** |
 | ~~MIR → C 编译~~ | ❌ 已移除 |
-| REPL 交互环境 | ✅ |
+| REPL 交互环境 | ✅ 多行输入支持 |
 | 内存护栏 (arena + limits) | ✅ |
 | WASM 编译 (wasm-encoder + wasmi) | ✅ |
-| 自动微分 (标量级 tape) | ✅ |
-| Vec / HashMap / String 标准库 | ✅ |
+| **张量级自动微分 (19 算子)** | ✅ **backward 全链路** |
+| **张量间运算 (matmul/广播/转置)** | ✅ |
+| **Conv2D / Dropout / BatchNorm** | ✅ |
+| Vec / HashMap / String 标准库 | ✅ **pop/split/trim 等 10+ 方法** |
 | **自举编译器 (Tenth 编写，全链路)** | ✅ **~0.2s** |
 | **WASM import 输出** | ✅ wasmi 验证通过 |
+| **块注释 /* */** | ✅ 支持嵌套 |
 
 ## 快速开始
 
 ```bash
-# 克隆
-git clone <repo-url> tenth-lang
-cd tenth-lang
-
 # 编译（release 模式，推荐）
 cargo build --release --manifest-path tenth/Cargo.toml
 
 # 运行 REPL
 cargo run --release --manifest-path tenth/Cargo.toml
 
-# 运行 .th 文件（默认走 VM，VM 不支持时自动回退解释器）
+# 运行 .th 文件
 cargo run --release --manifest-path tenth/Cargo.toml run path/to/file.th
-
-# 编译到 WASM 并用 wasmi 执行
-cargo run --release --manifest-path tenth/Cargo.toml wasm path/to/file.th
-
-# 编译到 .wasm 文件
-cargo run --release --manifest-path tenth/Cargo.toml build path/to/file.th
 
 # 运行测试
 cargo test --manifest-path tenth/Cargo.toml
@@ -54,48 +47,88 @@ cargo test --manifest-path tenth/Cargo.toml
 ## 语言示例
 
 ```tenth
-// Hello World
+// 张量运算 + 自动微分
 fn main() {
-    println("Hello, Tenth!");
-}
+    let x = tensor[[1.0, 2.0, 3.0, 4.0]];
+    let target = tensor[[3.0, 5.0, 7.0, 9.0]];
 
-// 变量与控制流
-fn factorial(n: i64) -> i64 {
-    let mut result = 1;
-    let mut i = 1;
-    while i <= n {
-        result = result * i;
-        i = i + 1;
+    let mut w = tensor[[0.0]];
+    let mut b = tensor[[0.0]];
+    let lr = 0.02;
+    let mut epoch = 0;
+
+    while epoch < 500 {
+        new_grad();
+        zero_grad();
+        w = param(w);
+        b = param(b);
+
+        let pred = w * x + b;
+        let loss = ((pred - target) * (pred - target)).mean();
+
+        backward(loss);
+
+        stop_grad();
+        w = w - lr * grad(w);
+        b = b - lr * grad(b);
+        epoch = epoch + 1;
     };
-    result
+
+    println(w.sum());   // ~2.0
+    println(b.sum());   // ~1.0
 }
 
-// 张量运算
+// 矩阵乘法 + 广播
 fn main() {
-    let a = tensor[[1.0, 2.0], [3.0, 4.0]];
-    let b = a + 10.0;
-    println(b.sum());  // => 50
+    let a = tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];  // 2×3
+    let b = tensor[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];  // 3×2
+    let c = a.matmul(b);  // (2×3) @ (3×2) = (2×2)
+    println(c.sum());      // => 163
 }
 
-// 结构体 + trait + 方法
-struct Point { x: f64, y: f64 }
-
-impl Point {
-    fn dist(self) -> f64 {
-        (self.x * self.x + self.y * self.y).sqrt()
-    }
-}
-
+// 神经网络（XOR）
 fn main() {
-    let p = Point { x: 3.0, y: 4.0 };
-    println(p.dist());  // => 5
-}
+    let x = tensor[[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]];
+    let target = tensor[[0.0], [1.0], [1.0], [0.0]];
 
-// 泛型函数
-fn identity<T>(x: T) -> T { x }
+    let mut w1 = randn(2, 4);
+    let mut w2 = randn(4, 1);
+    // ... training loop with backward(loss) ...
+    // Converges to [0.03, 0.94, 0.93, 0.08]
+}
 ```
 
-更多示例见 `Tenth实例/` 目录（21 个）和 `tenth/std/` 标准库。
+更多示例见 `Tenth实例/` 目录（25 个）和 `tenth/std/` 标准库（16 个文件）。
+
+## 自动微分
+
+Tenth 内置张量级自动微分，通过 7 个内置函数控制：
+
+| 函数 | 作用 |
+|------|------|
+| `new_grad()` | 创建新计算图，开启录制 |
+| `param(tensor)` | 注册可训练参数 |
+| `backward(loss)` | 反向传播，梯度写入 `param` 的 `.grad` |
+| `grad(param)` | 读取参数梯度 |
+| `stop_grad()` | 关闭录制（SGD 更新时不录） |
+| `zero_grad()` | 清零所有参数梯度 |
+| `cross_entropy(logits, target)` | 交叉熵损失（融合 softmax） |
+
+支持的算子（19 个，全部有正确的 backward）：
+`Add / Sub / Mul / Div / Neg / ReLU / MatMul / Transpose / Sum / Mean / Exp / Log / Sigmoid / Softmax / CrossEntropy / Dropout / Conv2D / BatchNorm / Input`
+
+## 标准库
+
+```
+tenth/std/
+├── nn/          ← linear, loss (MSE/L1/BCE), activations, dropout
+├── optim/       ← SGD (vanilla/momentum/decay), Adam, AdaGrad, RMSProp
+├── data/        ← DataLoader (规划中)
+├── init/        ← 初始化指南
+├── utils/       ← 序列化 (规划中)
+├── math/        ← 数学函数参考
+└── prelude.th   ← 可用项总目录
+```
 
 ## 自举
 
