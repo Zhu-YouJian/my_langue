@@ -667,6 +667,7 @@ impl Parser {
             TokenKind::EqEq | TokenKind::NotEq => 2,
             TokenKind::AndAnd => 1,
             TokenKind::OrOr => 0,
+            TokenKind::DotDot => 0,  // range operator: lowest precedence
             TokenKind::Assign
             | TokenKind::PlusAssign
             | TokenKind::MinusAssign
@@ -702,6 +703,32 @@ impl Parser {
             let prec = Self::binop_precedence(self.peek_kind());
             if prec < min_prec || prec == 255 {
                 break;
+            }
+
+            // Range expressions: start..end, start..=end
+            if matches!(self.peek_kind(), TokenKind::DotDot) {
+                self.advance();
+                let inclusive = self.match_token(TokenKind::Assign); // ..=
+                let end = if !matches!(self.peek_kind(), TokenKind::Semicolon)
+                    && !matches!(self.peek_kind(), TokenKind::RBrace)
+                    && !matches!(self.peek_kind(), TokenKind::RParen)
+                    && !matches!(self.peek_kind(), TokenKind::Comma)
+                    && !matches!(self.peek_kind(), TokenKind::RBracket)
+                {
+                    Some(Box::new(self.parse_expr()?))
+                } else {
+                    None
+                };
+                let left_span = left.span.clone();
+                left = Expr {
+                    kind: ExprKind::Range {
+                        start: Some(Box::new(left)),
+                        end,
+                        inclusive,
+                    },
+                    span: left_span,
+                };
+                continue;
             }
 
             if matches!(self.peek_kind(), TokenKind::Assign) {
@@ -1092,6 +1119,34 @@ impl Parser {
                 Ok(Stmt {
                     kind: StmtKind::While {
                         cond,
+                        body: Box::new(body),
+                    },
+                    span,
+                })
+            }
+            TokenKind::For => {
+                self.advance();
+                let var = self.expect_ident()?;
+                self.expect(TokenKind::In)?;
+                let iter = self.parse_expr()?;
+                let body = if matches!(self.peek_kind(), TokenKind::LBrace) {
+                    self.advance();
+                    let stmts = self.parse_block_stmts()?;
+                    Stmt {
+                        kind: StmtKind::Expr(Expr {
+                            kind: ExprKind::Block(stmts),
+                            span: self.span(),
+                        }),
+                        span: self.span(),
+                    }
+                } else {
+                    self.parse_stmt()?
+                };
+                self.match_token(TokenKind::Semicolon);
+                Ok(Stmt {
+                    kind: StmtKind::For {
+                        var,
+                        iter,
                         body: Box::new(body),
                     },
                     span,

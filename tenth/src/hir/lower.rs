@@ -871,7 +871,12 @@ impl Lowerer {
             }
             StmtKind::For { var, iter, body } => {
                 let it = self.lower_expr(iter)?;
+                // Push loop variable into scope so body can reference it
+                let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
+                self.scope = body_scope;
+                self.scope.define_var(var.name.clone(), Type::Unknown, false);
                 let b = self.lower_stmt(body)?;
+                self.scope = *self.scope.parent.take().unwrap();
                 HirStmtKind::For { var: var.name.clone(), iter: it, body: Box::new(b) }
             }
             StmtKind::Break => HirStmtKind::Break,

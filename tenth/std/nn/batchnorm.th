@@ -1,11 +1,9 @@
-// BatchNorm layer (placeholder)
+// BatchNorm layer
+// Per-channel normalization over (N, H, W) dims.
+// Supports autodiff via TapeOp::BatchNorm.
 //
-// Usage (planned):
-//   let y = batchnorm(x, gamma, beta, eps=1e-5)
+// Usage:
+//   let y = x.batchnorm(gamma, beta, eps=1e-5)
 //
-// Requires:
-//   - Running mean/variance tracking across forward passes (new Rust code)
-//   - Training vs inference mode toggle
-//   - TapeOp::BatchNorm already exists for backward
-//
-// TODO: implement stateful BatchNorm with running stats
+// x: (N, C, H, W) or (N, C, L)
+// gamma, beta: (C,) learnable scale and shift

@@ -581,7 +581,17 @@ impl Interpreter {
                 }))
             }
 
-            HirExprKind::Range { .. } => Ok(Some(Value::Unit)),
+            HirExprKind::Range { start, end, inclusive } => {
+                let s = match start {
+                    Some(e) => self.eval_expr(e)?.and_then(|v| v.as_int()).unwrap_or(0),
+                    None => 0,
+                };
+                let e = match end {
+                    Some(e) => self.eval_expr(e)?.and_then(|v| v.as_int()).unwrap_or(0),
+                    None => 0,
+                };
+                Ok(Some(Value::Range { start: s, end: e, inclusive: *inclusive }))
+            }
 
             HirExprKind::Ref(inner) => {
                 let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
@@ -1575,6 +1585,108 @@ impl Interpreter {
                             message: "conv2d: weight must be a tensor".into(),
                         });
                     }
+                    "batchnorm" => {
+                        // x.batchnorm(gamma, beta, eps)
+                        // gamma, beta: 1D tensors of shape (C,)
+                        // x: (N, C, H, W) — computes mean/var over N, H, W per channel
+                        if args.len() < 3 {
+                            return Err(TenthError::RuntimeError {
+                                message: "batchnorm() takes gamma, beta, eps".into(),
+                            });
+                        }
+                        let eps = args[2].as_float().unwrap_or(1e-5);
+                        if let (Value::Tensor(gamma_rc), Value::Tensor(beta_rc)) = (&args[0], &args[1]) {
+                            let x_shape = tensor.shape();
+                            if x_shape.len() < 2 {
+                                return Err(TenthError::RuntimeError {
+                                    message: "batchnorm requires at least 2D input".into(),
+                                });
+                            }
+                            let c = x_shape[1]; // channel dim
+                            let n = x_shape[0];
+                            let spatial: usize = x_shape[2..].iter().product();
+
+                            let x_flat = tensor.data.as_standard_layout().to_owned();
+                            let x_slice = x_flat.as_slice().unwrap_or(&[]);
+                            let gamma_ref = gamma_rc.borrow();
+                            let beta_ref = beta_rc.borrow();
+                            let g_flat = gamma_ref.data.as_standard_layout().to_owned();
+                            let b_flat = beta_ref.data.as_standard_layout().to_owned();
+                            let g_slice = g_flat.as_slice().unwrap_or(&[]);
+                            let b_slice = b_flat.as_slice().unwrap_or(&[]);
+
+                            let mut result_data = Vec::with_capacity(x_slice.len());
+                            let mut x_hat_data = Vec::with_capacity(x_slice.len());
+                            let mut std_inv_data = Vec::with_capacity(c);
+
+                            for ci in 0..c {
+                                // Mean over N, H, W for this channel
+                                let mut sum = 0.0;
+                                let mut count = 0;
+                                for ni in 0..n {
+                                    for si in 0..spatial {
+                                        let idx = ((ni * c + ci) * spatial) + si;
+                                        if idx < x_slice.len() {
+                                            sum += x_slice[idx];
+                                            count += 1;
+                                        }
+                                    }
+                                }
+                                let mean = if count > 0 { sum / count as f64 } else { 0.0 };
+
+                                // Variance
+                                let mut var_sum = 0.0;
+                                for ni in 0..n {
+                                    for si in 0..spatial {
+                                        let idx = ((ni * c + ci) * spatial) + si;
+                                        if idx < x_slice.len() {
+                                            let diff = x_slice[idx] - mean;
+                                            var_sum += diff * diff;
+                                        }
+                                    }
+                                }
+                                let var = if count > 0 { var_sum / count as f64 } else { 1.0 };
+                                let std_inv = 1.0 / (var + eps).sqrt();
+                                std_inv_data.push(std_inv);
+
+                                let g = g_slice.get(ci).copied().unwrap_or(1.0);
+                                let b = b_slice.get(ci).copied().unwrap_or(0.0);
+
+                                for ni in 0..n {
+                                    for si in 0..spatial {
+                                        let idx = ((ni * c + ci) * spatial) + si;
+                                        if idx < x_slice.len() {
+                                            let x_norm = (x_slice[idx] - mean) * std_inv;
+                                            x_hat_data.push(x_norm);
+                                            result_data.push(g * x_norm + b);
+                                        }
+                                    }
+                                }
+                            }
+
+                            let result = Rc::new(RefCell::new(Tensor::from_vec(result_data, x_shape.clone())));
+                            if self.recording {
+                                let x_hat = Rc::new(RefCell::new(Tensor::from_vec(x_hat_data, x_shape)));
+                                let std_inv_tensor = Rc::new(RefCell::new(
+                                    Tensor::from_vec(std_inv_data, vec![c])
+                                ));
+                                if let Some(ref mut tape) = self.tape {
+                                    let x_id = t.borrow().tape_id
+                                        .unwrap_or_else(|| tape.input(t.clone()));
+                                    let node_id = tape.batchnorm(
+                                        x_id, t.clone(),
+                                        gamma_rc.clone(), beta_rc.clone(),
+                                        x_hat, std_inv_tensor, result.clone(),
+                                    );
+                                    result.borrow_mut().tape_id = Some(node_id);
+                                }
+                            }
+                            return Ok(Value::Tensor(result));
+                        }
+                        return Err(TenthError::RuntimeError {
+                            message: "batchnorm: gamma and beta must be tensors".into(),
+                        });
+                    }
                     "dropout" => {
                         if args.is_empty() {
                             return Err(TenthError::RuntimeError {
@@ -2326,23 +2438,49 @@ impl Interpreter {
                     message: "for iterable is void".into(),
                 })?;
                 match iter_val {
+                    Value::Range { start, end, inclusive } => {
+                        let e = if inclusive { end + 1 } else { end };
+                        for i in start..e {
+                            self.current_scope().insert(var.clone(), Value::Int(i));
+                            self.eval_stmt(body)?;
+                        }
+                    }
+                    Value::Vec(items) => {
+                        let vec = items.borrow();
+                        for item in vec.iter() {
+                            let val = match item {
+                                Value::Shared(rc) => rc.borrow().clone(),
+                                other => other.clone(),
+                            };
+                            self.current_scope().insert(var.clone(), val);
+                            self.eval_stmt(body)?;
+                        }
+                    }
                     Value::Tensor(t) => {
                         let tensor = t.borrow();
                         let shape = tensor.shape();
                         let n = shape.first().copied().unwrap_or(0);
-
+                        let row_size: usize = shape[1..].iter().product();
+                        let flat = tensor.data.as_standard_layout().to_owned();
+                        let slice = flat.as_slice().unwrap_or(&[]);
                         for i in 0..n {
-                            let val = match tensor.get(&[i]) {
-                                Some(v) => Value::Float(v),
-                                None => Value::Unit,
+                            let start = i * row_size;
+                            let end = (start + row_size).min(slice.len());
+                            let row_data = slice[start..end].to_vec();
+                            let row_shape = if shape.len() > 1 {
+                                shape[1..].to_vec()
+                            } else {
+                                vec![1]
                             };
+                            let row_tensor = Tensor::from_vec(row_data, row_shape);
+                            let val = Value::Tensor(Rc::new(RefCell::new(row_tensor)));
                             self.current_scope().insert(var.clone(), val);
                             self.eval_stmt(body)?;
                         }
                     }
                     _ => {
                         return Err(TenthError::RuntimeError {
-                            message: "for loop only supports tensor iteration for now".into(),
+                            message: "for loop supports range, Vec, and tensor".into(),
                         });
                     }
                 }

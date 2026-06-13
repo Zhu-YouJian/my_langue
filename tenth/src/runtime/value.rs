@@ -39,6 +39,7 @@ pub enum Value {
     Moved,
     Vec(Rc<RefCell<Vec<Value>>>),
     Map(Rc<RefCell<HashMap<String, Value>>>),
+    Range { start: i64, end: i64, inclusive: bool },
 }
 
 impl Value {
@@ -80,6 +81,7 @@ impl Value {
             Value::Moved => Type::unit(),
             Value::Vec(_) => Type::Unknown,
             Value::Map(_) => Type::Unknown,
+            Value::Range { .. } => Type::Unknown,
         }
     }
 
@@ -162,6 +164,10 @@ impl fmt::Display for Value {
                     write!(f, "{}", item)?;
                 }
                 write!(f, "]")
+            }
+            Value::Range { start, end, inclusive } => {
+                let op = if *inclusive { "..=" } else { ".." };
+                write!(f, "{}{}{}", start, op, end)
             }
             Value::Map(entries) => {
                 let entries = entries.borrow();

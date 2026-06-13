@@ -166,6 +166,23 @@ impl Tape {
         id
     }
 
+    /// Record a batchnorm node.
+    pub fn batchnorm(
+        &mut self, x_id: usize, x: Rc<RefCell<Tensor>>,
+        gamma: Rc<RefCell<Tensor>>, beta: Rc<RefCell<Tensor>>,
+        x_hat: Rc<RefCell<Tensor>>, std_inv: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+    ) -> usize {
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::BatchNorm,
+            inputs: vec![x_id],
+            input_tensors: vec![x, gamma, beta, x_hat, std_inv, result],
+        });
+        id
+    }
+
     /// Record a conv2d node.
     pub fn conv2d(
         &mut self, x_id: usize, x: Rc<RefCell<Tensor>>,

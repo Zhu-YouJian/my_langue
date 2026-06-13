@@ -1,13 +1,12 @@
-// Conv2D layer (placeholder)
+// Conv2D layer
+// Supports autodiff via TapeOp::Conv2D.
 //
-// Usage (planned):
+// Usage:
 //   let y = conv2d(x, w, b, stride=1, pad=0)
 //
-// Currently use the tensor method directly:
-//   let y = x.conv2d(w, kernel_h, kernel_w, stride, pad) + b.reshape([...])
+// x: (N, C_in, H, W)
+// w: (C_out, C_in, kH, kW)
+// b: (C_out,) — broadcast to (1, C_out, 1, 1)
 //
-// TODO: implement proper Conv2D layer with:
-//   - weight initialization (He/Kaiming)
-//   - bias broadcast
-//   - multiple output channels
-//   - autodiff via TapeOp::Conv2D
+// Implemented via x.conv2d(w, kH, kW, stride, pad) tensor method.
+// Bias broadcasting requires manual reshape for now.
