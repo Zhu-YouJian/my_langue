@@ -1,0 +1,57 @@
+// XOR 神经网络 — 2层 MLP 用 autodiff 训练
+// 经典验证：证明 Tenth 的 autodiff 能训练真正的神经网络
+
+fn main() {
+    // XOR 真值表: 4样本 × 2特征
+    let x = tensor[[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]];  // 4×2
+    let target = tensor[[0.0], [1.0], [1.0], [0.0]];                  // 4×1
+
+    // 网络: input(2) → hidden(4) → output(1)
+    let mut w1 = randn(2, 4);   // 2×4
+    let mut b1 = tensor[[0.0, 0.0, 0.0, 0.0]];                        // 1×4
+    let mut w2 = randn(4, 1);   // 4×1
+    let mut b2 = tensor[[0.0]];                                        // 1×1
+
+    let lr = 0.5;
+    let mut epoch: i64 = 0;
+
+    while epoch < 3000 {
+        new_grad();
+        zero_grad();
+        w1 = param(w1);
+        b1 = param(b1);
+        w2 = param(w2);
+        b2 = param(b2);
+
+        // 前向传播
+        let h = (x.matmul(w1) + b1).sigmoid();    // 隐藏层: 4×4
+        let pred = (h.matmul(w2) + b2).sigmoid();  // 输出层: 4×1
+
+        let diff = pred - target;
+        let loss = (diff * diff).mean();
+
+        backward(loss);
+
+        // 梯度下降更新
+        stop_grad();
+        w1 = w1 - lr * grad(w1);
+        b1 = b1 - lr * grad(b1);
+        w2 = w2 - lr * grad(w2);
+        b2 = b2 - lr * grad(b2);
+
+        epoch = epoch + 1;
+    };
+
+    // 验证：打印预测张量（应接近 [[0],[1],[1],[0]]）
+    stop_grad();
+    let h = (x.matmul(w1) + b1).sigmoid();
+    let pred = (h.matmul(w2) + b2).sigmoid();
+
+    println("XOR predictions (target = [[0],[1],[1],[0]]):");
+    println(pred);
+
+    println("\nFinal MSE loss (should be small):");
+    stop_grad();
+    let diff = pred - target;
+    println((diff * diff).mean());
+}

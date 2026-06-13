@@ -1,35 +1,58 @@
-// 张量运算演示
+// 张量运算完整演示 — matmul、广播、转置、逐元素运算
 
 fn main() {
-    let a = tensor[[1.0, 2.0], [3.0, 4.0]];
-    println("Tensor A (sum=10):");
-    println(a.sum());
+    // ── 基础张量 ──────────────────────────────────────────
+    let a = tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];  // 2×3
+    let b = tensor[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];  // 3×2
 
-    // 广播标量
-    let b = a + 10.0;
-    println("A + 10 broadcast (sum=50):");
-    println(b.sum());
-
-    let c = a * 2.0;
-    println("A * 2 (sum=20):");
+    println("=== 矩阵乘法 ===");
+    // matmul: (2×3) @ (3×2) = (2×2)
+    let c = a.matmul(b);
+    println("A @ B sum (should be 163):");
     println(c.sum());
 
-    // 一元运算
-    let d = a.relu();
-    println("ReLU(A) sum:");
+    // ── 转置 ──────────────────────────────────────────────
+    println("\n=== 转置 ===");
+    let a_t = a.transpose();
+    println("A^T shape: 3×2, sum:");
+    println(a_t.sum());
+
+    // ── 张量间逐元素运算（广播） ─────────────────────────
+    println("\n=== 逐元素运算 + 广播 ===");
+    // 标量广播到张量
+    let x = tensor[[1.0, 2.0, 3.0]];      // 1×3
+    let s = tensor[[10.0]];                // 1×1 标量
+    let z = x + s;                          // 广播: (1×3) + (1×1) → (1×3)
+    println("[[1,2,3]] + [[10]] (broadcast → [11,12,13] sum=36):");
+    println(z.sum());
+
+    // 同形张量逐元素运算
+    let a = tensor[[1.0, 2.0], [3.0, 4.0]];
+    let b = tensor[[10.0, 20.0], [30.0, 40.0]];
+    let c = a + b;
+    println("A + B (element-wise) sum=110:");
+    println(c.sum());
+    let d = a * b;
+    println("A * B (element-wise) sum=300:");
     println(d.sum());
 
-    let e = a.exp();
-    println("exp(A) sum:");
-    println(e.sum());
+    // ── 一元激活函数 ─────────────────────────────────────
+    println("\n=== 激活函数 ===");
+    let r = tensor[[-2.0, -1.0, 0.0, 1.0, 2.0]];
+    println("ReLU (should be [0,0,0,1,2] sum=3):");
+    println(r.relu().sum());
+    println("Sigmoid sum:");
+    println(r.sigmoid().sum());
+    println("Tanh sum:");
+    println(r.tanh().sum());
 
-    // softmax
-    let f = a.softmax();
-    println("softmax(A) sum (~1 per row):");
-    println(f.sum());
-
-    // reshape
-    let g = a.flatten();
-    println("flatten(A) sum:");
-    println(g.sum());
+    // ── 规约 ──────────────────────────────────────────────
+    println("\n=== 规约 ===");
+    let d = tensor[[1.0, 2.0], [3.0, 4.0]];
+    println("sum: 10 =");
+    println(d.sum());
+    println("mean: 2.5 =");
+    println(d.mean());
+    println("flatten + sum:");
+    println(d.flatten().sum());
 }
