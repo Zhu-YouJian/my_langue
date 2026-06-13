@@ -1,0 +1,4 @@
+// Dropout layer wrapper
+fn dropout(x: Tensor[f64, ..], rate: f64) -> Tensor[f64, ..] {
+    x.dropout(rate)
+}

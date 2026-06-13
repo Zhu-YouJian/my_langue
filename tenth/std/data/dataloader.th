@@ -1,0 +1,15 @@
+// DataLoader (placeholder)
+//
+// Planned API:
+//   let loader = DataLoader::new(dataset, batch_size=32, shuffle=true)
+//   while let Some(batch) = loader.next() {
+//       let (x, y) = batch;
+//       ...
+//   }
+//
+// Requires:
+//   - Iterator / generator protocol (new language feature)
+//   - Batching + shuffling (can be done with Vec methods)
+//   - Data augmentation pipeline (placeholder)
+//
+// TODO: implement when iterator/generator syntax is available

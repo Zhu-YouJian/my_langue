@@ -1,0 +1,10 @@
+// Embedding layer (placeholder)
+//
+// Usage (planned):
+//   let w = Embedding(vocab_size=10000, dim=512)
+//   let e = w.lookup(indices)   // (N,) -> (N, dim)
+//
+// Requires:
+//   - Integer tensor indexing (x[indices] where indices is a tensor)
+//   - Gradient for embedding lookup (sparse update)
+//   - New TapeOp or builtin

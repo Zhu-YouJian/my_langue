@@ -1,0 +1,25 @@
+// Tenth Standard Library — Prelude
+//
+// Commonly used items.  Use with:
+//   use std::prelude::*
+//
+// Currently Tenth doesn't support `use std::prelude::*` (module system is basic).
+// This file serves as documentation of what's available.
+
+// ── Built-in (always available, no import needed) ──
+//   println, eprintln       — output
+//   tensor[[...]]            — tensor literal
+//   rand, randn              — random tensors
+//   start_grad, new_grad     — autodiff control
+//   param, grad, backward    — autodiff ops
+//   stop_grad, zero_grad     — autodiff control
+//   cross_entropy            — loss function
+//   Vec::new, HashMap::new   — collections
+//   read_file, write_bytes   — file I/O
+
+// ── Std lib (use path::to::function) ──
+//   std::nn::linear::linear
+//   std::nn::loss::mse, mse_loss
+//   std::nn::activations::relu, sigmoid, tanh, softmax
+//   std::optim::sgd::sgd_step
+//   std::optim::adam::adam_step

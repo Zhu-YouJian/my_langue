@@ -1,0 +1,12 @@
+// AdaGrad optimizer
+//
+// Accumulates squared gradients and adapts learning rate per-parameter.
+// Good for sparse features, less used in deep learning now.
+//
+// Usage (in training loop):
+//   stop_grad();
+//   let gw = grad(w);
+//   g2_w = g2_w + gw * gw;                      // accumulate squared grad
+//   w = w - lr * gw / (g2_w.sqrt() + eps);       // update
+//
+// Hyperparams: lr=0.01, eps=1e-8

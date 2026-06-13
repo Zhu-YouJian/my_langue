@@ -1,0 +1,12 @@
+// RMSProp optimizer
+//
+// Moving average of squared gradients, similar to AdaGrad
+// but with decay to prevent learning rate from vanishing.
+//
+// Usage (in training loop):
+//   stop_grad();
+//   let gw = grad(w);
+//   g2_w = decay * g2_w + (1.0 - decay) * gw * gw;  // moving avg
+//   w = w - lr * gw / (g2_w.sqrt() + eps);
+//
+// Hyperparams: lr=0.001, decay=0.9, eps=1e-8

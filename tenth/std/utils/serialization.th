@@ -1,0 +1,12 @@
+// Serialization utilities (placeholder)
+//
+// Planned API:
+//   save_weights("model.thw", [w1, b1, w2, b2])
+//   let [w1, b1, w2, b2] = load_weights("model.thw")
+//
+// Requires:
+//   - Binary file I/O (write_bytes exists, need structured format)
+//   - Tensor serialization format (.thw = Tenth Weights)
+//   - Shape + data encoding
+//
+// TODO: implement simple binary format with magic number + shape + flat data

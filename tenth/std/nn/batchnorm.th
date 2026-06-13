@@ -1,0 +1,11 @@
+// BatchNorm layer (placeholder)
+//
+// Usage (planned):
+//   let y = batchnorm(x, gamma, beta, eps=1e-5)
+//
+// Requires:
+//   - Running mean/variance tracking across forward passes (new Rust code)
+//   - Training vs inference mode toggle
+//   - TapeOp::BatchNorm already exists for backward
+//
+// TODO: implement stateful BatchNorm with running stats

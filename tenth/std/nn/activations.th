@@ -1,0 +1,10 @@
+// Activation functions
+// Thin wrappers around tensor methods for clarity.
+// All of these support autodiff (recorded via tensor methods).
+
+fn relu(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.relu() }
+fn sigmoid(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.sigmoid() }
+fn tanh(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.tanh() }
+fn softmax(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.softmax() }
+fn exp(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.exp() }
+fn log(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.log() }

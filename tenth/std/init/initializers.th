@@ -1,0 +1,14 @@
+// Initialization helpers
+//
+// Tensors can be created with:
+//   let w = zeros([2, 3])       — planned builtin (currently use tensor[[0.0, 0.0, 0.0], ...])
+//   let w = ones([2, 3])        — planned builtin
+//   let w = randn(2, 3)         — builtin (normal distribution, mean=0, std=1)
+//   let w = rand(2, 3)          — builtin (uniform [0, 1))
+//
+// TODO: add Xavier/Glorot and He/Kaiming initializers as builtins
+//   let w = xavier_uniform(in_dim, out_dim)   // uniform ± sqrt(6/(in+out))
+//   let w = kaiming_normal(in_dim)             // normal with std = sqrt(2/in)
+//
+// Workaround for now:
+//   let w = randn(2, 3) * 0.01   // small random weights (scalar-tensor mul)

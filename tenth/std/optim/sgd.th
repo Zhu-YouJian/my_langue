@@ -1,10 +1,26 @@
-// Stochastic Gradient Descent optimizer using autodiff
+// SGD optimizer variants
 
-// Performs one SGD step: reads gradients from the parameter tensors,
-// updates them in-place, then clears gradients.
-fn sgd_step(w: &mut Tensor[f64, ..], b: &mut Tensor[f64, ..], lr: f64) {
+// Vanilla SGD step (reading gradients via autodiff)
+fn sgd_step(w: Tensor[f64, ..], lr: f64) -> Tensor[f64, ..] {
     let gw = grad(w);
-    let gb = grad(b);
-    *w = *w - lr * gw;
-    *b = *b - lr * gb;
+    w - lr * gw
+}
+
+// SGD with momentum
+// m = momentum * m + lr * gw
+// w = w - m
+fn sgd_momentum(w: Tensor[f64, ..], m: Tensor[f64, ..], lr: f64, momentum: f64)
+    -> (Tensor[f64, ..], Tensor[f64, ..]) {
+    let gw = grad(w);
+    let new_m = momentum * m + lr * gw;
+    let new_w = w - new_m;
+    (new_w, new_m)
+}
+
+// SGD with weight decay (L2 regularization)
+// gw = grad(w) + decay * w
+// w = w - lr * gw
+fn sgd_weight_decay(w: Tensor[f64, ..], lr: f64, decay: f64) -> Tensor[f64, ..] {
+    let gw = grad(w) + decay * w;
+    w - lr * gw
 }

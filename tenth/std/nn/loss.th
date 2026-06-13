@@ -1,10 +1,9 @@
 // Loss functions
 
-// Mean Squared Error
+// Mean Squared Error (returns scalar)
 fn mse(pred: Tensor[f64, ..], target: Tensor[f64, ..]) -> f64 {
     let diff = pred - target;
-    let sq = diff * diff;
-    sq.mean()
+    (diff * diff).mean()
 }
 
 // Mean Squared Error (returns scalar tensor for autodiff)
@@ -13,7 +12,16 @@ fn mse_loss(pred: Tensor[f64, ..], target: Tensor[f64, ..]) -> Tensor[f64, ..] {
     diff * diff
 }
 
-// Binary Cross Entropy (scalar version)
+// Binary Cross Entropy (scalar inputs)
 fn binary_cross_entropy(pred: f64, target: f64) -> f64 {
     -(target * pred.log() + (1.0 - target) * (1.0 - pred).log())
 }
+
+// L1 Loss (Mean Absolute Error)
+fn l1_loss(pred: Tensor[f64, ..], target: Tensor[f64, ..]) -> Tensor[f64, ..] {
+    let diff = pred - target;
+    diff.abs()
+}
+
+// Huber Loss (smooth L1, placeholder — needs abs and conditional)
+// fn huber_loss(pred, target, delta=1.0) { ... }

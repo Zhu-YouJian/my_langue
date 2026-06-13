@@ -1,0 +1,13 @@
+// Conv2D layer (placeholder)
+//
+// Usage (planned):
+//   let y = conv2d(x, w, b, stride=1, pad=0)
+//
+// Currently use the tensor method directly:
+//   let y = x.conv2d(w, kernel_h, kernel_w, stride, pad) + b.reshape([...])
+//
+// TODO: implement proper Conv2D layer with:
+//   - weight initialization (He/Kaiming)
+//   - bias broadcast
+//   - multiple output channels
+//   - autodiff via TapeOp::Conv2D
