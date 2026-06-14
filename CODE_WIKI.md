@@ -108,7 +108,7 @@ Tenth 采用经典的多阶段编译架构，执行流程如下：
               └────────┘   └──────────┘   └──────────┘
 ```
 
-**执行优先级**：VM 优先 → 解释器 fallback。当 VM 遇到不支持的构造时，自动回退到树遍历解释器。VM 已支持闭包（MakeClosure）和张量字面量（MakeTensor）。
+**执行优先级**：VM 优先 → 解释器 fallback。VM 已支持 for-in 循环、闭包调用、字符串切片、张量字面量（MakeTensor）和闭包创建（MakeClosure）。
 
 ---
 
@@ -863,6 +863,10 @@ cargo test --manifest-path tenth/Cargo.toml
 | 闭包捕获环境变量 | ✅ HIR captures 字段 + Lowerer free_vars_in() |
 | 文件级导入（use 自动搜索 std/） | ✅ Lowerer search_paths + try_import_file() |
 | 错误信息增强（源码位置） | ✅ Scope check_use/check_borrow 带 span |
+| VM for-in 循环 | ✅ 字节码编译器 Range/Vec 迭代 |
+| VM 闭包调用 | ✅ MakeClosure + FnRef 全局查找 |
+| VM 字符串切片 | ✅ SliceStr + Range 索引解析 |
+| 严格借用检查 | ✅ check_borrow_shared/check_borrow_mut 恢复 |
 | 块注释 /* */ | ✅ 支持嵌套 |
 
 ---

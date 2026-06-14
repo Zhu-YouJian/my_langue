@@ -29,6 +29,10 @@
 | Vec / HashMap / String 标准库 | ✅ **pop/split/trim 等 10+ 方法** |
 | **自举编译器 (Tenth 编写，全链路)** | ✅ **~0.2s** |
 | **WASM import 输出** | ✅ wasmi 验证通过 |
+| **VM for-in 循环** | ✅ **Range/Vec 迭代编译** |
+| **VM 闭包调用** | ✅ **MakeClosure + FnRef 全局查找** |
+| **VM 字符串切片** | ✅ **SliceStr + Range 索引解析** |
+| **严格借用检查** | ✅ **check_borrow_shared/check_borrow_mut 恢复** |
 | **闭包捕获环境变量** | ✅ **free_vars_in() 自动分析** |
 | **文件级导入（use 自动搜索 std/）** | ✅ **search_paths + try_import_file()** |
 | **错误信息增强（源码位置）** | ✅ **span 信息** |
