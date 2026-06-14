@@ -125,6 +125,7 @@ pub enum HirExprKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HirMatchArm {
     pub pattern: HirPattern,
+    pub guard: Option<HirExpr>,
     pub body: HirExpr,
 }
 
@@ -140,6 +141,12 @@ pub enum HirPattern {
     },
     Wildcard,
     Literal(Literal),
+    /// Tuple destructuring: (a, b, c)
+    Tuple(Vec<HirPattern>),
+    /// Range pattern: start..end or start..=end
+    Range { start: i64, end: i64, inclusive: bool },
+    /// Variable binding: `x` (catch-all that binds the value)
+    Binding(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -248,5 +255,15 @@ pub struct HirProgram {
 pub struct HirTraitDef {
     pub name: String,
     pub generics: Vec<String>,
-    pub methods: Vec<(String, Vec<(String, Type)>, Type)>,
+    pub methods: Vec<HirTraitMethod>,
+    pub associated_types: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HirTraitMethod {
+    pub name: String,
+    pub params: Vec<(String, Type)>,
+    pub return_type: Type,
+    /// Default method body (if provided in trait definition)
+    pub default_body: Option<HirExpr>,
 }

@@ -146,6 +146,7 @@ pub enum ExprKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Expr>,
     pub body: Expr,
 }
 
@@ -161,6 +162,12 @@ pub enum Pattern {
     },
     Wildcard,
     Literal(Literal),
+    /// Tuple destructuring: (a, b, c)
+    Tuple(Vec<Pattern>),
+    /// Range pattern: start..end or start..=end
+    Range { start: i64, end: i64, inclusive: bool },
+    /// Variable binding: `x` (catch-all that binds the value)
+    Binding(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -231,6 +238,7 @@ pub enum ItemKind {
         params: Vec<Param>,
         return_type: Option<TypeAnnotation>,
         body: Expr,
+        is_pub: bool,
     },
     Const {
         name: Ident,
@@ -239,11 +247,13 @@ pub enum ItemKind {
     },
     Use {
         path: Vec<Ident>,
+        glob: bool,  // true for `use path::*`
     },
     StructDef {
         name: Ident,
         generics: Vec<GenericParam>,
         fields: Vec<StructField>,
+        is_pub: bool,
     },
     EnumDef {
         name: Ident,
@@ -263,6 +273,7 @@ pub enum ItemKind {
         name: Ident,
         generics: Vec<GenericParam>,
         methods: Vec<TraitMethod>,
+        associated_types: Vec<Ident>,
     },
 }
 
@@ -271,6 +282,7 @@ pub struct TraitMethod {
     pub name: Ident,
     pub params: Vec<Param>,
     pub return_type: Option<TypeAnnotation>,
+    pub body: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

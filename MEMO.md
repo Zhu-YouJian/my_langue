@@ -4,7 +4,7 @@
 >
 > **当前阶段：v0.3.3 — GPU 脚手架 + 包管理器 + LSP + 语言增强**
 >
-> **2026-06-14 更新**：GPU 后端脚手架 + tenthpm 包管理器 + LSP 服务器 + 标准库补全 + 结构体默认值/泛型返回/枚举元组变体 + 134 项测试（13 新增）。
+> **2026-06-15 更新**：文档维护 — 自动微分算子数修正为 21（新增 LayerNorm/GELU），标准库模块补全（collections/string/utils/nn 扩展），张量方法补全（gelu/layer_norm/cat/masked_fill/permute/broadcast_to/max_val）。
 >
 > **2026-06-04 重大变更**：`tenth/src/compile/`（MIR→C 编译管线）、`tenthc/codegen/`、`tenthc/runtime.c` 已删除。
 > 原因：生成的 C 代码无内存管理（12 处 malloc / 0 处 free），导致系统级内存耗尽。详见 `SECURITY.md`。
@@ -209,7 +209,7 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 
 | 组件 | 状态 |
 |------|------|
-| 张量级 Wengert tape (19 算子) | ✅ |
+| 张量级 Wengert tape (21 算子) | ✅ |
 | Backward 全链路 (DAG 遍历 + broadcast grad) | ✅ |
 | 解释器 recording 模式 | ✅ |
 | 7 个内置函数 (new_grad/param/backward/grad/stop_grad/zero_grad/cross_entropy) | ✅ |
@@ -226,17 +226,19 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 | Conv2D (im2col + backward) | ✅ |
 | Dropout (inverted + backward) | ✅ |
 | Softmax (逐行) | ✅ |
-| BatchNorm (backward 就绪, forward 待包装) | 🚧 |
+| BatchNorm (backward 就绪, forward 已包装) | ✅ |
 
 #### 标准库
 
 | 模块 | 文件数 | 状态 |
 |------|--------|------|
-| nn/ | 7 | 全部可运行 (linear/loss/activations/dropout/conv/batchnorm/embedding) |
+| nn/ | 13 | 全部可运行 (linear/loss/activations/dropout/conv/batchnorm/embedding/attention/multihead_attention/layer_norm/positional_encoding/feedforward/transformer) |
 | optim/ | 4 | 全部可运行 (sgd/adam/adagrad/rmsprop) |
-| data/ | 1 | DataLoader 占位 (需要迭代器) |
+| data/ | 1 | DataLoader (new/has_next/next_batch/reset/num_batches) |
 | init/ | 1 | 6 个初始化器实现 (zeros/ones/xavier_uniform/xavier_normal/kaiming_uniform/kaiming_normal) |
-| utils/ | 1 | 序列化占位 |
+| collections/ | 2 | iter (map/filter/reduce/zip/enumerate 等), collections (flat_map/partition 等) |
+| string/ | 1 | 字符串工具 (join_lines/join_comma/indent/word_wrap/capitalize 等) |
+| utils/ | 2 | 序列化 (save_model/load_model/save_checkpoint), math (min/max/clamp/signum 等) |
 | math/ | 1 | 数学函数参考 |
 
 #### 语言打磨

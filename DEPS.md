@@ -219,8 +219,40 @@ git config --unset https.proxy
     │   │   └── limits.rs    ← 资源限制 + 原子计数器
     │   └── repl.rs       ← 交互环境
     ├── std/             ← Tenth 标准库 (.th 源码)
+    │   ├── collections/
+    │   │   ├── collections.th
+    │   │   └── iter.th
+    │   ├── data/
+    │   │   └── dataloader.th
+    │   ├── init/
+    │   │   └── initializers.th
+    │   ├── math/
+    │   │   └── functions.th
     │   ├── nn/
-    │   └── optim/
+    │   │   ├── activations.th
+    │   │   ├── attention.th
+    │   │   ├── batchnorm.th
+    │   │   ├── conv.th
+    │   │   ├── dropout.th
+    │   │   ├── embedding.th
+    │   │   ├── feedforward.th
+    │   │   ├── layer_norm.th
+    │   │   ├── linear.th
+    │   │   ├── loss.th
+    │   │   ├── multihead_attention.th
+    │   │   ├── positional_encoding.th
+    │   │   └── transformer.th
+    │   ├── optim/
+    │   │   ├── adagrad.th
+    │   │   ├── adam.th
+    │   │   ├── rmsprop.th
+    │   │   └── sgd.th
+    │   ├── string/
+    │   │   └── string.th
+    │   ├── utils/
+    │   │   ├── math.th
+    │   │   └── serialization.th
+    │   └── prelude.th
     └── tests/          ← 134 项测试（14 文件）
         ├── integration_test.rs
         ├── memory_test.rs

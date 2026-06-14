@@ -45,3 +45,80 @@ fn test_use_import() {
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
+
+// --- Glob import: use path::* ---
+
+#[test]
+fn test_use_glob_import() {
+    let src = r#"
+    mod math {
+        fn add(a: i32, b: i32) -> i32 { a + b }
+        fn mul(a: i32, b: i32) -> i32 { a * b }
+    }
+    use math::*;
+    add(3, 4) + mul(2, 5)
+    "#;
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Int(17)) => {}
+        v => panic!("expected Int(17), got {:?}", v),
+    }
+}
+
+// --- Nested modules ---
+
+#[test]
+fn test_nested_module() {
+    let src = r#"
+    mod outer {
+        mod inner {
+            fn value() -> i32 { 42 }
+        }
+        use inner::value;
+    }
+    use outer::value;
+    value()
+    "#;
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Int(42)) => {}
+        v => panic!("expected Int(42), got {:?}", v),
+    }
+}
+
+// --- pub function visibility ---
+
+#[test]
+fn test_pub_function() {
+    let src = r#"
+    mod utils {
+        pub fn helper() -> i32 { 99 }
+    }
+    use utils::helper;
+    helper()
+    "#;
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Int(99)) => {}
+        v => panic!("expected Int(99), got {:?}", v),
+    }
+}
+
+// --- Module with multiple functions ---
+
+#[test]
+fn test_module_multiple_functions() {
+    let src = r#"
+    mod math {
+        fn square(x: i32) -> i32 { x * x }
+        fn cube(x: i32) -> i32 { x * x * x }
+    }
+    use math::*;
+    square(3) + cube(2)
+    "#;
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Int(17)) => {}
+        v => panic!("expected Int(17), got {:?}", v),
+    }
+}

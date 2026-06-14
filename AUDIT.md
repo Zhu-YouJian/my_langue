@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-06-14 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 | 134 项测试（133 passed + 1 ignored）
+> 日期：2026-06-15 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 | 134 项测试（133 passed + 1 ignored）
 
 ---
 
@@ -85,7 +85,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `stdlib_test.rs` | 8 | Vec/HashMap/String/Option/文件 I/O |
 | `memory_test.rs` | 17 | 内存护栏: arena/limits/计数器 |
 | `selfhost_verify.rs` | 1 | WASM 自举闭环验证 |
-| `autodiff_test.rs` | 20 | 自动微分/闭包/张量/错误位置 |
+| `autodiff_test.rs` | 20 | 自动微分/闭包/张量/错误位置（21 算子） |
 | `three_stage.rs` | 1 | 三段式自举（忽略 — wasmi 慢） |
 | **总计** | **134** | 133 激活 + 1 忽略 |
 
@@ -112,7 +112,7 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 | ~~tenthc parser method_call 丢失 receiver~~ | ✅ 已修复 (Dot+LParen 产生 method_call) |
 | ~~VM chunk clone 内存泄漏~~ | ✅ 已修复 (chunk_idx 索引引用) |
 | ~~VM StoreField/code 切换死循环~~ | ✅ 已修复 (CallN/Ret 同步更新 code/strings) |
-| `runtime/autodiff.rs` | ⚠️ 标量级可用，未集成解释器 |
+| `runtime/autodiff.rs` | ✅ 张量级可用，已集成解释器（21 算子） |
 | Lowerer 大文件性能 | ⚠️ 实际不慢 (release 39 函数 <0.01s)，之前误判为瓶颈 |
 
 ---
@@ -177,7 +177,7 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 
 ### 6.1 短期 (解锁自举)
 
-- **修复致命缺陷 #1-#4** → 自举闭环可达
+- **~~修复致命缺陷 #1-#4~~** → ✅ 已修复，自举闭环可达
 - **添加 `tenthc_combined.th` 自动生成** — build script 或 Makefile，而非手动拼接
 - **`tenthc_test.rs` 加执行测试** — 改为 VM/WASM 路径验证
 
@@ -185,11 +185,11 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 
 - **VM 补全** — closure/generic call/match 仍偶有 fallback
 - **~~恢复 borrow checker~~** — 已恢复，`check_borrow_shared`/`check_borrow_mut` 现执行完整检查
-- **WASM Host import 真实现** — Vec/String 在 WASM 模块中以占位形式存在
+- **WASM Host import 真实现** — Vec/String 在 WASM 模块中仍以占位形式存在，待实现
 
 ### 6.3 长期 (生态)
 
-- **激活死模块** — shape.rs (张量形状优化)、docgen.rs (API 文档生成)、autodiff.rs (自动微分训练)
+- **激活死模块** — shape.rs (张量形状优化)、docgen.rs (API 文档生成)；~~autodiff.rs (自动微分训练)~~ ✅ 已完整集成（21 算子，张量级，已集成解释器）
 - **tenthpm 包管理器** — `tools/tenthpm/` 脚手架已就绪，待实现依赖解析/锁文件/注册中心
 - **LSP 服务器** — `tools/lsp/` 脚手架已就绪，待实现完整协议对接
 - **CUDA 后端** — `compile/gpu/` + `compile/optimizations/` 脚手架已就绪，待安装 CUDA Toolkit

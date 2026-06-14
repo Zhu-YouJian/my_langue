@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
 use crate::hir::types::{BaseType, Dim, Type};
-use super::value::Value;
+use super::value::{Value, LazyIterator, IteratorTransform};
 use super::tensor::Tensor;
 use super::limits::RuntimeLimits;
 use super::arena::Arena;
@@ -799,7 +799,7 @@ impl Interpreter {
                         values.push(Value::Unit);
                     }
                 }
-                Ok(Some(Value::Vec(Rc::new(RefCell::new(values)))))
+                Ok(Some(Value::Tuple(values)))
             }
 
             HirExprKind::StructLiteral { name, fields, has_default: _ } => {
@@ -838,34 +838,25 @@ impl Interpreter {
 
                 for arm in arms {
                     if self.pattern_matches(&arm.pattern, &val) {
-                        // Bind fields from the matched enum value
-                        if let HirPattern::EnumVariant { field_bind, tuple_binds, .. } = &arm.pattern {
-                            if let Value::Enum { fields, .. } = &val {
-                                let fields_ref = fields.borrow();
-                                // Bind single named field (legacy)
-                                if let Some((_fname, bname)) = field_bind {
-                                    if let Some((_, v)) = fields_ref.first() {
-                                        self.current_scope().insert(bname.clone(), v.clone());
-                                    }
-                                }
-                                // Bind tuple variant fields
-                                for (field_name, bind_name) in tuple_binds {
-                                    if let Some((_, v)) = fields_ref.iter().find(|(n, _)| n == field_name) {
-                                        self.current_scope().insert(bind_name.clone(), v.clone());
-                                    }
-                                }
+                        // Bind variables from the matched pattern (needed for guard evaluation)
+                        self.bind_pattern(&arm.pattern, &val);
+                        // Check guard if present
+                        if let Some(guard) = &arm.guard {
+                            let guard_val = self.eval_expr(guard)?;
+                            let guard_bool = match guard_val {
+                                Some(Value::Bool(true)) => true,
+                                Some(Value::Bool(false)) => false,
+                                _ => false,
+                            };
+                            if !guard_bool {
+                                // Clean up bindings and try next arm
+                                self.unbind_pattern(&arm.pattern);
+                                continue;
                             }
                         }
                         let result = self.eval_expr(&arm.body);
                         // Clean up bound variables
-                        if let HirPattern::EnumVariant { field_bind, tuple_binds, .. } = &arm.pattern {
-                            if let Some((_, bname)) = field_bind {
-                                self.current_scope().remove(bname);
-                            }
-                            for (_, bind_name) in tuple_binds {
-                                self.current_scope().remove(bind_name);
-                            }
-                        }
+                        self.unbind_pattern(&arm.pattern);
                         return result;
                     }
                 }
@@ -949,6 +940,7 @@ impl Interpreter {
     fn pattern_matches(&self, pattern: &HirPattern, val: &Value) -> bool {
         match pattern {
             HirPattern::Wildcard => true,
+            HirPattern::Binding(_) => true,
             HirPattern::Literal(lit) => {
                 match (lit, val) {
                     (Literal::Int(a), Value::Int(b)) => a == b,
@@ -965,6 +957,97 @@ impl Interpreter {
                     _ => false,
                 }
             }
+            HirPattern::Tuple(patterns) => {
+                match val {
+                    Value::Tuple(items) if items.len() == patterns.len() => {
+                        patterns.iter().zip(items.iter())
+                            .all(|(p, v)| self.pattern_matches(p, v))
+                    }
+                    Value::Vec(items) => {
+                        let items_ref = items.borrow();
+                        items_ref.len() == patterns.len()
+                            && patterns.iter().zip(items_ref.iter())
+                                .all(|(p, v)| self.pattern_matches(p, v))
+                    }
+                    _ => false,
+                }
+            }
+            HirPattern::Range { start, end, inclusive } => {
+                match val {
+                    Value::Int(n) => {
+                        if *inclusive {
+                            *n >= *start && *n <= *end
+                        } else {
+                            *n >= *start && *n < *end
+                        }
+                    }
+                    _ => false,
+                }
+            }
+        }
+    }
+
+    /// Bind variables from a matched pattern into the current scope.
+    fn bind_pattern(&mut self, pattern: &HirPattern, val: &Value) {
+        match pattern {
+            HirPattern::Binding(name) => {
+                self.current_scope().insert(name.clone(), val.clone());
+            }
+            HirPattern::EnumVariant { field_bind, tuple_binds, .. } => {
+                if let Value::Enum { fields, .. } = val {
+                    let fields_ref = fields.borrow();
+                    if let Some((_fname, bname)) = field_bind {
+                        if let Some((_, v)) = fields_ref.first() {
+                            self.current_scope().insert(bname.clone(), v.clone());
+                        }
+                    }
+                    for (field_name, bind_name) in tuple_binds {
+                        if let Some((_, v)) = fields_ref.iter().find(|(n, _)| n == field_name) {
+                            self.current_scope().insert(bind_name.clone(), v.clone());
+                        }
+                    }
+                }
+            }
+            HirPattern::Tuple(patterns) => {
+                match val {
+                    Value::Tuple(items) => {
+                        for (p, v) in patterns.iter().zip(items.iter()) {
+                            self.bind_pattern(p, v);
+                        }
+                    }
+                    Value::Vec(items) => {
+                        let items_ref = items.borrow();
+                        for (p, v) in patterns.iter().zip(items_ref.iter()) {
+                            self.bind_pattern(p, v);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Range { .. } => {}
+        }
+    }
+
+    /// Remove variables bound by a pattern from the current scope.
+    fn unbind_pattern(&mut self, pattern: &HirPattern) {
+        match pattern {
+            HirPattern::Binding(name) => {
+                self.current_scope().remove(name);
+            }
+            HirPattern::EnumVariant { field_bind, tuple_binds, .. } => {
+                if let Some((_, bname)) = field_bind {
+                    self.current_scope().remove(bname);
+                }
+                for (_, bind_name) in tuple_binds {
+                    self.current_scope().remove(bind_name);
+                }
+            }
+            HirPattern::Tuple(patterns) => {
+                for p in patterns {
+                    self.unbind_pattern(p);
+                }
+            }
+            HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Range { .. } => {}
         }
     }
 
@@ -1256,6 +1339,11 @@ impl Interpreter {
             Value::Range { start, end, inclusive } => {
                 if *inclusive { format!("{}..={}", start, end) } else { format!("{}..{}", start, end) }
             }
+            Value::Iterator(_) => "<iterator>".to_string(),
+            Value::Tuple(items) => {
+                let strs: Vec<String> = items.iter().map(|x| self.value_to_string(x)).collect();
+                format!("({})", strs.join(", "))
+            }
         }
     }
 
@@ -1351,7 +1439,7 @@ impl Interpreter {
                 let f = *i as f64;
                 self.eval_scalar_method(f, method, args).map(Some)
             }
-            Value::String(_) | Value::Vec(_) | Value::Map(_) => {
+            Value::String(_) | Value::Vec(_) | Value::Map(_) | Value::Range { .. } | Value::Iterator(_) => {
                 self.eval_native_method(recv, method, args)
             }
             _ => Err(TenthError::RuntimeError {
@@ -1365,6 +1453,8 @@ impl Interpreter {
             Value::String(s) => self.eval_string_method(s, method, args),
             Value::Vec(items) => self.eval_vec_method(items, method, args),
             Value::Map(m) => self.eval_map_method(m, method, args),
+            Value::Range { start, end, inclusive } => self.eval_range_method(*start, *end, *inclusive, method, args),
+            Value::Iterator(iter) => self.eval_iterator_method(iter, method, args),
             _ => Err(TenthError::RuntimeError {
                 message: format!("native method '{}' not available", method),
             }),
@@ -1762,8 +1852,179 @@ impl Interpreter {
                 }
                 Ok(Some(Value::Vec(Rc::new(RefCell::new(result)))))
             }
+            // Lazy iterator methods
+            "iter" => {
+                Ok(Some(Value::Iterator(LazyIterator::from_vec(items))))
+            }
+            "map" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "map() takes 1 argument (closure)".into(),
+                    });
+                }
+                let iter = LazyIterator::from_vec(items);
+                let iter = iter.with_transform(IteratorTransform::Map { closure: args[0].clone() });
+                Ok(Some(Value::Iterator(iter)))
+            }
+            "filter" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "filter() takes 1 argument (closure)".into(),
+                    });
+                }
+                let iter = LazyIterator::from_vec(items);
+                let iter = iter.with_transform(IteratorTransform::Filter { closure: args[0].clone() });
+                Ok(Some(Value::Iterator(iter)))
+            }
+            "collect" => {
+                // Vec.collect() is a no-op — already a Vec
+                Ok(Some(Value::Vec(items.clone())))
+            }
             _ => Err(TenthError::RuntimeError {
                 message: format!("Vec has no method '{}'", method),
+            }),
+        }
+    }
+
+    fn eval_range_method(&self, start: i64, end: i64, inclusive: bool, method: &str, _args: &[Value]) -> TenthResult<Option<Value>> {
+        match method {
+            "iter" => Ok(Some(Value::Iterator(LazyIterator::from_range(start, end, inclusive)))),
+            "len" => {
+                let len = if inclusive { (end - start + 1).max(0) as i64 } else { (end - start).max(0) as i64 };
+                Ok(Some(Value::Int(len)))
+            }
+            _ => Err(TenthError::RuntimeError {
+                message: format!("Range has no method '{}'", method),
+            }),
+        }
+    }
+
+    fn eval_iterator_method(&mut self, iter: &LazyIterator, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
+        match method {
+            "map" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "map() takes 1 argument (closure)".into(),
+                    });
+                }
+                let new_iter = iter.with_transform(IteratorTransform::Map { closure: args[0].clone() });
+                Ok(Some(Value::Iterator(new_iter)))
+            }
+            "filter" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "filter() takes 1 argument (closure)".into(),
+                    });
+                }
+                let new_iter = iter.with_transform(IteratorTransform::Filter { closure: args[0].clone() });
+                Ok(Some(Value::Iterator(new_iter)))
+            }
+            "take" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "take() takes 1 argument (n)".into(),
+                    });
+                }
+                let n = args[0].as_int().unwrap_or(0).max(0) as usize;
+                let new_iter = iter.with_transform(IteratorTransform::Take { n });
+                Ok(Some(Value::Iterator(new_iter)))
+            }
+            "skip" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "skip() takes 1 argument (n)".into(),
+                    });
+                }
+                let n = args[0].as_int().unwrap_or(0).max(0) as usize;
+                let new_iter = iter.with_transform(IteratorTransform::Skip { n });
+                Ok(Some(Value::Iterator(new_iter)))
+            }
+            "collect" => {
+                // Materialize the iterator: apply all transforms to each element
+                let source = iter.source.borrow();
+                let transforms = iter.transforms.borrow();
+                let mut result = Vec::new();
+                let mut seen_count: usize = 0;
+                for item in source.iter() {
+                    let mut val = match item {
+                        Value::Shared(rc) => rc.borrow().clone(),
+                        other => other.clone(),
+                    };
+                    let mut included = true;
+                    for transform in transforms.iter() {
+                        match transform {
+                            IteratorTransform::Map { closure } => {
+                                val = self.apply_closure(closure, &[val])?;
+                            }
+                            IteratorTransform::Filter { closure } => {
+                                let pred_result = self.apply_closure(closure, &[val.clone()])?;
+                                match pred_result {
+                                    Value::Bool(true) => {},
+                                    Value::Bool(false) => { included = false; break; }
+                                    _ => { included = false; break; }
+                                }
+                            }
+                            IteratorTransform::Take { n } => {
+                                if result.len() >= *n {
+                                    included = false;
+                                    break;
+                                }
+                            }
+                            IteratorTransform::Skip { n } => {
+                                if seen_count < *n {
+                                    included = false;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    seen_count += 1;
+                    if included {
+                        result.push(Value::Shared(Rc::new(RefCell::new(val))));
+                    }
+                }
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(result)))))
+            }
+            "len" => {
+                // Materialize to count — not ideal but correct
+                let collected = self.eval_iterator_method(iter, "collect", &[])?;
+                match collected {
+                    Some(Value::Vec(v)) => Ok(Some(Value::Int(v.borrow().len() as i64))),
+                    _ => Ok(Some(Value::Int(0))),
+                }
+            }
+            _ => Err(TenthError::RuntimeError {
+                message: format!("Iterator has no method '{}'", method),
+            }),
+        }
+    }
+
+    /// Apply a closure value to arguments, returning the result.
+    fn apply_closure(&mut self, closure: &Value, args: &[Value]) -> TenthResult<Value> {
+        match closure {
+            Value::Closure { params, body, captures } => {
+                self.scopes.push(captures.clone().into_iter().collect());
+                for (i, (name, _)) in params.iter().enumerate() {
+                    let val = args.get(i).cloned().unwrap_or(Value::Unit);
+                    self.current_scope().insert(name.clone(), val);
+                }
+                let result = self.eval_expr(body);
+                self.scopes.pop();
+                match result {
+                    Ok(Some(v)) => Ok(v),
+                    Ok(None) => Ok(Value::Unit),
+                    Err(TenthError::ReturnValue(v)) => Ok(v),
+                    Err(e) => Err(e),
+                }
+            }
+            Value::FnRef { name, .. } => {
+                // Call named function
+                let span = crate::lexer::token::Span { line: 0, col: 0 };
+                let result = self.call_named_fn(name, args, &span)?;
+                Ok(result.unwrap_or(Value::Unit))
+            }
+            _ => Err(TenthError::RuntimeError {
+                message: format!("expected a callable, got {:?}", closure),
             }),
         }
     }
@@ -3330,9 +3591,24 @@ impl Interpreter {
                             self.eval_stmt(body)?;
                         }
                     }
+                    Value::Iterator(lazy_iter) => {
+                        // Collect the iterator and iterate over the result
+                        let collected = self.eval_iterator_method(&lazy_iter, "collect", &[])?;
+                        if let Some(Value::Vec(items)) = collected {
+                            let vec = items.borrow();
+                            for item in vec.iter() {
+                                let val = match item {
+                                    Value::Shared(rc) => rc.borrow().clone(),
+                                    other => other.clone(),
+                                };
+                                self.current_scope().insert(var.clone(), val);
+                                self.eval_stmt(body)?;
+                            }
+                        }
+                    }
                     _ => {
                         return Err(TenthError::RuntimeError {
-                            message: "for loop supports range, Vec, and tensor".into(),
+                            message: "for loop supports range, Vec, tensor, and iterator".into(),
                         });
                     }
                 }

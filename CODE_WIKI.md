@@ -473,6 +473,7 @@ pub enum Value {
     Vec(Rc<RefCell<Vec<Value>>>),   // 动态数组
     Map(Rc<RefCell<HashMap<String, Value>>>), // 哈希映射
     Range { start: i64, end: i64, inclusive: bool },
+    Tuple(Vec<Value>),                  // 元组
 }
 ```
 
@@ -555,6 +556,7 @@ pub struct Tensor {
 | **矩阵运算** | `matmul` |
 | **归一化** | `softmax`, `batchnorm` (通过方法调用) |
 | **卷积** | `conv2d` (im2col 实现), `dropout` |
+| **高级运算** | `gelu` — GELU 激活 (tanh 近似), `layer_norm` — LayerNorm 归一化, `cat` — 沿维度拼接 (2D), `masked_fill` — 掩码填充, `permute` — 维度重排, `broadcast_to` — 广播到目标形状, `max_val` — 最大值 |
 | **索引** | `get`, `im2col` |
 
 #### Autodiff（自动微分）
@@ -568,7 +570,7 @@ pub struct Tape {
 pub enum TapeOp {
     Add, Sub, Mul, Div, Neg, ReLU, MatMul, Transpose,
     Sum, Mean, Exp, Log, Sigmoid, Softmax,
-    CrossEntropy, Dropout, Conv2D, BatchNorm, Input,
+    CrossEntropy, Dropout, Conv2D, BatchNorm, LayerNorm, Gelu, Input,
 }
 ```
 
@@ -736,14 +738,20 @@ LSP 服务器为编辑器（VS Code 等）提供语言智能功能，基于 LSP 
 
 ```
 tenth/std/
-├── nn/                  # ✅ 全部可运行
+├── nn/                  # ✅ 全部可运行（13 文件）
 │   ├── linear.th        # 线性层：fn linear(x, w, b) = x.matmul(w.transpose()) + b
 │   ├── loss.th          # 损失函数：MSE, L1, BCE, cross_entropy
 │   ├── activations.th   # 激活函数：relu, sigmoid, tanh
 │   ├── dropout.th       # Dropout 层
 │   ├── batchnorm.th     # BatchNorm 层
 │   ├── conv.th          # 卷积层
-│   └── embedding.th     # 嵌入层
+│   ├── embedding.th     # 嵌入层
+│   ├── attention.th     # 注意力机制
+│   ├── multihead_attention.th # 多头注意力
+│   ├── layer_norm.th    # LayerNorm 层
+│   ├── positional_encoding.th # 位置编码
+│   ├── feedforward.th   # 前馈网络
+│   └── transformer.th   # Transformer 模型
 ├── optim/               # ✅ 全部可运行
 │   ├── sgd.th           # SGD 优化器（vanilla / momentum / decay）
 │   ├── adam.th          # Adam 优化器
@@ -755,8 +763,14 @@ tenth/std/
 │   └── initializers.th  # 初始化器（xavier_uniform / xavier_normal / kaiming_uniform / kaiming_normal）
 ├── math/
 │   └── functions.th     # 数学函数参考
+├── collections/         # 集合工具
+│   ├── iter.th          # 迭代器工具
+│   └── collections.th   # 集合操作
+├── string/              # 字符串工具
+│   └── string.th        # 字符串操作
 ├── utils/
-│   └── serialization.th # 模型保存/加载（save_model/load_model/save_checkpoint）
+│   ├── serialization.th # 模型保存/加载（save_model/load_model/save_checkpoint）
+│   └── math.th          # 数学工具函数
 └── prelude.th           # 可用项总目录
 ```
 
@@ -999,7 +1013,7 @@ cargo test --manifest-path tenth/Cargo.toml
 | REPL 交互环境 | ✅ 多行输入支持 |
 | 内存护栏 (arena + limits) | ✅ |
 | WASM 编译 (wasm-encoder + wasmi) | ✅ |
-| 张量级自动微分 (19 算子) | ✅ backward 全链路 |
+| 张量级自动微分 (21 算子) | ✅ backward 全链路 |
 | 张量间运算 (matmul/广播/转置) | ✅ |
 | Conv2D / Dropout / BatchNorm | ✅ |
 | Vec / HashMap / String 标准库 | ✅ pop/split/trim 等 10+ 方法 |
@@ -1022,4 +1036,4 @@ cargo test --manifest-path tenth/Cargo.toml
 
 ---
 
-> 本文档基于项目 v0.3.3 版本源码自动生成，最后更新：2026-06-14
+> 本文档基于项目 v0.3.3 版本源码自动生成，最后更新：2026-06-15

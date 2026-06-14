@@ -23,7 +23,7 @@
 | REPL 交互环境 | ✅ 多行输入支持 |
 | 内存护栏 (arena + limits) | ✅ |
 | WASM 编译 (wasm-encoder + wasmi) | ✅ |
-| **张量级自动微分 (19 算子)** | ✅ **backward 全链路** |
+| **张量级自动微分 (21 算子)** | ✅ **backward 全链路** |
 | **张量间运算 (matmul/广播/转置)** | ✅ |
 | **Conv2D / Dropout / BatchNorm** | ✅ |
 | Vec / HashMap / String 标准库 | ✅ **pop/split/trim 等 10+ 方法** |
@@ -130,18 +130,20 @@ Tenth 内置张量级自动微分，通过 7 个内置函数控制：
 | `zero_grad()` | 清零所有参数梯度 |
 | `cross_entropy(logits, target)` | 交叉熵损失（融合 softmax） |
 
-支持的算子（19 个，全部有正确的 backward）：
-`Add / Sub / Mul / Div / Neg / ReLU / MatMul / Transpose / Sum / Mean / Exp / Log / Sigmoid / Softmax / CrossEntropy / Dropout / Conv2D / BatchNorm / Input`
+支持的算子（21 个，全部有正确的 backward）：
+`Add / Sub / Mul / Div / Neg / ReLU / MatMul / Transpose / Sum / Mean / Exp / Log / Sigmoid / Softmax / CrossEntropy / Dropout / Conv2D / BatchNorm / LayerNorm / GELU / Input`
 
 ## 标准库
 
 ```
 tenth/std/
-├── nn/          ← linear, loss (MSE/L1/BCE), activations, dropout, batchnorm, conv2d, embedding
+├── nn/          ← linear, loss (MSE/L1/BCE), activations, dropout, batchnorm, conv2d, embedding, attention, multihead_attention, layer_norm, positional_encoding, feedforward, transformer
 ├── optim/       ← SGD (vanilla/momentum/decay), Adam, AdaGrad, RMSProp (全部可运行)
-├── data/        ← DataLoader (new/has_next/next_batch/reset)
+├── data/        ← DataLoader (new/has_next/next_batch/reset/num_batches)
 ├── init/        ← xavier_uniform/xavier_normal/he_normal/he_uniform/zeros_init/constant_init
-├── utils/       ← 序列化 (save_model/load_model/save_checkpoint)
+├── collections/ ← iter (map/filter/reduce/zip/enumerate 等), collections (flat_map/partition 等)
+├── string/      ← join_lines/join_comma/repeat_sep/indent/word_wrap/capitalize 等
+├── utils/       ← 序列化 (save_model/load_model/save_checkpoint), math (min/max/clamp 等)
 ├── math/        ← 数学函数参考
 └── prelude.th   ← 可用项总目录
 ```

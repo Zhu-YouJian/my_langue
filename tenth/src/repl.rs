@@ -18,7 +18,7 @@ pub fn run_repl() -> TenthResult<()> {
 pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
     let limits = RuntimeLimits::new(config);
     let mut rl = DefaultEditor::new().unwrap();
-    println!("Tenth v0.1.0 REPL");
+    println!("Tenth v0.3.0 REPL");
     println!("Type expressions, ':q' to quit, ':h' for help");
     println!();
 
@@ -36,7 +36,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
         trait_impls: HashMap::new(),
     };
     let mut variables: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-    let mut def_count: usize = 0; // track accumulated definitions
+    let mut def_count: usize = 0;
 
     loop {
         let prompt = "tenth> ";
@@ -50,28 +50,91 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                     continue;
                 }
 
+                // ── REPL commands ──────────────────────────────────
                 if trimmed == ":q" {
                     println!("Goodbye!");
                     break;
                 }
                 if trimmed == ":h" {
                     println!("Tenth REPL commands:");
-                    println!("  :q         quit");
-                    println!("  :h         help");
-                    println!("  :vars      show variables");
-                    println!("  :clear     reset all state (functions, vars)");
-                    println!("  :mem       show memory / limits snapshot");
-                    println!("  :print V   print variable value");
+                    println!("  :q            quit");
+                    println!("  :h            help");
+                    println!("  :vars         show variables");
+                    println!("  :fns          show defined functions");
+                    println!("  :structs      show defined structs");
+                    println!("  :enums        show defined enums");
+                    println!("  :clear        reset all state (functions, vars)");
+                    println!("  :mem          show memory / limits snapshot");
+                    println!("  :print V      print variable value");
+                    println!("  :type EXPR    show the inferred type of an expression");
+                    println!("  :load FILE    load and execute a .th file");
                     println!();
                     println!("Examples:");
                     println!("  let x = 42");
                     println!("  x + 10");
-                    println!("  tensor.rand([3, 224, 224]).sum()");
+                    println!("  fn add(a: i32, b: i32) -> i32 {{ a + b }}");
+                    println!("  :type 1 + 2.0");
                     continue;
                 }
                 if trimmed == ":vars" {
-                    for (name, val) in &variables {
-                        println!("  {} = {}", name, val);
+                    if variables.is_empty() {
+                        println!("  (no variables)");
+                    } else {
+                        for (name, val) in &variables {
+                            println!("  {} : {} = {}", name, val.type_of(), val);
+                        }
+                    }
+                    continue;
+                }
+                if trimmed == ":fns" {
+                    if accumulated_program.functions.is_empty() {
+                        println!("  (no functions)");
+                    } else {
+                        for f in &accumulated_program.functions {
+                            let params: Vec<String> = f.params.iter()
+                                .map(|(n, t)| format!("{}: {}", n, t))
+                                .collect();
+                            println!("  fn {}({}) -> {} {{ ... }}", f.name, params.join(", "), f.return_type);
+                        }
+                    }
+                    continue;
+                }
+                if trimmed == ":structs" {
+                    if accumulated_program.structs.is_empty() && accumulated_program.generic_structs.is_empty() {
+                        println!("  (no structs)");
+                    } else {
+                        for (name, fields) in &accumulated_program.structs {
+                            let field_strs: Vec<String> = fields.iter()
+                                .map(|(n, t)| format!("{}: {}", n, t))
+                                .collect();
+                            println!("  struct {} {{ {} }}", name, field_strs.join(", "));
+                        }
+                        for (_, gs) in &accumulated_program.generic_structs {
+                            let field_strs: Vec<String> = gs.fields.iter()
+                                .map(|(n, t)| format!("{}: {}", n, t))
+                                .collect();
+                            println!("  struct {}<{}> {{ {} }}", gs.name, gs.generics.join(", "), field_strs.join(", "));
+                        }
+                    }
+                    continue;
+                }
+                if trimmed == ":enums" {
+                    if accumulated_program.enums.is_empty() {
+                        println!("  (no enums)");
+                    } else {
+                        for (name, variants) in &accumulated_program.enums {
+                            let variant_strs: Vec<String> = variants.iter().map(|(v, fields)| {
+                                if fields.is_empty() {
+                                    v.clone()
+                                } else {
+                                    let field_strs: Vec<String> = fields.iter()
+                                        .map(|(n, t)| format!("{}: {}", n, t))
+                                        .collect();
+                                    format!("{}({})", v, field_strs.join(", "))
+                                }
+                            }).collect();
+                            println!("  enum {} {{ {} }}", name, variant_strs.join(", "));
+                        }
                     }
                     continue;
                 }
@@ -109,8 +172,24 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                 if trimmed.starts_with(":print ") {
                     let var = trimmed[7..].trim();
                     match variables.get(var) {
-                        Some(val) => println!("  {} = {}", var, val),
+                        Some(val) => println!("  {} : {} = {}", var, val.type_of(), val),
                         None => println!("  undefined variable: {}", var),
+                    }
+                    continue;
+                }
+                if trimmed.starts_with(":type ") {
+                    let expr_src = &trimmed[6..];
+                    match show_type(expr_src) {
+                        Ok(ty_str) => println!("  : {}", ty_str),
+                        Err(e) => eprintln!("Error: {}", e),
+                    }
+                    continue;
+                }
+                if trimmed.starts_with(":load ") {
+                    let file_path = trimmed[6..].trim();
+                    match load_file(file_path, &mut accumulated_program, &mut variables, &limits, &mut def_count) {
+                        Ok(()) => {}
+                        Err(e) => eprintln!("Error: {}", e),
                     }
                     continue;
                 }
@@ -119,7 +198,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                     continue;
                 }
 
-                // Multi-line input: if braces are unbalanced, keep reading
+                // ── Multi-line input ───────────────────────────────
                 let mut full_input = trimmed.to_string();
                 while !is_balanced(&full_input) {
                     match rl.readline("...     ") {
@@ -160,7 +239,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        eprintln!("Error: {}", e);
+                        eprintln!("Error: {}", e.display_with_source(Some(&full_input)));
                     }
                 }
             }
@@ -201,6 +280,83 @@ fn is_balanced(s: &str) -> bool {
         }
     }
     stack.is_empty()
+}
+
+/// Show the inferred type of an expression without executing it.
+fn show_type(expr_src: &str) -> TenthResult<String> {
+    let mut lexer = Lexer::new(expr_src);
+    let tokens = lexer.tokenize()?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program()?;
+    let mut lowerer = Lowerer::new();
+    let hir_program = lowerer.lower_program(&program)?;
+
+    // If the expression was lowered as a main_expr, show its type
+    if let Some(ref expr) = hir_program.main_expr {
+        Ok(format!("{}", expr.ty))
+    } else {
+        Ok("()".to_string())
+    }
+}
+
+/// Load and execute a .th file, merging definitions into the REPL state.
+fn load_file(
+    path: &str,
+    accumulated_program: &mut HirProgram,
+    variables: &mut HashMap<String, Value>,
+    limits: &RuntimeLimits,
+    def_count: &mut usize,
+) -> TenthResult<()> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| TenthError::RuntimeError {
+            message: format!("cannot read {}: {}", path, e),
+        })?;
+
+    let mut lexer = Lexer::new(&source);
+    let tokens = lexer.tokenize()?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program()?;
+    let mut lowerer = Lowerer::new();
+    let hir_program = lowerer.lower_program(&program)?;
+
+    let new_defs = hir_program.functions.len()
+        + hir_program.generic_funcs.len()
+        + hir_program.methods.len()
+        + hir_program.trait_defs.len()
+        + hir_program.trait_impls.len();
+    *def_count += new_defs;
+
+    if let Err(msg) = limits.guard_defs(*def_count) {
+        *def_count -= new_defs;
+        return Err(TenthError::RuntimeError { message: msg });
+    }
+
+    // Merge definitions
+    accumulated_program.functions.extend(hir_program.functions.clone());
+    accumulated_program.generic_funcs.extend(hir_program.generic_funcs.clone());
+    accumulated_program.modules.extend(hir_program.modules.clone());
+    accumulated_program.uses.extend(hir_program.uses.clone());
+    accumulated_program.methods.extend(hir_program.methods.clone());
+    accumulated_program.generic_structs.extend(hir_program.generic_structs.clone());
+    accumulated_program.trait_defs.extend(hir_program.trait_defs.clone());
+    accumulated_program.trait_impls.extend(hir_program.trait_impls.clone());
+    accumulated_program.main_expr = hir_program.main_expr;
+
+    // Execute the file
+    let mut interpreter = Interpreter::with_limits(accumulated_program, limits.clone());
+    interpreter.scopes[0].extend(variables.clone());
+    let result = interpreter.execute_program(accumulated_program)?;
+    *variables = interpreter.scopes[0].clone();
+
+    if let Some(val) = result {
+        match val {
+            Value::Unit => {}
+            _ => println!("= {}", val),
+        }
+    }
+
+    println!("  Loaded: {}", path);
+    Ok(())
 }
 
 fn execute_line_with_limits(

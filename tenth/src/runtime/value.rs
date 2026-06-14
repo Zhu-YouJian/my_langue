@@ -5,6 +5,65 @@ use std::fmt;
 use super::tensor::Tensor;
 use crate::hir::types::{Type, BaseType, Dim};
 
+/// A lazy iterator that yields values on demand.
+/// Stores the source data and a chain of transformations (map/filter).
+#[derive(Debug, Clone)]
+pub struct LazyIterator {
+    /// Source items (cloned from Vec/Range)
+    pub source: Rc<RefCell<Vec<Value>>>,
+    /// Current position in the source
+    pub cursor: Rc<RefCell<usize>>,
+    /// Chain of transformations to apply lazily
+    pub transforms: Rc<RefCell<Vec<IteratorTransform>>>,
+}
+
+/// A single transformation in an iterator chain.
+#[derive(Debug, Clone)]
+pub enum IteratorTransform {
+    /// Map each element through a closure
+    Map { closure: Value },
+    /// Filter elements through a predicate closure
+    Filter { closure: Value },
+    /// Take only the first N elements
+    Take { n: usize },
+    /// Skip the first N elements
+    Skip { n: usize },
+}
+
+impl LazyIterator {
+    pub fn from_vec(vec: &Rc<RefCell<Vec<Value>>>) -> Self {
+        let items = vec.borrow().clone();
+        LazyIterator {
+            source: Rc::new(RefCell::new(items)),
+            cursor: Rc::new(RefCell::new(0)),
+            transforms: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    pub fn from_range(start: i64, end: i64, inclusive: bool) -> Self {
+        let items: Vec<Value> = if inclusive {
+            (start..=end).map(Value::Int).collect()
+        } else {
+            (start..end).map(Value::Int).collect()
+        };
+        LazyIterator {
+            source: Rc::new(RefCell::new(items)),
+            cursor: Rc::new(RefCell::new(0)),
+            transforms: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    pub fn with_transform(&self, transform: IteratorTransform) -> Self {
+        let mut new_transforms = self.transforms.borrow().clone();
+        new_transforms.push(transform);
+        LazyIterator {
+            source: self.source.clone(),
+            cursor: self.cursor.clone(),
+            transforms: Rc::new(RefCell::new(new_transforms)),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
@@ -40,6 +99,8 @@ pub enum Value {
     Vec(Rc<RefCell<Vec<Value>>>),
     Map(Rc<RefCell<HashMap<String, Value>>>),
     Range { start: i64, end: i64, inclusive: bool },
+    Iterator(LazyIterator),
+    Tuple(Vec<Value>),
 }
 
 impl Value {
@@ -82,6 +143,8 @@ impl Value {
             Value::Vec(_) => Type::Unknown,
             Value::Map(_) => Type::Unknown,
             Value::Range { .. } => Type::Unknown,
+            Value::Iterator(_) => Type::Unknown,
+            Value::Tuple(items) => Type::Tuple(items.iter().map(|v| v.type_of()).collect()),
         }
     }
 
@@ -168,6 +231,15 @@ impl fmt::Display for Value {
             Value::Range { start, end, inclusive } => {
                 let op = if *inclusive { "..=" } else { ".." };
                 write!(f, "{}{}{}", start, op, end)
+            }
+            Value::Iterator(_) => write!(f, "<iterator>"),
+            Value::Tuple(items) => {
+                write!(f, "(")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", item)?;
+                }
+                write!(f, ")")
             }
             Value::Map(entries) => {
                 let entries = entries.borrow();

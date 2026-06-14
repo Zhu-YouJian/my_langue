@@ -37,6 +37,7 @@ pub enum Type {
     MutRef(Box<Type>),
     Struct(String),
     Enum(String),
+    Tuple(Vec<Type>),
     Unknown,
 }
 
@@ -78,6 +79,14 @@ impl fmt::Display for Type {
             Type::MutRef(inner) => write!(f, "&mut {}", inner),
             Type::Struct(name) => write!(f, "{}", name),
             Type::Enum(name) => write!(f, "{}", name),
+            Type::Tuple(types) => {
+                write!(f, "(")?;
+                for (i, t) in types.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", t)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }

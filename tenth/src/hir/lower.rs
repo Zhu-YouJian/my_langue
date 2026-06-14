@@ -165,17 +165,35 @@ impl Lowerer {
         lowerer.trait_defs.insert("Display".to_string(), HirTraitDef {
             name: "Display".to_string(),
             generics: vec![],
-            methods: vec![("display".to_string(), vec![("self".to_string(), Type::Unknown)], Type::str_())],
+            methods: vec![HirTraitMethod {
+                name: "display".to_string(),
+                params: vec![("self".to_string(), Type::Unknown)],
+                return_type: Type::str_(),
+                default_body: None,
+            }],
+            associated_types: vec![],
         });
         lowerer.trait_defs.insert("Eq".to_string(), HirTraitDef {
             name: "Eq".to_string(),
             generics: vec![],
-            methods: vec![("eq".to_string(), vec![("self".to_string(), Type::Unknown), ("other".to_string(), Type::Unknown)], Type::bool_())],
+            methods: vec![HirTraitMethod {
+                name: "eq".to_string(),
+                params: vec![("self".to_string(), Type::Unknown), ("other".to_string(), Type::Unknown)],
+                return_type: Type::bool_(),
+                default_body: None,
+            }],
+            associated_types: vec![],
         });
         lowerer.trait_defs.insert("Clone".to_string(), HirTraitDef {
             name: "Clone".to_string(),
             generics: vec![],
-            methods: vec![("clone".to_string(), vec![("self".to_string(), Type::Unknown)], Type::Unknown)],
+            methods: vec![HirTraitMethod {
+                name: "clone".to_string(),
+                params: vec![("self".to_string(), Type::Unknown)],
+                return_type: Type::Unknown,
+                default_body: None,
+            }],
+            associated_types: vec![],
         });
 
         // Preload Option enum
@@ -285,7 +303,7 @@ impl Lowerer {
                                         variant: variant.to_string(),
                                         fields: Vec::new(),
                                     },
-                                    ty: Type::Unknown,
+                                    ty: Type::Enum(enum_name.to_string()),
                                     span,
                                 });
                             }
@@ -492,14 +510,21 @@ impl Lowerer {
                 let lowered: Vec<HirExpr> = elements.iter()
                     .map(|e| self.lower_expr(e))
                     .collect::<TenthResult<_>>()?;
-                let ty = Type::Unknown;
+                let elem_ty = lowered.first()
+                    .map(|e| e.ty.clone())
+                    .unwrap_or(Type::Unknown);
+                let ty = Type::Array(Box::new(elem_ty));
                 (HirExprKind::ArrayLiteral { elements: lowered, ty: ty.clone() }, ty)
             }
 
             ExprKind::Range { start, end, inclusive } => {
                 let s = start.as_ref().map(|e| self.lower_expr(e)).transpose()?;
                 let e = end.as_ref().map(|e| self.lower_expr(e)).transpose()?;
-                (HirExprKind::Range { start: s.map(Box::new), end: e.map(Box::new), inclusive: *inclusive }, Type::Unknown)
+                let ty = s.as_ref()
+                    .or(e.as_ref())
+                    .map(|expr| expr.ty.clone())
+                    .unwrap_or(Type::i32());
+                (HirExprKind::Range { start: s.map(Box::new), end: e.map(Box::new), inclusive: *inclusive }, ty)
             }
 
             ExprKind::If { cond, then_branch, else_branch } => {
@@ -566,7 +591,11 @@ impl Lowerer {
                 // Analyze free variables in the closure body (excluding params)
                 let captures = Self::free_vars_in(&b);
 
-                (HirExprKind::Closure { params: lowered_params, body: Box::new(b), captures }, Type::Unknown)
+                let closure_ty = Type::FnType {
+                    params: lowered_params.iter().map(|(_, t)| t.clone()).collect(),
+                    ret: Box::new(b.ty.clone()),
+                };
+                (HirExprKind::Closure { params: lowered_params, body: Box::new(b), captures }, closure_ty)
             }
 
             ExprKind::Assign { target, value } => {
@@ -699,7 +728,7 @@ impl Lowerer {
                     enum_name: enum_name.name.clone(),
                     variant: variant.name.clone(),
                     fields: lowered_fields,
-                }, Type::Unknown)
+                }, Type::Enum(enum_name.name.clone()))
             }
 
             ExprKind::Match { scrutinee, arms } => {
@@ -711,28 +740,32 @@ impl Lowerer {
                         let arm_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
                         self.scope = arm_scope;
 
-                        if let ast::Pattern::EnumVariant { field_bind, tuple_fields, .. } = &arm.pattern {
-                            if let Some((_fname, bname)) = field_bind {
-                                self.scope.define_var(bname.clone(), Type::Unknown, false);
-                            }
-                            // Bind tuple variant fields
-                            for bind_name in tuple_fields {
-                                self.scope.define_var(bind_name.clone(), Type::Unknown, false);
-                            }
-                        }
+                        // Bind variables from pattern
+                        self.bind_pattern_vars(&hir_pattern, &lowered_scrutinee.ty);
+
+                        // Lower guard if present
+                        let guard = arm.guard.as_ref()
+                            .map(|g| self.lower_expr(g))
+                            .transpose()?;
 
                         let body = self.lower_expr(&arm.body)?;
 
                         let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
                         self.scope = outer_scope;
 
-                        Ok(HirMatchArm { pattern: hir_pattern, body })
+                        Ok(HirMatchArm { pattern: hir_pattern, guard, body })
                     })
                     .collect::<TenthResult<_>>()?;
+                // Infer match type from first non-Unknown arm, falling back to first arm
+                let match_ty = lowered_arms.iter()
+                    .map(|arm| arm.body.ty.clone())
+                    .find(|ty| !matches!(ty, Type::Unknown))
+                    .or_else(|| lowered_arms.first().map(|arm| arm.body.ty.clone()))
+                    .unwrap_or(Type::Unknown);
                 (HirExprKind::Match {
                     scrutinee: Box::new(lowered_scrutinee),
                     arms: lowered_arms,
-                }, Type::Unknown)
+                }, match_ty)
             }
 
             ExprKind::Ref(inner) => {
@@ -783,7 +816,11 @@ impl Lowerer {
 
             ExprKind::TryBlock(inner) => {
                 let e = self.lower_expr(inner)?;
-                (HirExprKind::TryBlock(Box::new(e)), Type::Unknown)
+                let result_ty = Type::Generic {
+                    base: Box::new(Type::Enum("Result".to_string())),
+                    args: vec![e.ty.clone(), Type::str_()],
+                };
+                (HirExprKind::TryBlock(Box::new(e)), result_ty)
             }
 
             ExprKind::InterpolatedString(parts) => {
@@ -796,7 +833,8 @@ impl Lowerer {
 
             ExprKind::Tuple(elems) => {
                 let hir_elems: Vec<HirExpr> = elems.iter().map(|e| self.lower_expr(e)).collect::<Result<_, _>>()?;
-                (HirExprKind::Tuple(hir_elems), Type::Unknown)
+                let elem_types: Vec<Type> = hir_elems.iter().map(|e| e.ty.clone()).collect();
+                (HirExprKind::Tuple(hir_elems), Type::Tuple(elem_types))
             }
         };
 
@@ -837,6 +875,65 @@ impl Lowerer {
                 };
                 Ok(HirPattern::Literal(hir_lit))
             }
+            ast::Pattern::Tuple(patterns) => {
+                let hir_patterns: Vec<HirPattern> = patterns.iter()
+                    .map(|p| self.lower_pattern(p))
+                    .collect::<TenthResult<_>>()?;
+                Ok(HirPattern::Tuple(hir_patterns))
+            }
+            ast::Pattern::Range { start, end, inclusive } => {
+                Ok(HirPattern::Range {
+                    start: *start,
+                    end: *end,
+                    inclusive: *inclusive,
+                })
+            }
+            ast::Pattern::Binding(name) => {
+                Ok(HirPattern::Binding(name.clone()))
+            }
+        }
+    }
+
+    /// Define variables in scope from a matched pattern.
+    fn bind_pattern_vars(&mut self, pattern: &HirPattern, scrutinee_ty: &Type) {
+        match pattern {
+            HirPattern::EnumVariant { enum_name, variant, field_bind, tuple_binds } => {
+                let variant_fields = self.enums.get(enum_name)
+                    .and_then(|variants| variants.iter().find(|(v, _)| v == variant))
+                    .map(|(_, fields)| fields.clone());
+
+                if let Some((_fname, bname)) = field_bind {
+                    let bind_ty = variant_fields.as_ref()
+                        .and_then(|f| f.first())
+                        .map(|(_, t)| t.clone())
+                        .unwrap_or(Type::Unknown);
+                    self.scope.define_var(bname.clone(), bind_ty, false);
+                }
+                for (i, (_, bind_name)) in tuple_binds.iter().enumerate() {
+                    let bind_ty = variant_fields.as_ref()
+                        .and_then(|f| f.get(i))
+                        .map(|(_, t)| t.clone())
+                        .unwrap_or(Type::Unknown);
+                    self.scope.define_var(bind_name.clone(), bind_ty, false);
+                }
+            }
+            HirPattern::Tuple(patterns) => {
+                // Bind each sub-pattern with type from tuple element
+                if let Type::Tuple(elem_types) = scrutinee_ty {
+                    for (i, sub_pat) in patterns.iter().enumerate() {
+                        let elem_ty = elem_types.get(i).cloned().unwrap_or(Type::Unknown);
+                        self.bind_pattern_vars(sub_pat, &elem_ty);
+                    }
+                } else {
+                    for sub_pat in patterns {
+                        self.bind_pattern_vars(sub_pat, &Type::Unknown);
+                    }
+                }
+            }
+            HirPattern::Binding(name) => {
+                self.scope.define_var(name.clone(), scrutinee_ty.clone(), false);
+            }
+            HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Range { .. } => {}
         }
     }
 
@@ -897,12 +994,18 @@ impl Lowerer {
             HirExprKind::Var(name) => {
                 if let Some((params, ret)) = self.scope.lookup_fn(name) {
                     if params.len() != args.len() {
+                        let expected: Vec<String> = params.iter()
+                            .map(|(n, t)| format!("{}: {}", n, t))
+                            .collect();
+                        let got: Vec<String> = args.iter()
+                            .map(|a| format!("{}", a.ty))
+                            .collect();
                         return Err(TenthError::TypeError {
                             line: span.line,
                             col: span.col,
                             message: format!(
-                                "function '{}' expects {} arguments, got {}",
-                                name, params.len(), args.len()
+                                "function '{}' expects {} argument(s) [{}], got {} [{}]",
+                                name, params.len(), expected.join(", "), args.len(), got.join(", ")
                             ),
                         });
                     }
@@ -929,14 +1032,34 @@ impl Lowerer {
                     "reshape" | "view" => Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] },
                     "flatten" => Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] },
                     "abs" | "sqrt" | "exp" | "log" | "relu" |
-                    "sigmoid" | "tanh" | "softmax" => {
+                    "sigmoid" | "tanh" | "softmax" |
+                    "transpose" | "permute" => {
                         Type::Tensor { dtype: dtype.clone(), dims: dims.clone() }
                     }
+                    "to_vec" => Type::Array(Box::new(Type::Base(dtype.clone()))),
+                    "len" | "size" | "dim" => Type::Base(BaseType::I64),
+                    "shape" => Type::Array(Box::new(Type::Base(BaseType::I64))),
                     _ => Type::Unknown,
                 }
             }
             Type::Base(BaseType::Str) => match method {
                 "len" => Type::Base(BaseType::I64),
+                "contains" | "starts_with" | "ends_with" => Type::bool_(),
+                "trim" | "to_lowercase" | "to_uppercase" => Type::str_(),
+                "split" | "lines" => Type::Array(Box::new(Type::str_())),
+                "replace" => Type::str_(),
+                "parse_int" | "parse_float" => Type::Enum("Option".to_string()),
+                "chars" => Type::Array(Box::new(Type::Base(BaseType::Char))),
+                _ => Type::Unknown,
+            },
+            Type::Array(inner) => match method {
+                "len" => Type::Base(BaseType::I64),
+                "push" => Type::unit(),
+                "pop" => Type::Enum("Option".to_string()),
+                "get" => Type::Enum("Option".to_string()),
+                "map" | "filter" => Type::Array(inner.clone()),
+                "is_empty" => Type::bool_(),
+                "iter" => Type::Unknown,
                 _ => Type::Unknown,
             },
             _ => match method {
@@ -955,9 +1078,27 @@ impl Lowerer {
             "rand" | "randn" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
             "read_file" => Ok(Type::str_()),
             "str_at" => Ok(Type::str_()),
-            "write_file" => Ok(Type::unit()),
-            "Vec::new" | "HashMap::new" => Ok(Type::Unknown),
+            "write_file" | "write_bytes" => Ok(Type::unit()),
+            "Vec::new" => Ok(Type::Array(Box::new(Type::Unknown))),
+            "HashMap::new" => Ok(Type::Unknown),
             "compile_host" => Ok(Type::Base(BaseType::I32)),
+            "format" => Ok(Type::str_()),
+            "parse_int" => Ok(Type::Enum("Option".to_string())),
+            "parse_float" => Ok(Type::Enum("Option".to_string())),
+            "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" => Ok(Type::f64()),
+            "zeros" | "ones" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
+            "save_weights" | "load_weights" => Ok(Type::unit()),
+            "cross_entropy" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
+            "start_grad" | "new_grad" | "stop_grad" | "param" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
+            "backward" => Ok(Type::unit()),
+            "grad" | "zero_grad" => Ok(Type::Unknown),
+            "path_join" => Ok(Type::str_()),
+            "path_exists" | "path_is_file" | "path_is_dir" => Ok(Type::bool_()),
+            "mkdir" => Ok(Type::unit()),
+            "list_dir" => Ok(Type::Array(Box::new(Type::str_()))),
+            "file_size" => Ok(Type::Base(BaseType::I64)),
+            "remove_file" | "copy_file" => Ok(Type::unit()),
+            "lexer_new" | "lexer_tokenize" | "parse_program" | "lower_program" | "compile_to_wasm" | "compile_program" => Ok(Type::Unknown),
             _ => Ok(Type::Unknown),
         }
     }
@@ -1024,7 +1165,7 @@ impl Lowerer {
     pub fn lower_program(&mut self, program: &ast::Program) -> TenthResult<HirProgram> {
         for item in &program.items {
             match &item.kind {
-                ast::ItemKind::StructDef { name, generics, fields } => {
+                ast::ItemKind::StructDef { name, generics, fields, .. } => {
                     let field_types: Vec<(String, Type)> = fields.iter()
                         .map(|f| (f.name.name.clone(), Type::from_annotation(&f.type_ann)))
                         .collect();
@@ -1060,9 +1201,10 @@ impl Lowerer {
                         .collect();
                     self.enums.insert(name.name.clone(), variant_list);
                 }
-                ast::ItemKind::Trait { name, generics, methods } => {
+                ast::ItemKind::Trait { name, generics, methods, associated_types } => {
                     let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
-                    let method_sigs: Vec<(String, Vec<(String, Type)>, Type)> = methods.iter()
+                    let assoc_type_names: Vec<String> = associated_types.iter().map(|t| t.name.clone()).collect();
+                    let method_sigs: Vec<HirTraitMethod> = methods.iter()
                         .map(|m| {
                             let param_types: Vec<(String, Type)> = m.params.iter()
                                 .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
@@ -1070,13 +1212,33 @@ impl Lowerer {
                             let ret_ty = m.return_type.as_ref()
                                 .map(|rt| Type::from_annotation(rt))
                                 .unwrap_or(Type::unit());
-                            (m.name.name.clone(), param_types, ret_ty)
+                            // Lower default body if present
+                            let default_body = if let Some(body) = &m.body {
+                                let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
+                                self.scope = body_scope;
+                                for (n, t) in &param_types {
+                                    self.scope.define_var(n.clone(), t.clone(), false);
+                                }
+                                let lowered = self.lower_expr(body).ok();
+                                let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
+                                self.scope = outer_scope;
+                                lowered
+                            } else {
+                                None
+                            };
+                            HirTraitMethod {
+                                name: m.name.name.clone(),
+                                params: param_types,
+                                return_type: ret_ty,
+                                default_body,
+                            }
                         })
                         .collect();
                     self.trait_defs.insert(name.name.clone(), HirTraitDef {
                         name: name.name.clone(),
                         generics: gen_names,
                         methods: method_sigs,
+                        associated_types: assoc_type_names,
                     });
                 }
                 ast::ItemKind::Function { name, generics, params, return_type, .. } => {
@@ -1104,7 +1266,7 @@ impl Lowerer {
                         let type_name_str = type_name.name.clone();
                         let mut method_map = HashMap::new();
                         for fn_item in functions {
-                            if let ast::ItemKind::Function { name, generics, params, return_type, body } = &fn_item.kind {
+                            if let ast::ItemKind::Function { name, generics, params, return_type, body, .. } = &fn_item.kind {
                                 let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
                                 let param_types: Vec<(String, Type)> = params.iter()
                                     .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
@@ -1137,13 +1299,34 @@ impl Lowerer {
                                 method_map.insert(fn_def.name.clone(), fn_def);
                             }
                         }
-                        self.trait_impls.entry(trait_name_str)
+                        self.trait_impls.entry(trait_name_str.clone())
                             .or_insert_with(HashMap::new)
-                            .insert(type_name_str, method_map);
+                            .insert(type_name_str.clone(), method_map);
+
+                        // Trait bound check: verify all required methods are implemented
+                        if let Some(trait_def) = self.trait_defs.get(&trait_name_str) {
+                            let impl_methods: Vec<String> = self.trait_impls
+                                .get(&trait_name_str)
+                                .and_then(|m| m.get(&type_name_str))
+                                .map(|m| m.keys().cloned().collect())
+                                .unwrap_or_default();
+                            for method in &trait_def.methods {
+                                if method.default_body.is_none() && !impl_methods.contains(&method.name) {
+                                    return Err(TenthError::TypeError {
+                                        line: type_name.span.line,
+                                        col: type_name.span.col,
+                                        message: format!(
+                                            "missing implementation of '{}' for trait '{}' on type '{}'",
+                                            method.name, trait_name_str, type_name_str
+                                        ),
+                                    });
+                                }
+                            }
+                        }
                     } else {
                         let mut method_map = HashMap::new();
                         for fn_item in functions {
-                            if let ast::ItemKind::Function { name, generics, params, return_type, body } = &fn_item.kind {
+                            if let ast::ItemKind::Function { name, generics, params, return_type, body, .. } = &fn_item.kind {
                                 let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
                                 let param_types: Vec<(String, Type)> = params.iter()
                                     .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
@@ -1192,35 +1375,92 @@ impl Lowerer {
                     let hir_mod = lowerer.lower_program(&mod_program)?;
                     self.modules.insert(name.name.clone(), hir_mod);
                 }
-                ast::ItemKind::Use { path } => {
+                ast::ItemKind::Use { path, glob } => {
                     let path_strs: Vec<String> = path.iter().map(|p| p.name.clone()).collect();
-                    if path_strs.len() >= 2 {
+                    if path_strs.is_empty() { continue; }
+
+                    if *glob {
+                        // `use path::*` — import all public functions from the module
+                        let mod_name = &path_strs[0];
+
+                        // Try to load the module from file if not already loaded
+                        if !self.modules.contains_key(mod_name) && path_strs.len() > 1 {
+                            if let Ok(Some(imported_hir)) = self.try_import_file(&path_strs[..path_strs.len()-1]) {
+                                self.modules.insert(mod_name.clone(), imported_hir);
+                            }
+                        }
+
+                        // Also check nested modules
+                        let module = if path_strs.len() == 1 {
+                            self.modules.get(mod_name)
+                        } else {
+                            // Navigate nested modules: a::b::c
+                            let mut current = self.modules.get(&path_strs[0]);
+                            for seg in &path_strs[1..] {
+                                if let Some(m) = current {
+                                    current = m.modules.get(seg);
+                                } else {
+                                    break;
+                                }
+                            }
+                            current
+                        };
+
+                        if let Some(module) = module {
+                            for fn_def in &module.functions {
+                                let param_types = fn_def.params.clone();
+                                let ret_ty = fn_def.return_type.clone();
+                                self.scope.define_fn(fn_def.name.clone(), param_types, ret_ty);
+                                // Also add the function definition to the top-level function list
+                                // so the interpreter can find and execute it
+                                if !self.functions.iter().any(|f| f.name == fn_def.name) {
+                                    self.functions.push(fn_def.clone());
+                                }
+                            }
+                        }
+                    } else if path_strs.len() >= 2 {
+                        // `use path::name` — import a single function
                         let alias = path_strs.last().cloned().unwrap_or_default();
                         self.uses.push((path_strs.clone(), alias.clone()));
                         let mod_name = &path_strs[0];
 
                         // If the module is not already loaded, try to import it from file
                         if !self.modules.contains_key(mod_name) && !path_strs.is_empty() {
-                            // Try loading the module path as a file
-                            // For "use std::nn::linear", try to load "std/nn/linear.th"
-                            // The module name will be the first segment ("std")
                             if let Ok(Some(imported_hir)) = self.try_import_file(&path_strs[..path_strs.len()-1]) {
-                                // Register the imported module under the first path segment
                                 self.modules.insert(mod_name.clone(), imported_hir);
                             }
                         }
 
-                        if let Some(module) = self.modules.get(mod_name) {
-                            let fn_name = &path_strs[1];
+                        // Navigate nested modules for the target function
+                        let (module, fn_name) = if path_strs.len() == 2 {
+                            (self.modules.get(mod_name), &path_strs[1])
+                        } else {
+                            // Navigate to the parent module of the target
+                            let mut current = self.modules.get(&path_strs[0]);
+                            for seg in &path_strs[1..path_strs.len()-1] {
+                                if let Some(m) = current {
+                                    current = m.modules.get(seg);
+                                } else {
+                                    break;
+                                }
+                            }
+                            (current, path_strs.last().unwrap())
+                        };
+
+                        if let Some(module) = module {
                             if let Some(fn_def) = module.functions.iter().find(|f| &f.name == fn_name) {
                                 let param_types = fn_def.params.clone();
                                 let ret_ty = fn_def.return_type.clone();
-                                self.scope.define_fn(alias, param_types, ret_ty);
+                                self.scope.define_fn(alias.clone(), param_types, ret_ty);
+                                // Also add the function definition to the top-level function list
+                                if !self.functions.iter().any(|f| f.name == fn_def.name) {
+                                    self.functions.push(fn_def.clone());
+                                }
                             }
                         }
                     }
                 }
-                ast::ItemKind::Function { name, generics, params, return_type, body } => {
+                ast::ItemKind::Function { name, generics, params, return_type, body, .. } => {
                     if name.name == "<expr>" {
                         continue;
                     }

@@ -94,3 +94,100 @@ fn test_builtin_trait_in_bound() {
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
+
+// --- Default method implementation ---
+
+#[test]
+fn test_trait_default_method() {
+    let src = r#"
+        struct Point { x: f64, y: f64 }
+        trait Describe {
+            fn describe(self) -> string;
+            fn debug_str(self) -> string { "debug: " + self.describe() }
+        }
+        impl Describe for Point {
+            fn describe(self) -> string { "point" }
+        }
+        let p = Point { x: 1.0, y: 2.0 };
+        p.describe()
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::String(s)) => assert_eq!(s, "point"),
+        v => panic!("expected String, got {:?}", v),
+    }
+}
+
+// --- Associated types ---
+
+#[test]
+fn test_trait_associated_type() {
+    let src = r#"
+        trait Container {
+            type Item;
+            fn get(self) -> Item;
+        }
+        struct Box { value: i32 }
+        impl Container for Box {
+            fn get(self) -> i32 { self.value }
+        }
+        let b = Box { value: 42 };
+        b.get()
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(42)) => {},
+        v => panic!("expected Int(42), got {:?}", v),
+    }
+}
+
+// --- Trait bound check: missing required method ---
+
+#[test]
+fn test_trait_bound_check_missing_method() {
+    let src = r#"
+        trait Required {
+            fn must_impl(self) -> i32;
+        }
+        struct S { x: i32 }
+        impl Required for S { }
+    "#;
+    let result = run_code(src);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.contains("missing implementation"), "expected missing impl error, got: {}", err);
+}
+
+// --- Trait with default method only (no required methods) ---
+
+#[test]
+fn test_trait_all_default_methods() {
+    let src = r#"
+        struct S { x: i32 }
+        trait Greet {
+            fn hello() -> string { "hello" }
+        }
+        impl Greet for S { }
+        42
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(42)) => {},
+        v => panic!("expected Int(42), got {:?}", v),
+    }
+}
+
+// --- Multiple trait bounds ---
+
+#[test]
+fn test_multiple_trait_bounds() {
+    let src = r#"
+        fn both<T: Display + Clone>(x: T) -> T { x }
+        both<i32>(7)
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(7)) => {},
+        v => panic!("expected Int(7), got {:?}", v),
+    }
+}

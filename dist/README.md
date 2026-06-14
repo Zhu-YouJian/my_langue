@@ -46,7 +46,7 @@ tenth.bat run file.th
 
 ## 标准库
 
-见 `tenth/std/` — nn (Linear, ReLU, Sigmoid, MSE, BCE, BatchNorm, Conv2D, Embedding), optim (SGD, Adam, AdaGrad, RMSProp — 全部可运行), init (xavier_uniform/xavier_normal/he_normal/he_uniform/zeros_init/constant_init)
+见 `tenth/std/` — nn (Linear, ReLU, Sigmoid, MSE, BCE, BatchNorm, Conv2D, Embedding, attention, multihead_attention, layer_norm, positional_encoding, feedforward, transformer), optim (SGD, Adam, AdaGrad, RMSProp — 全部可运行), init (xavier_uniform/xavier_normal/he_normal/he_uniform/zeros_init/constant_init), collections/, string/
 
 ## 示例
 

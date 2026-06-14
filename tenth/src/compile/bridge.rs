@@ -66,6 +66,7 @@ pub fn compact_program_to_ast(prog_val: &Value) -> TenthResult<ast::Program> {
                     params: Vec::new(),
                     return_type: Some(ast::TypeAnnotation::Named(ast::Ident { name: "i64".to_string(), span: dummy_span.clone() })),
                     body: main_body,
+                    is_pub: false,
                 },
                 span: dummy_span.clone(),
             });
@@ -188,6 +189,7 @@ fn convert_struct_def(val: &Value, span: &Span) -> TenthResult<ast::Item> {
             name: ast::Ident { name, span: span.clone() },
             generics: Vec::new(),
             fields: ast_fields,
+            is_pub: false,
         },
         span: span.clone(),
     })
@@ -298,6 +300,7 @@ fn convert_fn_def(
                 kind: ast::ExprKind::Block(body_stmts),
                 span: span.clone(),
             },
+            is_pub: false,
         },
         span: span.clone(),
     })
