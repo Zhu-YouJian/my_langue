@@ -1,10 +1,22 @@
-// Embedding layer (placeholder)
+// Embedding layer
+// Lookup table that maps integer indices to dense vectors.
 //
-// Usage (planned):
-//   let w = Embedding(vocab_size=10000, dim=512)
-//   let e = w.lookup(indices)   // (N,) -> (N, dim)
+// Usage:
+//   let weight = randn(vocab_size, dim) * 0.01   // init
+//   let e = embedding(weight, indices)            // forward
 //
-// Requires:
-//   - Integer tensor indexing (x[indices] where indices is a tensor)
-//   - Gradient for embedding lookup (sparse update)
-//   - New TapeOp or builtin
+// weight: (vocab_size, dim) — embedding matrix
+// indices: (N,) — integer tensor of token IDs
+// Returns: (N, dim) — embedded vectors
+//
+// Autodiff: gradient flows back to the weight matrix.
+// Sparse gradient updates are not yet supported; full dense update is used.
+
+// Embedding lookup: weight[indices]
+// Each index selects a row from the weight matrix.
+fn embedding(
+    weight: Tensor[f64, ..],
+    indices: Tensor[f64, ..],
+) -> Tensor[f64, ..] {
+    weight.embedding_lookup(indices)
+}

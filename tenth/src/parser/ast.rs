@@ -146,6 +146,9 @@ pub enum Pattern {
         enum_name: String,
         variant: String,
         field_bind: Option<(String, String)>,
+        /// For tuple variant patterns: list of bind names for positional fields.
+        /// e.g. `Some(x)` → ["x"], `Pair(a, b)` → ["a", "b"]
+        tuple_fields: Vec<String>,
     },
     Wildcard,
     Literal(Literal),
@@ -274,9 +277,16 @@ pub struct StructField {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum EnumVariantKind {
+    Unit,
+    Named(Vec<StructField>),
+    Tuple(Vec<TypeAnnotation>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct EnumVariant {
     pub name: Ident,
-    pub fields: Vec<StructField>,
+    pub kind: EnumVariantKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]

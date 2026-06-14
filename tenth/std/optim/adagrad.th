@@ -1,5 +1,4 @@
 // AdaGrad optimizer
-//
 // Accumulates squared gradients and adapts learning rate per-parameter.
 // Good for sparse features, less used in deep learning now.
 //
@@ -10,3 +9,17 @@
 //   w = w - lr * gw / (g2_w.sqrt() + eps);       // update
 //
 // Hyperparams: lr=0.01, eps=1e-8
+
+// Single AdaGrad step for one parameter tensor.
+// Returns (updated_w, updated_g2).
+fn adagrad_step(
+    w: Tensor[f64, ..],
+    g2: Tensor[f64, ..],
+    lr: f64,
+    eps: f64,
+) -> (Tensor[f64, ..], Tensor[f64, ..]) {
+    let gw = grad(w);
+    let new_g2 = g2 + gw * gw;
+    let new_w = w - lr * gw / (new_g2.sqrt() + eps);
+    (new_w, new_g2)
+}

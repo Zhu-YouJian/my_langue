@@ -614,7 +614,8 @@ impl Lowerer {
                             if !field_names.contains(fname) {
                                 let default_val = match fty {
                                     Type::Base(b) => match b {
-                                        BaseType::I32 | BaseType::I64 | BaseType::I8 | BaseType::I16 => HirExpr {
+                                        BaseType::I32 | BaseType::I64 | BaseType::I8 | BaseType::I16
+                                        | BaseType::U8 | BaseType::U16 | BaseType::U32 | BaseType::U64 => HirExpr {
                                             kind: HirExprKind::Literal(Literal::Int(0)),
                                             ty: fty.clone(),
                                             span: name.span.clone(),
@@ -634,9 +635,14 @@ impl Lowerer {
                                             ty: fty.clone(),
                                             span: name.span.clone(),
                                         },
-                                        _ => HirExpr {
+                                        BaseType::Char => HirExpr {
                                             kind: HirExprKind::Literal(Literal::Int(0)),
-                                            ty: Type::Unknown,
+                                            ty: fty.clone(),
+                                            span: name.span.clone(),
+                                        },
+                                        BaseType::Unit => HirExpr {
+                                            kind: HirExprKind::Literal(Literal::Int(0)),
+                                            ty: Type::unit(),
                                             span: name.span.clone(),
                                         },
                                     },
@@ -656,6 +662,7 @@ impl Lowerer {
                 (HirExprKind::StructLiteral {
                     name: name.name.clone(),
                     fields: lowered_fields,
+                    has_default: *use_defaults,
                 }, struct_ty)
             }
 
@@ -682,9 +689,13 @@ impl Lowerer {
                         let arm_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
                         self.scope = arm_scope;
 
-                        if let ast::Pattern::EnumVariant { field_bind, .. } = &arm.pattern {
+                        if let ast::Pattern::EnumVariant { field_bind, tuple_fields, .. } = &arm.pattern {
                             if let Some((_fname, bname)) = field_bind {
                                 self.scope.define_var(bname.clone(), Type::Unknown, false);
+                            }
+                            // Bind tuple variant fields
+                            for bind_name in tuple_fields {
+                                self.scope.define_var(bind_name.clone(), Type::Unknown, false);
                             }
                         }
 
@@ -766,11 +777,14 @@ impl Lowerer {
 
     fn lower_pattern(&mut self, pattern: &ast::Pattern) -> TenthResult<HirPattern> {
         match pattern {
-            ast::Pattern::EnumVariant { enum_name, variant, field_bind } => {
+            ast::Pattern::EnumVariant { enum_name, variant, field_bind, tuple_fields } => {
                 Ok(HirPattern::EnumVariant {
                     enum_name: enum_name.clone(),
                     variant: variant.clone(),
                     field_bind: field_bind.clone(),
+                    tuple_binds: tuple_fields.iter().enumerate()
+                        .map(|(i, bind_name)| (format!("_{}", i), bind_name.clone()))
+                        .collect(),
                 })
             }
             ast::Pattern::Wildcard => Ok(HirPattern::Wildcard),
@@ -986,9 +1000,19 @@ impl Lowerer {
                 ast::ItemKind::EnumDef { name, variants } => {
                     let variant_list: Vec<(String, Vec<(String, Type)>)> = variants.iter()
                         .map(|v| {
-                            let fields: Vec<(String, Type)> = v.fields.iter()
-                                .map(|f| (f.name.name.clone(), Type::from_annotation(&f.type_ann)))
-                                .collect();
+                            let fields: Vec<(String, Type)> = match &v.kind {
+                                ast::EnumVariantKind::Unit => Vec::new(),
+                                ast::EnumVariantKind::Named(named_fields) => {
+                                    named_fields.iter()
+                                        .map(|f| (f.name.name.clone(), Type::from_annotation(&f.type_ann)))
+                                        .collect()
+                                }
+                                ast::EnumVariantKind::Tuple(types) => {
+                                    types.iter().enumerate()
+                                        .map(|(i, ty)| (format!("_{}", i), Type::from_annotation(ty)))
+                                        .collect()
+                                }
+                            };
                             (v.name.name.clone(), fields)
                         })
                         .collect();

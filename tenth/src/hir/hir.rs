@@ -82,6 +82,7 @@ pub enum HirExprKind {
     StructLiteral {
         name: String,
         fields: Vec<(String, HirExpr)>,
+        has_default: bool,
     },
     EnumLiteral {
         enum_name: String,
@@ -124,6 +125,9 @@ pub enum HirPattern {
         enum_name: String,
         variant: String,
         field_bind: Option<(String, String)>,
+        /// For tuple variants: list of (field_name, bind_name) pairs.
+        /// e.g. `Some(x)` → [("_0", "x")], `Pair(a, b)` → [("_0", "a"), ("_1", "b")]
+        tuple_binds: Vec<(String, String)>,
     },
     Wildcard,
     Literal(Literal),

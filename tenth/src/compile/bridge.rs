@@ -215,7 +215,11 @@ fn convert_enum_def(val: &Value, span: &Span) -> TenthResult<ast::Item> {
         }
         ast_variants.push(ast::EnumVariant {
             name: ast::Ident { name: vname, span: span.clone() },
-            fields: vfields,
+            kind: if vfields.is_empty() {
+                ast::EnumVariantKind::Unit
+            } else {
+                ast::EnumVariantKind::Named(vfields)
+            },
         });
     }
 

@@ -1,14 +1,45 @@
 // Initialization helpers
 //
-// Tensors can be created with:
-//   let w = zeros([2, 3])       — planned builtin (currently use tensor[[0.0, 0.0, 0.0], ...])
-//   let w = ones([2, 3])        — planned builtin
-//   let w = randn(2, 3)         — builtin (normal distribution, mean=0, std=1)
-//   let w = rand(2, 3)          — builtin (uniform [0, 1))
-//
-// TODO: add Xavier/Glorot and He/Kaiming initializers as builtins
-//   let w = xavier_uniform(in_dim, out_dim)   // uniform ± sqrt(6/(in+out))
-//   let w = kaiming_normal(in_dim)             // normal with std = sqrt(2/in)
-//
-// Workaround for now:
-//   let w = randn(2, 3) * 0.01   // small random weights (scalar-tensor mul)
+// Xavier/Glorot and He/Kaiming initializers for neural network weights.
+// These set the initial scale based on fan-in and fan-out to maintain
+// activation variance across layers.
+
+// Xavier/Glorot uniform initialization.
+// Draws from uniform[-limit, limit] where limit = sqrt(6 / (fan_in + fan_out))
+// Good for sigmoid/tanh activations.
+fn xavier_uniform(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+    let limit = sqrt(6.0 / (fan_in + fan_out));
+    randn(fan_in, fan_out) * limit
+}
+
+// Xavier/Glorot normal initialization.
+// Draws from normal(0, std) where std = sqrt(2 / (fan_in + fan_out))
+fn xavier_normal(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+    let std = sqrt(2.0 / (fan_in + fan_out));
+    randn(fan_in, fan_out) * std
+}
+
+// He/Kaiming normal initialization.
+// Draws from normal(0, std) where std = sqrt(2 / fan_in)
+// Good for ReLU and variants.
+fn he_normal(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+    let std = sqrt(2.0 / fan_in);
+    randn(fan_in, fan_out) * std
+}
+
+// He/Kaiming uniform initialization.
+// Draws from uniform[-limit, limit] where limit = sqrt(6 / fan_in)
+fn he_uniform(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+    let limit = sqrt(6.0 / fan_in);
+    randn(fan_in, fan_out) * limit
+}
+
+// Zeros initialization (for biases).
+fn zeros_init(rows: i64, cols: i64) -> Tensor[f64, ..] {
+    zeros(rows, cols)
+}
+
+// Constant initialization (for biases).
+fn constant_init(rows: i64, cols: i64, val: f64) -> Tensor[f64, ..] {
+    zeros(rows, cols) + val
+}

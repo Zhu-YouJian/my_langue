@@ -10,3 +10,18 @@
 //
 // Implemented via x.conv2d(w, kH, kW, stride, pad) tensor method.
 // Bias broadcasting requires manual reshape for now.
+
+// Conv2D forward: y = conv2d(x, w) + b
+// stride and pad default to 1 and 0 respectively.
+fn conv2d(
+    x: Tensor[f64, ..],
+    w: Tensor[f64, ..],
+    b: Tensor[f64, ..],
+    stride: i64,
+    pad: i64,
+) -> Tensor[f64, ..] {
+    let kH = shape(w)[2];
+    let kW = shape(w)[3];
+    let out = x.conv2d(w, kH, kW, stride, pad);
+    out + b
+}

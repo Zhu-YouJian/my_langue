@@ -84,3 +84,48 @@ fn test_struct_default_fields() {
         v => panic!("expected Some(Float(1.0)), got {:?}", v),
     }
 }
+
+#[test]
+fn test_struct_default_int_and_str_fields() {
+    // Expr { kind: "Int", ival: 42, .. } — sval should default to ""
+    let src = r#"
+    struct Expr { kind: str, ival: i64, sval: str }
+    let e = Expr { kind: "Int", ival: 42, .. };
+    e.ival
+    "#;
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Int(n)) => assert_eq!(n, 42, "expected ival=42, got {}", n),
+        v => panic!("expected Some(Int(42)), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_struct_default_all_fields() {
+    // Point { .. } — all fields take default values (0.0 for f64)
+    let src = r#"
+    struct Point { x: f64, y: f64 }
+    let p = Point { .. };
+    p.x + p.y
+    "#;
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Float(n)) => assert!((n - 0.0).abs() < 1e-10, "expected 0.0 + 0.0 = 0.0, got {}", n),
+        v => panic!("expected Some(Float(0.0)), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_struct_default_bool_field() {
+    // Flag { value: bool, .. } — value should default to false
+    let src = r#"
+    struct Flag { name: str, value: bool }
+    let f = Flag { name: "test", .. };
+    f.value
+    "#;
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Bool(b)) => assert_eq!(b, false, "expected value=false, got {}", b),
+        v => panic!("expected Some(Bool(false)), got {:?}", v),
+    }
+}

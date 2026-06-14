@@ -590,7 +590,7 @@ impl WasmCompiler {
                 body.instruction(&Instruction::LocalGet(tmp));
             }
 
-            HirExprKind::StructLiteral { name, fields } => {
+            HirExprKind::StructLiteral { name, fields, has_default: _ } => {
                 let sz = self.struct_size(name);
                 body.instruction(&Instruction::I32Const(sz as i32));
                 body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32

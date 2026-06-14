@@ -7,3 +7,14 @@
 //
 // x: (N, C, H, W) or (N, C, L)
 // gamma, beta: (C,) learnable scale and shift
+
+// BatchNorm forward: normalize then scale/shift.
+// gamma and beta are (C,) vectors; eps prevents division by zero.
+fn batchnorm(
+    x: Tensor[f64, ..],
+    gamma: Tensor[f64, ..],
+    beta: Tensor[f64, ..],
+    eps: f64,
+) -> Tensor[f64, ..] {
+    x.batchnorm(gamma, beta, eps)
+}

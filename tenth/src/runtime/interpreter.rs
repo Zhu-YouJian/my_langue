@@ -744,7 +744,7 @@ impl Interpreter {
                 Ok(Some(val))
             }
 
-            HirExprKind::StructLiteral { name, fields } => {
+            HirExprKind::StructLiteral { name, fields, has_default: _ } => {
                 let mut field_vals = Vec::new();
                 for (fname, fexpr) in fields {
                     let v = self.eval_expr(fexpr)?.ok_or_else(|| TenthError::RuntimeError {
@@ -752,6 +752,9 @@ impl Interpreter {
                     })?;
                     field_vals.push((fname.clone(), v));
                 }
+                // Note: when has_default is true, the lowerer has already filled in
+                // default values for any missing fields in the HIR. The interpreter
+                // just evaluates the complete field list as-is.
                 Ok(Some(Value::Struct { name: name.clone(), fields: Rc::new(RefCell::new(field_vals)) }))
             }
 
@@ -777,19 +780,32 @@ impl Interpreter {
 
                 for arm in arms {
                     if self.pattern_matches(&arm.pattern, &val) {
-                        if let HirPattern::EnumVariant { field_bind, .. } = &arm.pattern {
-                            if let Some((_fname, bname)) = field_bind {
-                                if let Value::Enum { fields, .. } = &val {
-                                    if let Some((_, v)) = fields.borrow().first() {
+                        // Bind fields from the matched enum value
+                        if let HirPattern::EnumVariant { field_bind, tuple_binds, .. } = &arm.pattern {
+                            if let Value::Enum { fields, .. } = &val {
+                                let fields_ref = fields.borrow();
+                                // Bind single named field (legacy)
+                                if let Some((_fname, bname)) = field_bind {
+                                    if let Some((_, v)) = fields_ref.first() {
                                         self.current_scope().insert(bname.clone(), v.clone());
+                                    }
+                                }
+                                // Bind tuple variant fields
+                                for (field_name, bind_name) in tuple_binds {
+                                    if let Some((_, v)) = fields_ref.iter().find(|(n, _)| n == field_name) {
+                                        self.current_scope().insert(bind_name.clone(), v.clone());
                                     }
                                 }
                             }
                         }
                         let result = self.eval_expr(&arm.body);
-                        if let HirPattern::EnumVariant { field_bind, .. } = &arm.pattern {
+                        // Clean up bound variables
+                        if let HirPattern::EnumVariant { field_bind, tuple_binds, .. } = &arm.pattern {
                             if let Some((_, bname)) = field_bind {
                                 self.current_scope().remove(bname);
+                            }
+                            for (_, bind_name) in tuple_binds {
+                                self.current_scope().remove(bind_name);
                             }
                         }
                         return result;

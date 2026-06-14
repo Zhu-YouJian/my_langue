@@ -36,6 +36,40 @@ impl Parser {
         self.tokens.get(idx).unwrap_or(&EOF_TOKEN)
     }
 
+    /// Expect a `>` token to close a generic type parameter list.
+    /// Handles the case where `>>` is tokenized as `Shr` by splitting it:
+    /// consumes the `Shr` and inserts a synthetic `Gt` token at the current
+    /// position so the outer generic context sees its closing `>`.
+    fn expect_gt(&mut self) -> TenthResult<&Token> {
+        let token = self.peek();
+        match &token.kind {
+            TokenKind::Gt => {
+                self.pos += 1;
+                Ok(self.tokens.get(self.pos - 1).unwrap())
+            }
+            TokenKind::Shr => {
+                // >> encountered where > expected: split into two > tokens.
+                // Consume the Shr and insert a synthetic Gt at current position.
+                let span = token.span.clone();
+                self.pos += 1;
+                // Insert a synthetic Gt token so the outer parse_type sees it
+                let synthetic_gt = Token {
+                    kind: TokenKind::Gt,
+                    span: Span { line: span.line, col: span.col + 1 },
+                };
+                self.tokens.insert(self.pos, synthetic_gt);
+                Ok(self.tokens.get(self.pos - 1).unwrap())
+            }
+            _ => {
+                Err(TenthError::ParseError {
+                    line: token.span.line,
+                    col: token.span.col,
+                    message: format!("expected >, got {}", token.kind),
+                })
+            }
+        }
+    }
+
     fn expect(&mut self, kind: TokenKind) -> TenthResult<&Token> {
         let token = self.peek();
         if std::mem::discriminant(&token.kind) == std::mem::discriminant(&kind) {
@@ -84,14 +118,14 @@ impl Parser {
                 if matches!(self.peek_kind(), TokenKind::Lt) && self.looks_like_generic_struct_literal() {
                     self.advance();
                     let mut generic_args = Vec::new();
-                    while !matches!(self.peek_kind(), TokenKind::Gt) {
+                    while !matches!(self.peek_kind(), TokenKind::Gt | TokenKind::Shr) {
                         generic_args.push(self.parse_type()?);
                         if !matches!(self.peek_kind(), TokenKind::Comma) {
                             break;
                         }
                         self.advance();
                     }
-                    self.expect(TokenKind::Gt)?;
+                    self.expect_gt()?;
                     self.expect(TokenKind::LBrace)?;
                     let mut fields = Vec::new();
                     let mut use_defaults = false;
@@ -114,9 +148,9 @@ impl Parser {
                     ExprKind::StructLiteral { name: Ident { name, span }, generics: generic_args, fields, use_defaults }
                 } else if matches!(self.peek_kind(), TokenKind::LBrace) {
                     let is_struct = self.tokens.get(self.pos + 1)
-                        .map(|t| matches!(t.kind, TokenKind::Identifier(_) | TokenKind::RBrace))
+                        .map(|t| matches!(t.kind, TokenKind::Identifier(_) | TokenKind::RBrace | TokenKind::DotDot))
                         .unwrap_or(false);
-                    let has_colon = if is_struct && matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::RBrace)) {
+                    let has_colon = if is_struct && matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::RBrace) | Some(TokenKind::DotDot)) {
                         true
                     } else if is_struct {
                         self.tokens.get(self.pos + 2)
@@ -126,7 +160,7 @@ impl Parser {
                         false
                     };
 
-                    if has_colon || (is_struct && matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::RBrace))) {
+                    if has_colon || (is_struct && matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::RBrace) | Some(TokenKind::DotDot))) {
                         let ident = Ident { name, span };
                         self.advance();
                         let mut fields = Vec::new();
@@ -385,14 +419,14 @@ impl Parser {
                     }
                     self.advance();
                     let mut generics = Vec::new();
-                    while !matches!(self.peek_kind(), TokenKind::Gt) {
+                    while !matches!(self.peek_kind(), TokenKind::Gt | TokenKind::Shr) {
                         generics.push(self.parse_type()?);
                         if !matches!(self.peek_kind(), TokenKind::Comma) {
                             break;
                         }
                         self.advance();
                     }
-                    self.expect(TokenKind::Gt)?;
+                    self.expect_gt()?;
 
                     if matches!(self.peek_kind(), TokenKind::LParen) {
                         self.advance();
@@ -607,6 +641,30 @@ impl Parser {
             return false;
         }
         matches!(&self.tokens[i].kind, TokenKind::LBrace)
+    }
+
+    /// Look ahead inside enum variant parentheses to determine if fields are named.
+    /// Named: `name: Type, ...` — first token is Identifier, second is Colon.
+    /// Tuple: `Type, ...` — first token is Identifier but second is NOT Colon,
+    ///        or first token is a keyword type like `i64`, `str`, etc.
+    fn looks_like_named_enum_fields(&self) -> bool {
+        let i = self.pos;
+        // Skip past the LParen (already consumed), so we're at the first content token
+        // Check: is the first token an Identifier followed by Colon?
+        if i >= self.tokens.len() {
+            return false;
+        }
+        // Empty parens: neither
+        if matches!(&self.tokens[i].kind, TokenKind::RParen) {
+            return false;
+        }
+        // If first token is Identifier and second is Colon → named fields
+        if let TokenKind::Identifier(_) = &self.tokens[i].kind {
+            if i + 1 < self.tokens.len() && matches!(self.tokens[i + 1].kind, TokenKind::Colon) {
+                return true;
+            }
+        }
+        false
     }
 
     fn parse_unary(&mut self) -> TenthResult<Expr> {
@@ -924,14 +982,14 @@ impl Parser {
                     // Generic type: Vec<Token>, HashMap<K,V>, etc.
                     self.advance();
                     let mut args = Vec::new();
-                    while !matches!(self.peek_kind(), TokenKind::Gt) {
+                    while !matches!(self.peek_kind(), TokenKind::Gt | TokenKind::Shr) {
                         args.push(self.parse_type()?);
                         if !matches!(self.peek_kind(), TokenKind::Comma) {
                             break;
                         }
                         self.advance();
                     }
-                    self.expect(TokenKind::Gt)?;
+                    self.expect_gt()?;
                     Ok(TypeAnnotation::Generic {
                         base: Ident { name, span },
                         args,
@@ -1306,20 +1364,38 @@ impl Parser {
                 let mut variants = Vec::new();
                 while !matches!(self.peek_kind(), TokenKind::RBrace) {
                     let variant_name = self.expect_ident()?;
-                    let mut fields = Vec::new();
-                    if matches!(self.peek_kind(), TokenKind::LParen) {
+                    let kind = if matches!(self.peek_kind(), TokenKind::LParen) {
                         self.advance();
-                        while !matches!(self.peek_kind(), TokenKind::RParen) {
-                            let fname = self.expect_ident()?;
-                            self.expect(TokenKind::Colon)?;
-                            let ftype = self.parse_type()?;
-                            fields.push(StructField { name: fname, type_ann: ftype });
-                            if !matches!(self.peek_kind(), TokenKind::Comma) { break; }
-                            self.advance();
+                        // Determine if this is a named-field or tuple variant.
+                        // Look ahead: if we see `Identifier :` it's named; otherwise tuple.
+                        let is_named = self.looks_like_named_enum_fields();
+                        if is_named {
+                            let mut fields = Vec::new();
+                            while !matches!(self.peek_kind(), TokenKind::RParen) {
+                                let fname = self.expect_ident()?;
+                                self.expect(TokenKind::Colon)?;
+                                let ftype = self.parse_type()?;
+                                fields.push(StructField { name: fname, type_ann: ftype });
+                                if !matches!(self.peek_kind(), TokenKind::Comma) { break; }
+                                self.advance();
+                            }
+                            self.expect(TokenKind::RParen)?;
+                            EnumVariantKind::Named(fields)
+                        } else {
+                            let mut types = Vec::new();
+                            while !matches!(self.peek_kind(), TokenKind::RParen) {
+                                let ty = self.parse_type()?;
+                                types.push(ty);
+                                if !matches!(self.peek_kind(), TokenKind::Comma) { break; }
+                                self.advance();
+                            }
+                            self.expect(TokenKind::RParen)?;
+                            EnumVariantKind::Tuple(types)
                         }
-                        self.expect(TokenKind::RParen)?;
-                    }
-                    variants.push(EnumVariant { name: variant_name, fields });
+                    } else {
+                        EnumVariantKind::Unit
+                    };
+                    variants.push(EnumVariant { name: variant_name, kind });
                     if !matches!(self.peek_kind(), TokenKind::Comma) { break; }
                     self.advance();
                 }
@@ -1440,7 +1516,7 @@ impl Parser {
         }
         self.advance();
         let mut params = Vec::new();
-        while !matches!(self.peek_kind(), TokenKind::Gt) {
+        while !matches!(self.peek_kind(), TokenKind::Gt | TokenKind::Shr) {
             let name = self.expect_ident()?;
             let mut bounds = Vec::new();
             if matches!(self.peek_kind(), TokenKind::Colon) {
@@ -1457,7 +1533,7 @@ impl Parser {
             }
             self.advance();
         }
-        self.expect(TokenKind::Gt)?;
+        self.expect_gt()?;
         Ok(params)
     }
 
@@ -1491,39 +1567,19 @@ impl Parser {
                 if parts.len() == 2 {
                     let enum_name = parts[0].to_string();
                     let variant = parts[1].to_string();
-                    let field_bind = self.parse_pattern_field_bind()?;
-                    Ok(Pattern::EnumVariant { enum_name, variant, field_bind })
+                    let (field_bind, tuple_fields) = self.parse_pattern_fields()?;
+                    Ok(Pattern::EnumVariant { enum_name, variant, field_bind, tuple_fields })
                 } else {
                     let name = path_str;
                     if matches!(self.peek_kind(), TokenKind::LParen) {
                         self.advance();
-                        if matches!(self.peek_kind(), TokenKind::RParen) {
-                            self.advance();
-                            Ok(Pattern::EnumVariant {
-                                enum_name: String::new(),
-                                variant: name,
-                                field_bind: None,
-                            })
-                        } else {
-                            let bind = self.expect_ident()?;
-                            if matches!(self.peek_kind(), TokenKind::Colon) {
-                                self.advance();
-                                let bname = self.expect_ident()?;
-                                self.expect(TokenKind::RParen)?;
-                                Ok(Pattern::EnumVariant {
-                                    enum_name: String::new(),
-                                    variant: name,
-                                    field_bind: Some((bind.name, bname.name)),
-                                })
-                            } else {
-                                self.expect(TokenKind::RParen)?;
-                                Ok(Pattern::EnumVariant {
-                                    enum_name: String::new(),
-                                    variant: name,
-                                    field_bind: Some((String::new(), bind.name)),
-                                })
-                            }
-                        }
+                        let (field_bind, tuple_fields) = self.parse_pattern_fields_inner()?;
+                        Ok(Pattern::EnumVariant {
+                            enum_name: String::new(),
+                            variant: name,
+                            field_bind,
+                            tuple_fields,
+                        })
                     } else {
                         Ok(Pattern::Wildcard)
                     }
@@ -1537,24 +1593,44 @@ impl Parser {
         }
     }
 
-    fn parse_pattern_field_bind(&mut self) -> TenthResult<Option<(String, String)>> {
+    /// Parse the field bindings after an enum variant name in a match pattern.
+    /// Returns (field_bind, tuple_fields).
+    /// - Named field: `Some(value: v)` → field_bind = Some(("value", "v"))
+    /// - Tuple field: `Some(x)` → tuple_fields = ["x"]
+    /// - Multiple tuple fields: `Pair(a, b)` → tuple_fields = ["a", "b"]
+    fn parse_pattern_fields(&mut self) -> TenthResult<(Option<(String, String)>, Vec<String>)> {
         if !matches!(self.peek_kind(), TokenKind::LParen) {
-            return Ok(None);
+            return Ok((None, Vec::new()));
         }
         self.advance();
+        self.parse_pattern_fields_inner()
+    }
+
+    /// Parse field bindings inside parentheses (LParen already consumed).
+    fn parse_pattern_fields_inner(&mut self) -> TenthResult<(Option<(String, String)>, Vec<String>)> {
         if matches!(self.peek_kind(), TokenKind::RParen) {
             self.advance();
-            return Ok(None);
+            return Ok((None, Vec::new()));
         }
-        let fname = self.expect_ident()?;
+
+        // Check if this is a named-field pattern: `name: bind_name`
+        let first = self.expect_ident()?;
         if matches!(self.peek_kind(), TokenKind::Colon) {
+            // Named field binding: `value: v`
             self.advance();
             let bname = self.expect_ident()?;
             self.expect(TokenKind::RParen)?;
-            Ok(Some((fname.name, bname.name)))
+            Ok((Some((first.name, bname.name)), Vec::new()))
         } else {
+            // Tuple-style binding: positional identifiers
+            let mut tuple_fields = vec![first.name];
+            while matches!(self.peek_kind(), TokenKind::Comma) {
+                self.advance();
+                let bind = self.expect_ident()?;
+                tuple_fields.push(bind.name);
+            }
             self.expect(TokenKind::RParen)?;
-            Ok(Some((String::new(), fname.name)))
+            Ok((None, tuple_fields))
         }
     }
 

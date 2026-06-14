@@ -209,7 +209,7 @@ impl BytecodeCompiler {
                 }
             }
 
-            StructLiteral { name, fields } => {
+            StructLiteral { name, fields, has_default: _ } => {
                 let ni = self.chunk.add_string(name);
                 for (fname, fexpr) in fields.iter().rev() {
                     self.compile_expr(fexpr)?;
@@ -306,7 +306,7 @@ impl BytecodeCompiler {
                 let end_label = self.new_label();
                 for arm in arms {
                     match &arm.pattern {
-                        HirPattern::EnumVariant { enum_name: _, variant, field_bind } => {
+                        HirPattern::EnumVariant { enum_name: _, variant, field_bind, tuple_binds } => {
                             self.chunk.emit(Op::Dup); // dup for IsEnumVariant check
                             let variant_i = self.chunk.add_string(variant);
                             self.chunk.emit(Op::IsEnumVariant(variant_i));
@@ -320,6 +320,17 @@ impl BytecodeCompiler {
                                 let pos = self.locals.len();
                                 self.locals.push(bind_name.clone());
                                 self.chunk.emit(Op::Store(pos)); // pops field
+                            } else if !tuple_binds.is_empty() {
+                                // Tuple variant: bind each positional field
+                                for (field_name, bind_name) in tuple_binds {
+                                    self.chunk.emit(Op::Dup); // dup scrutinee for each field
+                                    let fi = self.chunk.add_string(field_name);
+                                    self.chunk.emit(Op::EnumGetField(fi));
+                                    let pos = self.locals.len();
+                                    self.locals.push(bind_name.clone());
+                                    self.chunk.emit(Op::Store(pos));
+                                }
+                                self.chunk.emit(Op::Pop); // drop scrutinee
                             } else {
                                 self.chunk.emit(Op::Pop); // drop scrutinee (no field needed)
                             }
