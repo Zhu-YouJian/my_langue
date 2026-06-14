@@ -1,0 +1,97 @@
+// String utility functions — common string operations
+//
+// Supplements the built-in String methods (len, trim, to_upper, to_lower,
+// replace, split, substring, contains, find, starts_with, ends_with,
+// parse_int, parse_float, is_empty, repeat, chars, bytes,
+// trim_start, trim_end, strip_prefix, strip_suffix)
+// with higher-level string processing helpers.
+//
+// Usage:
+//   use std::string::string::join_lines
+//   use std::string::string::indent
+
+// Join a Vec of strings with newline separator.
+fn join_lines(lines: Vec) -> String {
+    lines.join("\n")
+}
+
+// Join a Vec of strings with comma separator.
+fn join_comma(items: Vec) -> String {
+    items.join(", ")
+}
+
+// Repeat a string n times with a separator between each repetition.
+fn repeat_sep(s: String, sep: String, n: i64) -> String {
+    if n <= 0 { "" } else {
+        let mut result = s;
+        for i in 1..n {
+            result = result + sep + s;
+        };
+        result
+    }
+}
+
+// Indent every line of a multi-line string by n spaces.
+fn indent(s: String, n: i64) -> String {
+    let pad = repeat_sep(" ", "", n);
+    let lines = s.split("\n");
+    let mut result = Vec::new();
+    for i in 0..lines.len() {
+        result.push(pad + lines.get(i));
+    };
+    result.join("\n")
+}
+
+// Wrap a string by inserting newlines at or before the given width.
+// Simple word-boundary approximation: split on spaces.
+fn word_wrap(s: String, width: i64) -> String {
+    let words = s.split(" ");
+    let mut lines = Vec::new();
+    let mut current = "";
+    for i in 0..words.len() {
+        let word = words.get(i);
+        if current.len() == 0 {
+            current = word;
+        } else if (current.len() + 1 + word.len()) <= width {
+            current = current + " " + word;
+        } else {
+            lines.push(current);
+            current = word;
+        };
+    };
+    if current.len() > 0 { lines.push(current); };
+    lines.join("\n")
+}
+
+// Check if a string is blank (empty or only whitespace).
+fn is_blank(s: String) -> bool {
+    s.trim().is_empty()
+}
+
+// Capitalize the first character of a string.
+// Note: this is a simplified version; full Unicode title-casing
+// would need Rust-level support.
+fn capitalize(s: String) -> String {
+    if s.is_empty() { s } else {
+        let chars = s.chars();
+        let first = chars.get(0);
+        let rest = s.substring(1, s.len() - 1);
+        first.to_upper() + rest
+    }
+}
+
+// Count non-overlapping occurrences of a substring.
+fn count(s: String, sub: String) -> i64 {
+    if sub.is_empty() { 0 } else {
+        let mut count = 0;
+        let mut remaining = s;
+        loop {
+            let pos = remaining.find(sub);
+            if pos < 0 { break; };
+            count = count + 1;
+            let skip = pos + sub.len();
+            remaining = remaining.substring(skip, remaining.len() - skip);
+        };
+        count
+    }
+}

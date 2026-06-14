@@ -307,6 +307,7 @@ impl Lowerer {
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
+                            | "format" | "parse_int" | "parse_float"
                             | "lexer_new" | "lexer_tokenize" | "parse_program"
                             | "lower_program" | "compile_to_wasm" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)

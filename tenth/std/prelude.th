@@ -40,3 +40,7 @@
 //   std::utils::serialization::save_model, load_model, save_checkpoint
 //   std::init::initializers::xavier_uniform, xavier_normal, he_normal, he_uniform, zeros_init, constant_init
 //   std::math::functions::abs, sqrt, sin, cos, ln, pow, exp
+//   std::collections::iter::map, filter, reduce, range, concat, reverse, take, skip, zip, enumerate, any, all, sum, find, count_if
+//   std::collections::collections::flat_map, any, all, find, count_if, partition, sum, product, from_entries, map_values, filter_map
+//   std::string::string::join_lines, join_comma, repeat_sep, indent, word_wrap, is_blank, capitalize, count
+//   std::utils::math::min, max, clamp, abs, fmin, fmax, fclamp, fabs, signum

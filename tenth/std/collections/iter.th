@@ -1,0 +1,166 @@
+// Iterator utilities — higher-order functions for Vec
+//
+// Provides map, filter, reduce and common sequence operations.
+// Closures use Tenth's |x| expr syntax and can be passed as arguments.
+//
+// Usage:
+//   use std::collections::iter::map
+//   use std::collections::iter::filter
+//   use std::collections::iter::reduce
+
+// ── Higher-order functions ──
+
+// Apply a function to every element, returning a new Vec.
+fn map(items: Vec, f) -> Vec {
+    let mut result = Vec::new();
+    for i in 0..items.len() {
+        result.push(f(items.get(i)));
+    };
+    result
+}
+
+// Keep only elements that satisfy a predicate.
+fn filter(items: Vec, f) -> Vec {
+    let mut result = Vec::new();
+    for i in 0..items.len() {
+        let item = items.get(i);
+        if f(item) { result.push(item); };
+    };
+    result
+}
+
+// Fold elements from left to right with an accumulator.
+// f(acc, item) returns the new accumulator value.
+fn reduce(items: Vec, init, f) {
+    let mut acc = init;
+    for i in 0..items.len() {
+        acc = f(acc, items.get(i));
+    };
+    acc
+}
+
+// ── Sequence generation ──
+
+// Generate an integer sequence [start, end).
+fn range(start: i64, end: i64) -> Vec {
+    let mut result = Vec::new();
+    for i in start..end {
+        result.push(i);
+    };
+    result
+}
+
+// ── List transformations ──
+
+// Concatenate two Vecs into a new Vec.
+fn concat(a: Vec, b: Vec) -> Vec {
+    let mut result = Vec::new();
+    for i in 0..a.len() { result.push(a.get(i)); };
+    for i in 0..b.len() { result.push(b.get(i)); };
+    result
+}
+
+// Reverse a Vec (creates a new Vec).
+fn reverse(items: Vec) -> Vec {
+    let mut result = Vec::new();
+    let n = items.len();
+    for i in 0..n {
+        result.push(items.get(n - 1 - i));
+    };
+    result
+}
+
+// Take the first n elements.
+fn take(items: Vec, n: i64) -> Vec {
+    let mut result = Vec::new();
+    let limit = if n < items.len() { n } else { items.len() };
+    for i in 0..limit {
+        result.push(items.get(i));
+    };
+    result
+}
+
+// Skip the first n elements.
+fn skip(items: Vec, n: i64) -> Vec {
+    let mut result = Vec::new();
+    for i in n..items.len() {
+        result.push(items.get(i));
+    };
+    result
+}
+
+// Pair elements from two Vecs.
+// Returns a Vec of pairs, where each pair is a Vec [a_i, b_i].
+fn zip(a: Vec, b: Vec) -> Vec {
+    let mut result = Vec::new();
+    let n = if a.len() < b.len() { a.len() } else { b.len() };
+    for i in 0..n {
+        let mut pair = Vec::new();
+        pair.push(a.get(i));
+        pair.push(b.get(i));
+        result.push(pair);
+    };
+    result
+}
+
+// ── Enumeration ──
+
+// Pair each element with its index.
+// Returns a Vec of [index, element] pairs.
+fn enumerate(items: Vec) -> Vec {
+    let mut result = Vec::new();
+    for i in 0..items.len() {
+        let mut pair = Vec::new();
+        pair.push(i);
+        pair.push(items.get(i));
+        result.push(pair);
+    };
+    result
+}
+
+// ── Predicates ──
+
+// Check if any element satisfies a predicate.
+fn any(items: Vec, f) -> bool {
+    for i in 0..items.len() {
+        if f(items.get(i)) { return true; };
+    };
+    false
+}
+
+// Check if all elements satisfy a predicate.
+fn all(items: Vec, f) -> bool {
+    for i in 0..items.len() {
+        if !f(items.get(i)) { return false; };
+    };
+    true
+}
+
+// ── Numeric helpers ──
+
+// Sum of integer elements.
+fn sum(items: Vec) -> i64 {
+    let mut total = 0;
+    for i in 0..items.len() {
+        total = total + items.get(i);
+    };
+    total
+}
+
+// Find the first element satisfying a predicate, or return default.
+fn find(items: Vec, f, default) {
+    for i in 0..items.len() {
+        let item = items.get(i);
+        if f(item) { return item; };
+    };
+    default
+}
+
+// Count elements satisfying a predicate.
+fn count_if(items: Vec, f) -> i64 {
+    let mut n = 0;
+    for i in 0..items.len() {
+        if f(items.get(i)) { n = n + 1; };
+    };
+    n
+}

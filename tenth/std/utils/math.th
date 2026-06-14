@@ -1,0 +1,57 @@
+// Math utility functions — scalar min/max/clamp/abs/signum
+//
+// Supplements the built-in math functions (abs, sqrt, sin, cos, ln, pow)
+// with comparison and clamping helpers commonly needed in ML code.
+//
+// Usage:
+//   use std::utils::math::min
+//   use std::utils::math::clamp
+
+// ── Integer operations ──
+
+// Minimum of two integers.
+fn min(a: i64, b: i64) -> i64 {
+    if a < b { a } else { b }
+}
+
+// Maximum of two integers.
+fn max(a: i64, b: i64) -> i64 {
+    if a > b { a } else { b }
+}
+
+// Clamp an integer to [lo, hi].
+fn clamp(x: i64, lo: i64, hi: i64) -> i64 {
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+// Absolute value of an integer.
+fn abs(x: i64) -> i64 {
+    if x < 0 { -x } else { x }
+}
+
+// ── Float operations ──
+
+// Minimum of two floats.
+fn fmin(a: f64, b: f64) -> f64 {
+    if a < b { a } else { b }
+}
+
+// Maximum of two floats.
+fn fmax(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+// Clamp a float to [lo, hi].
+fn fclamp(x: f64, lo: f64, hi: f64) -> f64 {
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+// Absolute value of a float.
+fn fabs(x: f64) -> f64 {
+    if x < 0.0 { -x } else { x }
+}
+
+// Sign function: returns 1.0, -1.0, or 0.0.
+fn signum(x: f64) -> f64 {
+    if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 }
+}

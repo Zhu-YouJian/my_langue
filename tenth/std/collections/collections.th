@@ -1,0 +1,128 @@
+// Collection utility functions — Vec and HashMap helpers
+//
+// Supplements the built-in Vec methods (len, push, get, pop, set, clear,
+// contains, index_of, remove, join, is_empty, reverse, slice, extend,
+// sort, dedup, first, last, flatten, chunks) and HashMap methods
+// (len, get, insert, contains_key, remove, keys, values, is_empty,
+// entries, merge) with higher-level collection operations.
+//
+// Usage:
+//   use std::collections::collections::flat_map
+//   use std::collections::collections::group_by
+
+// ── Vec transformations ──
+
+// Apply a function to each element and flatten the results.
+fn flat_map(items: Vec, f) -> Vec {
+    let mut result = Vec::new();
+    for i in 0..items.len() {
+        let mapped = f(items.get(i));
+        result.extend(mapped);
+    };
+    result
+}
+
+// Check if any element satisfies a predicate.
+fn any(items: Vec, f) -> bool {
+    for i in 0..items.len() {
+        if f(items.get(i)) { return true; };
+    };
+    false
+}
+
+// Check if all elements satisfy a predicate.
+fn all(items: Vec, f) -> bool {
+    for i in 0..items.len() {
+        if !f(items.get(i)) { return false; };
+    };
+    true
+}
+
+// Find the first element satisfying a predicate, or return default.
+fn find(items: Vec, f, default) {
+    for i in 0..items.len() {
+        let item = items.get(i);
+        if f(item) { return item; };
+    };
+    default
+}
+
+// Count elements satisfying a predicate.
+fn count_if(items: Vec, f) -> i64 {
+    let mut n = 0;
+    for i in 0..items.len() {
+        if f(items.get(i)) { n = n + 1; };
+    };
+    n
+}
+
+// Partition a Vec into two Vecs based on a predicate.
+// Returns [satisfying, not_satisfying] as a Vec of two Vecs.
+fn partition(items: Vec, f) -> Vec {
+    let mut yes = Vec::new();
+    let mut no = Vec::new();
+    for i in 0..items.len() {
+        let item = items.get(i);
+        if f(item) { yes.push(item); } else { no.push(item); };
+    };
+    let mut result = Vec::new();
+    result.push(yes);
+    result.push(no);
+    result
+}
+
+// ── Numeric Vec operations ──
+
+// Sum of integer elements.
+fn sum(items: Vec) -> i64 {
+    let mut total = 0;
+    for i in 0..items.len() {
+        total = total + items.get(i);
+    };
+    total
+}
+
+// Product of integer elements.
+fn product(items: Vec) -> i64 {
+    let mut total = 1;
+    for i in 0..items.len() {
+        total = total * items.get(i);
+    };
+    total
+}
+
+// ── HashMap helpers ──
+
+// Collect Vec of [key, value] pairs into a HashMap.
+fn from_entries(entries: Vec) -> HashMap {
+    let mut m = HashMap::new();
+    for i in 0..entries.len() {
+        let pair = entries.get(i);
+        m.insert(pair.get(0), pair.get(1));
+    };
+    m
+}
+
+// Map values of a HashMap, keeping keys the same.
+fn map_values(m: HashMap, f) -> HashMap {
+    let entries = m.entries();
+    let mut result = HashMap::new();
+    for i in 0..entries.len() {
+        let pair = entries.get(i);
+        result.insert(pair.get(0), f(pair.get(1)));
+    };
+    result
+}
+
+// Filter HashMap entries by a predicate on (key, value).
+fn filter_map(m: HashMap, f) -> HashMap {
+    let entries = m.entries();
+    let mut result = HashMap::new();
+    for i in 0..entries.len() {
+        let pair = entries.get(i);
+        if f(pair.get(0), pair.get(1)) {
+            result.insert(pair.get(0), pair.get(1));
+        };
+    };
+    result
+}

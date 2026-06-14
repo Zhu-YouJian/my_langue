@@ -337,7 +337,8 @@ impl Interpreter {
                             | "cross_entropy"
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
                             | "zeros" | "ones"
-                            | "save_weights" | "load_weights" => {
+                            | "save_weights" | "load_weights"
+                            | "format" | "parse_int" | "parse_float" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),
@@ -1267,6 +1268,88 @@ impl Interpreter {
                     message: "substring() takes start and length".into(),
                 })
             }
+            "contains" => {
+                if let Some(Value::String(sub)) = args.first() {
+                    return Ok(Some(Value::Bool(s.contains(sub.as_str()))));
+                }
+                Err(TenthError::RuntimeError {
+                    message: "contains() takes a string argument".into(),
+                })
+            }
+            "find" => {
+                if let Some(Value::String(sub)) = args.first() {
+                    return Ok(Some(Value::Int(s.find(sub.as_str()).map(|i| i as i64).unwrap_or(-1))));
+                }
+                Err(TenthError::RuntimeError {
+                    message: "find() takes a string argument".into(),
+                })
+            }
+            "starts_with" => {
+                if let Some(Value::String(prefix)) = args.first() {
+                    return Ok(Some(Value::Bool(s.starts_with(prefix.as_str()))));
+                }
+                Err(TenthError::RuntimeError {
+                    message: "starts_with() takes a string argument".into(),
+                })
+            }
+            "ends_with" => {
+                if let Some(Value::String(suffix)) = args.first() {
+                    return Ok(Some(Value::Bool(s.ends_with(suffix.as_str()))));
+                }
+                Err(TenthError::RuntimeError {
+                    message: "ends_with() takes a string argument".into(),
+                })
+            }
+            "parse_int" => {
+                return Ok(Some(Value::Int(s.trim().parse::<i64>().unwrap_or(0))));
+            }
+            "parse_float" => {
+                return Ok(Some(Value::Float(s.trim().parse::<f64>().unwrap_or(0.0))));
+            }
+            "is_empty" => {
+                return Ok(Some(Value::Bool(s.is_empty())));
+            }
+            "repeat" => {
+                if let Some(arg) = args.first() {
+                    let n = arg.as_int().unwrap_or(0).max(0) as usize;
+                    return Ok(Some(Value::String(s.repeat(n))));
+                }
+                Err(TenthError::RuntimeError {
+                    message: "repeat() takes an integer argument".into(),
+                })
+            }
+            "chars" => {
+                let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(chars)))))
+            }
+            "bytes" => {
+                let bytes: Vec<Value> = s.bytes().map(|b| Value::Int(b as i64)).collect();
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(bytes)))))
+            }
+            "trim_start" => Ok(Some(Value::String(s.trim_start().to_string()))),
+            "trim_end" => Ok(Some(Value::String(s.trim_end().to_string()))),
+            "strip_prefix" => {
+                if let Some(Value::String(prefix)) = args.first() {
+                    return Ok(Some(match s.strip_prefix(prefix.as_str()) {
+                        Some(rest) => Value::String(rest.to_string()),
+                        None => Value::String(s.to_string()),
+                    }));
+                }
+                Err(TenthError::RuntimeError {
+                    message: "strip_prefix() takes a string argument".into(),
+                })
+            }
+            "strip_suffix" => {
+                if let Some(Value::String(suffix)) = args.first() {
+                    return Ok(Some(match s.strip_suffix(suffix.as_str()) {
+                        Some(rest) => Value::String(rest.to_string()),
+                        None => Value::String(s.to_string()),
+                    }));
+                }
+                Err(TenthError::RuntimeError {
+                    message: "strip_suffix() takes a string argument".into(),
+                })
+            }
             _ => Err(TenthError::RuntimeError {
                 message: format!("String has no method '{}'", method),
             }),
@@ -1339,6 +1422,203 @@ impl Interpreter {
                 items.borrow_mut().clear();
                 Ok(Some(Value::Unit))
             }
+            "contains" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "contains() takes 1 argument".into(),
+                    });
+                }
+                let vec = items.borrow();
+                let found = vec.iter().any(|v| {
+                    let unwrapped = match v {
+                        Value::Shared(rc) => rc.borrow().clone(),
+                        other => other.clone(),
+                    };
+                    self.values_eq(&unwrapped, &args[0])
+                });
+                Ok(Some(Value::Bool(found)))
+            }
+            "index_of" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "index_of() takes 1 argument".into(),
+                    });
+                }
+                let vec = items.borrow();
+                for (i, v) in vec.iter().enumerate() {
+                    let unwrapped = match v {
+                        Value::Shared(rc) => rc.borrow().clone(),
+                        other => other.clone(),
+                    };
+                    if self.values_eq(&unwrapped, &args[0]) {
+                        return Ok(Some(Value::Int(i as i64)));
+                    }
+                }
+                Ok(Some(Value::Int(-1)))
+            }
+            "remove" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "remove() takes 1 argument (index)".into(),
+                    });
+                }
+                let idx = args[0].as_int().ok_or_else(|| TenthError::RuntimeError {
+                    message: "remove() index must be an integer".into(),
+                })? as usize;
+                let mut vec = items.borrow_mut();
+                if idx < vec.len() {
+                    Ok(Some(vec.remove(idx)))
+                } else {
+                    Err(TenthError::RuntimeError {
+                        message: format!("Vec remove index {} out of bounds", idx),
+                    })
+                }
+            }
+            "join" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "join() takes 1 argument (delimiter)".into(),
+                    });
+                }
+                let delim = match &args[0] {
+                    Value::String(s) => s.clone(),
+                    _ => return Err(TenthError::RuntimeError {
+                        message: "join() delimiter must be a string".into(),
+                    }),
+                };
+                let vec = items.borrow();
+                let parts: Vec<String> = vec.iter().map(|v| {
+                    match v {
+                        Value::Shared(rc) => format!("{}", rc.borrow()),
+                        other => format!("{}", other),
+                    }
+                }).collect();
+                Ok(Some(Value::String(parts.join(&delim))))
+            }
+            "is_empty" => {
+                Ok(Some(Value::Bool(items.borrow().is_empty())))
+            }
+            "reverse" => {
+                let vec = items.borrow();
+                let reversed: Vec<Value> = vec.iter().rev().cloned().collect();
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(reversed)))))
+            }
+            "slice" => {
+                if args.len() != 2 {
+                    return Err(TenthError::RuntimeError {
+                        message: "slice() takes 2 arguments (start, end)".into(),
+                    });
+                }
+                let start = args[0].as_int().unwrap_or(0).max(0) as usize;
+                let end = args[1].as_int().unwrap_or(0).max(0) as usize;
+                let vec = items.borrow();
+                let end = end.min(vec.len());
+                if start > end {
+                    return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
+                }
+                let sliced: Vec<Value> = vec[start..end].to_vec();
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(sliced)))))
+            }
+            "extend" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "extend() takes 1 argument (Vec)".into(),
+                    });
+                }
+                if let Value::Vec(other) = &args[0] {
+                    let other_vals = other.borrow().clone();
+                    let mut vec = items.borrow_mut();
+                    for v in other_vals {
+                        let elem = match v {
+                            Value::Shared(rc) => Value::Shared(rc),
+                            other => Value::Shared(Rc::new(RefCell::new(other))),
+                        };
+                        vec.push(elem);
+                    }
+                    return Ok(Some(Value::Unit));
+                }
+                Err(TenthError::RuntimeError {
+                    message: "extend() argument must be a Vec".into(),
+                })
+            }
+            "sort" => {
+                let mut vec = items.borrow_mut();
+                vec.sort_by(|a, b| {
+                    let av = match a { Value::Shared(rc) => rc.borrow().clone(), o => o.clone() };
+                    let bv = match b { Value::Shared(rc) => rc.borrow().clone(), o => o.clone() };
+                    match (&av, &bv) {
+                        (Value::Int(x), Value::Int(y)) => x.cmp(y),
+                        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+                        (Value::String(x), Value::String(y)) => x.cmp(y),
+                        _ => std::cmp::Ordering::Equal,
+                    }
+                });
+                Ok(Some(Value::Unit))
+            }
+            "dedup" => {
+                let mut vec = items.borrow_mut();
+                vec.dedup_by(|a, b| {
+                    let av = match a { Value::Shared(rc) => rc.borrow().clone(), o => o.clone() };
+                    let bv = match b { Value::Shared(rc) => rc.borrow().clone(), o => o.clone() };
+                    self.values_eq(&av, &bv)
+                });
+                Ok(Some(Value::Unit))
+            }
+            "first" => {
+                let vec = items.borrow();
+                match vec.first() {
+                    Some(v) => Ok(Some(v.clone())),
+                    None => Ok(None),
+                }
+            }
+            "last" => {
+                let vec = items.borrow();
+                match vec.last() {
+                    Some(v) => Ok(Some(v.clone())),
+                    None => Ok(None),
+                }
+            }
+            "flatten" => {
+                let vec = items.borrow();
+                let mut result = Vec::new();
+                for v in vec.iter() {
+                    let unwrapped = match v {
+                        Value::Shared(rc) => rc.borrow().clone(),
+                        other => other.clone(),
+                    };
+                    if let Value::Vec(inner) = unwrapped {
+                        for item in inner.borrow().iter() {
+                            let elem = match item {
+                                Value::Shared(rc) => Value::Shared(rc.clone()),
+                                o => Value::Shared(Rc::new(RefCell::new(o.clone()))),
+                            };
+                            result.push(elem);
+                        }
+                    } else {
+                        let elem = match v {
+                            Value::Shared(rc) => Value::Shared(rc.clone()),
+                            o => Value::Shared(Rc::new(RefCell::new(o.clone()))),
+                        };
+                        result.push(elem);
+                    }
+                }
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(result)))))
+            }
+            "chunks" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "chunks() takes 1 argument (size)".into(),
+                    });
+                }
+                let size = args[0].as_int().unwrap_or(1).max(1) as usize;
+                let vec = items.borrow();
+                let mut result = Vec::new();
+                for chunk in vec.chunks(size) {
+                    let c: Vec<Value> = chunk.to_vec();
+                    result.push(Value::Vec(Rc::new(RefCell::new(c))));
+                }
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(result)))))
+            }
             _ => Err(TenthError::RuntimeError {
                 message: format!("Vec has no method '{}'", method),
             }),
@@ -1376,6 +1656,75 @@ impl Interpreter {
                         message: "HashMap key must be a string".into(),
                     })
                 }
+            }
+            "contains_key" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "contains_key() takes 1 argument".into(),
+                    });
+                }
+                if let Value::String(key) = &args[0] {
+                    Ok(Some(Value::Bool(m.borrow().contains_key(key))))
+                } else {
+                    Err(TenthError::RuntimeError {
+                        message: "HashMap key must be a string".into(),
+                    })
+                }
+            }
+            "remove" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "remove() takes 1 argument".into(),
+                    });
+                }
+                if let Value::String(key) = &args[0] {
+                    Ok(m.borrow_mut().remove(key))
+                } else {
+                    Err(TenthError::RuntimeError {
+                        message: "HashMap key must be a string".into(),
+                    })
+                }
+            }
+            "keys" => {
+                let map = m.borrow();
+                let keys: Vec<Value> = map.keys().map(|k| Value::String(k.clone())).collect();
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(keys)))))
+            }
+            "values" => {
+                let map = m.borrow();
+                let vals: Vec<Value> = map.values().cloned().collect();
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(vals)))))
+            }
+            "is_empty" => {
+                Ok(Some(Value::Bool(m.borrow().is_empty())))
+            }
+            "entries" => {
+                let map = m.borrow();
+                let entries: Vec<Value> = map.iter().map(|(k, v)| {
+                    Value::Vec(Rc::new(RefCell::new(vec![
+                        Value::String(k.clone()),
+                        v.clone(),
+                    ])))
+                }).collect();
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(entries)))))
+            }
+            "merge" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError {
+                        message: "merge() takes 1 argument (HashMap)".into(),
+                    });
+                }
+                if let Value::Map(other) = &args[0] {
+                    let other_map = other.borrow().clone();
+                    let mut map = m.borrow_mut();
+                    for (k, v) in other_map {
+                        map.insert(k, v);
+                    }
+                    return Ok(Some(Value::Unit));
+                }
+                Err(TenthError::RuntimeError {
+                    message: "merge() argument must be a HashMap".into(),
+                })
             }
             _ => Err(TenthError::RuntimeError {
                 message: format!("HashMap has no method '{}'", method),
@@ -2475,6 +2824,76 @@ impl Interpreter {
                     }
                 }
                 return Ok(Some(Value::Int(1)));
+            }
+            "format" => {
+                if args.is_empty() {
+                    return Err(TenthError::RuntimeError {
+                        message: "format() expects at least a template string".into(),
+                    });
+                }
+                if let Value::String(template) = &args[0] {
+                    let mut result = String::new();
+                    let mut arg_idx = 1;
+                    let mut chars = template.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        if c == '{' {
+                            if chars.peek() == Some(&'{') {
+                                chars.next();
+                                result.push('{');
+                            } else {
+                                // Find closing }
+                                let mut placeholder = String::new();
+                                while let Some(pc) = chars.next() {
+                                    if pc == '}' {
+                                        break;
+                                    }
+                                    placeholder.push(pc);
+                                }
+                                if arg_idx < args.len() {
+                                    result.push_str(&format!("{}", args[arg_idx]));
+                                    arg_idx += 1;
+                                } else {
+                                    result.push('{');
+                                    result.push_str(&placeholder);
+                                    result.push('}');
+                                }
+                            }
+                        } else if c == '}' {
+                            if chars.peek() == Some(&'}') {
+                                chars.next();
+                                result.push('}');
+                            } else {
+                                result.push('}');
+                            }
+                        } else {
+                            result.push(c);
+                        }
+                    }
+                    return Ok(Some(Value::String(result)));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "format() first argument must be a string template".into(),
+                })
+            }
+            "parse_int" => {
+                if let Some(arg) = args.first() {
+                    if let Value::String(s) = arg {
+                        return Ok(Some(Value::Int(s.trim().parse::<i64>().unwrap_or(0))));
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "parse_int() expects a string argument".into(),
+                })
+            }
+            "parse_float" => {
+                if let Some(arg) = args.first() {
+                    if let Value::String(s) = arg {
+                        return Ok(Some(Value::Float(s.trim().parse::<f64>().unwrap_or(0.0))));
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "parse_float() expects a string argument".into(),
+                })
             }
             _ => {}
         }
