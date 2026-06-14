@@ -2,10 +2,10 @@
 
 > 各类待办、跳过项、环境依赖、注意事项均记录于此。
 >
-> **当前阶段：v0.3.0 — C 编译后端已移除，聚焦 Rust 解释器路径**
+> **当前阶段：v0.3.1 — 闭包捕获 + 文件导入 + VM 补全 + 标准库完善**
 >
-> **2026-06-14 更新**：张量级自动微分 (19 算子) + 张量间运算 (matmul/广播/Conv2D) + 标准库扩展 (16 文件)。
-> 88 项测试全过（89 项，1 忽略）。
+> **2026-06-14 更新**：闭包捕获环境变量 + VM MakeTensor/MakeClosure 指令(45条) + 文件级导入(search_paths) + 标准库补全(DataLoader/serialization) + 错误信息增强(span) + 自举编译器同步 + 33 个示例(8 新增 + 18 优化)。
+> 112 项测试全过（113 项，1 忽略）。
 >
 > **2026-06-04 重大变更**：`tenth/src/compile/`（MIR→C 编译管线）、`tenthc/codegen/`、`tenthc/runtime.c` 已删除。
 > 原因：生成的 C 代码无内存管理（12 处 malloc / 0 处 free），导致系统级内存耗尽。详见 `SECURITY.md`。
@@ -29,7 +29,7 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 |------|--------|--------|
 | 自举管线执行时间 | ~200s (interpreter) | **~0.2s (VM)** |
 | VM fallback 率 | Lexer/Parser 100% | **0%** |
-| VM 指令数 | 33 | **43** (41→43, PushRange+MoveOp) |
+| VM 指令数 | 33 | **45** (41→43→45, PushRange+MoveOp+MakeTensor+MakeClosure) |
 | wasmi 加载验证 | ❌ | ✅ `add(3,4)=7` |
 
 ### 各层状态
@@ -43,10 +43,10 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 | Lowerer | `tenthc/hir/lower.th` | ✅ AST→HIR 降级 (306 行) |
 | WASM 编译器 | `tenthc/compile/wasm.th` | ✅ HIR→WASM + import 段 (703 行) |
 | ~~C Codegen~~ | ~~`tenthc/codegen/cgen.th`~~ | ❌ 已移除 |
-| **字节码 VM** | `tenth/src/runtime/vm.rs` | ✅ **41 指令** (33→41) |
+| **字节码 VM** | `tenth/src/runtime/vm.rs` | ✅ **45 指令** (33→41→43→45) |
 | VM 编译器 | `tenth/src/compile/bytecode.rs` | ✅ HIR→bytecode (含 Enum/Match) |
 
-### VM 指令列表（41 条）
+### VM 指令列表（45 条）
 
 ```
 0-3:   PushInt/Float/Bool/Str    20-23: Lt/Gt/Lte/Gte
@@ -59,9 +59,13 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 18-19: Eq/Neq                    34-35: LoadField/StoreField
                                   36:    IndexGet
                                   37:    SliceStr
-                                  38:    MakeEnum       ← 新增
-                                  39:    IsEnumVariant   ← 新增
-                                  40:    EnumGetField    ← 新增
+                                  38:    MakeEnum
+                                  39:    IsEnumVariant
+                                  40:    EnumGetField
+                                  41:    PushRange       ← v0.3.0
+                                  42:    MoveOp          ← v0.3.0
+                                  43:    MakeTensor      ← v0.3.1
+                                  44:    MakeClosure     ← v0.3.1
 ```
 
 ### 新增验证（2026-06-10）
@@ -73,10 +77,79 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 
 ### 已知限制
 
-- [x] ~~Closure/GenericCall VM fallback~~ → GenericCall/Move/Range 已补全，仅剩 Closure/TensorLiteral
+- [x] ~~Closure/GenericCall VM fallback~~ → GenericCall/Move/Range/MakeTensor/MakeClosure 已补全
 - [ ] Host import (Vec/String) 为占位实现，WASM 模块需宿主提供真实运行时
 - [ ] 三段式自举验证（输出 WASM 再编译自身）因栈溢出未跑通
 - [x] ~~大文件 Lowerer 性能~~ → 已解决 (VM ~0.2s)
+
+### v0.3.1 新增（2026-06-14）
+
+#### 闭包捕获
+
+| 组件 | 状态 |
+|------|------|
+| HIR `HirExprKind::Closure` 新增 `captures: Vec<String>` | ✅ |
+| Lowerer `free_vars_in()` 递归分析自由变量 | ✅ |
+| Interpreter 闭包创建时从 `resolve_var()` 捕获环境变量 | ✅ |
+| VM `MakeClosure(params_count, chunk_idx)` 指令 | ✅ |
+| BytecodeCompiler 闭包编译为 MakeClosure | ✅ |
+
+#### VM 补全
+
+| 组件 | 状态 |
+|------|------|
+| `MakeTensor(rows, cols)` 指令 (opcode 43) | ✅ |
+| `MakeClosure(params_count, chunk_idx)` 指令 (opcode 44) | ✅ |
+| BytecodeCompiler TensorLiteral 编译为 PushFloat+MakeTensor | ✅ |
+
+#### 文件级导入
+
+| 组件 | 状态 |
+|------|------|
+| Lowerer `search_paths` 字段 | ✅ |
+| Lowerer `try_import_file()` / `load_and_compile_file()` | ✅ |
+| `source_to_hir()` 使用 `with_search_paths(vec!["std"])` | ✅ |
+
+#### 错误信息增强
+
+| 组件 | 状态 |
+|------|------|
+| Scope `check_use/check_borrow_shared/check_borrow_mut` 带 span 参数 | ✅ |
+| 消除 3 处 `line: 0, col: 0` 硬编码 | ✅ |
+
+#### 标准库补全
+
+| 模块 | 状态 |
+|------|------|
+| data/dataloader.th — DataLoader 完整实现 | ✅ |
+| utils/serialization.th — save_model/load_model/save_checkpoint | ✅ |
+| prelude.th — 更新所有模块索引 | ✅ |
+
+#### 自举编译器同步
+
+| 模块 | 状态 |
+|------|------|
+| hir/hir.th — captures_start/captures_count/range_inclusive 字段 | ✅ |
+| hir/lower.th — closure/array/tensor/move/assign_op/deref 降低 | ✅ |
+| parser/parser.th — 闭包/数组/张量/move/复合赋值解析 | ✅ |
+| compile/wasm.th — disc 22-30 的 WASM 编译处理器 | ✅ |
+| lexer/lexer.th — `/* */` 块注释支持（含嵌套） | ✅ |
+
+#### 测试覆盖提升
+
+| 测试文件 | 新增项 | 状态 |
+|----------|--------|------|
+| autodiff_test.rs | 20 项（autodiff 8 + closure 4 + tensor 7 + error span 1） | ✅ |
+
+#### 示例集
+
+| 变更 | 数量 |
+|------|------|
+| 新增示例 | 8（归并排序/二叉搜索树/闭包捕获/Softmax回归/Adam优化器/张量广播/词频统计/矩阵转置与运算） |
+| 优化示例 | 18（while→for-in, 闭包捕获增强） |
+| 总计 | 33 个示例 |
+
+---
 
 ### v0.3.0 后期新增（2026-06-14）
 

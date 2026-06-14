@@ -2,7 +2,7 @@
 
 > **Tenth** = Tensor + Zenith，意为「张量之巅」—— 一门为 AI 研究而生的编程语言
 >
-> 当前版本：**v0.3.0** | 语言实现：Rust | 许可证：MIT
+> 当前版本：**v0.3.1** | 语言实现：Rust | 许可证：MIT
 
 ---
 
@@ -32,9 +32,11 @@
 Tenth 是一门面向 AI/ML 研究的编程语言，核心特性包括：
 
 - **张量级自动微分**：内置 19 个算子的反向传播全链路，支持 `new_grad()` / `param()` / `backward()` / `grad()` 等控制函数
-- **双执行引擎**：字节码 VM（默认，43 指令）+ 树遍历解释器（fallback）
+- **双执行引擎**：字节码 VM（默认，45 指令）+ 树遍历解释器（fallback）
 - **WASM 编译**：通过 `wasm-encoder` 生成 WASM 字节码，`wasmi` 执行验证
 - **自举编译器**：用 Tenth 自身编写的编译器（`tenthc/`），经三阶段验证闭环
+- **闭包捕获**：闭包自动捕获外层作用域变量，支持单变量和多变量捕获
+- **文件级导入**：`use` 语句自动搜索 `std/` 目录下的 `.th` 文件
 - **类 Rust 语法**：支持 `struct` / `enum` / `match` / `trait` / `impl` / 泛型 / 引用与移动语义
 
 ### 项目目录结构
@@ -63,7 +65,7 @@ Tenth 是一门面向 AI/ML 研究的编程语言，核心特性包括：
 │   ├── parser/             # Tenth 实现的语法分析
 │   ├── hir/                # Tenth 实现的 HIR
 │   └── compile/            # Tenth 实现的 WASM 编译
-├── Tenth实例/              # 25 个语言示例
+├── Tenth实例/              # 33 个语言示例
 ├── docs/                   # 文档
 │   ├── 语言参考手册.md
 │   └── superpowers/plans/  # 开发计划
@@ -106,7 +108,7 @@ Tenth 采用经典的多阶段编译架构，执行流程如下：
               └────────┘   └──────────┘   └──────────┘
 ```
 
-**执行优先级**：VM 优先 → 解释器 fallback。当 VM 遇到不支持的构造（如闭包、张量字面量）时，自动回退到树遍历解释器。
+**执行优先级**：VM 优先 → 解释器 fallback。当 VM 遇到不支持的构造时，自动回退到树遍历解释器。VM 已支持闭包（MakeClosure）和张量字面量（MakeTensor）。
 
 ---
 
@@ -119,7 +121,8 @@ Tenth 采用经典的多阶段编译架构，执行流程如下：
 fn source_to_hir(source: &str) -> TenthResult<HirProgram> {
     let tokens = Lexer::new(source).tokenize()?;        // 源码 → Token
     let program = Parser::new(tokens).parse_program()?; // Token → AST
-    let hir = Lowerer::new().lower_program(&program)?;  // AST → HIR
+    let hir = Lowerer::with_search_paths(vec!["std".into()])  // AST → HIR（含文件导入）
+        .lower_program(&program)?;
     Ok(hir)
 }
 ```
@@ -295,6 +298,8 @@ pub struct HirProgram {
 | **类型推断** | 根据字面量、运算符、函数签名推断表达式类型 |
 | **借用检查** | 追踪变量的所有权状态（Owned / SharedRef / ExclusiveRef / Moved） |
 | **作用域管理** | 嵌套作用域链，支持变量查找和遮蔽 |
+| **闭包捕获分析** | `free_vars_in()` 递归分析闭包自由变量，自动捕获外层作用域 |
+| **文件级导入** | `search_paths` + `try_import_file()` 自动发现和加载 .th 文件 |
 | **内置函数注册** | 预注册 `println`, `tensor`, `rand`, `randn`, `backward`, `grad` 等 |
 | **预加载类型** | 内置 `Option`, `Result` 枚举和 `Display`, `Eq`, `Clone` trait |
 
@@ -311,7 +316,7 @@ pub struct HirProgram {
 | `wasm.rs` | HIR → WASM 字节码编译器 |
 | `bridge.rs` | 自举编译器输出 → Rust AST 转换桥 |
 
-#### 字节码 VM 指令集（43 条）
+#### 字节码 VM 指令集（45 条）
 
 ```rust
 pub enum Op {
@@ -337,6 +342,9 @@ pub enum Op {
     IndexGet, SliceStr,
     MakeEnum(usize, usize, usize), IsEnumVariant(usize), EnumGetField(usize),
     PushRange(i64, i64, bool), MoveOp,
+    // v0.3.1 新增
+    MakeTensor(i64, i64),    // opcode 43: 从栈上 f64 值构建 Tensor(rows, cols)
+    MakeClosure(i64, i64),   // opcode 44: 创建闭包(params_count, chunk_idx)
 }
 ```
 
@@ -606,13 +614,26 @@ tenth/std/
 │   ├── adagrad.th       # AdaGrad 优化器
 │   └── rmsprop.th       # RMSProp 优化器
 ├── data/
-│   └── dataloader.th    # DataLoader（规划中）
+│   └── dataloader.th    # DataLoader（new/has_next/next_batch/reset/num_batches）
 ├── init/
 │   └── initializers.th  # 初始化器
 ├── math/
 │   └── functions.th     # 数学函数参考
+├── nn/
+│   ├── activations.th   # 激活函数：relu, sigmoid, tanh
+│   ├── batchnorm.th     # BatchNorm 层
+│   ├── conv.th          # 卷积层
+│   ├── dropout.th       # Dropout 层
+│   ├── embedding.th     # 嵌入层
+│   ├── linear.th        # 线性层：fn linear(x, w, b) = x.matmul(w.transpose()) + b
+│   └── loss.th          # 损失函数：MSE, L1, BCE, cross_entropy
+├── optim/
+│   ├── adagrad.th       # AdaGrad 优化器
+│   ├── adam.th          # Adam 优化器
+│   ├── rmsprop.th       # RMSProp 优化器
+│   └── sgd.th           # SGD 优化器（vanilla / momentum / decay）
 ├── utils/
-│   └── serialization.th # 序列化（规划中）
+│   └── serialization.th # 模型保存/加载（save_model/load_model/save_checkpoint）
 └── prelude.th           # 可用项总目录
 ```
 
@@ -624,7 +645,7 @@ tenth/std/
 
 ## 7. 示例集 (Tenth实例)
 
-**位置**：`Tenth实例/`，共 25 个示例，涵盖算法、数据结构和 AI/ML：
+**位置**：`Tenth实例/`，共 33 个示例，涵盖算法、数据结构和 AI/ML：
 
 ### 经典算法
 
@@ -659,7 +680,7 @@ tenth/std/
 |------|------|------|
 | 泛型示例 | `generics.th` | 泛型函数与结构体 |
 | Trait示例 | `trait_demo.th` | Trait 定义与实现 |
-| 闭包合集 | `closures.th` | 闭包语法演示 |
+| 闭包合集 | `closures.th` | 闭包语法演示（含变量捕获） |
 | 凯撒密码 | `caesar.th` | 字符串操作 |
 
 ### AI/ML
@@ -676,6 +697,14 @@ tenth/std/
 | 多项式回归 | `polyfit.th` | 回归拟合 |
 | 微型CNN | `cnn.th` | 卷积神经网络 |
 | 边缘检测 | `sobel.th` | Sobel 算子 |
+| 归并排序 | `merge_sort.th` | 分治排序 |
+| 二叉搜索树 | `bst.th` | 枚举递归、函数式不可变更新 |
+| 闭包捕获 | `closure_capture.th` | 闭包捕获外层变量、嵌套闭包 |
+| Softmax 回归 | `softmax_regression.th` | matmul、cross_entropy、自动微分 |
+| Adam 优化器 | `adam.th` | 自适应学习率、一阶/二阶矩 |
+| 张量广播 | `tensor_broadcast.th` | 标量广播、matmul、sqrt |
+| 词频统计 | `word_count.th` | HashMap、字符串 split |
+| 矩阵转置与运算 | `matrix_ops.th` | transpose、matmul、自动微分 |
 
 ---
 
@@ -767,7 +796,7 @@ cargo run --release --manifest-path tenth/Cargo.toml -- --max-memory 256
 ### 测试
 
 ```bash
-# 运行所有测试（88 项通过，1 项忽略）
+# 运行所有测试（112 项通过，1 项忽略）
 cargo test --manifest-path tenth/Cargo.toml
 
 # 测试文件列表
@@ -784,6 +813,7 @@ cargo test --manifest-path tenth/Cargo.toml
 # tests/stdlib_test.rs      — 标准库测试
 # tests/selfhost_verify.rs  — 自举验证测试
 # tests/three_stage.rs      — 三阶段编译测试
+# tests/autodiff_test.rs    — 自动微分/闭包/张量/错误位置测试（20 项）
 ```
 
 ### 分发
@@ -816,7 +846,7 @@ cargo test --manifest-path tenth/Cargo.toml
 | Lexer / Parser / AST | ✅ |
 | HIR + 类型推断 + 借用检查 | ✅ |
 | 树遍历解释器 | ✅ (VM fallback) |
-| 字节码 VM（栈式，43 指令） | ✅ 默认执行路径 |
+| 字节码 VM（栈式，45 指令） | ✅ 默认执行路径（含 MakeTensor/MakeClosure） |
 | 泛型函数 / 结构体 | ✅ |
 | Trait 定义与实现 | ✅ |
 | 引用 / 移动语义 | ✅ |
@@ -830,8 +860,11 @@ cargo test --manifest-path tenth/Cargo.toml
 | Vec / HashMap / String 标准库 | ✅ pop/split/trim 等 10+ 方法 |
 | 自举编译器 (Tenth 编写，全链路) | ✅ ~0.2s |
 | WASM import 输出 | ✅ wasmi 验证通过 |
+| 闭包捕获环境变量 | ✅ HIR captures 字段 + Lowerer free_vars_in() |
+| 文件级导入（use 自动搜索 std/） | ✅ Lowerer search_paths + try_import_file() |
+| 错误信息增强（源码位置） | ✅ Scope check_use/check_borrow 带 span |
 | 块注释 /* */ | ✅ 支持嵌套 |
 
 ---
 
-> 本文档基于项目 v0.3.0 版本源码自动生成，最后更新：2026-06-14
+> 本文档基于项目 v0.3.1 版本源码自动生成，最后更新：2026-06-14

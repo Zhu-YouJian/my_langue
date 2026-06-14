@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-06-10 | 版本：v0.3.0 | 自举完成 | 83 项测试全过（共 84 项/13 文件，1 项忽略）
+> 日期：2026-06-14 | 版本：v0.3.1 | 闭包捕获 + 文件导入 + VM 补全 | 112 项测试全过（共 113 项/14 文件，1 项忽略）
 
 ---
 
@@ -23,7 +23,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 │   │   ├── compile/          ← WASM 编译 + 字节码编译 (wasm.rs + bytecode.rs + bridge.rs)
 │   │   ├── runtime/          ← 解释器 + VM + 值系统 (interpreter.rs + vm.rs + value.rs + tensor.rs + arena.rs + autodiff.rs + limits.rs)
 │   │   └── repl.rs           ← 交互环境
-│   ├── tests/                ← 测试 (13 文件, 84 项 — 83 激活 + 1 忽略)
+│   ├── tests/                ← 测试 (14 文件, 113 项 — 112 激活 + 1 忽略)
 │   ├── std/                  ← Tenth 标准库 (.th 源码: nn/, optim/)
 │   └── target/               ← (gitignored)
 ├── tenthc/                   ← Tenth 自举编译器 (.th 源码, 自举验证通过)
@@ -32,7 +32,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 │   ├── lexer/lexer.th        ← O(1) 源切片词法分析器
 │   └── parser/parser.th      ← 递归下降解析器 (method_call 支持)
 ├── docs/                     ← 语言参考手册 + 实施计划
-├── Tenth实例/                ← 21 个语言示例程序
+├── Tenth实例/                ← 33 个语言示例程序
 ├── README.md / MEMO.md / DEPS.md / SECURITY.md / AUDIT.md
 └── .gitignore
 ```
@@ -82,8 +82,9 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `stdlib_test.rs` | 8 | Vec/HashMap/String/Option/文件 I/O |
 | `memory_test.rs` | 17 | 内存护栏: arena/limits/计数器 |
 | `selfhost_verify.rs` | 1 | WASM 自举闭环验证 |
+| `autodiff_test.rs` | 20 | 自动微分/闭包/张量/错误位置 |
 | `three_stage.rs` | 1 | 三段式自举（忽略 — wasmi 慢） |
-| **总计** | **84** | 83 激活 + 1 忽略 |
+| **总计** | **113** | 112 激活 + 1 忽略 |
 
 ---
 
@@ -117,7 +118,7 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 
 | # | 问题 | 影响 |
 |---|------|------|
-| 1 | VM 不支持字符串切片/闭包/match/for | 自动回退到树遍历解释器 |
+| 1 | VM 不支持字符串切片 | 自动回退到树遍历解释器 |
 | 2 | 树遍历解释器大文件慢 (debug build) | release build 即解决 |
 | 3 | WASM codegen 个别边界情况 | wasmi 执行偶有 type mismatch |
 | 4 | 无 GPU 后端 | Phase 4 待 CUDA 环境就绪 |

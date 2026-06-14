@@ -170,7 +170,7 @@ git config --unset https.proxy
 │   │   │   ├── mod.rs
 │   │   │   ├── value.rs
 │   │   │   ├── tensor.rs
-│   │   │   ├── vm.rs         ← 字节码 VM（41 指令，默认路径）
+│   │   │   ├── vm.rs         ← 字节码 VM（45 指令，默认路径）
 │   │   │   ├── interpreter.rs
 │   │   │   ├── arena.rs
 │   │   │   ├── autodiff.rs
@@ -179,7 +179,7 @@ git config --unset https.proxy
 │   ├── std/             ← Tenth 标准库 (.th 源码)
 │   │   ├── nn/
 │   │   └── optim/
-    └── tests/          ← 84 项测试（13 文件，83 激活 + 1 忽略）
+    └── tests/          ← 113 项测试（14 文件，112 激活 + 1 忽略）
         ├── integration_test.rs
         ├── memory_test.rs
         ├── lexer_test.rs
@@ -193,6 +193,7 @@ git config --unset https.proxy
         ├── trait_test.rs
         ├── selfhost_verify.rs
         ├── three_stage.rs
+        ├── autodiff_test.rs    ← 自动微分/闭包/张量/错误位置（20 项）
         └── fixtures/
 ```
 

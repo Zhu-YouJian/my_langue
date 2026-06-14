@@ -7,14 +7,14 @@
 
 ## 现状
 
-**v0.3.0** — 字节码 VM (41 指令) + 自举编译器 (Tenth 全链路) + WASM 输出 + **张量级自动微分**。88 项测试全过（共 89 项，1 项忽略）。
+**v0.3.1** — 字节码 VM (45 指令) + 自举编译器 (Tenth 全链路) + WASM 输出 + **张量级自动微分** + **闭包捕获** + **文件级导入**。112 项测试全过（共 113 项，1 项忽略）。
 
 | 组件 | 状态 |
 |------|------|
 | Lexer / Parser / AST | ✅ |
 | HIR + 类型推断 + 借用检查 | ✅ |
 | 树遍历解释器 | ✅ (VM fallback) |
-| **字节码 VM（栈式，43 指令）** | ✅ **默认路径** |
+| **字节码 VM（栈式，45 指令）** | ✅ **默认路径**（含 MakeTensor/MakeClosure） |
 | 泛型函数 / 结构体 | ✅ |
 | Trait 定义与实现 | ✅ |
 | 引用 / 移动语义 | ✅ |
@@ -29,6 +29,9 @@
 | Vec / HashMap / String 标准库 | ✅ **pop/split/trim 等 10+ 方法** |
 | **自举编译器 (Tenth 编写，全链路)** | ✅ **~0.2s** |
 | **WASM import 输出** | ✅ wasmi 验证通过 |
+| **闭包捕获环境变量** | ✅ **free_vars_in() 自动分析** |
+| **文件级导入（use 自动搜索 std/）** | ✅ **search_paths + try_import_file()** |
+| **错误信息增强（源码位置）** | ✅ **span 信息** |
 | **块注释 /* */** | ✅ 支持嵌套 |
 
 ## 快速开始
@@ -101,7 +104,7 @@ fn main() {
 }
 ```
 
-更多示例见 `Tenth实例/` 目录（25 个）和 `tenth/std/` 标准库（16 个文件）。
+更多示例见 `Tenth实例/` 目录（33 个）和 `tenth/std/` 标准库（16 个文件）。
 
 ## 自动微分
 
@@ -126,9 +129,9 @@ Tenth 内置张量级自动微分，通过 7 个内置函数控制：
 tenth/std/
 ├── nn/          ← linear, loss (MSE/L1/BCE), activations, dropout
 ├── optim/       ← SGD (vanilla/momentum/decay), Adam, AdaGrad, RMSProp
-├── data/        ← DataLoader (规划中)
+├── data/        ← DataLoader (new/has_next/next_batch/reset)
 ├── init/        ← 初始化指南
-├── utils/       ← 序列化 (规划中)
+├── utils/       ← 序列化 (save_model/load_model/save_checkpoint)
 ├── math/        ← 数学函数参考
 └── prelude.th   ← 可用项总目录
 ```

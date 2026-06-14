@@ -1,6 +1,6 @@
 # Tenth 语言工具
 
-> 版本: v0.3.0-pre | 字节码 VM + 树遍历 fallback | 自举验证通过
+> 版本: v0.3.1 | 字节码 VM (45 指令) + 树遍历 fallback | 自举验证通过 | 闭包捕获 + 文件级导入
 
 ## 快速开始
 
@@ -32,9 +32,11 @@ tenth.bat run file.th
 | trait / impl / 泛型 | ✅ |
 | 引用 / 移动 / 借用检查 | ✅ |
 | Vec / HashMap / String 标准库 | ✅ |
-| 字节码 VM (33 指令) | ✅ |
+| 字节码 VM (45 指令, 含 MakeTensor/MakeClosure) | ✅ |
 | WASM 编译 (wasm-encoder) | ✅ |
 | 自举 (Tenth 编译器编译自身) | ✅ |
+| 闭包捕获环境变量 | ✅ |
+| 文件级导入 (use 自动搜索 std/) | ✅ |
 
 ## 标准库
 
@@ -42,7 +44,7 @@ tenth.bat run file.th
 
 ## 示例
 
-见 `Tenth实例/` — 21 个示例程序 (排序/查找/链表/神经网络/梯度下降等)
+见 `Tenth实例/` — 33 个示例程序 (排序/查找/链表/神经网络/梯度下降/闭包捕获/Adam等)
 
 ## 更多
 
