@@ -1,12 +1,9 @@
-// HIR Lowerer v2 — creates fully-formed nodes before pushing to Vec
+// HIR Lowerer v3 — v0.3.3 idioms: `..` defaults, for-in, generic returns
+// Creates fully-formed nodes before pushing to Vec
 // Avoids post-push field mutation (incompatible with VM value semantics)
 
 fn add_type(p: &mut HirProgram, disc: i64, sub: i64, name: str, params_start: i64, params_count: i64, ret_ty: i64) -> i64 {
-    let t = HirType {
-        disc: disc, sub: sub, name: name,
-        params_start: params_start, params_count: params_count,
-        ret_ty: ret_ty,
-    };
+    let t = HirType { disc: disc, sub: sub, name: name, params_start: params_start, params_count: params_count, ret_ty: ret_ty };
     p.type_nodes.push(t);
     p.type_nodes.len()
 }
@@ -25,6 +22,7 @@ fn parse_type(p: &mut HirProgram, s: str) -> i64 {
 }
 
 // Push a fully-formed HirExpr and return its 1-based index
+// Uses `..` to fill zero-value fields not explicitly set
 fn push_expr(p: &mut HirProgram, disc: i64, lit_ival: i64, lit_fval: f64, lit_sval: str, lit_bval: bool, left: i64, right: i64, cond: i64, body: i64, alt: i64, args_start: i64, args_count: i64, stmts_start: i64, stmts_count: i64, op: str, name: str, variant: str, ty: i64) -> i64 {
     let e = HirExpr {
         disc: disc,
@@ -32,13 +30,8 @@ fn push_expr(p: &mut HirProgram, disc: i64, lit_ival: i64, lit_fval: f64, lit_sv
         left: left, right: right, cond: cond, body: body, alt: alt,
         args_start: args_start, args_count: args_count,
         stmts_start: stmts_start, stmts_count: stmts_count,
-        fields_start: 0, fields_count: 0,
-        generics_start: 0, generics_count: 0,
-        params_start: 0, params_count: 0,
-        captures_start: 0, captures_count: 0,
-        op: op, name: name, variant: variant,
-        range_inclusive: false,
-        ty: ty,
+        op: op, name: name, variant: variant, ty: ty,
+        ..  // fields_start/generics_start/params_start/captures_start/range_inclusive default to 0/false
     };
     p.expr_nodes.push(e);
     p.expr_nodes.len()
@@ -46,8 +39,7 @@ fn push_expr(p: &mut HirProgram, disc: i64, lit_ival: i64, lit_fval: f64, lit_sv
 
 fn push_stmt(p: &mut HirProgram, disc: i64, name: str, expr: i64, cond: i64, body_start: i64, body_count: i64, init: i64, mutable: bool) -> i64 {
     let s = HirStmt {
-        disc: disc,
-        name: name, expr: expr, cond: cond,
+        disc: disc, name: name, expr: expr, cond: cond,
         body_start: body_start, body_count: body_count,
         init: init, mutable: mutable,
     };
@@ -59,10 +51,10 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     if idx <= 0 { return 0; };
     if idx > exprs.len() { return 0; };
     if depth > 50 { return 0; };
-    
+
     let e = exprs[idx - 1];
     let kind = e.kind;
-    
+
     if kind == "int" {
         let ty = add_type(p, 0, 0, "", 0, 0, 0);
         return push_expr(p, 0, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
@@ -73,82 +65,74 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
     if kind == "bool" {
         let ty = add_type(p, 0, 4, "", 0, 0, 0);
-        return push_expr(p, 2, 0, 0.0, "", e.ival != 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
+        return push_expr(p, 2, 0, 0.0, "", e.ival != 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
     };
     if kind == "str" {
         let ty = add_type(p, 0, 5, "", 0, 0, 0);
         return push_expr(p, 3, 0, 0.0, e.sval, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
     };
-    
+
     if kind == "ident" {
         return push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
     };
-    
+
     if kind == "binary" {
         let l = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         let r = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 5, 0, 0.0, "", false, l, r, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", 0);
     };
-    
+
     if kind == "unary" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 6, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", 0);
     };
-    
+
     if kind == "call" {
         let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
         let start = p.expr_nodes.len() + 1;
         let mut count: i64 = 0;
         if e.arg_count > 0 {
-            let s = e.arg_start;
-            let end = s + e.arg_count;
-            let mut i = s;
-            while i < end {
+            for i in e.arg_start..(e.arg_start + e.arg_count) {
                 lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
                 count = count + 1;
-                i = i + 1;
             };
         };
         return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "method_call" {
         let recv = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         let start = p.expr_nodes.len() + 1;
         let mut count: i64 = 0;
         if e.arg_count > 0 {
-            let s = e.arg_start;
-            let end = s + e.arg_count;
-            let mut i = s;
-            while i < end {
+            for i in e.arg_start..(e.arg_start + e.arg_count) {
                 lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
                 count = count + 1;
-                i = i + 1;
             };
         };
         return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, start, count, 0, 0, "", e.sval, "", 0);
     };
-    
+
     if kind == "field" {
         let target = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 10, 0, 0.0, "", false, target, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
     };
-    
+
     if kind == "ref" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 18, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "deref" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 20, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "move" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 30, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "if" {
         let cond = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         let then_ = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
@@ -158,23 +142,19 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_expr(p, 12, 0, 0.0, "", false, 0, 0, cond, then_, else_, 0, 0, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "block" {
         let start = p.stmt_nodes.len() + 1;
         let mut count: i64 = 0;
         if e.extra_count > 0 {
-            let s = e.extra_start;
-            let end = s + e.extra_count;
-            let mut i = s;
-            while i < end {
+            for i in e.extra_start..(e.extra_start + e.extra_count) {
                 lower_stmt(p, i, exprs, stmts, match_arms, depth + 1);
                 count = count + 1;
-                i = i + 1;
             };
         };
         return push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
     };
-    
+
     if kind == "assign" {
         let lhs = e.left;
         let lexpr = exprs[lhs - 1];
@@ -189,7 +169,7 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_expr(p, 14, 0, 0.0, "", false, 0, rhs, 0, 0, 0, 0, 0, 0, 0, "", lexpr.sval, "", 0);
     };
-    
+
     if kind == "assign_op" {
         let lhs = e.left;
         let lexpr = exprs[lhs - 1];
@@ -200,7 +180,7 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_expr(p, 24, 0, 0.0, "", false, 0, rhs, 0, 0, 0, 0, 0, 0, 0, e.sval, lexpr.sval, "", 0);
     };
-    
+
     if kind == "closure" {
         // Lower the body
         let body = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
@@ -208,27 +188,17 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         let params_start = p.expr_nodes.len() + 1;
         let mut params_count: i64 = 0;
         if e.extra_count > 0 {
-            let mut i = e.extra_start;
-            let end = e.extra_start + e.extra_count;
-            while i < end {
+            for i in e.extra_start..(e.extra_start + e.extra_count) {
                 if i <= exprs.len() {
                     let param_expr = exprs[i - 1];
                     let pidx = push_expr(p, 4, 0, 0.0, param_expr.sval, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", param_expr.sval, "", 0);
                     params_count = params_count + 1;
                 };
-                i = i + 1;
             };
         };
-        // Analyze free variables for captures
+        // Captures — simplified: no deep analysis in self-hosting compiler
         let captures_start = p.captures.len() + 1;
-        let mut captures_count: i64 = 0;
-        // Simple capture analysis: collect Var references in body that are not params
-        // This is a simplified version — the full Rust implementation has recursive analysis
-        let body_expr_idx = body;
-        if body_expr_idx > 0 && body_expr_idx <= p.expr_nodes.len() {
-            // For now, we don't do deep analysis in the self-hosting compiler.
-            // Captures will be resolved at runtime by the interpreter.
-        };
+        let captures_count: i64 = 0;
         let result = push_expr(p, 23, 0, 0.0, "", false, 0, 0, 0, body, 0, 0, 0, 0, 0, "", "", "", 0);
         p.expr_nodes[result - 1].params_start = params_start;
         p.expr_nodes[result - 1].params_count = params_count;
@@ -236,43 +206,36 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         p.expr_nodes[result - 1].captures_count = captures_count;
         return result;
     };
-    
+
     if kind == "array" {
         let start = p.expr_nodes.len() + 1;
         let mut count: i64 = 0;
         if e.arg_count > 0 {
-            let mut i = e.arg_start;
-            let end = e.arg_start + e.arg_count;
-            while i < end {
+            for i in e.arg_start..(e.arg_start + e.arg_count) {
                 lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
                 count = count + 1;
-                i = i + 1;
             };
         };
         return push_expr(p, 22, 0, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "tensor" {
         let start = p.expr_nodes.len() + 1;
         let mut count: i64 = 0;
         if e.arg_count > 0 {
-            let mut i = e.arg_start;
-            let end = e.arg_start + e.arg_count;
-            while i < end {
+            for i in e.arg_start..(e.arg_start + e.arg_count) {
                 lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
                 count = count + 1;
-                i = i + 1;
             };
         };
-        let result = push_expr(p, 29, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
-        return result;
+        return push_expr(p, 29, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "match" {
         let scrutinee = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 17, 0, 0.0, "", false, scrutinee, 0, 0, 0, 0, 0, 0, e.extra_start, e.extra_count, "", "", "", 0);
     };
-    
+
     push_expr(p, 0, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0)
 }
 
@@ -281,7 +244,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     if idx > stmts.len() { return 0; };
     let s = stmts[idx - 1];
     let kind = s.kind;
-    
+
     if kind == "let" {
         let mut init: i64 = 0;
         if s.expr_idx > 0 {
@@ -289,7 +252,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_stmt(p, 0, s.name, 0, 0, 0, 0, init, true);
     };
-    
+
     if kind == "return" {
         let mut re: i64 = 0;
         if s.expr_idx > 0 {
@@ -297,7 +260,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_stmt(p, 2, "", re, 0, 0, 0, 0, false);
     };
-    
+
     if kind == "expr" {
         let mut ee: i64 = 0;
         if s.expr_idx > 0 {
@@ -305,96 +268,65 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_stmt(p, 1, "", ee, 0, 0, 0, 0, false);
     };
-    
+
     if kind == "loop" {
         let bstart = p.stmt_nodes.len() + 1;
         let mut bcount: i64 = 0;
         if s.body_count > 0 {
-            let mut i = s.body_start;
-            let end = s.body_start + s.body_count;
-            while i < end {
+            for i in s.body_start..(s.body_start + s.body_count) {
                 lower_stmt(p, i, exprs, stmts, match_arms, depth + 1);
                 bcount = bcount + 1;
-                i = i + 1;
             };
         };
         return push_stmt(p, 7, "", 0, 0, bstart, bcount, 0, false);
     };
-    
+
     if kind == "break" { return push_stmt(p, 5, "", 0, 0, 0, 0, 0, false); };
     if kind == "continue" { return push_stmt(p, 6, "", 0, 0, 0, 0, 0, false); };
-    
+
     push_stmt(p, 1, "", 0, 0, 0, 0, 0, false)
 }
 
 fn lower_program(program: Program) -> HirProgram {
-    let mut p = HirProgram {
-        fns: Vec::new(),
-        main_expr: 0,
-        expr_nodes: Vec::new(),
-        stmt_nodes: Vec::new(),
-        type_nodes: Vec::new(),
-        type_args: Vec::new(),
-        type_params: Vec::new(),
-        match_arms: Vec::new(),
-        structs: Vec::new(),
-        captures: Vec::new(),
-    };
-    
+    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), captures: Vec::new() };
+
     // Lower struct definitions
-    let mut si: i64 = 0;
-    while si < program.structs.len() {
+    for si in 0..program.structs.len() {
         let sd = program.structs[si];
         let mut fields = Vec::new();
-        let mut fi: i64 = 0;
-        while fi < sd.fields.len() {
+        for fi in 0..sd.fields.len() {
             let sf = sd.fields[fi];
             let fty = parse_type(&mut p, sf.type_ann);
             fields.push(HirStructField { name: sf.name, ty: fty });
-            fi = fi + 1;
         };
         p.structs.push(HirStructDef { name: sd.name, fields: fields });
-        si = si + 1;
     };
-    
-    let mut i: i64 = 0;
-    while i < program.fns.len() {
+
+    for i in 0..program.fns.len() {
         let f = program.fns[i];
         let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
         let ret_ty = parse_type(&mut p, f.return_type);
         let mut params = Vec::new();
-        let mut j: i64 = 0;
-        while j < f.params.len() {
+        for j in 0..f.params.len() {
             let param = f.params[j];
             let pty = parse_type(&mut p, param.type_ann);
             params.push(HirParam { name: param.name, ty: pty });
-            j = j + 1;
         };
-        let hf = HirFnDef {
-            name: f.name,
-            params: params,
-            return_type: ret_ty,
-            body: body_expr,
-            generics: Vec::new(),
-        };
+        let hf = HirFnDef { name: f.name, params: params, return_type: ret_ty, body: body_expr, generics: Vec::new() };
         p.fns.push(hf);
-        i = i + 1;
     };
-    
+
     if program.main_stmts_count > 0 {
         let start = p.stmt_nodes.len() + 1;
         let mut count: i64 = 0;
-        let mut k: i64 = program.main_stmts_start;
-        let end = program.main_stmts_start + program.main_stmts_count;
-        while k < end {
+        for k in program.main_stmts_start..(program.main_stmts_start + program.main_stmts_count) {
             lower_stmt(&mut p, k, program.expr_nodes, program.stmt_nodes, program.match_arms, 0);
             count = count + 1;
-            k = k + 1;
         };
         let ni = push_expr(&mut p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
         p.main_expr = ni;
     };
-    
+
     p
 }
 
@@ -402,12 +334,9 @@ fn lower_fn_body(p: &mut HirProgram, body_start: i64, body_count: i64, exprs: Ve
     if body_count <= 0 { return 0; };
     let start = p.stmt_nodes.len() + 1;
     let mut count: i64 = 0;
-    let mut i: i64 = body_start;
-    let end = body_start + body_count;
-    while i < end {
+    for i in body_start..(body_start + body_count) {
         lower_stmt(p, i, exprs, stmts, match_arms, 0);
         count = count + 1;
-        i = i + 1;
     };
     push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0)
 }

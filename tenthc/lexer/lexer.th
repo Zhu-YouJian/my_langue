@@ -1,4 +1,4 @@
-// Self-hosting Lexer — v0.3.2 perf-optimized (source slicing)
+// Self-hosting Lexer — v0.3.3 (tuple variants, struct defaults, DotDotEq/Shr)
 struct Lexer { source: str, pos: i64, line: i64, col: i64 }
 fn lexer_new(source: str) -> Lexer { Lexer { source: source, pos: 0, line: 1, col: 1 } }
 fn is_digit(ch: str) -> bool { (ch >= "0") && (ch <= "9") }
@@ -42,7 +42,7 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         } else { break; };
     };
     let line = lexer.line; let col = lexer.col; let span = make_span(line, col);
-    if ch == "" { return Token { kind: TokenKind::Eof, span: span, disc: 61, ival: 0, fval: 0.0, sval: "" }; };
+    if ch == "" { return Token { kind: TokenKind::Eof, span: span, disc: 61, .. }; };
 
     // Number — incremental arithmetic (no string building)
     if is_digit(ch) {
@@ -51,8 +51,8 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         let mut frac_val: i64 = 0;
         let mut frac_len: i64 = 0;
         while is_digit(ch) { ival = ival * 10 + char_to_digit(ch); ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
-        if ch == "." { is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer); while is_digit(ch) { frac_val = frac_val * 10 + char_to_digit(ch); frac_len = frac_len + 1; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; let mut div: f64 = 1.0; let mut i: i64 = 0; while i < frac_len { div = div * 10.0; i = i + 1; }; let fv: f64 = ival; let ff: f64 = frac_val; return Token { kind: TokenKind::FloatLiteral(value: fv + (ff / div)), span: span, disc: 1, ival: ival, fval: fv + (ff / div), sval: "" }; };
-        return Token { kind: TokenKind::IntLiteral(value: ival), span: span, disc: 0, ival: ival, fval: 0.0, sval: "" };
+        if ch == "." { is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer); while is_digit(ch) { frac_val = frac_val * 10 + char_to_digit(ch); frac_len = frac_len + 1; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; let mut div: f64 = 1.0; let mut i: i64 = 0; while i < frac_len { div = div * 10.0; i = i + 1; }; let fv: f64 = ival; let ff: f64 = frac_val; return Token { kind: TokenKind::FloatLiteral(fv + (ff / div)), span: span, disc: 1, ival: ival, fval: fv + (ff / div), .. }; };
+        return Token { kind: TokenKind::IntLiteral(ival), span: span, disc: 0, ival: ival, .. };
     };
 
     // Identifier — source slice (O(1))
@@ -61,29 +61,29 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         while (ch != "") && is_alnum(ch) { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
         let end_pos = lexer.pos;
         let ident = lexer.source[start..end_pos];
-        if ident == "fn" { return Token { kind: TokenKind::Fn, span: span, disc: 4, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "let" { return Token { kind: TokenKind::Let, span: span, disc: 5, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "mut" { return Token { kind: TokenKind::Mut, span: span, disc: 6, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "if" { return Token { kind: TokenKind::If, span: span, disc: 7, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "else" { return Token { kind: TokenKind::Else, span: span, disc: 8, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "match" { return Token { kind: TokenKind::Match, span: span, disc: 9, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "return" { return Token { kind: TokenKind::Return, span: span, disc: 10, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "while" { return Token { kind: TokenKind::While, span: span, disc: 11, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "for" { return Token { kind: TokenKind::For, span: span, disc: 12, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "loop" { return Token { kind: TokenKind::Loop, span: span, disc: 13, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "break" { return Token { kind: TokenKind::Break, span: span, disc: 14, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "continue" { return Token { kind: TokenKind::Continue, span: span, disc: 15, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "struct" { return Token { kind: TokenKind::Struct, span: span, disc: 16, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "enum" { return Token { kind: TokenKind::Enum, span: span, disc: 17, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "impl" { return Token { kind: TokenKind::Impl, span: span, disc: 18, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "trait" { return Token { kind: TokenKind::Trait, span: span, disc: 19, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "use" { return Token { kind: TokenKind::Use, span: span, disc: 20, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "mod" { return Token { kind: TokenKind::Mod, span: span, disc: 21, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "true" { return Token { kind: TokenKind::True, span: span, disc: 22, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "false" { return Token { kind: TokenKind::False, span: span, disc: 23, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "move" { return Token { kind: TokenKind::Move, span: span, disc: 24, ival: 0, fval: 0.0, sval: "" }; };
-        if ident == "self" { return Token { kind: TokenKind::Self_, span: span, disc: 25, ival: 0, fval: 0.0, sval: "" }; };
-        return Token { kind: TokenKind::Identifier(name: ident), span: span, disc: 3, ival: 0, fval: 0.0, sval: ident };
+        if ident == "fn" { return Token { kind: TokenKind::Fn, span: span, disc: 4, .. }; };
+        if ident == "let" { return Token { kind: TokenKind::Let, span: span, disc: 5, .. }; };
+        if ident == "mut" { return Token { kind: TokenKind::Mut, span: span, disc: 6, .. }; };
+        if ident == "if" { return Token { kind: TokenKind::If, span: span, disc: 7, .. }; };
+        if ident == "else" { return Token { kind: TokenKind::Else, span: span, disc: 8, .. }; };
+        if ident == "match" { return Token { kind: TokenKind::Match, span: span, disc: 9, .. }; };
+        if ident == "return" { return Token { kind: TokenKind::Return, span: span, disc: 10, .. }; };
+        if ident == "while" { return Token { kind: TokenKind::While, span: span, disc: 11, .. }; };
+        if ident == "for" { return Token { kind: TokenKind::For, span: span, disc: 12, .. }; };
+        if ident == "loop" { return Token { kind: TokenKind::Loop, span: span, disc: 13, .. }; };
+        if ident == "break" { return Token { kind: TokenKind::Break, span: span, disc: 14, .. }; };
+        if ident == "continue" { return Token { kind: TokenKind::Continue, span: span, disc: 15, .. }; };
+        if ident == "struct" { return Token { kind: TokenKind::Struct, span: span, disc: 16, .. }; };
+        if ident == "enum" { return Token { kind: TokenKind::Enum, span: span, disc: 17, .. }; };
+        if ident == "impl" { return Token { kind: TokenKind::Impl, span: span, disc: 18, .. }; };
+        if ident == "trait" { return Token { kind: TokenKind::Trait, span: span, disc: 19, .. }; };
+        if ident == "use" { return Token { kind: TokenKind::Use, span: span, disc: 20, .. }; };
+        if ident == "mod" { return Token { kind: TokenKind::Mod, span: span, disc: 21, .. }; };
+        if ident == "true" { return Token { kind: TokenKind::True, span: span, disc: 22, .. }; };
+        if ident == "false" { return Token { kind: TokenKind::False, span: span, disc: 23, .. }; };
+        if ident == "move" { return Token { kind: TokenKind::Move, span: span, disc: 24, .. }; };
+        if ident == "self" { return Token { kind: TokenKind::Self_, span: span, disc: 25, .. }; };
+        return Token { kind: TokenKind::Identifier(ident), span: span, disc: 3, sval: ident, .. };
     };
 
     // String literal — source slice (O(1))
@@ -95,32 +95,42 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         let end_pos = lexer.pos;
         if ch == "\"" { lexer_advance(lexer); }; // skip closing quote
         let s = lexer.source[start..end_pos];
-        return Token { kind: TokenKind::StringLiteral(value: s), span: span, disc: 2, ival: 0, fval: 0.0, sval: s };
+        return Token { kind: TokenKind::StringLiteral(s), span: span, disc: 2, sval: s, .. };
     };
 
     lexer_advance(lexer);
-    if ch == "(" { return Token { kind: TokenKind::LParen, span: span, disc: 47, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == ")" { return Token { kind: TokenKind::RParen, span: span, disc: 48, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "{" { return Token { kind: TokenKind::LBrace, span: span, disc: 49, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "}" { return Token { kind: TokenKind::RBrace, span: span, disc: 50, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "[" { return Token { kind: TokenKind::LBracket, span: span, disc: 51, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "]" { return Token { kind: TokenKind::RBracket, span: span, disc: 52, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "," { return Token { kind: TokenKind::Comma, span: span, disc: 53, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == ";" { return Token { kind: TokenKind::Semicolon, span: span, disc: 54, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "." { if lexer_peek(lexer) == "." { lexer_advance(lexer); return Token { kind: TokenKind::DotDot, span: span, disc: 57, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Dot, span: span, disc: 56, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == ":" { if lexer_peek(lexer) == ":" { lexer_advance(lexer); return Token { kind: TokenKind::ColonColon, span: span, disc: 60, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Colon, span: span, disc: 55, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "+" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::PlusAssign, span: span, disc: 43, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Plus, span: span, disc: 26, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "-" { if lexer_peek(lexer) == ">" { lexer_advance(lexer); return Token { kind: TokenKind::Arrow, span: span, disc: 58, ival: 0, fval: 0.0, sval: "" }; }; if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::MinusAssign, span: span, disc: 44, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Minus, span: span, disc: 27, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "*" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::StarAssign, span: span, disc: 45, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Star, span: span, disc: 28, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "/" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::SlashAssign, span: span, disc: 46, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Slash, span: span, disc: 29, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "%" { return Token { kind: TokenKind::Percent, span: span, disc: 30, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "=" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::EqEq, span: span, disc: 31, ival: 0, fval: 0.0, sval: "" }; }; if lexer_peek(lexer) == ">" { lexer_advance(lexer); return Token { kind: TokenKind::FatArrow, span: span, disc: 59, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Assign, span: span, disc: 42, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "!" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::NotEq, span: span, disc: 32, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Not, span: span, disc: 39, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "<" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::LtEq, span: span, disc: 35, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Lt, span: span, disc: 33, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == ">" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::GtEq, span: span, disc: 36, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Gt, span: span, disc: 34, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "&" { if lexer_peek(lexer) == "&" { lexer_advance(lexer); return Token { kind: TokenKind::AndAnd, span: span, disc: 37, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Ampersand, span: span, disc: 40, ival: 0, fval: 0.0, sval: "" }; };
-    if ch == "|" { if lexer_peek(lexer) == "|" { lexer_advance(lexer); return Token { kind: TokenKind::OrOr, span: span, disc: 38, ival: 0, fval: 0.0, sval: "" }; }; return Token { kind: TokenKind::Pipe, span: span, disc: 41, ival: 0, fval: 0.0, sval: "" }; };
-    Token { kind: TokenKind::Identifier(name: ch), span: span, disc: 3, ival: 0, fval: 0.0, sval: "" }
+    if ch == "(" { return Token { kind: TokenKind::LParen, span: span, disc: 47, .. }; };
+    if ch == ")" { return Token { kind: TokenKind::RParen, span: span, disc: 48, .. }; };
+    if ch == "{" { return Token { kind: TokenKind::LBrace, span: span, disc: 49, .. }; };
+    if ch == "}" { return Token { kind: TokenKind::RBrace, span: span, disc: 50, .. }; };
+    if ch == "[" { return Token { kind: TokenKind::LBracket, span: span, disc: 51, .. }; };
+    if ch == "]" { return Token { kind: TokenKind::RBracket, span: span, disc: 52, .. }; };
+    if ch == "," { return Token { kind: TokenKind::Comma, span: span, disc: 53, .. }; };
+    if ch == ";" { return Token { kind: TokenKind::Semicolon, span: span, disc: 54, .. }; };
+    if ch == "." {
+        let next = lexer_peek(lexer);
+        if next == "." { lexer_advance(lexer); return Token { kind: TokenKind::DotDot, span: span, disc: 57, .. }; };
+        if next == "=" { lexer_advance(lexer); return Token { kind: TokenKind::DotDotEq, span: span, disc: 62, .. }; };
+        return Token { kind: TokenKind::Dot, span: span, disc: 56, .. };
+    };
+    if ch == ":" { if lexer_peek(lexer) == ":" { lexer_advance(lexer); return Token { kind: TokenKind::ColonColon, span: span, disc: 60, .. }; }; return Token { kind: TokenKind::Colon, span: span, disc: 55, .. }; };
+    if ch == "+" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::PlusAssign, span: span, disc: 43, .. }; }; return Token { kind: TokenKind::Plus, span: span, disc: 26, .. }; };
+    if ch == "-" { if lexer_peek(lexer) == ">" { lexer_advance(lexer); return Token { kind: TokenKind::Arrow, span: span, disc: 58, .. }; }; if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::MinusAssign, span: span, disc: 44, .. }; }; return Token { kind: TokenKind::Minus, span: span, disc: 27, .. }; };
+    if ch == "*" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::StarAssign, span: span, disc: 45, .. }; }; return Token { kind: TokenKind::Star, span: span, disc: 28, .. }; };
+    if ch == "/" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::SlashAssign, span: span, disc: 46, .. }; }; return Token { kind: TokenKind::Slash, span: span, disc: 29, .. }; };
+    if ch == "%" { return Token { kind: TokenKind::Percent, span: span, disc: 30, .. }; };
+    if ch == "=" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::EqEq, span: span, disc: 31, .. }; }; if lexer_peek(lexer) == ">" { lexer_advance(lexer); return Token { kind: TokenKind::FatArrow, span: span, disc: 59, .. }; }; return Token { kind: TokenKind::Assign, span: span, disc: 42, .. }; };
+    if ch == "!" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::NotEq, span: span, disc: 32, .. }; }; return Token { kind: TokenKind::Not, span: span, disc: 39, .. }; };
+    if ch == "<" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::LtEq, span: span, disc: 35, .. }; }; return Token { kind: TokenKind::Lt, span: span, disc: 33, .. }; };
+    if ch == ">" {
+        let next = lexer_peek(lexer);
+        if next == ">" { lexer_advance(lexer); return Token { kind: TokenKind::Shr, span: span, disc: 63, .. }; };
+        if next == "=" { lexer_advance(lexer); return Token { kind: TokenKind::GtEq, span: span, disc: 36, .. }; };
+        return Token { kind: TokenKind::Gt, span: span, disc: 34, .. };
+    };
+    if ch == "&" { if lexer_peek(lexer) == "&" { lexer_advance(lexer); return Token { kind: TokenKind::AndAnd, span: span, disc: 37, .. }; }; return Token { kind: TokenKind::Ampersand, span: span, disc: 40, .. }; };
+    if ch == "|" { if lexer_peek(lexer) == "|" { lexer_advance(lexer); return Token { kind: TokenKind::OrOr, span: span, disc: 38, .. }; }; return Token { kind: TokenKind::Pipe, span: span, disc: 41, .. }; };
+    Token { kind: TokenKind::Identifier(ch), span: span, disc: 3, sval: "", .. }
 }
 
 fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {

@@ -1,4 +1,5 @@
-// Minimal WASM emitter — compiles HirProgram to WASM binary bytes
+// Minimal WASM emitter — v0.3.3 idioms: for-in, `..` defaults, generic returns
+// Compiles HirProgram to WASM binary bytes
 // Output: Vec<i64> where each element is a byte (0-255)
 
 // ── LEB128 encoding ──
@@ -31,8 +32,7 @@ fn leb128_s(value: i64, out: &mut Vec<i64>) {
 fn emit_section(out: &mut Vec<i64>, section_id: i64, body: Vec<i64>) {
     out.push(section_id);
     leb128_u(body.len(), out);
-    let mut i: i64 = 0;
-    while i < body.len() { out.push(body.get(i)); i = i + 1; };
+    for i in 0..body.len() { out.push(body.get(i)); };
 }
 
 // ── WASM opcodes ──
@@ -89,43 +89,36 @@ struct WasmCtx {
 }
 
 fn ctx_new() -> WasmCtx {
-    WasmCtx {
-        out: Vec::new(),
-        code_out: Vec::new(),
-        func_count: 0,
-        temp_local: 0,
-    }
+    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0 }
 }
 
 // ── Compile one function body ──
 
 fn compile_fn_body(ctx: &mut WasmCtx, hir: HirProgram, fn_idx: i64) {
     let f = hir.fns[fn_idx];
-    
+
     // Count locals (params + let bindings)
     let num_params = f.params.len();
-    let num_locals = num_params; // simplified: no extra locals
-    
+
     // Function body header
     let mut body: Vec<i64> = Vec::new();
-    
+
     // Local declaration count: 16 temp locals (i64)
     leb128_u(1, &mut body); // 1 group
     leb128_u(16, &mut body); // 16 locals
     body.push(126); // i64
-    
+
     // Set temp local index
     ctx.temp_local = num_params;
-    
+
     // Compile body expression
     compile_expr(ctx, &mut body, hir, f.body);
-    
+
     wasm_end(&mut body);
-    
+
     // Emit function body size + body
     leb128_u(body.len(), &mut ctx.code_out);
-    let mut i: i64 = 0;
-    while i < body.len() { ctx.code_out.push(body[i]); i = i + 1; };
+    for i in 0..body.len() { ctx.code_out.push(body[i]); };
 }
 
 // ── Struct offset lookup ──
@@ -138,20 +131,16 @@ fn type_struct_name(hir: HirProgram, ty_idx: i64) -> str {
 }
 
 fn struct_field_offset(hir: HirProgram, struct_name: str, field_name: str) -> i64 {
-    let mut si: i64 = 0;
-    while si < hir.structs.len() {
+    for si in 0..hir.structs.len() {
         let sd = hir.structs[si];
         if sd.name == struct_name {
             let mut offset: i64 = 0;
-            let mut fi: i64 = 0;
-            while fi < sd.fields.len() {
+            for fi in 0..sd.fields.len() {
                 if sd.fields[fi].name == field_name { return offset; };
                 offset = offset + 8; // each i64 field is 8 bytes
-                fi = fi + 1;
             };
             return offset; // field not found, return end offset
         };
-        si = si + 1;
     };
     0
 }
@@ -160,7 +149,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if idx <= 0 || idx > hir.expr_nodes.len() { return; };
     let e = hir.expr_nodes[idx - 1];
     let d = e.disc;
-    
+
     if d == 0 {
         // IntLiteral
         wasm_i64_const(out, e.lit_ival);
@@ -169,25 +158,18 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if d == 4 {
         // Var — look up local index by name
         let name = e.name;
-        // Simple: var index = position in params (0-based)
-        // For now: crude lookup
         let mut local_idx: i64 = 0;
-        // Search params of current function
         let mut found: bool = false;
-        let mut fi: i64 = 0;
-        while fi < hir.fns.len() {
+        for fi in 0..hir.fns.len() {
             let func = hir.fns[fi];
-            let mut pi: i64 = 0;
-            while pi < func.params.len() {
+            for pi in 0..func.params.len() {
                 if func.params[pi].name == name {
                     local_idx = pi;
                     found = true;
                     break;
                 };
-                pi = pi + 1;
             };
             if found { break; };
-            fi = fi + 1;
         };
         wasm_local_get(out, local_idx);
         return;
@@ -224,25 +206,20 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     };
     if d == 14 {
         // Assign — target is a variable name, value is compiled
-        // We need local.set — find the local index by name
         compile_expr(ctx, out, hir, e.right);
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
-        let mut fi: i64 = 0;
-        while fi < hir.fns.len() {
+        for fi in 0..hir.fns.len() {
             let func = hir.fns[fi];
-            let mut pi: i64 = 0;
-            while pi < func.params.len() {
+            for pi in 0..func.params.len() {
                 if func.params[pi].name == name {
                     local_idx = pi;
                     found = true;
                     break;
                 };
-                pi = pi + 1;
             };
             if found { break; };
-            fi = fi + 1;
         };
         wasm_local_set(out, local_idx);
         return;
@@ -251,13 +228,11 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         // StructLiteral — allocate using global bump pointer
         let sname = e.name;
         let mut size: i64 = 0;
-        let mut si: i64 = 0;
-        while si < hir.structs.len() {
+        for si in 0..hir.structs.len() {
             if hir.structs[si].name == sname {
                 size = hir.structs[si].fields.len() * 8;
                 break;
             };
-            si = si + 1;
         };
         // global.get $bump (idx 0) → local.tee $temp (idx = num_params)
         wasm_global_get(out, 0);
@@ -287,9 +262,9 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         let method = e.name;
         if e.left > 0 { compile_expr(ctx, out, hir, e.left); };
         if e.args_count > 0 {
-            let mut ai = e.args_start;
-            let end = e.args_start + e.args_count;
-            while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+            for ai in e.args_start..(e.args_start + e.args_count) {
+                compile_expr(ctx, out, hir, ai);
+            };
         };
         if method == "len" {
             wasm_call(out, 2); // import 2: env.vec_len
@@ -348,11 +323,8 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if d == 13 {
         // Block — compile statements, then final expr
         if e.stmts_count > 0 {
-            let mut s = e.stmts_start;
-            let end = e.stmts_start + e.stmts_count;
-            while s < end {
+            for s in e.stmts_start..(e.stmts_start + e.stmts_count) {
                 compile_stmt(ctx, out, hir, s);
-                s = s + 1;
             };
         };
         return;
@@ -369,9 +341,9 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         let func_name = hir.expr_nodes[e.left - 1].name;
         if func_name == "println" {
             if e.args_count > 0 {
-                let mut ai = e.args_start;
-                let end = e.args_start + e.args_count;
-                while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
             };
             wasm_call(out, 0); // import 0: env.println
             return;
@@ -382,35 +354,30 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         };
         if func_name == "read_file" {
             if e.args_count > 0 {
-                let mut ai = e.args_start;
-                let end = e.args_start + e.args_count;
-                while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
             };
             wasm_call(out, 5); // import 5: env.read_file
             return;
         };
         if func_name == "write_bytes" {
             if e.args_count > 0 {
-                let mut ai = e.args_start;
-                let end = e.args_start + e.args_count;
-                while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
             };
             wasm_call(out, 6); // import 6: env.write_bytes
             return;
         };
         // Regular function call (indices offset by 7 imports)
         let mut call_idx: i64 = 7;
-        let mut fi: i64 = 0;
-        while fi < hir.fns.len() {
+        for fi in 0..hir.fns.len() {
             if hir.fns[fi].name == func_name { call_idx = 7 + fi; break; };
-            fi = fi + 1;
         };
         if e.args_count > 0 {
-            let mut ai = e.args_start;
-            let end = e.args_start + e.args_count;
-            while ai < end {
+            for ai in e.args_start..(e.args_start + e.args_count) {
                 compile_expr(ctx, out, hir, ai);
-                ai = ai + 1;
             };
         };
         wasm_call(out, call_idx);
@@ -419,9 +386,10 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if d == 22 {
         // ArrayLiteral — compile elements and drop, return 0
         if e.args_count > 0 {
-            let mut ai = e.args_start;
-            let end = e.args_start + e.args_count;
-            while ai < end { compile_expr(ctx, out, hir, ai); wasm_drop(out); ai = ai + 1; };
+            for ai in e.args_start..(e.args_start + e.args_count) {
+                compile_expr(ctx, out, hir, ai);
+                wasm_drop(out);
+            };
         };
         wasm_i64_const(out, 0);
         return;
@@ -437,20 +405,16 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
-        let mut fi: i64 = 0;
-        while fi < hir.fns.len() {
+        for fi in 0..hir.fns.len() {
             let func = hir.fns[fi];
-            let mut pi: i64 = 0;
-            while pi < func.params.len() {
+            for pi in 0..func.params.len() {
                 if func.params[pi].name == name {
                     local_idx = pi;
                     found = true;
                     break;
                 };
-                pi = pi + 1;
             };
             if found { break; };
-            fi = fi + 1;
         };
         wasm_local_set(out, local_idx);
         return;
@@ -489,7 +453,7 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if idx <= 0 || idx > hir.stmt_nodes.len() { return; };
     let s = hir.stmt_nodes[idx - 1];
     let d = s.disc;
-    
+
     if d == 2 {
         // Return
         if s.expr > 0 { compile_expr(ctx, out, hir, s.expr); }
@@ -507,11 +471,8 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             wasm_br_if(out, 1); // break to block (label idx 1 = outer block)
         };
         if s.body_count > 0 {
-            let mut bi = s.body_start;
-            let bend = s.body_start + s.body_count;
-            while bi < bend {
+            for bi in s.body_start..(s.body_start + s.body_count) {
                 compile_stmt(ctx, out, hir, bi);
-                bi = bi + 1;
             };
         };
         wasm_br(out, 0); // continue loop
@@ -554,10 +515,10 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     let mut ctx = ctx_new();
     let num_funcs = hir.fns.len();
     ctx.func_count = num_funcs;
-    
+
     // Import count
     let num_imports: i64 = 7;
-    
+
     // ---- Build type section ----
     // Import types come first: 5 signatures
     // Type 0: (i64) -> ()    — println
@@ -567,99 +528,90 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     // Type 4: (i64,i64) -> i64 — vec_get, write_bytes
     let mut types: Vec<i64> = Vec::new();
     leb128_u(5 + num_funcs, &mut types); // total type count
-    
+
     // Type 0: (i64) -> ()
     types.push(96); leb128_u(1, &mut types); types.push(126); // params
     leb128_u(0, &mut types); // results
-    
+
     // Type 1: () -> i64
     types.push(96); leb128_u(0, &mut types); // params
     leb128_u(1, &mut types); types.push(126); // results
-    
+
     // Type 2: (i64) -> i64
     types.push(96); leb128_u(1, &mut types); types.push(126);
     leb128_u(1, &mut types); types.push(126);
-    
+
     // Type 3: (i64,i64) -> ()
     types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
     leb128_u(0, &mut types);
-    
+
     // Type 4: (i64,i64) -> i64
     types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
     leb128_u(1, &mut types); types.push(126);
-    
+
     // Function types (type index 5+)
-    let mut fi: i64 = 0;
-    while fi < num_funcs {
+    for fi in 0..num_funcs {
         let f = hir.fns[fi];
         types.push(96);
         leb128_u(f.params.len(), &mut types);
-        let mut pi: i64 = 0;
-        while pi < f.params.len() { types.push(126); pi = pi + 1; };
+        for pi in 0..f.params.len() { types.push(126); };
         leb128_u(1, &mut types); types.push(126); // 1 result: i64
-        fi = fi + 1;
     };
     let mut type_sec: Vec<i64> = Vec::new();
-    let mut ti: i64 = 0;
-    while ti < types.len() { type_sec.push(types[ti]); ti = ti + 1; };
-    
+    for ti in 0..types.len() { type_sec.push(types[ti]); };
+
     // ---- Build import section ----
-    // Helper to emit a string as LEB128 length + ASCII bytes
     let mut import_sec: Vec<i64> = Vec::new();
     leb128_u(num_imports, &mut import_sec);
-    
+
     // Import 0: env.println (type 0)
-    // module ''env''
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
-    // field ''println''
     import_sec.push(7);
     import_sec.push(112);import_sec.push(114);import_sec.push(105);import_sec.push(110);import_sec.push(116);import_sec.push(108);import_sec.push(110);
     import_sec.push(0); leb128_u(0, &mut import_sec); // func, type 0
-    
+
     // Import 1: env.vec_new (type 1)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(7);
     import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(110);import_sec.push(101);import_sec.push(119);
     import_sec.push(0); leb128_u(1, &mut import_sec);
-    
+
     // Import 2: env.vec_len (type 2)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(7);
     import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(108);import_sec.push(101);import_sec.push(110);
     import_sec.push(0); leb128_u(2, &mut import_sec);
-    
+
     // Import 3: env.vec_push (type 3)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(8);
     import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(112);import_sec.push(117);import_sec.push(115);import_sec.push(104);
     import_sec.push(0); leb128_u(3, &mut import_sec);
-    
+
     // Import 4: env.vec_get (type 4)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(7);
     import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(103);import_sec.push(101);import_sec.push(116);
     import_sec.push(0); leb128_u(4, &mut import_sec);
-    
+
     // Import 5: env.read_file (type 2 — same as vec_len: (i64)->i64)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(9);
     import_sec.push(114);import_sec.push(101);import_sec.push(97);import_sec.push(100);import_sec.push(95);import_sec.push(102);import_sec.push(105);import_sec.push(108);import_sec.push(101);
     import_sec.push(0); leb128_u(2, &mut import_sec);
-    
+
     // Import 6: env.write_bytes (type 4 — same as vec_get: (i64,i64)->i64)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(11);
     import_sec.push(119);import_sec.push(114);import_sec.push(105);import_sec.push(116);import_sec.push(101);import_sec.push(95);import_sec.push(98);import_sec.push(121);import_sec.push(116);import_sec.push(101);import_sec.push(115);
     import_sec.push(0); leb128_u(4, &mut import_sec);
-    
+
     // ---- Build function section ----
-    // Function indices start after imports: index 7+
     let mut func_sec: Vec<i64> = Vec::new();
     leb128_u(num_funcs, &mut func_sec);
-    let mut idx: i64 = 0;
-    while idx < num_funcs { leb128_u(idx + 5, &mut func_sec); idx = idx + 1; };
-    
-    // ---- Build global section ----    // ---- Build global section ----
+    for idx in 0..num_funcs { leb128_u(idx + 5, &mut func_sec); };
+
+    // ---- Build global section ----
     let mut glob_sec: Vec<i64> = Vec::new();
     leb128_u(1, &mut glob_sec); // 1 global
     glob_sec.push(127); // type: i32
@@ -668,31 +620,27 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     glob_sec.push(65); // i32.const
     leb128_s(4, &mut glob_sec);
     glob_sec.push(11); // end
-    
+
     // ---- Build memory section ----
     let mut mem_sec: Vec<i64> = Vec::new();
     leb128_u(1, &mut mem_sec); // 1 memory
     mem_sec.push(0); // flags: no max
     leb128_u(1, &mut mem_sec); // min: 1 page (64KB)
-    
+
     // ---- Build code section ----
     leb128_u(num_funcs, &mut ctx.code_out);
-    fi = 0;
-    while fi < num_funcs {
+    for fi in 0..num_funcs {
         compile_fn_body(&mut ctx, hir, fi);
-        fi = fi + 1;
     };
-    
+
     // ---- Build export section ----
     let mut export_sec: Vec<i64> = Vec::new();
     leb128_u(num_funcs, &mut export_sec);
-    fi = 0;
-    while fi < num_funcs {
+    for fi in 0..num_funcs {
         let f = hir.fns[fi];
         // Export name
         leb128_u(f.name.len(), &mut export_sec);
-        let mut ci: i64 = 0;
-        while ci < f.name.len() {
+        for ci in 0..f.name.len() {
             let ch = f.name[ci];
             // Simple ASCII byte
             let mut byte: i64 = 0;
@@ -736,19 +684,17 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
             else if ch == "_" { byte = 95; }
             else { byte = 63; }; // '?' for unknown chars
             export_sec.push(byte);
-            ci = ci + 1;
         };
         export_sec.push(0); // export kind: function
         leb128_u(fi + 7, &mut export_sec);
-        fi = fi + 1;
     };
-    
+
     // ---- Assemble module ----
     // Magic header
     ctx.out.push(0); ctx.out.push(97); ctx.out.push(115); ctx.out.push(109);
     // Version
     ctx.out.push(1); ctx.out.push(0); ctx.out.push(0); ctx.out.push(0);
-    
+
     // Type section (1)
     emit_section(&mut ctx.out, 1, type_sec);
     // Import section (2)
@@ -763,6 +709,6 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     emit_section(&mut ctx.out, 7, export_sec);
     // Code section (10)
     emit_section(&mut ctx.out, 10, ctx.code_out);
-    
+
     ctx.out
 }

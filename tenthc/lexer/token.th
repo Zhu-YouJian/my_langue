@@ -1,4 +1,4 @@
-// Token definitions — v0.3.1 compact
+// Token definitions — v0.3.3 compact (positional tuple variants)
 struct Span { line: i64, col: i64 }
-enum TokenKind { IntLiteral(value: i64), FloatLiteral(value: f64), StringLiteral(value: str), Identifier(name: str), Fn, Let, Mut, If, Else, Match, Return, While, For, Loop, Break, Continue, Struct, Enum, Impl, Trait, Use, Mod, True, False, Move, Self_, Plus, Minus, Star, Slash, Percent, EqEq, NotEq, Lt, Gt, LtEq, GtEq, AndAnd, OrOr, Not, Ampersand, Pipe, Assign, PlusAssign, MinusAssign, StarAssign, SlashAssign, LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semicolon, Colon, Dot, DotDot, Arrow, FatArrow, ColonColon, Eof }
+enum TokenKind { IntLiteral(i64), FloatLiteral(f64), StringLiteral(str), Identifier(str), Fn, Let, Mut, If, Else, Match, Return, While, For, Loop, Break, Continue, Struct, Enum, Impl, Trait, Use, Mod, True, False, Move, Self_, Plus, Minus, Star, Slash, Percent, EqEq, NotEq, Lt, Gt, LtEq, GtEq, AndAnd, OrOr, Not, Ampersand, Pipe, Assign, PlusAssign, MinusAssign, StarAssign, SlashAssign, LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semicolon, Colon, Dot, DotDot, Arrow, FatArrow, ColonColon, Eof, DotDotEq, Shr }
 struct Token { kind: TokenKind, span: Span, disc: i64, ival: i64, fval: f64, sval: str }

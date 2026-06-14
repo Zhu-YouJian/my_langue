@@ -1,5 +1,6 @@
-// HIR data structures — compact flat representation for self-hosting compiler
+// HIR data structures — v0.3.3 compact flat representation
 // Based on tenth/src/hir/hir.rs + types.rs, adapted for Tenth's type system
+// Uses `..` default field syntax for zero-value initialization
 
 // ── Base type discriminants ──
 // 0:I64 1:I32 2:F64 3:F32 4:Bool 5:Str 6:Unit 7:Char
@@ -54,7 +55,7 @@ struct HirExpr {
     captures_start: i64,
     captures_count: i64,
     // Names
-    op: str,         // Binary/Unary operator: "add","sub","mul","div","mod","eq","neq","lt","gt","lte","gte","and","or","neg","not"
+    op: str,         // Binary/Unary operator
     name: str,       // Var name, field name, method name, struct name
     variant: str,    // Enum variant name
     // Range flags

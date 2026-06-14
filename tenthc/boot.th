@@ -151,13 +151,7 @@ struct Program { structs: Vec<StructDef>, enums: Vec<EnumDef>, fns: Vec<FnDef>, 
 struct Parser { tokens: Vec<Token>, pos: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm> }
 
 fn parser_new(tokens: Vec<Token>) -> Parser {
-    Parser {
-        tokens: tokens,
-        pos: 0,
-        expr_nodes: Vec::new(),
-        stmt_nodes: Vec::new(),
-        match_arms: Vec::new(),
-    }
+    Parser { tokens: tokens, pos: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), match_arms: Vec::new() }
 }
 
 // ── Token access ──
@@ -165,6 +159,11 @@ fn parser_new(tokens: Vec<Token>) -> Parser {
 fn parser_peek(p: &Parser) -> Token {
     if p.pos < p.tokens.len() { p.tokens[p.pos] }
     else { Token { kind: TokenKind::Eof, span: Span { line: 0, col: 0 }, disc: 61, ival: 0, fval: 0.0, sval: "" } }
+}
+
+fn parser_peek_disc(p: &Parser) -> i64 {
+    if p.pos < p.tokens.len() { p.tokens[p.pos].disc }
+    else { 61 }
 }
 
 fn parser_at_eof(p: &Parser) -> bool {
@@ -179,21 +178,13 @@ fn parser_advance(p: &mut Parser) -> Token {
 // ── Helper: add expr node, return index (1-based, 0 = nil) ──
 
 fn add_expr(p: &mut Parser, kind: str) -> i64 {
-    let e = Expr {
-        kind: kind, ival: 0, fval: 0.0, sval: "",
-        left: 0, right: 0, arg_start: 0, arg_count: 0,
-        extra_start: 0, extra_count: 0,
-    };
+    let e = Expr { kind: kind, .. };
     p.expr_nodes.push(e);
     p.expr_nodes.len()
 }
 
 fn add_stmt(p: &mut Parser, kind: str) -> i64 {
-    let s = Stmt {
-        kind: kind, name: "", expr_idx: 0,
-        body_start: 0, body_count: 0,
-        else_start: 0, else_count: 0,
-    };
+    let s = Stmt { kind: kind, .. };
     p.stmt_nodes.push(s);
     p.stmt_nodes.len()
 }
@@ -294,17 +285,14 @@ fn parse_primary(p: &mut Parser) -> i64 {
         parser_advance(p); // skip |
         let mut closure_params = Vec::new();
         loop {
-            let t = parser_peek(p);
-            if t.disc == 41 { parser_advance(p); break; }; // closing |
+            if parser_peek_disc(p) == 41 { parser_advance(p); break; }; // closing |
             let pname_tok = parser_advance(p);
             let pname = pname_tok.sval;
             // skip optional : Type
-            let t2 = parser_peek(p);
-            if t2.disc == 55 { parser_advance(p); parser_advance(p); }; // skip : and type
+            if parser_peek_disc(p) == 55 { parser_advance(p); parser_advance(p); }; // skip : and type
             closure_params.push(Param { name: pname, type_ann: "" });
-            let t3 = parser_peek(p);
-            if t3.disc == 53 { parser_advance(p); } // skip ,
-            else if t3.disc == 41 { parser_advance(p); break; }; // closing |
+            if parser_peek_disc(p) == 53 { parser_advance(p); } // skip ,
+            else if parser_peek_disc(p) == 41 { parser_advance(p); break; }; // closing |
         };
         let body = parse_expr(p);
         let idx = add_expr(p, "closure");
@@ -312,11 +300,9 @@ fn parse_primary(p: &mut Parser) -> i64 {
         p.expr_nodes[idx - 1].left = body;
         p.expr_nodes[idx - 1].extra_start = p.expr_nodes.len() + 1;
         p.expr_nodes[idx - 1].extra_count = closure_params.len();
-        let mut pi: i64 = 0;
-        while pi < closure_params.len() {
+        for pi in 0..closure_params.len() {
             let pidx = add_expr(p, "ident");
             p.expr_nodes[pidx - 1].sval = closure_params[pi].name;
-            pi = pi + 1;
         };
         return idx;
     };
@@ -324,41 +310,33 @@ fn parse_primary(p: &mut Parser) -> i64 {
     // LBracket (51) — array literal or tensor literal
     if d == 51 {
         parser_advance(p); // skip [
-        let next = parser_peek(p);
-        if next.disc == 51 {
+        if parser_peek_disc(p) == 51 {
             // Tensor literal: [[...], [...]]
             parser_advance(p); // skip inner [
             let start = p.expr_nodes.len() + 1;
             let mut count: i64 = 0;
             loop {
-                let t = parser_peek(p);
-                if t.disc == 52 { break; }; // ]
+                if parser_peek_disc(p) == 52 { break; }; // ]
                 parse_expr(p);
                 count = count + 1;
-                let t2 = parser_peek(p);
-                if t2.disc == 53 { parser_advance(p); }; // ,
+                if parser_peek_disc(p) == 53 { parser_advance(p); }; // ,
             };
             parser_advance(p); // skip inner ]
             // Check for more rows
             let mut rows: i64 = 1;
             let mut total_count = count;
-            let t3 = parser_peek(p);
-            if t3.disc == 53 {
+            if parser_peek_disc(p) == 53 {
                 // Multiple rows
                 loop {
-                    let t4 = parser_peek(p);
-                    if t4.disc == 52 { break; }; // ]
-                    if t4.disc == 53 { parser_advance(p); }; // ,
-                    let t5 = parser_peek(p);
-                    if t5.disc == 51 {
+                    if parser_peek_disc(p) == 52 { break; }; // ]
+                    if parser_peek_disc(p) == 53 { parser_advance(p); }; // ,
+                    if parser_peek_disc(p) == 51 {
                         parser_advance(p); // skip [
                         loop {
-                            let t6 = parser_peek(p);
-                            if t6.disc == 52 { break; };
+                            if parser_peek_disc(p) == 52 { break; };
                             parse_expr(p);
                             total_count = total_count + 1;
-                            let t7 = parser_peek(p);
-                            if t7.disc == 53 { parser_advance(p); };
+                            if parser_peek_disc(p) == 53 { parser_advance(p); };
                         };
                         parser_advance(p); // skip ]
                         rows = rows + 1;
@@ -376,13 +354,11 @@ fn parse_primary(p: &mut Parser) -> i64 {
         let start = p.expr_nodes.len() + 1;
         let mut count: i64 = 0;
         loop {
-            let t = parser_peek(p);
-            if t.disc == 52 { break; }; // ]
-            if t.disc == 61 { break; }; // Eof
+            if parser_peek_disc(p) == 52 { break; }; // ]
+            if parser_peek_disc(p) == 61 { break; }; // Eof
             parse_expr(p);
             count = count + 1;
-            let t2 = parser_peek(p);
-            if t2.disc == 53 { parser_advance(p); }
+            if parser_peek_disc(p) == 53 { parser_advance(p); }
             else { break; };
         };
         parser_advance(p); // skip ]
@@ -415,25 +391,21 @@ fn parse_postfix(p: &mut Parser) -> i64 {
     let mut expr_idx = parse_unary(p);
 
     loop {
-        let tok = parser_peek(p);
-        let d = tok.disc;
-
         // LParen (47) — function call
-        if d == 47 {
+        if parser_peek_disc(p) == 47 {
             parser_advance(p); // skip (
             let start = p.expr_nodes.len() + 1;
             let count = parse_arg_list(p);
             p.expr_nodes[expr_idx - 1].kind = "call";
             p.expr_nodes[expr_idx - 1].arg_start = start;
             p.expr_nodes[expr_idx - 1].arg_count = count;
-        } else if d == 56 {
+        } else if parser_peek_disc(p) == 56 {
             // Dot (56) — field access or method call
             parser_advance(p); // skip .
             let field_tok = parser_advance(p);
             let field_name = field_tok.sval;
             // Check if next is ( → method call
-            let next = parser_peek(p);
-            if next.disc == 47 {
+            if parser_peek_disc(p) == 47 {
                 parser_advance(p); // skip (
                 let start = p.expr_nodes.len() + 1;
                 let count = parse_arg_list(p);
@@ -460,14 +432,11 @@ fn parse_postfix(p: &mut Parser) -> i64 {
 fn parse_arg_list(p: &mut Parser) -> i64 {
     let mut count: i64 = 0;
     loop {
-        let tok = parser_peek(p);
-        let d = tok.disc;
-        if d == 48 { break; };
-        if d == 61 { break; };
+        if parser_peek_disc(p) == 48 { break; };
+        if parser_peek_disc(p) == 61 { break; };
         parse_expr(p);
         count = count + 1;
-        let tok2 = parser_peek(p);
-        if tok2.disc == 53 { parser_advance(p); }
+        if parser_peek_disc(p) == 53 { parser_advance(p); }
         else { break; };
     };
     parser_advance(p); // skip )
@@ -484,8 +453,7 @@ fn binop_prec(op: str) -> i64 {
     else { -1 }
 }
 
-fn token_to_binop_str(tok: Token) -> str {
-    let d = tok.disc;
+fn token_to_binop_str(d: i64) -> str {
     if d == 26 { "+" }
     else if d == 27 { "-" }
     else if d == 28 { "*" }
@@ -502,8 +470,7 @@ fn token_to_binop_str(tok: Token) -> str {
     else { "" }
 }
 
-fn is_binop(tok: Token) -> bool {
-    let d = tok.disc;
+fn is_binop(d: i64) -> bool {
     d == 26 || d == 27 || d == 28 || d == 29 || d == 30 || d == 31 || d == 32 || d == 33 || d == 34 || d == 35 || d == 36 || d == 37 || d == 38
 }
 
@@ -511,9 +478,8 @@ fn parse_binary(p: &mut Parser, min_prec: i64) -> i64 {
     let mut left = parse_postfix(p);
 
     loop {
-        let tok = parser_peek(p);
-        if !is_binop(tok) { break; };
-        let op = token_to_binop_str(tok);
+        if !is_binop(parser_peek_disc(p)) { break; };
+        let op = token_to_binop_str(parser_peek_disc(p));
         let prec = binop_prec(op);
         if prec < min_prec { break; };
 
@@ -532,13 +498,11 @@ fn parse_binary(p: &mut Parser, min_prec: i64) -> i64 {
 
 fn parse_expr(p: &mut Parser) -> i64 {
     // Check for assignment
-    let tok = parser_peek(p);
     // Simple: just parse binary
     let expr = parse_binary(p, 0);
 
     // Check for = or +=, -=, *=, /=
-    let tok2 = parser_peek(p);
-    if tok2.disc == 42 {
+    if parser_peek_disc(p) == 42 {
         // Simple assignment
         parser_advance(p);
         let rhs = parse_expr(p);
@@ -546,18 +510,41 @@ fn parse_expr(p: &mut Parser) -> i64 {
         p.expr_nodes[idx - 1].left = expr;
         p.expr_nodes[idx - 1].right = rhs;
         idx
-    } else if tok2.disc == 43 || tok2.disc == 44 || tok2.disc == 45 || tok2.disc == 46 {
-        // Compound assignment: +=, -=, *=, /=
-        let op_str = if tok2.disc == 43 { "+=" }
-                     else if tok2.disc == 44 { "-=" }
-                     else if tok2.disc == 45 { "*=" }
-                     else { "/=" };
+    } else if parser_peek_disc(p) == 43 {
+        // += assignment
         parser_advance(p);
         let rhs = parse_expr(p);
         let idx = add_expr(p, "assign_op");
         p.expr_nodes[idx - 1].left = expr;
         p.expr_nodes[idx - 1].right = rhs;
-        p.expr_nodes[idx - 1].sval = op_str;
+        p.expr_nodes[idx - 1].sval = "+=";
+        idx
+    } else if parser_peek_disc(p) == 44 {
+        // -= assignment
+        parser_advance(p);
+        let rhs = parse_expr(p);
+        let idx = add_expr(p, "assign_op");
+        p.expr_nodes[idx - 1].left = expr;
+        p.expr_nodes[idx - 1].right = rhs;
+        p.expr_nodes[idx - 1].sval = "-=";
+        idx
+    } else if parser_peek_disc(p) == 45 {
+        // *= assignment
+        parser_advance(p);
+        let rhs = parse_expr(p);
+        let idx = add_expr(p, "assign_op");
+        p.expr_nodes[idx - 1].left = expr;
+        p.expr_nodes[idx - 1].right = rhs;
+        p.expr_nodes[idx - 1].sval = "*=";
+        idx
+    } else if parser_peek_disc(p) == 46 {
+        // /= assignment
+        parser_advance(p);
+        let rhs = parse_expr(p);
+        let idx = add_expr(p, "assign_op");
+        p.expr_nodes[idx - 1].left = expr;
+        p.expr_nodes[idx - 1].right = rhs;
+        p.expr_nodes[idx - 1].sval = "/=";
         idx
     } else { expr }
 }
@@ -566,10 +553,8 @@ fn parse_block_expr(p: &mut Parser) -> i64 {
     let body_start = p.stmt_nodes.len() + 1;
     let mut count: i64 = 0;
     loop {
-        let tok = parser_peek(p);
-        let d = tok.disc;
-        if d == 50 { break; };
-        if d == 61 { break; };
+        if parser_peek_disc(p) == 50 { break; };
+        if parser_peek_disc(p) == 61 { break; };
         parse_stmt(p);
         count = count + 1;
     };
@@ -586,8 +571,7 @@ fn parse_if_expr(p: &mut Parser) -> i64 {
     let then_expr = parse_expr(p);
 
     let mut else_idx: i64 = 0;
-    let tok = parser_peek(p);
-    if tok.disc == 8 {
+    if parser_peek_disc(p) == 8 {
         parser_advance(p);
         else_idx = parse_expr(p);
     };
@@ -607,10 +591,8 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
     let mut arm_count: i64 = 0;
 
     loop {
-        let tok = parser_peek(p);
-        let d = tok.disc;
-        if d == 50 { break; };
-        if d == 61 { break; };
+        if parser_peek_disc(p) == 50 { break; };
+        if parser_peek_disc(p) == 61 { break; };
 
         // Parse pattern
         let pat_tok = parser_advance(p);
@@ -622,8 +604,7 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
             pat_kind = "enum_variant";
             pat_name = pat_tok.sval;
             // Check for ::Variant
-            let next = parser_peek(p);
-            if next.disc == 60 {
+            if parser_peek_disc(p) == 60 {
                 parser_advance(p);
                 let variant_tok = parser_advance(p);
                 if variant_tok.disc == 3 { pat_name = variant_tok.sval; };
@@ -633,15 +614,11 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
         parser_advance(p); // skip =>
         let body = parse_expr(p);
 
-        let arm = MatchArm {
-            pat_kind: pat_kind, pat_name: pat_name,
-            pat_bind: pat_bind, body_expr: body,
-        };
+        let arm = MatchArm { pat_kind: pat_kind, pat_name: pat_name, pat_bind: pat_bind, body_expr: body };
         p.match_arms.push(arm);
         arm_count = arm_count + 1;
 
-        let t = parser_peek(p);
-        if t.disc == 53 { parser_advance(p); };
+        if parser_peek_disc(p) == 53 { parser_advance(p); };
     };
 
     parser_advance(p); // skip }
@@ -656,23 +633,17 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
 // ── Statement parsing ──
 
 fn parse_stmt(p: &mut Parser) -> i64 {
-    let tok = parser_peek(p);
-    let disc = tok.disc;
-
     // Let (5)
-    if disc == 5 {
+    if parser_peek_disc(p) == 5 {
         parser_advance(p); // skip let
         let mut mutable = false;
-        let t2 = parser_peek(p);
-        if t2.disc == 6 { parser_advance(p); mutable = true; };
+        if parser_peek_disc(p) == 6 { parser_advance(p); mutable = true; };
         let name_tok = parser_advance(p);
         let mut name = name_tok.sval;
         // skip optional : Type
-        let t3 = parser_peek(p);
-        if t3.disc == 55 { parser_advance(p); parser_advance(p); }; // skip : and type
+        if parser_peek_disc(p) == 55 { parser_advance(p); parser_advance(p); }; // skip : and type
         // =
-        let t4 = parser_peek(p);
-        if t4.disc == 42 {
+        if parser_peek_disc(p) == 42 {
             parser_advance(p);
             let init = parse_expr(p);
             let idx = add_stmt(p, "let");
@@ -686,18 +657,17 @@ fn parse_stmt(p: &mut Parser) -> i64 {
     };
 
     // Return (10)
-    if disc == 10 {
+    if parser_peek_disc(p) == 10 {
         parser_advance(p);
-        let t2 = parser_peek(p);
         let mut expr_idx: i64 = 0;
-        if !is_stmt_end(t2) { expr_idx = parse_expr(p); };
+        if !is_stmt_end(parser_peek_disc(p)) { expr_idx = parse_expr(p); };
         let idx = add_stmt(p, "return");
         p.stmt_nodes[idx - 1].expr_idx = expr_idx;
         return idx;
     };
 
     // While (11)
-    if disc == 11 {
+    if parser_peek_disc(p) == 11 {
         parser_advance(p);
         let cond = parse_expr(p);
         parser_advance(p); parser_advance(p);
@@ -705,29 +675,28 @@ fn parse_stmt(p: &mut Parser) -> i64 {
     };
 
     // Break (14)
-    if disc == 14 {
+    if parser_peek_disc(p) == 14 {
         parser_advance(p);
         return add_stmt(p, "break");
     };
 
     // Continue (15)
-    if disc == 15 {
+    if parser_peek_disc(p) == 15 {
         parser_advance(p);
         return add_stmt(p, "continue");
     };
 
     // Loop (13)
-    if disc == 13 {
+    if parser_peek_disc(p) == 13 {
         parser_advance(p);
         parser_advance(p); // skip {
         let body_start = p.stmt_nodes.len() + 1;
         let mut body_count: i64 = 0;
         loop {
-            let t2 = parser_peek(p);
-            if is_end_of_block(t2) { break; };
+            if is_end_of_block(parser_peek_disc(p)) { break; };
             parse_stmt(p);
             body_count = body_count + 1;
-            let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
+            if parser_peek_disc(p) == 54 { parser_advance(p); };
         };
         parser_advance(p); // skip }
         let idx = add_stmt(p, "loop");
@@ -752,35 +721,30 @@ fn parse_fn(p: &mut Parser) -> FnDef {
     parser_advance(p); // skip (
     let mut params = Vec::new();
     loop {
-        let t = parser_peek(p);
-        if is_end_of_paren(t) { break; };
+        if is_end_of_paren(parser_peek_disc(p)) { break; };
         let pname_tok = parser_advance(p);
         let pname = pname_tok.sval;
         parser_advance(p); // skip :
         // Skip type tokens until , or ) (handles &Vec<Expr>, &mut Lexer, etc.)
         let mut ptype = "";
         loop {
-            let tt = parser_peek(p);
-            if tt.disc == 53 || tt.disc == 48 || tt.disc == 61 { break; }; // Comma/RParen/Eof
+            if parser_peek_disc(p) == 53 || parser_peek_disc(p) == 48 || parser_peek_disc(p) == 61 { break; }; // Comma/RParen/Eof
             let type_tok = parser_advance(p);
             if ptype != "" { ptype = ptype + " "; };
             ptype = ptype + type_tok.sval;
         };
         params.push(Param { name: pname, type_ann: ptype });
-        let t2 = parser_peek(p);
-        if t2.disc == 53 { parser_advance(p); }
+        if parser_peek_disc(p) == 53 { parser_advance(p); }
         else { break; };
     };
     parser_advance(p); // skip )
 
     let mut return_type = "";
-    let t3 = parser_peek(p);
-    if t3.disc == 58 {
+    if parser_peek_disc(p) == 58 {
         parser_advance(p);
         // Skip return type tokens until { (handles &Vec<Expr>, etc.)
         loop {
-            let tt = parser_peek(p);
-            if tt.disc == 49 || tt.disc == 61 { break; }; // LBrace or Eof
+            if parser_peek_disc(p) == 49 || parser_peek_disc(p) == 61 { break; }; // LBrace or Eof
             let ret_tok = parser_advance(p);
             if return_type != "" { return_type = return_type + " "; };
             return_type = return_type + ret_tok.sval;
@@ -791,13 +755,11 @@ fn parse_fn(p: &mut Parser) -> FnDef {
     let body_start = p.stmt_nodes.len() + 1;
     let mut body_count: i64 = 0;
     loop {
-        let t4 = parser_peek(p);
-        if is_end_of_block(t4) { break; };
+        if is_end_of_block(parser_peek_disc(p)) { break; };
         parse_stmt(p);
         body_count = body_count + 1;
         // skip optional semicolon
-        let ts = parser_peek(p);
-        if ts.disc == 54 { parser_advance(p); };
+        if parser_peek_disc(p) == 54 { parser_advance(p); };
     };
     parser_advance(p); // skip }
 
@@ -811,23 +773,20 @@ fn parse_struct_def(p: &mut Parser) -> StructDef {
     parser_advance(p); // skip {
     let mut fields = Vec::new();
     loop {
-        let t = parser_peek(p);
-        if is_end_of_block(t) { break; };
+        if is_end_of_block(parser_peek_disc(p)) { break; };
         let fname_tok = parser_advance(p);
         let fname = fname_tok.sval;
         parser_advance(p); // skip :
         // Skip type tokens until , or } (handles &Vec<Expr>, etc.)
         let mut ftype = "";
         loop {
-            let tt = parser_peek(p);
-            if tt.disc == 53 || tt.disc == 50 || tt.disc == 61 { break; }; // Comma/RBrace/Eof
+            if parser_peek_disc(p) == 53 || parser_peek_disc(p) == 50 || parser_peek_disc(p) == 61 { break; }; // Comma/RBrace/Eof
             let type_tok = parser_advance(p);
             if ftype != "" { ftype = ftype + " "; };
             ftype = ftype + type_tok.sval;
         };
         fields.push(StructField { name: fname, type_ann: ftype });
-        let t2 = parser_peek(p);
-        if t2.disc == 53 { parser_advance(p); }
+        if parser_peek_disc(p) == 53 { parser_advance(p); }
         else { break; };
     };
     parser_advance(p); // skip }
@@ -841,32 +800,27 @@ fn parse_enum_def(p: &mut Parser) -> EnumDef {
     parser_advance(p); // skip {
     let mut variants = Vec::new();
     loop {
-        let t = parser_peek(p);
-        if is_end_of_block(t) { break; };
+        if is_end_of_block(parser_peek_disc(p)) { break; };
         let vname_tok = parser_advance(p);
         let vname = vname_tok.sval;
         let mut vfields = Vec::new();
-        let t2 = parser_peek(p);
-        if t2.disc == 47 {
+        if parser_peek_disc(p) == 47 {
                 parser_advance(p);
                 loop {
-                    let t3 = parser_peek(p);
-                    if is_end_of_paren(t3) { break; };
+                    if is_end_of_paren(parser_peek_disc(p)) { break; };
                     let fname_tok = parser_advance(p);
                     let fname = fname_tok.sval;
                     parser_advance(p); // skip :
                     let ftype_tok = parser_advance(p);
                     let ftype = ftype_tok.sval;
                     vfields.push(StructField { name: fname, type_ann: ftype });
-                    let t4 = parser_peek(p);
-                    if t4.disc == 53 { parser_advance(p); }
+                    if parser_peek_disc(p) == 53 { parser_advance(p); }
                     else { break; };
                 };
                 parser_advance(p); // skip )
         };
         variants.push(EnumVariant { name: vname, fields: vfields });
-        let t5 = parser_peek(p);
-        if t5.disc == 53 { parser_advance(p); }
+        if parser_peek_disc(p) == 53 { parser_advance(p); }
         else { break; };
     };
     parser_advance(p); // skip }
@@ -875,24 +829,19 @@ fn parse_enum_def(p: &mut Parser) -> EnumDef {
 
 // ── Pattern helpers (avoids OR-patterns) ──
 
-fn is_end_of_block(tok: Token) -> bool {
-    let d = tok.disc;
+fn is_end_of_block(d: i64) -> bool {
     d == 50 || d == 61  // RBrace(50) or Eof(61)
 }
 
-fn is_end_of_paren(tok: Token) -> bool {
-    let d = tok.disc;
+fn is_end_of_paren(d: i64) -> bool {
     d == 48 || d == 61  // RParen(48) or Eof(61)
 }
 
-fn is_stmt_end(tok: Token) -> bool {
-    let d = tok.disc;
+fn is_stmt_end(d: i64) -> bool {
     d == 54 || d == 50 || d == 61  // Semicolon(54), RBrace(50), Eof(61)
 }
 
-fn parse_program(tokens: Vec<Token>) -> Program {
-    let mut p = parser_new(tokens);
-
+fn parse_program_inner(p: &mut Parser) -> Program {
     let mut structs = Vec::new();
     let mut enums = Vec::new();
     let mut fns = Vec::new();
@@ -900,52 +849,44 @@ fn parse_program(tokens: Vec<Token>) -> Program {
     let mut main_count: i64 = 0;
 
     loop {
-        if parser_at_eof(&p) { break; };
-        let tok = parser_peek(&p);
-        let d = tok.disc;
+        if parser_at_eof(p) { break; };
+        let d = parser_peek_disc(p);
 
         // Struct (16)
         if d == 16 {
-            structs.push(parse_struct_def(&mut p));
-            let t2 = parser_peek(&p);
-            if t2.disc == 54 { parser_advance(&mut p); };
+            structs.push(parse_struct_def(p));
+            if parser_peek_disc(p) == 54 { parser_advance(p); };
         } else if d == 17 {
             // Enum (17)
-            enums.push(parse_enum_def(&mut p));
-            let t2 = parser_peek(&p);
-            if t2.disc == 54 { parser_advance(&mut p); };
+            enums.push(parse_enum_def(p));
+            if parser_peek_disc(p) == 54 { parser_advance(p); };
         } else if d == 4 {
             // Fn (4)
-            fns.push(parse_fn(&mut p));
-            let t2 = parser_peek(&p);
-            if t2.disc == 54 { parser_advance(&mut p); };
+            fns.push(parse_fn(p));
+            if parser_peek_disc(p) == 54 { parser_advance(p); };
         } else if d == 61 {
             // Eof (61)
             break;
         } else {
             // Top-level expression statement
             if main_stmts_start == 1 { main_stmts_start = p.stmt_nodes.len() + 1; };
-            parse_stmt(&mut p);
+            parse_stmt(p);
             main_count = main_count + 1;
-            let t2 = parser_peek(&p);
-            if t2.disc == 54 { parser_advance(&mut p); };
+            if parser_peek_disc(p) == 54 { parser_advance(p); };
         };
     };
 
-    Program {
-        structs: structs,
-        enums: enums,
-        fns: fns,
-        main_stmts_start: main_stmts_start,
-        main_stmts_count: main_count,
-        expr_nodes: p.expr_nodes,
-        stmt_nodes: p.stmt_nodes,
-        match_arms: p.match_arms,
-    }
+    Program { structs: structs, enums: enums, fns: fns, main_stmts_start: main_stmts_start, main_stmts_count: main_count, expr_nodes: p.expr_nodes, stmt_nodes: p.stmt_nodes, match_arms: p.match_arms }
 }
 
-// HIR data structures — compact flat representation for self-hosting compiler
+fn parse_program(tokens: Vec<Token>) -> Program {
+    let mut p = parser_new(tokens);
+    parse_program_inner(&mut p)
+}
+
+// HIR data structures — v0.3.3 compact flat representation
 // Based on tenth/src/hir/hir.rs + types.rs, adapted for Tenth's type system
+// Uses `..` default field syntax for zero-value initialization
 
 // ── Base type discriminants ──
 // 0:I64 1:I32 2:F64 3:F32 4:Bool 5:Str 6:Unit 7:Char
@@ -1000,7 +941,7 @@ struct HirExpr {
     captures_start: i64,
     captures_count: i64,
     // Names
-    op: str,         // Binary/Unary operator: "add","sub","mul","div","mod","eq","neq","lt","gt","lte","gte","and","or","neg","not"
+    op: str,         // Binary/Unary operator
     name: str,       // Var name, field name, method name, struct name
     variant: str,    // Enum variant name
     // Range flags
@@ -1066,15 +1007,12 @@ struct HirProgram {
     captures: Vec<HirCapture>,  // flat: closure capture names
 }
 
-// HIR Lowerer v2 — creates fully-formed nodes before pushing to Vec
+// HIR Lowerer v3 — v0.3.3 idioms: `..` defaults, for-in, generic returns
+// Creates fully-formed nodes before pushing to Vec
 // Avoids post-push field mutation (incompatible with VM value semantics)
 
 fn add_type(p: &mut HirProgram, disc: i64, sub: i64, name: str, params_start: i64, params_count: i64, ret_ty: i64) -> i64 {
-    let t = HirType {
-        disc: disc, sub: sub, name: name,
-        params_start: params_start, params_count: params_count,
-        ret_ty: ret_ty,
-    };
+    let t = HirType { disc: disc, sub: sub, name: name, params_start: params_start, params_count: params_count, ret_ty: ret_ty };
     p.type_nodes.push(t);
     p.type_nodes.len()
 }
@@ -1093,6 +1031,7 @@ fn parse_type(p: &mut HirProgram, s: str) -> i64 {
 }
 
 // Push a fully-formed HirExpr and return its 1-based index
+// Uses `..` to fill zero-value fields not explicitly set
 fn push_expr(p: &mut HirProgram, disc: i64, lit_ival: i64, lit_fval: f64, lit_sval: str, lit_bval: bool, left: i64, right: i64, cond: i64, body: i64, alt: i64, args_start: i64, args_count: i64, stmts_start: i64, stmts_count: i64, op: str, name: str, variant: str, ty: i64) -> i64 {
     let e = HirExpr {
         disc: disc,
@@ -1100,13 +1039,8 @@ fn push_expr(p: &mut HirProgram, disc: i64, lit_ival: i64, lit_fval: f64, lit_sv
         left: left, right: right, cond: cond, body: body, alt: alt,
         args_start: args_start, args_count: args_count,
         stmts_start: stmts_start, stmts_count: stmts_count,
-        fields_start: 0, fields_count: 0,
-        generics_start: 0, generics_count: 0,
-        params_start: 0, params_count: 0,
-        captures_start: 0, captures_count: 0,
-        op: op, name: name, variant: variant,
-        range_inclusive: false,
-        ty: ty,
+        op: op, name: name, variant: variant, ty: ty,
+        ..  // fields_start/generics_start/params_start/captures_start/range_inclusive default to 0/false
     };
     p.expr_nodes.push(e);
     p.expr_nodes.len()
@@ -1114,8 +1048,7 @@ fn push_expr(p: &mut HirProgram, disc: i64, lit_ival: i64, lit_fval: f64, lit_sv
 
 fn push_stmt(p: &mut HirProgram, disc: i64, name: str, expr: i64, cond: i64, body_start: i64, body_count: i64, init: i64, mutable: bool) -> i64 {
     let s = HirStmt {
-        disc: disc,
-        name: name, expr: expr, cond: cond,
+        disc: disc, name: name, expr: expr, cond: cond,
         body_start: body_start, body_count: body_count,
         init: init, mutable: mutable,
     };
@@ -1127,10 +1060,10 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     if idx <= 0 { return 0; };
     if idx > exprs.len() { return 0; };
     if depth > 50 { return 0; };
-    
+
     let e = exprs[idx - 1];
     let kind = e.kind;
-    
+
     if kind == "int" {
         let ty = add_type(p, 0, 0, "", 0, 0, 0);
         return push_expr(p, 0, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
@@ -1147,76 +1080,68 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         let ty = add_type(p, 0, 5, "", 0, 0, 0);
         return push_expr(p, 3, 0, 0.0, e.sval, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
     };
-    
+
     if kind == "ident" {
         return push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
     };
-    
+
     if kind == "binary" {
         let l = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         let r = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 5, 0, 0.0, "", false, l, r, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", 0);
     };
-    
+
     if kind == "unary" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 6, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", 0);
     };
-    
+
     if kind == "call" {
         let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
         let start = p.expr_nodes.len() + 1;
         let mut count: i64 = 0;
         if e.arg_count > 0 {
-            let s = e.arg_start;
-            let end = s + e.arg_count;
-            let mut i = s;
-            while i < end {
+            for i in e.arg_start..(e.arg_start + e.arg_count) {
                 lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
                 count = count + 1;
-                i = i + 1;
             };
         };
         return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "method_call" {
         let recv = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         let start = p.expr_nodes.len() + 1;
         let mut count: i64 = 0;
         if e.arg_count > 0 {
-            let s = e.arg_start;
-            let end = s + e.arg_count;
-            let mut i = s;
-            while i < end {
+            for i in e.arg_start..(e.arg_start + e.arg_count) {
                 lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
                 count = count + 1;
-                i = i + 1;
             };
         };
         return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, start, count, 0, 0, "", e.sval, "", 0);
     };
-    
+
     if kind == "field" {
         let target = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 10, 0, 0.0, "", false, target, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
     };
-    
+
     if kind == "ref" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 18, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "deref" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 20, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "move" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 30, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "if" {
         let cond = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         let then_ = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
@@ -1226,23 +1151,19 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_expr(p, 12, 0, 0.0, "", false, 0, 0, cond, then_, else_, 0, 0, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "block" {
         let start = p.stmt_nodes.len() + 1;
         let mut count: i64 = 0;
         if e.extra_count > 0 {
-            let s = e.extra_start;
-            let end = s + e.extra_count;
-            let mut i = s;
-            while i < end {
+            for i in e.extra_start..(e.extra_start + e.extra_count) {
                 lower_stmt(p, i, exprs, stmts, match_arms, depth + 1);
                 count = count + 1;
-                i = i + 1;
             };
         };
         return push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
     };
-    
+
     if kind == "assign" {
         let lhs = e.left;
         let lexpr = exprs[lhs - 1];
@@ -1257,7 +1178,7 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_expr(p, 14, 0, 0.0, "", false, 0, rhs, 0, 0, 0, 0, 0, 0, 0, "", lexpr.sval, "", 0);
     };
-    
+
     if kind == "assign_op" {
         let lhs = e.left;
         let lexpr = exprs[lhs - 1];
@@ -1268,7 +1189,7 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_expr(p, 24, 0, 0.0, "", false, 0, rhs, 0, 0, 0, 0, 0, 0, 0, e.sval, lexpr.sval, "", 0);
     };
-    
+
     if kind == "closure" {
         // Lower the body
         let body = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
@@ -1276,27 +1197,17 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         let params_start = p.expr_nodes.len() + 1;
         let mut params_count: i64 = 0;
         if e.extra_count > 0 {
-            let mut i = e.extra_start;
-            let end = e.extra_start + e.extra_count;
-            while i < end {
+            for i in e.extra_start..(e.extra_start + e.extra_count) {
                 if i <= exprs.len() {
                     let param_expr = exprs[i - 1];
                     let pidx = push_expr(p, 4, 0, 0.0, param_expr.sval, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", param_expr.sval, "", 0);
                     params_count = params_count + 1;
                 };
-                i = i + 1;
             };
         };
-        // Analyze free variables for captures
+        // Captures — simplified: no deep analysis in self-hosting compiler
         let captures_start = p.captures.len() + 1;
-        let mut captures_count: i64 = 0;
-        // Simple capture analysis: collect Var references in body that are not params
-        // This is a simplified version — the full Rust implementation has recursive analysis
-        let body_expr_idx = body;
-        if body_expr_idx > 0 && body_expr_idx <= p.expr_nodes.len() {
-            // For now, we don't do deep analysis in the self-hosting compiler.
-            // Captures will be resolved at runtime by the interpreter.
-        };
+        let captures_count: i64 = 0;
         let result = push_expr(p, 23, 0, 0.0, "", false, 0, 0, 0, body, 0, 0, 0, 0, 0, "", "", "", 0);
         p.expr_nodes[result - 1].params_start = params_start;
         p.expr_nodes[result - 1].params_count = params_count;
@@ -1304,43 +1215,36 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         p.expr_nodes[result - 1].captures_count = captures_count;
         return result;
     };
-    
+
     if kind == "array" {
         let start = p.expr_nodes.len() + 1;
         let mut count: i64 = 0;
         if e.arg_count > 0 {
-            let mut i = e.arg_start;
-            let end = e.arg_start + e.arg_count;
-            while i < end {
+            for i in e.arg_start..(e.arg_start + e.arg_count) {
                 lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
                 count = count + 1;
-                i = i + 1;
             };
         };
         return push_expr(p, 22, 0, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "tensor" {
         let start = p.expr_nodes.len() + 1;
         let mut count: i64 = 0;
         if e.arg_count > 0 {
-            let mut i = e.arg_start;
-            let end = e.arg_start + e.arg_count;
-            while i < end {
+            for i in e.arg_start..(e.arg_start + e.arg_count) {
                 lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
                 count = count + 1;
-                i = i + 1;
             };
         };
-        let result = push_expr(p, 29, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
-        return result;
+        return push_expr(p, 29, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
     };
-    
+
     if kind == "match" {
         let scrutinee = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 17, 0, 0.0, "", false, scrutinee, 0, 0, 0, 0, 0, 0, e.extra_start, e.extra_count, "", "", "", 0);
     };
-    
+
     push_expr(p, 0, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0)
 }
 
@@ -1349,7 +1253,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     if idx > stmts.len() { return 0; };
     let s = stmts[idx - 1];
     let kind = s.kind;
-    
+
     if kind == "let" {
         let mut init: i64 = 0;
         if s.expr_idx > 0 {
@@ -1357,7 +1261,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_stmt(p, 0, s.name, 0, 0, 0, 0, init, true);
     };
-    
+
     if kind == "return" {
         let mut re: i64 = 0;
         if s.expr_idx > 0 {
@@ -1365,7 +1269,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_stmt(p, 2, "", re, 0, 0, 0, 0, false);
     };
-    
+
     if kind == "expr" {
         let mut ee: i64 = 0;
         if s.expr_idx > 0 {
@@ -1373,96 +1277,67 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         return push_stmt(p, 1, "", ee, 0, 0, 0, 0, false);
     };
-    
+
     if kind == "loop" {
         let bstart = p.stmt_nodes.len() + 1;
         let mut bcount: i64 = 0;
         if s.body_count > 0 {
-            let mut i = s.body_start;
-            let end = s.body_start + s.body_count;
-            while i < end {
+            for i in s.body_start..(s.body_start + s.body_count) {
                 lower_stmt(p, i, exprs, stmts, match_arms, depth + 1);
                 bcount = bcount + 1;
-                i = i + 1;
             };
         };
         return push_stmt(p, 7, "", 0, 0, bstart, bcount, 0, false);
     };
-    
+
     if kind == "break" { return push_stmt(p, 5, "", 0, 0, 0, 0, 0, false); };
     if kind == "continue" { return push_stmt(p, 6, "", 0, 0, 0, 0, 0, false); };
-    
+
     push_stmt(p, 1, "", 0, 0, 0, 0, 0, false)
 }
 
-fn lower_program(program: Program) -> HirProgram {
-    let mut p = HirProgram {
-        fns: Vec::new(),
-        main_expr: 0,
-        expr_nodes: Vec::new(),
-        stmt_nodes: Vec::new(),
-        type_nodes: Vec::new(),
-        type_args: Vec::new(),
-        type_params: Vec::new(),
-        match_arms: Vec::new(),
-        structs: Vec::new(),
-        captures: Vec::new(),
-    };
-    
+fn lower_program_inner(p: &mut HirProgram, program: Program) {
     // Lower struct definitions
-    let mut si: i64 = 0;
-    while si < program.structs.len() {
+    for si in 0..program.structs.len() {
         let sd = program.structs[si];
         let mut fields = Vec::new();
-        let mut fi: i64 = 0;
-        while fi < sd.fields.len() {
+        for fi in 0..sd.fields.len() {
             let sf = sd.fields[fi];
-            let fty = parse_type(&mut p, sf.type_ann);
+            let fty = parse_type(p, sf.type_ann);
             fields.push(HirStructField { name: sf.name, ty: fty });
-            fi = fi + 1;
         };
         p.structs.push(HirStructDef { name: sd.name, fields: fields });
-        si = si + 1;
     };
-    
-    let mut i: i64 = 0;
-    while i < program.fns.len() {
+
+    for i in 0..program.fns.len() {
         let f = program.fns[i];
-        let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
-        let ret_ty = parse_type(&mut p, f.return_type);
+        let body_expr = lower_fn_body(p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
+        let ret_ty = parse_type(p, f.return_type);
         let mut params = Vec::new();
-        let mut j: i64 = 0;
-        while j < f.params.len() {
+        for j in 0..f.params.len() {
             let param = f.params[j];
-            let pty = parse_type(&mut p, param.type_ann);
+            let pty = parse_type(p, param.type_ann);
             params.push(HirParam { name: param.name, ty: pty });
-            j = j + 1;
         };
-        let hf = HirFnDef {
-            name: f.name,
-            params: params,
-            return_type: ret_ty,
-            body: body_expr,
-            generics: Vec::new(),
-        };
+        let hf = HirFnDef { name: f.name, params: params, return_type: ret_ty, body: body_expr, generics: Vec::new() };
         p.fns.push(hf);
-        i = i + 1;
     };
-    
+
     if program.main_stmts_count > 0 {
         let start = p.stmt_nodes.len() + 1;
         let mut count: i64 = 0;
-        let mut k: i64 = program.main_stmts_start;
-        let end = program.main_stmts_start + program.main_stmts_count;
-        while k < end {
-            lower_stmt(&mut p, k, program.expr_nodes, program.stmt_nodes, program.match_arms, 0);
+        for k in program.main_stmts_start..(program.main_stmts_start + program.main_stmts_count) {
+            lower_stmt(p, k, program.expr_nodes, program.stmt_nodes, program.match_arms, 0);
             count = count + 1;
-            k = k + 1;
         };
-        let ni = push_expr(&mut p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
+        let ni = push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
         p.main_expr = ni;
     };
-    
+}
+
+fn lower_program(program: Program) -> HirProgram {
+    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), captures: Vec::new() };
+    lower_program_inner(&mut p, program);
     p
 }
 
@@ -1470,17 +1345,15 @@ fn lower_fn_body(p: &mut HirProgram, body_start: i64, body_count: i64, exprs: Ve
     if body_count <= 0 { return 0; };
     let start = p.stmt_nodes.len() + 1;
     let mut count: i64 = 0;
-    let mut i: i64 = body_start;
-    let end = body_start + body_count;
-    while i < end {
+    for i in body_start..(body_start + body_count) {
         lower_stmt(p, i, exprs, stmts, match_arms, 0);
         count = count + 1;
-        i = i + 1;
     };
     push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0)
 }
 
-// Minimal WASM emitter — compiles HirProgram to WASM binary bytes
+// Minimal WASM emitter — v0.3.3 idioms: for-in, `..` defaults, generic returns
+// Compiles HirProgram to WASM binary bytes
 // Output: Vec<i64> where each element is a byte (0-255)
 
 // ── LEB128 encoding ──
@@ -1513,8 +1386,7 @@ fn leb128_s(value: i64, out: &mut Vec<i64>) {
 fn emit_section(out: &mut Vec<i64>, section_id: i64, body: Vec<i64>) {
     out.push(section_id);
     leb128_u(body.len(), out);
-    let mut i: i64 = 0;
-    while i < body.len() { out.push(body.get(i)); i = i + 1; };
+    for i in 0..body.len() { out.push(body.get(i)); };
 }
 
 // ── WASM opcodes ──
@@ -1571,43 +1443,39 @@ struct WasmCtx {
 }
 
 fn ctx_new() -> WasmCtx {
-    WasmCtx {
-        out: Vec::new(),
-        code_out: Vec::new(),
-        func_count: 0,
-        temp_local: 0,
-    }
+    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0 }
 }
 
 // ── Compile one function body ──
 
-fn compile_fn_body(ctx: &mut WasmCtx, hir: HirProgram, fn_idx: i64) {
+fn compile_fn_body_inner(ctx: &mut WasmCtx, body: &mut Vec<i64>, hir: HirProgram, fn_idx: i64) {
     let f = hir.fns[fn_idx];
-    
+
     // Count locals (params + let bindings)
     let num_params = f.params.len();
-    let num_locals = num_params; // simplified: no extra locals
-    
-    // Function body header
-    let mut body: Vec<i64> = Vec::new();
-    
+
     // Local declaration count: 16 temp locals (i64)
-    leb128_u(1, &mut body); // 1 group
-    leb128_u(16, &mut body); // 16 locals
+    leb128_u(1, body); // 1 group
+    leb128_u(16, body); // 16 locals
     body.push(126); // i64
-    
+
     // Set temp local index
     ctx.temp_local = num_params;
-    
+
     // Compile body expression
-    compile_expr(ctx, &mut body, hir, f.body);
-    
-    wasm_end(&mut body);
-    
+    compile_expr(ctx, body, hir, f.body);
+
+    wasm_end(body);
+}
+
+fn compile_fn_body(ctx: &mut WasmCtx, hir: HirProgram, fn_idx: i64) {
+    let mut body: Vec<i64> = Vec::new();
+
+    compile_fn_body_inner(ctx, &mut body, hir, fn_idx);
+
     // Emit function body size + body
     leb128_u(body.len(), &mut ctx.code_out);
-    let mut i: i64 = 0;
-    while i < body.len() { ctx.code_out.push(body[i]); i = i + 1; };
+    for i in 0..body.len() { ctx.code_out.push(body[i]); };
 }
 
 // ── Struct offset lookup ──
@@ -1620,20 +1488,16 @@ fn type_struct_name(hir: HirProgram, ty_idx: i64) -> str {
 }
 
 fn struct_field_offset(hir: HirProgram, struct_name: str, field_name: str) -> i64 {
-    let mut si: i64 = 0;
-    while si < hir.structs.len() {
+    for si in 0..hir.structs.len() {
         let sd = hir.structs[si];
         if sd.name == struct_name {
             let mut offset: i64 = 0;
-            let mut fi: i64 = 0;
-            while fi < sd.fields.len() {
+            for fi in 0..sd.fields.len() {
                 if sd.fields[fi].name == field_name { return offset; };
                 offset = offset + 8; // each i64 field is 8 bytes
-                fi = fi + 1;
             };
             return offset; // field not found, return end offset
         };
-        si = si + 1;
     };
     0
 }
@@ -1642,7 +1506,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if idx <= 0 || idx > hir.expr_nodes.len() { return; };
     let e = hir.expr_nodes[idx - 1];
     let d = e.disc;
-    
+
     if d == 0 {
         // IntLiteral
         wasm_i64_const(out, e.lit_ival);
@@ -1651,25 +1515,18 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if d == 4 {
         // Var — look up local index by name
         let name = e.name;
-        // Simple: var index = position in params (0-based)
-        // For now: crude lookup
         let mut local_idx: i64 = 0;
-        // Search params of current function
         let mut found: bool = false;
-        let mut fi: i64 = 0;
-        while fi < hir.fns.len() {
+        for fi in 0..hir.fns.len() {
             let func = hir.fns[fi];
-            let mut pi: i64 = 0;
-            while pi < func.params.len() {
+            for pi in 0..func.params.len() {
                 if func.params[pi].name == name {
                     local_idx = pi;
                     found = true;
                     break;
                 };
-                pi = pi + 1;
             };
             if found { break; };
-            fi = fi + 1;
         };
         wasm_local_get(out, local_idx);
         return;
@@ -1706,25 +1563,20 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     };
     if d == 14 {
         // Assign — target is a variable name, value is compiled
-        // We need local.set — find the local index by name
         compile_expr(ctx, out, hir, e.right);
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
-        let mut fi: i64 = 0;
-        while fi < hir.fns.len() {
+        for fi in 0..hir.fns.len() {
             let func = hir.fns[fi];
-            let mut pi: i64 = 0;
-            while pi < func.params.len() {
+            for pi in 0..func.params.len() {
                 if func.params[pi].name == name {
                     local_idx = pi;
                     found = true;
                     break;
                 };
-                pi = pi + 1;
             };
             if found { break; };
-            fi = fi + 1;
         };
         wasm_local_set(out, local_idx);
         return;
@@ -1733,13 +1585,11 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         // StructLiteral — allocate using global bump pointer
         let sname = e.name;
         let mut size: i64 = 0;
-        let mut si: i64 = 0;
-        while si < hir.structs.len() {
+        for si in 0..hir.structs.len() {
             if hir.structs[si].name == sname {
                 size = hir.structs[si].fields.len() * 8;
                 break;
             };
-            si = si + 1;
         };
         // global.get $bump (idx 0) → local.tee $temp (idx = num_params)
         wasm_global_get(out, 0);
@@ -1769,9 +1619,9 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         let method = e.name;
         if e.left > 0 { compile_expr(ctx, out, hir, e.left); };
         if e.args_count > 0 {
-            let mut ai = e.args_start;
-            let end = e.args_start + e.args_count;
-            while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+            for ai in e.args_start..(e.args_start + e.args_count) {
+                compile_expr(ctx, out, hir, ai);
+            };
         };
         if method == "len" {
             wasm_call(out, 2); // import 2: env.vec_len
@@ -1830,11 +1680,8 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if d == 13 {
         // Block — compile statements, then final expr
         if e.stmts_count > 0 {
-            let mut s = e.stmts_start;
-            let end = e.stmts_start + e.stmts_count;
-            while s < end {
+            for s in e.stmts_start..(e.stmts_start + e.stmts_count) {
                 compile_stmt(ctx, out, hir, s);
-                s = s + 1;
             };
         };
         return;
@@ -1851,9 +1698,9 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         let func_name = hir.expr_nodes[e.left - 1].name;
         if func_name == "println" {
             if e.args_count > 0 {
-                let mut ai = e.args_start;
-                let end = e.args_start + e.args_count;
-                while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
             };
             wasm_call(out, 0); // import 0: env.println
             return;
@@ -1864,35 +1711,30 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         };
         if func_name == "read_file" {
             if e.args_count > 0 {
-                let mut ai = e.args_start;
-                let end = e.args_start + e.args_count;
-                while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
             };
             wasm_call(out, 5); // import 5: env.read_file
             return;
         };
         if func_name == "write_bytes" {
             if e.args_count > 0 {
-                let mut ai = e.args_start;
-                let end = e.args_start + e.args_count;
-                while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
             };
             wasm_call(out, 6); // import 6: env.write_bytes
             return;
         };
         // Regular function call (indices offset by 7 imports)
         let mut call_idx: i64 = 7;
-        let mut fi: i64 = 0;
-        while fi < hir.fns.len() {
+        for fi in 0..hir.fns.len() {
             if hir.fns[fi].name == func_name { call_idx = 7 + fi; break; };
-            fi = fi + 1;
         };
         if e.args_count > 0 {
-            let mut ai = e.args_start;
-            let end = e.args_start + e.args_count;
-            while ai < end {
+            for ai in e.args_start..(e.args_start + e.args_count) {
                 compile_expr(ctx, out, hir, ai);
-                ai = ai + 1;
             };
         };
         wasm_call(out, call_idx);
@@ -1901,9 +1743,10 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if d == 22 {
         // ArrayLiteral — compile elements and drop, return 0
         if e.args_count > 0 {
-            let mut ai = e.args_start;
-            let end = e.args_start + e.args_count;
-            while ai < end { compile_expr(ctx, out, hir, ai); wasm_drop(out); ai = ai + 1; };
+            for ai in e.args_start..(e.args_start + e.args_count) {
+                compile_expr(ctx, out, hir, ai);
+                wasm_drop(out);
+            };
         };
         wasm_i64_const(out, 0);
         return;
@@ -1919,20 +1762,16 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
-        let mut fi: i64 = 0;
-        while fi < hir.fns.len() {
+        for fi in 0..hir.fns.len() {
             let func = hir.fns[fi];
-            let mut pi: i64 = 0;
-            while pi < func.params.len() {
+            for pi in 0..func.params.len() {
                 if func.params[pi].name == name {
                     local_idx = pi;
                     found = true;
                     break;
                 };
-                pi = pi + 1;
             };
             if found { break; };
-            fi = fi + 1;
         };
         wasm_local_set(out, local_idx);
         return;
@@ -1971,7 +1810,7 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if idx <= 0 || idx > hir.stmt_nodes.len() { return; };
     let s = hir.stmt_nodes[idx - 1];
     let d = s.disc;
-    
+
     if d == 2 {
         // Return
         if s.expr > 0 { compile_expr(ctx, out, hir, s.expr); }
@@ -1989,11 +1828,8 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             wasm_br_if(out, 1); // break to block (label idx 1 = outer block)
         };
         if s.body_count > 0 {
-            let mut bi = s.body_start;
-            let bend = s.body_start + s.body_count;
-            while bi < bend {
+            for bi in s.body_start..(s.body_start + s.body_count) {
                 compile_stmt(ctx, out, hir, bi);
-                bi = bi + 1;
             };
         };
         wasm_br(out, 0); // continue loop
@@ -2032,151 +1868,113 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
 
 // ── Main compilation entry ──
 
-fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
-    let mut ctx = ctx_new();
-    let num_funcs = hir.fns.len();
-    ctx.func_count = num_funcs;
-    
-    // Import count
-    let num_imports: i64 = 7;
-    
-    // ---- Build type section ----
-    // Import types come first: 5 signatures
-    // Type 0: (i64) -> ()    — println
-    // Type 1: () -> i64      — read_file, Vec::new
-    // Type 2: (i64) -> i64   — vec_len, str_len
-    // Type 3: (i64,i64) -> () — vec_push
-    // Type 4: (i64,i64) -> i64 — vec_get, write_bytes
-    let mut types: Vec<i64> = Vec::new();
-    leb128_u(5 + num_funcs, &mut types); // total type count
-    
+fn build_type_section(types: &mut Vec<i64>, num_funcs: i64, hir: HirProgram) {
+    leb128_u(5 + num_funcs, types); // total type count
+
     // Type 0: (i64) -> ()
-    types.push(96); leb128_u(1, &mut types); types.push(126); // params
-    leb128_u(0, &mut types); // results
-    
+    types.push(96); leb128_u(1, types); types.push(126);
+    leb128_u(0, types);
+
     // Type 1: () -> i64
-    types.push(96); leb128_u(0, &mut types); // params
-    leb128_u(1, &mut types); types.push(126); // results
-    
+    types.push(96); leb128_u(0, types);
+    leb128_u(1, types); types.push(126);
+
     // Type 2: (i64) -> i64
-    types.push(96); leb128_u(1, &mut types); types.push(126);
-    leb128_u(1, &mut types); types.push(126);
-    
+    types.push(96); leb128_u(1, types); types.push(126);
+    leb128_u(1, types); types.push(126);
+
     // Type 3: (i64,i64) -> ()
-    types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
-    leb128_u(0, &mut types);
-    
+    types.push(96); leb128_u(2, types); types.push(126); types.push(126);
+    leb128_u(0, types);
+
     // Type 4: (i64,i64) -> i64
-    types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
-    leb128_u(1, &mut types); types.push(126);
-    
+    types.push(96); leb128_u(2, types); types.push(126); types.push(126);
+    leb128_u(1, types); types.push(126);
+
     // Function types (type index 5+)
-    let mut fi: i64 = 0;
-    while fi < num_funcs {
+    for fi in 0..num_funcs {
         let f = hir.fns[fi];
         types.push(96);
-        leb128_u(f.params.len(), &mut types);
-        let mut pi: i64 = 0;
-        while pi < f.params.len() { types.push(126); pi = pi + 1; };
-        leb128_u(1, &mut types); types.push(126); // 1 result: i64
-        fi = fi + 1;
+        leb128_u(f.params.len(), types);
+        for pi in 0..f.params.len() { types.push(126); };
+        leb128_u(1, types); types.push(126);
     };
-    let mut type_sec: Vec<i64> = Vec::new();
-    let mut ti: i64 = 0;
-    while ti < types.len() { type_sec.push(types[ti]); ti = ti + 1; };
-    
-    // ---- Build import section ----
-    // Helper to emit a string as LEB128 length + ASCII bytes
-    let mut import_sec: Vec<i64> = Vec::new();
-    leb128_u(num_imports, &mut import_sec);
-    
+}
+
+fn build_import_section(import_sec: &mut Vec<i64>) {
+    let num_imports: i64 = 7;
+    leb128_u(num_imports, import_sec);
+
     // Import 0: env.println (type 0)
-    // module ''env''
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
-    // field ''println''
     import_sec.push(7);
     import_sec.push(112);import_sec.push(114);import_sec.push(105);import_sec.push(110);import_sec.push(116);import_sec.push(108);import_sec.push(110);
-    import_sec.push(0); leb128_u(0, &mut import_sec); // func, type 0
-    
+    import_sec.push(0); leb128_u(0, import_sec);
+
     // Import 1: env.vec_new (type 1)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(7);
     import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(110);import_sec.push(101);import_sec.push(119);
-    import_sec.push(0); leb128_u(1, &mut import_sec);
-    
+    import_sec.push(0); leb128_u(1, import_sec);
+
     // Import 2: env.vec_len (type 2)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(7);
     import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(108);import_sec.push(101);import_sec.push(110);
-    import_sec.push(0); leb128_u(2, &mut import_sec);
-    
+    import_sec.push(0); leb128_u(2, import_sec);
+
     // Import 3: env.vec_push (type 3)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(8);
     import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(112);import_sec.push(117);import_sec.push(115);import_sec.push(104);
-    import_sec.push(0); leb128_u(3, &mut import_sec);
-    
+    import_sec.push(0); leb128_u(3, import_sec);
+
     // Import 4: env.vec_get (type 4)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(7);
     import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(103);import_sec.push(101);import_sec.push(116);
-    import_sec.push(0); leb128_u(4, &mut import_sec);
-    
-    // Import 5: env.read_file (type 2 — same as vec_len: (i64)->i64)
+    import_sec.push(0); leb128_u(4, import_sec);
+
+    // Import 5: env.read_file (type 2)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(9);
     import_sec.push(114);import_sec.push(101);import_sec.push(97);import_sec.push(100);import_sec.push(95);import_sec.push(102);import_sec.push(105);import_sec.push(108);import_sec.push(101);
-    import_sec.push(0); leb128_u(2, &mut import_sec);
-    
-    // Import 6: env.write_bytes (type 4 — same as vec_get: (i64,i64)->i64)
+    import_sec.push(0); leb128_u(2, import_sec);
+
+    // Import 6: env.write_bytes (type 4)
     import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
     import_sec.push(11);
     import_sec.push(119);import_sec.push(114);import_sec.push(105);import_sec.push(116);import_sec.push(101);import_sec.push(95);import_sec.push(98);import_sec.push(121);import_sec.push(116);import_sec.push(101);import_sec.push(115);
-    import_sec.push(0); leb128_u(4, &mut import_sec);
-    
-    // ---- Build function section ----
-    // Function indices start after imports: index 7+
-    let mut func_sec: Vec<i64> = Vec::new();
-    leb128_u(num_funcs, &mut func_sec);
-    let mut idx: i64 = 0;
-    while idx < num_funcs { leb128_u(idx + 5, &mut func_sec); idx = idx + 1; };
-    
-    // ---- Build global section ----    // ---- Build global section ----
-    let mut glob_sec: Vec<i64> = Vec::new();
-    leb128_u(1, &mut glob_sec); // 1 global
+    import_sec.push(0); leb128_u(4, import_sec);
+}
+
+fn build_func_section(func_sec: &mut Vec<i64>, num_funcs: i64) {
+    leb128_u(num_funcs, func_sec);
+    for idx in 0..num_funcs { leb128_u(idx + 5, func_sec); };
+}
+
+fn build_global_section(glob_sec: &mut Vec<i64>) {
+    leb128_u(1, glob_sec);
     glob_sec.push(127); // type: i32
     glob_sec.push(1); // mutable: true
-    // init: i32.const 4
     glob_sec.push(65); // i32.const
-    leb128_s(4, &mut glob_sec);
+    leb128_s(4, glob_sec);
     glob_sec.push(11); // end
-    
-    // ---- Build memory section ----
-    let mut mem_sec: Vec<i64> = Vec::new();
-    leb128_u(1, &mut mem_sec); // 1 memory
-    mem_sec.push(0); // flags: no max
-    leb128_u(1, &mut mem_sec); // min: 1 page (64KB)
-    
-    // ---- Build code section ----
-    leb128_u(num_funcs, &mut ctx.code_out);
-    fi = 0;
-    while fi < num_funcs {
-        compile_fn_body(&mut ctx, hir, fi);
-        fi = fi + 1;
-    };
-    
-    // ---- Build export section ----
-    let mut export_sec: Vec<i64> = Vec::new();
-    leb128_u(num_funcs, &mut export_sec);
-    fi = 0;
-    while fi < num_funcs {
+}
+
+fn build_memory_section(mem_sec: &mut Vec<i64>) {
+    leb128_u(1, mem_sec);
+    mem_sec.push(0);
+    leb128_u(1, mem_sec);
+}
+
+fn build_export_section(export_sec: &mut Vec<i64>, hir: HirProgram, num_funcs: i64) {
+    leb128_u(num_funcs, export_sec);
+    for fi in 0..num_funcs {
         let f = hir.fns[fi];
-        // Export name
-        leb128_u(f.name.len(), &mut export_sec);
-        let mut ci: i64 = 0;
-        while ci < f.name.len() {
+        leb128_u(f.name.len(), export_sec);
+        for ci in 0..f.name.len() {
             let ch = f.name[ci];
-            // Simple ASCII byte
             let mut byte: i64 = 0;
             if ch == "a" { byte = 97; }
             else if ch == "b" { byte = 98; }
@@ -2216,35 +2014,82 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
             else if ch == "8" { byte = 56; }
             else if ch == "9" { byte = 57; }
             else if ch == "_" { byte = 95; }
-            else { byte = 63; }; // '?' for unknown chars
+            else { byte = 63; };
             export_sec.push(byte);
-            ci = ci + 1;
         };
         export_sec.push(0); // export kind: function
-        leb128_u(fi + 7, &mut export_sec);
-        fi = fi + 1;
+        leb128_u(fi + 7, export_sec);
     };
-    
+}
+
+fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
+    let mut ctx = ctx_new();
+    let num_funcs = hir.fns.len();
+    ctx.func_count = num_funcs;
+
+    // ---- Build type section ----
+    let mut types: Vec<i64> = Vec::new();
+    build_type_section(&mut types, num_funcs, hir);
+    let mut type_sec: Vec<i64> = Vec::new();
+    for ti in 0..types.len() { type_sec.push(types[ti]); };
+
+    // ---- Build import section ----
+    let mut import_sec: Vec<i64> = Vec::new();
+    build_import_section(&mut import_sec);
+
+    // ---- Build function section ----
+    let mut func_sec: Vec<i64> = Vec::new();
+    build_func_section(&mut func_sec, num_funcs);
+
+    // ---- Build global section ----
+    let mut glob_sec: Vec<i64> = Vec::new();
+    build_global_section(&mut glob_sec);
+
+    // ---- Build memory section ----
+    let mut mem_sec: Vec<i64> = Vec::new();
+    build_memory_section(&mut mem_sec);
+
+    // ---- Build code section ----
+    leb128_u(num_funcs, &mut ctx.code_out);
+    for fi in 0..num_funcs {
+        compile_fn_body(&mut ctx, hir, fi);
+    };
+
+    // ---- Build export section ----
+    let mut export_sec: Vec<i64> = Vec::new();
+    build_export_section(&mut export_sec, hir, num_funcs);
+
     // ---- Assemble module ----
-    // Magic header
     ctx.out.push(0); ctx.out.push(97); ctx.out.push(115); ctx.out.push(109);
-    // Version
     ctx.out.push(1); ctx.out.push(0); ctx.out.push(0); ctx.out.push(0);
-    
-    // Type section (1)
+
     emit_section(&mut ctx.out, 1, type_sec);
-    // Import section (2)
     emit_section(&mut ctx.out, 2, import_sec);
-    // Function section (3)
     emit_section(&mut ctx.out, 3, func_sec);
-    // Memory section (5)
     emit_section(&mut ctx.out, 5, mem_sec);
-    // Global section (6)
     emit_section(&mut ctx.out, 6, glob_sec);
-    // Export section (7)
     emit_section(&mut ctx.out, 7, export_sec);
-    // Code section (10)
     emit_section(&mut ctx.out, 10, ctx.code_out);
-    
+
     ctx.out
+}
+
+// Self-hosting bootstrap — compile with dependencies concatenated
+
+fn main() {
+    println("=== Tenth Self-Hosting Bootstrap ===");
+
+    let src = read_file("tenthc/lexer/token.th");
+    let src = src + "\n" + read_file("tenthc/lexer/lexer.th");
+    let src = src + "\n" + read_file("tenthc/parser/parser.th");
+    let src = src + "\n" + read_file("tenthc/hir/hir.th");
+    let src = src + "\n" + read_file("tenthc/hir/lower.th");
+    let src = src + "\n" + read_file("tenthc/compile/wasm.th");
+
+    let ok = compile_host(src, "tenthc_full.wasm");
+    if ok == 0 {
+        println("[OK] Full compiler compiled to tenthc_full.wasm");
+    } else {
+        println("[FAIL] Compilation failed");
+    };
 }
