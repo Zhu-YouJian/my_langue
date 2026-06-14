@@ -70,6 +70,12 @@ pub enum TapeOp {
     /// Batch normalization.
     /// Forward stores normalized x, std, gamma, beta; backward is standard BN grad.
     BatchNorm,
+    /// Layer normalization (over last dim).
+    /// input_tensors = [input, gamma, beta, x_hat, std_inv, result]
+    LayerNorm,
+    /// GELU activation (tanh approximation).
+    /// input_tensors = [input, result]
+    Gelu,
 }
 
 // ── Tape ──────────────────────────────────────────────────────────────
@@ -177,6 +183,24 @@ impl Tape {
         self.nodes.push(TapeNode {
             id,
             op: TapeOp::BatchNorm,
+            inputs: vec![x_id],
+            input_tensors: vec![x, gamma, beta, x_hat, std_inv, result],
+        });
+        id
+    }
+
+    /// Record a layernorm node.
+    /// input_tensors = [input, gamma, beta, x_hat, std_inv, result]
+    pub fn layernorm(
+        &mut self, x_id: usize, x: Rc<RefCell<Tensor>>,
+        gamma: Rc<RefCell<Tensor>>, beta: Rc<RefCell<Tensor>>,
+        x_hat: Rc<RefCell<Tensor>>, std_inv: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+    ) -> usize {
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::LayerNorm,
             inputs: vec![x_id],
             input_tensors: vec![x, gamma, beta, x_hat, std_inv, result],
         });
@@ -417,6 +441,98 @@ impl Tape {
                         propagate_grad(node, 1, &d_gamma, &mut node_grads);
                         propagate_grad(node, 2, &d_beta, &mut node_grads);
                     }
+                }
+                TapeOp::LayerNorm => {
+                    // LayerNorm backward (over last dim):
+                    // d(gamma) = sum_over_outer(dY * x_hat), d(beta) = sum_over_outer(dY)
+                    // dX = gamma * std_inv * (dY - mean(dY) - x_hat * mean(dY * x_hat))  [per-row]
+                    // input_tensors = [input, gamma, beta, x_hat, std_inv, result]
+                    if node.input_tensors.len() >= 5 {
+                        let x_hat_ref = node.input_tensors[3].borrow();
+                        let std_inv_ref = node.input_tensors[4].borrow();
+                        let gamma_ref = node.input_tensors[1].borrow();
+
+                        let x_hat_shape = x_hat_ref.shape();
+                        let ndim = x_hat_shape.len();
+                        let axis_len = x_hat_shape[ndim - 1];
+                        let outer_len: usize = x_hat_shape[..ndim - 1].iter().product();
+
+                        let x_hat_flat = x_hat_ref.data.as_standard_layout().to_owned();
+                        let x_hat_slice = x_hat_flat.as_slice().unwrap_or(&[]);
+                        let std_inv_flat = std_inv_ref.data.as_standard_layout().to_owned();
+                        let std_inv_slice = std_inv_flat.as_slice().unwrap_or(&[]);
+                        let grad_flat = grad.as_standard_layout().to_owned();
+                        let grad_slice = grad_flat.as_slice().unwrap_or(&[]);
+                        let g_flat = gamma_ref.data.as_standard_layout().to_owned();
+                        let g_slice = g_flat.as_slice().unwrap_or(&[]);
+
+                        // d(gamma): sum over outer dims of dY * x_hat
+                        let mut d_gamma_data = vec![0.0f64; axis_len];
+                        for i in 0..outer_len {
+                            let start = i * axis_len;
+                            for j in 0..axis_len {
+                                d_gamma_data[j] += grad_slice.get(start + j).copied().unwrap_or(0.0)
+                                    * x_hat_slice.get(start + j).copied().unwrap_or(0.0);
+                            }
+                        }
+                        let d_gamma = ArrayD::from_shape_vec(IxDyn(&[axis_len]), d_gamma_data).unwrap();
+
+                        // d(beta): sum over outer dims of dY
+                        let mut d_beta_data = vec![0.0f64; axis_len];
+                        for i in 0..outer_len {
+                            let start = i * axis_len;
+                            for j in 0..axis_len {
+                                d_beta_data[j] += grad_slice.get(start + j).copied().unwrap_or(0.0);
+                            }
+                        }
+                        let d_beta = ArrayD::from_shape_vec(IxDyn(&[axis_len]), d_beta_data).unwrap();
+
+                        // dX per row: gamma * std_inv * (dY - mean(dY) - x_hat * mean(dY * x_hat))
+                        let mut d_x_data = Vec::with_capacity(grad_slice.len());
+                        for i in 0..outer_len {
+                            let start = i * axis_len;
+                            let inv = std_inv_slice.get(i).copied().unwrap_or(1.0);
+                            let mut mean_dy = 0.0;
+                            let mut mean_dy_xhat = 0.0;
+                            for j in 0..axis_len {
+                                let dy = grad_slice.get(start + j).copied().unwrap_or(0.0);
+                                let xh = x_hat_slice.get(start + j).copied().unwrap_or(0.0);
+                                mean_dy += dy;
+                                mean_dy_xhat += dy * xh;
+                            }
+                            mean_dy /= axis_len as f64;
+                            mean_dy_xhat /= axis_len as f64;
+                            for j in 0..axis_len {
+                                let dy = grad_slice.get(start + j).copied().unwrap_or(0.0);
+                                let xh = x_hat_slice.get(start + j).copied().unwrap_or(0.0);
+                                let g = g_slice.get(j).copied().unwrap_or(1.0);
+                                d_x_data.push(g * inv * (dy - mean_dy - xh * mean_dy_xhat));
+                            }
+                        }
+                        let d_x = ArrayD::from_shape_vec(IxDyn(&x_hat_shape), d_x_data).unwrap();
+
+                        propagate_grad(node, 0, &d_x, &mut node_grads);
+                        propagate_grad(node, 1, &d_gamma, &mut node_grads);
+                        propagate_grad(node, 2, &d_beta, &mut node_grads);
+                    }
+                }
+                TapeOp::Gelu => {
+                    // GELU backward: d(gelu(x))/dx = 0.5 * (1 + tanh(inner)) + 0.5 * x * sech^2(inner) * sqrt(2/pi) * (1 + 3*0.044715*x^2)
+                    // inner = sqrt(2/pi) * (x + 0.044715 * x^3)
+                    // input_tensors = [input, result]
+                    let g_a = {
+                        let x_ref = node.input_tensors[0].borrow();
+                        let sqrt_2_over_pi = (2.0 / std::f64::consts::PI).sqrt();
+                        let x_data = &x_ref.data;
+                        let deriv = x_data.mapv(|x| {
+                            let inner = sqrt_2_over_pi * (x + 0.044715 * x * x * x);
+                            let tanh_inner = inner.tanh();
+                            let sech2 = 1.0 - tanh_inner * tanh_inner;
+                            0.5 * (1.0 + tanh_inner) + 0.5 * x * sech2 * sqrt_2_over_pi * (1.0 + 3.0 * 0.044715 * x * x)
+                        });
+                        &grad * &deriv
+                    };
+                    propagate_grad(node, 0, &g_a, &mut node_grads);
                 }
                 TapeOp::Conv2D => {
                     // input_tensors = [input, weight, im2col, output]

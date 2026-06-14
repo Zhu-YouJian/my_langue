@@ -1,0 +1,24 @@
+// Sinusoidal Positional Encoding
+// Creates position embeddings using sin/cos as in "Attention Is All You Need"
+//
+// Full formula:
+//   PE(pos, 2i)   = sin(pos / 10000^(2i/d_model))
+//   PE(pos, 2i+1) = cos(pos / 10000^(2i/d_model))
+//
+// Limitation: Tenth currently does not support element-wise index assignment
+// on tensors (e.g., pe[pos][2*i] = value). The full implementation requires:
+//   for pos in 0..seq_len {
+//       for i in 0..d_model/2 {
+//           let angle = pos / pow(10000.0, 2.0 * i / d_model);
+//           pe[pos][2*i] = sin(angle);
+//           pe[pos][2*i+1] = cos(angle);
+//       }
+//   }
+// Until per-element tensor indexing/assignment is available, this returns
+// a small random initialization as a placeholder.
+
+fn positional_encoding(seq_len: i64, d_model: i64) -> Tensor[f64, ..] {
+    // Placeholder: random init with small variance
+    // Replace with sinusoidal encoding once element-wise ops are supported
+    randn(seq_len, d_model) * 0.01
+}

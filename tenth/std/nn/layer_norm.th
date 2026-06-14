@@ -1,0 +1,21 @@
+// Layer Normalization
+// Normalizes across the last dimension.
+// Supports autodiff via TapeOp::LayerNorm (once interpreter adds support).
+
+fn layer_norm(
+    x: Tensor[f64, ..],
+    gamma: Tensor[f64, ..],
+    beta: Tensor[f64, ..],
+    eps: f64,
+) -> Tensor[f64, ..] {
+    // TODO: requires interpreter support for x.layer_norm(gamma, beta, eps)
+    x.layer_norm(gamma, beta, eps)
+}
+
+// Convenience: create learnable layer norm parameters
+// gamma initialized to ones, beta initialized to zeros
+fn make_layer_norm(dim: i64) -> (Tensor[f64, ..], Tensor[f64, ..]) {
+    let gamma = ones(dim);
+    let beta = zeros(dim);
+    (gamma, beta)
+}

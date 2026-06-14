@@ -1,0 +1,53 @@
+// Transformer Encoder Block (Pre-Norm architecture)
+// x = x + MultiHeadAttention(LayerNorm(x))
+// x = x + FeedForward(LayerNorm(x))
+//
+// Uses pre-norm (LayerNorm before each sub-layer) which is more stable
+// for training deep Transformers.
+
+fn transformer_encoder_block(
+    x: Tensor[f64, ..],       // (seq_len, d_model)
+    w_q: Tensor[f64, ..],
+    w_k: Tensor[f64, ..],
+    w_v: Tensor[f64, ..],
+    w_o: Tensor[f64, ..],
+    ln1_gamma: Tensor[f64, ..],
+    ln1_beta: Tensor[f64, ..],
+    w1: Tensor[f64, ..],
+    b1: Tensor[f64, ..],
+    w2: Tensor[f64, ..],
+    b2: Tensor[f64, ..],
+    ln2_gamma: Tensor[f64, ..],
+    ln2_beta: Tensor[f64, ..],
+    n_heads: i64,
+    dropout_p: f64,
+) -> Tensor[f64, ..] {
+    // Pre-norm: LayerNorm before attention
+    let x_norm = layer_norm(x, ln1_gamma, ln1_beta, 1e-5);
+    let mask = zeros(1);  // no mask for encoder
+    let attn = multihead_attention(x_norm, w_q, w_k, w_v, w_o, mask, n_heads, dropout_p);
+    let x = x + attn;  // residual connection
+
+    // Pre-norm: LayerNorm before feed-forward
+    let x_norm2 = layer_norm(x, ln2_gamma, ln2_beta, 1e-5);
+    let ffn_out = feedforward(x_norm2, w1, b1, w2, b2);
+    x + ffn_out  // residual connection
+}
+
+// Convenience: initialize all parameters for a Transformer encoder block
+fn make_transformer_block_params(d_model: i64, n_heads: i64, d_ff: i64) -> (
+    Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..],  // w_q, w_k, w_v, w_o
+    Tensor[f64, ..], Tensor[f64, ..],  // ln1_gamma, ln1_beta
+    Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..],  // w1, b1, w2, b2
+    Tensor[f64, ..], Tensor[f64, ..],  // ln2_gamma, ln2_beta
+) {
+    let scale = sqrt(2.0 / d_model);
+    let w_q = randn(d_model, d_model) * scale;
+    let w_k = randn(d_model, d_model) * scale;
+    let w_v = randn(d_model, d_model) * scale;
+    let w_o = randn(d_model, d_model) * scale;
+    let (ln1_gamma, ln1_beta) = make_layer_norm(d_model);
+    let (w1, b1, w2, b2) = make_feedforward_params(d_model, d_ff);
+    let (ln2_gamma, ln2_beta) = make_layer_norm(d_model);
+    (w_q, w_k, w_v, w_o, ln1_gamma, ln1_beta, w1, b1, w2, b2, ln2_gamma, ln2_beta)
+}

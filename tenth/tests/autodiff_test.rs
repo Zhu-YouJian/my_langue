@@ -833,3 +833,130 @@ fn test_vm_recursive_function() {
         v => panic!("expected Int(55), got {:?}", v),
     }
 }
+
+// ── Transformer component tests ──
+
+#[test]
+fn test_tensor_layer_norm() {
+    let src = r#"
+        let x = randn(3, 4);
+        let gamma = ones(4);
+        let beta = zeros(4);
+        let y = x.layer_norm(gamma, beta, 0.00001);
+        y.mean()
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Float(n)) => assert!(n.abs() < 0.5, "layer_norm mean should be near 0, got {}", n),
+        v => panic!("expected Float, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_tensor_gelu() {
+    // GELU(0) ≈ 0, GELU(1) ≈ 0.841, GELU(-1) ≈ -0.159
+    // Test via scalar computation: GELU(1) - GELU(-1) should be ~1.0
+    let src = r#"
+        let x = tensor[[1.0, -1.0]];
+        let y = x.gelu();
+        y.sum()
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Float(n)) => assert!((n - 0.682).abs() < 0.1, "GELU(1)+GELU(-1) should be ~0.682, got {}", n),
+        v => panic!("expected Float, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_tensor_cat() {
+    // cat two (1,2) tensors along dim=0 → (2,2), sum should be 1+2+3+4=10
+    let src = r#"
+        let a = tensor[[1.0, 2.0]];
+        let b = tensor[[3.0, 4.0]];
+        let c = a.cat(b, 0);
+        c.sum()
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Float(n)) => assert!((n - 10.0).abs() < 0.01, "cat sum should be 10.0, got {}", n),
+        v => panic!("expected Float, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_tensor_masked_fill() {
+    // mask[1]=1.0 means position 1 gets filled with -inf
+    // result should have position 0 and 2 unchanged, position 1 very negative
+    let src = r#"
+        let x = tensor[[1.0, 2.0, 3.0]];
+        let mask = tensor[[0.0, 1.0, 0.0]];
+        let y = x.masked_fill(mask, -1000000000.0);
+        y.sum()
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Float(n)) => assert!(n < -1e8, "masked_fill sum should be very negative, got {}", n),
+        v => panic!("expected Float, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_tensor_permute() {
+    // x is (2,3), permute(1,0) gives (3,2), sum should still be 21
+    let src = r#"
+        let x = tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let y = x.permute(1, 0);
+        y.sum()
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Float(n)) => assert!((n - 21.0).abs() < 0.01, "permute sum should be 21.0, got {}", n),
+        v => panic!("expected Float, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_scaled_dot_product_attention() {
+    // Q,K,V: (3,8), attention output should be (3,8)
+    // Just verify the computation doesn't error and output sum is finite
+    let src = r#"
+        let q = randn(3, 8);
+        let k = randn(3, 8);
+        let v = randn(3, 8);
+        let d_k = 8;
+        let scale = 1.0 / sqrt(d_k);
+        let kT = k.transpose();
+        let scores = q.matmul(kT) * scale;
+        let weights = scores.softmax();
+        let out = weights.matmul(v);
+        out.sum()
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Float(n)) => assert!(n.is_finite(), "attention output should be finite, got {}", n),
+        v => panic!("expected Float, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_feedforward_network() {
+    // x: (4,16), w1: (16,64), w2: (64,16), output: (4,16)
+    // Verify computation doesn't error and output sum is finite
+    let src = r#"
+        let x = randn(4, 16);
+        let w1 = randn(16, 64) * 0.1;
+        let b1 = zeros(64);
+        let w2 = randn(64, 16) * 0.1;
+        let b2 = zeros(16);
+        let hidden = x.matmul(w1) + b1;
+        let activated = hidden.gelu();
+        let out = activated.matmul(w2) + b2;
+        out.sum()
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Float(n)) => assert!(n.is_finite(), "FFN output should be finite, got {}", n),
+        v => panic!("expected Float, got {:?}", v),
+    }
+}

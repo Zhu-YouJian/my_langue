@@ -26,6 +26,12 @@
 //   std::nn::batchnorm::batchnorm
 //   std::nn::conv::conv2d
 //   std::nn::embedding::embedding
+//   std::nn::attention::scaled_dot_product_attention
+//   std::nn::multihead_attention::multihead_attention
+//   std::nn::layer_norm::layer_norm, make_layer_norm
+//   std::nn::positional_encoding::positional_encoding
+//   std::nn::feedforward::feedforward, make_feedforward_params
+//   std::nn::transformer::transformer_encoder_block, make_transformer_block_params
 //   std::optim::sgd::sgd_step, sgd_momentum, sgd_weight_decay
 //   std::optim::adam::adam_step
 //   std::optim::adagrad::adagrad_step

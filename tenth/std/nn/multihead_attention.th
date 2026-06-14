@@ -1,0 +1,39 @@
+// Multi-Head Attention
+// d_model: model dimension, n_heads: number of heads, d_k: per-head dimension (d_model / n_heads)
+//
+// Simplified: since Tenth matmul only supports 2D tensors, we cannot reshape
+// Q/K/V into (n_heads, seq_len, d_k) and compute per-head attention in parallel.
+// Instead, this implementation computes a single-head-equivalent attention over
+// the full d_model dimension. True multi-head attention requires either:
+//   1. 3D/batched matmul support, or
+//   2. A loop over heads with per-head slices (requires tensor indexing).
+// Both are currently unavailable, so we project Q/K/V with the full weight
+// matrices and apply attention once.
+
+fn multihead_attention(
+    x: Tensor[f64, ..],       // (seq_len, d_model)
+    w_q: Tensor[f64, ..],     // (d_model, d_model)
+    w_k: Tensor[f64, ..],     // (d_model, d_model)
+    w_v: Tensor[f64, ..],     // (d_model, d_model)
+    w_o: Tensor[f64, ..],     // (d_model, d_model)
+    mask: Tensor[f64, ..],
+    n_heads: i64,
+    dropout_p: f64,
+) -> Tensor[f64, ..] {
+    let seq_len = shape(x)[0];
+    let d_model = shape(x)[1];
+    let d_k = d_model / n_heads;
+
+    // Project Q, K, V
+    let q = x.matmul(w_q);  // (seq_len, d_model)
+    let k = x.matmul(w_k);
+    let v = x.matmul(w_v);
+
+    // TODO: True multi-head: reshape q/k/v to (n_heads, seq_len, d_k),
+    //       compute scaled_dot_product_attention per head, then concat.
+    //       Currently falls back to single-head-equivalent computation.
+    let attn_out = scaled_dot_product_attention(q, k, v, mask, dropout_p);
+
+    // Output projection
+    attn_out.matmul(w_o)
+}

@@ -321,6 +321,142 @@ impl Tensor {
         Tensor::from_data(array)
     }
 
+    // ── Transformer ops ──────────────────────────────────────────────
+
+    /// Layer normalization along the last dimension.
+    /// x: (..., D), gamma: (D,), beta: (D,), eps: f64
+    /// Returns (x - mean) / sqrt(var + eps) * gamma + beta
+    pub fn layer_norm(&self, gamma: &Tensor, beta: &Tensor, eps: f64) -> Tensor {
+        let shape = self.shape();
+        let ndim = shape.len();
+        if ndim == 0 || shape[ndim - 1] == 0 {
+            return self.clone();
+        }
+        let axis_len = shape[ndim - 1];
+        let outer_len: usize = shape[..ndim - 1].iter().product();
+
+        let contiguous = self.data.as_standard_layout().to_owned();
+        let flat = match contiguous.as_slice() {
+            Some(s) => s.to_vec(),
+            None => self.data.iter().cloned().collect(),
+        };
+
+        let g_flat = gamma.data.as_standard_layout().to_owned();
+        let b_flat = beta.data.as_standard_layout().to_owned();
+        let g_slice = g_flat.as_slice().unwrap_or(&[]);
+        let b_slice = b_flat.as_slice().unwrap_or(&[]);
+
+        let mut result_data = Vec::with_capacity(flat.len());
+        for i in 0..outer_len {
+            let start = i * axis_len;
+            let slice = &flat[start..start + axis_len];
+            let mean: f64 = slice.iter().sum::<f64>() / axis_len as f64;
+            let var: f64 = slice.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / axis_len as f64;
+            let std_inv = 1.0 / (var + eps).sqrt();
+            for j in 0..axis_len {
+                let x_hat = (slice[j] - mean) * std_inv;
+                let g = g_slice.get(j).copied().unwrap_or(1.0);
+                let b = b_slice.get(j).copied().unwrap_or(0.0);
+                result_data.push(g * x_hat + b);
+            }
+        }
+        Tensor::from_vec(result_data, shape)
+    }
+
+    /// GELU activation (tanh approximation).
+    /// 0.5 * x * (1.0 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+    pub fn gelu(&self) -> Tensor {
+        let sqrt_2_over_pi = (2.0 / std::f64::consts::PI).sqrt();
+        Tensor::from_data(self.data.mapv(|x| {
+            let inner = sqrt_2_over_pi * (x + 0.044715 * x * x * x);
+            0.5 * x * (1.0 + inner.tanh())
+        }))
+    }
+
+    /// Concatenate two 2D tensors along the given dimension.
+    /// Only supports dim=0 or dim=1 for 2D tensors.
+    pub fn cat(&self, other: &Tensor, dim: usize) -> Result<Tensor, String> {
+        let a_shape = self.shape();
+        let b_shape = other.shape();
+        if a_shape.len() != 2 || b_shape.len() != 2 {
+            return Err(format!("cat only supports 2D tensors, got {:?}D and {:?}D", a_shape.len(), b_shape.len()));
+        }
+        match dim {
+            0 => {
+                if a_shape[1] != b_shape[1] {
+                    return Err(format!("cat dim=0: column mismatch {} vs {}", a_shape[1], b_shape[1]));
+                }
+                let a_flat = self.data.as_standard_layout().to_owned();
+                let b_flat = other.data.as_standard_layout().to_owned();
+                let a_slice = a_flat.as_slice().unwrap_or(&[]);
+                let b_slice = b_flat.as_slice().unwrap_or(&[]);
+                let mut data = Vec::with_capacity(a_slice.len() + b_slice.len());
+                data.extend_from_slice(a_slice);
+                data.extend_from_slice(b_slice);
+                Ok(Tensor::from_vec(data, vec![a_shape[0] + b_shape[0], a_shape[1]]))
+            }
+            1 => {
+                if a_shape[0] != b_shape[0] {
+                    return Err(format!("cat dim=1: row mismatch {} vs {}", a_shape[0], b_shape[0]));
+                }
+                let a_flat = self.data.as_standard_layout().to_owned();
+                let b_flat = other.data.as_standard_layout().to_owned();
+                let a_slice = a_flat.as_slice().unwrap_or(&[]);
+                let b_slice = b_flat.as_slice().unwrap_or(&[]);
+                let mut data = Vec::with_capacity(a_slice.len() + b_slice.len());
+                for i in 0..a_shape[0] {
+                    let a_start = i * a_shape[1];
+                    data.extend_from_slice(&a_slice[a_start..a_start + a_shape[1]]);
+                    let b_start = i * b_shape[1];
+                    data.extend_from_slice(&b_slice[b_start..b_start + b_shape[1]]);
+                }
+                Ok(Tensor::from_vec(data, vec![a_shape[0], a_shape[1] + b_shape[1]]))
+            }
+            _ => Err(format!("cat only supports dim=0 or dim=1, got dim={}", dim)),
+        }
+    }
+
+    /// Masked fill: where mask is truthy (>0.5), fill with value.
+    /// mask must have the same shape as self.
+    pub fn masked_fill(&self, mask: &Tensor, value: f64) -> Result<Tensor, String> {
+        if self.shape() != mask.shape() {
+            return Err(format!("masked_fill: shape mismatch {:?} vs {:?}", self.shape(), mask.shape()));
+        }
+        let mask_data = mask.data.as_standard_layout().to_owned();
+        let mask_slice = mask_data.as_slice().unwrap_or(&[]);
+        let self_data = self.data.as_standard_layout().to_owned();
+        let self_slice = self_data.as_slice().unwrap_or(&[]);
+        let mut result = Vec::with_capacity(self_slice.len());
+        for i in 0..self_slice.len() {
+            if mask_slice.get(i).copied().unwrap_or(0.0) > 0.5 {
+                result.push(value);
+            } else {
+                result.push(self_slice[i]);
+            }
+        }
+        Ok(Tensor::from_vec(result, self.shape()))
+    }
+
+    /// Permute dimensions. Only supports 2D/3D/4D tensors.
+    pub fn permute(&self, dims: &[usize]) -> Result<Tensor, String> {
+        let ndim = self.ndim();
+        if dims.len() != ndim {
+            return Err(format!("permute: expected {} dims, got {}", ndim, dims.len()));
+        }
+        if ndim < 2 || ndim > 4 {
+            return Err(format!("permute only supports 2D/3D/4D tensors, got {}D", ndim));
+        }
+        // Validate dims is a valid permutation
+        let mut sorted = dims.to_vec();
+        sorted.sort();
+        let expected: Vec<usize> = (0..ndim).collect();
+        if sorted != expected {
+            return Err(format!("permute: {:?} is not a valid permutation of {} dims", dims, ndim));
+        }
+        let result = self.data.view().permuted_axes(dims.to_vec()).to_owned();
+        Ok(Tensor::from_data(result))
+    }
+
     /// Softmax along the last axis (per-row for 2D).
     /// For a tensor of shape [..., N], each slice along the last dimension
     /// is independently softmaxed.

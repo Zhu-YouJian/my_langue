@@ -1,0 +1,27 @@
+// Scaled Dot-Product Attention
+// Q: (seq_q, d_k), K: (seq_k, d_k), V: (seq_k, d_v)
+// mask: optional attention mask
+//
+// Note: Tenth matmul only supports 2D tensors (see src/runtime/tensor.rs),
+// so this implementation operates on 2D inputs without a batch dimension.
+// For batched inputs, loop over the batch dimension externally.
+
+fn scaled_dot_product_attention(
+    q: Tensor[f64, ..],
+    k: Tensor[f64, ..],
+    v: Tensor[f64, ..],
+    mask: Tensor[f64, ..],
+    dropout_p: f64,
+) -> Tensor[f64, ..] {
+    let d_k = shape(q)[1];
+    let scale = 1.0 / sqrt(d_k);
+    // scores = Q @ K^T * scale
+    let kT = k.transpose();
+    let scores = q.matmul(kT) * scale;
+    // Apply mask: fill masked positions with -inf so softmax yields ~0
+    // TODO: requires interpreter support for x.masked_fill(mask, value)
+    let masked_scores = scores.masked_fill(mask, -1e9);
+    let weights = masked_scores.softmax();
+    let dropped = weights.dropout(dropout_p);
+    dropped.matmul(v)
+}

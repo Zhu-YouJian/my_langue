@@ -1739,6 +1739,132 @@ impl Interpreter {
                         }
                         Ok(Value::Tensor(result))
                     }
+                    "layer_norm" => {
+                        // x.layer_norm(gamma, beta, eps)
+                        if args.len() < 2 {
+                            return Err(TenthError::RuntimeError {
+                                message: "layer_norm() takes gamma, beta, [eps]".into(),
+                            });
+                        }
+                        let eps = args.get(2).and_then(|a| a.as_float()).unwrap_or(1e-5);
+                        if let (Value::Tensor(gamma_rc), Value::Tensor(beta_rc)) = (&args[0], &args[1]) {
+                            let x_shape = tensor.shape();
+                            let ndim = x_shape.len();
+                            if ndim == 0 || x_shape[ndim - 1] == 0 {
+                                return Ok(Value::Tensor(Rc::new(RefCell::new(tensor.clone()))));
+                            }
+                            let axis_len = x_shape[ndim - 1];
+                            let outer_len: usize = x_shape[..ndim - 1].iter().product();
+
+                            let contiguous = tensor.data.as_standard_layout().to_owned();
+                            let flat = match contiguous.as_slice() {
+                                Some(s) => s.to_vec(),
+                                None => tensor.data.iter().cloned().collect(),
+                            };
+
+                            let gamma_ref = gamma_rc.borrow();
+                            let beta_ref = beta_rc.borrow();
+                            let g_flat = gamma_ref.data.as_standard_layout().to_owned();
+                            let b_flat = beta_ref.data.as_standard_layout().to_owned();
+                            let g_slice = g_flat.as_slice().unwrap_or(&[]);
+                            let b_slice = b_flat.as_slice().unwrap_or(&[]);
+
+                            let mut result_data = Vec::with_capacity(flat.len());
+                            let mut x_hat_data = Vec::with_capacity(flat.len());
+                            let mut std_inv_data = Vec::with_capacity(outer_len);
+
+                            for i in 0..outer_len {
+                                let start = i * axis_len;
+                                let slice = &flat[start..start + axis_len];
+                                let mean: f64 = slice.iter().sum::<f64>() / axis_len as f64;
+                                let var: f64 = slice.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / axis_len as f64;
+                                let std_inv = 1.0 / (var + eps).sqrt();
+                                std_inv_data.push(std_inv);
+                                for j in 0..axis_len {
+                                    let x_hat = (slice[j] - mean) * std_inv;
+                                    x_hat_data.push(x_hat);
+                                    let g = g_slice.get(j).copied().unwrap_or(1.0);
+                                    let b = b_slice.get(j).copied().unwrap_or(0.0);
+                                    result_data.push(g * x_hat + b);
+                                }
+                            }
+
+                            let result = Rc::new(RefCell::new(Tensor::from_vec(result_data, x_shape.clone())));
+                            if self.recording {
+                                let x_hat = Rc::new(RefCell::new(Tensor::from_vec(x_hat_data, x_shape)));
+                                let std_inv_tensor = Rc::new(RefCell::new(
+                                    Tensor::from_vec(std_inv_data, vec![outer_len])
+                                ));
+                                if let Some(ref mut tape) = self.tape {
+                                    let x_id = t.borrow().tape_id
+                                        .unwrap_or_else(|| tape.input(t.clone()));
+                                    let node_id = tape.layernorm(
+                                        x_id, t.clone(),
+                                        gamma_rc.clone(), beta_rc.clone(),
+                                        x_hat, std_inv_tensor, result.clone(),
+                                    );
+                                    result.borrow_mut().tape_id = Some(node_id);
+                                }
+                            }
+                            return Ok(Value::Tensor(result));
+                        }
+                        return Err(TenthError::RuntimeError {
+                            message: "layer_norm: gamma and beta must be tensors".into(),
+                        });
+                    }
+                    "gelu" => {
+                        let result_tensor = tensor.gelu();
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording {
+                            self.record_unary(TapeOp::Gelu, t, &result);
+                        }
+                        Ok(Value::Tensor(result))
+                    }
+                    "cat" => {
+                        // x.cat(other, dim)
+                        if args.is_empty() {
+                            return Err(TenthError::RuntimeError {
+                                message: "cat() takes at least 1 argument (other, [dim])".into(),
+                            });
+                        }
+                        let dim = args.get(1).and_then(|a| a.as_int()).unwrap_or(0) as usize;
+                        if let Value::Tensor(other) = &args[0] {
+                            let result_tensor = tensor.cat(&other.borrow(), dim)
+                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            Ok(Value::Tensor(Rc::new(RefCell::new(result_tensor))))
+                        } else {
+                            Err(TenthError::RuntimeError {
+                                message: "cat() first argument must be a tensor".into(),
+                            })
+                        }
+                    }
+                    "masked_fill" => {
+                        // x.masked_fill(mask, value)
+                        if args.len() < 2 {
+                            return Err(TenthError::RuntimeError {
+                                message: "masked_fill() takes mask and value".into(),
+                            });
+                        }
+                        let value = args[1].as_float().unwrap_or(0.0);
+                        if let Value::Tensor(mask_rc) = &args[0] {
+                            let result_tensor = tensor.masked_fill(&mask_rc.borrow(), value)
+                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            Ok(Value::Tensor(Rc::new(RefCell::new(result_tensor))))
+                        } else {
+                            Err(TenthError::RuntimeError {
+                                message: "masked_fill() mask must be a tensor".into(),
+                            })
+                        }
+                    }
+                    "permute" => {
+                        // x.permute(dims...)
+                        let dims: Vec<usize> = args.iter()
+                            .map(|a| a.as_int().unwrap_or(0) as usize)
+                            .collect();
+                        let result_tensor = tensor.permute(&dims)
+                            .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                        Ok(Value::Tensor(Rc::new(RefCell::new(result_tensor))))
+                    }
                     "softmax" => {
                         let result_tensor = tensor.softmax().ok_or_else(|| TenthError::RuntimeError {
                             message: "softmax failed".into(),
