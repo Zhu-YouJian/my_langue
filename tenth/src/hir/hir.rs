@@ -3,6 +3,12 @@ use crate::lexer::token::Span;
 use super::types::Type;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum InterpPart {
+    Literal(String),
+    Expr(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum HirExprKind {
     Literal(Literal),
     Var(String),
@@ -106,6 +112,9 @@ pub enum HirExprKind {
         value: Box<HirExpr>,
     },
     Move(Box<HirExpr>),
+    TryBlock(Box<HirExpr>),
+    InterpolatedString { parts: Vec<InterpPart> },
+    Tuple(Vec<HirExpr>),
     FieldAssign {
         target: Box<HirExpr>,
         field: String,
@@ -157,7 +166,7 @@ pub enum BinOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
-    Neg, Not,
+    Neg, Not, Try,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -173,7 +182,7 @@ pub enum Index {
 #[derive(Debug, Clone, PartialEq)]
 pub enum HirStmtKind {
     Let {
-        name: String,
+        names: Vec<String>,
         type_ann: Option<Type>,
         mutable: bool,
         init: Option<HirExpr>,

@@ -1,5 +1,5 @@
 use crate::error::{TenthError, TenthResult};
-use super::token::{Span, Token, TokenKind};
+use super::token::{Span, Token, TokenKind, StringPart};
 
 pub struct Lexer {
     source: Vec<char>,
@@ -107,7 +107,10 @@ impl Lexer {
             }
         }
 
+        let mut is_float = false;
+
         if self.peek() == Some('.') && self.peek_next().map_or(false, |c| c.is_ascii_digit()) {
+            is_float = true;
             s.push('.');
             self.advance();
             while let Some(ch) = self.peek() {
@@ -118,26 +121,52 @@ impl Lexer {
                     break;
                 }
             }
+        }
+
+        // Scientific notation: 1e9, 1.5e-3, 1e+4
+        if let Some(ch) = self.peek() {
+            if ch == 'e' || ch == 'E' {
+                is_float = true;
+                s.push(ch);
+                self.advance();
+                if let Some(sign) = self.peek() {
+                    if sign == '+' || sign == '-' {
+                        s.push(sign);
+                        self.advance();
+                    }
+                }
+                while let Some(ch) = self.peek() {
+                    if ch.is_ascii_digit() || ch == '_' {
+                        s.push(ch);
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if is_float {
             let n: f64 = s.parse().map_err(|_| TenthError::LexerError {
                 line: span.line,
                 col: span.col,
                 message: format!("invalid float: {}", s),
             })?;
-            return Ok(Token {
+            Ok(Token {
                 kind: TokenKind::FloatLiteral(n),
                 span,
-            });
+            })
+        } else {
+            let n: i64 = s.parse().map_err(|_| TenthError::LexerError {
+                line: span.line,
+                col: span.col,
+                message: format!("invalid integer: {}", s),
+            })?;
+            Ok(Token {
+                kind: TokenKind::IntLiteral(n),
+                span,
+            })
         }
-
-        let n: i64 = s.parse().map_err(|_| TenthError::LexerError {
-            line: span.line,
-            col: span.col,
-            message: format!("invalid integer: {}", s),
-        })?;
-        Ok(Token {
-            kind: TokenKind::IntLiteral(n),
-            span,
-        })
     }
 
     fn read_identifier(&mut self, first: char) -> Token {
@@ -196,36 +225,89 @@ impl Lexer {
 
     fn read_string(&mut self) -> TenthResult<Token> {
         let span = self.span();
-        self.advance();
-        let mut s = String::new();
+        self.advance(); // consume opening "
+        let mut parts: Vec<StringPart> = Vec::new();
+        let mut current_literal = String::new();
+        let mut has_interpolation = false;
+
         while let Some(ch) = self.peek() {
             if ch == '"' {
                 self.advance();
-                return Ok(Token {
-                    kind: TokenKind::StringLiteral(s),
-                    span,
-                });
+                if !current_literal.is_empty() {
+                    parts.push(StringPart::Literal(current_literal));
+                }
+                if has_interpolation {
+                    return Ok(Token {
+                        kind: TokenKind::InterpolatedString(parts),
+                        span,
+                    });
+                } else if parts.len() == 1 {
+                    if let Some(StringPart::Literal(s)) = parts.into_iter().next() {
+                        return Ok(Token {
+                            kind: TokenKind::StringLiteral(s),
+                            span,
+                        });
+                    }
+                    unreachable!()
+                } else {
+                    return Ok(Token {
+                        kind: TokenKind::StringLiteral(String::new()),
+                        span,
+                    });
+                }
             }
             if ch == '\\' {
                 self.advance();
                 match self.peek() {
-                    Some('n') => { self.advance(); s.push('\n'); }
-                    Some('r') => { self.advance(); s.push('\r'); }
-                    Some('t') => { self.advance(); s.push('\t'); }
-                    Some('\\') => { self.advance(); s.push('\\'); }
-                    Some('"') => { self.advance(); s.push('"'); }
-                    Some(c) => { self.advance(); s.push(c); }
+                    Some('n') => { self.advance(); current_literal.push('\n'); }
+                    Some('r') => { self.advance(); current_literal.push('\r'); }
+                    Some('t') => { self.advance(); current_literal.push('\t'); }
+                    Some('\\') => { self.advance(); current_literal.push('\\'); }
+                    Some('"') => { self.advance(); current_literal.push('"'); }
+                    Some('{') => { self.advance(); current_literal.push('{'); }
+                    Some('}') => { self.advance(); current_literal.push('}'); }
+                    Some(c) => { self.advance(); current_literal.push(c); }
                     None => break,
                 }
+            } else if ch == '{' {
+                // String interpolation: {expr}
+                // Only treat as interpolation if the content looks like a valid identifier
+                self.advance(); // consume {
+                let mut expr = String::new();
+                while let Some(c) = self.peek() {
+                    if c == '}' {
+                        self.advance(); // consume }
+                        break;
+                    }
+                    expr.push(c);
+                    self.advance();
+                }
+                let trimmed = expr.trim();
+                // Check if the expression is a valid identifier (alphanumeric + _)
+                let is_valid_ident = !trimmed.is_empty()
+                    && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.');
+                if is_valid_ident {
+                    has_interpolation = true;
+                    if !current_literal.is_empty() {
+                        parts.push(StringPart::Literal(current_literal));
+                        current_literal = String::new();
+                    }
+                    parts.push(StringPart::Expr(trimmed.to_string()));
+                } else {
+                    // Not a valid identifier — treat { } as literal text
+                    current_literal.push('{');
+                    current_literal.push_str(&expr);
+                    current_literal.push('}');
+                }
             } else {
-                s.push(ch);
+                current_literal.push(ch);
                 self.advance();
             }
         }
         Err(TenthError::LexerError {
             line: span.line,
             col: span.col,
-            message: "unterminated string literal".into(),
+            message: "unterminated string".into(),
         })
     }
 
@@ -243,6 +325,7 @@ impl Lexer {
             '.' => Some(TokenKind::Dot),
             '%' => Some(TokenKind::Percent),
             '^' => Some(TokenKind::Caret),
+            '?' => Some(TokenKind::QuestionMark),
             _ => None,
         }
     }

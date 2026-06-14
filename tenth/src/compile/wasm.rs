@@ -694,8 +694,41 @@ impl WasmCompiler {
             // Ref/MutRef/Deref are identity ops for struct pointers (stored as i64)
             HirExprKind::Ref(inner)
             | HirExprKind::MutRef(inner)
-            | HirExprKind::Deref(inner) => {
+            | HirExprKind::Deref(inner)
+            | HirExprKind::TryBlock(inner) => {
                 self.compile_expr(body, inner)?;
+            }
+
+            HirExprKind::InterpolatedString { parts } => {
+                // Evaluate by concatenating all parts as strings via str_add host call
+                let mut first = true;
+                for p in parts {
+                    match p {
+                        crate::hir::hir::InterpPart::Literal(s) => {
+                            body.instruction(&Instruction::I32Const(self.intern_string(s) as i32));
+                        }
+                        crate::hir::hir::InterpPart::Expr(name) => {
+                            // Look up variable and convert to string
+                            if let Some(&idx) = self.local_map.get(name) {
+                                body.instruction(&Instruction::LocalGet(idx));
+                                // Convert to i32 string pointer via str_int
+                                body.instruction(&Instruction::Call(5)); // str_int(i64) -> i32
+                            }
+                        }
+                    }
+                    if first {
+                        first = false;
+                    } else {
+                        // str_add: pop two i32 string ptrs, push concatenated i32 ptr
+                        body.instruction(&Instruction::Call(3)); // str_add
+                    }
+                }
+                // Result is i32 string pointer; extend to i64 for local storage
+                body.instruction(&Instruction::I64ExtendI32U);
+            }
+            HirExprKind::Tuple(_elems) => {
+                // Tuple not yet supported in WASM backend
+                body.instruction(&Instruction::I64Const(0));
             }
 
             HirExprKind::Index { target, indices } => {
@@ -727,30 +760,28 @@ impl WasmCompiler {
                     body.instruction(&Instruction::Drop);
                 }
             }
-            HirStmtKind::Let { name, type_ann, init, .. } => {
+            HirStmtKind::Let { names, type_ann, init, .. } => {
                 if let Some(e) = init {
                     self.compile_expr(body, e)?;
-                    // Convert/Reinterpret based on declared type vs expression type
                     let target_f = matches!(type_ann, Some(Type::Base(BaseType::F64 | BaseType::F32)));
                     let expr_f = matches!(&e.ty, Type::Base(BaseType::F64 | BaseType::F32));
                     let expr_bool = matches!(&e.ty, Type::Base(BaseType::Bool));
                     if target_f && !expr_f {
-                        // i64 → f64 conversion (not reinterpret)
                         body.instruction(&Instruction::F64ConvertI64S);
                         body.instruction(&Instruction::I64ReinterpretF64);
                     } else if expr_f {
-                        // f64 → store as i64 bits
                         body.instruction(&Instruction::I64ReinterpretF64);
                     } else if expr_bool {
-                        // bool (i32) → i64 for local storage
                         body.instruction(&Instruction::I64ExtendI32U);
                     }
                 } else {
                     body.instruction(&Instruction::I64Const(0));
                 }
-                self.local_map.insert(name.clone(), self.local_count);
-                body.instruction(&Instruction::LocalSet(self.local_count));
-                self.local_count += 1;
+                for name in names {
+                    self.local_map.insert(name.clone(), self.local_count);
+                    body.instruction(&Instruction::LocalSet(self.local_count));
+                    self.local_count += 1;
+                }
             }
             HirStmtKind::Loop { body: lb } => {
                 body.instruction(&Instruction::Block(BlockType::Empty));
@@ -841,6 +872,7 @@ impl WasmCompiler {
                 body.instruction(&Instruction::I64Sub);
             },
             UnaryOp::Not => { body.instruction(&Instruction::I32Eqz); }
+            UnaryOp::Try => { /* Try not supported in WASM backend */ }
         }
         Ok(())
     }

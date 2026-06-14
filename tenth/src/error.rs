@@ -44,6 +44,11 @@ pub enum TenthError {
     /// Propagated up through blocks/statements to the enclosing loop.
     #[error("continue")]
     ContinueSignal,
+
+    /// Non-error signal: a `?` operator encountered Result::Err and propagates it.
+    /// Caught by `try { }` blocks and function boundaries.
+    #[error("try propagate")]
+    TryPropagate(Value),
 }
 
 pub type TenthResult<T> = Result<T, TenthError>;

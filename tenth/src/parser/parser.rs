@@ -112,6 +112,13 @@ impl Parser {
             TokenKind::True => ExprKind::Literal(Literal::Bool(true)),
             TokenKind::False => ExprKind::Literal(Literal::Bool(false)),
             TokenKind::StringLiteral(s) => ExprKind::Literal(Literal::String(s.clone())),
+            TokenKind::InterpolatedString(parts) => {
+                let interp_parts: Vec<InterpPart> = parts.iter().map(|p| match p {
+                    crate::lexer::token::StringPart::Literal(s) => InterpPart::Literal(s.clone()),
+                    crate::lexer::token::StringPart::Expr(e) => InterpPart::Expr(e.clone()),
+                }).collect();
+                ExprKind::InterpolatedString(interp_parts)
+            }
             TokenKind::Self_ => ExprKind::Ident(Ident { name: "self".to_string(), span }),
             TokenKind::Identifier(name) => {
                 let name = name.clone();
@@ -297,6 +304,22 @@ impl Parser {
             }
             TokenKind::LParen => {
                 let expr = self.parse_expr()?;
+                if matches!(self.peek_kind(), TokenKind::Comma) {
+                    // Tuple expression: (expr, expr, ...)
+                    let mut elems = vec![expr];
+                    while matches!(self.peek_kind(), TokenKind::Comma) {
+                        self.advance();
+                        if matches!(self.peek_kind(), TokenKind::RParen) {
+                            break;
+                        }
+                        elems.push(self.parse_expr()?);
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    return Ok(Expr {
+                        kind: ExprKind::Tuple(elems),
+                        span: self.span(),
+                    });
+                }
                 self.expect(TokenKind::RParen)?;
                 return Ok(expr);
             }
@@ -318,6 +341,10 @@ impl Parser {
                     then_branch: Box::new(then_branch),
                     else_branch,
                 }
+            }
+            TokenKind::Try => {
+                let block = self.parse_expr()?;
+                ExprKind::TryBlock(Box::new(block))
             }
             TokenKind::Pipe => {
                 return self.parse_closure_after_pipe(span);
@@ -575,6 +602,14 @@ impl Parser {
                             span: expr_span,
                         };
                     }
+                }
+                TokenKind::QuestionMark => {
+                    self.advance();
+                    let expr_span = expr.span.clone();
+                    expr = Expr {
+                        kind: ExprKind::Unary { op: UnaryOp::Try, expr: Box::new(expr) },
+                        span: expr_span,
+                    };
                 }
                 _ => break,
             }
@@ -926,6 +961,50 @@ impl Parser {
     fn parse_type(&mut self) -> TenthResult<TypeAnnotation> {
         let span = self.span();
         match self.peek_kind() {
+            TokenKind::LParen => {
+                // Tuple type: (A, B, C)
+                self.advance();
+                let mut types = Vec::new();
+                if !matches!(self.peek_kind(), TokenKind::RParen) {
+                    loop {
+                        types.push(self.parse_type()?);
+                        if !matches!(self.peek_kind(), TokenKind::Comma) {
+                            break;
+                        }
+                        self.advance();
+                        if matches!(self.peek_kind(), TokenKind::RParen) {
+                            break;
+                        }
+                    }
+                }
+                self.expect(TokenKind::RParen)?;
+                if types.is_empty() {
+                    Ok(TypeAnnotation::Named(Ident { name: "()".to_string(), span }))
+                } else if types.len() == 1 {
+                    Ok(types.into_iter().next().unwrap())
+                } else {
+                    // Flatten tuple type into a named type like "(A, B, C)"
+                    let names: Vec<String> = types.iter().map(|t| {
+                        match t {
+                            TypeAnnotation::Named(id) => id.name.clone(),
+                            TypeAnnotation::Tensor { dtype, dims } => {
+                                let dim_strs: Vec<String> = dims.iter().map(|d| match d {
+                                    DimSpec::Literal(n) => n.to_string(),
+                                    DimSpec::Symbol(s) => s.clone(),
+                                    DimSpec::Wildcard => "..".to_string(),
+                                }).collect();
+                                let dtype_name = match dtype.as_ref() {
+                                    TypeAnnotation::Named(id) => id.name.clone(),
+                                    _ => "_".to_string(),
+                                };
+                                format!("Tensor[{}, {}]", dtype_name, dim_strs.join(", "))
+                            }
+                            _ => "_".to_string(),
+                        }
+                    }).collect();
+                    Ok(TypeAnnotation::Named(Ident { name: format!("({})", names.join(", ")), span }))
+                }
+            }
             TokenKind::Ampersand => {
                 self.advance();
                 let is_mut = matches!(self.peek_kind(), TokenKind::Mut);
@@ -1026,12 +1105,6 @@ impl Parser {
                 };
                 Ok(TypeAnnotation::FnType { params, ret })
             }
-            TokenKind::LParen => {
-                self.advance();
-                let inner = self.parse_type()?;
-                self.expect(TokenKind::RParen)?;
-                Ok(inner)
-            }
             _ => Err(TenthError::ParseError {
                 line: span.line,
                 col: span.col,
@@ -1066,8 +1139,16 @@ impl Parser {
             });
             return Ok(Param { name, type_ann });
         }
-        self.expect(TokenKind::Colon)?;
-        let type_ann = self.parse_type()?;
+        let type_ann = if matches!(self.peek_kind(), TokenKind::Colon) {
+            self.advance();
+            self.parse_type()?
+        } else {
+            // Untyped parameter — infer as Unknown
+            TypeAnnotation::Named(Ident {
+                name: "Unknown".to_string(),
+                span: name.span.clone(),
+            })
+        };
         Ok(Param { name, type_ann })
     }
 
@@ -1087,11 +1168,42 @@ impl Parser {
             TokenKind::Let => {
                 self.advance();
                 let mutable = self.match_token(TokenKind::Mut);
-                let name = if let TokenKind::Identifier(name) = &self.peek().kind {
-                    Ident {
+
+                // Check for tuple destructuring: let (a, b, c) = expr
+                let names: Vec<Ident> = if matches!(self.peek_kind(), TokenKind::LParen) {
+                    self.advance();
+                    let mut idents = Vec::new();
+                    if !matches!(self.peek_kind(), TokenKind::RParen) {
+                        loop {
+                            if let TokenKind::Identifier(name) = &self.peek().kind {
+                                idents.push(Ident {
+                                    name: name.clone(),
+                                    span: self.peek().span.clone(),
+                                });
+                                self.advance();
+                            } else {
+                                return Err(TenthError::ParseError {
+                                    line: self.peek().span.line,
+                                    col: self.peek().span.col,
+                                    message: "expected variable name in destructuring".into(),
+                                });
+                            }
+                            if !matches!(self.peek_kind(), TokenKind::Comma) {
+                                break;
+                            }
+                            self.advance();
+                            if matches!(self.peek_kind(), TokenKind::RParen) {
+                                break;
+                            }
+                        }
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    idents
+                } else if let TokenKind::Identifier(name) = &self.peek().kind {
+                    vec![Ident {
                         name: name.clone(),
                         span: self.peek().span.clone(),
-                    }
+                    }]
                 } else {
                     return Err(TenthError::ParseError {
                         line: self.peek().span.line,
@@ -1119,7 +1231,7 @@ impl Parser {
 
                 Ok(Stmt {
                     kind: StmtKind::Let {
-                        name,
+                        names,
                         type_ann,
                         mutable,
                         init,
@@ -1312,6 +1424,10 @@ impl Parser {
                             break;
                         }
                         self.advance();
+                        // Trailing comma: if RParen follows the comma, stop
+                        if matches!(self.peek_kind(), TokenKind::RParen) {
+                            break;
+                        }
                     }
                 }
                 self.expect(TokenKind::RParen)?;

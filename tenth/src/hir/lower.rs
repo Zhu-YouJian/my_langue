@@ -299,8 +299,8 @@ impl Lowerer {
                     if var_info.is_none() && fn_info.is_none() {
                         match ident.name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
-                            | "read_file" | "write_file" | "str_at" | "Vec::new" | "HashMap::new"
-                            | "compile_host" | "compile_program" | "write_bytes"
+                            | "read_file" | "write_file" | "write_bytes" | "str_at" | "Vec::new" | "HashMap::new"
+                            | "compile_host" | "compile_program"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
                             | "cross_entropy"
@@ -308,6 +308,8 @@ impl Lowerer {
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
                             | "format" | "parse_int" | "parse_float"
+                            | "path_join" | "path_exists" | "path_is_file" | "path_is_dir"
+                            | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file"
                             | "lexer_new" | "lexer_tokenize" | "parse_program"
                             | "lower_program" | "compile_to_wasm" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)
@@ -346,6 +348,7 @@ impl Lowerer {
                 let hir_op = match op {
                     ast::UnaryOp::Neg => UnaryOp::Neg,
                     ast::UnaryOp::Not => UnaryOp::Not,
+                    ast::UnaryOp::Try => UnaryOp::Try,
                 };
                 (HirExprKind::Unary { op: hir_op, expr: Box::new(e), ty: ty.clone() }, ty)
             }
@@ -355,6 +358,24 @@ impl Lowerer {
                 let lowered_args: Vec<_> = args.iter()
                     .map(|a| self.lower_expr(a))
                     .collect::<TenthResult<_>>()?;
+
+                // If the func is an EnumLiteral, merge args as tuple fields
+                if let HirExprKind::EnumLiteral { enum_name, variant, fields } = &f.kind {
+                    if fields.is_empty() && !lowered_args.is_empty() {
+                        let tuple_fields: Vec<(String, HirExpr)> = lowered_args.into_iter().enumerate()
+                            .map(|(i, a)| (format!("_{}", i), a))
+                            .collect();
+                        return Ok(HirExpr {
+                            kind: HirExprKind::EnumLiteral {
+                                enum_name: enum_name.clone(),
+                                variant: variant.clone(),
+                                fields: tuple_fields,
+                            },
+                            ty: Type::Unknown,
+                            span,
+                        });
+                    }
+                }
 
                 let ret_ty = self.resolve_call_type(&f, &lowered_args, &span)?;
 
@@ -759,6 +780,24 @@ impl Lowerer {
                 }
                 (HirExprKind::Move(Box::new(e)), ty)
             }
+
+            ExprKind::TryBlock(inner) => {
+                let e = self.lower_expr(inner)?;
+                (HirExprKind::TryBlock(Box::new(e)), Type::Unknown)
+            }
+
+            ExprKind::InterpolatedString(parts) => {
+                let hir_parts: Vec<crate::hir::hir::InterpPart> = parts.iter().map(|p| match p {
+                    ast::InterpPart::Literal(s) => crate::hir::hir::InterpPart::Literal(s.clone()),
+                    ast::InterpPart::Expr(e) => crate::hir::hir::InterpPart::Expr(e.clone()),
+                }).collect();
+                (HirExprKind::InterpolatedString { parts: hir_parts }, Type::str_())
+            }
+
+            ExprKind::Tuple(elems) => {
+                let hir_elems: Vec<HirExpr> = elems.iter().map(|e| self.lower_expr(e)).collect::<Result<_, _>>()?;
+                (HirExprKind::Tuple(hir_elems), Type::Unknown)
+            }
         };
 
         Ok(HirExpr { kind, ty, span })
@@ -929,17 +968,19 @@ impl Lowerer {
         let span = stmt.span.clone();
 
         let kind = match &stmt.kind {
-            StmtKind::Let { name, type_ann, mutable, init } => {
+            StmtKind::Let { names, type_ann, mutable, init } => {
                 let lowered_init = init.as_ref().map(|i| self.lower_expr(i)).transpose()?;
                 let ty = type_ann.as_ref()
                     .map(|a| Type::from_annotation(a))
                     .or_else(|| lowered_init.as_ref().map(|e| e.ty.clone()))
                     .unwrap_or(Type::Unknown);
 
-                self.scope.define_var(name.name.clone(), ty.clone(), *mutable);
+                for name in names {
+                    self.scope.define_var(name.name.clone(), ty.clone(), *mutable);
+                }
 
                 HirStmtKind::Let {
-                    name: name.name.clone(),
+                    names: names.iter().map(|n| n.name.clone()).collect(),
                     type_ann: type_ann.as_ref().map(|a| Type::from_annotation(a)),
                     mutable: *mutable,
                     init: lowered_init,
@@ -1347,8 +1388,10 @@ impl Lowerer {
                 // Track variables bound within the block
                 let mut bound = Vec::new();
                 for s in stmts {
-                    if let HirStmtKind::Let { name, .. } = &s.kind {
-                        bound.push(name.clone());
+                    if let HirStmtKind::Let { names, .. } = &s.kind {
+                        for name in names {
+                            bound.push(name.clone());
+                        }
                     }
                     Self::collect_free_vars_stmt(s, vars);
                 }
@@ -1387,8 +1430,20 @@ impl Lowerer {
             HirExprKind::Ref(inner) | HirExprKind::MutRef(inner) | HirExprKind::Deref(inner) => {
                 Self::collect_free_vars(inner, vars);
             }
-            HirExprKind::Move(inner) => {
+            HirExprKind::Move(inner) | HirExprKind::TryBlock(inner) => {
                 Self::collect_free_vars(inner, vars);
+            }
+            HirExprKind::InterpolatedString { parts } => {
+                for p in parts {
+                    if let crate::hir::hir::InterpPart::Expr(name) = p {
+                        vars.push(name.clone());
+                    }
+                }
+            }
+            HirExprKind::Tuple(elems) => {
+                for e in elems {
+                    Self::collect_free_vars(e, vars);
+                }
             }
             HirExprKind::DerefAssign { target, value } | HirExprKind::DerefAssignOp { target, value, .. } => {
                 Self::collect_free_vars(target, vars);

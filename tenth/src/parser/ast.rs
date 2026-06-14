@@ -49,12 +49,20 @@ pub enum BinOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
-    Neg, Not,
+    Neg, Not, Try,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InterpPart {
+    Literal(String),
+    Expr(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Literal(Literal),
+    InterpolatedString(Vec<InterpPart>),
+    Tuple(Vec<Expr>),
     Ident(Ident),
     Binary {
         op: BinOp,
@@ -132,6 +140,7 @@ pub enum ExprKind {
     MutRef(Box<Expr>),
     Deref(Box<Expr>),
     Move(Box<Expr>),
+    TryBlock(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -173,7 +182,7 @@ pub enum IndexExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StmtKind {
     Let {
-        name: Ident,
+        names: Vec<Ident>,
         type_ann: Option<TypeAnnotation>,
         mutable: bool,
         init: Option<Expr>,

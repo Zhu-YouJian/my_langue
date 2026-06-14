@@ -348,7 +348,7 @@ fn convert_stmt(
             };
             Ok(Some(ast::Stmt {
                 kind: ast::StmtKind::Let {
-                    name: ast::Ident { name: var_name, span: span.clone() },
+                    names: vec![ast::Ident { name: var_name, span: span.clone() }],
                     type_ann: None,
                     mutable: false,
                     init,

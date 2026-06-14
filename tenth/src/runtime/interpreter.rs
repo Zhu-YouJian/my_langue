@@ -229,10 +229,10 @@ impl Interpreter {
         self.arena.reset();
 
         if let Some(ref expr) = program.main_expr {
-            self.eval_expr(expr)
+            Self::unwrap_return(self.eval_expr(expr))
         } else if let Some(main_fn) = self.functions.iter().find(|f| f.name == "main") {
             let body = main_fn.body.clone();
-            self.eval_expr(&body)
+            Self::unwrap_return(self.eval_expr(&body))
         } else {
             Ok(None)
         }
@@ -329,8 +329,8 @@ impl Interpreter {
                     .or_else(|| {
                         match name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
-                            | "read_file" | "write_file" | "compile_host"
-                            | "compile_program" | "write_bytes"
+                            | "read_file" | "write_file" | "write_bytes" | "compile_host"
+                            | "compile_program"
                             | "Vec::new" | "HashMap::new"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
@@ -338,7 +338,9 @@ impl Interpreter {
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
-                            | "format" | "parse_int" | "parse_float" => {
+                            | "format" | "parse_int" | "parse_float"
+                            | "path_join" | "path_exists" | "path_is_file" | "path_is_dir"
+                            | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),
@@ -745,6 +747,61 @@ impl Interpreter {
                 Ok(Some(val))
             }
 
+            HirExprKind::TryBlock(inner) => {
+                // `try { block }` — catch TryPropagate and wrap as Result::Err
+                match self.eval_expr(inner) {
+                    Ok(val) => {
+                        // Success: wrap in Result::Ok
+                        let inner_val = val.unwrap_or(Value::Unit);
+                        Ok(Some(Value::Enum {
+                            enum_name: "Result".to_string(),
+                            variant: "Ok".to_string(),
+                            fields: Rc::new(RefCell::new(vec![("_0".to_string(), inner_val)])),
+                        }))
+                    }
+                    Err(TenthError::TryPropagate(err_val)) => {
+                        // Caught a ? propagation: wrap in Result::Err
+                        Ok(Some(Value::Enum {
+                            enum_name: "Result".to_string(),
+                            variant: "Err".to_string(),
+                            fields: Rc::new(RefCell::new(vec![("_0".to_string(), err_val)])),
+                        }))
+                    }
+                    Err(other) => Err(other),
+                }
+            }
+
+            HirExprKind::InterpolatedString { parts } => {
+                let mut result = String::new();
+                for p in parts {
+                    match p {
+                        crate::hir::hir::InterpPart::Literal(s) => {
+                            result.push_str(s);
+                        }
+                        crate::hir::hir::InterpPart::Expr(name) => {
+                            if let Some(val) = self.resolve_var(name) {
+                                result.push_str(&self.value_to_string(&val));
+                            } else {
+                                result.push_str(name);
+                            }
+                        }
+                    }
+                }
+                Ok(Some(Value::String(result)))
+            }
+
+            HirExprKind::Tuple(elems) => {
+                let mut values = Vec::new();
+                for e in elems {
+                    if let Some(v) = self.eval_expr(e)? {
+                        values.push(v);
+                    } else {
+                        values.push(Value::Unit);
+                    }
+                }
+                Ok(Some(Value::Vec(Rc::new(RefCell::new(values)))))
+            }
+
             HirExprKind::StructLiteral { name, fields, has_default: _ } => {
                 let mut field_vals = Vec::new();
                 for (fname, fexpr) in fields {
@@ -880,6 +937,11 @@ impl Interpreter {
     fn unwrap_return(result: TenthResult<Option<Value>>) -> TenthResult<Option<Value>> {
         match result {
             Err(TenthError::ReturnValue(v)) => Ok(Some(v)),
+            Err(TenthError::TryPropagate(err_val)) => Ok(Some(Value::Enum {
+                enum_name: "Result".to_string(),
+                variant: "Err".to_string(),
+                fields: Rc::new(RefCell::new(vec![("_0".to_string(), err_val)])),
+            })),
             other => other,
         }
     }
@@ -1139,6 +1201,64 @@ impl Interpreter {
         }
     }
 
+    fn value_to_string(&self, val: &Value) -> String {
+        match val {
+            Value::Int(n) => n.to_string(),
+            Value::Float(f) => f.to_string(),
+            Value::Bool(b) => b.to_string(),
+            Value::String(s) => s.clone(),
+            Value::Unit => "()".to_string(),
+            Value::Enum { enum_name, variant, fields } => {
+                let borrowed = fields.borrow();
+                if borrowed.is_empty() {
+                    format!("{}::{}", enum_name, variant)
+                } else if borrowed.len() == 1 {
+                    format!("{}::{}({})", enum_name, variant, self.value_to_string(&borrowed[0].1))
+                } else {
+                    let inner: Vec<String> = borrowed.iter().map(|(_, v)| self.value_to_string(v)).collect();
+                    format!("{}::{}({})", enum_name, variant, inner.join(", "))
+                }
+            }
+            Value::Vec(v) => {
+                let items: Vec<String> = v.borrow().iter().map(|x| self.value_to_string(x)).collect();
+                format!("[{}]", items.join(", "))
+            }
+            Value::Array(v) => {
+                let items: Vec<String> = v.borrow().iter().map(|x| self.value_to_string(x)).collect();
+                format!("[{}]", items.join(", "))
+            }
+            Value::Map(m) => {
+                let items: Vec<String> = m.borrow().iter()
+                    .map(|(k, v)| format!("{}: {}", k, self.value_to_string(v)))
+                    .collect();
+                format!("{{{}}}", items.join(", "))
+            }
+            Value::Tensor(t) => format!("{:?}", t.borrow().data),
+            Value::Closure { .. } => "<closure>".to_string(),
+            Value::FnRef { name, .. } => format!("<fn {}>", name),
+            Value::Struct { name, fields } => {
+                let borrowed = fields.borrow();
+                let items: Vec<String> = borrowed.iter()
+                    .map(|(k, v)| format!("{}: {}", k, self.value_to_string(v)))
+                    .collect();
+                format!("{} {{{}}}", name, items.join(", "))
+            }
+            Value::Ref(r) => self.value_to_string(&r.borrow()),
+            Value::MutRef(r) => {
+                if let Some(rc) = r.upgrade() {
+                    self.value_to_string(&rc.borrow())
+                } else {
+                    "<dangling mut ref>".to_string()
+                }
+            }
+            Value::Shared(r) => self.value_to_string(&r.borrow()),
+            Value::Moved => "<moved>".to_string(),
+            Value::Range { start, end, inclusive } => {
+                if *inclusive { format!("{}..={}", start, end) } else { format!("{}..{}", start, end) }
+            }
+        }
+    }
+
     fn eval_unary(&self, op: &UnaryOp, val: &Value) -> TenthResult<Value> {
         match op {
             UnaryOp::Neg => match val {
@@ -1153,6 +1273,29 @@ impl Interpreter {
                 }),
             },
             UnaryOp::Not => Ok(Value::Bool(!val.is_truthy())),
+            UnaryOp::Try => {
+                // `expr?` — if Result::Err, propagate early return; if Result::Ok, unwrap
+                match val {
+                    Value::Enum { enum_name, variant, fields } => {
+                        if enum_name == "Result" {
+                            if variant == "Ok" {
+                                // Unwrap: return the inner value
+                                let borrowed = fields.borrow();
+                                if let Some((_, v)) = borrowed.first() {
+                                    return Ok(v.clone());
+                                }
+                                return Ok(Value::Unit);
+                            } else if variant == "Err" {
+                                // Propagate: return the Err as a special early-return signal
+                                return Err(TenthError::TryPropagate(val.clone()));
+                            }
+                        }
+                        // Non-Result: just pass through
+                        Ok(val.clone())
+                    }
+                    _ => Ok(val.clone()),
+                }
+            }
         }
     }
 
@@ -2370,6 +2513,17 @@ impl Interpreter {
             Value::FnRef { name, .. } => {
                 self.call_named_fn(name, args, span)
             }
+            Value::Enum { enum_name, variant, fields: _ } => {
+                // Enum variant used as constructor: Result::Ok(42) → Enum with fields
+                let field_vals: Vec<(String, Value)> = args.iter().enumerate()
+                    .map(|(i, v)| (format!("_{}", i), v.clone()))
+                    .collect();
+                Ok(Some(Value::Enum {
+                    enum_name: enum_name.clone(),
+                    variant: variant.clone(),
+                    fields: Rc::new(RefCell::new(field_vals)),
+                }))
+            }
             Value::Closure { params, body, captures } => {
                 self.scopes.push(HashMap::new());
 
@@ -2764,6 +2918,131 @@ impl Interpreter {
                     message: "write_file(path, content) expects two string args".into(),
                 });
             }
+            "write_bytes" => {
+                if args.len() >= 2 {
+                    if let (Value::String(path), Value::Vec(bytes)) = (&args[0], &args[1]) {
+                        let data: Vec<u8> = bytes.borrow().iter().filter_map(|v| {
+                            if let Value::Int(n) = v { Some(*n as u8) } else { None }
+                        }).collect();
+                        match std::fs::write(path, &data) {
+                            Ok(()) => return Ok(Some(Value::Unit)),
+                            Err(e) => return Err(TenthError::RuntimeError {
+                                message: format!("write_bytes failed: {}", e),
+                            }),
+                        }
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "write_bytes(path, bytes) expects a string and a byte vec".into(),
+                });
+            }
+            "path_join" => {
+                if args.len() >= 2 {
+                    if let (Value::String(base), Value::String(rest)) = (&args[0], &args[1]) {
+                        let joined = std::path::Path::new(base).join(rest);
+                        return Ok(Some(Value::String(joined.to_string_lossy().to_string())));
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "path_join(base, rest) expects two string args".into(),
+                });
+            }
+            "path_exists" => {
+                if let Some(Value::String(path)) = args.first() {
+                    return Ok(Some(Value::Bool(std::path::Path::new(path).exists())));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "path_exists(path) expects a string path".into(),
+                });
+            }
+            "path_is_file" => {
+                if let Some(Value::String(path)) = args.first() {
+                    return Ok(Some(Value::Bool(std::path::Path::new(path).is_file())));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "path_is_file(path) expects a string path".into(),
+                });
+            }
+            "path_is_dir" => {
+                if let Some(Value::String(path)) = args.first() {
+                    return Ok(Some(Value::Bool(std::path::Path::new(path).is_dir())));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "path_is_dir(path) expects a string path".into(),
+                });
+            }
+            "mkdir" => {
+                if let Some(Value::String(path)) = args.first() {
+                    match std::fs::create_dir_all(path) {
+                        Ok(()) => return Ok(Some(Value::Unit)),
+                        Err(e) => return Err(TenthError::RuntimeError {
+                            message: format!("mkdir failed: {}", e),
+                        }),
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "mkdir(path) expects a string path".into(),
+                });
+            }
+            "list_dir" => {
+                if let Some(Value::String(path)) = args.first() {
+                    match std::fs::read_dir(path) {
+                        Ok(entries) => {
+                            let names: Vec<Value> = entries.filter_map(|e| {
+                                e.ok().map(|entry| Value::String(entry.file_name().to_string_lossy().to_string()))
+                            }).collect();
+                            return Ok(Some(Value::Vec(Rc::new(RefCell::new(names)))));
+                        }
+                        Err(e) => return Err(TenthError::RuntimeError {
+                            message: format!("list_dir failed: {}", e),
+                        }),
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "list_dir(path) expects a string path".into(),
+                });
+            }
+            "file_size" => {
+                if let Some(Value::String(path)) = args.first() {
+                    match std::fs::metadata(path) {
+                        Ok(meta) => return Ok(Some(Value::Int(meta.len() as i64))),
+                        Err(e) => return Err(TenthError::RuntimeError {
+                            message: format!("file_size failed: {}", e),
+                        }),
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "file_size(path) expects a string path".into(),
+                });
+            }
+            "remove_file" => {
+                if let Some(Value::String(path)) = args.first() {
+                    match std::fs::remove_file(path) {
+                        Ok(()) => return Ok(Some(Value::Unit)),
+                        Err(e) => return Err(TenthError::RuntimeError {
+                            message: format!("remove_file failed: {}", e),
+                        }),
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "remove_file(path) expects a string path".into(),
+                });
+            }
+            "copy_file" => {
+                if args.len() >= 2 {
+                    if let (Value::String(src), Value::String(dst)) = (&args[0], &args[1]) {
+                        match std::fs::copy(src, dst) {
+                            Ok(_) => return Ok(Some(Value::Unit)),
+                            Err(e) => return Err(TenthError::RuntimeError {
+                                message: format!("copy_file failed: {}", e),
+                            }),
+                        }
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "copy_file(src, dst) expects two string args".into(),
+                });
+            }
             "Vec::new" => return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new()))))),
             "HashMap::new" => return Ok(Some(Value::Map(Rc::new(RefCell::new(HashMap::new()))))),
             "compile_host" => {
@@ -2806,24 +3085,6 @@ impl Interpreter {
                 return Err(TenthError::RuntimeError {
                     message: "compile_program(program, out) expects Program struct and string path".into(),
                 });
-            }
-            "write_bytes" => {
-                if args.len() >= 2 {
-                    if let Value::String(out) = &args[1] {
-                        if let Value::Vec(items) = &args[0] {
-                            let borrowed = items.borrow();
-                            let bytes: Vec<u8> = borrowed.iter().map(|v| {
-                                match v {
-                                    Value::Shared(rc) => rc.borrow().as_int().unwrap_or(0) as u8,
-                                    other => other.as_int().unwrap_or(0) as u8,
-                                }
-                            }).collect();
-                            let _ = std::fs::write(out, &bytes);
-                            return Ok(Some(Value::Int(0)));
-                        }
-                    }
-                }
-                return Ok(Some(Value::Int(1)));
             }
             "format" => {
                 if args.is_empty() {
@@ -2953,12 +3214,36 @@ impl Interpreter {
                 self.eval_expr(e)?;
                 Ok(())
             }
-            HirStmtKind::Let { name, init, .. } => {
+            HirStmtKind::Let { names, init, .. } => {
                 let val = match init {
                     Some(e) => self.eval_expr(e)?.unwrap_or(Value::Unit),
                     None => Value::Unit,
                 };
-                self.current_scope().insert(name.clone(), val);
+                if names.len() == 1 {
+                    self.current_scope().insert(names[0].clone(), val);
+                } else {
+                    // Tuple destructuring: val should be a Vec
+                    match &val {
+                        Value::Vec(v) => {
+                            let borrowed = v.borrow();
+                            for (i, name) in names.iter().enumerate() {
+                                let v = borrowed.get(i).cloned().unwrap_or(Value::Unit);
+                                self.current_scope().insert(name.clone(), v);
+                            }
+                        }
+                        Value::Array(a) => {
+                            let borrowed = a.borrow();
+                            for (i, name) in names.iter().enumerate() {
+                                let v = borrowed.get(i).cloned().unwrap_or(Value::Unit);
+                                self.current_scope().insert(name.clone(), v);
+                            }
+                        }
+                        _ => {
+                            // Fallback: assign entire value to first name
+                            self.current_scope().insert(names[0].clone(), val);
+                        }
+                    }
+                }
                 Ok(())
             }
             HirStmtKind::Return(expr) => {

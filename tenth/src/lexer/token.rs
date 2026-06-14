@@ -1,10 +1,18 @@
 use std::fmt;
 
+/// A part of an interpolated string: either a literal text segment or an expression name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StringPart {
+    Literal(String),
+    Expr(String),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     IntLiteral(i64),
     FloatLiteral(f64),
     StringLiteral(String),
+    InterpolatedString(Vec<StringPart>),
     CharLiteral(char),
 
     Identifier(String),
@@ -83,6 +91,8 @@ pub enum TokenKind {
     FatArrow,
     ColonColon,
 
+    QuestionMark,
+
     Eof,
 }
 
@@ -104,6 +114,16 @@ impl fmt::Display for TokenKind {
             TokenKind::IntLiteral(n) => write!(f, "{}", n),
             TokenKind::FloatLiteral(n) => write!(f, "{}", n),
             TokenKind::StringLiteral(s) => write!(f, "\"{}\"", s),
+            TokenKind::InterpolatedString(parts) => {
+                write!(f, "\"")?;
+                for p in parts {
+                    match p {
+                        StringPart::Literal(s) => write!(f, "{}", s)?,
+                        StringPart::Expr(e) => write!(f, "{{{}}}", e)?,
+                    }
+                }
+                write!(f, "\"")
+            }
             TokenKind::CharLiteral(c) => write!(f, "'{}'", c),
             TokenKind::Identifier(s) => write!(f, "{}", s),
             TokenKind::Fn => write!(f, "fn"),
@@ -177,6 +197,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Arrow => write!(f, "->"),
             TokenKind::FatArrow => write!(f, "=>"),
             TokenKind::ColonColon => write!(f, "::"),
+            TokenKind::QuestionMark => write!(f, "?"),
             TokenKind::Eof => write!(f, "<EOF>"),
             TokenKind::Shard => write!(f, "shard"),
         }

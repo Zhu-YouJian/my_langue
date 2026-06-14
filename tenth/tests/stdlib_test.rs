@@ -539,3 +539,332 @@ fn test_hashmap_merge() {
         v => panic!("expected Int(2), got {:?}", v),
     }
 }
+
+// ── Result / try / ? tests ──
+
+#[test]
+fn test_result_ok() {
+    let src = r#"Result::Ok(42)"#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Enum { enum_name, variant, .. }) => {
+            assert_eq!(enum_name, "Result");
+            assert_eq!(variant, "Ok");
+        }
+        v => panic!("expected Result::Ok, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_result_err() {
+    let src = r#"Result::Err("oops")"#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Enum { enum_name, variant, .. }) => {
+            assert_eq!(enum_name, "Result");
+            assert_eq!(variant, "Err");
+        }
+        v => panic!("expected Result::Err, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_try_operator_ok() {
+    let src = r#"Result::Ok(10)?"#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(10)) => {}
+        v => panic!("expected Int(10), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_try_operator_err_propagate() {
+    // ? on Err at top level propagates as Result::Err via unwrap_return
+    let src = r#"Result::Err("bad")?"#;
+    let result = run_code(src);
+    match result {
+        Ok(Some(Value::Enum { enum_name, variant, .. })) => {
+            assert_eq!(enum_name, "Result");
+            assert_eq!(variant, "Err");
+        }
+        _ => panic!("expected Result::Err from propagation, got {:?}", result),
+    }
+}
+
+#[test]
+fn test_try_block_catch() {
+    // try block catches ? propagation from Err
+    let src = r#"try { Result::Err("bad")? }"#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Enum { enum_name, variant, .. }) => {
+            assert_eq!(enum_name, "Result");
+            assert_eq!(variant, "Err");
+        }
+        v => panic!("expected Result::Err, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_try_block_success() {
+    // Test try block with a simple expression
+    let src = r#"try { 42 }"#;
+    let result = run_code(src);
+    assert!(result.is_ok(), "try block should parse and run, got {:?}", result);
+    match result.unwrap() {
+        Some(Value::Enum { enum_name, variant, .. }) => {
+            assert_eq!(enum_name, "Result");
+            assert_eq!(variant, "Ok");
+        }
+        v => panic!("expected Result::Ok, got {:?}", v),
+    }
+}
+
+// ── String Interpolation Tests ──────────────────────────────────────────
+
+#[test]
+fn test_string_interp_simple() {
+    let src = r#"let name = "world"; "hello {name}""#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::String(s)) => assert_eq!(s, "hello world"),
+        v => panic!("expected String, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_string_interp_multiple() {
+    let src = r#"let x = 10; let y = 20; "{x} + {y} = 30""#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::String(s)) => assert_eq!(s, "10 + 20 = 30"),
+        v => panic!("expected String, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_string_interp_no_expr() {
+    // Plain string without interpolation should still work
+    let src = r#""just a string""#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::String(s)) => assert_eq!(s, "just a string"),
+        v => panic!("expected String, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_string_interp_only_expr() {
+    let src = r#"let val = 42; "{val}""#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::String(s)) => assert_eq!(s, "42"),
+        v => panic!("expected String, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_string_interp_bool() {
+    let src = r#"let flag = true; "flag={flag}""#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::String(s)) => assert_eq!(s, "flag=true"),
+        v => panic!("expected String, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_tensor_type_param() {
+    // Test that Tensor[f64, ..] type annotation parses correctly
+    let src = r#"fn foo(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x }"#;
+    let result = run_code(src);
+    assert!(result.is_ok(), "Tensor type annotation should parse, got {:?}", result);
+}
+
+#[test]
+fn test_multiline_fn_sig() {
+    // Test that multi-line function signatures parse correctly
+    let src = r#"fn add(
+    a: i64,
+    b: i64,
+) -> i64 { a + b }"#;
+    let result = run_code(src);
+    assert!(result.is_ok(), "multi-line fn sig should parse, got {:?}", result);
+}
+
+// ── .th Standard Library Validation ──────────────────────────────────────
+
+fn parse_th_file(path: &str) -> Result<(), String> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {}", path, e))?;
+    let mut lexer = Lexer::new(&source);
+    let tokens = lexer.tokenize().map_err(|e| format!("{}: lexer error: {}", path, e))?;
+    let mut parser = Parser::new(tokens);
+    let _program = parser.parse_program().map_err(|e| format!("{}: parser error: {}", path, e))?;
+    Ok(())
+}
+
+fn lower_th_file(path: &str) -> Result<(), String> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {}", path, e))?;
+    let mut lexer = Lexer::new(&source);
+    let tokens = lexer.tokenize().map_err(|e| format!("{}: lexer error: {}", path, e))?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().map_err(|e| format!("{}: parser error: {}", path, e))?;
+    let mut lowerer = Lowerer::new();
+    let _hir = lowerer.lower_program(&program).map_err(|e| format!("{}: lower error: {}", path, e))?;
+    Ok(())
+}
+
+macro_rules! th_parse_test {
+    ($name:ident, $path:expr) => {
+        #[test]
+        fn $name() {
+            parse_th_file($path).unwrap();
+        }
+    };
+}
+
+macro_rules! th_lower_test {
+    ($name:ident, $path:expr) => {
+        #[test]
+        fn $name() {
+            lower_th_file($path).unwrap();
+        }
+    };
+}
+
+// Parse-only tests (files that may use features not yet supported at runtime)
+th_parse_test!(th_parse_prelude, "std/prelude.th");
+th_parse_test!(th_parse_string, "std/string/string.th");
+th_parse_test!(th_parse_collections, "std/collections/collections.th");
+th_parse_test!(th_parse_iter, "std/collections/iter.th");
+th_parse_test!(th_parse_math_utils, "std/utils/math.th");
+th_parse_test!(th_parse_math_functions, "std/math/functions.th");
+th_parse_test!(th_parse_nn_linear, "std/nn/linear.th");
+th_parse_test!(th_parse_nn_activations, "std/nn/activations.th");
+th_parse_test!(th_parse_nn_loss, "std/nn/loss.th");
+th_parse_test!(th_parse_nn_dropout, "std/nn/dropout.th");
+th_parse_test!(th_parse_nn_attention, "std/nn/attention.th");
+th_parse_test!(th_parse_nn_multihead_attention, "std/nn/multihead_attention.th");
+th_parse_test!(th_parse_nn_embedding, "std/nn/embedding.th");
+th_parse_test!(th_parse_nn_layer_norm, "std/nn/layer_norm.th");
+th_parse_test!(th_parse_nn_batchnorm, "std/nn/batchnorm.th");
+th_parse_test!(th_parse_nn_conv, "std/nn/conv.th");
+th_parse_test!(th_parse_nn_feedforward, "std/nn/feedforward.th");
+th_parse_test!(th_parse_nn_positional_encoding, "std/nn/positional_encoding.th");
+th_parse_test!(th_parse_nn_transformer, "std/nn/transformer.th");
+th_parse_test!(th_parse_optim_sgd, "std/optim/sgd.th");
+th_parse_test!(th_parse_optim_adam, "std/optim/adam.th");
+th_parse_test!(th_parse_optim_adagrad, "std/optim/adagrad.th");
+th_parse_test!(th_parse_optim_rmsprop, "std/optim/rmsprop.th");
+th_parse_test!(th_parse_init_initializers, "std/init/initializers.th");
+th_parse_test!(th_parse_data_dataloader, "std/data/dataloader.th");
+th_parse_test!(th_parse_utils_serialization, "std/utils/serialization.th");
+
+// Lower tests for core utility files (no tensor dependencies)
+th_lower_test!(th_lower_string, "std/string/string.th");
+th_lower_test!(th_lower_iter, "std/collections/iter.th");
+th_lower_test!(th_lower_math_utils, "std/utils/math.th");
+
+// ── File I/O Tests ──────────────────────────────────────────────────────
+
+#[test]
+fn test_write_and_read_file() {
+    let tmp = std::env::temp_dir().join("tenth_test_io.txt");
+    let path = tmp.to_string_lossy().replace('\\', "/");
+    let src = format!(r#"write_file("{}", "hello io")"#, path);
+    let result = run_code(&src);
+    assert!(result.is_ok(), "write_file should succeed, got {:?}", result);
+
+    let src2 = format!(r#"read_file("{}")"#, path);
+    let result2 = run_code(&src2).unwrap();
+    match result2 {
+        Some(Value::String(s)) => assert_eq!(s, "hello io"),
+        v => panic!("expected String, got {:?}", v),
+    }
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn test_path_join() {
+    let src = r#"path_join("foo", "bar")"#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::String(s)) => {
+            assert!(s.contains("foo"), "path_join result should contain 'foo', got {}", s);
+            assert!(s.contains("bar"), "path_join result should contain 'bar', got {}", s);
+        }
+        v => panic!("expected String, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_path_exists() {
+    let src = r#"path_exists("nonexistent_path_xyz")"#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Bool(b)) => assert_eq!(b, false),
+        v => panic!("expected Bool(false), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_path_is_file() {
+    let src = r#"path_is_file("nonexistent_file.xyz")"#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Bool(b)) => assert_eq!(b, false),
+        v => panic!("expected Bool(false), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_mkdir_and_list_dir() {
+    let tmp = std::env::temp_dir().join("tenth_test_dir");
+    let path = tmp.to_string_lossy().replace('\\', "/");
+    // Create dir
+    let src = format!(r#"mkdir("{}")"#, path);
+    let result = run_code(&src);
+    assert!(result.is_ok(), "mkdir should succeed, got {:?}", result);
+    // List dir
+    let src2 = format!(r#"list_dir("{}")"#, path);
+    let result2 = run_code(&src2).unwrap();
+    match result2 {
+        Some(Value::Vec(_)) => {},
+        v => panic!("expected Vec, got {:?}", v),
+    }
+    // Cleanup
+    let _ = std::fs::remove_dir(&tmp);
+}
+
+#[test]
+fn test_file_size() {
+    let tmp = std::env::temp_dir().join("tenth_test_size.txt");
+    let path = tmp.to_string_lossy().replace('\\', "/");
+    let _ = std::fs::write(&tmp, "12345");
+    let src = format!(r#"file_size("{}")"#, path);
+    let result = run_code(&src).unwrap();
+    match result {
+        Some(Value::Int(n)) => assert_eq!(n, 5),
+        v => panic!("expected Int(5), got {:?}", v),
+    }
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn test_copy_file() {
+    let tmp1 = std::env::temp_dir().join("tenth_test_copy_src.txt");
+    let tmp2 = std::env::temp_dir().join("tenth_test_copy_dst.txt");
+    let path1 = tmp1.to_string_lossy().replace('\\', "/");
+    let path2 = tmp2.to_string_lossy().replace('\\', "/");
+    let _ = std::fs::write(&tmp1, "copy me");
+    let src = format!(r#"copy_file("{}", "{}")"#, path1, path2);
+    let result = run_code(&src);
+    assert!(result.is_ok(), "copy_file should succeed, got {:?}", result);
+    let content = std::fs::read_to_string(&tmp2).unwrap();
+    assert_eq!(content, "copy me");
+    let _ = std::fs::remove_file(&tmp1);
+    let _ = std::fs::remove_file(&tmp2);
+}

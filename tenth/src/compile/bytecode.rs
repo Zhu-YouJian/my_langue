@@ -122,7 +122,7 @@ impl BytecodeCompiler {
             Unary { op, expr: inner, .. } => {
                 self.compile_expr(inner)?;
                 use crate::hir::hir::UnaryOp::*;
-                self.chunk.emit(match op { Neg => Op::Neg, Not => Op::Not });
+                self.chunk.emit(match op { Neg => Op::Neg, Not => Op::Not, Try => Op::Pop });
             }
 
             Call { func, args, .. } => {
@@ -372,6 +372,49 @@ impl BytecodeCompiler {
             HirExprKind::Move { .. } => {
                 self.chunk.emit(Op::MoveOp);
             }
+            HirExprKind::TryBlock { .. } => {
+                // TryBlock not yet supported in bytecode; emit as no-op
+            }
+            HirExprKind::InterpolatedString { parts } => {
+                // Evaluate by concatenating all parts as strings
+                // First, push all parts as strings, then concatenate
+                let mut count = 0;
+                for p in parts {
+                    match p {
+                        crate::hir::hir::InterpPart::Literal(s) => {
+                            let i = self.chunk.add_string(s);
+                            self.chunk.emit(Op::PushStr(i));
+                            count += 1;
+                        }
+                        crate::hir::hir::InterpPart::Expr(name) => {
+                            // Look up variable and convert to string
+                            if let Some(pos) = self.locals.iter().position(|n| n == name) {
+                                self.chunk.emit(Op::Load(pos));
+                            } else {
+                                let i = self.chunk.add_string(name);
+                                self.chunk.emit(Op::LoadGlobal(i));
+                            }
+                            // Convert to string via format builtin
+                            let fi = self.chunk.add_string("format");
+                            self.chunk.emit(Op::CallN(fi, 1));
+                            count += 1;
+                        }
+                    }
+                }
+                // Concatenate all parts: result = parts[0] + parts[1] + ...
+                for _ in 1..count {
+                    // str_add is host function index 3
+                    let fi = self.chunk.add_string("str_add");
+                    self.chunk.emit(Op::CallN(fi, 2));
+                }
+            }
+            HirExprKind::Tuple(elems) => {
+                // Build a Vec from the elements
+                for e in elems {
+                    self.compile_expr(e)?;
+                }
+                // TODO: proper tuple support in bytecode
+            }
             HirExprKind::Range { start: _, end: _, inclusive } => {
                 // Compile as constant range (start/end expressions simplified)
                 self.chunk.emit(Op::PushRange(0, 0, *inclusive));
@@ -436,19 +479,20 @@ impl BytecodeCompiler {
 
     fn compile_stmt(&mut self, stmt: &HirStmt) -> TenthResult<()> {
         match &stmt.kind {
-            HirStmtKind::Let { name, init, .. } => {
-                let pos = self.locals.len();
-                self.locals.push(name.clone());
+            HirStmtKind::Let { names, init, .. } => {
                 if let Some(e) = init {
                     self.compile_expr(e)?;
                 } else {
                     self.chunk.emit(Op::PushUnit);
                 }
-                self.chunk.emit(Op::Dup);
-                self.chunk.emit(Op::Store(pos));
-                // Also store as global so closure FnRef values can be called by name
-                let gi = self.chunk.add_string(name);
-                self.chunk.emit(Op::StoreGlobal(gi));
+                for name in names {
+                    let pos = self.locals.len();
+                    self.locals.push(name.clone());
+                    self.chunk.emit(Op::Dup);
+                    self.chunk.emit(Op::Store(pos));
+                    let gi = self.chunk.add_string(name);
+                    self.chunk.emit(Op::StoreGlobal(gi));
+                }
             }
             HirStmtKind::Expr(e) => {
                 self.compile_expr(e)?;
