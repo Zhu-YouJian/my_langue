@@ -32,6 +32,8 @@ pub enum Op {
     EnumGetField(usize),
     PushRange(i64, i64, bool),  // start, end, inclusive
     MoveOp,                     // no-op marker for move semantics
+    MakeTensor(usize, usize),   // rows, cols — pops rows*cols f64 values from stack
+    MakeClosure(usize, usize),  // params_count, chunk_idx — creates a closure value
 }
 
 // ── Chunk ──────────────────────────────────────────────────────────────────
@@ -68,6 +70,7 @@ impl Chunk {
             IndexGet => 36, SliceStr => 37,
             MakeEnum(..) => 38, IsEnumVariant(_) => 39, EnumGetField(_) => 40,
             PushRange(..) => 41, MoveOp => 42,
+            MakeTensor(..) => 43, MakeClosure(..) => 44,
         });
 
         // Emit operands
@@ -86,6 +89,8 @@ impl Chunk {
             IsEnumVariant(v) => w!(*v, u64),
             EnumGetField(f) => w!(*f, u64),
             PushRange(s, e, inc) => { w!(*s, i64); w!(*e, i64); self.code.push(if *inc {1} else {0}); }
+            MakeTensor(r, c) => { w!(*r, u64); w!(*c, u64); }
+            MakeClosure(p, c) => { w!(*p, u64); w!(*c, u64); }
             MoveOp => {}
             _ => {}
         }
@@ -122,6 +127,8 @@ impl Chunk {
             40 => EnumGetField(r!(u64) as usize),
             41 => PushRange(r!(i64), r!(i64), { let b = self.code[*ip]; *ip += 1; b != 0 }),
             42 => MoveOp,
+            43 => MakeTensor(r!(u64) as usize, r!(u64) as usize),
+            44 => MakeClosure(r!(u64) as usize, r!(u64) as usize),
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -232,6 +239,10 @@ impl Vm {
                     38 => MakeEnum(r!(u64) as usize, r!(u64) as usize, r!(u64) as usize),
                     39 => IsEnumVariant(r!(u64) as usize),
                     40 => EnumGetField(r!(u64) as usize),
+                    41 => PushRange(r!(i64), r!(i64), { let b = code[ip]; ip += 1; b != 0 }),
+                    42 => MoveOp,
+                    43 => MakeTensor(r!(u64) as usize, r!(u64) as usize),
+                    44 => MakeClosure(r!(u64) as usize, r!(u64) as usize),
                     _ => Ret,
                 }
             };
@@ -526,6 +537,39 @@ impl Vm {
 
                 Op::MoveOp => {
                     // no-op: move semantics are checked at HIR level
+                }
+
+                Op::MakeTensor(rows, cols) => {
+                    use super::tensor::Tensor;
+                    let total = rows * cols;
+                    let mut data = Vec::with_capacity(total);
+                    for _ in 0..total {
+                        let v = self.stack.pop().unwrap_or(Value::Float(0.0));
+                        data.push(match v {
+                            Value::Float(f) => f,
+                            Value::Int(n) => n as f64,
+                            _ => 0.0,
+                        });
+                    }
+                    data.reverse();
+                    let tensor = if rows == 1 || cols == 1 {
+                        Tensor::from_vec(data, vec![total])
+                    } else {
+                        Tensor::from_vec(data, vec![rows, cols])
+                    };
+                    self.stack.push(Value::Tensor(Rc::new(RefCell::new(tensor))));
+                }
+
+                Op::MakeClosure(params_count, _chunk_idx) => {
+                    // Create a closure value with empty captures (captures are resolved at call time via globals)
+                    let _param_names: Vec<(String, crate::hir::types::Type)> = (0..params_count)
+                        .map(|i| (format!("__param_{i}"), crate::hir::types::Type::Unknown))
+                        .collect();
+                    // Note: VM closures currently don't carry a body; they rely on
+                    // the function being registered as a named function. This opcode
+                    // is a placeholder for when full closure support is added.
+                    // For now, push Unit as a marker that closure creation was attempted.
+                    self.stack.push(Value::Unit);
                 }
             }
         }

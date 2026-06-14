@@ -1,4 +1,7 @@
-// Model serialization
+// Model serialization utilities
+//
+// Uses the built-in save_weights / load_weights functions for
+// binary tensor serialization (.thw format).
 //
 // Binary format (.thw = Tenth Weights):
 //   [num_tensors: i32]
@@ -8,3 +11,30 @@
 // Usage:
 //   save_weights("model.thw", [w1, b1, w2, b2])
 //   let [w1, b1, w2, b2] = load_weights("model.thw")
+
+// Save model parameters to a binary file.
+// Wraps the built-in save_weights for a more descriptive API.
+fn save_model(path: str, params: Vec) -> i32 {
+    save_weights(path, params)
+}
+
+// Load model parameters from a binary file.
+// Returns a Vec of tensors in the same order they were saved.
+fn load_model(path: str) -> Vec {
+    load_weights(path)
+}
+
+// Checkpoint: save training state (model params + optimizer state)
+// This is a higher-level API that saves both model and optimizer
+// parameters in separate files.
+fn save_checkpoint(
+    path_prefix: str,
+    model_params: Vec,
+    optim_params: Vec,
+) -> i32 {
+    let model_path = path_prefix + ".model.thw";
+    let optim_path = path_prefix + ".optim.thw";
+    let r1 = save_weights(model_path, model_params);
+    let r2 = save_weights(optim_path, optim_params);
+    if r1 == 0 && r2 == 0 { 0 } else { 1 }
+}

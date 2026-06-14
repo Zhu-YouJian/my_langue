@@ -20,8 +20,31 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
     let mut ch = lexer_peek(lexer);
     loop {
         while (ch != "") && is_ws(ch) { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
-        if (ch != "") && (ch == "/") { let next_pos = lexer.pos + 1; if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") { lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer); while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; }; }
-        else { break; };
+        if (ch != "") && (ch == "/") {
+            let next_pos = lexer.pos + 1;
+            if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") {
+                lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer);
+                while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+            } else if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "*") {
+                lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer);
+                let mut depth: i64 = 1;
+                while (depth > 0) && (ch != "") {
+                    if ch == "/" {
+                        let nn = lexer.pos + 1;
+                        if (nn < lexer.source.len()) && (lexer.source[nn] == "*") {
+                            lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer);
+                            depth = depth + 1;
+                        } else { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+                    } else if ch == "*" {
+                        let nn = lexer.pos + 1;
+                        if (nn < lexer.source.len()) && (lexer.source[nn] == "/") {
+                            lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer);
+                            depth = depth - 1;
+                        } else { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+                    } else { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+                };
+            } else { break; };
+        } else { break; };
     };
     let line = lexer.line; let col = lexer.col; let span = make_span(line, col);
     if ch == "" { return Token { kind: TokenKind::Eof, span: span, disc: 61, ival: 0, fval: 0.0, sval: "" }; };
@@ -111,6 +134,7 @@ fn lexer_tokenize(lexer: &mut Lexer) -> Vec<Token> {
     while lexer.pos < src_len { let t = lexer_next(lexer); tokens.push(t); };
     tokens
 }
+
 // Self-hosting Parser — v0.3.1 recursive descent
 
 struct Expr { kind: str, ival: i64, fval: f64, sval: str, left: i64, right: i64, arg_start: i64, arg_count: i64, extra_start: i64, extra_count: i64 }
@@ -265,6 +289,118 @@ fn parse_primary(p: &mut Parser) -> i64 {
         p.expr_nodes[idx - 1].left = inner;
         return idx;
     };
+    // Pipe (41) — closure: |params| body
+    if d == 41 {
+        parser_advance(p); // skip |
+        let mut closure_params = Vec::new();
+        loop {
+            let t = parser_peek(p);
+            if t.disc == 41 { parser_advance(p); break; }; // closing |
+            let pname_tok = parser_advance(p);
+            let pname = pname_tok.sval;
+            // skip optional : Type
+            let t2 = parser_peek(p);
+            if t2.disc == 55 { parser_advance(p); parser_advance(p); }; // skip : and type
+            closure_params.push(Param { name: pname, type_ann: "" });
+            let t3 = parser_peek(p);
+            if t3.disc == 53 { parser_advance(p); } // skip ,
+            else if t3.disc == 41 { parser_advance(p); break; }; // closing |
+        };
+        let body = parse_expr(p);
+        let idx = add_expr(p, "closure");
+        // Store params as a sub-expression list
+        p.expr_nodes[idx - 1].left = body;
+        p.expr_nodes[idx - 1].extra_start = p.expr_nodes.len() + 1;
+        p.expr_nodes[idx - 1].extra_count = closure_params.len();
+        let mut pi: i64 = 0;
+        while pi < closure_params.len() {
+            let pidx = add_expr(p, "ident");
+            p.expr_nodes[pidx - 1].sval = closure_params[pi].name;
+            pi = pi + 1;
+        };
+        return idx;
+    };
+
+    // LBracket (51) — array literal or tensor literal
+    if d == 51 {
+        parser_advance(p); // skip [
+        let next = parser_peek(p);
+        if next.disc == 51 {
+            // Tensor literal: [[...], [...]]
+            parser_advance(p); // skip inner [
+            let start = p.expr_nodes.len() + 1;
+            let mut count: i64 = 0;
+            loop {
+                let t = parser_peek(p);
+                if t.disc == 52 { break; }; // ]
+                parse_expr(p);
+                count = count + 1;
+                let t2 = parser_peek(p);
+                if t2.disc == 53 { parser_advance(p); }; // ,
+            };
+            parser_advance(p); // skip inner ]
+            // Check for more rows
+            let mut rows: i64 = 1;
+            let mut total_count = count;
+            let t3 = parser_peek(p);
+            if t3.disc == 53 {
+                // Multiple rows
+                loop {
+                    let t4 = parser_peek(p);
+                    if t4.disc == 52 { break; }; // ]
+                    if t4.disc == 53 { parser_advance(p); }; // ,
+                    let t5 = parser_peek(p);
+                    if t5.disc == 51 {
+                        parser_advance(p); // skip [
+                        loop {
+                            let t6 = parser_peek(p);
+                            if t6.disc == 52 { break; };
+                            parse_expr(p);
+                            total_count = total_count + 1;
+                            let t7 = parser_peek(p);
+                            if t7.disc == 53 { parser_advance(p); };
+                        };
+                        parser_advance(p); // skip ]
+                        rows = rows + 1;
+                    } else { break; };
+                };
+            };
+            parser_advance(p); // skip outer ]
+            let idx = add_expr(p, "tensor");
+            p.expr_nodes[idx - 1].arg_start = start;
+            p.expr_nodes[idx - 1].arg_count = total_count;
+            p.expr_nodes[idx - 1].lit_ival = rows;
+            return idx;
+        };
+        // Array literal: [1, 2, 3]
+        let start = p.expr_nodes.len() + 1;
+        let mut count: i64 = 0;
+        loop {
+            let t = parser_peek(p);
+            if t.disc == 52 { break; }; // ]
+            if t.disc == 61 { break; }; // Eof
+            parse_expr(p);
+            count = count + 1;
+            let t2 = parser_peek(p);
+            if t2.disc == 53 { parser_advance(p); }
+            else { break; };
+        };
+        parser_advance(p); // skip ]
+        let idx = add_expr(p, "array");
+        p.expr_nodes[idx - 1].arg_start = start;
+        p.expr_nodes[idx - 1].arg_count = count;
+        return idx;
+    };
+
+    // Move (24) — move expression
+    if d == 24 {
+        parser_advance(p);
+        let inner = parse_unary(p);
+        let idx = add_expr(p, "move");
+        p.expr_nodes[idx - 1].left = inner;
+        return idx;
+    };
+
     // Default
     let idx = add_expr(p, "int");
     p.expr_nodes[idx - 1].ival = 0;
@@ -400,14 +536,28 @@ fn parse_expr(p: &mut Parser) -> i64 {
     // Simple: just parse binary
     let expr = parse_binary(p, 0);
 
-    // Check for =
+    // Check for = or +=, -=, *=, /=
     let tok2 = parser_peek(p);
     if tok2.disc == 42 {
+        // Simple assignment
         parser_advance(p);
         let rhs = parse_expr(p);
         let idx = add_expr(p, "assign");
         p.expr_nodes[idx - 1].left = expr;
         p.expr_nodes[idx - 1].right = rhs;
+        idx
+    } else if tok2.disc == 43 || tok2.disc == 44 || tok2.disc == 45 || tok2.disc == 46 {
+        // Compound assignment: +=, -=, *=, /=
+        let op_str = if tok2.disc == 43 { "+=" }
+                     else if tok2.disc == 44 { "-=" }
+                     else if tok2.disc == 45 { "*=" }
+                     else { "/=" };
+        parser_advance(p);
+        let rhs = parse_expr(p);
+        let idx = add_expr(p, "assign_op");
+        p.expr_nodes[idx - 1].left = expr;
+        p.expr_nodes[idx - 1].right = rhs;
+        p.expr_nodes[idx - 1].sval = op_str;
         idx
     } else { expr }
 }
@@ -794,17 +944,1307 @@ fn parse_program(tokens: Vec<Token>) -> Program {
     }
 }
 
-fn main() {
-    println("=== Path C: Self-hosting ===");
-    let code = "fn add(a:i64,b:i64)->i64{a+b}";
-    let mut lex = lexer_new(code);
-    let tokens = lexer_tokenize(&mut lex);
-    println("Tokens: ");
-    println(tokens.len());
-    let program = parse_program(tokens);
-    println("Functions: ");
-    println(program.fns.len());
-    let ok = compile_program(program, "boot_out.wasm");
-    if ok == 0 { println("[OK] Path C: compiled via self-hosting"); }
-    else { println("[FAIL] Path C compilation failed"); };
+// HIR data structures — compact flat representation for self-hosting compiler
+// Based on tenth/src/hir/hir.rs + types.rs, adapted for Tenth's type system
+
+// ── Base type discriminants ──
+// 0:I64 1:I32 2:F64 3:F32 4:Bool 5:Str 6:Unit 7:Char
+// 8:I8 9:I16 10:U8 11:U16 12:U32 13:U64 14:F16 15:BF16
+
+// ── HirType (flattened) ──
+// disc: 0=Base 1=Tensor 2=Array 3=FnType 4=TypeParam 5=Generic 6=Ref 7=MutRef 8=Struct 9=Enum 10=Unknown 11=Unit
+struct HirType {
+    disc: i64,
+    sub: i64,         // BaseType discriminant, or inner type index
+    name: str,        // for TypeParam/Struct/Enum
+    params_start: i64, // start in type_args / type_params flat arrays
+    params_count: i64,
+    ret_ty: i64,      // return type index (for FnType)
+}
+
+// ── HirExpr node (flat, all fields) ──
+// disc values:
+//   0: IntLiteral   1: FloatLiteral  2: BoolLiteral  3: StringLiteral
+//   4: Var          5: Binary        6: Unary         7: Call
+//   8: MethodCall   9: Index        10: Field        11: FieldAssign
+//  12: If          13: Block        14: Assign       15: StructLiteral
+//  16: EnumLiteral 17: Match        18: Ref          19: MutRef
+//  20: Deref       21: Return       22: ArrayLiteral 23: Closure
+//  24: AssignOp    25: GenericCall  26: DerefAssign  27: DerefAssignOp
+//  28: Range       29: TensorLiteral 30: Move
+struct HirExpr {
+    disc: i64,
+    // Literal values
+    lit_ival: i64,
+    lit_fval: f64,
+    lit_sval: str,
+    lit_bval: bool,
+    // References to other exprs (1-based, 0=nil)
+    left: i64,
+    right: i64,
+    cond: i64,
+    body: i64,
+    alt: i64,        // else_branch
+    // Flat sub-arrays
+    args_start: i64,
+    args_count: i64,
+    stmts_start: i64,
+    stmts_count: i64,
+    fields_start: i64,
+    fields_count: i64,
+    generics_start: i64,
+    generics_count: i64,
+    params_start: i64,
+    params_count: i64,
+    // Closure captures (flat array of name indices)
+    captures_start: i64,
+    captures_count: i64,
+    // Names
+    op: str,         // Binary/Unary operator: "add","sub","mul","div","mod","eq","neq","lt","gt","lte","gte","and","or","neg","not"
+    name: str,       // Var name, field name, method name, struct name
+    variant: str,    // Enum variant name
+    // Range flags
+    range_inclusive: bool,
+    // Type
+    ty: i64,         // type index in program.type_nodes (1-based, 0=unknown)
+}
+
+// ── HirStmt (flattened) ──
+// disc: 0=Let 1=Expr 2=Return 3=While 4=For 5=Break 6=Continue 7=Loop
+struct HirStmt {
+    disc: i64,
+    name: str,       // let variable name / for loop var
+    expr: i64,       // expr index
+    cond: i64,       // while condition expr index
+    body_start: i64, // start in stmt_nodes for While/For/Loop body
+    body_count: i64,
+    init: i64,       // let initializer expr index
+    mutable: bool,
+}
+
+// ── Fn param ──
+struct HirParam { name: str, ty: i64 }
+
+// ── Match arm ──
+struct HirMatchArm {
+    pat_disc: i64,   // 0=EnumVariant 1=Wildcard 2=Literal
+    pat_enum: str,
+    pat_variant: str,
+    pat_bind: str,
+    body_expr: i64,  // expr index
+}
+
+// ── HirFnDef ──
+struct HirFnDef {
+    name: str,
+    params: Vec<HirParam>,
+    return_type: i64,  // type index
+    body: i64,         // expr index
+    generics: Vec<str>,
+}
+
+// ── Struct field definition ──
+struct HirStructField { name: str, ty: i64 }
+
+// ── Struct definition ──
+struct HirStructDef { name: str, fields: Vec<HirStructField> }
+
+// ── Capture name entry (for closure captures) ──
+struct HirCapture { name: str }
+
+// ── HirProgram ──
+struct HirProgram {
+    fns: Vec<HirFnDef>,
+    main_expr: i64,     // 0 = none
+    expr_nodes: Vec<HirExpr>,
+    stmt_nodes: Vec<HirStmt>,
+    type_nodes: Vec<HirType>,
+    type_args: Vec<i64>,    // flat: type indices referenced by HirType.params
+    type_params: Vec<i64>,  // flat: type indices for FnType params
+    match_arms: Vec<HirMatchArm>,
+    structs: Vec<HirStructDef>,
+    captures: Vec<HirCapture>,  // flat: closure capture names
+}
+
+// HIR Lowerer v2 — creates fully-formed nodes before pushing to Vec
+// Avoids post-push field mutation (incompatible with VM value semantics)
+
+fn add_type(p: &mut HirProgram, disc: i64, sub: i64, name: str, params_start: i64, params_count: i64, ret_ty: i64) -> i64 {
+    let t = HirType {
+        disc: disc, sub: sub, name: name,
+        params_start: params_start, params_count: params_count,
+        ret_ty: ret_ty,
+    };
+    p.type_nodes.push(t);
+    p.type_nodes.len()
+}
+
+fn parse_type(p: &mut HirProgram, s: str) -> i64 {
+    if s == "" { return add_type(p, 11, 0, "", 0, 0, 0); };
+    if s == "()" { return add_type(p, 11, 0, "", 0, 0, 0); };
+    if s == "i64" { return add_type(p, 0, 0, "", 0, 0, 0); };
+    if s == "i32" { return add_type(p, 0, 1, "", 0, 0, 0); };
+    if s == "f64" { return add_type(p, 0, 2, "", 0, 0, 0); };
+    if s == "f32" { return add_type(p, 0, 3, "", 0, 0, 0); };
+    if s == "bool" { return add_type(p, 0, 4, "", 0, 0, 0); };
+    if s == "str" { return add_type(p, 0, 5, "", 0, 0, 0); };
+    if s == "char" { return add_type(p, 0, 7, "", 0, 0, 0); };
+    add_type(p, 4, 0, s, 0, 0, 0)
+}
+
+// Push a fully-formed HirExpr and return its 1-based index
+fn push_expr(p: &mut HirProgram, disc: i64, lit_ival: i64, lit_fval: f64, lit_sval: str, lit_bval: bool, left: i64, right: i64, cond: i64, body: i64, alt: i64, args_start: i64, args_count: i64, stmts_start: i64, stmts_count: i64, op: str, name: str, variant: str, ty: i64) -> i64 {
+    let e = HirExpr {
+        disc: disc,
+        lit_ival: lit_ival, lit_fval: lit_fval, lit_sval: lit_sval, lit_bval: lit_bval,
+        left: left, right: right, cond: cond, body: body, alt: alt,
+        args_start: args_start, args_count: args_count,
+        stmts_start: stmts_start, stmts_count: stmts_count,
+        fields_start: 0, fields_count: 0,
+        generics_start: 0, generics_count: 0,
+        params_start: 0, params_count: 0,
+        captures_start: 0, captures_count: 0,
+        op: op, name: name, variant: variant,
+        range_inclusive: false,
+        ty: ty,
+    };
+    p.expr_nodes.push(e);
+    p.expr_nodes.len()
+}
+
+fn push_stmt(p: &mut HirProgram, disc: i64, name: str, expr: i64, cond: i64, body_start: i64, body_count: i64, init: i64, mutable: bool) -> i64 {
+    let s = HirStmt {
+        disc: disc,
+        name: name, expr: expr, cond: cond,
+        body_start: body_start, body_count: body_count,
+        init: init, mutable: mutable,
+    };
+    p.stmt_nodes.push(s);
+    p.stmt_nodes.len()
+}
+
+fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, match_arms: Vec<MatchArm>, depth: i64) -> i64 {
+    if idx <= 0 { return 0; };
+    if idx > exprs.len() { return 0; };
+    if depth > 50 { return 0; };
+    
+    let e = exprs[idx - 1];
+    let kind = e.kind;
+    
+    if kind == "int" {
+        let ty = add_type(p, 0, 0, "", 0, 0, 0);
+        return push_expr(p, 0, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
+    };
+    if kind == "float" {
+        let ty = add_type(p, 0, 2, "", 0, 0, 0);
+        return push_expr(p, 1, 0, e.fval, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
+    };
+    if kind == "bool" {
+        let ty = add_type(p, 0, 4, "", 0, 0, 0);
+        return push_expr(p, 2, 0, 0.0, "", e.ival != 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
+    };
+    if kind == "str" {
+        let ty = add_type(p, 0, 5, "", 0, 0, 0);
+        return push_expr(p, 3, 0, 0.0, e.sval, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
+    };
+    
+    if kind == "ident" {
+        return push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
+    };
+    
+    if kind == "binary" {
+        let l = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        let r = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
+        return push_expr(p, 5, 0, 0.0, "", false, l, r, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", 0);
+    };
+    
+    if kind == "unary" {
+        let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        return push_expr(p, 6, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", 0);
+    };
+    
+    if kind == "call" {
+        let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
+        let start = p.expr_nodes.len() + 1;
+        let mut count: i64 = 0;
+        if e.arg_count > 0 {
+            let s = e.arg_start;
+            let end = s + e.arg_count;
+            let mut i = s;
+            while i < end {
+                lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                count = count + 1;
+                i = i + 1;
+            };
+        };
+        return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
+    };
+    
+    if kind == "method_call" {
+        let recv = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        let start = p.expr_nodes.len() + 1;
+        let mut count: i64 = 0;
+        if e.arg_count > 0 {
+            let s = e.arg_start;
+            let end = s + e.arg_count;
+            let mut i = s;
+            while i < end {
+                lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                count = count + 1;
+                i = i + 1;
+            };
+        };
+        return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, start, count, 0, 0, "", e.sval, "", 0);
+    };
+    
+    if kind == "field" {
+        let target = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        return push_expr(p, 10, 0, 0.0, "", false, target, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
+    };
+    
+    if kind == "ref" {
+        let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        return push_expr(p, 18, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+    };
+    
+    if kind == "deref" {
+        let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        return push_expr(p, 20, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+    };
+    
+    if kind == "move" {
+        let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        return push_expr(p, 30, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+    };
+    
+    if kind == "if" {
+        let cond = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        let then_ = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
+        let mut else_: i64 = 0;
+        if e.extra_start > 0 {
+            else_ = lower_expr(p, e.extra_start, exprs, stmts, match_arms, depth + 1);
+        };
+        return push_expr(p, 12, 0, 0.0, "", false, 0, 0, cond, then_, else_, 0, 0, 0, 0, "", "", "", 0);
+    };
+    
+    if kind == "block" {
+        let start = p.stmt_nodes.len() + 1;
+        let mut count: i64 = 0;
+        if e.extra_count > 0 {
+            let s = e.extra_start;
+            let end = s + e.extra_count;
+            let mut i = s;
+            while i < end {
+                lower_stmt(p, i, exprs, stmts, match_arms, depth + 1);
+                count = count + 1;
+                i = i + 1;
+            };
+        };
+        return push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
+    };
+    
+    if kind == "assign" {
+        let lhs = e.left;
+        let lexpr = exprs[lhs - 1];
+        let rhs = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
+        if lexpr.kind == "field" {
+            let target = lower_expr(p, lexpr.left, exprs, stmts, match_arms, depth + 1);
+            return push_expr(p, 11, 0, 0.0, "", false, target, rhs, 0, 0, 0, 0, 0, 0, 0, "", lexpr.sval, "", 0);
+        };
+        if lexpr.kind == "deref" {
+            let target = lower_expr(p, lexpr.left, exprs, stmts, match_arms, depth + 1);
+            return push_expr(p, 26, 0, 0.0, "", false, target, rhs, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+        };
+        return push_expr(p, 14, 0, 0.0, "", false, 0, rhs, 0, 0, 0, 0, 0, 0, 0, "", lexpr.sval, "", 0);
+    };
+    
+    if kind == "assign_op" {
+        let lhs = e.left;
+        let lexpr = exprs[lhs - 1];
+        let rhs = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
+        if lexpr.kind == "deref" {
+            let target = lower_expr(p, lexpr.left, exprs, stmts, match_arms, depth + 1);
+            return push_expr(p, 27, 0, 0.0, "", false, target, rhs, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", 0);
+        };
+        return push_expr(p, 24, 0, 0.0, "", false, 0, rhs, 0, 0, 0, 0, 0, 0, 0, e.sval, lexpr.sval, "", 0);
+    };
+    
+    if kind == "closure" {
+        // Lower the body
+        let body = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        // Collect param names from extra_start..extra_start+extra_count
+        let params_start = p.expr_nodes.len() + 1;
+        let mut params_count: i64 = 0;
+        if e.extra_count > 0 {
+            let mut i = e.extra_start;
+            let end = e.extra_start + e.extra_count;
+            while i < end {
+                if i <= exprs.len() {
+                    let param_expr = exprs[i - 1];
+                    let pidx = push_expr(p, 4, 0, 0.0, param_expr.sval, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", param_expr.sval, "", 0);
+                    params_count = params_count + 1;
+                };
+                i = i + 1;
+            };
+        };
+        // Analyze free variables for captures
+        let captures_start = p.captures.len() + 1;
+        let mut captures_count: i64 = 0;
+        // Simple capture analysis: collect Var references in body that are not params
+        // This is a simplified version — the full Rust implementation has recursive analysis
+        let body_expr_idx = body;
+        if body_expr_idx > 0 && body_expr_idx <= p.expr_nodes.len() {
+            // For now, we don't do deep analysis in the self-hosting compiler.
+            // Captures will be resolved at runtime by the interpreter.
+        };
+        let result = push_expr(p, 23, 0, 0.0, "", false, 0, 0, 0, body, 0, 0, 0, 0, 0, "", "", "", 0);
+        p.expr_nodes[result - 1].params_start = params_start;
+        p.expr_nodes[result - 1].params_count = params_count;
+        p.expr_nodes[result - 1].captures_start = captures_start;
+        p.expr_nodes[result - 1].captures_count = captures_count;
+        return result;
+    };
+    
+    if kind == "array" {
+        let start = p.expr_nodes.len() + 1;
+        let mut count: i64 = 0;
+        if e.arg_count > 0 {
+            let mut i = e.arg_start;
+            let end = e.arg_start + e.arg_count;
+            while i < end {
+                lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                count = count + 1;
+                i = i + 1;
+            };
+        };
+        return push_expr(p, 22, 0, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
+    };
+    
+    if kind == "tensor" {
+        let start = p.expr_nodes.len() + 1;
+        let mut count: i64 = 0;
+        if e.arg_count > 0 {
+            let mut i = e.arg_start;
+            let end = e.arg_start + e.arg_count;
+            while i < end {
+                lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                count = count + 1;
+                i = i + 1;
+            };
+        };
+        let result = push_expr(p, 29, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
+        return result;
+    };
+    
+    if kind == "match" {
+        let scrutinee = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        return push_expr(p, 17, 0, 0.0, "", false, scrutinee, 0, 0, 0, 0, 0, 0, e.extra_start, e.extra_count, "", "", "", 0);
+    };
+    
+    push_expr(p, 0, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0)
+}
+
+fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, match_arms: Vec<MatchArm>, depth: i64) -> i64 {
+    if idx <= 0 { return 0; };
+    if idx > stmts.len() { return 0; };
+    let s = stmts[idx - 1];
+    let kind = s.kind;
+    
+    if kind == "let" {
+        let mut init: i64 = 0;
+        if s.expr_idx > 0 {
+            init = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
+        };
+        return push_stmt(p, 0, s.name, 0, 0, 0, 0, init, true);
+    };
+    
+    if kind == "return" {
+        let mut re: i64 = 0;
+        if s.expr_idx > 0 {
+            re = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
+        };
+        return push_stmt(p, 2, "", re, 0, 0, 0, 0, false);
+    };
+    
+    if kind == "expr" {
+        let mut ee: i64 = 0;
+        if s.expr_idx > 0 {
+            ee = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
+        };
+        return push_stmt(p, 1, "", ee, 0, 0, 0, 0, false);
+    };
+    
+    if kind == "loop" {
+        let bstart = p.stmt_nodes.len() + 1;
+        let mut bcount: i64 = 0;
+        if s.body_count > 0 {
+            let mut i = s.body_start;
+            let end = s.body_start + s.body_count;
+            while i < end {
+                lower_stmt(p, i, exprs, stmts, match_arms, depth + 1);
+                bcount = bcount + 1;
+                i = i + 1;
+            };
+        };
+        return push_stmt(p, 7, "", 0, 0, bstart, bcount, 0, false);
+    };
+    
+    if kind == "break" { return push_stmt(p, 5, "", 0, 0, 0, 0, 0, false); };
+    if kind == "continue" { return push_stmt(p, 6, "", 0, 0, 0, 0, 0, false); };
+    
+    push_stmt(p, 1, "", 0, 0, 0, 0, 0, false)
+}
+
+fn lower_program(program: Program) -> HirProgram {
+    let mut p = HirProgram {
+        fns: Vec::new(),
+        main_expr: 0,
+        expr_nodes: Vec::new(),
+        stmt_nodes: Vec::new(),
+        type_nodes: Vec::new(),
+        type_args: Vec::new(),
+        type_params: Vec::new(),
+        match_arms: Vec::new(),
+        structs: Vec::new(),
+        captures: Vec::new(),
+    };
+    
+    // Lower struct definitions
+    let mut si: i64 = 0;
+    while si < program.structs.len() {
+        let sd = program.structs[si];
+        let mut fields = Vec::new();
+        let mut fi: i64 = 0;
+        while fi < sd.fields.len() {
+            let sf = sd.fields[fi];
+            let fty = parse_type(&mut p, sf.type_ann);
+            fields.push(HirStructField { name: sf.name, ty: fty });
+            fi = fi + 1;
+        };
+        p.structs.push(HirStructDef { name: sd.name, fields: fields });
+        si = si + 1;
+    };
+    
+    let mut i: i64 = 0;
+    while i < program.fns.len() {
+        let f = program.fns[i];
+        let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
+        let ret_ty = parse_type(&mut p, f.return_type);
+        let mut params = Vec::new();
+        let mut j: i64 = 0;
+        while j < f.params.len() {
+            let param = f.params[j];
+            let pty = parse_type(&mut p, param.type_ann);
+            params.push(HirParam { name: param.name, ty: pty });
+            j = j + 1;
+        };
+        let hf = HirFnDef {
+            name: f.name,
+            params: params,
+            return_type: ret_ty,
+            body: body_expr,
+            generics: Vec::new(),
+        };
+        p.fns.push(hf);
+        i = i + 1;
+    };
+    
+    if program.main_stmts_count > 0 {
+        let start = p.stmt_nodes.len() + 1;
+        let mut count: i64 = 0;
+        let mut k: i64 = program.main_stmts_start;
+        let end = program.main_stmts_start + program.main_stmts_count;
+        while k < end {
+            lower_stmt(&mut p, k, program.expr_nodes, program.stmt_nodes, program.match_arms, 0);
+            count = count + 1;
+            k = k + 1;
+        };
+        let ni = push_expr(&mut p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
+        p.main_expr = ni;
+    };
+    
+    p
+}
+
+fn lower_fn_body(p: &mut HirProgram, body_start: i64, body_count: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, match_arms: Vec<MatchArm>) -> i64 {
+    if body_count <= 0 { return 0; };
+    let start = p.stmt_nodes.len() + 1;
+    let mut count: i64 = 0;
+    let mut i: i64 = body_start;
+    let end = body_start + body_count;
+    while i < end {
+        lower_stmt(p, i, exprs, stmts, match_arms, 0);
+        count = count + 1;
+        i = i + 1;
+    };
+    push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0)
+}
+
+// Minimal WASM emitter — compiles HirProgram to WASM binary bytes
+// Output: Vec<i64> where each element is a byte (0-255)
+
+// ── LEB128 encoding ──
+
+fn leb128_u(value: i64, out: &mut Vec<i64>) {
+    let mut v = value;
+    loop {
+        let mut byte = v % 128;
+        v = v / 128;
+        if v != 0 { byte = byte + 128; };
+        out.push(byte);
+        if v == 0 { break; };
+    };
+}
+
+fn leb128_s(value: i64, out: &mut Vec<i64>) {
+    let mut v = value;
+    loop {
+        let mut byte = v % 128;
+        v = v / 128;
+        if (v == 0) && (byte < 64) { out.push(byte); break; };
+        if (v == -1) && (byte >= 64) { out.push(byte); break; };
+        byte = byte + 128;
+        out.push(byte);
+    };
+}
+
+// ── Section helpers ──
+
+fn emit_section(out: &mut Vec<i64>, section_id: i64, body: Vec<i64>) {
+    out.push(section_id);
+    leb128_u(body.len(), out);
+    let mut i: i64 = 0;
+    while i < body.len() { out.push(body.get(i)); i = i + 1; };
+}
+
+// ── WASM opcodes ──
+
+fn wasm_unreachable(out: &mut Vec<i64>) { out.push(0); }
+fn wasm_nop(out: &mut Vec<i64>) { out.push(1); }
+fn wasm_end(out: &mut Vec<i64>) { out.push(11); }
+fn wasm_return(out: &mut Vec<i64>) { out.push(15); }
+fn wasm_local_get(out: &mut Vec<i64>, idx: i64) { out.push(32); leb128_u(idx, out); }
+fn wasm_local_set(out: &mut Vec<i64>, idx: i64) { out.push(33); leb128_u(idx, out); }
+fn wasm_i64_const(out: &mut Vec<i64>, val: i64) {
+    out.push(66);
+    leb128_s(val, out);
+}
+fn wasm_i64_add(out: &mut Vec<i64>) { out.push(124); }
+fn wasm_i64_sub(out: &mut Vec<i64>) { out.push(125); }
+fn wasm_i64_mul(out: &mut Vec<i64>) { out.push(126); }
+fn wasm_i64_div_s(out: &mut Vec<i64>) { out.push(127); }
+fn wasm_i64_eq(out: &mut Vec<i64>) { out.push(81); }
+fn wasm_i64_ne(out: &mut Vec<i64>) { out.push(82); }
+fn wasm_i64_lt_s(out: &mut Vec<i64>) { out.push(83); }
+fn wasm_i64_gt_s(out: &mut Vec<i64>) { out.push(85); }
+fn wasm_i64_le_s(out: &mut Vec<i64>) { out.push(87); }
+fn wasm_i64_ge_s(out: &mut Vec<i64>) { out.push(89); }
+fn wasm_call(out: &mut Vec<i64>, func_idx: i64) { out.push(16); leb128_u(func_idx, out); }
+fn wasm_block(out: &mut Vec<i64>, blocktype: i64) { out.push(2); out.push(blocktype); }
+fn wasm_loop(out: &mut Vec<i64>, blocktype: i64) { out.push(3); out.push(blocktype); }
+fn wasm_if(out: &mut Vec<i64>, blocktype: i64) { out.push(4); out.push(blocktype); }
+fn wasm_else(out: &mut Vec<i64>) { out.push(5); }
+fn wasm_br(out: &mut Vec<i64>, idx: i64) { out.push(12); leb128_u(idx, out); }
+fn wasm_br_if(out: &mut Vec<i64>, idx: i64) { out.push(13); leb128_u(idx, out); }
+fn wasm_i32_eqz(out: &mut Vec<i64>) { out.push(69); }
+fn wasm_i64_eqz(out: &mut Vec<i64>) { out.push(80); }
+fn wasm_i32_wrap_i64(out: &mut Vec<i64>) { out.push(167); }
+fn wasm_i32_const(out: &mut Vec<i64>, val: i64) { out.push(65); leb128_s(val, out); }
+fn wasm_i32_add(out: &mut Vec<i64>) { out.push(106); }
+fn wasm_i64_load(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(41); leb128_u(align, out); leb128_u(offset, out); }
+fn wasm_i64_store(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(55); leb128_u(align, out); leb128_u(offset, out); }
+fn wasm_i32_load(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(40); leb128_u(align, out); leb128_u(offset, out); }
+fn wasm_i32_store(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(54); leb128_u(align, out); leb128_u(offset, out); }
+fn wasm_i64_extend_i32_u(out: &mut Vec<i64>) { out.push(173); }
+fn wasm_drop(out: &mut Vec<i64>) { out.push(26); }
+fn wasm_local_tee(out: &mut Vec<i64>, idx: i64) { out.push(34); leb128_u(idx, out); }
+fn wasm_global_get(out: &mut Vec<i64>, idx: i64) { out.push(35); leb128_u(idx, out); }
+fn wasm_global_set(out: &mut Vec<i64>, idx: i64) { out.push(36); leb128_u(idx, out); }
+
+// ── Compiler state ──
+
+struct WasmCtx {
+    out: Vec<i64>,       // final output bytes
+    code_out: Vec<i64>,  // code section body
+    func_count: i64,     // number of functions
+    temp_local: i64,     // index of temp local slot
+}
+
+fn ctx_new() -> WasmCtx {
+    WasmCtx {
+        out: Vec::new(),
+        code_out: Vec::new(),
+        func_count: 0,
+        temp_local: 0,
+    }
+}
+
+// ── Compile one function body ──
+
+fn compile_fn_body(ctx: &mut WasmCtx, hir: HirProgram, fn_idx: i64) {
+    let f = hir.fns[fn_idx];
+    
+    // Count locals (params + let bindings)
+    let num_params = f.params.len();
+    let num_locals = num_params; // simplified: no extra locals
+    
+    // Function body header
+    let mut body: Vec<i64> = Vec::new();
+    
+    // Local declaration count: 16 temp locals (i64)
+    leb128_u(1, &mut body); // 1 group
+    leb128_u(16, &mut body); // 16 locals
+    body.push(126); // i64
+    
+    // Set temp local index
+    ctx.temp_local = num_params;
+    
+    // Compile body expression
+    compile_expr(ctx, &mut body, hir, f.body);
+    
+    wasm_end(&mut body);
+    
+    // Emit function body size + body
+    leb128_u(body.len(), &mut ctx.code_out);
+    let mut i: i64 = 0;
+    while i < body.len() { ctx.code_out.push(body[i]); i = i + 1; };
+}
+
+// ── Struct offset lookup ──
+
+fn type_struct_name(hir: HirProgram, ty_idx: i64) -> str {
+    if ty_idx <= 0 || ty_idx > hir.type_nodes.len() { return ""; };
+    let t = hir.type_nodes[ty_idx - 1];
+    if t.disc == 4 || t.disc == 8 { return t.name; }; // TypeParam or Struct
+    ""
+}
+
+fn struct_field_offset(hir: HirProgram, struct_name: str, field_name: str) -> i64 {
+    let mut si: i64 = 0;
+    while si < hir.structs.len() {
+        let sd = hir.structs[si];
+        if sd.name == struct_name {
+            let mut offset: i64 = 0;
+            let mut fi: i64 = 0;
+            while fi < sd.fields.len() {
+                if sd.fields[fi].name == field_name { return offset; };
+                offset = offset + 8; // each i64 field is 8 bytes
+                fi = fi + 1;
+            };
+            return offset; // field not found, return end offset
+        };
+        si = si + 1;
+    };
+    0
+}
+
+fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64) {
+    if idx <= 0 || idx > hir.expr_nodes.len() { return; };
+    let e = hir.expr_nodes[idx - 1];
+    let d = e.disc;
+    
+    if d == 0 {
+        // IntLiteral
+        wasm_i64_const(out, e.lit_ival);
+        return;
+    };
+    if d == 4 {
+        // Var — look up local index by name
+        let name = e.name;
+        // Simple: var index = position in params (0-based)
+        // For now: crude lookup
+        let mut local_idx: i64 = 0;
+        // Search params of current function
+        let mut found: bool = false;
+        let mut fi: i64 = 0;
+        while fi < hir.fns.len() {
+            let func = hir.fns[fi];
+            let mut pi: i64 = 0;
+            while pi < func.params.len() {
+                if func.params[pi].name == name {
+                    local_idx = pi;
+                    found = true;
+                    break;
+                };
+                pi = pi + 1;
+            };
+            if found { break; };
+            fi = fi + 1;
+        };
+        wasm_local_get(out, local_idx);
+        return;
+    };
+    if d == 5 {
+        // Binary
+        compile_expr(ctx, out, hir, e.left);
+        compile_expr(ctx, out, hir, e.right);
+        let op = e.op;
+        if op == "+" { wasm_i64_add(out); return; };
+        if op == "-" { wasm_i64_sub(out); return; };
+        if op == "*" { wasm_i64_mul(out); return; };
+        if op == "/" { wasm_i64_div_s(out); return; };
+        if op == "==" { wasm_i64_eq(out); return; };
+        if op == "!=" { wasm_i64_ne(out); return; };
+        if op == "<" { wasm_i64_lt_s(out); return; };
+        if op == ">" { wasm_i64_gt_s(out); return; };
+        if op == "<=" { wasm_i64_le_s(out); return; };
+        if op == ">=" { wasm_i64_ge_s(out); return; };
+        return;
+    };
+    if d == 6 {
+        // Unary
+        compile_expr(ctx, out, hir, e.left);
+        let op = e.op;
+        if op == "-" {
+            wasm_i64_const(out, 0);
+            wasm_i64_sub(out);
+        } else {
+            // ! or other: eqz
+            wasm_i64_eqz(out);
+        };
+        return;
+    };
+    if d == 14 {
+        // Assign — target is a variable name, value is compiled
+        // We need local.set — find the local index by name
+        compile_expr(ctx, out, hir, e.right);
+        let name = e.name;
+        let mut local_idx: i64 = 0;
+        let mut found: bool = false;
+        let mut fi: i64 = 0;
+        while fi < hir.fns.len() {
+            let func = hir.fns[fi];
+            let mut pi: i64 = 0;
+            while pi < func.params.len() {
+                if func.params[pi].name == name {
+                    local_idx = pi;
+                    found = true;
+                    break;
+                };
+                pi = pi + 1;
+            };
+            if found { break; };
+            fi = fi + 1;
+        };
+        wasm_local_set(out, local_idx);
+        return;
+    };
+    if d == 15 {
+        // StructLiteral — allocate using global bump pointer
+        let sname = e.name;
+        let mut size: i64 = 0;
+        let mut si: i64 = 0;
+        while si < hir.structs.len() {
+            if hir.structs[si].name == sname {
+                size = hir.structs[si].fields.len() * 8;
+                break;
+            };
+            si = si + 1;
+        };
+        // global.get $bump (idx 0) → local.tee $temp (idx = num_params)
+        wasm_global_get(out, 0);
+        let temp_idx = ctx.temp_local;
+        wasm_local_tee(out, temp_idx);
+        // i32.const size → i32.add → global.set $bump
+        wasm_i32_const(out, size);
+        wasm_i32_add(out);
+        wasm_global_set(out, 0);
+        // Return allocated address as i64
+        wasm_local_get(out, temp_idx);
+        wasm_i64_extend_i32_u(out);
+        return;
+    };
+    if d == 18 || d == 19 {
+        // Ref / MutRef — pass through pointer
+        compile_expr(ctx, out, hir, e.left);
+        return;
+    };
+    if d == 20 {
+        // Deref — pass through (subsequent Field adds offset)
+        compile_expr(ctx, out, hir, e.left);
+        return;
+    };
+    if d == 8 {
+        // MethodCall — route Vec/String methods to imports
+        let method = e.name;
+        if e.left > 0 { compile_expr(ctx, out, hir, e.left); };
+        if e.args_count > 0 {
+            let mut ai = e.args_start;
+            let end = e.args_start + e.args_count;
+            while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+        };
+        if method == "len" {
+            wasm_call(out, 2); // import 2: env.vec_len
+            return;
+        };
+        if method == "push" {
+            wasm_call(out, 3); // import 3: env.vec_push
+            return;
+        };
+        if method == "get" {
+            wasm_call(out, 4); // import 4: env.vec_get
+            return;
+        };
+        // Unknown method: drop everything, return 0
+        let mut dc = e.args_count;
+        while dc > 0 { wasm_drop(out); dc = dc - 1; };
+        wasm_drop(out);
+        wasm_i64_const(out, 0);
+        return;
+    };
+    if d == 10 {
+        // Field access
+        compile_expr(ctx, out, hir, e.left);
+        wasm_i32_wrap_i64(out);
+        let sname = type_struct_name(hir, e.ty);
+        let offset = struct_field_offset(hir, sname, e.name);
+        wasm_i32_const(out, offset);
+        wasm_i32_add(out);
+        wasm_i64_load(out, 3, 0);
+        return;
+    };
+    if d == 11 {
+        // FieldAssign
+        compile_expr(ctx, out, hir, e.left);
+        wasm_i32_wrap_i64(out);
+        let sname = type_struct_name(hir, e.ty);
+        let offset = struct_field_offset(hir, sname, e.name);
+        wasm_i32_const(out, offset);
+        wasm_i32_add(out);
+        compile_expr(ctx, out, hir, e.right);
+        wasm_i64_store(out, 3, 0);
+        return;
+    };
+    if d == 12 {
+        // If
+        compile_expr(ctx, out, hir, e.cond);
+        wasm_if(out, 64); // i64 result type (0x40 = empty, 0x7E = i64)
+        compile_expr(ctx, out, hir, e.body);
+        if e.alt > 0 {
+            wasm_else(out);
+            compile_expr(ctx, out, hir, e.alt);
+        };
+        wasm_end(out);
+        return;
+    };
+    if d == 13 {
+        // Block — compile statements, then final expr
+        if e.stmts_count > 0 {
+            let mut s = e.stmts_start;
+            let end = e.stmts_start + e.stmts_count;
+            while s < end {
+                compile_stmt(ctx, out, hir, s);
+                s = s + 1;
+            };
+        };
+        return;
+    };
+    if d == 21 {
+        // Return
+        if e.left > 0 { compile_expr(ctx, out, hir, e.left); }
+        else { wasm_i64_const(out, 0); };
+        wasm_return(out);
+        return;
+    };
+    if d == 7 {
+        // Call — route to import or local function
+        let func_name = hir.expr_nodes[e.left - 1].name;
+        if func_name == "println" {
+            if e.args_count > 0 {
+                let mut ai = e.args_start;
+                let end = e.args_start + e.args_count;
+                while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+            };
+            wasm_call(out, 0); // import 0: env.println
+            return;
+        };
+        if func_name == "Vec::new" || func_name == "HashMap::new" {
+            wasm_call(out, 1); // import 1: env.vec_new
+            return;
+        };
+        if func_name == "read_file" {
+            if e.args_count > 0 {
+                let mut ai = e.args_start;
+                let end = e.args_start + e.args_count;
+                while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+            };
+            wasm_call(out, 5); // import 5: env.read_file
+            return;
+        };
+        if func_name == "write_bytes" {
+            if e.args_count > 0 {
+                let mut ai = e.args_start;
+                let end = e.args_start + e.args_count;
+                while ai < end { compile_expr(ctx, out, hir, ai); ai = ai + 1; };
+            };
+            wasm_call(out, 6); // import 6: env.write_bytes
+            return;
+        };
+        // Regular function call (indices offset by 7 imports)
+        let mut call_idx: i64 = 7;
+        let mut fi: i64 = 0;
+        while fi < hir.fns.len() {
+            if hir.fns[fi].name == func_name { call_idx = 7 + fi; break; };
+            fi = fi + 1;
+        };
+        if e.args_count > 0 {
+            let mut ai = e.args_start;
+            let end = e.args_start + e.args_count;
+            while ai < end {
+                compile_expr(ctx, out, hir, ai);
+                ai = ai + 1;
+            };
+        };
+        wasm_call(out, call_idx);
+        return;
+    };
+    if d == 22 {
+        // ArrayLiteral — compile elements and drop, return 0
+        if e.args_count > 0 {
+            let mut ai = e.args_start;
+            let end = e.args_start + e.args_count;
+            while ai < end { compile_expr(ctx, out, hir, ai); wasm_drop(out); ai = ai + 1; };
+        };
+        wasm_i64_const(out, 0);
+        return;
+    };
+    if d == 23 {
+        // Closure — not representable in WASM, push 0 placeholder
+        wasm_i64_const(out, 0);
+        return;
+    };
+    if d == 24 {
+        // AssignOp — compile right side, then local.set (same as disc 14)
+        compile_expr(ctx, out, hir, e.right);
+        let name = e.name;
+        let mut local_idx: i64 = 0;
+        let mut found: bool = false;
+        let mut fi: i64 = 0;
+        while fi < hir.fns.len() {
+            let func = hir.fns[fi];
+            let mut pi: i64 = 0;
+            while pi < func.params.len() {
+                if func.params[pi].name == name {
+                    local_idx = pi;
+                    found = true;
+                    break;
+                };
+                pi = pi + 1;
+            };
+            if found { break; };
+            fi = fi + 1;
+        };
+        wasm_local_set(out, local_idx);
+        return;
+    };
+    if d == 26 {
+        // DerefAssign — compile target address, compile value, i64.store (same as disc 11)
+        compile_expr(ctx, out, hir, e.left);
+        wasm_i32_wrap_i64(out);
+        compile_expr(ctx, out, hir, e.right);
+        wasm_i64_store(out, 3, 0);
+        return;
+    };
+    if d == 27 {
+        // DerefAssignOp — same as DerefAssign for now
+        compile_expr(ctx, out, hir, e.left);
+        wasm_i32_wrap_i64(out);
+        compile_expr(ctx, out, hir, e.right);
+        wasm_i64_store(out, 3, 0);
+        return;
+    };
+    if d == 29 {
+        // TensorLiteral — not representable in WASM, push 0
+        wasm_i64_const(out, 0);
+        return;
+    };
+    if d == 30 {
+        // Move — pass through (same as disc 18/19/20)
+        compile_expr(ctx, out, hir, e.left);
+        return;
+    };
+    // Default: unreachable
+    wasm_unreachable(out);
+}
+
+fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64) {
+    if idx <= 0 || idx > hir.stmt_nodes.len() { return; };
+    let s = hir.stmt_nodes[idx - 1];
+    let d = s.disc;
+    
+    if d == 2 {
+        // Return
+        if s.expr > 0 { compile_expr(ctx, out, hir, s.expr); }
+        else { wasm_i64_const(out, 0); };
+        wasm_return(out);
+        return;
+    };
+    if d == 3 {
+        // While — WASM: block $break { loop $continue { cond; i64.eqz; br_if $break; body; br $continue; } }
+        wasm_block(out, 64);
+        wasm_loop(out, 64);
+        if s.cond > 0 {
+            compile_expr(ctx, out, hir, s.cond);
+            wasm_i64_eqz(out);
+            wasm_br_if(out, 1); // break to block (label idx 1 = outer block)
+        };
+        if s.body_count > 0 {
+            let mut bi = s.body_start;
+            let bend = s.body_start + s.body_count;
+            while bi < bend {
+                compile_stmt(ctx, out, hir, bi);
+                bi = bi + 1;
+            };
+        };
+        wasm_br(out, 0); // continue loop
+        wasm_end(out);   // end loop
+        wasm_end(out);   // end block
+        return;
+    };
+    if d == 0 {
+        // Let — store init value to a temp local
+        if s.init > 0 {
+            compile_expr(ctx, out, hir, s.init);
+            // Store to next available local slot
+            let slot = ctx.temp_local + 1; // after temp
+            wasm_local_set(out, slot);
+            // Track in temp_local for now (single-let support)
+            ctx.temp_local = slot;
+        };
+        return;
+    };
+    if d == 5 {
+        // Break — branch to enclosing block
+        wasm_br(out, 1);
+        return;
+    };
+    if d == 6 {
+        // Continue — branch to enclosing loop
+        wasm_br(out, 0);
+        return;
+    };
+    if d == 1 {
+        // Expr statement
+        if s.expr > 0 { compile_expr(ctx, out, hir, s.expr); };
+        return;
+    };
+}
+
+// ── Main compilation entry ──
+
+fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
+    let mut ctx = ctx_new();
+    let num_funcs = hir.fns.len();
+    ctx.func_count = num_funcs;
+    
+    // Import count
+    let num_imports: i64 = 7;
+    
+    // ---- Build type section ----
+    // Import types come first: 5 signatures
+    // Type 0: (i64) -> ()    — println
+    // Type 1: () -> i64      — read_file, Vec::new
+    // Type 2: (i64) -> i64   — vec_len, str_len
+    // Type 3: (i64,i64) -> () — vec_push
+    // Type 4: (i64,i64) -> i64 — vec_get, write_bytes
+    let mut types: Vec<i64> = Vec::new();
+    leb128_u(5 + num_funcs, &mut types); // total type count
+    
+    // Type 0: (i64) -> ()
+    types.push(96); leb128_u(1, &mut types); types.push(126); // params
+    leb128_u(0, &mut types); // results
+    
+    // Type 1: () -> i64
+    types.push(96); leb128_u(0, &mut types); // params
+    leb128_u(1, &mut types); types.push(126); // results
+    
+    // Type 2: (i64) -> i64
+    types.push(96); leb128_u(1, &mut types); types.push(126);
+    leb128_u(1, &mut types); types.push(126);
+    
+    // Type 3: (i64,i64) -> ()
+    types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
+    leb128_u(0, &mut types);
+    
+    // Type 4: (i64,i64) -> i64
+    types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
+    leb128_u(1, &mut types); types.push(126);
+    
+    // Function types (type index 5+)
+    let mut fi: i64 = 0;
+    while fi < num_funcs {
+        let f = hir.fns[fi];
+        types.push(96);
+        leb128_u(f.params.len(), &mut types);
+        let mut pi: i64 = 0;
+        while pi < f.params.len() { types.push(126); pi = pi + 1; };
+        leb128_u(1, &mut types); types.push(126); // 1 result: i64
+        fi = fi + 1;
+    };
+    let mut type_sec: Vec<i64> = Vec::new();
+    let mut ti: i64 = 0;
+    while ti < types.len() { type_sec.push(types[ti]); ti = ti + 1; };
+    
+    // ---- Build import section ----
+    // Helper to emit a string as LEB128 length + ASCII bytes
+    let mut import_sec: Vec<i64> = Vec::new();
+    leb128_u(num_imports, &mut import_sec);
+    
+    // Import 0: env.println (type 0)
+    // module ''env''
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    // field ''println''
+    import_sec.push(7);
+    import_sec.push(112);import_sec.push(114);import_sec.push(105);import_sec.push(110);import_sec.push(116);import_sec.push(108);import_sec.push(110);
+    import_sec.push(0); leb128_u(0, &mut import_sec); // func, type 0
+    
+    // Import 1: env.vec_new (type 1)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(7);
+    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(110);import_sec.push(101);import_sec.push(119);
+    import_sec.push(0); leb128_u(1, &mut import_sec);
+    
+    // Import 2: env.vec_len (type 2)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(7);
+    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(108);import_sec.push(101);import_sec.push(110);
+    import_sec.push(0); leb128_u(2, &mut import_sec);
+    
+    // Import 3: env.vec_push (type 3)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(8);
+    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(112);import_sec.push(117);import_sec.push(115);import_sec.push(104);
+    import_sec.push(0); leb128_u(3, &mut import_sec);
+    
+    // Import 4: env.vec_get (type 4)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(7);
+    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(103);import_sec.push(101);import_sec.push(116);
+    import_sec.push(0); leb128_u(4, &mut import_sec);
+    
+    // Import 5: env.read_file (type 2 — same as vec_len: (i64)->i64)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(9);
+    import_sec.push(114);import_sec.push(101);import_sec.push(97);import_sec.push(100);import_sec.push(95);import_sec.push(102);import_sec.push(105);import_sec.push(108);import_sec.push(101);
+    import_sec.push(0); leb128_u(2, &mut import_sec);
+    
+    // Import 6: env.write_bytes (type 4 — same as vec_get: (i64,i64)->i64)
+    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
+    import_sec.push(11);
+    import_sec.push(119);import_sec.push(114);import_sec.push(105);import_sec.push(116);import_sec.push(101);import_sec.push(95);import_sec.push(98);import_sec.push(121);import_sec.push(116);import_sec.push(101);import_sec.push(115);
+    import_sec.push(0); leb128_u(4, &mut import_sec);
+    
+    // ---- Build function section ----
+    // Function indices start after imports: index 7+
+    let mut func_sec: Vec<i64> = Vec::new();
+    leb128_u(num_funcs, &mut func_sec);
+    let mut idx: i64 = 0;
+    while idx < num_funcs { leb128_u(idx + 5, &mut func_sec); idx = idx + 1; };
+    
+    // ---- Build global section ----    // ---- Build global section ----
+    let mut glob_sec: Vec<i64> = Vec::new();
+    leb128_u(1, &mut glob_sec); // 1 global
+    glob_sec.push(127); // type: i32
+    glob_sec.push(1); // mutable: true
+    // init: i32.const 4
+    glob_sec.push(65); // i32.const
+    leb128_s(4, &mut glob_sec);
+    glob_sec.push(11); // end
+    
+    // ---- Build memory section ----
+    let mut mem_sec: Vec<i64> = Vec::new();
+    leb128_u(1, &mut mem_sec); // 1 memory
+    mem_sec.push(0); // flags: no max
+    leb128_u(1, &mut mem_sec); // min: 1 page (64KB)
+    
+    // ---- Build code section ----
+    leb128_u(num_funcs, &mut ctx.code_out);
+    fi = 0;
+    while fi < num_funcs {
+        compile_fn_body(&mut ctx, hir, fi);
+        fi = fi + 1;
+    };
+    
+    // ---- Build export section ----
+    let mut export_sec: Vec<i64> = Vec::new();
+    leb128_u(num_funcs, &mut export_sec);
+    fi = 0;
+    while fi < num_funcs {
+        let f = hir.fns[fi];
+        // Export name
+        leb128_u(f.name.len(), &mut export_sec);
+        let mut ci: i64 = 0;
+        while ci < f.name.len() {
+            let ch = f.name[ci];
+            // Simple ASCII byte
+            let mut byte: i64 = 0;
+            if ch == "a" { byte = 97; }
+            else if ch == "b" { byte = 98; }
+            else if ch == "c" { byte = 99; }
+            else if ch == "d" { byte = 100; }
+            else if ch == "e" { byte = 101; }
+            else if ch == "f" { byte = 102; }
+            else if ch == "g" { byte = 103; }
+            else if ch == "h" { byte = 104; }
+            else if ch == "i" { byte = 105; }
+            else if ch == "j" { byte = 106; }
+            else if ch == "k" { byte = 107; }
+            else if ch == "l" { byte = 108; }
+            else if ch == "m" { byte = 109; }
+            else if ch == "n" { byte = 110; }
+            else if ch == "o" { byte = 111; }
+            else if ch == "p" { byte = 112; }
+            else if ch == "q" { byte = 113; }
+            else if ch == "r" { byte = 114; }
+            else if ch == "s" { byte = 115; }
+            else if ch == "t" { byte = 116; }
+            else if ch == "u" { byte = 117; }
+            else if ch == "v" { byte = 118; }
+            else if ch == "w" { byte = 119; }
+            else if ch == "x" { byte = 120; }
+            else if ch == "y" { byte = 121; }
+            else if ch == "z" { byte = 122; }
+            else if ch == "A" { byte = 65; }
+            else if ch == "0" { byte = 48; }
+            else if ch == "1" { byte = 49; }
+            else if ch == "2" { byte = 50; }
+            else if ch == "3" { byte = 51; }
+            else if ch == "4" { byte = 52; }
+            else if ch == "5" { byte = 53; }
+            else if ch == "6" { byte = 54; }
+            else if ch == "7" { byte = 55; }
+            else if ch == "8" { byte = 56; }
+            else if ch == "9" { byte = 57; }
+            else if ch == "_" { byte = 95; }
+            else { byte = 63; }; // '?' for unknown chars
+            export_sec.push(byte);
+            ci = ci + 1;
+        };
+        export_sec.push(0); // export kind: function
+        leb128_u(fi + 7, &mut export_sec);
+        fi = fi + 1;
+    };
+    
+    // ---- Assemble module ----
+    // Magic header
+    ctx.out.push(0); ctx.out.push(97); ctx.out.push(115); ctx.out.push(109);
+    // Version
+    ctx.out.push(1); ctx.out.push(0); ctx.out.push(0); ctx.out.push(0);
+    
+    // Type section (1)
+    emit_section(&mut ctx.out, 1, type_sec);
+    // Import section (2)
+    emit_section(&mut ctx.out, 2, import_sec);
+    // Function section (3)
+    emit_section(&mut ctx.out, 3, func_sec);
+    // Memory section (5)
+    emit_section(&mut ctx.out, 5, mem_sec);
+    // Global section (6)
+    emit_section(&mut ctx.out, 6, glob_sec);
+    // Export section (7)
+    emit_section(&mut ctx.out, 7, export_sec);
+    // Code section (10)
+    emit_section(&mut ctx.out, 10, ctx.code_out);
+    
+    ctx.out
 }

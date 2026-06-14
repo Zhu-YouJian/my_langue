@@ -24,7 +24,8 @@ struct HirType {
 //  12: If          13: Block        14: Assign       15: StructLiteral
 //  16: EnumLiteral 17: Match        18: Ref          19: MutRef
 //  20: Deref       21: Return       22: ArrayLiteral 23: Closure
-//  24: AssignOp    25: GenericCall  26: DerefAssign
+//  24: AssignOp    25: GenericCall  26: DerefAssign  27: DerefAssignOp
+//  28: Range       29: TensorLiteral 30: Move
 struct HirExpr {
     disc: i64,
     // Literal values
@@ -49,10 +50,15 @@ struct HirExpr {
     generics_count: i64,
     params_start: i64,
     params_count: i64,
+    // Closure captures (flat array of name indices)
+    captures_start: i64,
+    captures_count: i64,
     // Names
     op: str,         // Binary/Unary operator: "add","sub","mul","div","mod","eq","neq","lt","gt","lte","gte","and","or","neg","not"
     name: str,       // Var name, field name, method name, struct name
     variant: str,    // Enum variant name
+    // Range flags
+    range_inclusive: bool,
     // Type
     ty: i64,         // type index in program.type_nodes (1-based, 0=unknown)
 }
@@ -97,6 +103,9 @@ struct HirStructField { name: str, ty: i64 }
 // ── Struct definition ──
 struct HirStructDef { name: str, fields: Vec<HirStructField> }
 
+// ── Capture name entry (for closure captures) ──
+struct HirCapture { name: str }
+
 // ── HirProgram ──
 struct HirProgram {
     fns: Vec<HirFnDef>,
@@ -108,4 +117,5 @@ struct HirProgram {
     type_params: Vec<i64>,  // flat: type indices for FnType params
     match_arms: Vec<HirMatchArm>,
     structs: Vec<HirStructDef>,
+    captures: Vec<HirCapture>,  // flat: closure capture names
 }

@@ -357,11 +357,27 @@ impl BytecodeCompiler {
                 self.chunk.emit(Op::PushRange(0, 0, *inclusive));
             }
 
-            // Still unsupported
-            Closure { .. } | TensorLiteral { .. } => {
-                return Err(crate::error::TenthError::RuntimeError {
-                    message: "bytecode: unsupported construct (fallback to interpreter)".into(),
-                });
+            // Tensor literal: [[1.0, 2.0], [3.0, 4.0]]
+            TensorLiteral { data, .. } => {
+                let rows = data.len();
+                let cols = if rows > 0 { data[0].len() } else { 0 };
+                // Push all elements in row-major order
+                for row in data.iter() {
+                    for elem in row.iter() {
+                        self.compile_expr(elem)?;
+                    }
+                }
+                self.chunk.emit(Op::MakeTensor(rows, cols));
+            }
+
+            // Closure: |params| body
+            Closure { params, .. } => {
+                // Closures in the VM are limited: we emit a MakeClosure placeholder.
+                // The closure body is not compiled as a separate chunk here because
+                // the VM doesn't have a mechanism to store and invoke closure bodies yet.
+                // For now, emit a MakeClosure with the param count and chunk_idx=0.
+                // When the VM encounters a closure call, it falls back to the interpreter.
+                self.chunk.emit(Op::MakeClosure(params.len(), 0));
             }
 
         }

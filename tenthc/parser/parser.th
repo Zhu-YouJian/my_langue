@@ -152,6 +152,118 @@ fn parse_primary(p: &mut Parser) -> i64 {
         p.expr_nodes[idx - 1].left = inner;
         return idx;
     };
+    // Pipe (41) — closure: |params| body
+    if d == 41 {
+        parser_advance(p); // skip |
+        let mut closure_params = Vec::new();
+        loop {
+            let t = parser_peek(p);
+            if t.disc == 41 { parser_advance(p); break; }; // closing |
+            let pname_tok = parser_advance(p);
+            let pname = pname_tok.sval;
+            // skip optional : Type
+            let t2 = parser_peek(p);
+            if t2.disc == 55 { parser_advance(p); parser_advance(p); }; // skip : and type
+            closure_params.push(Param { name: pname, type_ann: "" });
+            let t3 = parser_peek(p);
+            if t3.disc == 53 { parser_advance(p); } // skip ,
+            else if t3.disc == 41 { parser_advance(p); break; }; // closing |
+        };
+        let body = parse_expr(p);
+        let idx = add_expr(p, "closure");
+        // Store params as a sub-expression list
+        p.expr_nodes[idx - 1].left = body;
+        p.expr_nodes[idx - 1].extra_start = p.expr_nodes.len() + 1;
+        p.expr_nodes[idx - 1].extra_count = closure_params.len();
+        let mut pi: i64 = 0;
+        while pi < closure_params.len() {
+            let pidx = add_expr(p, "ident");
+            p.expr_nodes[pidx - 1].sval = closure_params[pi].name;
+            pi = pi + 1;
+        };
+        return idx;
+    };
+
+    // LBracket (51) — array literal or tensor literal
+    if d == 51 {
+        parser_advance(p); // skip [
+        let next = parser_peek(p);
+        if next.disc == 51 {
+            // Tensor literal: [[...], [...]]
+            parser_advance(p); // skip inner [
+            let start = p.expr_nodes.len() + 1;
+            let mut count: i64 = 0;
+            loop {
+                let t = parser_peek(p);
+                if t.disc == 52 { break; }; // ]
+                parse_expr(p);
+                count = count + 1;
+                let t2 = parser_peek(p);
+                if t2.disc == 53 { parser_advance(p); }; // ,
+            };
+            parser_advance(p); // skip inner ]
+            // Check for more rows
+            let mut rows: i64 = 1;
+            let mut total_count = count;
+            let t3 = parser_peek(p);
+            if t3.disc == 53 {
+                // Multiple rows
+                loop {
+                    let t4 = parser_peek(p);
+                    if t4.disc == 52 { break; }; // ]
+                    if t4.disc == 53 { parser_advance(p); }; // ,
+                    let t5 = parser_peek(p);
+                    if t5.disc == 51 {
+                        parser_advance(p); // skip [
+                        loop {
+                            let t6 = parser_peek(p);
+                            if t6.disc == 52 { break; };
+                            parse_expr(p);
+                            total_count = total_count + 1;
+                            let t7 = parser_peek(p);
+                            if t7.disc == 53 { parser_advance(p); };
+                        };
+                        parser_advance(p); // skip ]
+                        rows = rows + 1;
+                    } else { break; };
+                };
+            };
+            parser_advance(p); // skip outer ]
+            let idx = add_expr(p, "tensor");
+            p.expr_nodes[idx - 1].arg_start = start;
+            p.expr_nodes[idx - 1].arg_count = total_count;
+            p.expr_nodes[idx - 1].lit_ival = rows;
+            return idx;
+        };
+        // Array literal: [1, 2, 3]
+        let start = p.expr_nodes.len() + 1;
+        let mut count: i64 = 0;
+        loop {
+            let t = parser_peek(p);
+            if t.disc == 52 { break; }; // ]
+            if t.disc == 61 { break; }; // Eof
+            parse_expr(p);
+            count = count + 1;
+            let t2 = parser_peek(p);
+            if t2.disc == 53 { parser_advance(p); }
+            else { break; };
+        };
+        parser_advance(p); // skip ]
+        let idx = add_expr(p, "array");
+        p.expr_nodes[idx - 1].arg_start = start;
+        p.expr_nodes[idx - 1].arg_count = count;
+        return idx;
+    };
+
+    // Move (24) — move expression
+    if d == 24 {
+        parser_advance(p);
+        let inner = parse_unary(p);
+        let idx = add_expr(p, "move");
+        p.expr_nodes[idx - 1].left = inner;
+        return idx;
+    };
+
     // Default
     let idx = add_expr(p, "int");
     p.expr_nodes[idx - 1].ival = 0;
@@ -287,14 +399,28 @@ fn parse_expr(p: &mut Parser) -> i64 {
     // Simple: just parse binary
     let expr = parse_binary(p, 0);
 
-    // Check for =
+    // Check for = or +=, -=, *=, /=
     let tok2 = parser_peek(p);
     if tok2.disc == 42 {
+        // Simple assignment
         parser_advance(p);
         let rhs = parse_expr(p);
         let idx = add_expr(p, "assign");
         p.expr_nodes[idx - 1].left = expr;
         p.expr_nodes[idx - 1].right = rhs;
+        idx
+    } else if tok2.disc == 43 || tok2.disc == 44 || tok2.disc == 45 || tok2.disc == 46 {
+        // Compound assignment: +=, -=, *=, /=
+        let op_str = if tok2.disc == 43 { "+=" }
+                     else if tok2.disc == 44 { "-=" }
+                     else if tok2.disc == 45 { "*=" }
+                     else { "/=" };
+        parser_advance(p);
+        let rhs = parse_expr(p);
+        let idx = add_expr(p, "assign_op");
+        p.expr_nodes[idx - 1].left = expr;
+        p.expr_nodes[idx - 1].right = rhs;
+        p.expr_nodes[idx - 1].sval = op_str;
         idx
     } else { expr }
 }

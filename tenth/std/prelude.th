@@ -16,10 +16,21 @@
 //   cross_entropy            — loss function
 //   Vec::new, HashMap::new   — collections
 //   read_file, write_bytes   — file I/O
+//   save_weights, load_weights — model serialization
 
 // ── Std lib (use path::to::function) ──
 //   std::nn::linear::linear
-//   std::nn::loss::mse, mse_loss
+//   std::nn::loss::mse, mse_loss, binary_cross_entropy, l1_loss
 //   std::nn::activations::relu, sigmoid, tanh, softmax
-//   std::optim::sgd::sgd_step
+//   std::nn::dropout::dropout
+//   std::nn::batchnorm::batchnorm
+//   std::nn::conv::conv2d
+//   std::nn::embedding::embedding
+//   std::optim::sgd::sgd_step, sgd_momentum, sgd_weight_decay
 //   std::optim::adam::adam_step
+//   std::optim::adagrad::adagrad_step
+//   std::optim::rmsprop::rmsprop_step
+//   std::data::dataloader::new, has_next, next_batch, reset, num_batches
+//   std::utils::serialization::save_model, load_model, save_checkpoint
+//   std::init::initializers::xavier_uniform, he_normal
+//   std::math::functions::abs, sqrt, sin, cos, ln, pow, exp

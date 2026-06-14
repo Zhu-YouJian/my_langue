@@ -35,7 +35,9 @@ fn push_expr(p: &mut HirProgram, disc: i64, lit_ival: i64, lit_fval: f64, lit_sv
         fields_start: 0, fields_count: 0,
         generics_start: 0, generics_count: 0,
         params_start: 0, params_count: 0,
+        captures_start: 0, captures_count: 0,
         op: op, name: name, variant: variant,
+        range_inclusive: false,
         ty: ty,
     };
     p.expr_nodes.push(e);
@@ -142,6 +144,11 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         return push_expr(p, 20, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
     };
     
+    if kind == "move" {
+        let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        return push_expr(p, 30, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+    };
+    
     if kind == "if" {
         let cond = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         let then_ = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
@@ -176,7 +183,89 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             let target = lower_expr(p, lexpr.left, exprs, stmts, match_arms, depth + 1);
             return push_expr(p, 11, 0, 0.0, "", false, target, rhs, 0, 0, 0, 0, 0, 0, 0, "", lexpr.sval, "", 0);
         };
+        if lexpr.kind == "deref" {
+            let target = lower_expr(p, lexpr.left, exprs, stmts, match_arms, depth + 1);
+            return push_expr(p, 26, 0, 0.0, "", false, target, rhs, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+        };
         return push_expr(p, 14, 0, 0.0, "", false, 0, rhs, 0, 0, 0, 0, 0, 0, 0, "", lexpr.sval, "", 0);
+    };
+    
+    if kind == "assign_op" {
+        let lhs = e.left;
+        let lexpr = exprs[lhs - 1];
+        let rhs = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
+        if lexpr.kind == "deref" {
+            let target = lower_expr(p, lexpr.left, exprs, stmts, match_arms, depth + 1);
+            return push_expr(p, 27, 0, 0.0, "", false, target, rhs, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", 0);
+        };
+        return push_expr(p, 24, 0, 0.0, "", false, 0, rhs, 0, 0, 0, 0, 0, 0, 0, e.sval, lexpr.sval, "", 0);
+    };
+    
+    if kind == "closure" {
+        // Lower the body
+        let body = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        // Collect param names from extra_start..extra_start+extra_count
+        let params_start = p.expr_nodes.len() + 1;
+        let mut params_count: i64 = 0;
+        if e.extra_count > 0 {
+            let mut i = e.extra_start;
+            let end = e.extra_start + e.extra_count;
+            while i < end {
+                if i <= exprs.len() {
+                    let param_expr = exprs[i - 1];
+                    let pidx = push_expr(p, 4, 0, 0.0, param_expr.sval, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", param_expr.sval, "", 0);
+                    params_count = params_count + 1;
+                };
+                i = i + 1;
+            };
+        };
+        // Analyze free variables for captures
+        let captures_start = p.captures.len() + 1;
+        let mut captures_count: i64 = 0;
+        // Simple capture analysis: collect Var references in body that are not params
+        // This is a simplified version — the full Rust implementation has recursive analysis
+        let body_expr_idx = body;
+        if body_expr_idx > 0 && body_expr_idx <= p.expr_nodes.len() {
+            // For now, we don't do deep analysis in the self-hosting compiler.
+            // Captures will be resolved at runtime by the interpreter.
+        };
+        let result = push_expr(p, 23, 0, 0.0, "", false, 0, 0, 0, body, 0, 0, 0, 0, 0, "", "", "", 0);
+        p.expr_nodes[result - 1].params_start = params_start;
+        p.expr_nodes[result - 1].params_count = params_count;
+        p.expr_nodes[result - 1].captures_start = captures_start;
+        p.expr_nodes[result - 1].captures_count = captures_count;
+        return result;
+    };
+    
+    if kind == "array" {
+        let start = p.expr_nodes.len() + 1;
+        let mut count: i64 = 0;
+        if e.arg_count > 0 {
+            let mut i = e.arg_start;
+            let end = e.arg_start + e.arg_count;
+            while i < end {
+                lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                count = count + 1;
+                i = i + 1;
+            };
+        };
+        return push_expr(p, 22, 0, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
+    };
+    
+    if kind == "tensor" {
+        let start = p.expr_nodes.len() + 1;
+        let mut count: i64 = 0;
+        if e.arg_count > 0 {
+            let mut i = e.arg_start;
+            let end = e.arg_start + e.arg_count;
+            while i < end {
+                lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                count = count + 1;
+                i = i + 1;
+            };
+        };
+        let result = push_expr(p, 29, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
+        return result;
     };
     
     if kind == "match" {
@@ -249,6 +338,7 @@ fn lower_program(program: Program) -> HirProgram {
         type_params: Vec::new(),
         match_arms: Vec::new(),
         structs: Vec::new(),
+        captures: Vec::new(),
     };
     
     // Lower struct definitions

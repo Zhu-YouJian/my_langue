@@ -68,6 +68,7 @@ pub enum HirExprKind {
     Closure {
         params: Vec<(String, Type)>,
         body: Box<HirExpr>,
+        captures: Vec<String>,
     },
     Assign {
         target: String,

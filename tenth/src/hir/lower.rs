@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use crate::error::{TenthError, TenthResult};
 use crate::lexer::token::Span;
 use crate::parser::ast as ast;
@@ -57,31 +58,31 @@ impl Scope {
         self.ownership.insert(name.to_string(), state);
     }
 
-    fn check_use(&self, name: &str) -> TenthResult<()> {
+    fn check_use(&self, name: &str, span: &crate::lexer::token::Span) -> TenthResult<()> {
         if let Some(Ownership::Moved) = self.get_ownership(name) {
             return Err(TenthError::TypeError {
-                line: 0, col: 0,
+                line: span.line, col: span.col,
                 message: format!("use of moved value '{}'", name),
             });
         }
         Ok(())
     }
 
-    fn check_borrow_shared(&self, name: &str) -> TenthResult<()> {
+    fn check_borrow_shared(&self, name: &str, span: &crate::lexer::token::Span) -> TenthResult<()> {
         match self.get_ownership(name) {
             Some(Ownership::ExclusiveRef) => {
                 // Relaxed: allow shared borrow through mutable borrow (for self-hosting)
                 Ok(())
             },
             Some(Ownership::Moved) => Err(TenthError::TypeError {
-                line: 0, col: 0,
+                line: span.line, col: span.col,
                 message: format!("cannot borrow moved value '{}'", name),
             }),
             _ => Ok(()),
         }
     }
 
-    fn check_borrow_mut(&self, name: &str) -> TenthResult<()> {
+    fn check_borrow_mut(&self, name: &str, span: &crate::lexer::token::Span) -> TenthResult<()> {
         match self.get_ownership(name) {
             Some(Ownership::SharedRef(n)) if n > 0 => {
                 // Relaxed: allow mutable borrow after shared (for self-hosting)
@@ -92,7 +93,7 @@ impl Scope {
                 Ok(())
             },
             Some(Ownership::Moved) => Err(TenthError::TypeError {
-                line: 0, col: 0,
+                line: span.line, col: span.col,
                 message: format!("cannot borrow moved value '{}'", name),
             }),
             _ => Ok(()),
@@ -128,6 +129,10 @@ pub struct Lowerer {
     uses: Vec<(Vec<String>, String)>,
     trait_defs: HashMap<String, HirTraitDef>,
     trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
+    /// Directories to search for imported .th files
+    search_paths: Vec<String>,
+    /// Set of files already imported (to prevent circular imports)
+    imported_files: HashSet<String>,
 }
 
 impl Lowerer {
@@ -153,6 +158,8 @@ impl Lowerer {
             uses: Vec::new(),
             trait_defs: HashMap::new(),
             trait_impls: HashMap::new(),
+            search_paths: Vec::new(),
+            imported_files: HashSet::new(),
         };
 
         lowerer.trait_defs.insert("Display".to_string(), HirTraitDef {
@@ -184,6 +191,68 @@ impl Lowerer {
         ]);
 
         lowerer
+    }
+
+    /// Create a Lowerer with additional search paths for file imports.
+    /// The `std_path` should point to the `std/` directory of the Tenth installation.
+    pub fn with_search_paths(search_paths: Vec<String>) -> Self {
+        let mut lowerer = Self::new();
+        lowerer.search_paths = search_paths;
+        lowerer
+    }
+
+    /// Try to resolve a module path to a .th file and load it.
+    /// Path resolution order:
+    ///   1. <search_path>/<mod_path>.th
+    ///   2. <search_path>/<mod_path>/mod.th
+    ///   3. <search_path>/<mod_path>/<last_segment>.th
+    fn try_import_file(&mut self, mod_path: &[String]) -> TenthResult<Option<HirProgram>> {
+        // Build the relative path: "std::nn::linear" -> "std/nn/linear"
+        let rel_path = mod_path.join(std::path::MAIN_SEPARATOR_STR);
+        let canonical_key = rel_path.replace(std::path::MAIN_SEPARATOR, "::");
+
+        // Prevent circular imports
+        if self.imported_files.contains(&canonical_key) {
+            return Ok(None);
+        }
+
+        for search_dir in &self.search_paths {
+            // Try <search_dir>/<rel_path>.th
+            let direct = std::path::Path::new(search_dir).join(format!("{}.th", rel_path));
+            if direct.exists() {
+                return self.load_and_compile_file(&direct, &canonical_key);
+            }
+
+            // Try <search_dir>/<rel_path>/mod.th
+            let mod_file = std::path::Path::new(search_dir).join(&rel_path).join("mod.th");
+            if mod_file.exists() {
+                return self.load_and_compile_file(&mod_file, &canonical_key);
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn load_and_compile_file(&mut self, path: &std::path::Path, canonical_key: &str) -> TenthResult<Option<HirProgram>> {
+        let source = std::fs::read_to_string(path)
+            .map_err(|e| TenthError::RuntimeError {
+                message: format!("cannot read import '{}': {}", path.display(), e),
+            })?;
+
+        self.imported_files.insert(canonical_key.to_string());
+
+        let mut lexer = crate::lexer::lexer::Lexer::new(&source);
+        let tokens = lexer.tokenize()?;
+        let mut parser = crate::parser::parser::Parser::new(tokens);
+        let program = parser.parse_program()?;
+
+        // Create a sub-lowerer with the same search paths but fresh scope
+        let mut sub_lowerer = Lowerer::with_search_paths(self.search_paths.clone());
+        sub_lowerer.imported_files = self.imported_files.clone();
+        let hir = sub_lowerer.lower_program(&program)?;
+        self.imported_files = sub_lowerer.imported_files;
+
+        Ok(Some(hir))
     }
 
     fn lower_expr(&mut self, expr: &ast::Expr) -> TenthResult<HirExpr> {
@@ -224,7 +293,7 @@ impl Lowerer {
                     }
                     (HirExprKind::Var(ident.name.clone()), Type::Unknown)
                 } else {
-                    self.scope.check_use(&ident.name)?;
+                    self.scope.check_use(&ident.name, &ident.span)?;
                     let var_info = self.scope.lookup_var(&ident.name);
                     let fn_info = self.scope.lookup_fn(&ident.name);
                     if var_info.is_none() && fn_info.is_none() {
@@ -472,7 +541,10 @@ impl Lowerer {
                 let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
                 self.scope = outer_scope;
 
-                (HirExprKind::Closure { params: lowered_params, body: Box::new(b) }, Type::Unknown)
+                // Analyze free variables in the closure body (excluding params)
+                let captures = Self::free_vars_in(&b);
+
+                (HirExprKind::Closure { params: lowered_params, body: Box::new(b), captures }, Type::Unknown)
             }
 
             ExprKind::Assign { target, value } => {
@@ -632,7 +704,7 @@ impl Lowerer {
 
             ExprKind::Ref(inner) => {
                 if let ExprKind::Ident(ident) = &inner.kind {
-                    self.scope.check_borrow_shared(&ident.name)?;
+                    self.scope.check_borrow_shared(&ident.name, &ident.span)?;
                 }
                 let e = self.lower_expr(inner)?;
                 let ty = Type::Ref(Box::new(e.ty.clone()));
@@ -648,7 +720,7 @@ impl Lowerer {
 
             ExprKind::MutRef(inner) => {
                 if let ExprKind::Ident(ident) = &inner.kind {
-                    self.scope.check_borrow_mut(&ident.name)?;
+                    self.scope.check_borrow_mut(&ident.name, &ident.span)?;
                 }
                 let e = self.lower_expr(inner)?;
                 let ty = Type::MutRef(Box::new(e.ty.clone()));
@@ -1060,8 +1132,20 @@ impl Lowerer {
                         let alias = path_strs.last().cloned().unwrap_or_default();
                         self.uses.push((path_strs.clone(), alias.clone()));
                         let mod_name = &path_strs[0];
-                        let fn_name = &path_strs[1];
+
+                        // If the module is not already loaded, try to import it from file
+                        if !self.modules.contains_key(mod_name) && !path_strs.is_empty() {
+                            // Try loading the module path as a file
+                            // For "use std::nn::linear", try to load "std/nn/linear.th"
+                            // The module name will be the first segment ("std")
+                            if let Ok(Some(imported_hir)) = self.try_import_file(&path_strs[..path_strs.len()-1]) {
+                                // Register the imported module under the first path segment
+                                self.modules.insert(mod_name.clone(), imported_hir);
+                            }
+                        }
+
                         if let Some(module) = self.modules.get(mod_name) {
+                            let fn_name = &path_strs[1];
                             if let Some(fn_def) = module.functions.iter().find(|f| &f.name == fn_name) {
                                 let param_types = fn_def.params.clone();
                                 let ret_ty = fn_def.return_type.clone();
@@ -1145,6 +1229,178 @@ impl Lowerer {
             trait_defs: self.trait_defs.clone(),
             trait_impls: self.trait_impls.clone(),
         })
+    }
+
+    /// Collect free variables referenced in an HIR expression.
+    /// A variable is "free" if it is referenced via `Var(name)` but not
+    /// bound by an enclosing `Let`, `For`, `Closure`, or `Assign` in the
+    /// given expression subtree.  We also exclude built-in names.
+    fn free_vars_in(expr: &HirExpr) -> Vec<String> {
+        let mut vars = Vec::new();
+        Self::collect_free_vars(expr, &mut vars);
+        vars.sort();
+        vars.dedup();
+        vars
+    }
+
+    fn collect_free_vars(expr: &HirExpr, vars: &mut Vec<String>) {
+        match &expr.kind {
+            HirExprKind::Var(name) => {
+                // Skip built-in names and qualified paths (e.g. "mod::fn")
+                if name.contains("::") { return; }
+                match name.as_str() {
+                    "println" | "eprintln" | "tensor" | "rand" | "randn"
+                    | "read_file" | "write_file" | "str_at" | "Vec::new" | "HashMap::new"
+                    | "compile_host" | "compile_program" | "write_bytes"
+                    | "start_grad" | "new_grad" | "stop_grad"
+                    | "param" | "backward" | "grad" | "zero_grad"
+                    | "cross_entropy"
+                    | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
+                    | "zeros" | "ones"
+                    | "save_weights" | "load_weights"
+                    | "lexer_new" | "lexer_tokenize" | "parse_program"
+                    | "lower_program" | "compile_to_wasm" | "self" => {}
+                    _ => { vars.push(name.clone()); }
+                }
+            }
+            HirExprKind::Literal(_) => {}
+            HirExprKind::Binary { left, right, .. } => {
+                Self::collect_free_vars(left, vars);
+                Self::collect_free_vars(right, vars);
+            }
+            HirExprKind::Unary { expr, .. } => {
+                Self::collect_free_vars(expr, vars);
+            }
+            HirExprKind::Call { func, args, .. } => {
+                Self::collect_free_vars(func, vars);
+                for a in args { Self::collect_free_vars(a, vars); }
+            }
+            HirExprKind::GenericCall { func, args, .. } => {
+                Self::collect_free_vars(func, vars);
+                for a in args { Self::collect_free_vars(a, vars); }
+            }
+            HirExprKind::MethodCall { receiver, args, .. } => {
+                Self::collect_free_vars(receiver, vars);
+                for a in args { Self::collect_free_vars(a, vars); }
+            }
+            HirExprKind::Index { target, indices } => {
+                Self::collect_free_vars(target, vars);
+                for idx in indices {
+                    match idx {
+                        crate::hir::hir::Index::Single(e) => {
+                            Self::collect_free_vars(e, vars);
+                        }
+                        crate::hir::hir::Index::Range { start, end } => {
+                            if let Some(s) = start { Self::collect_free_vars(s, vars); }
+                            if let Some(e) = end { Self::collect_free_vars(e, vars); }
+                        }
+                        crate::hir::hir::Index::Colon => {}
+                    }
+                }
+            }
+            HirExprKind::Field { target, .. } => {
+                Self::collect_free_vars(target, vars);
+            }
+            HirExprKind::TensorLiteral { data, .. } => {
+                for row in data {
+                    for e in row { Self::collect_free_vars(e, vars); }
+                }
+            }
+            HirExprKind::ArrayLiteral { elements, .. } => {
+                for e in elements { Self::collect_free_vars(e, vars); }
+            }
+            HirExprKind::Range { start, end, .. } => {
+                if let Some(s) = start { Self::collect_free_vars(s, vars); }
+                if let Some(e) = end { Self::collect_free_vars(e, vars); }
+            }
+            HirExprKind::If { cond, then_branch, else_branch, .. } => {
+                Self::collect_free_vars(cond, vars);
+                Self::collect_free_vars(then_branch, vars);
+                if let Some(eb) = else_branch { Self::collect_free_vars(eb, vars); }
+            }
+            HirExprKind::Block { stmts, final_expr } => {
+                // Track variables bound within the block
+                let mut bound = Vec::new();
+                for s in stmts {
+                    if let HirStmtKind::Let { name, .. } = &s.kind {
+                        bound.push(name.clone());
+                    }
+                    Self::collect_free_vars_stmt(s, vars);
+                }
+                if let Some(e) = final_expr { Self::collect_free_vars(e, vars); }
+                // Remove variables that were bound in this block
+                vars.retain(|v| !bound.contains(v));
+            }
+            HirExprKind::Closure { params, body, .. } => {
+                // Collect all free vars in the body, then remove params
+                let mut inner_vars = Vec::new();
+                Self::collect_free_vars(body, &mut inner_vars);
+                let param_names: Vec<String> = params.iter().map(|(n, _)| n.clone()).collect();
+                inner_vars.retain(|v| !param_names.contains(v));
+                vars.extend(inner_vars);
+            }
+            HirExprKind::Assign { target, value } => {
+                // target is a variable name that is being written to — it may be
+                // a free variable if it comes from an outer scope
+                vars.push(target.clone());
+                Self::collect_free_vars(value, vars);
+            }
+            HirExprKind::AssignOp { target, op: _, value } => {
+                vars.push(target.clone());
+                Self::collect_free_vars(value, vars);
+            }
+            HirExprKind::StructLiteral { fields, .. } => {
+                for (_, e) in fields { Self::collect_free_vars(e, vars); }
+            }
+            HirExprKind::EnumLiteral { fields, .. } => {
+                for (_, e) in fields { Self::collect_free_vars(e, vars); }
+            }
+            HirExprKind::Match { scrutinee, arms } => {
+                Self::collect_free_vars(scrutinee, vars);
+                for arm in arms { Self::collect_free_vars(&arm.body, vars); }
+            }
+            HirExprKind::Ref(inner) | HirExprKind::MutRef(inner) | HirExprKind::Deref(inner) => {
+                Self::collect_free_vars(inner, vars);
+            }
+            HirExprKind::Move(inner) => {
+                Self::collect_free_vars(inner, vars);
+            }
+            HirExprKind::DerefAssign { target, value } | HirExprKind::DerefAssignOp { target, value, .. } => {
+                Self::collect_free_vars(target, vars);
+                Self::collect_free_vars(value, vars);
+            }
+            HirExprKind::FieldAssign { target, value, .. } => {
+                Self::collect_free_vars(target, vars);
+                Self::collect_free_vars(value, vars);
+            }
+        }
+    }
+
+    fn collect_free_vars_stmt(stmt: &HirStmt, vars: &mut Vec<String>) {
+        match &stmt.kind {
+            HirStmtKind::Let { init, .. } => {
+                if let Some(e) = init { Self::collect_free_vars(e, vars); }
+            }
+            HirStmtKind::Expr(e) => { Self::collect_free_vars(e, vars); }
+            HirStmtKind::Return(e) => {
+                if let Some(e) = e { Self::collect_free_vars(e, vars); }
+            }
+            HirStmtKind::While { cond, body } => {
+                Self::collect_free_vars(cond, vars);
+                Self::collect_free_vars_stmt(body, vars);
+            }
+            HirStmtKind::For { var, iter, body } => {
+                Self::collect_free_vars(iter, vars);
+                let mut inner = Vec::new();
+                Self::collect_free_vars_stmt(body, &mut inner);
+                inner.retain(|v| v != var);
+                vars.extend(inner);
+            }
+            HirStmtKind::Break | HirStmtKind::Continue => {}
+            HirStmtKind::Loop { body } => {
+                for s in body { Self::collect_free_vars_stmt(s, vars); }
+            }
+        }
     }
 }
 

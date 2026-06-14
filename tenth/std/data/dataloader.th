@@ -1,15 +1,68 @@
-// DataLoader (placeholder)
+// DataLoader — batch iteration over datasets
 //
-// Planned API:
-//   let loader = DataLoader::new(dataset, batch_size=32, shuffle=true)
-//   while let Some(batch) = loader.next() {
-//       let (x, y) = batch;
-//       ...
-//   }
-//
-// Requires:
-//   - Iterator / generator protocol (new language feature)
-//   - Batching + shuffling (can be done with Vec methods)
-//   - Data augmentation pipeline (placeholder)
-//
-// TODO: implement when iterator/generator syntax is available
+// Since Tenth doesn't yet support generators/iterators, this module
+// provides a struct-based API where the caller manually advances the
+// cursor.
+
+// Create a DataLoader struct with dataset and batch configuration.
+// Fields:
+//   data     — the full dataset (Vec of samples)
+//   batch_sz — number of samples per batch
+//   cursor   — current position in the dataset
+//   len      — total number of samples
+struct DataLoader {
+    data: Vec,
+    batch_sz: i32,
+    cursor: i32,
+    len: i32,
+}
+
+// Construct a new DataLoader
+fn new(data: Vec, batch_sz: i32) -> DataLoader {
+    DataLoader {
+        data: data,
+        batch_sz: batch_sz,
+        cursor: 0,
+        len: data.len(),
+    }
+}
+
+// Check if there are more batches available
+fn has_next(loader: DataLoader) -> bool {
+    loader.cursor < loader.len
+}
+
+// Get the next batch (slice from cursor to cursor+batch_sz)
+// Returns a Vec of samples and advances the cursor.
+// If remaining samples < batch_sz, returns whatever is left.
+fn next_batch(loader: DataLoader) -> Vec {
+    let start = loader.cursor;
+    let end = if start + loader.batch_sz > loader.len {
+        loader.len
+    } else {
+        start + loader.batch_sz
+    };
+    // Note: Vec slicing requires index range — using get() in a loop
+    let mut batch = Vec::new();
+    let mut i = start;
+    while i < end {
+        batch.push(loader.data.get(i));
+        i = i + 1;
+    }
+    batch
+}
+
+// Reset the cursor to the beginning
+fn reset(loader: DataLoader) -> DataLoader {
+    DataLoader {
+        data: loader.data,
+        batch_sz: loader.batch_sz,
+        cursor: 0,
+        len: loader.len,
+    }
+}
+
+// Get the number of batches
+fn num_batches(loader: DataLoader) -> i32 {
+    (loader.len + loader.batch_sz - 1) / loader.batch_sz
+}

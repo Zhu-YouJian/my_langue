@@ -5,7 +5,6 @@ use tenth::repl;
 use tenth::runtime::limits::MemoryConfig;
 use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
-use tenth::hir::lower::Lowerer;
 use tenth::runtime::interpreter::Interpreter;
 use tenth::runtime::vm::Vm;
 use tenth::runtime::value::Value;
@@ -69,7 +68,34 @@ fn source_to_hir(source: &str) -> TenthResult<tenth::hir::hir::HirProgram> {
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(tokens);
     let program = parser.parse_program()?;
-    let mut lowerer = Lowerer::new();
+
+    // Build search paths for file imports:
+    //   1. The directory of the source file (if running from a file)
+    //   2. The `std/` directory relative to the executable
+    let mut search_paths = Vec::new();
+
+    // Add current directory
+    if let Ok(cwd) = std::env::current_dir() {
+        search_paths.push(cwd.to_string_lossy().to_string());
+    }
+
+    // Add std/ directory relative to Cargo.toml / executable
+    if let Ok(exe_dir) = std::env::current_exe()
+        .map(|p| p.parent().map(|d| d.to_path_buf()).unwrap_or_default())
+    {
+        let std_near_exe = exe_dir.join("std");
+        if std_near_exe.exists() {
+            search_paths.push(std_near_exe.to_string_lossy().to_string());
+        }
+    }
+
+    // Add tenth/std/ relative to working directory (for development)
+    let std_dev = std::path::Path::new("tenth/std");
+    if std_dev.exists() {
+        search_paths.push(std_dev.to_string_lossy().to_string());
+    }
+
+    let mut lowerer = tenth::hir::lower::Lowerer::with_search_paths(search_paths);
     lowerer.lower_program(&program)
 }
 

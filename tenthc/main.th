@@ -6,6 +6,9 @@ fn main() {
     let src = read_file("tenthc/lexer/token.th");
     let src = src + "\n" + read_file("tenthc/lexer/lexer.th");
     let src = src + "\n" + read_file("tenthc/parser/parser.th");
+    let src = src + "\n" + read_file("tenthc/hir/hir.th");
+    let src = src + "\n" + read_file("tenthc/hir/lower.th");
+    let src = src + "\n" + read_file("tenthc/compile/wasm.th");
     
     let ok = compile_host(src, "tenthc_full.wasm");
     if ok == 0 {

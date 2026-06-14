@@ -573,11 +573,17 @@ impl Interpreter {
                 }
             }
 
-            HirExprKind::Closure { params, body } => {
+            HirExprKind::Closure { params, body, captures } => {
+                // Capture the values of free variables from the current scope
+                let captured_values: Vec<(String, Value)> = captures.iter()
+                    .filter_map(|name| {
+                        self.resolve_var(name).map(|v| (name.clone(), v))
+                    })
+                    .collect();
                 Ok(Some(Value::Closure {
                     params: params.clone(),
                     body: Rc::new((**body).clone()),
-                    captures: Vec::new(),
+                    captures: captured_values,
                 }))
             }
 

@@ -416,6 +416,71 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_call(out, call_idx);
         return;
     };
+    if d == 22 {
+        // ArrayLiteral — compile elements and drop, return 0
+        if e.args_count > 0 {
+            let mut ai = e.args_start;
+            let end = e.args_start + e.args_count;
+            while ai < end { compile_expr(ctx, out, hir, ai); wasm_drop(out); ai = ai + 1; };
+        };
+        wasm_i64_const(out, 0);
+        return;
+    };
+    if d == 23 {
+        // Closure — not representable in WASM, push 0 placeholder
+        wasm_i64_const(out, 0);
+        return;
+    };
+    if d == 24 {
+        // AssignOp — compile right side, then local.set (same as disc 14)
+        compile_expr(ctx, out, hir, e.right);
+        let name = e.name;
+        let mut local_idx: i64 = 0;
+        let mut found: bool = false;
+        let mut fi: i64 = 0;
+        while fi < hir.fns.len() {
+            let func = hir.fns[fi];
+            let mut pi: i64 = 0;
+            while pi < func.params.len() {
+                if func.params[pi].name == name {
+                    local_idx = pi;
+                    found = true;
+                    break;
+                };
+                pi = pi + 1;
+            };
+            if found { break; };
+            fi = fi + 1;
+        };
+        wasm_local_set(out, local_idx);
+        return;
+    };
+    if d == 26 {
+        // DerefAssign — compile target address, compile value, i64.store (same as disc 11)
+        compile_expr(ctx, out, hir, e.left);
+        wasm_i32_wrap_i64(out);
+        compile_expr(ctx, out, hir, e.right);
+        wasm_i64_store(out, 3, 0);
+        return;
+    };
+    if d == 27 {
+        // DerefAssignOp — same as DerefAssign for now
+        compile_expr(ctx, out, hir, e.left);
+        wasm_i32_wrap_i64(out);
+        compile_expr(ctx, out, hir, e.right);
+        wasm_i64_store(out, 3, 0);
+        return;
+    };
+    if d == 29 {
+        // TensorLiteral — not representable in WASM, push 0
+        wasm_i64_const(out, 0);
+        return;
+    };
+    if d == 30 {
+        // Move — pass through (same as disc 18/19/20)
+        compile_expr(ctx, out, hir, e.left);
+        return;
+    };
     // Default: unreachable
     wasm_unreachable(out);
 }

@@ -15,8 +15,31 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
     let mut ch = lexer_peek(lexer);
     loop {
         while (ch != "") && is_ws(ch) { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
-        if (ch != "") && (ch == "/") { let next_pos = lexer.pos + 1; if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") { lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer); while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; }; }
-        else { break; };
+        if (ch != "") && (ch == "/") {
+            let next_pos = lexer.pos + 1;
+            if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "/") {
+                lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer);
+                while (ch != "") && (ch != "\n") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+            } else if (next_pos < lexer.source.len()) && (lexer.source[next_pos] == "*") {
+                lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer);
+                let mut depth: i64 = 1;
+                while (depth > 0) && (ch != "") {
+                    if ch == "/" {
+                        let nn = lexer.pos + 1;
+                        if (nn < lexer.source.len()) && (lexer.source[nn] == "*") {
+                            lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer);
+                            depth = depth + 1;
+                        } else { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+                    } else if ch == "*" {
+                        let nn = lexer.pos + 1;
+                        if (nn < lexer.source.len()) && (lexer.source[nn] == "/") {
+                            lexer_advance(lexer); lexer_advance(lexer); ch = lexer_peek(lexer);
+                            depth = depth - 1;
+                        } else { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+                    } else { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+                };
+            } else { break; };
+        } else { break; };
     };
     let line = lexer.line; let col = lexer.col; let span = make_span(line, col);
     if ch == "" { return Token { kind: TokenKind::Eof, span: span, disc: 61, ival: 0, fval: 0.0, sval: "" }; };
