@@ -135,8 +135,11 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
 
     for func in &hir.functions {
         let compiler = BytecodeCompiler::new();
-        if let Ok(chunk) = compiler.compile(func) {
+        if let Ok((chunk, closures)) = compiler.compile(func) {
             vm.add_fn(func.name.clone(), chunk);
+            for (name, closure_chunk) in closures {
+                vm.add_fn(name, closure_chunk);
+            }
         }
     }
 
@@ -144,9 +147,16 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
         vm.call("main")
     } else if let Some(ref expr) = hir.main_expr {
         let compiler = BytecodeCompiler::new();
-        let chunk = compiler.compile_main(expr)
-            .map_err(|_| tenth::error::TenthError::RuntimeError { message: "VM compile failed".into() })?;
-        vm.add_fn("main".into(), chunk);
+        if let Ok((chunk, closures)) = compiler.compile_main(expr) {
+            vm.add_fn("main".into(), chunk);
+            for (name, closure_chunk) in closures {
+                vm.add_fn(name, closure_chunk);
+            }
+        } else {
+            return Err(tenth::error::TenthError::RuntimeError {
+                message: "VM compile failed".into(),
+            });
+        }
         vm.call("main")
     } else if hir.functions.is_empty() {
         Ok(Value::Unit)
@@ -308,8 +318,11 @@ fn vm_run(path: &str) -> TenthResult<()> {
     for func in &hir.functions {
         let compiler = BytecodeCompiler::new();
         match compiler.compile(func) {
-            Ok(chunk) => {
+            Ok((chunk, closures)) => {
                 vm.add_fn(func.name.clone(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
                 // Also set as global so it can be called
                 vm.set_global(func.name.clone(), Value::FnRef {
                     name: func.name.clone(),
@@ -344,8 +357,11 @@ fn vm_run(path: &str) -> TenthResult<()> {
     } else if let Some(ref expr) = hir.main_expr {
         let compiler = BytecodeCompiler::new();
         match compiler.compile_main(expr) {
-            Ok(chunk) => {
+            Ok((chunk, closures)) => {
                 vm.add_fn("main".into(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
                 let val = vm.call("main")?;
                 if !matches!(val, Value::Unit) {
                     println!("= {}", val);

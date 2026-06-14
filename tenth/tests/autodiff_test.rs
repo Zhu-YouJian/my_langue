@@ -2,7 +2,11 @@ use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::hir::lower::Lowerer;
 use tenth::runtime::interpreter::Interpreter;
+use tenth::runtime::vm::Vm;
 use tenth::runtime::value::Value;
+use tenth::compile::bytecode::BytecodeCompiler;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 fn run_code(src: &str) -> Result<Option<Value>, String> {
     let mut lexer = Lexer::new(src);
@@ -13,6 +17,57 @@ fn run_code(src: &str) -> Result<Option<Value>, String> {
     let hir = lowerer.lower_program(&program).map_err(|e| e.to_string())?;
     let mut interpreter = Interpreter::new(&hir);
     interpreter.execute_program(&hir).map_err(|e| e.to_string())
+}
+
+fn run_vm(src: &str) -> Result<Value, String> {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().map_err(|e| e.to_string())?;
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).map_err(|e| e.to_string())?;
+
+    let mut vm = Vm::new();
+    // Register println native
+    vm.add_native("println".into(), |_vm, args| {
+        for a in args { print!("{a}"); }
+        println!();
+        Ok(Value::Unit)
+    });
+    vm.add_native("Vec::new".into(), |_vm, _args| {
+        Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))))
+    });
+
+    for func in &hir.functions {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile(func) {
+            Ok((chunk, closures)) => {
+                vm.add_fn(func.name.clone(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+    }
+
+    if let Some(ref expr) = hir.main_expr {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile_main(expr) {
+            Ok((chunk, closures)) => {
+                vm.add_fn("main".into(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+        vm.call("main").map_err(|e| e.to_string())
+    } else if vm.has_fn("main") {
+        vm.call("main").map_err(|e| e.to_string())
+    } else {
+        Ok(Value::Unit)
+    }
 }
 
 /// Extract a scalar f64 from a Value (Float or single-element Tensor)
@@ -332,4 +387,152 @@ fn test_error_span_in_borrow_check() {
     let err_msg = result.unwrap_err();
     let err_str = err_msg.to_string();
     assert!(err_str.contains("moved"), "expected 'moved' in error, got: {}", err_str);
+}
+
+// ── VM for-in loop tests ──
+
+#[test]
+fn test_vm_for_range() {
+    let src = r#"
+        fn sum_range(n: i64) -> i64 {
+            let mut sum = 0;
+            for i in 0..n {
+                sum = sum + i;
+            };
+            sum
+        };
+        sum_range(5)
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(10) => {}  // 0+1+2+3+4 = 10
+        v => panic!("expected Int(10), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_for_range_inclusive() {
+    let src = r#"
+        fn sum_to(n: i64) -> i64 {
+            let mut sum = 0;
+            for i in 1..=n {
+                sum = sum + i;
+            };
+            sum
+        };
+        sum_to(5)
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(15) => {}  // 1+2+3+4+5 = 15
+        v => panic!("expected Int(15), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_for_in_function() {
+    let src = r#"
+        fn sum_range(n: i64) -> i64 {
+            let mut s = 0;
+            for i in 0..n {
+                s = s + i;
+            };
+            s
+        };
+        sum_range(6)
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(15) => {}  // 0+1+2+3+4+5 = 15
+        v => panic!("expected Int(15), got {:?}", v),
+    }
+}
+
+// ── VM string slice test ──
+
+#[test]
+fn test_vm_string_slice() {
+    let src = r#"
+        fn slice_test() -> str {
+            let s = "hello world";
+            s[0..5]
+        };
+        slice_test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::String(s) => assert_eq!(s, "hello"),
+        v => panic!("expected String(\"hello\"), got {:?}", v),
+    }
+}
+
+// ── VM closure test ──
+
+#[test]
+fn test_vm_closure_simple() {
+    let src = r#"
+        fn closure_test() -> i64 {
+            let double = |x| x * 2;
+            double(21)
+        };
+        closure_test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(42) => {}
+        v => panic!("expected Int(42), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_closure_captures() {
+    let src = r#"
+        fn capture_test() -> i64 {
+            let factor = 3;
+            let multiply = |x| x * factor;
+            multiply(7)
+        };
+        capture_test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(21) => {}
+        v => panic!("expected Int(21), got {:?}", v),
+    }
+}
+
+// ── Borrow checker strict tests ──
+
+#[test]
+fn test_strict_borrow_shared_while_mut() {
+    let src = r#"
+        let mut x = 42;
+        let m = &mut x;
+        let r = &x;
+        *m
+    "#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let result = lowerer.lower_program(&program);
+    assert!(result.is_err(), "expected borrow check error");
+}
+
+#[test]
+fn test_strict_borrow_mut_while_shared() {
+    let src = r#"
+        let x = 42;
+        let r = &x;
+        let m = &mut x;
+        *r
+    "#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let result = lowerer.lower_program(&program);
+    assert!(result.is_err(), "expected borrow check error");
 }

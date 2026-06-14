@@ -352,7 +352,26 @@ impl Vm {
                     let n = num_args;
                     let mut args = vec![Value::Unit; n];
                     for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
-                    if let Some(native_fn) = self.natives.get(&name).copied() {
+
+                    // Try to find the function by name, checking globals for FnRef closures
+                    let callee_name = if let Some(Value::FnRef { name: fname, .. }) = self.globals.get(&name) {
+                        fname.clone()
+                    } else {
+                        name.clone()
+                    };
+
+                    if let Some(native_fn) = self.natives.get(&callee_name).copied() {
+                        let result = native_fn(self, &args)?;
+                        self.stack.push(result);
+                    } else if let Some(&callee_idx) = self.functions.get(&callee_name) {
+                        self.frames.push(Frame { ip, chunk_idx, locals: locals.clone(), stack_base: self.stack.len() });
+                        chunk_idx = callee_idx;
+                        code = self.chunks[chunk_idx].code.clone();
+                        strings = self.chunks[chunk_idx].strings.clone();
+                        ip = 0;
+                        locals = args;
+                        locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
+                    } else if let Some(native_fn) = self.natives.get(&name).copied() {
                         let result = native_fn(self, &args)?;
                         self.stack.push(result);
                     } else if let Some(&callee_idx) = self.functions.get(&name) {
@@ -560,16 +579,17 @@ impl Vm {
                     self.stack.push(Value::Tensor(Rc::new(RefCell::new(tensor))));
                 }
 
-                Op::MakeClosure(params_count, _chunk_idx) => {
-                    // Create a closure value with empty captures (captures are resolved at call time via globals)
-                    let _param_names: Vec<(String, crate::hir::types::Type)> = (0..params_count)
+                Op::MakeClosure(params_count, name_idx) => {
+                    // Create a FnRef value pointing to the closure function
+                    let name = strings.get(name_idx).cloned().unwrap_or_default();
+                    let param_names: Vec<(String, crate::hir::types::Type)> = (0..params_count)
                         .map(|i| (format!("__param_{i}"), crate::hir::types::Type::Unknown))
                         .collect();
-                    // Note: VM closures currently don't carry a body; they rely on
-                    // the function being registered as a named function. This opcode
-                    // is a placeholder for when full closure support is added.
-                    // For now, push Unit as a marker that closure creation was attempted.
-                    self.stack.push(Value::Unit);
+                    self.stack.push(Value::FnRef {
+                        name,
+                        params: param_names,
+                        return_type: crate::hir::types::Type::Unknown,
+                    });
                 }
             }
         }

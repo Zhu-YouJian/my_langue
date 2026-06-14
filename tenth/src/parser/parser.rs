@@ -503,7 +503,13 @@ impl Parser {
                                 indices.push(IndexExpr::Range { start: None, end });
                             } else {
                                 let start = self.parse_expr()?;
-                                if matches!(self.peek_kind(), TokenKind::DotDot) {
+                                // Check if parse_expr consumed a Range (e.g. 0..5)
+                                if let ExprKind::Range { start: rs, end: re, inclusive: _ } = &start.kind {
+                                    indices.push(IndexExpr::Range {
+                                        start: rs.as_ref().map(|b| Box::new(*b.clone())),
+                                        end: re.as_ref().map(|b| Box::new(*b.clone())),
+                                    });
+                                } else if matches!(self.peek_kind(), TokenKind::DotDot) {
                                     self.advance();
                                     let end = if !matches!(self.peek_kind(), TokenKind::Comma)
                                         && !matches!(self.peek_kind(), TokenKind::RBracket)
@@ -667,7 +673,7 @@ impl Parser {
             TokenKind::EqEq | TokenKind::NotEq => 2,
             TokenKind::AndAnd => 1,
             TokenKind::OrOr => 0,
-            TokenKind::DotDot => 0,  // range operator: lowest precedence
+            TokenKind::DotDot | TokenKind::DotDotEq => 0,  // range operator: lowest precedence
             TokenKind::Assign
             | TokenKind::PlusAssign
             | TokenKind::MinusAssign
@@ -706,9 +712,14 @@ impl Parser {
             }
 
             // Range expressions: start..end, start..=end
-            if matches!(self.peek_kind(), TokenKind::DotDot) {
-                self.advance();
-                let inclusive = self.match_token(TokenKind::Assign); // ..=
+            if matches!(self.peek_kind(), TokenKind::DotDot) || matches!(self.peek_kind(), TokenKind::DotDotEq) {
+                let inclusive = if matches!(self.peek_kind(), TokenKind::DotDotEq) {
+                    self.advance();
+                    true
+                } else {
+                    self.advance();
+                    self.match_token(TokenKind::Assign) // ..=  (when lexer splits)
+                };
                 let end = if !matches!(self.peek_kind(), TokenKind::Semicolon)
                     && !matches!(self.peek_kind(), TokenKind::RBrace)
                     && !matches!(self.peek_kind(), TokenKind::RParen)

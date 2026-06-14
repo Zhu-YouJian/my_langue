@@ -70,10 +70,10 @@ impl Scope {
 
     fn check_borrow_shared(&self, name: &str, span: &crate::lexer::token::Span) -> TenthResult<()> {
         match self.get_ownership(name) {
-            Some(Ownership::ExclusiveRef) => {
-                // Relaxed: allow shared borrow through mutable borrow (for self-hosting)
-                Ok(())
-            },
+            Some(Ownership::ExclusiveRef) => Err(TenthError::TypeError {
+                line: span.line, col: span.col,
+                message: format!("cannot borrow '{}' as shared because it is also borrowed as mutable", name),
+            }),
             Some(Ownership::Moved) => Err(TenthError::TypeError {
                 line: span.line, col: span.col,
                 message: format!("cannot borrow moved value '{}'", name),
@@ -84,14 +84,14 @@ impl Scope {
 
     fn check_borrow_mut(&self, name: &str, span: &crate::lexer::token::Span) -> TenthResult<()> {
         match self.get_ownership(name) {
-            Some(Ownership::SharedRef(n)) if n > 0 => {
-                // Relaxed: allow mutable borrow after shared (for self-hosting)
-                Ok(())
-            },
-            Some(Ownership::ExclusiveRef) => {
-                // Allow sequential mutable borrows (relaxed for self-hosting)
-                Ok(())
-            },
+            Some(Ownership::SharedRef(n)) if n > 0 => Err(TenthError::TypeError {
+                line: span.line, col: span.col,
+                message: format!("cannot borrow '{}' as mutable because it is also borrowed as shared", name),
+            }),
+            Some(Ownership::ExclusiveRef) => Err(TenthError::TypeError {
+                line: span.line, col: span.col,
+                message: format!("cannot borrow '{}' as mutable more than once at a time", name),
+            }),
             Some(Ownership::Moved) => Err(TenthError::TypeError {
                 line: span.line, col: span.col,
                 message: format!("cannot borrow moved value '{}'", name),

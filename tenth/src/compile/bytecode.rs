@@ -18,6 +18,10 @@ pub struct BytecodeCompiler {
     next_label: usize,
     /// Loop context stack: (loop_start_code_offset, break_label, continue_label)
     loop_stack: Vec<(usize, usize, usize)>,
+    /// Additional chunks compiled from closures (name, chunk)
+    closure_chunks: Vec<(String, Chunk)>,
+    /// Counter for generating unique closure names
+    closure_counter: usize,
 }
 
 impl BytecodeCompiler {
@@ -29,10 +33,12 @@ impl BytecodeCompiler {
             labels: HashMap::new(),
             next_label: 0,
             loop_stack: Vec::new(),
+            closure_chunks: Vec::new(),
+            closure_counter: 0,
         }
     }
 
-    pub fn compile(mut self, func: &HirFnDef) -> TenthResult<Chunk> {
+    pub fn compile(mut self, func: &HirFnDef) -> TenthResult<(Chunk, Vec<(String, Chunk)>)> {
         self.chunk.num_args = func.params.len();
         for (name, _) in &func.params {
             self.locals.push(name.clone());
@@ -45,15 +51,15 @@ impl BytecodeCompiler {
         self.chunk.emit(Op::Ret);
         self.resolve_patches();
         self.chunk.num_locals = self.locals.len();
-        Ok(self.chunk)
+        Ok((self.chunk, self.closure_chunks))
     }
 
-    pub fn compile_main(mut self, expr: &HirExpr) -> TenthResult<Chunk> {
+    pub fn compile_main(mut self, expr: &HirExpr) -> TenthResult<(Chunk, Vec<(String, Chunk)>)> {
         self.compile_expr(expr)?;
         self.chunk.emit(Op::Ret);
         self.resolve_patches();
         self.chunk.num_locals = self.locals.len();
-        Ok(self.chunk)
+        Ok((self.chunk, self.closure_chunks))
     }
 
     fn compile_expr(&mut self, expr: &HirExpr) -> TenthResult<()> {
@@ -178,6 +184,9 @@ impl BytecodeCompiler {
                     self.locals.push(target.clone());
                     self.chunk.emit(Op::Store(pos));
                 }
+                // Also store as global so closure FnRef values can be called by name
+                let gi = self.chunk.add_string(target);
+                self.chunk.emit(Op::StoreGlobal(gi));
             }
 
             AssignOp { target, op, value } => {
@@ -371,13 +380,43 @@ impl BytecodeCompiler {
             }
 
             // Closure: |params| body
-            Closure { params, .. } => {
-                // Closures in the VM are limited: we emit a MakeClosure placeholder.
-                // The closure body is not compiled as a separate chunk here because
-                // the VM doesn't have a mechanism to store and invoke closure bodies yet.
-                // For now, emit a MakeClosure with the param count and chunk_idx=0.
-                // When the VM encounters a closure call, it falls back to the interpreter.
-                self.chunk.emit(Op::MakeClosure(params.len(), 0));
+            Closure { params, body, captures } => {
+                // Compile the closure body as a separate chunk
+                let closure_name = format!("__closure_{}", self.closure_counter);
+                self.closure_counter += 1;
+
+                let mut closure_compiler = BytecodeCompiler::new();
+                closure_compiler.closure_counter = self.closure_counter;
+
+                // Set up params as locals in the closure chunk
+                closure_compiler.chunk.num_args = params.len();
+                for (name, _) in params {
+                    closure_compiler.locals.push(name.clone());
+                }
+
+                // Compile the closure body
+                closure_compiler.compile_expr(body)?;
+                closure_compiler.chunk.emit(Op::Ret);
+                closure_compiler.resolve_patches();
+                closure_compiler.chunk.num_locals = closure_compiler.locals.len();
+
+                // Store captured variable values as globals in the main chunk
+                // so the closure can access them via LoadGlobal
+                for cap_name in captures {
+                    if let Some(pos) = self.locals.iter().position(|n| n == cap_name) {
+                        // Load from local and store as global
+                        self.chunk.emit(Op::Load(pos));
+                        let gi = self.chunk.add_string(cap_name);
+                        self.chunk.emit(Op::StoreGlobal(gi));
+                    }
+                }
+
+                // Register the closure chunk
+                self.closure_chunks.push((closure_name.clone(), closure_compiler.chunk));
+
+                // Emit MakeClosure with the closure name index
+                let name_i = self.chunk.add_string(&closure_name);
+                self.chunk.emit(Op::MakeClosure(params.len(), name_i));
             }
 
         }
@@ -394,7 +433,11 @@ impl BytecodeCompiler {
                 } else {
                     self.chunk.emit(Op::PushUnit);
                 }
+                self.chunk.emit(Op::Dup);
                 self.chunk.emit(Op::Store(pos));
+                // Also store as global so closure FnRef values can be called by name
+                let gi = self.chunk.add_string(name);
+                self.chunk.emit(Op::StoreGlobal(gi));
             }
             HirStmtKind::Expr(e) => {
                 self.compile_expr(e)?;
@@ -439,6 +482,122 @@ impl BytecodeCompiler {
                 self.label(break_label); // break jumps here
                 self.loop_stack.pop();
             }
+            HirStmtKind::For { var, iter, body } => {
+                // Compile for-in loop
+                match &iter.kind {
+                    HirExprKind::Range { start, end, inclusive } => {
+                        // for var in start..end { body }
+                        // Compile as: var = start; while var < end { body; var += 1 }
+                        let var_slot = self.locals.len();
+                        self.locals.push(var.clone());
+
+                        // var = start
+                        if let Some(s) = start {
+                            self.compile_expr(s)?;
+                        } else {
+                            self.chunk.emit(Op::PushInt(0));
+                        }
+                        self.chunk.emit(Op::Store(var_slot));
+
+                        let loop_start = self.chunk.code.len();
+                        let break_label = self.new_label();
+                        let continue_label = self.new_label();
+                        self.label(continue_label);
+                        self.loop_stack.push((loop_start, break_label, continue_label));
+
+                        // condition: var < end (or var <= end for inclusive)
+                        self.chunk.emit(Op::Load(var_slot));
+                        if let Some(e) = end {
+                            self.compile_expr(e)?;
+                        } else {
+                            self.chunk.emit(Op::PushInt(i64::MAX));
+                        }
+                        if *inclusive {
+                            self.chunk.emit(Op::Lte);
+                        } else {
+                            self.chunk.emit(Op::Lt);
+                        }
+                        self.chunk.emit(Op::JmpFalse(0));
+                        self.patch_jump(break_label);
+
+                        // body
+                        self.compile_stmt(body)?;
+
+                        // var += 1
+                        self.chunk.emit(Op::Load(var_slot));
+                        self.chunk.emit(Op::PushInt(1));
+                        self.chunk.emit(Op::Add);
+                        self.chunk.emit(Op::Store(var_slot));
+
+                        // Jump back to condition
+                        let offset = loop_start as i32 - self.chunk.code.len() as i32 - 5;
+                        self.chunk.emit(Op::Jump(offset));
+                        self.label(break_label);
+                        self.loop_stack.pop();
+                    }
+                    _ => {
+                        // Generic iteration: for var in iterable { body }
+                        // Compile as index-based iteration:
+                        //   let __iter = iterable;
+                        //   let __idx = 0;
+                        //   while __idx < __iter.len() {
+                        //       let var = __iter[__idx];
+                        //       body;
+                        //       __idx += 1;
+                        //   }
+                        let iter_slot = self.locals.len();
+                        self.locals.push("__iter".to_string());
+                        let idx_slot = iter_slot + 1;
+                        self.locals.push("__idx".to_string());
+                        let var_slot = idx_slot + 1;
+                        self.locals.push(var.clone());
+
+                        // __iter = iterable
+                        self.compile_expr(iter)?;
+                        self.chunk.emit(Op::Store(iter_slot));
+
+                        // __idx = 0
+                        self.chunk.emit(Op::PushInt(0));
+                        self.chunk.emit(Op::Store(idx_slot));
+
+                        let loop_start = self.chunk.code.len();
+                        let break_label = self.new_label();
+                        let continue_label = self.new_label();
+                        self.label(continue_label);
+                        self.loop_stack.push((loop_start, break_label, continue_label));
+
+                        // condition: __idx < __iter.len()
+                        self.chunk.emit(Op::Load(idx_slot));
+                        self.chunk.emit(Op::Load(iter_slot));
+                        let len_i = self.chunk.add_string("len");
+                        self.chunk.emit(Op::MethodCall(len_i, 0));
+                        self.chunk.emit(Op::Lt);
+                        self.chunk.emit(Op::JmpFalse(0));
+                        self.patch_jump(break_label);
+
+                        // var = __iter[__idx]
+                        self.chunk.emit(Op::Load(iter_slot));
+                        self.chunk.emit(Op::Load(idx_slot));
+                        self.chunk.emit(Op::IndexGet);
+                        self.chunk.emit(Op::Store(var_slot));
+
+                        // body
+                        self.compile_stmt(body)?;
+
+                        // __idx += 1
+                        self.chunk.emit(Op::Load(idx_slot));
+                        self.chunk.emit(Op::PushInt(1));
+                        self.chunk.emit(Op::Add);
+                        self.chunk.emit(Op::Store(idx_slot));
+
+                        // Jump back to condition
+                        let offset = loop_start as i32 - self.chunk.code.len() as i32 - 5;
+                        self.chunk.emit(Op::Jump(offset));
+                        self.label(break_label);
+                        self.loop_stack.pop();
+                    }
+                }
+            }
             HirStmtKind::Break => {
                 if let Some(&(_, break_label, _)) = self.loop_stack.last() {
                     self.chunk.emit(Op::Jump(0));
@@ -451,7 +610,6 @@ impl BytecodeCompiler {
                     self.patches.push((self.chunk.code.len() - 4, continue_label));
                 }
             }
-            _ => {}
         }
         Ok(())
     }
