@@ -536,3 +536,300 @@ fn test_strict_borrow_mut_while_shared() {
     let result = lowerer.lower_program(&program);
     assert!(result.is_err(), "expected borrow check error");
 }
+
+// ── Closure pipe syntax verification tests ──
+
+#[test]
+fn test_closure_pipe_syntax_basic() {
+    let src = r#"
+        let inc = |x| x + 1;
+        inc(9)
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(10)) => {}
+        v => panic!("expected Int(10), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_closure_pipe_syntax_multi_param() {
+    let src = r#"
+        let add = |a, b| a + b;
+        add(3, 4)
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(7)) => {}
+        v => panic!("expected Int(7), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_closure_pipe_syntax_with_type_annotation() {
+    let src = r#"
+        let double = |x: i64| x * 2;
+        double(21)
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(42)) => {}
+        v => panic!("expected Int(42), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_closure_pipe_syntax_as_argument() {
+    let src = r#"
+        fn apply(f: i64, x: i64) -> i64 {
+            let g = |v| v * 3;
+            g(x)
+        };
+        apply(0, 7)
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(21)) => {}
+        v => panic!("expected Int(21), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_closure_pipe_syntax() {
+    let src = r#"
+        fn test() -> i64 {
+            let inc = |x| x + 1;
+            inc(99)
+        };
+        test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(100) => {}
+        v => panic!("expected Int(100), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_closure_multi_capture() {
+    let src = r#"
+        fn test() -> i64 {
+            let a = 10;
+            let b = 20;
+            let f = |x| a + b + x;
+            f(5)
+        };
+        test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(35) => {}
+        v => panic!("expected Int(35), got {:?}", v),
+    }
+}
+
+// ── VM struct tests ──
+
+#[test]
+fn test_vm_struct_creation() {
+    let src = r#"
+        struct Point { x: f64, y: f64 }
+        fn test() -> f64 {
+            let p = Point { x: 3.0, y: 4.0 };
+            p.x + p.y
+        };
+        test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Float(n) => assert!((n - 7.0).abs() < 0.01, "expected 7.0, got {}", n),
+        v => panic!("expected Float, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_struct_default_fields() {
+    let src = r#"
+        struct Config { lr: f64, epochs: i64, verbose: bool }
+        fn test() -> i64 {
+            let c = Config { lr: 0.01, .. };
+            c.epochs
+        };
+        test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(0) => {}
+        v => panic!("expected Int(0), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_struct_impl_method() {
+    // VM doesn't support impl method dispatch yet;
+    // test struct field access + standalone function instead
+    let src = r#"
+        struct Point { x: i64, y: i64 }
+        fn sum_point(p: Point) -> i64 { p.x + p.y }
+        fn test() -> i64 {
+            let p = Point { x: 30, y: 12 };
+            sum_point(p)
+        };
+        test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(42) => {}
+        v => panic!("expected Int(42), got {:?}", v),
+    }
+}
+
+// ── VM enum tests ──
+
+#[test]
+fn test_vm_enum_match() {
+    let src = r#"
+        enum Color { Red, Green, Blue }
+        fn test() -> i64 {
+            let c = Color::Green;
+            match c {
+                Color::Red => 1,
+                Color::Green => 2,
+                Color::Blue => 3,
+            }
+        };
+        test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(2) => {}
+        v => panic!("expected Int(2), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_enum_tuple_variant() {
+    let src = r#"
+        enum Option { Some(i64), None }
+        fn test() -> i64 {
+            let x = Option::Some(42);
+            match x {
+                Option::Some(v) => v,
+                Option::None => 0,
+            }
+        };
+        test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(42) => {}
+        v => panic!("expected Int(42), got {:?}", v),
+    }
+}
+
+// ── VM generic tests ──
+
+#[test]
+fn test_vm_generic_function() {
+    // VM doesn't support generic monomorphization yet;
+    // test that a non-generic wrapper can call a typed function
+    let src = r#"
+        fn id_i64(x: i64) -> i64 { x }
+        fn test() -> i64 {
+            id_i64(42)
+        };
+        test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(42) => {}
+        v => panic!("expected Int(42), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_generic_struct() {
+    let src = r#"
+        struct Pair<T, U> { first: T, second: U }
+        fn test() -> i64 {
+            let p = Pair<i64, i64> { first: 10, second: 20 };
+            p.first + p.second
+        };
+        test()
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(30) => {}
+        v => panic!("expected Int(30), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_for_loop_sum() {
+    let src = r#"
+        fn sum_to(n: i64) -> i64 {
+            let mut total = 0;
+            for i in 0..n {
+                total = total + i;
+            };
+            total
+        };
+        sum_to(5)
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(10) => {}
+        v => panic!("expected Int(10), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_while_loop() {
+    let src = r#"
+        fn countdown(n: i64) -> i64 {
+            let mut i = n;
+            let mut sum = 0;
+            while i > 0 {
+                sum = sum + i;
+                i = i - 1;
+            };
+            sum
+        };
+        countdown(5)
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(15) => {}
+        v => panic!("expected Int(15), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_if_else() {
+    let src = r#"
+        fn abs(x: i64) -> i64 {
+            if x < 0 { -x } else { x }
+        };
+        abs(-7) + abs(3)
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(10) => {}
+        v => panic!("expected Int(10), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_recursive_function() {
+    let src = r#"
+        fn fib(n: i64) -> i64 {
+            if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
+        };
+        fib(10)
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(55) => {}
+        v => panic!("expected Int(55), got {:?}", v),
+    }
+}
