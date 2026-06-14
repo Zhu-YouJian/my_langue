@@ -1,0 +1,39 @@
+// 矩阵转置与运算 — 展示矩阵操作和自动微分
+
+fn main() {
+    // 1. 矩阵创建
+    let a = tensor[[1.0, 2.0], [3.0, 4.0]];
+    let b = tensor[[5.0, 6.0], [7.0, 8.0]];
+
+    // 2. 矩阵加法
+    let sum = a + b;
+    println("A + B sum:");
+    println(sum.sum());
+
+    // 3. 矩阵乘法
+    let prod = a.matmul(b);
+    println("A * B sum:");
+    println(prod.sum());
+
+    // 4. 转置
+    let at = a.transpose();
+    println("A^T sum:");
+    println(at.sum());
+
+    // 5. 矩阵乘以转置 (A * A^T)
+    let aat = a.matmul(a.transpose());
+    println("A * A^T sum:");
+    println(aat.sum());
+
+    // 6. 矩阵的自动微分
+    new_grad();
+    let w = param(tensor[[1.0, 2.0], [3.0, 4.0]]);
+    let x = param(tensor[[1.0], [1.0]]);
+    let y = w.matmul(x);
+    let loss = y.sum();
+    backward(loss);
+    stop_grad();
+
+    println("Gradient of w:");
+    println(grad(w).sum());
+}

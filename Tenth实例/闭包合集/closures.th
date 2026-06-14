@@ -1,4 +1,4 @@
-// 闭包合集 — 当前 Tenth 支持的功能
+// 闭包合集 — 演示 Tenth 闭包功能（含变量捕获）
 
 fn main() {
     // 简单闭包
@@ -19,4 +19,17 @@ fn main() {
     let op = double;
     println("op(50):");
     println(op(50));
+
+    // 闭包捕获环境变量
+    let factor = 3;
+    let multiply = |x| x * factor;
+    println("multiply(7) with factor=3:");
+    println(multiply(7));
+
+    // 闭包捕获多个变量
+    let base = 10;
+    let offset = 5;
+    let compute = |x| x * base + offset;
+    println("compute(2) with base=10, offset=5:");
+    println(compute(2));
 }

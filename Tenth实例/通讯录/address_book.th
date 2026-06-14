@@ -14,23 +14,19 @@ fn add_contact(book: &mut AddressBook, name: str, phone: str) {
 }
 
 fn find_by_name(book: &AddressBook, name: str) -> str {
-    let mut i: i64 = 0;
-    while i < book.contacts.len() {
+    for i in 0..book.contacts.len() {
         let c = book.contacts[i];
         if c.name == name {
             return c.phone;
         };
-        i = i + 1;
     };
     "Not found"
 }
 
 fn list_all(book: &AddressBook) {
-    let mut i: i64 = 0;
-    while i < book.contacts.len() {
+    for i in 0..book.contacts.len() {
         let c = book.contacts[i];
         println("  ", c.name, ": ", c.phone);
-        i = i + 1;
     };
 }
 

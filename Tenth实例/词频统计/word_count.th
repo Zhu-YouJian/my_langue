@@ -1,0 +1,38 @@
+// 词频统计 — 使用 HashMap 统计文本中单词出现次数
+
+fn main() {
+    let text = "the cat sat on the mat and the cat ate the fish";
+    let words = text.split(" ");
+
+    let mut freq = HashMap::new();
+
+    let mut i: i64 = 0;
+    while i < words.len() {
+        let w = words[i];
+        let current = freq.get(w);
+        if current == 0 {
+            freq.insert(w, 1);
+        } else {
+            freq.insert(w, current + 1);
+        };
+        i = i + 1;
+    };
+
+    println("Word frequencies:");
+    println("the:");
+    println(freq.get("the"));
+    println("cat:");
+    println(freq.get("cat"));
+    println("sat:");
+    println(freq.get("sat"));
+    println("on:");
+    println(freq.get("on"));
+    println("mat:");
+    println(freq.get("mat"));
+    println("and:");
+    println(freq.get("and"));
+    println("ate:");
+    println(freq.get("ate"));
+    println("fish:");
+    println(freq.get("fish"));
+}

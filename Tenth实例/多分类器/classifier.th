@@ -34,8 +34,7 @@ fn main() {
     let lr = 0.0005;
 
     // ── 训练 ────────────────────────────────────────────
-    let mut epoch: i64 = 0;
-    while epoch < 20000 {
+    for epoch in 0..20000 {
         new_grad();
         zero_grad();
         w1 = param(w1);  b1 = param(b1);
@@ -55,8 +54,6 @@ fn main() {
         stop_grad();
         w1 = w1 - lr * grad(w1);  b1 = b1 - lr * grad(b1);
         w2 = w2 - lr * grad(w2);  b2 = b2 - lr * grad(b2);
-
-        epoch = epoch + 1;
     };
 
     // ── 验证 ────────────────────────────────────────────

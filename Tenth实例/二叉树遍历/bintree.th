@@ -33,6 +33,5 @@ fn main() {
     println("Inorder traversal (1-7):");
     let mut result = Vec::new();
     inorder_into(tree, &mut result);
-    let mut i: i64 = 0;
-    while i < result.len() { println(result[i]); i = i + 1; };
+    for i in 0..result.len() { println(result[i]); };
 }

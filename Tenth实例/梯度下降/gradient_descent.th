@@ -19,8 +19,7 @@ fn main() {
     let x3 = 3.0; let y3 = 7.0;
     let x4 = 4.0; let y4 = 9.0;
 
-    let mut step: i64 = 0;
-    while step < 500 {
+    for step in 0..500 {
         // 预测
         let p1 = w * x1 + b;
         let p2 = w * x2 + b;
@@ -33,8 +32,6 @@ fn main() {
 
         w = w - lr * gw;
         b = b - lr * gb;
-
-        step = step + 1;
     };
 
     println("Learned w (should be ~2):");

@@ -28,9 +28,8 @@ fn main() {
     let mut fc_b = tensor[[0.0, 0.0]];
 
     let lr = 0.01;
-    let mut epoch: i64 = 0;
 
-    while epoch < 5000 {
+    for epoch in 0..5000 {
         new_grad();
         zero_grad();
         conv_w = param(conv_w);
@@ -51,8 +50,6 @@ fn main() {
         conv_w = conv_w - lr * grad(conv_w);
         fc_w = fc_w - lr * grad(fc_w);
         fc_b = fc_b - lr * grad(fc_b);
-
-        epoch = epoch + 1;
     };
 
     // 验证

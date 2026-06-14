@@ -1,0 +1,12 @@
+使用 Softmax 回归进行多分类任务训练。
+
+模型：logits = X * W + b
+损失：cross_entropy（内置 softmax + 交叉熵）
+优化：SGD
+
+训练数据：
+- [1,0] → 类 0
+- [0,1] → 类 1
+- [1,1] → 类 2
+
+涉及特性：张量 matmul、cross_entropy、自动微分、for-in 循环

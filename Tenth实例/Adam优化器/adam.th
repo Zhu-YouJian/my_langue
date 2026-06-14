@@ -1,0 +1,68 @@
+// Adam 优化器 — 自适应学习率优化
+// 用 Adam 训练线性回归 y = 2x + 1
+
+fn main() {
+    let x = tensor[[1.0, 2.0, 3.0, 4.0]];
+    let target = tensor[[3.0, 5.0, 7.0, 9.0]];
+
+    let mut w = tensor[[0.0]];
+    let mut b = tensor[[0.0]];
+
+    // Adam 超参数
+    let lr = 0.01;
+    let beta1 = 0.9;
+    let beta2 = 0.999;
+    let eps = 0.0000001;
+
+    // 一阶矩和二阶矩
+    let mut mw = tensor[[0.0]];
+    let mut mb = tensor[[0.0]];
+    let mut vw = tensor[[0.0]];
+    let mut vb = tensor[[0.0]];
+
+    for epoch in 0..500 {
+        new_grad();
+        zero_grad();
+        w = param(w);
+        b = param(b);
+
+        let pred = w * x + b;
+        let loss = ((pred - target) * (pred - target)).mean();
+        backward(loss);
+
+        stop_grad();
+        let gw = grad(w);
+        let gb = grad(b);
+
+        // 更新一阶矩
+        mw = beta1 * mw + (1.0 - beta1) * gw;
+        mb = beta1 * mb + (1.0 - beta1) * gb;
+
+        // 更新二阶矩
+        vw = beta2 * vw + (1.0 - beta2) * gw * gw;
+        vb = beta2 * vb + (1.0 - beta2) * gb * gb;
+
+        // 偏差修正
+        let t = (epoch + 1) as f64;
+        let mw_hat = mw / (1.0 - beta1.pow(t));
+        let mb_hat = mb / (1.0 - beta1.pow(t));
+        let vw_hat = vw / (1.0 - beta2.pow(t));
+        let vb_hat = vb / (1.0 - beta2.pow(t));
+
+        // 参数更新
+        w = w - lr * mw_hat / (vw_hat.sqrt() + eps);
+        b = b - lr * mb_hat / (vb_hat.sqrt() + eps);
+
+        if epoch % 100 == 0 {
+            println("epoch:");
+            println(epoch);
+            println("loss:");
+            println(loss.sum());
+        };
+    };
+
+    println("w (should be ~2):");
+    println(w.sum());
+    println("b (should be ~1):");
+    println(b.sum());
+}

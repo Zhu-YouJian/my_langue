@@ -14,12 +14,10 @@ fn solve(board: Vec<i64>, n: i64) -> i64 {
     if row == n { return 1; };
 
     let mut total: i64 = 0;
-    let mut col: i64 = 0;
-    while col < n {
+    for col in 0..n {
         // 检查 (row, col) 是否与已放置的皇后冲突
         let mut safe = true;
-        let mut r: i64 = 0;
-        while r < row {
+        for r in 0..row {
             // 同列冲突
             if board[r] == col {
                 safe = false;
@@ -28,23 +26,18 @@ fn solve(board: Vec<i64>, n: i64) -> i64 {
             if abs_diff(board[r], col) == row - r {
                 safe = false;
             };
-            r = r + 1;
         };
 
         if safe {
             // 复制棋盘并添加新皇后
             let mut next = Vec::new();
-            let mut k: i64 = 0;
-            while k < row {
+            for k in 0..row {
                 next.push(board[k]);
-                k = k + 1;
             };
             next.push(col);
 
             total = total + solve(next, n);
         };
-
-        col = col + 1;
     };
 
     total

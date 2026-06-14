@@ -1,0 +1,14 @@
+使用 HashMap 统计文本中每个单词的出现频率。
+
+输入："the cat sat on the mat and the cat ate the fish"
+输出：
+  the: 3
+  cat: 2
+  sat: 1
+  on: 1
+  mat: 1
+  and: 1
+  ate: 1
+  fish: 1
+
+涉及特性：HashMap、字符串 split、条件更新

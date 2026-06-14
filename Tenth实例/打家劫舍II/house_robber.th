@@ -14,24 +14,20 @@ fn rob(nums: Vec<i64>) -> i64 {
     // 情况1: 不偷最后一间 [0, n-2]
     let mut prev2_1 = nums[0];
     let mut prev1_1 = max(nums[0], nums[1]);
-    let mut i: i64 = 2;
-    while i < n - 1 {
+    for i in 2..(n - 1) {
         let curr = max(prev2_1 + nums[i], prev1_1);
         prev2_1 = prev1_1;
         prev1_1 = curr;
-        i = i + 1;
     };
     let case1 = prev1_1;
 
     // 情况2: 不偷第一间 [1, n-1]
     let mut prev2_2 = nums[1];
     let mut prev1_2 = max(nums[1], nums[2]);
-    i = 3;
-    while i < n {
+    for i in 3..n {
         let curr = max(prev2_2 + nums[i], prev1_2);
         prev2_2 = prev1_2;
         prev1_2 = curr;
-        i = i + 1;
     };
     let case2 = prev1_2;
 

@@ -1,0 +1,42 @@
+// 张量广播演示 — 展示张量运算中的广播机制
+
+fn main() {
+    // 1. 标量与张量运算（广播）
+    let a = tensor[[1.0, 2.0, 3.0]];
+    let b = 10.0;
+    println("a + 10.0:");
+    println((a + b).sum());
+
+    // 2. 行向量与矩阵运算（广播）
+    let row = tensor[[1.0, 2.0, 3.0]];
+    let mat = tensor[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]];
+    println("mat + row (broadcast):");
+    println((mat + row).sum());
+
+    // 3. 张量乘标量
+    let scaled = tensor[[1.0, 2.0]] * 5.0;
+    println("scaled [1,2] * 5:");
+    println(scaled.sum());
+
+    // 4. 矩阵乘法
+    let w = tensor[[1.0, 2.0], [3.0, 4.0]];
+    let v = tensor[[5.0], [6.0]];
+    let result = w.matmul(v);
+    println("matmul [[1,2],[3,4]] * [[5],[6]]:");
+    println(result.sum());
+
+    // 5. 逐元素运算
+    let x = tensor[[1.0, 4.0, 9.0]];
+    println("sqrt([1,4,9]):");
+    println(x.sqrt().sum());
+
+    // 6. 转置
+    let m = tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+    let mt = m.transpose();
+    println("transpose 2x3 -> 3x2, sum:");
+    println(mt.sum());
+
+    // 7. flatten
+    println("flatten 2x3 -> 6:");
+    println(m.flatten().sum());
+}

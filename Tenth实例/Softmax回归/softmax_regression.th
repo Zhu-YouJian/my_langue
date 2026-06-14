@@ -1,0 +1,50 @@
+// Softmax 回归 — 多分类的自动微分训练
+// 使用 cross_entropy 损失函数训练 3 类分类器
+
+fn main() {
+    // 3 个样本，每个 2 维特征
+    let x = tensor[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
+    // 标签：0, 1, 2
+    let labels = tensor[[0.0], [1.0], [2.0]];
+
+    // 权重矩阵 2x3，偏置 1x3
+    let mut w = tensor[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]];
+    let mut b = tensor[[0.0, 0.0, 0.0]];
+    let lr = 0.1;
+
+    for epoch in 0..200 {
+        new_grad();
+        zero_grad();
+        w = param(w);
+        b = param(b);
+
+        // 前向传播：logits = x * w + b
+        let logits = x.matmul(w) + b;
+        // 交叉熵损失（内置 softmax）
+        let loss = cross_entropy(logits, labels);
+
+        backward(loss);
+
+        stop_grad();
+        w = w - lr * grad(w);
+        b = b - lr * grad(b);
+
+        if epoch % 50 == 0 {
+            println("epoch:");
+            println(epoch);
+            println("loss:");
+            println(loss.sum());
+        };
+    };
+
+    println("Final weights:");
+    println(w.sum());
+    println("Final bias:");
+    println(b.sum());
+
+    // 预测
+    let test_x = tensor[[1.0, 0.0]];
+    let pred = test_x.matmul(w) + b;
+    println("Prediction for [1,0]:");
+    println(pred.sum());
+}

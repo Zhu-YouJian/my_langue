@@ -13,9 +13,8 @@ fn main() {
     let mut b2 = tensor[[0.0]];                                        // 1×1
 
     let lr = 0.5;
-    let mut epoch: i64 = 0;
 
-    while epoch < 3000 {
+    for epoch in 0..3000 {
         new_grad();
         zero_grad();
         w1 = param(w1);
@@ -38,8 +37,6 @@ fn main() {
         b1 = b1 - lr * grad(b1);
         w2 = w2 - lr * grad(w2);
         b2 = b2 - lr * grad(b2);
-
-        epoch = epoch + 1;
     };
 
     // 验证：打印预测张量（应接近 [[0],[1],[1],[0]]）

@@ -1,0 +1,79 @@
+// 归并排序 — 分治排序算法
+// 展示递归分治、Vec 切片与合并
+
+fn merge_sort(arr: Vec<i64>) -> Vec<i64> {
+    let len = arr.len();
+    if len <= 1 { return arr; };
+
+    let mid = len / 2;
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    let mut i: i64 = 0;
+    while i < mid {
+        left.push(arr[i]);
+        i = i + 1;
+    };
+    while i < len {
+        right.push(arr[i]);
+        i = i + 1;
+    };
+
+    let sorted_left = merge_sort(left);
+    let sorted_right = merge_sort(right);
+    merge(sorted_left, sorted_right)
+}
+
+fn merge(left: Vec<i64>, right: Vec<i64>) -> Vec<i64> {
+    let mut result = Vec::new();
+    let mut i: i64 = 0;
+    let mut j: i64 = 0;
+    let ln = left.len();
+    let rn = right.len();
+
+    while i < ln && j < rn {
+        if left[i] <= right[j] {
+            result.push(left[i]);
+            i = i + 1;
+        } else {
+            result.push(right[j]);
+            j = j + 1;
+        };
+    };
+
+    while i < ln {
+        result.push(left[i]);
+        i = i + 1;
+    };
+    while j < rn {
+        result.push(right[j]);
+        j = j + 1;
+    };
+
+    result
+}
+
+fn main() {
+    let arr = [38, 27, 43, 3, 9, 82, 10];
+    let mut input = Vec::new();
+    let mut k: i64 = 0;
+    while k < arr.len() {
+        input.push(arr[k]);
+        k = k + 1;
+    };
+
+    println("Before:");
+    let mut p: i64 = 0;
+    while p < input.len() {
+        println(input[p]);
+        p = p + 1;
+    };
+
+    let sorted = merge_sort(input);
+
+    println("After merge sort:");
+    let mut q: i64 = 0;
+    while q < sorted.len() {
+        println(sorted[q]);
+        q = q + 1;
+    };
+}

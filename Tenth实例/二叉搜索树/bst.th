@@ -1,0 +1,63 @@
+// 二叉搜索树 — 插入、查找、中序遍历
+// 展示枚举递归、&mut 引用、match 模式
+
+enum Tree {
+    Empty,
+    Node(i64, Tree, Tree),
+}
+
+fn insert(tree: Tree, val: i64) -> Tree {
+    match tree {
+        Tree::Empty => Tree::Node(val, Tree::Empty, Tree::Empty),
+        Tree::Node(v, left, right) => {
+            if val < v {
+                Tree::Node(v, insert(left, val), right)
+            } else if val > v {
+                Tree::Node(v, left, insert(right, val))
+            } else {
+                tree
+            }
+        }
+    }
+}
+
+fn search(tree: Tree, val: i64) -> bool {
+    match tree {
+        Tree::Empty => false,
+        Tree::Node(v, left, right) => {
+            if val < v { search(left, val) }
+            else if val > v { search(right, val) }
+            else { true }
+        }
+    }
+}
+
+fn inorder(tree: Tree) {
+    match tree {
+        Tree::Empty => {},
+        Tree::Node(v, left, right) => {
+            inorder(left);
+            println(v);
+            inorder(right);
+        }
+    }
+}
+
+fn main() {
+    let mut tree: Tree = Tree::Empty;
+    tree = insert(tree, 50);
+    tree = insert(tree, 30);
+    tree = insert(tree, 70);
+    tree = insert(tree, 20);
+    tree = insert(tree, 40);
+    tree = insert(tree, 60);
+    tree = insert(tree, 80);
+
+    println("Inorder traversal (sorted):");
+    inorder(tree);
+
+    println("Search 40:");
+    println(search(tree, 40));
+    println("Search 45:");
+    println(search(tree, 45));
+}

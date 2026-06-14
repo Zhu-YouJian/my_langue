@@ -1,0 +1,33 @@
+// 闭包捕获演示 — 展示闭包如何捕获外层变量
+// 新特性：闭包现在能正确捕获定义时作用域中的变量
+
+fn main() {
+    // 1. 基本捕获：闭包捕获外层变量
+    let multiplier = 3;
+    let multiply = |x| x * multiplier;
+    println("multiply(7) with multiplier=3:");
+    println(multiply(7));
+
+    // 2. 多变量捕获
+    let base = 100;
+    let bonus = 25;
+    let compute_score = |points| base + points + bonus;
+    println("compute_score(50):");
+    println(compute_score(50));
+
+    // 3. 闭包工厂：返回闭包的函数
+    let make_adder = |n| |x| x + n;
+    let add5 = make_adder(5);
+    let add10 = make_adder(10);
+    println("add5(3):");
+    println(add5(3));
+    println("add10(3):");
+    println(add10(3));
+
+    // 4. 闭包组合
+    let double = |x| x * 2;
+    let negate = |x| -x;
+    let composed = |x| negate(double(x));
+    println("composed(7) = negate(double(7)):");
+    println(composed(7));
+}

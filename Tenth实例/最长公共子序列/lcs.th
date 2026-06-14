@@ -13,29 +13,23 @@ fn lcs(s1: str, s2: str) -> i64 {
 
     // prev 行（初始为全 0）
     let mut prev = Vec::new();
-    let mut j: i64 = 0;
-    while j <= n {
+    for j in 0..=n {
         prev.push(0);
-        j = j + 1;
     };
 
-    let mut i: i64 = 1;
-    while i <= m {
+    for i in 1..=m {
         let mut curr = Vec::new();
         curr.push(0);  // curr[0] = 0
 
-        j = 1;
-        while j <= n {
+        for j in 1..=n {
             if s1[i - 1] == s2[j - 1] {
                 curr.push(prev[j - 1] + 1);
             } else {
                 curr.push(max(prev[j], curr[j - 1]));
             };
-            j = j + 1;
         };
 
         prev = curr;
-        i = i + 1;
     };
 
     prev[n]

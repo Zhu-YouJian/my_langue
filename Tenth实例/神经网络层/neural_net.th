@@ -11,9 +11,8 @@ fn main() {
     let mut w = tensor[[0.0], [0.0]];  // 2×1 权重
     let mut b = tensor[[0.0]];         // 1×1 偏置
     let lr = 0.0001;
-    let mut epoch: i64 = 0;
 
-    while epoch < 5000 {
+    for epoch in 0..5000 {
         new_grad();
         zero_grad();
         w = param(w);
@@ -29,8 +28,6 @@ fn main() {
         stop_grad();
         w = w - lr * grad(w);
         b = b - lr * grad(b);
-
-        epoch = epoch + 1;
     };
 
     println("Learned weights W (should be ~[2, 3]^T):");
