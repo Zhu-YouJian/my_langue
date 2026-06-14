@@ -2,7 +2,7 @@
 
 > **Tenth** = Tensor + Zenith，意为「张量之巅」—— 一门为 AI 研究而生的编程语言
 >
-> 当前版本：**v0.3.1** | 语言实现：Rust | 许可证：MIT
+> 当前版本：**v0.3.3** | 语言实现：Rust | 许可证：MIT
 
 ---
 
@@ -48,7 +48,19 @@ Tenth 是一门面向 AI/ML 研究的编程语言，核心特性包括：
 │   │   ├── lexer/          # 词法分析
 │   │   ├── parser/         # 语法分析
 │   │   ├── hir/            # 高级中间表示
-│   │   ├── compile/        # 编译后端（字节码 + WASM）
+│   │   ├── compile/        # 编译后端（字节码 + WASM + GPU + 优化 Pass）
+│   │   │   ├── mod.rs
+│   │   │   ├── bytecode.rs # HIR→字节码编译器
+│   │   │   ├── wasm.rs     # HIR→WASM 编译器
+│   │   │   ├── bridge.rs   # 自举编译器桥接
+│   │   │   ├── gpu/        # GPU 后端脚手架
+│   │   │   │   ├── mod.rs  # GpuBackend / GpuConfig / GpuCompiler / GpuProgram
+│   │   │   │   ├── cuda_kernel.rs  # CudaKernel + elementwise/reduce 模板
+│   │   │   │   └── device.rs       # Device trait + CpuDevice / CudaDevice
+│   │   │   └── optimizations/      # 编译优化 Pass
+│   │   │       ├── mod.rs  # OptimizationPass trait
+│   │   │       ├── fusion.rs       # FusionPass 算子融合
+│   │   │       └── parallel.rs     # ParallelPass 自动并行
 │   │   ├── runtime/        # 运行时（解释器 + VM + 张量 + 自动微分）
 │   │   ├── error.rs        # 统一错误类型
 │   │   ├── lib.rs          # 库入口
@@ -58,6 +70,20 @@ Tenth 是一门面向 AI/ML 研究的编程语言，核心特性包括：
 │   ├── tests/              # 集成测试
 │   ├── Cargo.toml          # Rust 项目配置
 │   └── build.rs            # 构建脚本
+├── tools/                  # 生态工具
+│   ├── tenthpm/            # tenthpm 包管理器
+│   │   ├── Cargo.toml      # 依赖：serde, serde_json, toml
+│   │   └── src/
+│   │       ├── main.rs     # CLI 入口
+│   │       ├── manifest.rs # Tenth.toml 解析
+│   │       └── commands/   # 子命令（init/build/run/publish）
+│   └── lsp/                # LSP 服务器
+│       ├── Cargo.toml      # 依赖：serde, serde_json, tenth (path)
+│       └── src/
+│           ├── main.rs     # LSP 入口
+│           ├── lsp_types.rs # LSP 协议类型
+│           ├── io.rs       # stdio 通信
+│           └── handlers/   # 请求处理器
 ├── tenthc/                 # 自举编译器（Tenth 编写）
 │   ├── main.th             # 入口
 │   ├── boot.th             # 自举主程序
@@ -210,8 +236,8 @@ pub enum ExprKind {
     If { cond, then_branch, else_branch },
     Block(Vec<Stmt>), Closure { params, body },
     Assign { target, value }, AssignOp { target, op, value },
-    StructLiteral { name, generics, fields, use_defaults },
-    EnumLiteral { enum_name, variant, fields },
+    StructLiteral { name, generics, fields, use_defaults },  // use_defaults: .. 语法填充默认值
+    EnumLiteral { enum_name, variant, fields },              // fields: Struct / Tuple / Unit
     Match { scrutinee, arms },
     Ref(Box<Expr>), MutRef(Box<Expr>), Deref(Box<Expr>), Move(Box<Expr>),
 }
@@ -227,7 +253,7 @@ pub enum StmtKind {
 pub enum ItemKind {
     Function { name, generics, params, return_type, body },
     StructDef { name, generics, fields },
-    EnumDef { name, variants },
+    EnumDef { name, variants },  // variants: EnumVariantKind (Struct / Tuple / Unit)
     Impl { type_name, trait_name, generics, functions },
     Mod { name, items }, Use { path },
     Trait { name, generics, methods },
@@ -283,9 +309,9 @@ pub struct HirProgram {
     pub modules: HashMap<String, HirProgram>,         // 模块
     pub uses: Vec<(Vec<String>, String)>,             // use 导入
     pub methods: HashMap<String, HashMap<String, HirFnDef>>,  // impl 方法
-    pub structs: HashMap<String, Vec<(String, Type)>>,        // 结构体定义
+    pub structs: HashMap<String, Vec<(String, Type)>>,        // 结构体定义（字段含 has_default 标记）
     pub generic_structs: HashMap<String, HirGenericStruct>,    // 泛型结构体
-    pub enums: HashMap<String, Vec<(String, Vec<(String, Type)>)>>, // 枚举定义
+    pub enums: HashMap<String, Vec<(String, Vec<(String, Type)>)>>, // 枚举定义（变体含 tuple_binds）
     pub trait_defs: HashMap<String, HirTraitDef>,             // trait 定义
     pub trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>, // trait 实现
 }
@@ -315,6 +341,12 @@ pub struct HirProgram {
 | `bytecode.rs` | HIR → 字节码编译器 |
 | `wasm.rs` | HIR → WASM 字节码编译器 |
 | `bridge.rs` | 自举编译器输出 → Rust AST 转换桥 |
+| `gpu/mod.rs` | GPU 后端入口：GpuBackend / GpuConfig / GpuCompiler / GpuProgram |
+| `gpu/cuda_kernel.rs` | CUDA 内核生成：CudaKernel + elementwise/reduce 模板 |
+| `gpu/device.rs` | 设备抽象：Device trait + CpuDevice / CudaDevice |
+| `optimizations/mod.rs` | 优化 Pass 入口：OptimizationPass trait |
+| `optimizations/fusion.rs` | 算子融合：FusionPass（合并连续算子减少内存带宽） |
+| `optimizations/parallel.rs` | 自动并行：ParallelPass（识别独立算子并行执行） |
 
 #### 字节码 VM 指令集（45 条）
 
@@ -363,6 +395,49 @@ pub enum Op {
 - 使用 `wasm-encoder` crate 生成 WASM 二进制
 - 通过 `wasmi` 解释器执行和验证
 - 支持函数导出和 import
+
+#### GPU 后端（v0.3.3 脚手架）
+
+GPU 后端为 Phase 4 铺路，当前为架构脚手架，尚未接入真实 CUDA 运行时。
+
+```rust
+// gpu/mod.rs — GPU 后端核心结构
+pub struct GpuBackend { device: Box<dyn Device> }
+pub struct GpuConfig { device_type: DeviceType, max_threads: usize }
+pub struct GpuCompiler { config: GpuConfig }
+pub struct GpuProgram { kernels: Vec<CudaKernel> }
+
+// gpu/cuda_kernel.rs — CUDA 内核模板
+pub struct CudaKernel { name: String, params: Vec<String>, body: String }
+// 内置模板：elementwise_kernel / reduce_kernel
+
+// gpu/device.rs — 设备抽象
+pub trait Device {
+    fn device_type(&self) -> DeviceType;
+    fn allocate(&self, size: usize) -> DeviceBuffer;
+    fn launch(&self, kernel: &CudaKernel, args: &[DeviceBuffer]);
+}
+pub struct CpuDevice;   // CPU 回退
+pub struct CudaDevice;  // CUDA 设备（预留）
+```
+
+#### 编译优化 Pass（v0.3.3 脚手架）
+
+```rust
+// optimizations/mod.rs — 优化 Pass trait
+pub trait OptimizationPass {
+    fn name(&self) -> &str;
+    fn run(&self, program: &mut HirProgram) -> PassResult;
+}
+
+// optimizations/fusion.rs — 算子融合
+pub struct FusionPass;
+// 识别连续算子（如 relu → add）并融合为单一内核，减少内存带宽开销
+
+// optimizations/parallel.rs — 自动并行
+pub struct ParallelPass;
+// 识别无依赖的独立算子，生成并行执行计划
+```
 
 ---
 
@@ -594,13 +669,74 @@ REPL 命令：
 
 ---
 
+## 5.5 生态工具 (tools)
+
+### tenthpm 包管理器
+
+**位置**：`tools/tenthpm/`
+
+tenthpm 是 Tenth 语言的包管理器，负责项目初始化、依赖管理、构建和发布。
+
+| 文件 | 职责 |
+|------|------|
+| `Cargo.toml` | 依赖声明：serde, serde_json, toml |
+| `src/main.rs` | CLI 入口，子命令分发 |
+| `src/manifest.rs` | Tenth.toml 清单文件解析（项目名、版本、依赖） |
+| `src/commands/` | 子命令实现（init / build / run / publish） |
+
+#### CLI 子命令
+
+| 命令 | 说明 |
+|------|------|
+| `tenthpm init <name>` | 创建新项目（生成 Tenth.toml + src/） |
+| `tenthpm build` | 编译当前项目 |
+| `tenthpm run` | 编译并运行当前项目 |
+| `tenthpm publish` | 发布到包注册表 |
+
+#### Tenth.toml 格式
+
+```toml
+[package]
+name = "my-project"
+version = "0.1.0"
+
+[dependencies]
+tensor-utils = "0.2"
+```
+
+### LSP 服务器
+
+**位置**：`tools/lsp/`
+
+LSP 服务器为编辑器（VS Code 等）提供语言智能功能，基于 LSP 协议通过 stdio 通信。
+
+| 文件 | 职责 |
+|------|------|
+| `Cargo.toml` | 依赖声明：serde, serde_json, tenth (path) |
+| `src/main.rs` | LSP 入口，启动消息循环 |
+| `src/lsp_types.rs` | LSP 协议类型定义（请求/响应/通知） |
+| `src/io.rs` | stdio 通信层（JSON-RPC 消息收发） |
+| `src/handlers/` | 请求处理器 |
+
+#### 支持的 LSP 功能
+
+| 功能 | 说明 |
+|------|------|
+| textDocument/didOpen | 文件打开通知 |
+| textDocument/didChange | 文件变更通知 |
+| textDocument/completion | 自动补全 |
+| textDocument/hover | 悬停信息 |
+| textDocument/diagnostics | 语法/类型错误诊断 |
+
+---
+
 ## 6. 标准库 (std)
 
 **位置**：`tenth/std/`
 
 ```
 tenth/std/
-├── nn/
+├── nn/                  # ✅ 全部可运行
 │   ├── linear.th        # 线性层：fn linear(x, w, b) = x.matmul(w.transpose()) + b
 │   ├── loss.th          # 损失函数：MSE, L1, BCE, cross_entropy
 │   ├── activations.th   # 激活函数：relu, sigmoid, tanh
@@ -608,30 +744,17 @@ tenth/std/
 │   ├── batchnorm.th     # BatchNorm 层
 │   ├── conv.th          # 卷积层
 │   └── embedding.th     # 嵌入层
-├── optim/
+├── optim/               # ✅ 全部可运行
 │   ├── sgd.th           # SGD 优化器（vanilla / momentum / decay）
 │   ├── adam.th          # Adam 优化器
 │   ├── adagrad.th       # AdaGrad 优化器
 │   └── rmsprop.th       # RMSProp 优化器
 ├── data/
 │   └── dataloader.th    # DataLoader（new/has_next/next_batch/reset/num_batches）
-├── init/
-│   └── initializers.th  # 初始化器
+├── init/                # ✅ 全部可运行
+│   └── initializers.th  # 初始化器（xavier_uniform / xavier_normal / kaiming_uniform / kaiming_normal）
 ├── math/
 │   └── functions.th     # 数学函数参考
-├── nn/
-│   ├── activations.th   # 激活函数：relu, sigmoid, tanh
-│   ├── batchnorm.th     # BatchNorm 层
-│   ├── conv.th          # 卷积层
-│   ├── dropout.th       # Dropout 层
-│   ├── embedding.th     # 嵌入层
-│   ├── linear.th        # 线性层：fn linear(x, w, b) = x.matmul(w.transpose()) + b
-│   └── loss.th          # 损失函数：MSE, L1, BCE, cross_entropy
-├── optim/
-│   ├── adagrad.th       # AdaGrad 优化器
-│   ├── adam.th          # Adam 优化器
-│   ├── rmsprop.th       # RMSProp 优化器
-│   └── sgd.th           # SGD 优化器（vanilla / momentum / decay）
 ├── utils/
 │   └── serialization.th # 模型保存/加载（save_model/load_model/save_checkpoint）
 └── prelude.th           # 可用项总目录
@@ -712,6 +835,8 @@ tenth/std/
 
 ### Rust 依赖 (Cargo.toml)
 
+#### 主编译器 (tenth/Cargo.toml)
+
 | 依赖 | 版本 | 用途 |
 |------|------|------|
 | `ndarray` | 0.16 | 多维数组（张量底层数据结构） |
@@ -721,6 +846,22 @@ tenth/std/
 | `rand_distr` | 0.4 | 随机分布（正态分布等） |
 | `wasm-encoder` | 0.215 | WASM 字节码生成 |
 | `wasmi` | 0.39 | WASM 解释器 |
+
+#### tenthpm 包管理器 (tools/tenthpm/Cargo.toml)
+
+| 依赖 | 版本 | 用途 |
+|------|------|------|
+| `serde` | 1 | 序列化框架（derive） |
+| `serde_json` | 1 | JSON 解析（包注册表通信） |
+| `toml` | 0.8 | Tenth.toml 清单文件解析 |
+
+#### LSP 服务器 (tools/lsp/Cargo.toml)
+
+| 依赖 | 版本 | 用途 |
+|------|------|------|
+| `serde` | 1 | 序列化框架（derive） |
+| `serde_json` | 1 | LSP 协议 JSON-RPC 消息解析 |
+| `tenth` | path | 编译器前端（词法/语法/HIR） |
 
 ### 编译工具链
 
@@ -744,7 +885,9 @@ main.rs
   ├── compile
   │   ├── bytecode.rs ←── hir, runtime/vm
   │   ├── wasm.rs ←── hir
-  │   └── bridge.rs ←── parser/ast, hir
+  │   ├── bridge.rs ←── parser/ast, hir
+  │   ├── gpu/ (mod.rs, cuda_kernel.rs, device.rs) ←── hir
+  │   └── optimizations/ (mod.rs, fusion.rs, parallel.rs) ←── hir
   ├── runtime
   │   ├── value.rs ←── hir/types, tensor
   │   ├── interpreter.rs ←── hir, value, tensor, autodiff, arena, limits
@@ -755,6 +898,8 @@ main.rs
   │   └── limits.rs
   ├── repl.rs ←── lexer, parser, hir, runtime
   └── error.rs
+tools/tenthpm/ ←── serde, serde_json, toml
+tools/lsp/ ←── serde, serde_json, tenth (path)
 ```
 
 ---
@@ -796,7 +941,7 @@ cargo run --release --manifest-path tenth/Cargo.toml -- --max-memory 256
 ### 测试
 
 ```bash
-# 运行所有测试（112 项通过，1 项忽略）
+# 运行所有测试（134 项通过）
 cargo test --manifest-path tenth/Cargo.toml
 
 # 测试文件列表
@@ -833,9 +978,9 @@ cargo test --manifest-path tenth/Cargo.toml
 | Phase 2 | 解释器夯实 | ✅ 完成 |
 | Phase 3A | 类型系统深化 | ✅ 完成 |
 | ~~Phase 3B~~ | ~~编译后端 (C)~~ | ❌ 已移除 |
-| Phase 4 | GPU 与性能 | 🚧 进行中 |
+| Phase 4 | GPU 与性能 | 🔧 脚手架就绪（gpu/ + optimizations/） |
 | Phase 5 | AI 全栈 | 🚧 进行中 |
-| Phase 6 | 生态与工具 | 🚧 进行中 |
+| Phase 6 | 生态与工具 | 🔧 脚手架就绪（tenthpm/ + lsp/） |
 | Phase 7 | 核心标准库 | ✅ 完成 |
 | Phase 8 | 自举编译器 | ✅ 完成 |
 
@@ -868,7 +1013,13 @@ cargo test --manifest-path tenth/Cargo.toml
 | VM 字符串切片 | ✅ SliceStr + Range 索引解析 |
 | 严格借用检查 | ✅ check_borrow_shared/check_borrow_mut 恢复 |
 | 块注释 /* */ | ✅ 支持嵌套 |
+| 结构体字段默认值（`..` 语法） | ✅ StructLiteral use_defaults + HIR has_default |
+| 泛型返回类型（`Vec<Token>` 解析） | ✅ GenericCall 返回类型推断 |
+| 枚举元组变体（`Some(T)` 构造+匹配） | ✅ EnumVariantKind 三变体 + tuple_binds |
+| GPU 后端脚手架 | 🔧 compile/gpu/ + compile/optimizations/ |
+| tenthpm 包管理器 | 🔧 tools/tenthpm/（init/build/run/publish） |
+| LSP 服务器 | 🔧 tools/lsp/（completion/hover/diagnostics） |
 
 ---
 
-> 本文档基于项目 v0.3.1 版本源码自动生成，最后更新：2026-06-14
+> 本文档基于项目 v0.3.3 版本源码自动生成，最后更新：2026-06-14

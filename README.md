@@ -7,7 +7,7 @@
 
 ## 现状
 
-**v0.3.1** — 字节码 VM (45 指令) + 自举编译器 (Tenth 全链路) + WASM 输出 + **张量级自动微分** + **闭包捕获** + **文件级导入**。112 项测试全过（共 113 项，1 项忽略）。
+**v0.3.3** — 字节码 VM (45 指令) + 自举编译器 (Tenth 全链路) + WASM 输出 + **张量级自动微分** + **闭包捕获** + **文件级导入** + **GPU 脚手架** + **tenthpm 包管理器** + **LSP 服务器**。134 项测试全过（共 134 项，1 项忽略）。
 
 | 组件 | 状态 |
 |------|------|
@@ -37,6 +37,12 @@
 | **文件级导入（use 自动搜索 std/）** | ✅ **search_paths + try_import_file()** |
 | **错误信息增强（源码位置）** | ✅ **span 信息** |
 | **块注释 /* */** | ✅ 支持嵌套 |
+| **GPU 后端脚手架** | ✅ CudaKernel 模板 + Device 抽象 + 算子融合/并行分解 |
+| **tenthpm 包管理器** | ✅ init/build/test/run/add/publish/install |
+| **LSP 服务器** | ✅ 诊断/悬停/补全/定义/格式化 |
+| **结构体字段默认值 (..)** | ✅ 全管线支持 |
+| **泛型返回类型** | ✅ Vec<Token> / HashMap<str, Vec<i64>> |
+| **枚举元组变体** | ✅ Some(T) 构造 + match 绑定 |
 
 ## 快速开始
 
@@ -131,10 +137,10 @@ Tenth 内置张量级自动微分，通过 7 个内置函数控制：
 
 ```
 tenth/std/
-├── nn/          ← linear, loss (MSE/L1/BCE), activations, dropout
-├── optim/       ← SGD (vanilla/momentum/decay), Adam, AdaGrad, RMSProp
+├── nn/          ← linear, loss (MSE/L1/BCE), activations, dropout, batchnorm, conv2d, embedding
+├── optim/       ← SGD (vanilla/momentum/decay), Adam, AdaGrad, RMSProp (全部可运行)
 ├── data/        ← DataLoader (new/has_next/next_batch/reset)
-├── init/        ← 初始化指南
+├── init/        ← xavier_uniform/xavier_normal/he_normal/he_uniform/zeros_init/constant_init
 ├── utils/       ← 序列化 (save_model/load_model/save_checkpoint)
 ├── math/        ← 数学函数参考
 └── prelude.th   ← 可用项总目录
@@ -158,9 +164,9 @@ Tenth 编译器由 Tenth 自身编写（`tenthc/`），经自举管线验证：
 | Phase 2 | 解释器夯实 | ✅ |
 | Phase 3A | 类型系统深化 | ✅ |
 | ~~Phase 3B~~ | ~~编译后端 (C)~~ | ❌ 已移除 |
-| Phase 4 | GPU 与性能 | 🚧 |
+| Phase 4 | GPU 与性能 | 🚧 脚手架就绪 |
 | Phase 5 | AI 全栈 | 🚧 |
-| Phase 6 | 生态与工具 | 🚧 |
+| Phase 6 | 生态与工具 | 🚧 tenthpm+LSP 脚手架就绪 |
 | Phase 7 | 核心标准库 | ✅ |
 | Phase 8 | 自举编译器 | ✅ |
 

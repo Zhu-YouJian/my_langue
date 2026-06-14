@@ -86,6 +86,26 @@ git config --unset https.proxy
 | `wasm-encoder` | 0.215 | WASM 二进制编码（`.th` → `.wasm`） |
 | `wasmi` | 0.39 | WASM 内嵌解释器（wasm run） |
 
+### tenthpm 包管理器依赖
+
+定义于 `tools/tenthpm/Cargo.toml` 的 `[dependencies]` 段。
+
+| crate | 版本 | 用途 |
+|-------|------|------|
+| `serde` | 1 | 序列化框架（derive） |
+| `serde_json` | 1 | JSON 解析（包注册表通信） |
+| `toml` | 0.8 | Tenth.toml 清单文件解析 |
+
+### LSP 服务器依赖
+
+定义于 `tools/lsp/Cargo.toml` 的 `[dependencies]` 段。
+
+| crate | 版本 | 用途 |
+|-------|------|------|
+| `serde` | 1 | 序列化框架（derive） |
+| `serde_json` | 1 | LSP 协议 JSON-RPC 消息解析 |
+| `tenth` | path = "../../tenth" | 编译器前端（词法/语法/HIR） |
+
 ### 传递依赖树
 
 上述直接依赖自动拉取的间接依赖：
@@ -150,6 +170,20 @@ git config --unset https.proxy
 │   ├── main.th
 │   ├── lexer/
 │   └── parser/
+├── tools/               ← 生态工具
+│   ├── tenthpm/         ← tenthpm 包管理器
+│   │   ├── Cargo.toml   ← 依赖：serde, serde_json, toml
+│   │   └── src/
+│   │       ├── main.rs      ← CLI 入口
+│   │       ├── manifest.rs  ← Tenth.toml 解析
+│   │       └── commands/    ← 子命令（init/build/run/publish）
+│   └── lsp/             ← LSP 服务器
+│       ├── Cargo.toml   ← 依赖：serde, serde_json, tenth (path)
+│       └── src/
+│           ├── main.rs      ← LSP 入口
+│           ├── lsp_types.rs ← LSP 协议类型
+│           ├── io.rs        ← stdio 通信
+│           └── handlers/    ← 请求处理器
 └── tenth/
     ├── Cargo.toml   ← 依赖声明 + feature flags
     ├── Cargo.lock   ← 锁定版本
@@ -161,25 +195,33 @@ git config --unset https.proxy
     │   ├── lexer/
     │   ├── parser/
     │   ├── hir/
-│   │   ├── compile/    ← WASM 编译后端 + 字节码编译器
-│   │   │   ├── mod.rs
-│   │   │   ├── wasm.rs
-│   │   │   ├── bytecode.rs    ← HIR→字节码编译器
-│   │   │   └── bridge.rs
-│   │   ├── runtime/     ← 解释器 + VM + 值系统 + 内存管理
-│   │   │   ├── mod.rs
-│   │   │   ├── value.rs
-│   │   │   ├── tensor.rs
-│   │   │   ├── vm.rs         ← 字节码 VM（45 指令，默认路径）
-│   │   │   ├── interpreter.rs
-│   │   │   ├── arena.rs
-│   │   │   ├── autodiff.rs
-│   │   │   └── limits.rs    ← 资源限制 + 原子计数器
-│   │   └── repl.rs       ← 交互环境
-│   ├── std/             ← Tenth 标准库 (.th 源码)
-│   │   ├── nn/
-│   │   └── optim/
-    └── tests/          ← 113 项测试（14 文件，112 激活 + 1 忽略）
+    │   ├── compile/    ← WASM 编译后端 + 字节码编译器 + GPU 后端 + 优化 Pass
+    │   │   ├── mod.rs
+    │   │   ├── wasm.rs
+    │   │   ├── bytecode.rs    ← HIR→字节码编译器
+    │   │   ├── bridge.rs
+    │   │   ├── gpu/           ← GPU 后端脚手架
+    │   │   │   ├── mod.rs     ← GpuBackend / GpuConfig / GpuCompiler / GpuProgram
+    │   │   │   ├── cuda_kernel.rs  ← CudaKernel + elementwise/reduce 模板
+    │   │   │   └── device.rs      ← Device trait + CpuDevice / CudaDevice
+    │   │   └── optimizations/ ← 编译优化 Pass
+    │   │       ├── mod.rs     ← OptimizationPass trait
+    │   │       ├── fusion.rs  ← FusionPass 算子融合
+    │   │       └── parallel.rs ← ParallelPass 自动并行
+    │   ├── runtime/     ← 解释器 + VM + 值系统 + 内存管理
+    │   │   ├── mod.rs
+    │   │   ├── value.rs
+    │   │   ├── tensor.rs
+    │   │   ├── vm.rs         ← 字节码 VM（45 指令，默认路径）
+    │   │   ├── interpreter.rs
+    │   │   ├── arena.rs
+    │   │   ├── autodiff.rs
+    │   │   └── limits.rs    ← 资源限制 + 原子计数器
+    │   └── repl.rs       ← 交互环境
+    ├── std/             ← Tenth 标准库 (.th 源码)
+    │   ├── nn/
+    │   └── optim/
+    └── tests/          ← 134 项测试（14 文件）
         ├── integration_test.rs
         ├── memory_test.rs
         ├── lexer_test.rs

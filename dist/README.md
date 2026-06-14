@@ -1,6 +1,6 @@
 # Tenth 语言工具
 
-> 版本: v0.3.1 | 字节码 VM (45 指令) + 树遍历 fallback | 自举验证通过 | 闭包捕获 + 文件级导入
+> 版本: v0.3.3 | 字节码 VM (45 指令) + 树遍历 fallback | 自举验证通过 | 闭包捕获 + 文件级导入 + GPU/tenthpm/LSP 脚手架
 
 ## 快速开始
 
@@ -37,10 +37,16 @@ tenth.bat run file.th
 | 自举 (Tenth 编译器编译自身) | ✅ |
 | 闭包捕获环境变量 | ✅ |
 | 文件级导入 (use 自动搜索 std/) | ✅ |
+| 结构体字段默认值 (..) | ✅ |
+| 泛型返回类型 (Vec<Token>) | ✅ |
+| 枚举元组变体 (Some(T) 构造 + match 绑定) | ✅ |
+| GPU 后端脚手架 (CudaKernel + Device + 融合/并行) | ✅ |
+| tenthpm 包管理器 (init/build/test/run/add/publish/install) | ✅ |
+| LSP 服务器 (诊断/悬停/补全/定义/格式化) | ✅ |
 
 ## 标准库
 
-见 `tenth/std/` — nn (Linear, ReLU, Sigmoid, MSE, BCE), optim (SGD, Adam)
+见 `tenth/std/` — nn (Linear, ReLU, Sigmoid, MSE, BCE, BatchNorm, Conv2D, Embedding), optim (SGD, Adam, AdaGrad, RMSProp — 全部可运行), init (xavier_uniform/xavier_normal/he_normal/he_uniform/zeros_init/constant_init)
 
 ## 示例
 

@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-06-14 | 版本：v0.3.2 | VM 全覆盖 + 严格借用检查 | 121 项测试全过（共 122 项/14 文件，1 项忽略）
+> 日期：2026-06-14 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 | 134 项测试（133 passed + 1 ignored）
 
 ---
 
@@ -20,12 +20,15 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 │   │   ├── lexer/            ← 词法分析 (token.rs + lexer.rs)
 │   │   ├── parser/           ← 递归下降解析 (ast.rs + parser.rs)
 │   │   ├── hir/              ← HIR + 类型推断 + 借用检查 (hir.rs + types.rs + lower.rs)
-│   │   ├── compile/          ← WASM 编译 + 字节码编译 (wasm.rs + bytecode.rs + bridge.rs)
+│   │   ├── compile/          ← WASM 编译 + 字节码编译 + GPU 脚手架 + 优化 Pass (wasm.rs + bytecode.rs + bridge.rs + gpu/ + optimizations/)
 │   │   ├── runtime/          ← 解释器 + VM + 值系统 (interpreter.rs + vm.rs + value.rs + tensor.rs + arena.rs + autodiff.rs + limits.rs)
 │   │   └── repl.rs           ← 交互环境
-│   ├── tests/                ← 测试 (14 文件, 113 项 — 112 激活 + 1 忽略)
+│   ├── tests/                ← 测试 (14 文件, 134 项 — 133 激活 + 1 忽略)
 │   ├── std/                  ← Tenth 标准库 (.th 源码: nn/, optim/)
 │   └── target/               ← (gitignored)
+├── tools/                    ← 开发工具
+│   ├── tenthpm/              ← 包管理器 CLI (init/build/test/run/add/publish/install + Tenth.toml)
+│   └── lsp/                  ← LSP 服务器 (诊断/悬停/补全/定义/格式化)
 ├── tenthc/                   ← Tenth 自举编译器 (.th 源码, 自举验证通过)
 │   ├── main.th               ← 入口 (编排脚本, ~500B)
 │   ├── lexer/token.th        ← TokenKind 枚举 (50+ 变体)
@@ -73,9 +76,9 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `lexer_test.rs` | 6 | 整数/标识符/关键字/字符串/运算符/注释 |
 | `parser_test.rs` | 5 | 字面量/二元表达式/函数定义/if/tensor |
 | `integration_test.rs` | 14 | 全管线: 算术/布尔/比较/函数/闭包/while/tensor |
-| `enum_test.rs` | 5 | 枚举定义/字段/match/通配 |
-| `generic_test.rs` | 5 | 泛型函数/泛型结构体/trait bound |
-| `struct_test.rs` | 5 | 结构体/嵌套/impl/默认字段 |
+| `enum_test.rs` | 9 | 枚举定义/字段/match/通配/元组变体/match 绑定 |
+| `generic_test.rs` | 11 | 泛型函数/泛型结构体/trait bound/泛型返回/Vec<Token>/>>拆分 |
+| `struct_test.rs` | 8 | 结构体/嵌套/impl/默认字段/..语法 |
 | `trait_test.rs` | 4 | trait 定义/builtin bound/inherent impl |
 | `module_test.rs` | 2 | mod/use |
 | `ownership_test.rs` | 11 | 移动/借用/引用/解引用 |
@@ -84,7 +87,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `selfhost_verify.rs` | 1 | WASM 自举闭环验证 |
 | `autodiff_test.rs` | 20 | 自动微分/闭包/张量/错误位置 |
 | `three_stage.rs` | 1 | 三段式自举（忽略 — wasmi 慢） |
-| **总计** | **113** | 112 激活 + 1 忽略 |
+| **总计** | **134** | 133 激活 + 1 忽略 |
 
 ---
 
@@ -118,10 +121,10 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 
 | # | 问题 | 影响 |
 |---|------|------|
-| 0 | VM 不支持字符串切片（已修复：SliceStr + Range 索引解析） | — |
+| 0 | ~~VM 不支持字符串切片~~ | ✅ 已修复：SliceStr + Range 索引解析 |
 | 2 | 树遍历解释器大文件慢 (debug build) | release build 即解决 |
 | 3 | WASM codegen 个别边界情况 | wasmi 执行偶有 type mismatch |
-| 4 | 无 GPU 后端 | Phase 4 待 CUDA 环境就绪 |
+| 4 | 无 GPU 后端 | `compile/gpu/` 脚手架已就绪，待 CUDA 环境安装 |
 
 ---
 
@@ -164,7 +167,7 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 | # | 问题 |
 |---|------|
 | 13 | ~~解释器与 C 编译路径分歧~~ — C 后端已移除，不再适用 |
-| 14 | **borrow checker 双向放宽** — `check_borrow_shared` 和 `check_borrow_mut` 均跳过 ExclusiveRef/SharedRef 检查，为自举临时放宽 |
+| 14 | ~~borrow checker 双向放宽~~ — 已恢复，`check_borrow_shared` 和 `check_borrow_mut` 现执行 ExclusiveRef/SharedRef 检查 |
 | 15 | ~~C 类型系统薄弱~~ — C 后端已移除，不再适用 |
 | 16 | **Test 覆盖盲区** — `tenthc_test.rs` 只测解析，未测执行；tenthc 子编译器的正确性无自动化验证 |
 
@@ -181,15 +184,15 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 ### 6.2 中期 (质量加固)
 
 - **VM 补全** — closure/generic call/match 仍偶有 fallback
-- **恢复 borrow checker** — 自举完成后移除去掉的检查
+- **~~恢复 borrow checker~~** — 已恢复，`check_borrow_shared`/`check_borrow_mut` 现执行完整检查
 - **WASM Host import 真实现** — Vec/String 在 WASM 模块中以占位形式存在
 
 ### 6.3 长期 (生态)
 
 - **激活死模块** — shape.rs (张量形状优化)、docgen.rs (API 文档生成)、autodiff.rs (自动微分训练)
-- **tenthpm 包管理器** — Phase 6 预留
-- **LSP 服务器** — Phase 6 预留
-- **CUDA 后端** — Phase 4 预留 (需安装 CUDA Toolkit)
+- **tenthpm 包管理器** — `tools/tenthpm/` 脚手架已就绪，待实现依赖解析/锁文件/注册中心
+- **LSP 服务器** — `tools/lsp/` 脚手架已就绪，待实现完整协议对接
+- **CUDA 后端** — `compile/gpu/` + `compile/optimizations/` 脚手架已就绪，待安装 CUDA Toolkit
 
 ### 6.4 过程改进
 

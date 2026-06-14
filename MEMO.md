@@ -2,9 +2,9 @@
 
 > 各类待办、跳过项、环境依赖、注意事项均记录于此。
 >
-> **当前阶段：v0.3.2 — VM 全覆盖 + 严格借用检查**
+> **当前阶段：v0.3.3 — GPU 脚手架 + 包管理器 + LSP + 语言增强**
 >
-> **2026-06-14 更新**：VM for-in 循环/闭包调用/字符串切片全覆盖 + 严格借用检查恢复 + 121 项测试（8 新增 VM 测试）。
+> **2026-06-14 更新**：GPU 后端脚手架 + tenthpm 包管理器 + LSP 服务器 + 标准库补全 + 结构体默认值/泛型返回/枚举元组变体 + 134 项测试（13 新增）。
 >
 > **2026-06-04 重大变更**：`tenth/src/compile/`（MIR→C 编译管线）、`tenthc/codegen/`、`tenthc/runtime.c` 已删除。
 > 原因：生成的 C 代码无内存管理（12 处 malloc / 0 处 free），导致系统级内存耗尽。详见 `SECURITY.md`。
@@ -150,6 +150,59 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 
 ---
 
+### v0.3.3 新增（2026-06-14）
+
+#### GPU 后端脚手架
+
+| 组件 | 状态 |
+|------|------|
+| `compile/gpu/` — CudaKernel 模板 + Device 抽象 | ✅ 脚手架 |
+| `compile/optimizations/` — FusionPass / ParallelPass | ✅ 脚手架 |
+
+#### tenthpm 包管理器
+
+| 组件 | 状态 |
+|------|------|
+| `tools/tenthpm/` CLI (init/build/test/run/add/publish/install) | ✅ 脚手架 |
+| Tenth.toml manifest 格式 | ✅ |
+
+#### LSP 服务器
+
+| 组件 | 状态 |
+|------|------|
+| `tools/lsp/` — 诊断/悬停/补全/定义/格式化 handler | ✅ 脚手架 |
+
+#### 标准库补全
+
+| 组件 | 状态 |
+|------|------|
+| optim/adam_step 实现 | ✅ |
+| optim/adagrad_step 实现 | ✅ |
+| optim/rmsprop_step 实现 | ✅ |
+| nn/batchnorm 函数 | ✅ |
+| nn/conv2d 函数 | ✅ |
+| nn/embedding 函数 | ✅ |
+| init/ 6 个初始化器 (zeros/ones/xavier_uniform/xavier_normal/kaiming_uniform/kaiming_normal) | ✅ |
+
+#### 语言增强
+
+| 组件 | 状态 |
+|------|------|
+| 结构体字段默认值 — `Expr { kind: "Int", ival: 42, .. }` 语法 | ✅ |
+| 泛型返回类型 — `fn f() -> Vec<Token>` 正确解析，修复 `>>` 拆分 | ✅ |
+| 枚举元组变体 — `enum TokenKind { IntLiteral(i64), Plus, Eof }` + match 绑定 | ✅ |
+
+#### 测试覆盖提升
+
+| 测试文件 | 变更 | 状态 |
+|----------|------|------|
+| enum_test.rs | 5→9（+4 枚举元组变体/match 绑定） | ✅ |
+| generic_test.rs | 5→11（+6 泛型返回/Vec<Token>/>>拆分） | ✅ |
+| struct_test.rs | 5→8（+3 字段默认值/..语法） | ✅ |
+| 总计 | 121→134（+13） | ✅ 133 passed + 1 ignored |
+
+---
+
 ### v0.3.0 后期新增（2026-06-14）
 
 #### 自动微分
@@ -179,10 +232,10 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 
 | 模块 | 文件数 | 状态 |
 |------|--------|------|
-| nn/ | 7 | linear/loss/activations/dropout 可运行, conv/batchnorm/embedding 占位 |
-| optim/ | 4 | sgd 可运行, adam/adagrad/rmsprop 用法指南 |
+| nn/ | 7 | 全部可运行 (linear/loss/activations/dropout/conv/batchnorm/embedding) |
+| optim/ | 4 | 全部可运行 (sgd/adam/adagrad/rmsprop) |
 | data/ | 1 | DataLoader 占位 (需要迭代器) |
-| init/ | 1 | 初始化指南 |
+| init/ | 1 | 6 个初始化器实现 (zeros/ones/xavier_uniform/xavier_normal/kaiming_uniform/kaiming_normal) |
 | utils/ | 1 | 序列化占位 |
 | math/ | 1 | 数学函数参考 |
 
@@ -207,9 +260,9 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 ### Phase 4: GPU 与性能
 
 - [ ] 安装 CUDA Toolkit 12.6（`nvidia-smi` 显示驱动已支持，RTX 4060 8GB）
-- [ ] 实现 CUDA kernel 模板代码生成（逐元素运算、matmul）
+- [x] ~~实现 CUDA kernel 模板代码生成~~ → `compile/gpu/` 脚手架已就绪 (CudaKernel 模板 + Device 抽象)
 - [ ] MIR→CUDA 算子映射 + `tenth compile --target=cuda`
-- [ ] 算子融合（bias+matmul+relu → fused kernel）
+- [x] ~~算子融合~~ → `compile/optimizations/` 脚手架已就绪 (FusionPass/ParallelPass)
 - [ ] 自动并行分解 / SPMD 降级（需多 GPU）
 
 ### Phase 5: AI 全栈
@@ -217,14 +270,14 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 - [ ] SPMD 并行原语（数据并行、模型并行、流水线并行，需多 GPU）
 - [ ] 分布式通信（MPI/NCCL：all_reduce, all_gather, send/recv）
 - [ ] Autodiff 进阶：checkpointing、高阶微分、张量级 tape、解释器集成
-- [ ] nn 进阶：Conv2D, Embedding, LayerNorm, Attention, FlashAttention, GELU
+- [ ] nn 进阶：LayerNorm, Attention, FlashAttention, GELU
 - [ ] optim 进阶：AdamW, Lion, LAMB, lr_schedule, gradient clipping
 - [ ] data 标准库：DataLoader, 数据增强, pipeline 宏
 
 ### Phase 6: 生态与工具
 
-- [ ] 包管理器 tenthpm（Tenth.toml, 依赖解析, 锁文件, 注册中心）
-- [ ] LSP 服务器（补全、诊断、跳转、悬停、格式化、自动导入）
+- [x] ~~包管理器 tenthpm~~ → `tools/tenthpm/` 脚手架已就绪 (CLI: init/build/test/run/add/publish/install + Tenth.toml)
+- [x] ~~LSP 服务器~~ → `tools/lsp/` 脚手架已就绪 (诊断/悬停/补全/定义/格式化 handler)
 - [ ] 调试器进阶（断点插桩、调用栈、条件断点）
 - [ ] 官网 / 论坛 / RFC 流程 / 贡献指南
 
