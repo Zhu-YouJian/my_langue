@@ -1,0 +1,46 @@
+// 日志系统示例 — 分级日志输出
+//
+// 演示: debug(), info(), warn(), error(), set_level()
+
+fn main() {
+    println("=== 日志系统演示 ===");
+
+    // 默认级别为 INFO，DEBUG 消息不会显示
+    info("这是一条 INFO 消息");
+    warn("这是一条 WARN 消息");
+    error("这是一条 ERROR 消息");
+    debug("这条 DEBUG 消息不会显示（默认级别为 INFO）");
+
+    // 切换到 DEBUG 级别
+    println("");
+    println("--- 切换到 DEBUG 级别 ---");
+    set_level(0);  // LEVEL_DEBUG = 0
+    debug("现在 DEBUG 消息可见了");
+    info("INFO 消息仍然可见");
+    warn("WARN 消息仍然可见");
+    error("ERROR 消息仍然可见");
+
+    // 切换到 WARN 级别
+    println("");
+    println("--- 切换到 WARN 级别 ---");
+    set_level(2);  // LEVEL_WARN = 2
+    debug("DEBUG 消息被过滤");
+    info("INFO 消息被过滤");
+    warn("WARN 消息可见");
+    error("ERROR 消息可见");
+
+    // 切换到 ERROR 级别
+    println("");
+    println("--- 切换到 ERROR 级别 ---");
+    set_level(3);  // LEVEL_ERROR = 3
+    debug("DEBUG 被过滤");
+    info("INFO 被过滤");
+    warn("WARN 被过滤");
+    error("只有 ERROR 消息可见");
+
+    // 恢复 INFO 级别
+    set_level(1);
+
+    println("");
+    println("日志系统演示完成!");
+}

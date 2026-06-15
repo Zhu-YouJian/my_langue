@@ -1,0 +1,75 @@
+// JSON 处理示例 — 序列化与反序列化
+//
+// 演示: json_encode(), json_encode_pretty(), json_decode()
+
+fn main() {
+    println("=== JSON 编码演示 ===");
+
+    // 编码基本类型
+    let json_int = json_encode(42);
+    println("整数:");
+    println(json_int);
+
+    let json_float = json_encode(3.14);
+    println("浮点数:");
+    println(json_float);
+
+    let json_str = json_encode("hello world");
+    println("字符串:");
+    println(json_str);
+
+    let json_bool = json_encode(true);
+    println("布尔值:");
+    println(json_bool);
+
+    let json_null = json_encode(());
+    println("Unit(null):");
+    println(json_null);
+
+    // 编码 HashMap
+    let mut config = HashMap::new();
+    config.insert("name", "Tenth");
+    config.insert("version", "0.3");
+    config.insert("tensor_native", true);
+    let json_config = json_encode(config);
+    println("HashMap:");
+    println(json_config);
+
+    // 格式化编码
+    let json_pretty = json_encode_pretty(config);
+    println("格式化:");
+    println(json_pretty);
+
+    // JSON 解码
+    println("");
+    println("=== JSON 解码演示 ===");
+
+    let decoded_int = json_decode("42");
+    println("解码整数:");
+    println(decoded_int);
+
+    let decoded_str = json_decode("\"hello\"");
+    println("解码字符串:");
+    println(decoded_str);
+
+    let decoded_bool = json_decode("true");
+    println("解码布尔:");
+    println(decoded_bool);
+
+    let decoded_null = json_decode("null");
+    println("解码null:");
+    println(decoded_null);
+
+    // 解码数组
+    let decoded_arr = json_decode("[1, 2, 3]");
+    println("解码数组:");
+    println(decoded_arr);
+
+    // 解码对象
+    let decoded_obj = json_decode("{\"key\": \"value\", \"num\": 42}");
+    println("解码对象:");
+    println(decoded_obj);
+
+    println("");
+    println("JSON 处理演示完成!");
+}

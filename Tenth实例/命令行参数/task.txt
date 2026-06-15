@@ -1,0 +1,10 @@
+任务：使用 cli 模块解析命令行参数
+
+演示 Tenth 的 CLI 原生函数：
+- cli_args_count() 获取参数数量
+- cli_arg(index) 获取指定索引的参数
+- has_flag(flag) 检查标志是否存在
+- flag_value(flag) 获取标志后的值
+
+输入：命令行参数
+输出：解析结果

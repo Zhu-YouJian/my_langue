@@ -1,0 +1,13 @@
+任务：使用数学常数和高级数学函数
+
+演示 Tenth 的 math/constants 模块：
+- PI, E, TAU, PHI 等数学常数
+- deg2rad(), rad2deg() 角度转换
+- tan(), asin(), acos(), atan2() 三角函数
+- sinh(), cosh(), tanh_scalar() 双曲函数
+- log10(), log2(), exp() 对数/指数
+- floor(), ceil(), round() 取整
+- lerp(), clamp() 插值/钳制
+
+输入：无
+输出：各种数学计算结果

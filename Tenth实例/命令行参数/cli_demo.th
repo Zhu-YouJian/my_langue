@@ -1,0 +1,55 @@
+// 命令行参数解析示例
+//
+// 演示: cli_args_count(), cli_arg(), has_flag(), flag_value()
+
+fn main() {
+    println("=== 命令行参数解析 ===");
+
+    // 获取参数数量
+    let count = cli_args_count();
+    println("参数数量:");
+    println(count);
+
+    // 列出所有参数
+    let mut i = 0;
+    while i < count {
+        let arg = cli_arg(i);
+        println(i);
+        println(": ");
+        println(arg);
+        i = i + 1;
+    }
+
+    // 检查常见标志
+    println("");
+    println("=== 标志检测 ===");
+
+    if has_flag("--help") {
+        println("检测到 --help 标志");
+        println("用法: tenth run cli_demo.th [选项]");
+        println("  --help       显示帮助");
+        println("  --lr <值>    设置学习率");
+        println("  --epochs <N> 设置训练轮数");
+        println("  --verbose    详细输出");
+    }
+
+    if has_flag("--verbose") {
+        println("详细模式已启用");
+    }
+
+    // 获取标志值
+    let lr = flag_value("--lr");
+    if lr != "" {
+        println("学习率:");
+        println(lr);
+    }
+
+    let epochs = flag_value("--epochs");
+    if epochs != "" {
+        println("训练轮数:");
+        println(epochs);
+    }
+
+    println("");
+    println("命令行参数解析演示完成!");
+}

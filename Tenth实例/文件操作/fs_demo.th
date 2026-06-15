@@ -1,0 +1,57 @@
+// 文件操作示例 — 文件系统操作
+//
+// 演示: path_join, path_exists, read_file, write_file,
+//       list_dir, mkdir, file_size, copy_file
+
+fn main() {
+    println("=== 文件系统操作演示 ===");
+
+    // 路径操作
+    let base = "/tmp";
+    let filepath = path_join(base, "tenth_demo.txt");
+    println("拼接路径:");
+    println(filepath);
+
+    // 写入文件
+    write_file(filepath, "Hello from Tenth!\n第二行内容\n第三行");
+    println("文件已写入");
+
+    // 检查文件是否存在
+    let exists = path_exists(filepath);
+    println("文件是否存在:");
+    println(exists);
+
+    // 读取文件
+    let content = read_file(filepath);
+    println("文件内容:");
+    println(content);
+
+    // 获取文件大小
+    let size = file_size(filepath);
+    println("文件大小(字节):");
+    println(size);
+
+    // 复制文件
+    let copy_path = path_join(base, "tenth_demo_copy.txt");
+    copy_file(filepath, copy_path);
+    println("文件已复制");
+
+    // 列出目录
+    let entries = list_dir(base);
+    println("目录内容:");
+    let mut i = 0;
+    while i < entries.len() {
+        let entry = entries.get(i);
+        // 只显示 tenth_demo 相关文件
+        println(entry);
+        i = i + 1;
+    }
+
+    // 清理
+    remove_file(filepath);
+    remove_file(copy_path);
+    println("临时文件已清理");
+
+    println("");
+    println("文件操作演示完成!");
+}

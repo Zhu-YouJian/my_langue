@@ -1,0 +1,10 @@
+任务：使用 fs 模块进行文件系统操作
+
+演示 Tenth 的文件系统功能：
+- path_join(), path_exists() 路径操作
+- read_file(), write_file() 文件读写
+- list_dir(), mkdir() 目录操作
+- file_size(), copy_file() 文件操作
+
+输入：无
+输出：文件系统操作结果

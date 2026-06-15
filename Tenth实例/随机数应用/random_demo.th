@@ -1,0 +1,56 @@
+// 随机数应用示例 — 掷骰子与蒙特卡洛估算 π
+//
+// 演示: random_int(), random_float()
+
+fn main() {
+    println("=== 随机数演示 ===");
+
+    // 生成随机数
+    println("5 个随机浮点数 [0, 1):");
+    let mut i = 0;
+    while i < 5 {
+        println(random_float());
+        i = i + 1;
+    }
+
+    // 掷骰子
+    println("");
+    println("=== 掷骰子 ===");
+    let mut rolls = Vec::new();
+    let mut count = 0;
+    while count < 10 {
+        let dice = random_int(1, 6);
+        rolls.push(dice);
+        count = count + 1;
+    }
+    println("10 次掷骰子结果:");
+    let mut j = 0;
+    while j < rolls.len() {
+        println(rolls.get(j));
+        j = j + 1;
+    }
+
+    // 蒙特卡洛估算 π
+    println("");
+    println("=== 蒙特卡洛估算 π ===");
+    let mut inside = 0;
+    let total = 10000;
+    let mut n = 0;
+    while n < total {
+        let x = random_float();
+        let y = random_float();
+        // 检查点 (x, y) 是否在单位圆内
+        if x * x + y * y < 1.0 {
+            inside = inside + 1;
+        }
+        n = n + 1;
+    }
+    // π ≈ 4 * (inside / total)
+    let pi_estimate = 4.0 * inside as f64 / total as f64;
+    println("估算 π (10000 个采样点):");
+    println(pi_estimate);
+    println("实际 π ≈ 3.14159");
+
+    println("");
+    println("随机数应用演示完成!");
+}

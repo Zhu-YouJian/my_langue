@@ -1,0 +1,9 @@
+任务：使用 JSON 模块进行序列化和反序列化
+
+演示 Tenth 的 JSON 原生函数：
+- json_encode(value) 将值编码为 JSON 字符串
+- json_encode_pretty(value) 编码为格式化 JSON
+- json_decode(string) 将 JSON 字符串解码为值
+
+输入：无
+输出：各种类型的 JSON 编码/解码结果

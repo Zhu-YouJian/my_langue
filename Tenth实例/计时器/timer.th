@@ -1,0 +1,51 @@
+// 计时器示例 — 使用 time 模块测量代码执行时间
+//
+// 演示: time_now(), time_now_ms(), time_date(), time_datetime(),
+//       time_sleep_ms(), start_timer(), elapsed()
+
+fn main() {
+    // 获取当前时间
+    println("=== 时间函数演示 ===");
+    println("当前时间戳(秒):");
+    println(time_now());
+    println("当前时间戳(毫秒):");
+    println(time_now_ms());
+    println("当前日期:");
+    println(time_date());
+    println("当前时间:");
+    println(time_time());
+    println("当前日期时间:");
+    println(time_datetime());
+
+    // 计时器：测量代码执行时间
+    println("");
+    println("=== 计时器演示 ===");
+
+    // 测量一段循环的执行时间
+    let start = time_now();
+    let mut sum = 0.0;
+    let mut i = 0;
+    while i < 100000 {
+        sum = sum + i as f64;
+        i = i + 1;
+    }
+    let end = time_now();
+    let duration = end - start;
+    println("循环 100000 次求和:");
+    println(sum);
+    println("耗时(秒):");
+    println(duration);
+
+    // 测量 sleep 的精度
+    println("");
+    println("=== Sleep 精度测试 ===");
+    let start_ms = time_now_ms();
+    time_sleep_ms(100);
+    let end_ms = time_now_ms();
+    let actual_ms = end_ms - start_ms;
+    println("请求 sleep 100ms, 实际耗时(ms):");
+    println(actual_ms);
+
+    println("");
+    println("计时器演示完成!");
+}

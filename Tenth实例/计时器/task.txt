@@ -1,0 +1,10 @@
+任务：使用 time 模块测量代码执行时间
+
+演示 Tenth 的 time 原生函数：
+- time_now() 获取当前 Unix 时间戳（秒）
+- time_now_ms() 获取毫秒级时间戳
+- time_date() / time_time() / time_datetime() 获取格式化时间
+- time_sleep_ms(ms) 休眠
+
+输入：无
+输出：当前时间、计时器测量结果

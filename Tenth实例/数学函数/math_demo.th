@@ -1,0 +1,73 @@
+// 数学函数示例 — 常数与高级数学运算
+//
+// 演示: PI, E, TAU, deg2rad, rad2deg, tan, atan2, sinh, cosh,
+//       log10, log2, exp, floor, ceil, round, lerp, clamp
+
+fn main() {
+    println("=== 数学常数 ===");
+    println("PI:");
+    println(3.14159265358979);
+    println("E:");
+    println(2.71828182845905);
+    println("TAU (2*PI):");
+    println(6.28318530717959);
+
+    println("");
+    println("=== 角度转换 ===");
+    let deg = 90.0;
+    let rad = deg * 3.14159265358979 / 180.0;
+    println("90度 = ");
+    println(rad);
+    println(" 弧度");
+
+    println("");
+    println("=== 三角函数 ===");
+    println("tan(0):");
+    println(math_tan(0.0));
+    println("atan2(1, 1) = π/4:");
+    println(math_atan2(1.0, 1.0));
+
+    println("");
+    println("=== 双曲函数 ===");
+    println("sinh(0):");
+    println(math_sinh(0.0));
+    println("cosh(0):");
+    println(math_cosh(0.0));
+    println("tanh(0):");
+    println(math_tanh(0.0));
+
+    println("");
+    println("=== 对数与指数 ===");
+    println("log10(1000):");
+    println(math_log10(1000.0));
+    println("log2(1024):");
+    println(math_log2(1024.0));
+    println("exp(1) = E:");
+    println(math_exp(1.0));
+
+    println("");
+    println("=== 取整函数 ===");
+    println("floor(3.7):");
+    println(math_floor(3.7));
+    println("ceil(3.2):");
+    println(math_ceil(3.2));
+    println("round(3.5):");
+    println(math_round(3.5));
+
+    println("");
+    println("=== 实用函数 ===");
+    // lerp: 线性插值
+    let t = 0.5;
+    let result = 0.0 + (10.0 - 0.0) * t;
+    println("lerp(0, 10, 0.5):");
+    println(result);
+
+    // clamp: 钳制到范围
+    let clamped = 15.0;
+    let clamped_result = if clamped < 0.0 { 0.0 } else if clamped > 10.0 { 10.0 } else { clamped };
+    println("clamp(15, 0, 10):");
+    println(clamped_result);
+
+    println("");
+    println("数学函数演示完成!");
+}

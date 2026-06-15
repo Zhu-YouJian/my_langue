@@ -71,6 +71,14 @@ Tenth实例/
 | 边缘检测 | `边缘检测/` | Sobel 算子、张量卷积 |
 | 矩阵分解 | `矩阵分解/` | 矩阵运算、LU 分解 |
 | 自动微分 | `自动微分/` | 张量级自动微分、线性回归 |
+| 计时器 | `计时器/` | time_now、time_date、计时器、sleep |
+| JSON 处理 | `JSON处理/` | json_encode、json_decode、序列化 |
+| 命令行参数 | `命令行参数/` | cli_args_count、cli_arg、flag解析 |
+| 日志系统 | `日志系统/` | debug/info/warn/error、日志级别 |
+| 数学函数 | `数学函数/` | PI/E/TAU、三角/双曲/对数、取整、插值 |
+| 随机数应用 | `随机数应用/` | random_int、random_float、蒙特卡洛估算π |
+| 文件操作 | `文件操作/` | path_join、read/write_file、list_dir、copy |
+| MNIST 训练 | `MNIST训练/` | IDX解析、2层MLP、cross_entropy、SGD |
 
 ---
 
