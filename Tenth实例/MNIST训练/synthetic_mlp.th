@@ -1,0 +1,69 @@
+// 合成数据 MLP 训练测试
+//
+// 不依赖 MNIST 数据文件，使用合成数据验证完整的训练流程:
+//   - 2层 MLP: input_size → hidden_size (ReLU) → num_classes (Softmax)
+//   - cross_entropy 损失
+//   - SGD 优化
+//   - 自动微分
+
+fn main() {
+    // 合成数据: 4个样本，每个3维特征，3个类别
+    let x = tensor[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0]];
+    // 标签: 0, 1, 2, 0
+    let targets = tensor[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]];
+
+    // 初始化权重
+    let mut w1 = tensor[[0.1, 0.2, -0.1, 0.05], [0.0, -0.1, 0.2, 0.1], [-0.1, 0.1, 0.0, -0.2]];
+    let mut b1 = tensor[[0.0, 0.0, 0.0, 0.0]];
+    let mut w2 = tensor[[0.1, -0.1, 0.0], [0.0, 0.2, -0.1], [-0.1, 0.0, 0.1], [0.05, -0.05, 0.1]];
+    let mut b2 = tensor[[0.0, 0.0, 0.0]];
+
+    let lr = 0.5;
+
+    println("Training synthetic 2-layer MLP: 3 -> 4 (ReLU) -> 3 (Softmax)");
+
+    let mut epoch = 0;
+    while epoch < 100 {
+        new_grad();
+        w1 = param(w1);
+        w2 = param(w2);
+
+        // 前向传播
+        let h = (x.matmul(w1) + b1).relu();
+        let logits = h.matmul(w2) + b2;
+        let loss = cross_entropy(logits, targets);
+
+        // 反向传播
+        backward(loss);
+        stop_grad();
+
+        // 参数更新
+        let gw1 = grad(w1);
+        let gw2 = grad(w2);
+        w1 = w1 - lr * gw1;
+        w2 = w2 - lr * gw2;
+
+        if epoch % 20 == 0 {
+            println("Epoch");
+            println(epoch);
+            println("Loss:");
+            println(loss.sum());
+        }
+
+        epoch = epoch + 1;
+    }
+
+    // 最终评估
+    let h = (x.matmul(w1) + b1).relu();
+    let logits = h.matmul(w2) + b2;
+    let loss = cross_entropy(logits, targets);
+    println("Final loss:");
+    println(loss.sum());
+
+    // 预测
+    let pred = logits.softmax();
+    println("Predictions:");
+    println(pred.sum());
+
+    println("Training complete!");
+}

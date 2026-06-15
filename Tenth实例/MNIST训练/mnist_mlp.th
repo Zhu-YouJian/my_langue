@@ -1,0 +1,143 @@
+// MNIST 手写数字识别 — 2层 MLP 训练
+//
+// 网络结构: 784 → 128 (ReLU) → 10 (Softmax)
+// 损失函数: cross_entropy
+// 优化器: SGD
+//
+// 使用方法:
+//   1. 下载 MNIST 数据集到 data/ 目录
+//   2. 运行: tenth run mnist_mlp.th
+//
+// 数据集下载地址:
+//   train-images: http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz
+//   train-labels: http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz
+//   t10k-images:  http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz
+//   t10k-labels:  http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz
+
+use data::mnist
+
+fn main() {
+    let data_dir = "data/mnist";
+    let train_images_path = path_join(data_dir, "train-images-idx3-ubyte");
+    let train_labels_path = path_join(data_dir, "train-labels-idx1-ubyte");
+
+    // 检查数据文件是否存在
+    if !path_exists(train_images_path) {
+        println("MNIST data not found. Please download to data/mnist/");
+        println("See: http://yann.lecun.com/exdb/mnist/");
+        return;
+    }
+
+    println("Loading MNIST training data...");
+
+    // 解析 IDX 格式
+    let img_data = mnist::parse_images(train_images_path);
+    let lbl_data = mnist::parse_labels(train_labels_path);
+
+    let num_images = img_data.get(0).as_int().unwrap_or(0);
+    let rows = img_data.get(1).as_int().unwrap_or(28);
+    let cols = img_data.get(2).as_int().unwrap_or(28);
+    let num_labels = lbl_data.get(0).as_int().unwrap_or(0);
+
+    println("Loaded images:");
+    println(num_images);
+    println("Image size:");
+    println(rows);
+    println("x");
+    println(cols);
+
+    // 初始化权重 (Xavier 初始化近似)
+    let hidden_size = 128;
+    let lr = 0.01;
+
+    // W1: 784x128, b1: 1x128
+    // W2: 128x10, b2: 1x10
+    let mut w1 = randn(784, hidden_size) * 0.01;
+    let mut b1 = tensor[[0.0]];
+    let mut w2 = randn(hidden_size, 10) * 0.01;
+    let mut b2 = tensor[[0.0]];
+
+    println("Training 2-layer MLP: 784 -> 128 (ReLU) -> 10 (Softmax)");
+
+    // 训练循环 — 逐样本训练
+    let num_epochs = 3;
+    let mut epoch = 0;
+    while epoch < num_epochs {
+        let mut correct = 0;
+        let mut total_loss = 0.0;
+        let mut sample = 0;
+
+        // 每个样本训练一步
+        while sample < num_images {
+            // 提取单个样本的像素数据并归一化
+            let offset = 3 + sample * rows * cols;
+            let mut pixel_vals = Vec::new();
+            let mut px = 0;
+            while px < rows * cols {
+                let raw = img_data.get(offset + px).as_int().unwrap_or(0);
+                pixel_vals.push(raw as f64 / 255.0);
+                px = px + 1;
+            }
+
+            // 创建输入张量 (1 x 784)
+            let x = tensor[pixel_vals].reshape(1, 784);
+
+            // 获取标签
+            let label = lbl_data.get(1 + sample).as_int().unwrap_or(0);
+
+            // One-hot 编码
+            let target = tensor[mnist::one_hot(label)].reshape(1, 10);
+
+            // 前向传播
+            new_grad();
+            w1 = param(w1);
+            w2 = param(w2);
+
+            let h = (x.matmul(w1) + b1).relu();
+            let logits = h.matmul(w2) + b2;
+            let loss = cross_entropy(logits, target);
+
+            // 反向传播
+            backward(loss);
+            stop_grad();
+
+            // 参数更新
+            let gw1 = grad(w1);
+            let gw2 = grad(w2);
+            w1 = w1 - lr * gw1;
+            w2 = w2 - lr * gw2;
+
+            // 计算准确率
+            let pred = logits.argmax();
+            if pred == label {
+                correct = correct + 1;
+            }
+            total_loss = total_loss + loss.sum().as_float().unwrap_or(0.0);
+
+            sample = sample + 1;
+
+            // 每 10000 个样本打印进度
+            if sample % 10000 == 0 {
+                println("Epoch");
+                println(epoch + 1);
+                println("Sample");
+                println(sample);
+                println("Loss:");
+                println(total_loss / sample as f64);
+                println("Accuracy:");
+                println(correct as f64 / sample as f64);
+            }
+        }
+
+        println("=== Epoch");
+        println(epoch + 1);
+        println("complete. Loss:");
+        println(total_loss / num_images as f64);
+        println("Accuracy:");
+        println(correct as f64 / num_images as f64);
+
+        epoch = epoch + 1;
+    }
+
+    println("Training complete!");
+}

@@ -15,8 +15,39 @@
 //   stop_grad, zero_grad     — autodiff control
 //   cross_entropy            — loss function
 //   Vec::new, HashMap::new   — collections
-//   read_file, write_bytes   — file I/O
+//   read_file, write_bytes, read_bytes — file I/O
 //   save_weights, load_weights — model serialization
+//   format, parse_int, parse_float — formatting & parsing
+//   path_join, path_exists, path_is_file, path_is_dir — path operations
+//   mkdir, list_dir, file_size, remove_file, copy_file — filesystem
+
+// ── Time (built-in native functions) ──
+//   time_now()               — current Unix timestamp (f64, seconds)
+//   time_now_ms()            — current Unix timestamp (f64, milliseconds)
+//   time_date()              — current date string "YYYY-MM-DD"
+//   time_time()              — current time string "HH:MM:SS"
+//   time_datetime()          — current datetime string "YYYY-MM-DD HH:MM:SS"
+//   time_sleep_ms(ms)        — sleep for ms milliseconds
+
+// ── Random (built-in native functions) ──
+//   random_int(lo, hi)       — random integer in [lo, hi]
+//   random_float()           — random float in [0.0, 1.0)
+
+// ── Math (built-in native functions) ──
+//   abs, sqrt, sin, cos, ln, pow  — basic math
+//   math_tan, math_asin, math_acos, math_atan, math_atan2 — trig
+//   math_sinh, math_cosh, math_tanh — hyperbolic
+//   math_log10, math_log2, math_exp — logarithmic/exponential
+//   math_pow, math_floor, math_ceil, math_round — rounding/power
+
+// ── CLI (built-in native functions) ──
+//   cli_args_count()         — number of command-line arguments
+//   cli_arg(index)           — get argument by index
+
+// ── JSON (built-in native functions) ──
+//   json_encode(value)       — encode value to JSON string
+//   json_encode_pretty(value) — encode with indentation
+//   json_decode(string)      — decode JSON string to value
 
 // ── Std lib (use path::to::function) ──
 //   std::nn::linear::linear
@@ -37,10 +68,18 @@
 //   std::optim::adagrad::adagrad_step
 //   std::optim::rmsprop::rmsprop_step
 //   std::data::dataloader::new, has_next, next_batch, reset, num_batches
+//   std::data::mnist::parse_images, parse_labels, one_hot, normalize_pixel, read_i32_be
 //   std::utils::serialization::save_model, load_model, save_checkpoint
 //   std::init::initializers::xavier_uniform, xavier_normal, he_normal, he_uniform, zeros_init, constant_init
 //   std::math::functions::abs, sqrt, sin, cos, ln, pow, exp
+//   std::math::constants::PI, E, TAU, PHI, LN2, LN10, SQRT2, deg2rad, rad2deg, tan, asin, acos, atan, atan2, sinh, cosh, tanh_scalar, log10, log2, floor, ceil, round, lerp, clamp
 //   std::collections::iter::map, filter, reduce, range, concat, reverse, take, skip, zip, enumerate, any, all, sum, find, count_if
 //   std::collections::collections::flat_map, any, all, find, count_if, partition, sum, product, from_entries, map_values, filter_map
 //   std::string::string::join_lines, join_comma, repeat_sep, indent, word_wrap, is_blank, capitalize, count
 //   std::utils::math::min, max, clamp, abs, fmin, fmax, fclamp, fabs, signum
+//   std::time::time::now, now_ms, date, time_of_day, datetime, sleep_ms, start_timer, elapsed, elapsed_ms
+//   std::random::random::rand_int, rand_float, rand_range, choice, shuffle, rand_bool, sample
+//   std::cli::cli::args_count, arg, args, args_tail, has_flag, flag_value
+//   std::logging::logging::debug, info, warn, error, set_level, LEVEL_DEBUG, LEVEL_INFO, LEVEL_WARN, LEVEL_ERROR
+//   std::fs::fs::exists, is_file, is_dir, join, mkdir_all, list_dir, size, remove, copy, read_text, read_bytes, write_text, write_bytes, read_lines, extension, filename, parent
+//   std::json::json::encode, decode, encode_pretty, load, save

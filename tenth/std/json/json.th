@@ -1,0 +1,34 @@
+// JSON serialization and deserialization utilities
+//
+// Provides basic JSON encoding/decoding for Tenth values.
+// Supports: Int, Float, String, Bool, Vec, HashMap, Unit/None → null
+//
+// Usage:
+//   use std::json::json
+
+/// Encode a value to a JSON string
+fn encode(value) -> String {
+    json_encode(value)
+}
+
+/// Decode a JSON string to a Tenth value
+fn decode(json_str: String) {
+    json_decode(json_str)
+}
+
+/// Encode a value to a pretty-printed JSON string
+fn encode_pretty(value) -> String {
+    json_encode_pretty(value)
+}
+
+/// Read a JSON file and decode it
+fn load(path: String) {
+    let content = read_file(path);
+    json_decode(content)
+}
+
+/// Encode a value and write it to a JSON file
+fn save(path: String, value) {
+    let json_str = json_encode(value);
+    write_file(path, json_str)
+}

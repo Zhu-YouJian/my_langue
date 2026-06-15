@@ -33,6 +33,143 @@ pub struct Interpreter {
     pub recording: bool,
 }
 
+fn days_to_date(days: u64) -> (u64, u64, u64) {
+    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365*yoe + yoe/4 - yoe/100);
+    let mp = (5*doy + 2) / 153;
+    let d = doy - (153*mp+2)/5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+fn json_encode_value(val: &Value) -> String {
+    match val {
+        Value::Int(n) => format!("{}", n),
+        Value::Float(f) => format!("{}", f),
+        Value::Bool(b) => if *b { "true".into() } else { "false".into() },
+        Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\t', "\\t")),
+        Value::Unit => "null".into(),
+        Value::Vec(v) => {
+            let items: Vec<String> = v.borrow().iter().map(|v| json_encode_value(v)).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Array(a) => {
+            let items: Vec<String> = a.borrow().iter().map(|v| json_encode_value(v)).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Map(map) => {
+            let entries: Vec<String> = map.borrow().iter().map(|(k, v)| {
+                format!("\"{}\": {}", k, json_encode_value(v))
+            }).collect();
+            format!("{{{}}}", entries.join(", "))
+        }
+        _ => "null".into(),
+    }
+}
+
+fn json_encode_value_pretty(val: &Value, indent: usize) -> String {
+    let prefix = "  ".repeat(indent);
+    let inner_prefix = "  ".repeat(indent + 1);
+    match val {
+        Value::Int(n) => format!("{}", n),
+        Value::Float(f) => format!("{}", f),
+        Value::Bool(b) => if *b { "true".into() } else { "false".into() },
+        Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\t', "\\t")),
+        Value::Unit => "null".into(),
+        Value::Vec(v) => {
+            if v.borrow().is_empty() { return "[]".into(); }
+            let items: Vec<String> = v.borrow().iter().map(|v| format!("{}{}", inner_prefix, json_encode_value_pretty(v, indent + 1))).collect();
+            format!("[\n{}\n{}]", items.join(",\n"), prefix)
+        }
+        Value::Array(a) => {
+            if a.borrow().is_empty() { return "[]".into(); }
+            let items: Vec<String> = a.borrow().iter().map(|v| format!("{}{}", inner_prefix, json_encode_value_pretty(v, indent + 1))).collect();
+            format!("[\n{}\n{}]", items.join(",\n"), prefix)
+        }
+        Value::Map(map) => {
+            if map.borrow().is_empty() { return "{}".into(); }
+            let entries: Vec<String> = map.borrow().iter().map(|(k, v)| {
+                format!("{}\"{}\": {}", inner_prefix, k, json_encode_value_pretty(v, indent + 1))
+            }).collect();
+            format!("{{\n{}\n{}}}", entries.join(",\n"), prefix)
+        }
+        _ => "null".into(),
+    }
+}
+
+fn json_decode_string(s: &str) -> Value {
+    let s = s.trim();
+    if s == "null" { return Value::Unit; }
+    if s == "true" { return Value::Bool(true); }
+    if s == "false" { return Value::Bool(false); }
+    if s.starts_with('"') && s.ends_with('"') {
+        let inner = &s[1..s.len()-1];
+        return Value::String(inner.replace("\\\"", "\"").replace("\\\\", "\\").replace("\\n", "\n").replace("\\t", "\t"));
+    }
+    if let Ok(n) = s.parse::<i64>() { return Value::Int(n); }
+    if let Ok(f) = s.parse::<f64>() { return Value::Float(f); }
+    if s.starts_with('[') && s.ends_with(']') {
+        let inner = &s[1..s.len()-1];
+        if inner.trim().is_empty() { return Value::Vec(Rc::new(RefCell::new(Vec::new()))); }
+        let items: Vec<Value> = simple_json_split(inner, ',')
+            .iter()
+            .map(|s| json_decode_string(s))
+            .collect();
+        return Value::Vec(Rc::new(RefCell::new(items)));
+    }
+    if s.starts_with('{') && s.ends_with('}') {
+        let inner = &s[1..s.len()-1];
+        if inner.trim().is_empty() {
+            return Value::Map(Rc::new(RefCell::new(std::collections::HashMap::new())));
+        }
+        let mut map = std::collections::HashMap::new();
+        let entries = simple_json_split(inner, ',');
+        for entry in &entries {
+            let parts = simple_json_split(entry, ':');
+            if parts.len() >= 2 {
+                let key = json_decode_string(parts[0].trim());
+                if let Value::String(k) = key {
+                    let val = json_decode_string(parts[1].trim());
+                    map.insert(k, val);
+                }
+            }
+        }
+        return Value::Map(Rc::new(RefCell::new(map)));
+    }
+    Value::Unit
+}
+
+fn simple_json_split(s: &str, delimiter: char) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '"' && !in_string { in_string = true; current.push(c); continue; }
+        if c == '"' && in_string { in_string = false; current.push(c); continue; }
+        if in_string { current.push(c); continue; }
+        match c {
+            '[' | '{' => { depth += 1; current.push(c); }
+            ']' | '}' => { depth -= 1; current.push(c); }
+            d if d == delimiter && depth == 0 => {
+                result.push(current.trim().to_string());
+                current = String::new();
+            }
+            _ => { current.push(c); }
+        }
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() { result.push(trimmed); }
+    result
+}
+
 impl Interpreter {
     pub fn new(program: &HirProgram) -> Self {
         Interpreter {
@@ -329,7 +466,7 @@ impl Interpreter {
                     .or_else(|| {
                         match name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
-                            | "read_file" | "write_file" | "write_bytes" | "compile_host"
+                            | "read_file" | "write_file" | "write_bytes" | "read_bytes" | "compile_host"
                             | "compile_program"
                             | "Vec::new" | "HashMap::new"
                             | "start_grad" | "new_grad" | "stop_grad"
@@ -340,7 +477,14 @@ impl Interpreter {
                             | "save_weights" | "load_weights"
                             | "format" | "parse_int" | "parse_float"
                             | "path_join" | "path_exists" | "path_is_file" | "path_is_dir"
-                            | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file" => {
+                            | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file"
+                            | "time_now" | "time_now_ms" | "time_date" | "time_time" | "time_datetime" | "time_sleep_ms"
+                            | "random_int" | "random_float"
+                            | "math_tan" | "math_asin" | "math_acos" | "math_atan" | "math_atan2"
+                            | "math_sinh" | "math_cosh" | "math_tanh" | "math_log10" | "math_log2" | "math_exp" | "math_pow"
+                            | "math_floor" | "math_ceil" | "math_round"
+                            | "cli_args_count" | "cli_arg"
+                            | "json_encode" | "json_encode_pretty" | "json_decode" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),
@@ -3197,6 +3341,24 @@ impl Interpreter {
                     message: "write_bytes(path, bytes) expects a string and a byte vec".into(),
                 });
             }
+            "read_bytes" => {
+                if let Some(Value::String(path)) = args.first() {
+                    match std::fs::read(path) {
+                        Ok(data) => {
+                            let bytes: Vec<Value> = data.iter()
+                                .map(|b| Value::Int(*b as i64))
+                                .collect();
+                            return Ok(Some(Value::Vec(Rc::new(RefCell::new(bytes)))));
+                        }
+                        Err(e) => return Err(TenthError::RuntimeError {
+                            message: format!("read_bytes failed: {}", e),
+                        }),
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "read_bytes(path) expects a string path".into(),
+                });
+            }
             "path_join" => {
                 if args.len() >= 2 {
                     if let (Value::String(base), Value::String(rest)) = (&args[0], &args[1]) {
@@ -3416,6 +3578,213 @@ impl Interpreter {
                 return Err(TenthError::RuntimeError {
                     message: "parse_float() expects a string argument".into(),
                 })
+            }
+            // Time functions
+            "time_now" => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64();
+                return Ok(Some(Value::Float(now)));
+            }
+            "time_now_ms" => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as f64;
+                return Ok(Some(Value::Float(now)));
+            }
+            "time_date" => {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let days_since_epoch = secs / 86400;
+                let (year, month, day) = days_to_date(days_since_epoch);
+                return Ok(Some(Value::String(format!("{}-{:02}-{:02}", year, month, day))));
+            }
+            "time_time" => {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() % 86400;
+                let h = secs / 3600;
+                let m = (secs % 3600) / 60;
+                let s = secs % 60;
+                return Ok(Some(Value::String(format!("{}:{:02}:{:02}", h, m, s))));
+            }
+            "time_datetime" => {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let days_since_epoch = secs / 86400;
+                let (year, month, day) = days_to_date(days_since_epoch);
+                let day_secs = secs % 86400;
+                let h = day_secs / 3600;
+                let m = (day_secs % 3600) / 60;
+                let s = day_secs % 60;
+                return Ok(Some(Value::String(format!("{}-{:02}-{:02} {}:{:02}:{:02}", year, month, day, h, m, s))));
+            }
+            "time_sleep_ms" => {
+                if let Some(Value::Int(ms)) = args.first() {
+                    std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
+                    return Ok(Some(Value::Unit));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "time_sleep_ms(ms) expects an integer".into(),
+                });
+            }
+            // Random functions
+            "random_int" => {
+                if let (Some(Value::Int(lo)), Some(Value::Int(hi))) = (args.first(), args.get(1)) {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos();
+                    let mut hasher = DefaultHasher::new();
+                    now.hash(&mut hasher);
+                    let rand_val = hasher.finish();
+                    let range = (*hi - *lo + 1).max(1);
+                    let result = *lo + ((rand_val % (range as u64)) as i64);
+                    return Ok(Some(Value::Int(result)));
+                }
+                return Ok(Some(Value::Int(0)));
+            }
+            "random_float" => {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos();
+                let mut hasher = DefaultHasher::new();
+                now.hash(&mut hasher);
+                let rand_val = hasher.finish();
+                let result = (rand_val as f64) / (u64::MAX as f64);
+                return Ok(Some(Value::Float(result)));
+            }
+            // Math functions
+            "math_tan" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.tan())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_asin" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.asin())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_acos" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.acos())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_atan" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.atan())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_atan2" => {
+                if let (Some(Value::Float(y)), Some(Value::Float(x))) = (args.first(), args.get(1)) {
+                    return Ok(Some(Value::Float(y.atan2(*x))));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_sinh" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.sinh())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_cosh" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.cosh())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_tanh" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.tanh())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_log10" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.log10())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_log2" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.log2())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_exp" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.exp())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_pow" => {
+                if let (Some(Value::Float(base)), Some(Value::Float(exp))) = (args.first(), args.get(1)) {
+                    return Ok(Some(Value::Float(base.powf(*exp))));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_floor" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.floor())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_ceil" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.ceil())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            "math_round" => {
+                if let Some(Value::Float(x)) = args.first() {
+                    return Ok(Some(Value::Float(x.round())));
+                }
+                return Ok(Some(Value::Float(0.0)));
+            }
+            // CLI functions
+            "cli_args_count" => {
+                return Ok(Some(Value::Int(1))); // Default: just program name
+            }
+            "cli_arg" => {
+                if let Some(Value::Int(_idx)) = args.first() {
+                    return Ok(Some(Value::String(String::new())));
+                }
+                return Ok(Some(Value::String(String::new())));
+            }
+            // JSON functions
+            "json_encode" => {
+                if let Some(val) = args.first() {
+                    return Ok(Some(Value::String(json_encode_value(val))));
+                }
+                return Ok(Some(Value::String("null".into())));
+            }
+            "json_encode_pretty" => {
+                if let Some(val) = args.first() {
+                    return Ok(Some(Value::String(json_encode_value_pretty(val, 0))));
+                }
+                return Ok(Some(Value::String("null".into())));
+            }
+            "json_decode" => {
+                if let Some(Value::String(s)) = args.first() {
+                    return Ok(Some(json_decode_string(s)));
+                }
+                return Ok(Some(Value::Unit));
             }
             _ => {}
         }

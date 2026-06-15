@@ -8,6 +8,8 @@ use tenth::parser::parser::Parser;
 use tenth::runtime::interpreter::Interpreter;
 use tenth::runtime::vm::Vm;
 use tenth::runtime::value::Value;
+use tenth::runtime::autodiff::Tape;
+use tenth::runtime::tensor::Tensor;
 use tenth::compile;
 use tenth::compile::bytecode::BytecodeCompiler;
 
@@ -168,6 +170,146 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
     }
 }
 
+fn days_to_date(days: u64) -> (u64, u64, u64) {
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365*yoe + yoe/4 - yoe/100);
+    let mp = (5*doy + 2) / 153;
+    let d = doy - (153*mp+2)/5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+fn json_encode_value(val: &tenth::runtime::value::Value) -> String {
+    use tenth::runtime::value::Value;
+    match val {
+        Value::Int(n) => format!("{}", n),
+        Value::Float(f) => format!("{}", f),
+        Value::Bool(b) => if *b { "true".into() } else { "false".into() },
+        Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\t', "\\t")),
+        Value::Unit => "null".into(),
+        Value::Vec(v) => {
+            let items: Vec<String> = v.borrow().iter().map(|v| json_encode_value(v)).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Array(a) => {
+            let items: Vec<String> = a.borrow().iter().map(|v| json_encode_value(v)).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Map(map) => {
+            let entries: Vec<String> = map.borrow().iter().map(|(k, v)| {
+                format!("\"{}\": {}", k, json_encode_value(v))
+            }).collect();
+            format!("{{{}}}", entries.join(", "))
+        }
+        _ => "null".into(),
+    }
+}
+
+fn json_encode_value_pretty(val: &tenth::runtime::value::Value, indent: usize) -> String {
+    use tenth::runtime::value::Value;
+    let prefix = "  ".repeat(indent);
+    let inner_prefix = "  ".repeat(indent + 1);
+    match val {
+        Value::Int(n) => format!("{}", n),
+        Value::Float(f) => format!("{}", f),
+        Value::Bool(b) => if *b { "true".into() } else { "false".into() },
+        Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\t', "\\t")),
+        Value::Unit => "null".into(),
+        Value::Vec(v) => {
+            if v.borrow().is_empty() { return "[]".into(); }
+            let items: Vec<String> = v.borrow().iter().map(|v| format!("{}{}", inner_prefix, json_encode_value_pretty(v, indent + 1))).collect();
+            format!("[\n{}\n{}]", items.join(",\n"), prefix)
+        }
+        Value::Array(a) => {
+            if a.borrow().is_empty() { return "[]".into(); }
+            let items: Vec<String> = a.borrow().iter().map(|v| format!("{}{}", inner_prefix, json_encode_value_pretty(v, indent + 1))).collect();
+            format!("[\n{}\n{}]", items.join(",\n"), prefix)
+        }
+        Value::Map(map) => {
+            if map.borrow().is_empty() { return "{}".into(); }
+            let entries: Vec<String> = map.borrow().iter().map(|(k, v)| {
+                format!("{}\"{}\": {}", inner_prefix, k, json_encode_value_pretty(v, indent + 1))
+            }).collect();
+            format!("{{\n{}\n{}}}", entries.join(",\n"), prefix)
+        }
+        _ => "null".into(),
+    }
+}
+
+fn json_decode_string(s: &str) -> tenth::runtime::value::Value {
+    use tenth::runtime::value::Value;
+    use std::rc::Rc;
+    use std::cell::RefCell;
+    let s = s.trim();
+    if s == "null" { return Value::Unit; }
+    if s == "true" { return Value::Bool(true); }
+    if s == "false" { return Value::Bool(false); }
+    if s.starts_with('"') && s.ends_with('"') {
+        let inner = &s[1..s.len()-1];
+        return Value::String(inner.replace("\\\"", "\"").replace("\\\\", "\\").replace("\\n", "\n").replace("\\t", "\t"));
+    }
+    if let Ok(n) = s.parse::<i64>() { return Value::Int(n); }
+    if let Ok(f) = s.parse::<f64>() { return Value::Float(f); }
+    if s.starts_with('[') && s.ends_with(']') {
+        let inner = &s[1..s.len()-1];
+        if inner.trim().is_empty() { return Value::Vec(Rc::new(RefCell::new(Vec::new()))); }
+        let items: Vec<Value> = simple_json_split(inner, ',')
+            .iter()
+            .map(|s| json_decode_string(s))
+            .collect();
+        return Value::Vec(Rc::new(RefCell::new(items)));
+    }
+    if s.starts_with('{') && s.ends_with('}') {
+        let inner = &s[1..s.len()-1];
+        if inner.trim().is_empty() {
+            return Value::Map(Rc::new(RefCell::new(std::collections::HashMap::new())));
+        }
+        let mut map = std::collections::HashMap::new();
+        let entries = simple_json_split(inner, ',');
+        for entry in &entries {
+            let parts = simple_json_split(entry, ':');
+            if parts.len() >= 2 {
+                let key = json_decode_string(parts[0].trim());
+                if let Value::String(k) = key {
+                    let val = json_decode_string(parts[1].trim());
+                    map.insert(k, val);
+                }
+            }
+        }
+        return Value::Map(Rc::new(RefCell::new(map)));
+    }
+    Value::Unit
+}
+
+fn simple_json_split(s: &str, delimiter: char) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    for c in s.chars() {
+        if c == '"' && !in_string { in_string = true; current.push(c); continue; }
+        if c == '"' && in_string { in_string = false; current.push(c); continue; }
+        if in_string { current.push(c); continue; }
+        match c {
+            '[' | '{' => { depth += 1; current.push(c); }
+            ']' | '}' => { depth -= 1; current.push(c); }
+            d if d == delimiter && depth == 0 => {
+                result.push(current.trim().to_string());
+                current = String::new();
+            }
+            _ => { current.push(c); }
+        }
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() { result.push(trimmed); }
+    result
+}
+
 fn register_natives(vm: &mut Vm) {
     vm.add_native("println".into(), |_vm, args| {
         for a in args { print!("{a}"); }
@@ -187,6 +329,16 @@ fn register_natives(vm: &mut Vm) {
     vm.add_native("Vec::new".into(), |_vm, _args| {
         Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))))
     });
+    vm.add_native("tensor".into(), |_vm, args| {
+        // tensor() constructor: when called as tensor[[...]], the bytecode
+        // compiler handles TensorLiteral via Op::MakeTensor directly.
+        // This native handles the rare case where tensor() is called as a function.
+        if args.len() == 1 {
+            Ok(args[0].clone())
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "tensor() unexpected args".into() })
+        }
+    });
     vm.add_native("write_bytes".into(), |_vm, args| {
         if args.len() >= 2 {
             if let Value::String(path) = &args[1] {
@@ -198,6 +350,195 @@ fn register_natives(vm: &mut Vm) {
             }
         }
         Ok(Value::Int(1))
+    });
+    vm.add_native("read_bytes".into(), |_vm, args| {
+        if let Some(Value::String(path)) = args.first() {
+            match std::fs::read(path) {
+                Ok(data) => {
+                    let bytes: Vec<Value> = data.iter()
+                        .map(|b| Value::Int(*b as i64))
+                        .collect();
+                    Ok(Value::Vec(Rc::new(RefCell::new(bytes))))
+                }
+                Err(e) => Err(tenth::error::TenthError::RuntimeError {
+                    message: format!("read_bytes failed: {}", e),
+                }),
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError {
+                message: "read_bytes(path) expects a string path".into(),
+            })
+        }
+    });
+    // Time functions
+    vm.add_native("time_now".into(), |_vm, _args| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        Ok(Value::Float(now))
+    });
+    vm.add_native("time_now_ms".into(), |_vm, _args| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as f64;
+        Ok(Value::Float(now))
+    });
+    vm.add_native("time_date".into(), |_vm, _args| {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let days_since_epoch = secs / 86400;
+        let (year, month, day) = days_to_date(days_since_epoch);
+        Ok(Value::String(format!("{}-{:02}-{:02}", year, month, day)))
+    });
+    vm.add_native("time_time".into(), |_vm, _args| {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() % 86400;
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        let s = secs % 60;
+        Ok(Value::String(format!("{}:{:02}:{:02}", h, m, s)))
+    });
+    vm.add_native("time_datetime".into(), |_vm, _args| {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let days_since_epoch = secs / 86400;
+        let (year, month, day) = days_to_date(days_since_epoch);
+        let day_secs = secs % 86400;
+        let h = day_secs / 3600;
+        let m = (day_secs % 3600) / 60;
+        let s = day_secs % 60;
+        Ok(Value::String(format!("{}-{:02}-{:02} {}:{:02}:{:02}", year, month, day, h, m, s)))
+    });
+    vm.add_native("time_sleep_ms".into(), |_vm, args| {
+        if let Some(Value::Int(ms)) = args.first() {
+            std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
+            Ok(Value::Unit)
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "time_sleep_ms(ms) expects an integer".into() })
+        }
+    });
+    // Random functions
+    vm.add_native("random_int".into(), |_vm, args| {
+        let lo = match args.first() {
+            Some(Value::Int(n)) => *n,
+            _ => 0,
+        };
+        let hi = match args.get(1) {
+            Some(Value::Int(n)) => *n,
+            _ => lo,
+        };
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let mut hasher = DefaultHasher::new();
+        now.hash(&mut hasher);
+        let rand_val = hasher.finish();
+        let range = (hi - lo + 1).max(1);
+        Ok(Value::Int(lo + ((rand_val % (range as u64)) as i64)))
+    });
+    vm.add_native("random_float".into(), |_vm, _args| {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let mut hasher = DefaultHasher::new();
+        now.hash(&mut hasher);
+        let rand_val = hasher.finish();
+        Ok(Value::Float((rand_val as f64) / (u64::MAX as f64)))
+    });
+    // Math functions
+    vm.add_native("math_tan".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.tan())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_asin".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.asin())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_acos".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.acos())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_atan".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.atan())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_atan2".into(), |_vm, args| {
+        match (args.first(), args.get(1)) {
+            (Some(Value::Float(y)), Some(Value::Float(x))) => Ok(Value::Float(y.atan2(*x))),
+            _ => Ok(Value::Float(0.0))
+        }
+    });
+    vm.add_native("math_sinh".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.sinh())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_cosh".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.cosh())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_tanh".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.tanh())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_log10".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.log10())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_log2".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.log2())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_exp".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.exp())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_pow".into(), |_vm, args| {
+        match (args.first(), args.get(1)) {
+            (Some(Value::Float(base)), Some(Value::Float(exp))) => Ok(Value::Float(base.powf(*exp))),
+            _ => Ok(Value::Float(0.0))
+        }
+    });
+    vm.add_native("math_floor".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.floor())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_ceil".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.ceil())), _ => Ok(Value::Float(0.0)) }
+    });
+    vm.add_native("math_round".into(), |_vm, args| {
+        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.round())), _ => Ok(Value::Float(0.0)) }
+    });
+    // CLI functions
+    vm.add_native("cli_args_count".into(), |_vm, _args| {
+        Ok(Value::Int(1))
+    });
+    vm.add_native("cli_arg".into(), |_vm, _args| {
+        Ok(Value::String(String::new()))
+    });
+    // JSON functions
+    vm.add_native("json_encode".into(), |_vm, args| {
+        if let Some(val) = args.first() {
+            Ok(Value::String(json_encode_value(val)))
+        } else {
+            Ok(Value::String("null".into()))
+        }
+    });
+    vm.add_native("json_encode_pretty".into(), |_vm, args| {
+        if let Some(val) = args.first() {
+            Ok(Value::String(json_encode_value_pretty(val, 0)))
+        } else {
+            Ok(Value::String("null".into()))
+        }
+    });
+    vm.add_native("json_decode".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            Ok(json_decode_string(s))
+        } else {
+            Ok(Value::Unit)
+        }
     });
     vm.add_native("compile_host".into(), |_vm, args| {
         if args.len() >= 2 {
@@ -224,6 +565,113 @@ fn register_natives(vm: &mut Vm) {
             }
         }
         Ok(Value::Int(1))
+    });
+
+    // ── Autodiff native functions ──
+    vm.add_native("new_grad".into(), |vm, _args| {
+        vm.tape = Some(Tape::new());
+        vm.recording = true;
+        Ok(Value::Unit)
+    });
+    vm.add_native("param".into(), |vm, args| {
+        if let Some(Value::Tensor(t)) = args.first() {
+            if let Some(ref mut tape) = vm.tape {
+                let node_id = tape.input(t.clone());
+                t.borrow_mut().tape_id = Some(node_id);
+            }
+            Ok(Value::Tensor(t.clone()))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "param() requires a tensor argument".into() })
+        }
+    });
+    vm.add_native("backward".into(), |vm, args| {
+        if let Some(Value::Tensor(t)) = args.first() {
+            if let Some(ref tape) = vm.tape {
+                let loss_id = t.borrow().tape_id
+                    .ok_or_else(|| tenth::error::TenthError::RuntimeError { message: "backward(): tensor has no tape_id".into() })?;
+                tape.backward(loss_id);
+                Ok(Value::Unit)
+            } else {
+                Err(tenth::error::TenthError::RuntimeError { message: "new_grad() not called".into() })
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "backward() requires a tensor argument".into() })
+        }
+    });
+    vm.add_native("grad".into(), |_vm, args| {
+        if let Some(Value::Tensor(t)) = args.first() {
+            let p = t.borrow();
+            if let Some(ref grad) = p.grad {
+                let grad_tensor = Tensor::from_vec(grad.clone().into_raw_vec(), p.shape());
+                Ok(Value::Tensor(Rc::new(RefCell::new(grad_tensor))))
+            } else {
+                let zeros = Tensor::zeros(&p.shape());
+                Ok(Value::Tensor(Rc::new(RefCell::new(zeros))))
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "grad() requires a tensor argument".into() })
+        }
+    });
+    vm.add_native("stop_grad".into(), |vm, args| {
+        if let Some(Value::Tensor(t)) = args.first() {
+            let mut detached = t.borrow().clone();
+            detached.tape_id = None;
+            Ok(Value::Tensor(Rc::new(RefCell::new(detached))))
+        } else {
+            // No-arg form: stop gradient recording
+            vm.recording = false;
+            Ok(Value::Unit)
+        }
+    });
+    vm.add_native("zero_grad".into(), |vm, _args| {
+        if let Some(ref tape) = vm.tape {
+            tape.zero_grad();
+        }
+        Ok(Value::Unit)
+    });
+    vm.add_native("cross_entropy".into(), |vm, args| {
+        if args.len() < 2 {
+            return Err(tenth::error::TenthError::RuntimeError { message: "cross_entropy(logits, target) expects two tensors".into() });
+        }
+        if let (Value::Tensor(logits), Value::Tensor(target)) = (&args[0], &args[1]) {
+            let logits_data = logits.borrow();
+            let target_data = target.borrow();
+            let sm = logits_data.softmax().ok_or_else(|| {
+                tenth::error::TenthError::RuntimeError { message: "softmax failed in cross_entropy".into() }
+            })?;
+            let eps = 1e-10;
+            let sm_data = sm.data.as_standard_layout().to_owned();
+            let tgt_flat = target_data.data.as_standard_layout().to_owned();
+            let sm_slice = sm_data.as_slice().unwrap_or(&[]);
+            let tgt_slice = tgt_flat.as_slice().unwrap_or(&[]);
+            let mut loss_val = 0.0f64;
+            let n = sm_slice.len() as f64;
+            for i in 0..sm_slice.len().min(tgt_slice.len()) {
+                let p = sm_slice[i].max(eps);
+                loss_val -= tgt_slice[i] * p.ln();
+            }
+            loss_val /= n.max(1.0);
+            let loss_tensor = Tensor::from_vec(vec![loss_val], vec![1]);
+            let result = Rc::new(RefCell::new(loss_tensor));
+            if vm.recording {
+                let sm_rc = Rc::new(RefCell::new(sm));
+                if let Some(ref mut tape) = vm.tape {
+                    let logits_id = logits.borrow().tape_id
+                        .unwrap_or_else(|| tape.input(logits.clone()));
+                    let _sm_id = tape.input(sm_rc.clone());
+                    let node_id = tape.cross_entropy(
+                        logits_id, logits.clone(),
+                        sm_rc,
+                        target.clone(),
+                        result.clone(),
+                    );
+                    result.borrow_mut().tape_id = Some(node_id);
+                }
+            }
+            Ok(Value::Tensor(result))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "cross_entropy(logits, target) expects two tensors".into() })
+        }
     });
 }
 

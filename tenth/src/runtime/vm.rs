@@ -7,6 +7,8 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use super::value::Value;
+use super::autodiff::{Tape, TapeOp};
+use super::tensor::Tensor;
 
 /// Native Rust function callable from VM bytecode.
 pub type NativeFn = fn(&mut Vm, &[Value]) -> TenthResult<Value>;
@@ -151,11 +153,15 @@ pub struct Vm {
     globals: HashMap<String, Value>,
     stack: Vec<Value>,
     frames: Vec<Frame>,
+    /// Autodiff computation tape (active when `recording` is true).
+    pub tape: Option<Tape>,
+    /// Whether tensor operations should be recorded on the tape.
+    pub recording: bool,
 }
 
 impl Vm {
     pub fn new() -> Self {
-        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new() }
+        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new(), tape: None, recording: false }
     }
 
     pub fn add_fn(&mut self, name: String, chunk: Chunk) {
@@ -281,10 +287,10 @@ impl Vm {
                     self.globals.insert(name, v);
                 }
 
-                Op::Add => { let (a,b)=self.pop2(); self.stack.push(self.add(&a,&b)?); }
-                Op::Sub => { let (a,b)=self.pop2(); self.stack.push(self.sub(&a,&b)?); }
-                Op::Mul => { let (a,b)=self.pop2(); self.stack.push(self.mul(&a,&b)?); }
-                Op::Div => { let (a,b)=self.pop2(); self.stack.push(self.div(&a,&b)?); }
+                Op::Add => { let (a,b)=self.pop2(); let r=self.add(&a,&b)?; self.stack.push(r); }
+                Op::Sub => { let (a,b)=self.pop2(); let r=self.sub(&a,&b)?; self.stack.push(r); }
+                Op::Mul => { let (a,b)=self.pop2(); let r=self.mul(&a,&b)?; self.stack.push(r); }
+                Op::Div => { let (a,b)=self.pop2(); let r=self.div(&a,&b)?; self.stack.push(r); }
                 Op::Mod => {
                     let b = self.pop_int()?; let a = self.pop_int()?;
                     self.stack.push(Value::Int(a % b));
@@ -571,11 +577,7 @@ impl Vm {
                         });
                     }
                     data.reverse();
-                    let tensor = if rows == 1 || cols == 1 {
-                        Tensor::from_vec(data, vec![total])
-                    } else {
-                        Tensor::from_vec(data, vec![rows, cols])
-                    };
+                    let tensor = Tensor::from_vec(data, vec![rows, cols]);
                     self.stack.push(Value::Tensor(Rc::new(RefCell::new(tensor))));
                 }
 
@@ -608,47 +610,136 @@ impl Vm {
         }
     }
 
-    fn add(&self, a: &Value, b: &Value) -> TenthResult<Value> {
+    fn add(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
             (Value::Int(x), Value::Int(y)) => Value::Int(x + y),
             (Value::Float(x), Value::Float(y)) => Value::Float(x + y),
             (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 + y),
             (Value::Float(x), Value::Int(y)) => Value::Float(x + *y as f64),
             (Value::String(x), Value::String(y)) => Value::String(format!("{x}{y}")),
-            (Value::Tensor(t), Value::Float(s)) => Value::Tensor(Rc::new(RefCell::new(t.borrow().add_scalar(*s)))),
-            (Value::Float(s), Value::Tensor(t)) => Value::Tensor(Rc::new(RefCell::new(t.borrow().add_scalar(*s)))),
+            (Value::Tensor(t), Value::Float(s)) => {
+                let result = Rc::new(RefCell::new(t.borrow().add_scalar(*s)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s], vec![1])));
+                    self.record_binary(TapeOp::Add, &t, &s_tensor, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Float(s), Value::Tensor(t)) => {
+                let result = Rc::new(RefCell::new(t.borrow().add_scalar(*s)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s], vec![1])));
+                    self.record_binary(TapeOp::Add, &s_tensor, &t, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Tensor(t1), Value::Tensor(t2)) => {
+                let result_tensor = t1.borrow().add_tensor(&t2.borrow())
+                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                let result = Rc::new(RefCell::new(result_tensor));
+                if self.recording { self.record_binary(TapeOp::Add, &t1, &t2, &result); }
+                Value::Tensor(result)
+            }
             _ => return err("type mismatch in +"),
         })
     }
 
-    fn sub(&self, a: &Value, b: &Value) -> TenthResult<Value> {
+    fn sub(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
             (Value::Int(x), Value::Int(y)) => Value::Int(x - y),
             (Value::Float(x), Value::Float(y)) => Value::Float(x - y),
             (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 - y),
             (Value::Float(x), Value::Int(y)) => Value::Float(x - *y as f64),
+            (Value::Tensor(t), Value::Float(s)) => {
+                let result = Rc::new(RefCell::new(t.borrow().add_scalar(-*s)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s], vec![1])));
+                    self.record_binary(TapeOp::Sub, &t, &s_tensor, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Float(s), Value::Tensor(t)) => {
+                let result = Rc::new(RefCell::new(t.borrow().add_scalar(-*s)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s], vec![1])));
+                    self.record_binary(TapeOp::Sub, &s_tensor, &t, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Tensor(t1), Value::Tensor(t2)) => {
+                let result_tensor = t1.borrow().sub_tensor(&t2.borrow())
+                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                let result = Rc::new(RefCell::new(result_tensor));
+                if self.recording { self.record_binary(TapeOp::Sub, &t1, &t2, &result); }
+                Value::Tensor(result)
+            }
             _ => return err("type mismatch in -"),
         })
     }
 
-    fn mul(&self, a: &Value, b: &Value) -> TenthResult<Value> {
+    fn mul(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
             (Value::Int(x), Value::Int(y)) => Value::Int(x * y),
             (Value::Float(x), Value::Float(y)) => Value::Float(x * y),
             (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 * y),
             (Value::Float(x), Value::Int(y)) => Value::Float(x * *y as f64),
-            (Value::Tensor(t), Value::Float(s)) => Value::Tensor(Rc::new(RefCell::new(t.borrow().mul_scalar(*s)))),
-            (Value::Float(s), Value::Tensor(t)) => Value::Tensor(Rc::new(RefCell::new(t.borrow().mul_scalar(*s)))),
+            (Value::Tensor(t), Value::Float(s)) => {
+                let result = Rc::new(RefCell::new(t.borrow().mul_scalar(*s)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s], vec![1])));
+                    self.record_binary(TapeOp::Mul, &t, &s_tensor, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Float(s), Value::Tensor(t)) => {
+                let result = Rc::new(RefCell::new(t.borrow().mul_scalar(*s)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s], vec![1])));
+                    self.record_binary(TapeOp::Mul, &s_tensor, &t, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Tensor(t1), Value::Tensor(t2)) => {
+                let result_tensor = t1.borrow().mul_tensor(&t2.borrow())
+                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                let result = Rc::new(RefCell::new(result_tensor));
+                if self.recording { self.record_binary(TapeOp::Mul, &t1, &t2, &result); }
+                Value::Tensor(result)
+            }
             _ => return err("type mismatch in *"),
         })
     }
 
-    fn div(&self, a: &Value, b: &Value) -> TenthResult<Value> {
+    fn div(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
             (Value::Int(x), Value::Int(y)) => Value::Int(x / y),
             (Value::Float(x), Value::Float(y)) => Value::Float(x / y),
             (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 / y),
             (Value::Float(x), Value::Int(y)) => Value::Float(x / *y as f64),
+            (Value::Tensor(t), Value::Float(s)) => {
+                let result = Rc::new(RefCell::new(t.borrow().div_scalar(*s)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s], vec![1])));
+                    self.record_binary(TapeOp::Div, &t, &s_tensor, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Float(s), Value::Tensor(t)) => {
+                // s / t: scalar divided by tensor element-wise
+                let result = Rc::new(RefCell::new(t.borrow().div_scalar_inv(*s)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s], vec![1])));
+                    self.record_binary(TapeOp::Div, &s_tensor, &t, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Tensor(t1), Value::Tensor(t2)) => {
+                let result_tensor = t1.borrow().div_tensor(&t2.borrow())
+                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                let result = Rc::new(RefCell::new(result_tensor));
+                if self.recording { self.record_binary(TapeOp::Div, &t1, &t2, &result); }
+                Value::Tensor(result)
+            }
             _ => return err("type mismatch in /"),
         })
     }
@@ -700,10 +791,379 @@ impl Vm {
             Value::Tensor(t) => {
                 let tensor = t.borrow();
                 match method {
-                    "sum" => Ok(Value::Float(tensor.sum())),
-                    "mean" => Ok(Value::Float(tensor.mean())),
-                    "relu" => Ok(Value::Tensor(Rc::new(RefCell::new(tensor.relu())))),
+                    // ── Reductions ──
+                    "sum" => {
+                        if args.is_empty() {
+                            if self.recording {
+                                let scalar = tensor.sum();
+                                let result = Rc::new(RefCell::new(Tensor::from_vec(vec![scalar], vec![1])));
+                                self.record_unary(TapeOp::Sum, &t, &result);
+                                Ok(Value::Tensor(result))
+                            } else {
+                                Ok(Value::Float(tensor.sum()))
+                            }
+                        } else {
+                            let axis = args[0].as_int().unwrap_or(0) as usize;
+                            Ok(Value::Tensor(Rc::new(RefCell::new(tensor.sum_axis(axis)))))
+                        }
+                    }
+                    "mean" => {
+                        if self.recording {
+                            let scalar = tensor.mean();
+                            let result = Rc::new(RefCell::new(Tensor::from_vec(vec![scalar], vec![1])));
+                            self.record_unary(TapeOp::Mean, &t, &result);
+                            Ok(Value::Tensor(result))
+                        } else {
+                            Ok(Value::Float(tensor.mean()))
+                        }
+                    }
+                    "max_val" => Ok(Value::Float(tensor.max_val())),
+
+                    // ── Elementwise unary ──
+                    "abs" => {
+                        let result = Rc::new(RefCell::new(tensor.abs()));
+                        Ok(Value::Tensor(result))
+                    }
+                    "sqrt" => {
+                        let result = Rc::new(RefCell::new(tensor.sqrt()));
+                        Ok(Value::Tensor(result))
+                    }
+                    "exp" => {
+                        let result = Rc::new(RefCell::new(tensor.exp()));
+                        if self.recording { self.record_unary(TapeOp::Exp, &t, &result); }
+                        Ok(Value::Tensor(result))
+                    }
+                    "log" => {
+                        let result = Rc::new(RefCell::new(tensor.log()));
+                        if self.recording { self.record_unary(TapeOp::Log, &t, &result); }
+                        Ok(Value::Tensor(result))
+                    }
+                    "relu" => {
+                        let result = Rc::new(RefCell::new(tensor.relu()));
+                        if self.recording { self.record_unary(TapeOp::ReLU, &t, &result); }
+                        Ok(Value::Tensor(result))
+                    }
+                    "sigmoid" => {
+                        let result = Rc::new(RefCell::new(tensor.sigmoid()));
+                        if self.recording { self.record_unary(TapeOp::Sigmoid, &t, &result); }
+                        Ok(Value::Tensor(result))
+                    }
+                    "tanh" => {
+                        let result = Rc::new(RefCell::new(tensor.tanh()));
+                        Ok(Value::Tensor(result))
+                    }
+                    "gelu" => {
+                        let result = Rc::new(RefCell::new(tensor.gelu()));
+                        if self.recording { self.record_unary(TapeOp::Gelu, &t, &result); }
+                        Ok(Value::Tensor(result))
+                    }
+                    "softmax" => {
+                        let result_tensor = tensor.softmax().ok_or_else(|| {
+                            TenthError::RuntimeError { message: "softmax failed".into() }
+                        })?;
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording { self.record_unary(TapeOp::Softmax, &t, &result); }
+                        Ok(Value::Tensor(result))
+                    }
+
+                    // ── Shape operations ──
+                    "reshape" | "view" => {
+                        let shape: Vec<usize> = args.iter()
+                            .map(|a| a.as_int().unwrap_or(1) as usize)
+                            .collect();
+                        let result = tensor.reshape(&shape).ok_or_else(|| {
+                            TenthError::RuntimeError { message: format!("cannot reshape to {:?}", shape) }
+                        })?;
+                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                    }
                     "flatten" => Ok(Value::Tensor(Rc::new(RefCell::new(tensor.flatten())))),
+                    "transpose" => {
+                        let result_tensor = tensor.transpose().ok_or_else(|| {
+                            TenthError::RuntimeError { message: "transpose requires at least 2 dimensions".into() }
+                        })?;
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording { self.record_unary(TapeOp::Transpose, &t, &result); }
+                        Ok(Value::Tensor(result))
+                    }
+                    "permute" => {
+                        let dims: Vec<usize> = args.iter()
+                            .map(|a| a.as_int().unwrap_or(0) as usize)
+                            .collect();
+                        let result = tensor.permute(&dims)
+                            .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                    }
+                    "broadcast_to" => {
+                        let target_shape: Vec<usize> = args.iter()
+                            .map(|a| a.as_int().unwrap_or(1) as usize)
+                            .collect();
+                        let result = tensor.broadcast_to(&target_shape).ok_or_else(|| {
+                            TenthError::RuntimeError { message: format!("cannot broadcast to {:?}", target_shape) }
+                        })?;
+                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                    }
+                    "cat" => {
+                        if args.is_empty() {
+                            return err("cat() takes at least 1 argument (other, [dim])");
+                        }
+                        let dim = args.get(1).and_then(|a| a.as_int()).unwrap_or(0) as usize;
+                        if let Value::Tensor(other) = &args[0] {
+                            let result = tensor.cat(&other.borrow(), dim)
+                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                        } else {
+                            err("cat() first argument must be a tensor")
+                        }
+                    }
+                    "masked_fill" => {
+                        if args.len() < 2 {
+                            return err("masked_fill() takes mask and value");
+                        }
+                        let value = args[1].as_float().unwrap_or(0.0);
+                        if let Value::Tensor(mask_rc) = &args[0] {
+                            let result = tensor.masked_fill(&mask_rc.borrow(), value)
+                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                        } else {
+                            err("masked_fill() mask must be a tensor")
+                        }
+                    }
+
+                    // ── Matrix / NN operations ──
+                    "matmul" => {
+                        if args.len() != 1 {
+                            return err("matmul() takes 1 argument");
+                        }
+                        if let Value::Tensor(other) = &args[0] {
+                            let result_tensor = tensor.matmul(&other.borrow())
+                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            let result = Rc::new(RefCell::new(result_tensor));
+                            if self.recording { self.record_binary(TapeOp::MatMul, &t, &other, &result); }
+                            Ok(Value::Tensor(result))
+                        } else {
+                            err("matmul() argument must be a tensor")
+                        }
+                    }
+                    "conv2d" => {
+                        // x.conv2d(w, kernel_h, kernel_w, stride, pad)
+                        if args.len() < 5 {
+                            return err("conv2d() takes 5 args: w, kH, kW, stride, pad");
+                        }
+                        let k_h = args[1].as_int().unwrap_or(3) as usize;
+                        let k_w = args[2].as_int().unwrap_or(3) as usize;
+                        let stride = args[3].as_int().unwrap_or(1) as usize;
+                        let pad = args[4].as_int().unwrap_or(0) as usize;
+                        if let Value::Tensor(w_rc) = &args[0] {
+                            let w_data = w_rc.borrow();
+                            let (cols, h_out, w_out) = tensor.im2col(k_h, k_w, stride, pad)
+                                .ok_or_else(|| TenthError::RuntimeError {
+                                    message: "im2col failed (input must be 4D)".into(),
+                                })?;
+                            let w_shape = w_data.shape();
+                            let c_out = w_shape[0];
+                            let w_flat = w_data.reshape(&[c_out, w_shape[1] * w_shape[2] * w_shape[3]])
+                                .ok_or_else(|| TenthError::RuntimeError {
+                                    message: "weight reshape failed".into(),
+                                })?;
+                            let output_2d = cols.matmul(&w_flat.transpose()
+                                .ok_or_else(|| TenthError::RuntimeError {
+                                    message: "weight transpose failed".into(),
+                                })?).map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            let n = tensor.shape()[0];
+                            let result_tensor = output_2d.reshape(&[n, c_out, h_out, w_out])
+                                .ok_or_else(|| TenthError::RuntimeError {
+                                    message: "output reshape failed".into(),
+                                })?;
+                            let result = Rc::new(RefCell::new(result_tensor));
+                            if self.recording {
+                                let cols_rc = Rc::new(RefCell::new(cols));
+                                if let Some(ref mut tape) = self.tape {
+                                    let x_id = t.borrow().tape_id
+                                        .unwrap_or_else(|| tape.input(t.clone()));
+                                    let w_id = w_rc.borrow().tape_id
+                                        .unwrap_or_else(|| tape.input(w_rc.clone()));
+                                    let node_id = tape.conv2d(
+                                        x_id, t.clone(),
+                                        w_id, w_rc.clone(),
+                                        cols_rc, result.clone(),
+                                    );
+                                    result.borrow_mut().tape_id = Some(node_id);
+                                }
+                            }
+                            Ok(Value::Tensor(result))
+                        } else {
+                            err("conv2d: weight must be a tensor")
+                        }
+                    }
+                    "batchnorm" => {
+                        // x.batchnorm(gamma, beta, eps)
+                        if args.len() < 3 {
+                            return err("batchnorm() takes gamma, beta, eps");
+                        }
+                        let eps = args[2].as_float().unwrap_or(1e-5);
+                        if let (Value::Tensor(gamma_rc), Value::Tensor(beta_rc)) = (&args[0], &args[1]) {
+                            use super::tensor::Tensor;
+                            let x_shape = tensor.shape();
+                            if x_shape.len() < 2 {
+                                return err("batchnorm requires at least 2D input");
+                            }
+                            let c = x_shape[1];
+                            let n = x_shape[0];
+                            let spatial: usize = x_shape[2..].iter().product();
+                            let x_flat = tensor.data.as_standard_layout().to_owned();
+                            let x_slice = x_flat.as_slice().unwrap_or(&[]);
+                            let gamma_ref = gamma_rc.borrow();
+                            let beta_ref = beta_rc.borrow();
+                            let g_flat = gamma_ref.data.as_standard_layout().to_owned();
+                            let b_flat = beta_ref.data.as_standard_layout().to_owned();
+                            let g_slice = g_flat.as_slice().unwrap_or(&[]);
+                            let b_slice = b_flat.as_slice().unwrap_or(&[]);
+                            let mut result_data = Vec::with_capacity(x_slice.len());
+                            let mut x_hat_data = Vec::with_capacity(x_slice.len());
+                            let mut std_inv_data = Vec::with_capacity(c);
+                            for ci in 0..c {
+                                let mut sum = 0.0;
+                                let mut count = 0;
+                                for ni in 0..n {
+                                    for si in 0..spatial {
+                                        let idx = ((ni * c + ci) * spatial) + si;
+                                        if idx < x_slice.len() { sum += x_slice[idx]; count += 1; }
+                                    }
+                                }
+                                let mean = if count > 0 { sum / count as f64 } else { 0.0 };
+                                let mut var_sum = 0.0;
+                                for ni in 0..n {
+                                    for si in 0..spatial {
+                                        let idx = ((ni * c + ci) * spatial) + si;
+                                        if idx < x_slice.len() { let d = x_slice[idx] - mean; var_sum += d * d; }
+                                    }
+                                }
+                                let var = if count > 0 { var_sum / count as f64 } else { 1.0 };
+                                let std_inv = 1.0 / (var + eps).sqrt();
+                                std_inv_data.push(std_inv);
+                                let g = g_slice.get(ci).copied().unwrap_or(1.0);
+                                let b = b_slice.get(ci).copied().unwrap_or(0.0);
+                                for ni in 0..n {
+                                    for si in 0..spatial {
+                                        let idx = ((ni * c + ci) * spatial) + si;
+                                        if idx < x_slice.len() {
+                                            let x_hat = (x_slice[idx] - mean) * std_inv;
+                                            x_hat_data.push(x_hat);
+                                            result_data.push(g * x_hat + b);
+                                        }
+                                    }
+                                }
+                            }
+                            let result = Rc::new(RefCell::new(Tensor::from_vec(result_data, x_shape.clone())));
+                            if self.recording {
+                                let x_hat = Rc::new(RefCell::new(Tensor::from_vec(x_hat_data, x_shape.clone())));
+                                let std_inv_tensor = Rc::new(RefCell::new(Tensor::from_vec(std_inv_data, vec![c])));
+                                if let Some(ref mut tape) = self.tape {
+                                    let x_id = t.borrow().tape_id
+                                        .unwrap_or_else(|| tape.input(t.clone()));
+                                    let node_id = tape.batchnorm(
+                                        x_id, t.clone(),
+                                        gamma_rc.clone(), beta_rc.clone(),
+                                        x_hat, std_inv_tensor, result.clone(),
+                                    );
+                                    result.borrow_mut().tape_id = Some(node_id);
+                                }
+                            }
+                            Ok(Value::Tensor(result))
+                        } else {
+                            err("batchnorm: gamma and beta must be tensors")
+                        }
+                    }
+                    "layer_norm" => {
+                        // x.layer_norm(gamma, beta, [eps])
+                        if args.len() < 2 {
+                            return err("layer_norm() takes gamma, beta, [eps]");
+                        }
+                        let eps = args.get(2).and_then(|a| a.as_float()).unwrap_or(1e-5);
+                        if let (Value::Tensor(gamma_rc), Value::Tensor(beta_rc)) = (&args[0], &args[1]) {
+                            use super::tensor::Tensor;
+                            let x_shape = tensor.shape();
+                            let ndim = x_shape.len();
+                            if ndim == 0 || x_shape[ndim - 1] == 0 {
+                                return Ok(Value::Tensor(Rc::new(RefCell::new(tensor.clone()))));
+                            }
+                            let axis_len = x_shape[ndim - 1];
+                            let outer_len: usize = x_shape[..ndim - 1].iter().product();
+                            let contiguous = tensor.data.as_standard_layout().to_owned();
+                            let flat = match contiguous.as_slice() {
+                                Some(s) => s.to_vec(),
+                                None => tensor.data.iter().cloned().collect(),
+                            };
+                            let gamma_ref = gamma_rc.borrow();
+                            let beta_ref = beta_rc.borrow();
+                            let g_flat = gamma_ref.data.as_standard_layout().to_owned();
+                            let b_flat = beta_ref.data.as_standard_layout().to_owned();
+                            let g_slice = g_flat.as_slice().unwrap_or(&[]);
+                            let b_slice = b_flat.as_slice().unwrap_or(&[]);
+                            let mut result_data = Vec::with_capacity(flat.len());
+                            let mut x_hat_data = Vec::with_capacity(flat.len());
+                            let mut std_inv_data = Vec::with_capacity(outer_len);
+                            for i in 0..outer_len {
+                                let start = i * axis_len;
+                                let slice = &flat[start..start + axis_len];
+                                let mean: f64 = slice.iter().sum::<f64>() / axis_len as f64;
+                                let var: f64 = slice.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / axis_len as f64;
+                                let std_inv = 1.0 / (var + eps).sqrt();
+                                std_inv_data.push(std_inv);
+                                for j in 0..axis_len {
+                                    let x_hat = (slice[j] - mean) * std_inv;
+                                    x_hat_data.push(x_hat);
+                                    let g = g_slice.get(j).copied().unwrap_or(1.0);
+                                    let b = b_slice.get(j).copied().unwrap_or(0.0);
+                                    result_data.push(g * x_hat + b);
+                                }
+                            }
+                            let result = Rc::new(RefCell::new(Tensor::from_vec(result_data, x_shape.clone())));
+                            if self.recording {
+                                let x_hat = Rc::new(RefCell::new(Tensor::from_vec(x_hat_data, x_shape.clone())));
+                                let std_inv_tensor = Rc::new(RefCell::new(Tensor::from_vec(std_inv_data, vec![outer_len])));
+                                if let Some(ref mut tape) = self.tape {
+                                    let x_id = t.borrow().tape_id
+                                        .unwrap_or_else(|| tape.input(t.clone()));
+                                    let node_id = tape.layernorm(
+                                        x_id, t.clone(),
+                                        gamma_rc.clone(), beta_rc.clone(),
+                                        x_hat, std_inv_tensor, result.clone(),
+                                    );
+                                    result.borrow_mut().tape_id = Some(node_id);
+                                }
+                            }
+                            Ok(Value::Tensor(result))
+                        } else {
+                            err("layer_norm: gamma and beta must be tensors")
+                        }
+                    }
+                    "dropout" => {
+                        if args.is_empty() {
+                            return err("dropout() takes 1 argument (rate)");
+                        }
+                        let rate = args[0].as_float().unwrap_or(0.5);
+                        use rand::Rng;
+                        let mut rng = rand::thread_rng();
+                        let scale = 1.0 / (1.0 - rate);
+                        let mask_data = tensor.data.mapv(|_| {
+                            if rng.r#gen::<f64>() < rate { 0.0 } else { scale }
+                        });
+                        let mask = Rc::new(RefCell::new(Tensor::from_data(mask_data)));
+                        let result_tensor = Tensor::from_data(&tensor.data * &mask.borrow().data);
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording {
+                            if let Some(ref mut tape) = self.tape {
+                                let input_id = t.borrow().tape_id
+                                    .unwrap_or_else(|| tape.input(t.clone()));
+                                let _mask_id = tape.input(mask.clone());
+                                let node_id = tape.dropout(input_id, t.clone(), mask.clone(), result.clone());
+                                result.borrow_mut().tape_id = Some(node_id);
+                            }
+                        }
+                        Ok(Value::Tensor(result))
+                    }
+
                     _ => err(&format!("Tensor has no method '{method}'")),
                 }
             }
@@ -767,6 +1227,41 @@ impl Vm {
             (Value::String(x), Value::String(y)) => x == y,
             (Value::Unit, Value::Unit) => true,
             _ => false,
+        }
+    }
+
+    // ── Autodiff recording helpers ─────────────────────────────────────
+
+    fn record_unary(&mut self, op: TapeOp, input: &Rc<RefCell<Tensor>>, result: &Rc<RefCell<Tensor>>) {
+        if let Some(ref mut tape) = self.tape {
+            let node_id = match input.borrow().tape_id {
+                Some(input_id) => tape.unary(op, input_id, input.clone(), result.clone()),
+                None => {
+                    let dummy = tape.input(input.clone());
+                    tape.unary(op, dummy, input.clone(), result.clone())
+                }
+            };
+            result.borrow_mut().tape_id = Some(node_id);
+        }
+    }
+
+    fn record_binary(&mut self, op: TapeOp, t1: &Rc<RefCell<Tensor>>, t2: &Rc<RefCell<Tensor>>, result: &Rc<RefCell<Tensor>>) {
+        if let Some(ref mut tape) = self.tape {
+            let id1 = t1.borrow().tape_id;
+            let id2 = t2.borrow().tape_id;
+            let node_id = match (id1, id2) {
+                (Some(a), Some(b)) => tape.binary(op, a, b, t1.clone(), t2.clone(), result.clone()),
+                (Some(a), None) => {
+                    let dummy = tape.input(t2.clone());
+                    tape.binary(op, a, dummy, t1.clone(), t2.clone(), result.clone())
+                }
+                (None, Some(b)) => {
+                    let dummy = tape.input(t1.clone());
+                    tape.binary(op, dummy, b, t1.clone(), t2.clone(), result.clone())
+                }
+                (None, None) => tape.binary_direct(op, t1.clone(), t2.clone(), result.clone()),
+            };
+            result.borrow_mut().tape_id = Some(node_id);
         }
     }
 }

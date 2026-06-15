@@ -145,6 +145,11 @@ impl Tensor {
         Tensor::from_data(&self.data / scalar)
     }
 
+    /// Scalar divided by tensor: scalar / self (element-wise).
+    pub fn div_scalar_inv(&self, scalar: f64) -> Tensor {
+        Tensor::from_data(scalar / &self.data)
+    }
+
     // ── tensor-tensor element-wise ops (with broadcasting) ─────────────
 
     /// Element-wise addition with broadcasting.  Errors if shapes are incompatible.

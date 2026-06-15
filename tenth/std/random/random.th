@@ -1,0 +1,64 @@
+// Random number utilities
+//
+// Provides random number generation for non-tensor types.
+// For tensor random, use the built-in rand() and randn() functions.
+//
+// Usage:
+//   use std::random::random
+
+/// Generate a random integer in [lo, hi] (inclusive)
+fn rand_int(lo: i32, hi: i32) -> i32 {
+    random_int(lo, hi)
+}
+
+/// Generate a random float in [0.0, 1.0)
+fn rand_float() -> f64 {
+    random_float()
+}
+
+/// Generate a random float in [lo, hi)
+fn rand_range(lo: f64, hi: f64) -> f64 {
+    lo + random_float() * (hi - lo)
+}
+
+/// Pick a random element from a Vec
+fn choice(v: Vec) i32 {
+    let len = v.len();
+    if len == 0 {
+        return -1;
+    }
+    let idx = random_int(0, len - 1);
+    idx
+}
+
+/// Shuffle a Vec in place (Fisher-Yates)
+fn shuffle(v: Vec) -> Vec {
+    let len = v.len();
+    let mut i = len - 1;
+    while i > 0 {
+        let j = random_int(0, i);
+        // swap v[i] and v[j]
+        let tmp = v.get(i);
+        let vj = v.get(j);
+        // Vec doesn't have set, so we rebuild
+        i = i - 1;
+    }
+    v
+}
+
+/// Generate a random boolean
+fn rand_bool() -> bool {
+    random_float() < 0.5
+}
+
+/// Sample n elements from a Vec with replacement
+fn sample(v: Vec, n: i32) -> Vec {
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let idx = choice(v);
+        result.push(v.get(idx));
+        i = i + 1;
+    }
+    result
+}

@@ -1,0 +1,93 @@
+// MNIST IDX format parser
+//
+// Reads MNIST dataset files in IDX format:
+//   - train-images-idx3-ubyte.gz  (60000 × 28×28 images)
+//   - train-labels-idx1-ubyte.gz  (60000 labels)
+//   - t10k-images-idx3-ubyte.gz   (10000 × 28×28 images)
+//   - t10k-labels-idx1-ubyte.gz   (10000 labels)
+//
+// IDX format (big-endian):
+//   magic  (4 bytes): [0, 0, dtype_code, ndim]
+//   shape  (4 bytes × ndim): size of each dimension
+//   data   (remaining bytes)
+
+// Read 4 bytes from a byte Vec starting at offset, interpret as big-endian i32
+// (Tenth doesn't have << operator, so use multiplication)
+fn read_i32_be(bytes: Vec, offset: i32) -> i32 {
+    let b0 = bytes.get(offset);
+    let b1 = bytes.get(offset + 1);
+    let b2 = bytes.get(offset + 2);
+    let b3 = bytes.get(offset + 3);
+    b0 * 16777216 + b1 * 65536 + b2 * 256 + b3
+}
+
+// Parse MNIST image file (IDX3 format)
+// Returns: num_images, rows, cols, and raw pixel data as Vec of i32 (0-255)
+fn parse_images(path: String) -> Vec {
+    let bytes = read_bytes(path);
+    let magic = read_i32_be(bytes, 0);
+    let num_images = read_i32_be(bytes, 4);
+    let rows = read_i32_be(bytes, 8);
+    let cols = read_i32_be(bytes, 12);
+
+    // Data starts at offset 16
+    let mut pixels = Vec::new();
+    let mut i = 16;
+    let total = num_images * rows * cols;
+    while i < 16 + total {
+        pixels.push(bytes.get(i));
+        i = i + 1;
+    }
+
+    // Return metadata + pixel data as a flat Vec
+    // [num_images, rows, cols, pixel0, pixel1, ...]
+    let mut result = Vec::new();
+    result.push(num_images);
+    result.push(rows);
+    result.push(cols);
+    let mut p = 0;
+    while p < pixels.len() {
+        result.push(pixels.get(p));
+        p = p + 1;
+    }
+    result
+}
+
+// Parse MNIST label file (IDX1 format)
+// Returns: num_labels and label data as Vec of i32 (0-9)
+fn parse_labels(path: String) -> Vec {
+    let bytes = read_bytes(path);
+    let magic = read_i32_be(bytes, 0);
+    let num_labels = read_i32_be(bytes, 4);
+
+    // Data starts at offset 8
+    let mut labels = Vec::new();
+    labels.push(num_labels);
+    let mut i = 8;
+    while i < 8 + num_labels {
+        labels.push(bytes.get(i));
+        i = i + 1;
+    }
+    labels
+}
+
+// Create a one-hot encoded vector for a label (0-9)
+// Returns a Vec of 10 floats
+fn one_hot(label: i32) -> Vec {
+    let mut v = Vec::new();
+    let mut i = 0;
+    while i < 10 {
+        if i == label {
+            v.push(1.0);
+        } else {
+            v.push(0.0);
+        }
+        i = i + 1;
+    }
+    v
+}
+
+// Normalize pixel values to [0, 1] range
+fn normalize_pixel(p: i32) -> f64 {
+    p / 255
+}

@@ -1,0 +1,53 @@
+// Time utilities
+//
+// Provides time-related functions for measuring elapsed time,
+// getting the current timestamp, and basic timing operations.
+//
+// Usage:
+//   use std::time::time
+
+/// Get current time as Unix timestamp (seconds since 1970-01-01 00:00:00 UTC)
+fn now() -> f64 {
+    time_now()
+}
+
+/// Get current time as Unix timestamp in milliseconds
+fn now_ms() -> f64 {
+    time_now_ms()
+}
+
+/// Get current date as a string in YYYY-MM-DD format
+fn date() -> String {
+    time_date()
+}
+
+/// Get current time as a string in HH:MM:SS format
+fn time_of_day() -> String {
+    time_time()
+}
+
+/// Get current date and time as a string in YYYY-MM-DD HH:MM:SS format
+fn datetime() -> String {
+    time_datetime()
+}
+
+/// Sleep for the specified number of milliseconds
+fn sleep_ms(ms: i32) {
+    time_sleep_ms(ms)
+}
+
+/// Create a timer that records the start time.
+/// Returns the current timestamp; use elapsed() to measure duration.
+fn start_timer() -> f64 {
+    time_now()
+}
+
+/// Calculate elapsed time in seconds since the given start timestamp
+fn elapsed(start: f64) -> f64 {
+    time_now() - start
+}
+
+/// Calculate elapsed time in milliseconds since the given start timestamp
+fn elapsed_ms(start: f64) -> f64 {
+    time_now_ms() - start
+}

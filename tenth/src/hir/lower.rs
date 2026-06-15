@@ -317,7 +317,7 @@ impl Lowerer {
                     if var_info.is_none() && fn_info.is_none() {
                         match ident.name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
-                            | "read_file" | "write_file" | "write_bytes" | "str_at" | "Vec::new" | "HashMap::new"
+                            | "read_file" | "write_file" | "write_bytes" | "read_bytes" | "str_at" | "Vec::new" | "HashMap::new"
                             | "compile_host" | "compile_program"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
@@ -328,6 +328,13 @@ impl Lowerer {
                             | "format" | "parse_int" | "parse_float"
                             | "path_join" | "path_exists" | "path_is_file" | "path_is_dir"
                             | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file"
+                            | "time_now" | "time_now_ms" | "time_date" | "time_time" | "time_datetime" | "time_sleep_ms"
+                            | "random_int" | "random_float"
+                            | "math_tan" | "math_asin" | "math_acos" | "math_atan" | "math_atan2"
+                            | "math_sinh" | "math_cosh" | "math_tanh" | "math_log10" | "math_log2" | "math_exp" | "math_pow"
+                            | "math_floor" | "math_ceil" | "math_round"
+                            | "cli_args_count" | "cli_arg"
+                            | "json_encode" | "json_encode_pretty" | "json_decode"
                             | "lexer_new" | "lexer_tokenize" | "parse_program"
                             | "lower_program" | "compile_to_wasm" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)

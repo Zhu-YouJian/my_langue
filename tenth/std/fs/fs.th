@@ -1,0 +1,119 @@
+// File system utilities
+//
+// Higher-level file system operations built on top of built-in functions.
+//
+// Usage:
+//   use std::fs::fs
+
+/// Check if a path exists
+fn exists(path: String) -> bool {
+    path_exists(path)
+}
+
+/// Check if a path is a file
+fn is_file(path: String) -> bool {
+    path_is_file(path)
+}
+
+/// Check if a path is a directory
+fn is_dir(path: String) -> bool {
+    path_is_dir(path)
+}
+
+/// Join two path components
+fn join(base: String, rest: String) -> String {
+    path_join(base, rest)
+}
+
+/// Create a directory (and all parent directories)
+fn mkdir_all(path: String) {
+    mkdir(path)
+}
+
+/// List directory contents
+fn list_dir(path: String) -> Vec {
+    list_dir(path)
+}
+
+/// Get file size in bytes
+fn size(path: String) -> i32 {
+    file_size(path)
+}
+
+/// Remove a file
+fn remove(path: String) {
+    remove_file(path)
+}
+
+/// Copy a file
+fn copy(src: String, dst: String) {
+    copy_file(src, dst)
+}
+
+/// Read entire file as a string
+fn read_text(path: String) -> String {
+    read_file(path)
+}
+
+/// Read entire file as bytes
+fn read_bytes(path: String) -> Vec {
+    read_bytes(path)
+}
+
+/// Write a string to a file
+fn write_text(path: String, content: String) {
+    write_file(path, content)
+}
+
+/// Write bytes to a file
+fn write_bytes(path: String, bytes: Vec) {
+    write_bytes(bytes, path)
+}
+
+/// Read all lines from a text file
+fn read_lines(path: String) -> Vec {
+    let content = read_file(path);
+    content.split("\n")
+}
+
+/// Get the file extension from a path
+fn extension(path: String) -> String {
+    let parts = path.split(".");
+    if parts.len() > 1 {
+        parts.get(parts.len() - 1)
+    } else {
+        ""
+    }
+}
+
+/// Get the file name from a path (without directory)
+fn filename(path: String) -> String {
+    let parts = path.split("/");
+    if parts.len() > 1 {
+        parts.get(parts.len() - 1)
+    } else {
+        // Try backslash for Windows paths
+        let bparts = path.split("\\");
+        if bparts.len() > 1 {
+            bparts.get(bparts.len() - 1)
+        } else {
+            path
+        }
+    }
+}
+
+/// Get the parent directory of a path
+fn parent(path: String) -> String {
+    let parts = path.split("/");
+    if parts.len() > 1 {
+        let mut result = parts.get(0);
+        let mut i = 1;
+        while i < parts.len() - 1 {
+            result = result + "/" + parts.get(i);
+            i = i + 1;
+        }
+        result
+    } else {
+        "."
+    }
+}

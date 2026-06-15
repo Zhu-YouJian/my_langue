@@ -1,0 +1,61 @@
+// Logging utilities
+//
+// Provides simple logging with levels: DEBUG, INFO, WARN, ERROR
+//
+// Usage:
+//   use std::logging::logging
+
+/// Log levels
+let LEVEL_DEBUG: i32 = 0;
+let LEVEL_INFO: i32 = 1;
+let LEVEL_WARN: i32 = 2;
+let LEVEL_ERROR: i32 = 3;
+
+/// Current minimum log level (only messages at or above this level are shown)
+let mut log_level: i32 = LEVEL_INFO;
+
+/// Format a log message with level prefix
+fn format_message(level: i32, msg: String) -> String {
+    if level == LEVEL_DEBUG {
+        "[DEBUG] " + msg
+    } else if level == LEVEL_INFO {
+        "[INFO] " + msg
+    } else if level == LEVEL_WARN {
+        "[WARN] " + msg
+    } else {
+        "[ERROR] " + msg
+    }
+}
+
+/// Log a debug message
+fn debug(msg: String) {
+    if log_level <= LEVEL_DEBUG {
+        println(format_message(LEVEL_DEBUG, msg));
+    }
+}
+
+/// Log an info message
+fn info(msg: String) {
+    if log_level <= LEVEL_INFO {
+        println(format_message(LEVEL_INFO, msg));
+    }
+}
+
+/// Log a warning message
+fn warn(msg: String) {
+    if log_level <= LEVEL_WARN {
+        println(format_message(LEVEL_WARN, msg));
+    }
+}
+
+/// Log an error message
+fn error(msg: String) {
+    if log_level <= LEVEL_ERROR {
+        println(format_message(LEVEL_ERROR, msg));
+    }
+}
+
+/// Set the minimum log level
+fn set_level(level: i32) {
+    log_level = level;
+}
