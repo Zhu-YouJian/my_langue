@@ -386,7 +386,7 @@ fn test_error_span_in_borrow_check() {
     assert!(result.is_err());
     let err_msg = result.unwrap_err();
     let err_str = err_msg.to_string();
-    assert!(err_str.contains("moved"), "expected 'moved' in error, got: {}", err_str);
+    assert!(err_str.contains("移动") || err_str.contains("moved"), "expected 'moved' in error, got: {}", err_str);
 }
 
 // ── VM for-in loop tests ──

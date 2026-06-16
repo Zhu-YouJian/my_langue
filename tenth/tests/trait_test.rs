@@ -155,7 +155,7 @@ fn test_trait_bound_check_missing_method() {
     let result = run_code(src);
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.contains("missing implementation"), "expected missing impl error, got: {}", err);
+    assert!(err.contains("缺少方法") || err.contains("missing implementation"), "expected missing impl error, got: {}", err);
 }
 
 // --- Trait with default method only (no required methods) ---

@@ -150,7 +150,7 @@ impl Lexer {
             let n: f64 = s.parse().map_err(|_| TenthError::LexerError {
                 line: span.line,
                 col: span.col,
-                message: format!("invalid float: {}", s),
+                message: format!("无效的浮点数：{}", s),
             })?;
             Ok(Token {
                 kind: TokenKind::FloatLiteral(n),
@@ -160,7 +160,7 @@ impl Lexer {
             let n: i64 = s.parse().map_err(|_| TenthError::LexerError {
                 line: span.line,
                 col: span.col,
-                message: format!("invalid integer: {}", s),
+                message: format!("无效的整数：{}", s),
             })?;
             Ok(Token {
                 kind: TokenKind::IntLiteral(n),
@@ -307,7 +307,7 @@ impl Lexer {
         Err(TenthError::LexerError {
             line: span.line,
             col: span.col,
-            message: "unterminated string".into(),
+            message: "字符串未闭合".into(),
         })
     }
 
@@ -473,7 +473,7 @@ impl Lexer {
         Err(TenthError::LexerError {
             line: span.line,
             col: span.col,
-            message: format!("unexpected character: '{}'", ch),
+            message: format!("意外字符：'{}'", ch),
         })
     }
 

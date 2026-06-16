@@ -85,7 +85,7 @@ fn clone_struct_fields(val: &Value, expected_name: &str) -> TenthResult<Vec<(Str
         Value::Struct { name, fields } => {
             if name != expected_name {
                 return Err(TenthError::RuntimeError {
-                    message: format!("expected struct '{}', got '{}'", expected_name, name),
+                    message: format!("期望结构体 '{}'，但得到了 '{}'", expected_name, name),
                 });
             }
             Ok(fields.borrow().clone())
@@ -95,7 +95,7 @@ fn clone_struct_fields(val: &Value, expected_name: &str) -> TenthResult<Vec<(Str
             clone_struct_fields(&inner, expected_name)
         }
         _ => Err(TenthError::RuntimeError {
-            message: format!("expected struct '{}', got {:?}", expected_name, val.type_of()),
+            message: format!("期望结构体 '{}'，但得到了 {:?}", expected_name, val.type_of()),
         }),
     }
 }
@@ -117,12 +117,12 @@ fn get_field_i64(fields: &[(String, Value)], name: &str) -> TenthResult<i64> {
             match &*inner {
                 Value::Int(n) => Ok(*n),
                 v => Err(TenthError::RuntimeError {
-                    message: format!("field '{}' expected i64, got {:?}", name, v),
+                    message: format!("字段 '{}' 期望 i64，但得到了 {:?}", name, v),
                 }),
             }
         }
         v => Err(TenthError::RuntimeError {
-            message: format!("field '{}' expected i64, got {:?}", name, v),
+            message: format!("字段 '{}' 期望 i64，但得到了 {:?}", name, v),
         }),
     }
 }
@@ -135,13 +135,13 @@ fn get_field_string(fields: &[(String, Value)], name: &str) -> TenthResult<Strin
             match &*inner {
                 Value::String(s) => Ok(s.clone()),
                 v => Err(TenthError::RuntimeError {
-                    message: format!("field '{}' expected str, got {:?}", name, v),
+                    message: format!("字段 '{}' 期望字符串，但得到了 {:?}", name, v),
                 }),
             }
         }
         Value::Int(n) => Ok(n.to_string()),
         v => Err(TenthError::RuntimeError {
-            message: format!("field '{}' expected str, got {:?}", name, v),
+            message: format!("字段 '{}' 期望字符串，但得到了 {:?}", name, v),
         }),
     }
 }
@@ -423,12 +423,12 @@ fn convert_expr_depth(
 ) -> TenthResult<ast::Expr> {
     if depth > 50 {
         return Err(TenthError::RuntimeError {
-            message: format!("expr conversion recursion too deep at index {} (depth={})", idx, depth),
+            message: format!("表达式转换递归过深，索引 {}（深度={}）", idx, depth),
         });
     }
     if idx == 0 || idx > expr_nodes.len() {
         return Err(TenthError::RuntimeError {
-            message: format!("expr index {} out of bounds (len={})", idx, expr_nodes.len()),
+            message: format!("表达式索引 {} 越界（长度={}）", idx, expr_nodes.len()),
         });
     }
 
@@ -442,7 +442,7 @@ fn convert_expr_depth(
     let fields = match clone_struct_fields_opt(val) {
         Some(f) => f,
         None => return Err(TenthError::RuntimeError {
-            message: "expr node is not a struct".into(),
+            message: "表达式节点不是结构体".into(),
         }),
     };
 
@@ -496,7 +496,7 @@ fn convert_expr_depth(
                 "-" => ast::UnaryOp::Neg,
                 "!" => ast::UnaryOp::Not,
                 _ => return Err(TenthError::RuntimeError {
-                    message: format!("unknown unary operator: {}", sval),
+                    message: format!("未知的一元运算符：{}", sval),
                 }),
             };
             Ok(ast::Expr {
@@ -661,7 +661,7 @@ fn parse_binop(s: &str) -> TenthResult<ast::BinOp> {
         "&&" => Ok(ast::BinOp::And),
         "||" => Ok(ast::BinOp::Or),
         _ => Err(TenthError::RuntimeError {
-            message: format!("unknown binary operator: {}", s),
+            message: format!("未知的二元运算符：{}", s),
         }),
     }
 }

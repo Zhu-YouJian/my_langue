@@ -79,7 +79,7 @@ impl Parser {
                 Err(TenthError::ParseError {
                     line: token.span.line,
                     col: token.span.col,
-                    message: format!("expected >, got {}", token.kind),
+                    message: format!("期望 >，但遇到了 {}", token.kind),
                 })
             }
         }
@@ -94,7 +94,7 @@ impl Parser {
             Err(TenthError::ParseError {
                 line: token.span.line,
                 col: token.span.col,
-                message: format!("expected {}, got {}", kind, token.kind),
+                message: format!("期望 {}，但遇到了 {}", kind, token.kind),
             })
         }
     }
@@ -468,7 +468,7 @@ impl Parser {
                 return Err(TenthError::ParseError {
                     line: span.line,
                     col: span.col,
-                    message: format!("unexpected token: {}", token.kind),
+                    message: format!("意外的标记：{}", token.kind),
                 });
             }
         };
@@ -620,7 +620,7 @@ impl Parser {
                         return Err(TenthError::ParseError {
                             line: span.line,
                             col: span.col,
-                            message: "expected identifier after '.'".into(),
+                            message: "'.' 后面期望标识符".into(),
                         });
                     }
                 }
@@ -1009,7 +1009,7 @@ impl Parser {
                 return Err(TenthError::ParseError {
                     line: self.peek().span.line,
                     col: self.peek().span.col,
-                    message: "expected parameter name".into(),
+                    message: "期望参数名".into(),
                 });
             };
             self.advance();
@@ -1201,7 +1201,7 @@ impl Parser {
             _ => Err(TenthError::ParseError {
                 line: span.line,
                 col: span.col,
-                message: "expected type".into(),
+                message: "期望类型".into(),
             }),
         }
     }
@@ -1220,7 +1220,7 @@ impl Parser {
                 return Err(TenthError::ParseError {
                     line: self.peek().span.line,
                     col: self.peek().span.col,
-                    message: "expected parameter name".into(),
+                    message: "期望参数名".into(),
                 });
             }
         };
@@ -1511,7 +1511,7 @@ impl Parser {
                     return Err(TenthError::ParseError {
                         line: self.peek().span.line,
                         col: self.peek().span.col,
-                        message: "expected function name".into(),
+                        message: "期望函数名".into(),
                     });
                 };
                 self.advance();
@@ -1798,7 +1798,7 @@ impl Parser {
                     return Err(TenthError::ParseError {
                         line: self.peek().span.line,
                         col: self.peek().span.col,
-                        message: "expected end of range pattern".into(),
+                        message: "范围模式缺少结束值".into(),
                     });
                 }
                 if matches!(self.peek_kind(), TokenKind::DotDotEq) {
@@ -1811,7 +1811,7 @@ impl Parser {
                     return Err(TenthError::ParseError {
                         line: self.peek().span.line,
                         col: self.peek().span.col,
-                        message: "expected end of range pattern".into(),
+                        message: "范围模式缺少结束值".into(),
                     });
                 }
                 Ok(Pattern::Literal(Literal::Int(n)))
@@ -1941,7 +1941,7 @@ impl Parser {
             Err(TenthError::ParseError {
                 line: span.line,
                 col: span.col,
-                message: "expected identifier".into(),
+                message: "期望标识符".into(),
             })
         }
     }

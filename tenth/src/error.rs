@@ -3,31 +3,31 @@ use crate::runtime::value::Value;
 
 #[derive(Error, Debug, Clone)]
 pub enum TenthError {
-    #[error("Lexer error at line {line}, col {col}: {message}")]
+    #[error("第 {line} 行第 {col} 列：词法错误 — {message}")]
     LexerError {
         line: usize,
         col: usize,
         message: String,
     },
 
-    #[error("Parser error at line {line}, col {col}: {message}")]
+    #[error("第 {line} 行第 {col} 列：语法错误 — {message}")]
     ParseError {
         line: usize,
         col: usize,
         message: String,
     },
 
-    #[error("Type error at line {line}, col {col}: {message}")]
+    #[error("第 {line} 行第 {col} 列：类型错误 — {message}")]
     TypeError {
         line: usize,
         col: usize,
         message: String,
     },
 
-    #[error("Runtime error: {message}")]
+    #[error("运行时错误 — {message}")]
     RuntimeError { message: String },
 
-    #[error("Unexpected end of input")]
+    #[error("输入意外结束")]
     UnexpectedEof,
 
     /// Non-error signal: a return statement was executed with this value.
@@ -63,13 +63,13 @@ impl TenthError {
             let source_line = src.lines().nth(ln.saturating_sub(1)).unwrap_or("");
             let col = col_num.unwrap_or(1);
             let caret = build_caret(col, source_line);
-            format!("Error: {}\n  |\n{:>3} | {}\n  | {}{}", base, ln, source_line, caret, self.suggestion())
+            format!("错误：{}\n  |\n{:>3} | {}\n  | {}{}", base, ln, source_line, caret, self.suggestion())
         } else {
             let suggestion = self.suggestion();
             if suggestion.is_empty() {
-                format!("Error: {}", base)
+                format!("错误：{}", base)
             } else {
-                format!("Error: {}{}", base, suggestion)
+                format!("错误：{}{}", base, suggestion)
             }
         }
     }
@@ -89,40 +89,53 @@ impl TenthError {
         match self {
             TenthError::ParseError { message, .. } => {
                 let msg = message.to_lowercase();
-                if msg.contains("expected") && msg.contains("=>") {
-                    "\n  help: match arms use `pattern => body` syntax".to_string()
-                } else if msg.contains("expected") && msg.contains("}") {
-                    "\n  help: check for missing closing brace `}`".to_string()
-                } else if msg.contains("expected") && msg.contains(")") {
-                    "\n  help: check for missing closing parenthesis `)`".to_string()
-                } else if msg.contains("unexpected token") && msg.contains("=") {
-                    "\n  help: did you mean `==` for equality comparison?".to_string()
-                } else if msg.contains("undefined variable") {
+                if msg.contains("期望") && msg.contains("=>") {
+                    "\n  提示：match 分支使用 `模式 => 代码体` 语法".to_string()
+                } else if msg.contains("期望") && msg.contains("}") {
+                    "\n  提示：检查是否缺少右花括号 `}`".to_string()
+                } else if msg.contains("期望") && msg.contains(")") {
+                    "\n  提示：检查是否缺少右圆括号 `)`".to_string()
+                } else if msg.contains("意外") && msg.contains("=") {
+                    "\n  提示：你是否想用 `==` 进行相等比较？".to_string()
+                } else if msg.contains("未定义") {
                     extract_var_hint(message)
                 } else {
                     String::new()
                 }
             }
             TenthError::TypeError { message, .. } => {
-                if message.contains("undefined variable") {
+                if message.contains("未定义") {
                     extract_var_hint(message)
-                } else if message.contains("mismatched type") || message.contains("type mismatch") {
-                    "\n  help: check that the types on both sides of the expression match".to_string()
-                } else if message.contains("cannot borrow") {
-                    "\n  help: Tenth uses ownership and borrowing rules similar to Rust".to_string()
-                } else if message.contains("missing implementation") {
-                    "\n  help: all required trait methods must be implemented (default methods are optional)".to_string()
+                } else if message.contains("已移动") || message.contains("移动后") {
+                    "\n  提示：该值已被移动，无法再使用；考虑先克隆一份".to_string()
+                } else if message.contains("不可同时") || message.contains("可变借用") || message.contains("共享借用") {
+                    "\n  提示：Tenth 采用类似 Rust 的所有权和借用规则".to_string()
+                } else if message.contains("缺少实现") {
+                    "\n  提示：trait 中所有非默认方法都必须实现".to_string()
+                } else if message.contains("参数") && message.contains("不匹配") {
+                    "\n  提示：检查函数调用时传入的参数数量和类型是否正确".to_string()
                 } else {
                     String::new()
                 }
             }
             TenthError::RuntimeError { message } => {
-                if message.contains("undefined variable") {
+                if message.contains("未定义") {
                     extract_var_hint(message)
-                } else if message.contains("use of moved value") {
-                    "\n  help: the value has been moved and can no longer be used; consider cloning it first".to_string()
-                } else if message.contains("index out of bounds") {
-                    "\n  help: the index exceeds the length of the collection".to_string()
+                } else if message.contains("已移动") || message.contains("移动后") {
+                    "\n  提示：该值已被移动，无法再使用；考虑先克隆一份".to_string()
+                } else if message.contains("越界") || message.contains("索引") {
+                    "\n  提示：索引超出了集合的长度范围".to_string()
+                } else if message.contains("无法读取") || message.contains("找不到") {
+                    "\n  提示：检查文件路径是否正确".to_string()
+                } else {
+                    String::new()
+                }
+            }
+            TenthError::LexerError { message, .. } => {
+                if message.contains("未终止") || message.contains("未闭合") {
+                    "\n  提示：检查字符串是否缺少右引号".to_string()
+                } else if message.contains("意外字符") {
+                    "\n  提示：该字符在此位置不合法，检查是否拼写错误".to_string()
                 } else {
                     String::new()
                 }
@@ -150,22 +163,20 @@ fn build_caret(col: usize, source_line: &str) -> String {
 
 /// Try to extract a "did you mean" hint for undefined variable errors.
 fn extract_var_hint(message: &str) -> String {
-    // Try to extract the variable name from "undefined variable 'x'"
+    // Try to extract the variable name from "未定义变量 'x'" or "undefined variable 'x'"
     if let Some(start) = message.find('\'') {
         if let Some(end) = message[start + 1..].find('\'') {
             let var = &message[start + 1..start + 1 + end];
-            // Common typo suggestions
             let suggestions = match var {
                 "pritnln" | "printn" => Some("println"),
                 "print" => Some("println"),
                 "strng" => Some("string"),
                 "flase" => Some("false"),
                 "ture" | "fales" => Some("true"),
-                "fn" => None, // keyword, not a variable
                 _ => None,
             };
             if let Some(s) = suggestions {
-                return format!("\n  help: did you mean `{}`?", s);
+                return format!("\n  提示：你是否想用 `{}`？", s);
             }
         }
     }
@@ -180,9 +191,9 @@ pub fn format_multiple_errors(errors: &[TenthError], source: Option<&str>) -> St
     if errors.len() == 1 {
         return errors[0].display_with_source(source);
     }
-    let mut output = format!("found {} errors:\n\n", errors.len());
+    let mut output = format!("发现 {} 个错误：\n\n", errors.len());
     for (i, err) in errors.iter().enumerate() {
-        output.push_str(&format!("Error {} of {}:\n", i + 1, errors.len()));
+        output.push_str(&format!("第 {} 个错误（共 {} 个）：\n", i + 1, errors.len()));
         output.push_str(&err.display_with_source(source));
         output.push_str("\n\n");
     }

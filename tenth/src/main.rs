@@ -105,7 +105,7 @@ fn source_to_hir(source: &str) -> TenthResult<tenth::hir::hir::HirProgram> {
 fn run_file(path: &str) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| tenth::error::TenthError::RuntimeError {
-            message: format!("cannot read {}: {}", path, e),
+            message: format!("无法读取 {}：{}", path, e),
         })?;
     let hir = match source_to_hir(&source) {
         Ok(hir) => hir,
@@ -156,7 +156,7 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
             }
         } else {
             return Err(tenth::error::TenthError::RuntimeError {
-                message: "VM compile failed".into(),
+                message: "VM 编译失败".into(),
             });
         }
         vm.call("main")
@@ -165,7 +165,7 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
     } else {
         // Functions exist but none could be compiled for VM → signal fallback
         Err(tenth::error::TenthError::RuntimeError {
-            message: "VM: main not compiled (unsupported constructs, falling back to interpreter)".into(),
+            message: "VM: main 未编译（包含不支持的结构，回退到解释器）".into(),
         })
     }
 }
@@ -320,7 +320,7 @@ fn register_natives(vm: &mut Vm) {
         if let Some(Value::String(path)) = args.first() {
             match std::fs::read_to_string(path) {
                 Ok(s) => Ok(Value::String(s)),
-                Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("read_file: {e}") }),
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("读取文件: {e}") }),
             }
         } else {
             Ok(Value::String(String::new()))
@@ -336,7 +336,7 @@ fn register_natives(vm: &mut Vm) {
         if args.len() == 1 {
             Ok(args[0].clone())
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "tensor() unexpected args".into() })
+            Err(tenth::error::TenthError::RuntimeError { message: "tensor() 参数异常".into() })
         }
     });
     vm.add_native("write_bytes".into(), |_vm, args| {
@@ -361,12 +361,12 @@ fn register_natives(vm: &mut Vm) {
                     Ok(Value::Vec(Rc::new(RefCell::new(bytes))))
                 }
                 Err(e) => Err(tenth::error::TenthError::RuntimeError {
-                    message: format!("read_bytes failed: {}", e),
+                    message: format!("读取字节失败: {}", e),
                 }),
             }
         } else {
             Err(tenth::error::TenthError::RuntimeError {
-                message: "read_bytes(path) expects a string path".into(),
+                message: "read_bytes(路径) 期望一个字符串路径".into(),
             })
         }
     });
@@ -422,7 +422,7 @@ fn register_natives(vm: &mut Vm) {
             std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
             Ok(Value::Unit)
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "time_sleep_ms(ms) expects an integer".into() })
+            Err(tenth::error::TenthError::RuntimeError { message: "time_sleep_ms(ms) 期望一个整数".into() })
         }
     });
     // Random functions
@@ -581,21 +581,21 @@ fn register_natives(vm: &mut Vm) {
             }
             Ok(Value::Tensor(t.clone()))
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "param() requires a tensor argument".into() })
+            Err(tenth::error::TenthError::RuntimeError { message: "param() 需要一个张量参数".into() })
         }
     });
     vm.add_native("backward".into(), |vm, args| {
         if let Some(Value::Tensor(t)) = args.first() {
             if let Some(ref tape) = vm.tape {
                 let loss_id = t.borrow().tape_id
-                    .ok_or_else(|| tenth::error::TenthError::RuntimeError { message: "backward(): tensor has no tape_id".into() })?;
+                    .ok_or_else(|| tenth::error::TenthError::RuntimeError { message: "backward(): 张量没有 tape_id".into() })?;
                 tape.backward(loss_id);
                 Ok(Value::Unit)
             } else {
-                Err(tenth::error::TenthError::RuntimeError { message: "new_grad() not called".into() })
+                Err(tenth::error::TenthError::RuntimeError { message: "未调用 new_grad()".into() })
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "backward() requires a tensor argument".into() })
+            Err(tenth::error::TenthError::RuntimeError { message: "backward() 需要一个张量参数".into() })
         }
     });
     vm.add_native("grad".into(), |_vm, args| {
@@ -609,7 +609,7 @@ fn register_natives(vm: &mut Vm) {
                 Ok(Value::Tensor(Rc::new(RefCell::new(zeros))))
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "grad() requires a tensor argument".into() })
+            Err(tenth::error::TenthError::RuntimeError { message: "grad() 需要一个张量参数".into() })
         }
     });
     vm.add_native("stop_grad".into(), |vm, args| {
@@ -631,13 +631,13 @@ fn register_natives(vm: &mut Vm) {
     });
     vm.add_native("cross_entropy".into(), |vm, args| {
         if args.len() < 2 {
-            return Err(tenth::error::TenthError::RuntimeError { message: "cross_entropy(logits, target) expects two tensors".into() });
+            return Err(tenth::error::TenthError::RuntimeError { message: "cross_entropy(logits, target) 期望两个张量".into() });
         }
         if let (Value::Tensor(logits), Value::Tensor(target)) = (&args[0], &args[1]) {
             let logits_data = logits.borrow();
             let target_data = target.borrow();
             let sm = logits_data.softmax().ok_or_else(|| {
-                tenth::error::TenthError::RuntimeError { message: "softmax failed in cross_entropy".into() }
+                tenth::error::TenthError::RuntimeError { message: "cross_entropy 中 softmax 失败".into() }
             })?;
             let eps = 1e-10;
             let sm_data = sm.data.as_standard_layout().to_owned();
@@ -670,7 +670,7 @@ fn register_natives(vm: &mut Vm) {
             }
             Ok(Value::Tensor(result))
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "cross_entropy(logits, target) expects two tensors".into() })
+            Err(tenth::error::TenthError::RuntimeError { message: "cross_entropy(logits, target) 期望两个张量".into() })
         }
     });
 }
@@ -679,7 +679,7 @@ fn register_natives(vm: &mut Vm) {
 fn build_wasm(path: &str) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| tenth::error::TenthError::RuntimeError {
-            message: format!("cannot read {}: {}", path, e),
+            message: format!("无法读取 {}：{}", path, e),
         })?;
     let hir = source_to_hir(&source)?;
     let wasm_bytes = compile::compile_to_wasm(&hir)?;
@@ -687,7 +687,7 @@ fn build_wasm(path: &str) -> TenthResult<()> {
     let out_path = path.replace(".th", ".wasm");
     std::fs::write(&out_path, &wasm_bytes)
         .map_err(|e| tenth::error::TenthError::RuntimeError {
-            message: format!("cannot write {}: {}", out_path, e),
+            message: format!("无法写入 {}：{}", out_path, e),
         })?;
     println!("Compiled to {}", out_path);
     Ok(())
@@ -697,7 +697,7 @@ fn build_wasm(path: &str) -> TenthResult<()> {
 fn run_wasm(path: &str) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| tenth::error::TenthError::RuntimeError {
-            message: format!("cannot read {}: {}", path, e),
+            message: format!("无法读取 {}：{}", path, e),
         })?;
     let hir = source_to_hir(&source)?;
     compile::run_wasm(&hir)
@@ -708,7 +708,7 @@ fn run_wasm(path: &str) -> TenthResult<()> {
 fn vm_run(path: &str) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| tenth::error::TenthError::RuntimeError {
-            message: format!("cannot read {}: {}", path, e),
+            message: format!("无法读取 {}：{}", path, e),
         })?;
     let hir = source_to_hir(&source)?;
     let mut vm = Vm::new();
@@ -723,7 +723,7 @@ fn vm_run(path: &str) -> TenthResult<()> {
         if let Some(Value::String(path)) = args.first() {
             match std::fs::read_to_string(path) {
                 Ok(s) => Ok(Value::String(s)),
-                Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("read_file: {e}") }),
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("读取文件: {e}") }),
             }
         } else {
             Ok(Value::String(String::new()))

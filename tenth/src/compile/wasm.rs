@@ -36,7 +36,7 @@ fn to_val_type(ty: &Type) -> Option<ValType> {
 
 fn to_val_type_required(ty: &Type) -> TenthResult<ValType> {
     to_val_type(ty).ok_or_else(|| TenthError::RuntimeError {
-        message: format!("cannot map type {:?} to WASM value type", ty),
+        message: format!("无法将类型 {:?} 映射到 WASM 值类型", ty),
     })
 }
 
@@ -170,7 +170,7 @@ impl WasmCompiler {
             }
         }
         Err(TenthError::RuntimeError {
-            message: format!("WASM: no struct has field '{}'", field),
+            message: format!("WASM: 没有结构体包含字段 '{}'", field),
         })
     }
 
@@ -380,7 +380,7 @@ impl WasmCompiler {
             "Vec::get" | "Vec_get" => Ok(10),
             "compile_host" => Ok(11),
             _ => Err(TenthError::RuntimeError {
-                    message: format!("WASM: undefined function '{}'", name),
+                    message: format!("WASM: 未定义函数 '{}'", name),
                 }),
         }
     }
@@ -406,7 +406,7 @@ impl WasmCompiler {
                     }
                 } else if !["println","eprintln","write_file","read_file"].contains(&name.as_str()) {
                     return Err(TenthError::RuntimeError {
-                        message: format!("WASM: undefined variable '{}'", name),
+                        message: format!("WASM: 未定义变量 '{}'", name),
                     });
                 }
             }
@@ -468,7 +468,7 @@ impl WasmCompiler {
                 let fname = match &func.kind {
                     HirExprKind::Var(n) => n.clone(),
                     _ => return Err(TenthError::RuntimeError {
-                        message: "WASM: indirect calls not supported".into(),
+                        message: "WASM: 不支持间接调用".into(),
                     }),
                 };
                 match fname.as_str() {
@@ -571,7 +571,7 @@ impl WasmCompiler {
                 body.instruction(&Instruction::LocalSet(tmp));
                 let layout = self.struct_layouts.get(&layout_key).cloned()
                     .ok_or_else(|| TenthError::RuntimeError {
-                        message: format!("WASM: unknown enum variant '{}/{}'", enum_name, variant),
+                        message: format!("WASM: 未知的枚举变体 '{}/{}'", enum_name, variant),
                     })?;
                 for (fname, fexpr) in fields {
                     if let Some(&(offset, _size, vt)) = layout.get(fname) {
@@ -600,7 +600,7 @@ impl WasmCompiler {
                 body.instruction(&Instruction::LocalSet(tmp));
                 let layout = self.struct_layouts.get(name).cloned()
                     .ok_or_else(|| TenthError::RuntimeError {
-                        message: format!("WASM: unknown struct '{}'", name),
+                        message: format!("WASM: 未知结构体 '{}'", name),
                     })?;
                 for (fname, fexpr) in fields {
                     if let Some(&(offset, _size, vt)) = layout.get(fname) {
@@ -686,7 +686,7 @@ impl WasmCompiler {
                         body.instruction(&Instruction::Call(10)); // Vec_get(i64, i64) -> i64
                     }
                     _ => return Err(TenthError::RuntimeError {
-                        message: format!("WASM: unsupported method '{}'", method),
+                        message: format!("WASM: 不支持的方法 '{}'", method),
                     }),
                 }
             }
@@ -745,7 +745,7 @@ impl WasmCompiler {
             }
 
             _ => return Err(TenthError::RuntimeError {
-                message: format!("WASM: unsupported expr {:?}", expr.kind),
+                message: format!("WASM: 不支持的表达式 {:?}", expr.kind),
             }),
         }
         Ok(())
@@ -811,7 +811,7 @@ impl WasmCompiler {
             HirStmtKind::Break => { body.instruction(&Instruction::Br(1)); }
             HirStmtKind::Continue => { body.instruction(&Instruction::Br(0)); }
             _ => return Err(TenthError::RuntimeError {
-                message: format!("WASM: unsupported stmt {:?}", stmt.kind),
+                message: format!("WASM: 不支持的语句 {:?}", stmt.kind),
             }),
         }
         Ok(())
@@ -998,7 +998,7 @@ use wasmi::{Engine, Store, Linker, Caller};
 pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
     let engine = Engine::default();
     let module = wasmi::Module::new(&engine, wasm_bytes).map_err(|e| {
-        TenthError::RuntimeError { message: format!("WASM module parse error: {}", e) }
+        TenthError::RuntimeError { message: format!("WASM 模块解析错误：{}", e) }
     })?;
 
     let mut store = Store::new(&engine, 8192u32);
@@ -1009,7 +1009,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
         let data = mem.data(&caller);
         let end = data[ptr as usize..].iter().position(|&b| b == 0).unwrap_or(0);
         println!("{}", std::str::from_utf8(&data[ptr as usize..ptr as usize + end]).unwrap_or(""));
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     linker.func_wrap("host", "write_file",
         |caller: Caller<'_, u32>, path_ptr: i32, content_ptr: i32| {
@@ -1020,7 +1020,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 std::str::from_utf8(&data[p as usize..p as usize + end]).unwrap_or("")
             };
             let _ = std::fs::write(rs(path_ptr), rs(content_ptr));
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     // read_file(path: i32) -> i32
     linker.func_wrap("host", "read_file",
@@ -1045,7 +1045,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 }
                 Err(_) => 0i32,
             }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     linker.func_wrap("host", "str_add",
         |mut caller: Caller<'_, u32>, a_ptr: i32, b_ptr: i32| -> i32 {
@@ -1069,7 +1069,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
             d[np as usize..np as usize + bytes.len()].copy_from_slice(bytes);
             d[np as usize + bytes.len()] = 0;
             np as i32
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     linker.func_wrap("host", "str_eq",
         |caller: Caller<'_, u32>, a_ptr: i32, b_ptr: i32| -> i32 {
@@ -1080,7 +1080,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 std::str::from_utf8(&data[p as usize..p as usize + end]).unwrap_or("")
             };
             if rs(a_ptr) == rs(b_ptr) { 1 } else { 0 }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     linker.func_wrap("host", "str_int",
         |mut caller: Caller<'_, u32>, n: i64| -> i32 {
@@ -1094,7 +1094,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 data[off as usize + b.len()] = 0;
                 off
             } else { 0 }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     // tenth_alloc(size: i32) -> i32
     linker.func_wrap("host", "tenth_alloc",
@@ -1112,7 +1112,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
             }
             *caller.data_mut() = ptr + size as u32;
             ptr as i32
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     // Vec_new() -> i64 (pointer extended to i64)
     linker.func_wrap("host", "Vec_new",
@@ -1120,7 +1120,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
             let ptr = *caller.data();
             *caller.data_mut() = ptr + 24;
             ptr as i64
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     // Vec_len(vec: i64) -> i64
     linker.func_wrap("host", "Vec_len",
@@ -1131,7 +1131,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
             if vec_ptr + 16 <= data.len() {
                 i64::from_le_bytes(data[vec_ptr+8..vec_ptr+16].try_into().unwrap())
             } else { 0 }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     // Vec_get(vec: i64, idx: i64) -> i64
     linker.func_wrap("host", "Vec_get",
@@ -1145,7 +1145,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
             if pos + 8 <= data.len() {
                 i64::from_le_bytes(data[pos..pos+8].try_into().unwrap())
             } else { 0 }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     // Vec_push(vec: i64, item: i64) -> i64
     linker.func_wrap("host", "Vec_push",
@@ -1183,7 +1183,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 data[pos..pos+8].copy_from_slice(&item.to_le_bytes());
             }
             vec
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     // compile_host(src: i64, out_path: i64) -> i32
     // Reads source from WASM memory, compiles it via Rust pipeline, writes .wasm.
@@ -1210,7 +1210,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 }
                 Err(_) => 1i32,
             }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     // str_len(s: i32) -> i32  — returns length of null-terminated string
     linker.func_wrap("host", "str_len",
@@ -1219,7 +1219,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
             let data = mem.data(&caller);
             let off = ptr as usize;
             data[off..].iter().position(|&b| b == 0).unwrap_or(0) as i32
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     // str_at(s: i32, idx: i64) -> i32  — returns single-char string at index
     // Characters are pre-interned as "X\0" in the data section, so we
@@ -1255,7 +1255,7 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
             d[np as usize..np as usize + ch_bytes.len()].copy_from_slice(ch_bytes);
             d[np as usize + ch_bytes.len()] = 0;
             np as i32
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     // str_cmp(op: i32, a: i32, b: i32) -> i32  — op: 0=LT,1=GT,2=LE,3=GE; returns 0 or 1
     linker.func_wrap("host", "str_cmp",
@@ -1277,27 +1277,27 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 _ => false,
             };
             result as i32
-    }).map_err(|e| TenthError::RuntimeError { message: format!("linker: {}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
     let instance = linker.instantiate(&mut store, &module)
         .and_then(|pre| pre.start(&mut store))
         .map_err(|e| TenthError::RuntimeError {
-            message: format!("WASM instantiation error: {}", e),
+            message: format!("WASM 实例化错误：{}", e),
         })?;
 
     let main_fn = instance.get_typed_func::<(), i32>(&store, "main")
         .map_err(|_| TenthError::RuntimeError {
-            message: "WASM module has no exported 'main' function".into(),
+            message: "WASM 模块没有导出的 'main' 函数".into(),
         })?;
 
     let exit_code = main_fn.call(&mut store, ())
         .map_err(|e| TenthError::RuntimeError {
-            message: format!("WASM main() error: {}", e),
+            message: format!("WASM main() 错误：{}", e),
         })?;
 
     if exit_code != 0 {
         return Err(TenthError::RuntimeError {
-            message: format!("WASM main() exited with code {}", exit_code),
+            message: format!("WASM main() 以代码 {} 退出", exit_code),
         });
     }
 

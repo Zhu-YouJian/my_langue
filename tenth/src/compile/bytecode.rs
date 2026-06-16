@@ -365,7 +365,7 @@ impl BytecodeCompiler {
                     self.chunk.emit(Op::CallN(i, args.len()));
                 } else {
                     return Err(crate::error::TenthError::RuntimeError {
-                        message: "bytecode: indirect GenericCall (fallback)".into(),
+                        message: "字节码：间接 GenericCall（回退）".into(),
                     });
                 }
             }

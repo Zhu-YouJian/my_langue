@@ -188,13 +188,13 @@ impl Vm {
         if let Some(f) = self.natives.get(name).copied() {
             f(self, args)
         } else {
-            Err(TenthError::RuntimeError { message: format!("VM: undefined native '{name}'") })
+            Err(TenthError::RuntimeError { message: format!("未定义的原生函数 '{}'", name) })
         }
     }
 
     pub fn call(&mut self, name: &str) -> TenthResult<Value> {
         let idx = self.functions.get(name).copied()
-            .ok_or_else(|| TenthError::RuntimeError { message: format!("VM: undefined '{name}'") })?;
+            .ok_or_else(|| TenthError::RuntimeError { message: format!("未定义的函数 '{}'", name) })?;
         self.run(idx)
     }
 
@@ -301,7 +301,7 @@ impl Vm {
                         Value::Int(n) => Value::Int(-n),
                         Value::Float(n) => Value::Float(-n),
                         Value::Tensor(t) => Value::Tensor(Rc::new(RefCell::new(t.borrow().neg()))),
-                        _ => return err("cannot negate"),
+                        _ => return err("无法取负"),
                     });
                 }
                 Op::Not => {
@@ -350,7 +350,7 @@ impl Vm {
                             if self.stack.len() > base { locals[i] = self.stack.pop().unwrap(); }
                         }
                     } else {
-                        return Err(TenthError::RuntimeError { message: format!("VM: undefined '{name}'") });
+                        return Err(TenthError::RuntimeError { message: format!("未定义的函数 '{}'", name) });
                     }
                 }
                 Op::CallN(i, num_args) => {
@@ -389,7 +389,7 @@ impl Vm {
                         locals = args;
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
                     } else {
-                        return Err(TenthError::RuntimeError { message: format!("VM: undefined '{name}'") });
+                        return Err(TenthError::RuntimeError { message: format!("未定义的函数 '{}'", name) });
                     }
                 }
                 Op::MethodCall(i, num_args) => {
@@ -480,7 +480,7 @@ impl Vm {
                             let c = s.chars().nth(i).map(|c| c.to_string()).unwrap_or_default();
                             self.stack.push(Value::String(c));
                         }
-                        _ => return err("cannot index"),
+                        _ => return err("无法索引"),
                     }
                 }
 
@@ -495,12 +495,12 @@ impl Vm {
                             let si = start_idx.min(len);
                             let ei = end_idx.min(len);
                             if si > ei {
-                                return err("string slice start > end");
+                                return err("字符串切片起始位置大于结束位置");
                             }
                             let slice: String = chars[si..ei].iter().collect();
                             self.stack.push(Value::String(slice));
                         }
-                        _ => return err("SliceStr requires string target"),
+                        _ => return err("SliceStr 需要字符串目标"),
                     }
                 }
 
@@ -606,7 +606,7 @@ impl Vm {
     fn pop_int(&mut self) -> TenthResult<i64> {
         match self.stack.pop() {
             Some(Value::Int(n)) => Ok(n),
-            _ => err("expected int"),
+            _ => err("期望整数"),
         }
     }
 
@@ -640,7 +640,7 @@ impl Vm {
                 if self.recording { self.record_binary(TapeOp::Add, &t1, &t2, &result); }
                 Value::Tensor(result)
             }
-            _ => return err("type mismatch in +"),
+            _ => return err("+ 类型不匹配"),
         })
     }
 
@@ -673,7 +673,7 @@ impl Vm {
                 if self.recording { self.record_binary(TapeOp::Sub, &t1, &t2, &result); }
                 Value::Tensor(result)
             }
-            _ => return err("type mismatch in -"),
+            _ => return err("- 类型不匹配"),
         })
     }
 
@@ -706,7 +706,7 @@ impl Vm {
                 if self.recording { self.record_binary(TapeOp::Mul, &t1, &t2, &result); }
                 Value::Tensor(result)
             }
-            _ => return err("type mismatch in *"),
+            _ => return err("* 类型不匹配"),
         })
     }
 
@@ -740,7 +740,7 @@ impl Vm {
                 if self.recording { self.record_binary(TapeOp::Div, &t1, &t2, &result); }
                 Value::Tensor(result)
             }
-            _ => return err("type mismatch in /"),
+            _ => return err("/ 类型不匹配"),
         })
     }
 
@@ -751,7 +751,7 @@ impl Vm {
             (Value::Int(x), Value::Float(y)) => nf(*x as f64, *y),
             (Value::Float(x), Value::Int(y)) => nf(*x, *y as f64),
             (Value::String(x), Value::String(y)) => sf(x, y),
-            _ => return err("cannot compare"),
+            _ => return err("无法比较"),
         })
     }
 
@@ -766,7 +766,7 @@ impl Vm {
         match recv {
             Value::String(s) => match method {
                 "len" => Ok(Value::Int(s.chars().count() as i64)),
-                _ => err(&format!("String has no method '{method}'")),
+                _ => err(&format!("字符串没有方法 '{}'", method)),
             },
             Value::Vec(items) => match method {
                 "len" => Ok(Value::Int(items.borrow().len() as i64)),
@@ -774,19 +774,19 @@ impl Vm {
                     if args.len() == 1 {
                         items.borrow_mut().push(args[0].clone());
                         Ok(Value::Unit)
-                    } else { err("push takes 1 arg") }
+                    } else { err("push 需要 1 个参数") }
                 }
                 "get" => {
                     if args.len() == 1 {
                         let idx = args[0].as_int().unwrap_or(0) as usize;
                         Ok(items.borrow().get(idx).cloned().unwrap_or(Value::Unit))
-                    } else { err("get takes 1 arg") }
+                    } else { err("get 需要 1 个参数") }
                 }
-                _ => err(&format!("Vec has no method '{method}'")),
+                _ => err(&format!("Vec 没有方法 '{}'", method)),
             },
             Value::Map(m) => match method {
                 "len" => Ok(Value::Int(m.borrow().len() as i64)),
-                _ => err(&format!("Map has no method '{method}'")),
+                _ => err(&format!("Map 没有方法 '{}'", method)),
             },
             Value::Tensor(t) => {
                 let tensor = t.borrow();
@@ -859,7 +859,7 @@ impl Vm {
                     }
                     "softmax" => {
                         let result_tensor = tensor.softmax().ok_or_else(|| {
-                            TenthError::RuntimeError { message: "softmax failed".into() }
+                            TenthError::RuntimeError { message: "softmax 计算失败".into() }
                         })?;
                         let result = Rc::new(RefCell::new(result_tensor));
                         if self.recording { self.record_unary(TapeOp::Softmax, &t, &result); }
@@ -872,14 +872,14 @@ impl Vm {
                             .map(|a| a.as_int().unwrap_or(1) as usize)
                             .collect();
                         let result = tensor.reshape(&shape).ok_or_else(|| {
-                            TenthError::RuntimeError { message: format!("cannot reshape to {:?}", shape) }
+                            TenthError::RuntimeError { message: format!("无法重塑形状为 {:?}", shape) }
                         })?;
                         Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                     }
                     "flatten" => Ok(Value::Tensor(Rc::new(RefCell::new(tensor.flatten())))),
                     "transpose" => {
                         let result_tensor = tensor.transpose().ok_or_else(|| {
-                            TenthError::RuntimeError { message: "transpose requires at least 2 dimensions".into() }
+                            TenthError::RuntimeError { message: "转置至少需要 2 个维度".into() }
                         })?;
                         let result = Rc::new(RefCell::new(result_tensor));
                         if self.recording { self.record_unary(TapeOp::Transpose, &t, &result); }
@@ -898,13 +898,13 @@ impl Vm {
                             .map(|a| a.as_int().unwrap_or(1) as usize)
                             .collect();
                         let result = tensor.broadcast_to(&target_shape).ok_or_else(|| {
-                            TenthError::RuntimeError { message: format!("cannot broadcast to {:?}", target_shape) }
+                            TenthError::RuntimeError { message: format!("无法广播到 {:?}", target_shape) }
                         })?;
                         Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                     }
                     "cat" => {
                         if args.is_empty() {
-                            return err("cat() takes at least 1 argument (other, [dim])");
+                            return err("cat() 至少需要 1 个参数 (other, [dim])");
                         }
                         let dim = args.get(1).and_then(|a| a.as_int()).unwrap_or(0) as usize;
                         if let Value::Tensor(other) = &args[0] {
@@ -912,12 +912,12 @@ impl Vm {
                                 .map_err(|msg| TenthError::RuntimeError { message: msg })?;
                             Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                         } else {
-                            err("cat() first argument must be a tensor")
+                            err("cat() 第一个参数必须是张量")
                         }
                     }
                     "masked_fill" => {
                         if args.len() < 2 {
-                            return err("masked_fill() takes mask and value");
+                            return err("masked_fill() 需要 mask 和 value 参数");
                         }
                         let value = args[1].as_float().unwrap_or(0.0);
                         if let Value::Tensor(mask_rc) = &args[0] {
@@ -925,14 +925,14 @@ impl Vm {
                                 .map_err(|msg| TenthError::RuntimeError { message: msg })?;
                             Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                         } else {
-                            err("masked_fill() mask must be a tensor")
+                            err("masked_fill() 的 mask 必须是张量")
                         }
                     }
 
                     // ── Matrix / NN operations ──
                     "matmul" => {
                         if args.len() != 1 {
-                            return err("matmul() takes 1 argument");
+                            return err("matmul() 需要 1 个参数");
                         }
                         if let Value::Tensor(other) = &args[0] {
                             let result_tensor = tensor.matmul(&other.borrow())
@@ -941,13 +941,13 @@ impl Vm {
                             if self.recording { self.record_binary(TapeOp::MatMul, &t, &other, &result); }
                             Ok(Value::Tensor(result))
                         } else {
-                            err("matmul() argument must be a tensor")
+                            err("matmul() 参数必须是张量")
                         }
                     }
                     "conv2d" => {
                         // x.conv2d(w, kernel_h, kernel_w, stride, pad)
                         if args.len() < 5 {
-                            return err("conv2d() takes 5 args: w, kH, kW, stride, pad");
+                            return err("conv2d() 需要 5 个参数: w, kH, kW, stride, pad");
                         }
                         let k_h = args[1].as_int().unwrap_or(3) as usize;
                         let k_w = args[2].as_int().unwrap_or(3) as usize;
@@ -957,22 +957,22 @@ impl Vm {
                             let w_data = w_rc.borrow();
                             let (cols, h_out, w_out) = tensor.im2col(k_h, k_w, stride, pad)
                                 .ok_or_else(|| TenthError::RuntimeError {
-                                    message: "im2col failed (input must be 4D)".into(),
+                                    message: "im2col 失败（输入必须是 4D）".into(),
                                 })?;
                             let w_shape = w_data.shape();
                             let c_out = w_shape[0];
                             let w_flat = w_data.reshape(&[c_out, w_shape[1] * w_shape[2] * w_shape[3]])
                                 .ok_or_else(|| TenthError::RuntimeError {
-                                    message: "weight reshape failed".into(),
+                                    message: "权重重塑失败".into(),
                                 })?;
                             let output_2d = cols.matmul(&w_flat.transpose()
                                 .ok_or_else(|| TenthError::RuntimeError {
-                                    message: "weight transpose failed".into(),
+                                    message: "权重转置失败".into(),
                                 })?).map_err(|msg| TenthError::RuntimeError { message: msg })?;
                             let n = tensor.shape()[0];
                             let result_tensor = output_2d.reshape(&[n, c_out, h_out, w_out])
                                 .ok_or_else(|| TenthError::RuntimeError {
-                                    message: "output reshape failed".into(),
+                                    message: "输出重塑失败".into(),
                                 })?;
                             let result = Rc::new(RefCell::new(result_tensor));
                             if self.recording {
@@ -992,20 +992,20 @@ impl Vm {
                             }
                             Ok(Value::Tensor(result))
                         } else {
-                            err("conv2d: weight must be a tensor")
+                            err("conv2d: 权重必须是张量")
                         }
                     }
                     "batchnorm" => {
                         // x.batchnorm(gamma, beta, eps)
                         if args.len() < 3 {
-                            return err("batchnorm() takes gamma, beta, eps");
+                            return err("batchnorm() 需要 gamma, beta, eps 参数");
                         }
                         let eps = args[2].as_float().unwrap_or(1e-5);
                         if let (Value::Tensor(gamma_rc), Value::Tensor(beta_rc)) = (&args[0], &args[1]) {
                             use super::tensor::Tensor;
                             let x_shape = tensor.shape();
                             if x_shape.len() < 2 {
-                                return err("batchnorm requires at least 2D input");
+                                return err("batchnorm 至少需要 2D 输入");
                             }
                             let c = x_shape[1];
                             let n = x_shape[0];
@@ -1071,13 +1071,13 @@ impl Vm {
                             }
                             Ok(Value::Tensor(result))
                         } else {
-                            err("batchnorm: gamma and beta must be tensors")
+                            err("batchnorm: gamma 和 beta 必须是张量")
                         }
                     }
                     "layer_norm" => {
                         // x.layer_norm(gamma, beta, [eps])
                         if args.len() < 2 {
-                            return err("layer_norm() takes gamma, beta, [eps]");
+                            return err("layer_norm() 需要 gamma, beta, [eps] 参数");
                         }
                         let eps = args.get(2).and_then(|a| a.as_float()).unwrap_or(1e-5);
                         if let (Value::Tensor(gamma_rc), Value::Tensor(beta_rc)) = (&args[0], &args[1]) {
@@ -1135,12 +1135,12 @@ impl Vm {
                             }
                             Ok(Value::Tensor(result))
                         } else {
-                            err("layer_norm: gamma and beta must be tensors")
+                            err("layer_norm: gamma 和 beta 必须是张量")
                         }
                     }
                     "dropout" => {
                         if args.is_empty() {
-                            return err("dropout() takes 1 argument (rate)");
+                            return err("dropout() 需要 1 个参数 (rate)");
                         }
                         let rate = args[0].as_float().unwrap_or(0.5);
                         use rand::Rng;
@@ -1164,7 +1164,7 @@ impl Vm {
                         Ok(Value::Tensor(result))
                     }
 
-                    _ => err(&format!("Tensor has no method '{method}'")),
+                    _ => err(&format!("张量没有方法 '{}'", method)),
                 }
             }
             Value::Struct { name: _, fields } => {
@@ -1172,9 +1172,9 @@ impl Vm {
                 for (fname, fval) in fields.borrow().iter() {
                     if fname == method { return Ok(fval.clone()); }
                 }
-                err(&format!("no method '{method}'"))
+                err(&format!("没有方法 '{}'", method))
             }
-            _ => err(&format!("no method '{method}'")),
+            _ => err(&format!("没有方法 '{}'", method)),
         }
     }
 
@@ -1184,11 +1184,11 @@ impl Vm {
                 for (n, v) in fields.borrow_mut().iter_mut() {
                     if n == field { *v = new_val; return Ok(()); }
                 }
-                err(&format!("no field '{field}'"))
+                err(&format!("没有字段 '{}'", field))
             }
             Value::Shared(rc) => self.set_field(&rc.borrow(), field, new_val),
             Value::Ref(rc) => self.set_field(&rc.borrow(), field, new_val),
-            _ => err("cannot set field"),
+            _ => err("无法设置字段"),
         }
     }
 
@@ -1197,7 +1197,7 @@ impl Vm {
             Value::Ref(rc) => return self.get_field(&rc.borrow(), field),
             Value::MutRef(w) => {
                 if let Some(rc) = w.upgrade() { return self.get_field(&rc.borrow(), field); }
-                return err("dangling &mut");
+                return err("悬垂的 &mut 引用");
             }
             Value::Shared(rc) => return self.get_field(&rc.borrow(), field),
             v => v,
@@ -1207,15 +1207,15 @@ impl Vm {
                 for (n, v) in fields.borrow().iter() {
                     if n == field { return Ok(v.clone()); }
                 }
-                err(&format!("no field '{field}'"))
+                err(&format!("没有字段 '{}'", field))
             }
             Value::Enum { fields, .. } => {
                 for (n, v) in fields.borrow().iter() {
                     if n == field { return Ok(v.clone()); }
                 }
-                err(&format!("no field '{field}'"))
+                err(&format!("没有字段 '{}'", field))
             }
-            _ => err(&format!("no field '{field}'")),
+            _ => err(&format!("没有字段 '{}'", field)),
         }
     }
 

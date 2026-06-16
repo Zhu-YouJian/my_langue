@@ -459,7 +459,7 @@ impl Interpreter {
                 }
                 if self.scopes.iter().any(|s| matches!(s.get(name), Some(Value::Moved))) {
                     return Err(TenthError::RuntimeError {
-                        message: format!("use of moved value '{}'", name),
+                        message: format!("使用了已移动的值 '{}'", name),
                     });
                 }
                 self.resolve_var(name)
@@ -495,37 +495,37 @@ impl Interpreter {
                         }
                     })
                     .ok_or_else(|| TenthError::RuntimeError {
-                        message: format!("undefined variable '{}'", name),
+                        message: format!("未定义变量 '{}'", name),
                     })
                     .map(Some)
             }
 
             HirExprKind::Binary { op, left, right, .. } => {
                 let l = self.eval_expr(left)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "left operand is void".into(),
+                    message: "左操作数为空值".into(),
                 })?;
                 let r = self.eval_expr(right)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "right operand is void".into(),
+                    message: "右操作数为空值".into(),
                 })?;
                 self.eval_binary(op, &l, &r).map(Some)
             }
 
             HirExprKind::Unary { op, expr: inner, .. } => {
                 let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "unary operand is void".into(),
+                    message: "一元操作数为空值".into(),
                 })?;
                 self.eval_unary(op, &val).map(Some)
             }
 
             HirExprKind::Call { func, args, .. } => {
                 let f = self.eval_expr(func)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "function value is void".into(),
+                    message: "函数值为空值".into(),
                 })?;
 
                 let mut arg_values = Vec::new();
                 for a in args {
                     arg_values.push(self.eval_expr(a)?.ok_or_else(|| TenthError::RuntimeError {
-                        message: "argument is void".into(),
+                        message: "参数为空值".into(),
                     })?);
                 }
 
@@ -537,14 +537,14 @@ impl Interpreter {
                     HirExprKind::Var(name) => name.clone(),
                     _ => {
                         return Err(TenthError::RuntimeError {
-                            message: "generic call target must be a named function".into(),
+                            message: "泛型调用的目标必须是具名函数".into(),
                         });
                     }
                 };
 
                 let template = self.generic_funcs.get(&func_name)
                     .ok_or_else(|| TenthError::RuntimeError {
-                        message: format!("undefined generic function '{}'", func_name),
+                        message: format!("未定义的泛型函数 '{}'", func_name),
                     })?
                     .clone();
 
@@ -556,7 +556,7 @@ impl Interpreter {
                 let mut arg_values = Vec::new();
                 for a in args {
                     arg_values.push(self.eval_expr(a)?.ok_or_else(|| TenthError::RuntimeError {
-                        message: "argument is void".into(),
+                        message: "参数为空值".into(),
                     })?);
                 }
 
@@ -573,13 +573,13 @@ impl Interpreter {
 
             HirExprKind::MethodCall { receiver, method, args, .. } => {
                 let recv = self.eval_expr(receiver)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "receiver is void".into(),
+                    message: "接收者为空值".into(),
                 })?;
 
                 let mut arg_values = Vec::new();
                 for a in args {
                     arg_values.push(self.eval_expr(a)?.ok_or_else(|| TenthError::RuntimeError {
-                        message: "method argument is void".into(),
+                        message: "方法参数为空值".into(),
                     })?);
                 }
 
@@ -588,14 +588,14 @@ impl Interpreter {
 
             HirExprKind::Index { target, indices } => {
                 let t = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "index target is void".into(),
+                    message: "索引目标为空值".into(),
                 })?;
                 self.eval_index(&t, indices).map(Some)
             }
 
             HirExprKind::Field { target, field } => {
                 let t = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "field access target is void".into(),
+                    message: "字段访问目标为空值".into(),
                 })?;
                 self.eval_field(&t, field)
             }
@@ -604,7 +604,7 @@ impl Interpreter {
                 let mut vals = Vec::new();
                 for elem in elements {
                     let v = self.eval_expr(elem)?.ok_or_else(|| TenthError::RuntimeError {
-                        message: "array element is void".into(),
+                        message: "数组元素为空值".into(),
                     })?;
                     // Wrap in Shared so elements can be mutated via indexed assignment
                     vals.push(Value::Shared(Rc::new(RefCell::new(v))));
@@ -618,7 +618,7 @@ impl Interpreter {
                     let mut row_vals = Vec::new();
                     for elem in row {
                         let v = self.eval_expr(elem)?.ok_or_else(|| TenthError::RuntimeError {
-                            message: "tensor element is void".into(),
+                            message: "张量元素为空值".into(),
                         })?;
                         row_vals.push(v.as_float().unwrap_or(0.0));
                     }
@@ -633,7 +633,7 @@ impl Interpreter {
 
             HirExprKind::If { cond, then_branch, else_branch, .. } => {
                 let c = self.eval_expr(cond)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "if condition is void".into(),
+                    message: "if 条件为空值".into(),
                 })?;
                 if c.is_truthy() {
                     self.eval_expr(then_branch)
@@ -656,7 +656,7 @@ impl Interpreter {
 
             HirExprKind::Assign { target, value } => {
                 let v = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "assign value is void".into(),
+                    message: "赋值值为空值".into(),
                 })?;
                 self.set_var(target.clone(), v);
                 Ok(Some(Value::Unit))
@@ -664,21 +664,21 @@ impl Interpreter {
 
             HirExprKind::DerefAssign { target, value } => {
                 let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "deref-assign target is void".into(),
+                    message: "解引用赋值目标为空值".into(),
                 })?;
                 let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "deref-assign value is void".into(),
+                    message: "解引用赋值值为空值".into(),
                 })?;
                 match &target_val {
                     Value::MutRef(weak) => {
                         let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
-                            message: "cannot assign through dangling &mut reference".into(),
+                            message: "无法通过悬垂的 &mut 引用赋值".into(),
                         })?;
                         *rc.borrow_mut() = rhs;
                         Ok(Some(Value::Unit))
                     }
                     _ => Err(TenthError::RuntimeError {
-                        message: "can only assign through mutable reference".into(),
+                        message: "只能通过可变引用赋值".into(),
                     }),
                 }
             }
@@ -690,7 +690,7 @@ impl Interpreter {
                     }
                 })?;
                 let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "assign-op value is void".into(),
+                    message: "复合赋值值为空值".into(),
                 })?;
                 let result = self.eval_binary(op, &current, &rhs)?;
                 self.set_var(target.clone(), result);
@@ -699,15 +699,15 @@ impl Interpreter {
 
             HirExprKind::DerefAssignOp { target, op, value } => {
                 let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "deref-assignop target is void".into(),
+                    message: "解引用复合赋值目标为空值".into(),
                 })?;
                 let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "deref-assignop value is void".into(),
+                    message: "解引用复合赋值值为空值".into(),
                 })?;
                 match &target_val {
                     Value::MutRef(weak) => {
                         let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
-                            message: "cannot assign through dangling &mut reference".into(),
+                            message: "无法通过悬垂的 &mut 引用赋值".into(),
                         })?;
                         let current = rc.borrow().clone();
                         let result = self.eval_binary(op, &current, &rhs)?;
@@ -715,7 +715,7 @@ impl Interpreter {
                         Ok(Some(Value::Unit))
                     }
                     _ => Err(TenthError::RuntimeError {
-                        message: "can only assign through mutable reference".into(),
+                        message: "只能通过可变引用赋值".into(),
                     }),
                 }
             }
@@ -748,14 +748,14 @@ impl Interpreter {
 
             HirExprKind::Ref(inner) => {
                 let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "ref operand is void".into(),
+                    message: "引用操作数为空值".into(),
                 })?;
                 Ok(Some(Value::Ref(Rc::new(RefCell::new(val)))))
             }
 
             HirExprKind::MutRef(inner) => {
                 let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "mut ref operand is void".into(),
+                    message: "可变引用操作数为空值".into(),
                 })?;
                 if let HirExprKind::Var(var_name) = &inner.kind {
                     // Reuse existing Shared wrapper, or create new one in current scope
@@ -778,28 +778,28 @@ impl Interpreter {
 
             HirExprKind::Deref(inner) => {
                 let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "deref operand is void".into(),
+                    message: "解引用操作数为空值".into(),
                 })?;
                 match &val {
                     Value::Ref(rc) => Ok(Some(rc.borrow().clone())),
                     Value::MutRef(weak) => {
                         let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
-                            message: "cannot dereference dangling &mut reference".into(),
+                            message: "无法解引用悬垂的 &mut 引用".into(),
                         })?;
                         Ok(Some(rc.borrow().clone()))
                     }
                     _ => Err(TenthError::RuntimeError {
-                        message: "cannot dereference non-reference value".into(),
+                        message: "无法解引用非引用值".into(),
                     }),
                 }
             }
 
             HirExprKind::FieldAssign { target, field, value } => {
                 let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "field-assign target is void".into(),
+                    message: "字段赋值目标为空值".into(),
                 })?;
                 let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "field-assign value is void".into(),
+                    message: "字段赋值值为空值".into(),
                 })?;
                 let target_var_name = if let HirExprKind::Var(vn) = &target.kind {
                     Some(vn.clone())
@@ -819,7 +819,7 @@ impl Interpreter {
                         }
                         if !found {
                             return Err(TenthError::RuntimeError {
-                                message: format!("struct has no field '{}'", field),
+                                message: format!("结构体没有字段 '{}'", field),
                             });
                         }
                         // Update scope so subsequent reads see the change
@@ -835,7 +835,7 @@ impl Interpreter {
                     }
                     Value::MutRef(weak) => {
                         let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
-                            message: "cannot assign field through dangling &mut reference".into(),
+                            message: "无法通过悬垂的 &mut 引用赋值字段".into(),
                         })?;
                         let mut inner = rc.borrow_mut();
                         match &mut *inner {
@@ -847,11 +847,11 @@ impl Interpreter {
                                     }
                                 }
                                 Err(TenthError::RuntimeError {
-                                    message: format!("struct has no field '{}'", field),
+                                    message: format!("结构体没有字段 '{}'", field),
                                 })
                             }
                             _ => Err(TenthError::RuntimeError {
-                                message: "field assignment only supported on structs".into(),
+                                message: "字段赋值仅支持结构体".into(),
                             }),
                         }
                     }
@@ -867,23 +867,23 @@ impl Interpreter {
                                     }
                                 }
                                 Err(TenthError::RuntimeError {
-                                    message: format!("struct has no field '{}'", field),
+                                    message: format!("结构体没有字段 '{}'", field),
                                 })
                             }
                             _ => Err(TenthError::RuntimeError {
-                                message: "field assignment only supported on structs".into(),
+                                message: "字段赋值仅支持结构体".into(),
                             }),
                         }
                     }
                     _ => Err(TenthError::RuntimeError {
-                        message: "can only assign fields through mutable reference".into(),
+                        message: "只能通过可变引用赋值字段".into(),
                     }),
                 }
             }
 
             HirExprKind::Move(inner) => {
                 let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "move operand is void".into(),
+                    message: "move 操作数为空值".into(),
                 })?;
                 if let HirExprKind::Var(var_name) = &inner.kind {
                     self.current_scope().insert(var_name.clone(), Value::Moved);
@@ -950,7 +950,7 @@ impl Interpreter {
                 let mut field_vals = Vec::new();
                 for (fname, fexpr) in fields {
                     let v = self.eval_expr(fexpr)?.ok_or_else(|| TenthError::RuntimeError {
-                        message: format!("struct field '{}' is void", fname),
+                        message: format!("结构体字段 '{}' 为空值", fname),
                     })?;
                     field_vals.push((fname.clone(), v));
                 }
@@ -964,7 +964,7 @@ impl Interpreter {
                 let mut field_vals = Vec::new();
                 for (fname, fexpr) in fields {
                     let v = self.eval_expr(fexpr)?.ok_or_else(|| TenthError::RuntimeError {
-                        message: format!("enum field '{}' is void", fname),
+                        message: format!("枚举字段 '{}' 为空值", fname),
                     })?;
                     field_vals.push((fname.clone(), v));
                 }
@@ -977,7 +977,7 @@ impl Interpreter {
 
             HirExprKind::Match { scrutinee, arms } => {
                 let val = self.eval_expr(scrutinee)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "match scrutinee is void".into(),
+                    message: "match 表达式为空值".into(),
                 })?;
 
                 for arm in arms {
@@ -1022,7 +1022,7 @@ impl Interpreter {
                     return self.eval_field(&inner, field);
                 }
                 return Err(TenthError::RuntimeError {
-                    message: format!("cannot access field '{}' on dangling &mut reference", field),
+                    message: format!("无法访问悬垂 &mut 引用上的字段 '{}'", field),
                 });
             }
             Value::Shared(rc) => {
@@ -1040,7 +1040,7 @@ impl Interpreter {
                     }
                 }
                 Err(TenthError::RuntimeError {
-                    message: format!("struct has no field '{}'", field),
+                    message: format!("结构体没有字段 '{}'", field),
                 })
             }
             Value::Enum { fields, .. } => {
@@ -1050,7 +1050,7 @@ impl Interpreter {
                     }
                 }
                 Err(TenthError::RuntimeError {
-                    message: format!("enum variant has no field '{}'", field),
+                    message: format!("枚举变体没有字段 '{}'", field),
                 })
             }
             Value::Vec(items) => {
@@ -1059,11 +1059,11 @@ impl Interpreter {
                     return Ok(Some(Value::Int(items.borrow().len() as i64)));
                 }
                 Err(TenthError::RuntimeError {
-                    message: format!("Vec has no field '{}'", field),
+                    message: format!("Vec 没有字段 '{}'", field),
                 })
             }
             _ => Err(TenthError::RuntimeError {
-                message: format!("cannot access field '{}' on {:?}", field, v),
+                message: format!("无法访问 {:?} 上的字段 '{}'", v, field),
             }),
         }
     }
@@ -1265,7 +1265,7 @@ impl Interpreter {
                     Ok(Value::Tensor(result))
                 }
                 _ => Err(TenthError::RuntimeError {
-                    message: "type mismatch in addition".into(),
+                    message: "加法类型不匹配".into(),
                 }),
             },
             BinOp::Sub => match (l, r) {
@@ -1301,7 +1301,7 @@ impl Interpreter {
                     Ok(Value::Tensor(result))
                 }
                 _ => Err(TenthError::RuntimeError {
-                    message: "type mismatch in subtraction".into(),
+                    message: "减法类型不匹配".into(),
                 }),
             },
             BinOp::Mul => match (l, r) {
@@ -1335,7 +1335,7 @@ impl Interpreter {
                     Ok(Value::Tensor(result))
                 }
                 _ => Err(TenthError::RuntimeError {
-                    message: "type mismatch in multiplication".into(),
+                    message: "乘法类型不匹配".into(),
                 }),
             },
             BinOp::Div => match (l, r) {
@@ -1361,13 +1361,13 @@ impl Interpreter {
                     Ok(Value::Tensor(result))
                 }
                 _ => Err(TenthError::RuntimeError {
-                    message: "type mismatch in division".into(),
+                    message: "除法类型不匹配".into(),
                 }),
             },
             BinOp::Mod => match (l, r) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a % b)),
                 _ => Err(TenthError::RuntimeError {
-                    message: "modulo only supports integers".into(),
+                    message: "取模仅支持整数".into(),
                 }),
             },
             BinOp::Eq => Ok(Value::Bool(self.values_eq(l, r))),
@@ -1379,7 +1379,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a < *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a < b)),
                 _ => Err(TenthError::RuntimeError {
-                    message: "comparison requires numeric types".into(),
+                    message: "比较需要数值类型".into(),
                 }),
             },
             BinOp::Gt => match (l, r) {
@@ -1389,7 +1389,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a > *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a > b)),
                 _ => Err(TenthError::RuntimeError {
-                    message: "comparison requires numeric types".into(),
+                    message: "比较需要数值类型".into(),
                 }),
             },
             BinOp::LtEq => match (l, r) {
@@ -1399,7 +1399,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a <= *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a <= b)),
                 _ => Err(TenthError::RuntimeError {
-                    message: "comparison requires numeric types".into(),
+                    message: "比较需要数值类型".into(),
                 }),
             },
             BinOp::GtEq => match (l, r) {
@@ -1409,7 +1409,7 @@ impl Interpreter {
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a >= *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a >= b)),
                 _ => Err(TenthError::RuntimeError {
-                    message: "comparison requires numeric types".into(),
+                    message: "比较需要数值类型".into(),
                 }),
             },
             BinOp::And => Ok(Value::Bool(l.is_truthy() && r.is_truthy())),
@@ -1501,7 +1501,7 @@ impl Interpreter {
                     Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                 }
                 _ => Err(TenthError::RuntimeError {
-                    message: "cannot negate this value".into(),
+                    message: "无法对此值取负".into(),
                 }),
             },
             UnaryOp::Not => Ok(Value::Bool(!val.is_truthy())),
@@ -1544,7 +1544,7 @@ impl Interpreter {
                     return self.eval_method_call(&inner, method, args);
                 }
                 return Err(TenthError::RuntimeError {
-                    message: format!("method '{}' on dangling &mut reference", method),
+                    message: format!("悬垂 &mut 引用上的方法 '{}'", method),
                 });
             }
             Value::Shared(rc) => {
@@ -1587,7 +1587,7 @@ impl Interpreter {
                 self.eval_native_method(recv, method, args)
             }
             _ => Err(TenthError::RuntimeError {
-                message: format!("method '{}' not supported on this type", method),
+                message: format!("此类型不支持方法 '{}'", method),
             }),
         }
     }
@@ -1600,7 +1600,7 @@ impl Interpreter {
             Value::Range { start, end, inclusive } => self.eval_range_method(*start, *end, *inclusive, method, args),
             Value::Iterator(iter) => self.eval_iterator_method(iter, method, args),
             _ => Err(TenthError::RuntimeError {
-                message: format!("native method '{}' not available", method),
+                message: format!("原生方法 '{}' 不可用", method),
             }),
         }
     }
@@ -1618,7 +1618,7 @@ impl Interpreter {
                     }
                 }
                 Err(TenthError::RuntimeError {
-                    message: "replace() takes 2 string arguments".into(),
+                    message: "replace() 需要 2 个字符串参数".into(),
                 })
             }
             "split" => {
@@ -1629,7 +1629,7 @@ impl Interpreter {
                     return Ok(Some(Value::Vec(Rc::new(RefCell::new(parts)))));
                 }
                 Err(TenthError::RuntimeError {
-                    message: "split() takes a string delimiter".into(),
+                    message: "split() 需要一个字符串分隔符".into(),
                 })
             }
             "substring" => {
@@ -1642,7 +1642,7 @@ impl Interpreter {
                     return Ok(Some(Value::String(sub)));
                 }
                 Err(TenthError::RuntimeError {
-                    message: "substring() takes start and length".into(),
+                    message: "substring() 需要起始位置和长度".into(),
                 })
             }
             "contains" => {
@@ -1650,7 +1650,7 @@ impl Interpreter {
                     return Ok(Some(Value::Bool(s.contains(sub.as_str()))));
                 }
                 Err(TenthError::RuntimeError {
-                    message: "contains() takes a string argument".into(),
+                    message: "contains() 需要一个字符串参数".into(),
                 })
             }
             "find" => {
@@ -1658,7 +1658,7 @@ impl Interpreter {
                     return Ok(Some(Value::Int(s.find(sub.as_str()).map(|i| i as i64).unwrap_or(-1))));
                 }
                 Err(TenthError::RuntimeError {
-                    message: "find() takes a string argument".into(),
+                    message: "find() 需要一个字符串参数".into(),
                 })
             }
             "starts_with" => {
@@ -1666,7 +1666,7 @@ impl Interpreter {
                     return Ok(Some(Value::Bool(s.starts_with(prefix.as_str()))));
                 }
                 Err(TenthError::RuntimeError {
-                    message: "starts_with() takes a string argument".into(),
+                    message: "starts_with() 需要一个字符串参数".into(),
                 })
             }
             "ends_with" => {
@@ -1674,7 +1674,7 @@ impl Interpreter {
                     return Ok(Some(Value::Bool(s.ends_with(suffix.as_str()))));
                 }
                 Err(TenthError::RuntimeError {
-                    message: "ends_with() takes a string argument".into(),
+                    message: "ends_with() 需要一个字符串参数".into(),
                 })
             }
             "parse_int" => {
@@ -1692,7 +1692,7 @@ impl Interpreter {
                     return Ok(Some(Value::String(s.repeat(n))));
                 }
                 Err(TenthError::RuntimeError {
-                    message: "repeat() takes an integer argument".into(),
+                    message: "repeat() 需要一个整数参数".into(),
                 })
             }
             "chars" => {
@@ -1713,7 +1713,7 @@ impl Interpreter {
                     }));
                 }
                 Err(TenthError::RuntimeError {
-                    message: "strip_prefix() takes a string argument".into(),
+                    message: "strip_prefix() 需要一个字符串参数".into(),
                 })
             }
             "strip_suffix" => {
@@ -1724,11 +1724,11 @@ impl Interpreter {
                     }));
                 }
                 Err(TenthError::RuntimeError {
-                    message: "strip_suffix() takes a string argument".into(),
+                    message: "strip_suffix() 需要一个字符串参数".into(),
                 })
             }
             _ => Err(TenthError::RuntimeError {
-                message: format!("String has no method '{}'", method),
+                message: format!("String 没有方法 '{}'", method),
             }),
         }
     }
@@ -1739,7 +1739,7 @@ impl Interpreter {
             "push" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "push() takes 1 argument".into(),
+                        message: "push() 需要 1 个参数".into(),
                     });
                 }
                 // Wrap in Shared so elements can be mutated via indexed assignment.
@@ -1754,7 +1754,7 @@ impl Interpreter {
             "get" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "get() takes 1 argument".into(),
+                        message: "get() 需要 1 个参数".into(),
                     });
                 }
                 let idx = args[0].as_int().unwrap_or(0) as usize;
@@ -1762,7 +1762,7 @@ impl Interpreter {
                 match vec.get(idx) {
                     Some(v) => Ok(Some(v.clone())),
                     None => Err(TenthError::RuntimeError {
-                        message: format!("Vec index {} out of bounds", idx),
+                        message: format!("Vec 索引 {} 越界", idx),
                     }),
                 }
             }
@@ -1771,14 +1771,14 @@ impl Interpreter {
                 match vec.pop() {
                     Some(v) => Ok(Some(v)),
                     None => Err(TenthError::RuntimeError {
-                        message: "pop() on empty Vec".into(),
+                            message: "对空 Vec 调用 pop()".into(),
                     }),
                 }
             }
             "set" => {
                 if args.len() != 2 {
                     return Err(TenthError::RuntimeError {
-                        message: "set() takes 2 arguments (index, value)".into(),
+                        message: "set() 需要 2 个参数 (索引, 值)".into(),
                     });
                 }
                 let idx = args[0].as_int().unwrap_or(0) as usize;
@@ -1791,7 +1791,7 @@ impl Interpreter {
                     Ok(Some(Value::Unit))
                 } else {
                     Err(TenthError::RuntimeError {
-                        message: format!("Vec index {} out of bounds", idx),
+                        message: format!("Vec 索引 {} 越界", idx),
                     })
                 }
             }
@@ -1802,7 +1802,7 @@ impl Interpreter {
             "contains" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "contains() takes 1 argument".into(),
+                        message: "contains() 需要 1 个参数".into(),
                     });
                 }
                 let vec = items.borrow();
@@ -1818,7 +1818,7 @@ impl Interpreter {
             "index_of" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "index_of() takes 1 argument".into(),
+                        message: "index_of() 需要 1 个参数".into(),
                     });
                 }
                 let vec = items.borrow();
@@ -1836,31 +1836,31 @@ impl Interpreter {
             "remove" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "remove() takes 1 argument (index)".into(),
+                        message: "remove() 需要 1 个参数 (索引)".into(),
                     });
                 }
                 let idx = args[0].as_int().ok_or_else(|| TenthError::RuntimeError {
-                    message: "remove() index must be an integer".into(),
+                    message: "remove() 索引必须是整数".into(),
                 })? as usize;
                 let mut vec = items.borrow_mut();
                 if idx < vec.len() {
                     Ok(Some(vec.remove(idx)))
                 } else {
                     Err(TenthError::RuntimeError {
-                        message: format!("Vec remove index {} out of bounds", idx),
+                        message: format!("Vec remove 索引 {} 越界", idx),
                     })
                 }
             }
             "join" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "join() takes 1 argument (delimiter)".into(),
+                        message: "join() 需要 1 个参数 (分隔符)".into(),
                     });
                 }
                 let delim = match &args[0] {
                     Value::String(s) => s.clone(),
                     _ => return Err(TenthError::RuntimeError {
-                        message: "join() delimiter must be a string".into(),
+                            message: "join() 分隔符必须是字符串".into(),
                     }),
                 };
                 let vec = items.borrow();
@@ -1883,7 +1883,7 @@ impl Interpreter {
             "slice" => {
                 if args.len() != 2 {
                     return Err(TenthError::RuntimeError {
-                        message: "slice() takes 2 arguments (start, end)".into(),
+                        message: "slice() 需要 2 个参数 (起始, 结束)".into(),
                     });
                 }
                 let start = args[0].as_int().unwrap_or(0).max(0) as usize;
@@ -1899,7 +1899,7 @@ impl Interpreter {
             "extend" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "extend() takes 1 argument (Vec)".into(),
+                        message: "extend() 需要 1 个参数 (Vec)".into(),
                     });
                 }
                 if let Value::Vec(other) = &args[0] {
@@ -1915,7 +1915,7 @@ impl Interpreter {
                     return Ok(Some(Value::Unit));
                 }
                 Err(TenthError::RuntimeError {
-                    message: "extend() argument must be a Vec".into(),
+                    message: "extend() 参数必须是 Vec".into(),
                 })
             }
             "sort" => {
@@ -1984,7 +1984,7 @@ impl Interpreter {
             "chunks" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "chunks() takes 1 argument (size)".into(),
+                        message: "chunks() 需要 1 个参数 (大小)".into(),
                     });
                 }
                 let size = args[0].as_int().unwrap_or(1).max(1) as usize;
@@ -2003,7 +2003,7 @@ impl Interpreter {
             "map" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "map() takes 1 argument (closure)".into(),
+                        message: "map() 需要 1 个参数 (闭包)".into(),
                     });
                 }
                 let iter = LazyIterator::from_vec(items);
@@ -2013,7 +2013,7 @@ impl Interpreter {
             "filter" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "filter() takes 1 argument (closure)".into(),
+                        message: "filter() 需要 1 个参数 (闭包)".into(),
                     });
                 }
                 let iter = LazyIterator::from_vec(items);
@@ -2025,7 +2025,7 @@ impl Interpreter {
                 Ok(Some(Value::Vec(items.clone())))
             }
             _ => Err(TenthError::RuntimeError {
-                message: format!("Vec has no method '{}'", method),
+                message: format!("Vec 没有方法 '{}'", method),
             }),
         }
     }
@@ -2038,7 +2038,7 @@ impl Interpreter {
                 Ok(Some(Value::Int(len)))
             }
             _ => Err(TenthError::RuntimeError {
-                message: format!("Range has no method '{}'", method),
+                message: format!("Range 没有方法 '{}'", method),
             }),
         }
     }
@@ -2048,7 +2048,7 @@ impl Interpreter {
             "map" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "map() takes 1 argument (closure)".into(),
+                        message: "map() 需要 1 个参数 (闭包)".into(),
                     });
                 }
                 let new_iter = iter.with_transform(IteratorTransform::Map { closure: args[0].clone() });
@@ -2057,7 +2057,7 @@ impl Interpreter {
             "filter" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "filter() takes 1 argument (closure)".into(),
+                        message: "filter() 需要 1 个参数 (闭包)".into(),
                     });
                 }
                 let new_iter = iter.with_transform(IteratorTransform::Filter { closure: args[0].clone() });
@@ -2066,7 +2066,7 @@ impl Interpreter {
             "take" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "take() takes 1 argument (n)".into(),
+                        message: "take() 需要 1 个参数 (n)".into(),
                     });
                 }
                 let n = args[0].as_int().unwrap_or(0).max(0) as usize;
@@ -2076,7 +2076,7 @@ impl Interpreter {
             "skip" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "skip() takes 1 argument (n)".into(),
+                        message: "skip() 需要 1 个参数 (n)".into(),
                     });
                 }
                 let n = args[0].as_int().unwrap_or(0).max(0) as usize;
@@ -2138,7 +2138,7 @@ impl Interpreter {
                 }
             }
             _ => Err(TenthError::RuntimeError {
-                message: format!("Iterator has no method '{}'", method),
+                message: format!("Iterator 没有方法 '{}'", method),
             }),
         }
     }
@@ -2168,7 +2168,7 @@ impl Interpreter {
                 Ok(result.unwrap_or(Value::Unit))
             }
             _ => Err(TenthError::RuntimeError {
-                message: format!("expected a callable, got {:?}", closure),
+                message: format!("期望可调用值，得到 {:?}", closure),
             }),
         }
     }
@@ -2179,21 +2179,21 @@ impl Interpreter {
             "get" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "get() takes 1 argument".into(),
+                        message: "get() 需要 1 个参数".into(),
                     });
                 }
                 if let Value::String(key) = &args[0] {
                     Ok(m.borrow().get(key).cloned())
                 } else {
                     Err(TenthError::RuntimeError {
-                        message: "HashMap key must be a string".into(),
+                        message: "HashMap 键必须是字符串".into(),
                     })
                 }
             }
             "insert" => {
                 if args.len() != 2 {
                     return Err(TenthError::RuntimeError {
-                        message: "insert() takes 2 arguments".into(),
+                        message: "insert() 需要 2 个参数".into(),
                     });
                 }
                 if let Value::String(key) = &args[0] {
@@ -2201,35 +2201,35 @@ impl Interpreter {
                     Ok(Some(Value::Unit))
                 } else {
                     Err(TenthError::RuntimeError {
-                        message: "HashMap key must be a string".into(),
+                        message: "HashMap 键必须是字符串".into(),
                     })
                 }
             }
             "contains_key" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "contains_key() takes 1 argument".into(),
+                        message: "contains_key() 需要 1 个参数".into(),
                     });
                 }
                 if let Value::String(key) = &args[0] {
                     Ok(Some(Value::Bool(m.borrow().contains_key(key))))
                 } else {
                     Err(TenthError::RuntimeError {
-                        message: "HashMap key must be a string".into(),
+                        message: "HashMap 键必须是字符串".into(),
                     })
                 }
             }
             "remove" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "remove() takes 1 argument".into(),
+                        message: "remove() 需要 1 个参数".into(),
                     });
                 }
                 if let Value::String(key) = &args[0] {
                     Ok(m.borrow_mut().remove(key))
                 } else {
                     Err(TenthError::RuntimeError {
-                        message: "HashMap key must be a string".into(),
+                        message: "HashMap 键必须是字符串".into(),
                     })
                 }
             }
@@ -2259,7 +2259,7 @@ impl Interpreter {
             "merge" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "merge() takes 1 argument (HashMap)".into(),
+                        message: "merge() 需要 1 个参数 (HashMap)".into(),
                     });
                 }
                 if let Value::Map(other) = &args[0] {
@@ -2271,11 +2271,11 @@ impl Interpreter {
                     return Ok(Some(Value::Unit));
                 }
                 Err(TenthError::RuntimeError {
-                    message: "merge() argument must be a HashMap".into(),
+                    message: "merge() 参数必须是 HashMap".into(),
                 })
             }
             _ => Err(TenthError::RuntimeError {
-                message: format!("HashMap has no method '{}'", method),
+                message: format!("HashMap 没有方法 '{}'", method),
             }),
         }
     }
@@ -2397,7 +2397,7 @@ impl Interpreter {
                     "matmul" => {
                         if args.len() != 1 {
                             return Err(TenthError::RuntimeError {
-                                message: "matmul() takes 1 argument".into(),
+                                message: "matmul() 需要 1 个参数".into(),
                             });
                         }
                         if let Value::Tensor(other) = &args[0] {
@@ -2410,19 +2410,19 @@ impl Interpreter {
                             Ok(Value::Tensor(result))
                         } else {
                             Err(TenthError::RuntimeError {
-                                message: "matmul() argument must be a tensor".into(),
+                                message: "matmul() 参数必须是张量".into(),
                             })
                         }
                     }
                     "transpose" => {
                         if !args.is_empty() {
                             return Err(TenthError::RuntimeError {
-                                message: "transpose() takes no arguments".into(),
+                                message: "transpose() 不需要参数".into(),
                             });
                         }
                         let result_tensor = tensor.transpose().ok_or_else(|| {
                             TenthError::RuntimeError {
-                                message: "transpose requires at least 2 dimensions".into(),
+                                message: "转置至少需要 2 个维度".into(),
                             }
                         })?;
                         let result = Rc::new(RefCell::new(result_tensor));
@@ -2437,7 +2437,7 @@ impl Interpreter {
                             .collect();
                         let result = tensor.reshape(&shape).ok_or_else(|| {
                             TenthError::RuntimeError {
-                                message: format!("cannot reshape to {:?}", shape),
+                                message: format!("无法重塑形状为 {:?}", shape),
                             }
                         })?;
                         Ok(Value::Tensor(Rc::new(RefCell::new(result))))
@@ -2450,7 +2450,7 @@ impl Interpreter {
                         // x.conv2d(w, kernel_h, kernel_w, stride, pad)
                         if args.len() < 5 {
                             return Err(TenthError::RuntimeError {
-                                message: "conv2d() takes 5 args: w, kH, kW, stride, pad".into(),
+                                message: "conv2d() 需要 5 个参数: w, kH, kW, stride, pad".into(),
                             });
                         }
                         let k_h = args[1].as_int().unwrap_or(3) as usize;
@@ -2462,7 +2462,7 @@ impl Interpreter {
                             // im2col: (N,C,H,W) → (N*H_out*W_out, C*kH*kW)
                             let (cols, h_out, w_out) = tensor.im2col(k_h, k_w, stride, pad)
                                 .ok_or_else(|| TenthError::RuntimeError {
-                                    message: "im2col failed (input must be 4D)".into(),
+                                    message: "im2col 失败 (输入必须是 4D)".into(),
                                 })?;
                             // Reshape weight: (C_out, C_in, kH, kW) → (C_out, C_in*kH*kW)
                             let w_shape = w_data.shape();
@@ -2470,17 +2470,17 @@ impl Interpreter {
                             // matmul: cols @ w_flat^T → (N*H_out*W_out, C_out)
                             let w_flat = w_data.reshape(&[c_out, w_shape[1] * w_shape[2] * w_shape[3]])
                                 .ok_or_else(|| TenthError::RuntimeError {
-                                    message: "weight reshape failed".into(),
+                                    message: "权重重塑失败".into(),
                                 })?;
                             let output_2d = cols.matmul(&w_flat.transpose()
                                 .ok_or_else(|| TenthError::RuntimeError {
-                                    message: "weight transpose failed".into(),
+                                    message: "权重转置失败".into(),
                                 })?).map_err(|msg| TenthError::RuntimeError { message: msg })?;
                             // Reshape output to (N, C_out, H_out, W_out)
                             let n = tensor.shape()[0];
                             let result = output_2d.reshape(&[n, c_out, h_out, w_out])
                                 .ok_or_else(|| TenthError::RuntimeError {
-                                    message: "output reshape failed".into(),
+                                    message: "输出重塑失败".into(),
                                 })?;
                             let result_rc = Rc::new(RefCell::new(result));
                             if self.recording {
@@ -2501,7 +2501,7 @@ impl Interpreter {
                             return Ok(Value::Tensor(result_rc));
                         }
                         return Err(TenthError::RuntimeError {
-                            message: "conv2d: weight must be a tensor".into(),
+                            message: "conv2d: 权重必须是张量".into(),
                         });
                     }
                     "batchnorm" => {
@@ -2510,7 +2510,7 @@ impl Interpreter {
                         // x: (N, C, H, W) — computes mean/var over N, H, W per channel
                         if args.len() < 3 {
                             return Err(TenthError::RuntimeError {
-                                message: "batchnorm() takes gamma, beta, eps".into(),
+                                message: "batchnorm() 需要 gamma, beta, eps".into(),
                             });
                         }
                         let eps = args[2].as_float().unwrap_or(1e-5);
@@ -2518,7 +2518,7 @@ impl Interpreter {
                             let x_shape = tensor.shape();
                             if x_shape.len() < 2 {
                                 return Err(TenthError::RuntimeError {
-                                    message: "batchnorm requires at least 2D input".into(),
+                                    message: "batchnorm 需要至少 2D 输入".into(),
                                 });
                             }
                             let c = x_shape[1]; // channel dim
@@ -2603,13 +2603,13 @@ impl Interpreter {
                             return Ok(Value::Tensor(result));
                         }
                         return Err(TenthError::RuntimeError {
-                            message: "batchnorm: gamma and beta must be tensors".into(),
+                            message: "batchnorm: gamma 和 beta 必须是张量".into(),
                         });
                     }
                     "dropout" => {
                         if args.is_empty() {
                             return Err(TenthError::RuntimeError {
-                                message: "dropout() takes 1 argument (rate)".into(),
+                                message: "dropout() 需要 1 个参数 (比率)".into(),
                             });
                         }
                         let rate = args[0].as_float().unwrap_or(0.5);
@@ -2640,7 +2640,7 @@ impl Interpreter {
                         // x.layer_norm(gamma, beta, eps)
                         if args.len() < 2 {
                             return Err(TenthError::RuntimeError {
-                                message: "layer_norm() takes gamma, beta, [eps]".into(),
+                                message: "layer_norm() 需要 gamma, beta, [eps]".into(),
                             });
                         }
                         let eps = args.get(2).and_then(|a| a.as_float()).unwrap_or(1e-5);
@@ -2706,7 +2706,7 @@ impl Interpreter {
                             return Ok(Value::Tensor(result));
                         }
                         return Err(TenthError::RuntimeError {
-                            message: "layer_norm: gamma and beta must be tensors".into(),
+                            message: "layer_norm: gamma 和 beta 必须是张量".into(),
                         });
                     }
                     "gelu" => {
@@ -2721,7 +2721,7 @@ impl Interpreter {
                         // x.cat(other, dim)
                         if args.is_empty() {
                             return Err(TenthError::RuntimeError {
-                                message: "cat() takes at least 1 argument (other, [dim])".into(),
+                                message: "cat() 至少需要 1 个参数 (other, [dim])".into(),
                             });
                         }
                         let dim = args.get(1).and_then(|a| a.as_int()).unwrap_or(0) as usize;
@@ -2731,7 +2731,7 @@ impl Interpreter {
                             Ok(Value::Tensor(Rc::new(RefCell::new(result_tensor))))
                         } else {
                             Err(TenthError::RuntimeError {
-                                message: "cat() first argument must be a tensor".into(),
+                                message: "cat() 第一个参数必须是张量".into(),
                             })
                         }
                     }
@@ -2739,7 +2739,7 @@ impl Interpreter {
                         // x.masked_fill(mask, value)
                         if args.len() < 2 {
                             return Err(TenthError::RuntimeError {
-                                message: "masked_fill() takes mask and value".into(),
+                                message: "masked_fill() 需要 mask 和 value".into(),
                             });
                         }
                         let value = args[1].as_float().unwrap_or(0.0);
@@ -2749,7 +2749,7 @@ impl Interpreter {
                             Ok(Value::Tensor(Rc::new(RefCell::new(result_tensor))))
                         } else {
                             Err(TenthError::RuntimeError {
-                                message: "masked_fill() mask must be a tensor".into(),
+                                message: "masked_fill() mask 必须是张量".into(),
                             })
                         }
                     }
@@ -2764,7 +2764,7 @@ impl Interpreter {
                     }
                     "softmax" => {
                         let result_tensor = tensor.softmax().ok_or_else(|| TenthError::RuntimeError {
-                            message: "softmax failed".into(),
+                            message: "softmax 失败".into(),
                         })?;
                         let result = Rc::new(RefCell::new(result_tensor));
                         if self.recording {
@@ -2773,15 +2773,15 @@ impl Interpreter {
                         Ok(Value::Tensor(result))
                     }
                     _ => Err(TenthError::RuntimeError {
-                        message: format!("unknown tensor method: {}", method),
+                        message: format!("未知的张量方法: {}", method),
                     }),
                 }
             }
             Value::Struct { .. } => Err(TenthError::RuntimeError {
-                message: format!("unknown method '{}'", method),
+                message: format!("未知的方法 '{}'", method),
             }),
             _ => Err(TenthError::RuntimeError {
-                message: format!("method '{}' not supported on this type", method),
+                message: format!("此类型不支持方法 '{}'", method),
             }),
         }
     }
@@ -2793,7 +2793,7 @@ impl Interpreter {
             "exp" => Ok(Value::Float(val.exp())),
             "log" => Ok(Value::Float(val.ln())),
             _ => Err(TenthError::RuntimeError {
-                message: format!("unknown method '{}' on scalar", method),
+                message: format!("标量上未知的方法 '{}'", method),
             }),
         }
     }
@@ -2803,18 +2803,18 @@ impl Interpreter {
             Value::String(s) => {
                 if indices.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "string indexing takes exactly 1 index".into(),
+                        message: "字符串索引只需要 1 个索引".into(),
                     });
                 }
                 match &indices[0] {
                     Index::Single(e) => {
                         let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError {
-                            message: "index is void".into(),
+                            message: "索引为空值".into(),
                         })?;
                         let idx = v.as_int().unwrap_or(0) as usize;
                         s.chars().nth(idx).map(|c| Value::String(c.to_string())).ok_or_else(|| {
                             TenthError::RuntimeError {
-                                message: format!("string index {} out of bounds", idx),
+                                message: format!("字符串索引 {} 越界", idx),
                             }
                         })
                     }
@@ -2823,7 +2823,7 @@ impl Interpreter {
                         let start_idx = match start {
                             Some(e) => {
                                 let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError {
-                                    message: "range start is void".into(),
+                                    message: "范围起始为空值".into(),
                                 })?;
                                 v.as_int().unwrap_or(0) as usize
                             }
@@ -2832,7 +2832,7 @@ impl Interpreter {
                         let end_idx = match end {
                             Some(e) => {
                                 let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError {
-                                    message: "range end is void".into(),
+                                    message: "范围结束为空值".into(),
                                 })?;
                                 v.as_int().unwrap_or(0) as usize
                             }
@@ -2841,14 +2841,14 @@ impl Interpreter {
                         let chars: Vec<char> = s_val.chars().collect();
                         if start_idx > chars.len() || end_idx > chars.len() || start_idx > end_idx {
                             return Err(TenthError::RuntimeError {
-                                message: format!("string slice {}..{} out of bounds", start_idx, end_idx),
+                                message: format!("字符串切片 {}..{} 越界", start_idx, end_idx),
                             });
                         }
                         let slice: String = chars[start_idx..end_idx].iter().collect();
                         Ok(Value::String(slice))
                     }
                     _ => Err(TenthError::RuntimeError {
-                        message: "string index must be int or range".into(),
+                        message: "字符串索引必须是整数或范围".into(),
                     }),
                 }
             }
@@ -2860,7 +2860,7 @@ impl Interpreter {
                     match index_expr {
                         Index::Single(e) => {
                             let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError {
-                                message: "index is void".into(),
+                                message: "索引为空值".into(),
                             })?;
                             idx.push(v.as_int().unwrap_or(0) as usize);
                         }
@@ -2874,20 +2874,20 @@ impl Interpreter {
                 match tensor.get(&idx) {
                     Some(val) => Ok(Value::Float(val)),
                     None => Err(TenthError::RuntimeError {
-                        message: format!("index {:?} out of bounds for shape {:?}", idx, shape),
+                        message: format!("索引 {:?} 越界，形状为 {:?}", idx, shape),
                     }),
                 }
             }
             Value::Vec(items) => {
                 if indices.len() != 1 {
                     return Err(TenthError::RuntimeError {
-                        message: "Vec indexing takes exactly 1 index".into(),
+                        message: "Vec 索引只需要 1 个索引".into(),
                     });
                 }
                 match &indices[0] {
                     Index::Single(e) => {
                         let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError {
-                            message: "index is void".into(),
+                            message: "索引为空值".into(),
                         })?;
                         let idx = v.as_int().unwrap_or(0) as usize;
                         // Elements are stored as Shared; return the Shared so
@@ -2896,17 +2896,17 @@ impl Interpreter {
                             Some(Value::Shared(rc)) => Ok(Value::Shared(rc.clone())),
                             Some(other) => Ok(other.clone()),
                             None => Err(TenthError::RuntimeError {
-                                message: format!("Vec index {} out of bounds", idx),
+                                message: format!("Vec 索引 {} 越界", idx),
                             }),
                         }
                     }
                     _ => Err(TenthError::RuntimeError {
-                        message: "Vec index must be an integer".into(),
+                        message: "Vec 索引必须是整数".into(),
                     }),
                 }
             }
             _ => Err(TenthError::RuntimeError {
-                message: "indexing not supported on this type".into(),
+                message: "此类型不支持索引".into(),
             }),
         }
     }
@@ -2947,7 +2947,7 @@ impl Interpreter {
                 result
             }
             _ => Err(TenthError::RuntimeError {
-                message: "not a callable value".into(),
+                message: "不是可调用值".into(),
             }),
         }
     }
@@ -2984,7 +2984,7 @@ impl Interpreter {
                     return Ok(Some(Value::Tensor(t.clone())));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "param() expects a tensor argument".into(),
+                    message: "param() 期望一个张量参数".into(),
                 });
             }
             "backward" => {
@@ -2995,7 +2995,7 @@ impl Interpreter {
                     return Ok(Some(Value::Unit));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "backward() expects a tensor argument".into(),
+                    message: "backward() 期望一个张量参数".into(),
                 });
             }
             "stop_grad" => {
@@ -3019,75 +3019,75 @@ impl Interpreter {
                         Value::Int(n) => Value::Int(n.abs()),
                         Value::Float(n) => Value::Float(n.abs()),
                         _ => return Err(TenthError::RuntimeError {
-                            message: "abs() expects a numeric argument".into(),
+                            message: "abs() 期望一个数值参数".into(),
                         }),
                     }));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "abs() expects 1 argument".into(),
+                    message: "abs() 期望 1 个参数".into(),
                 });
             }
             "sqrt" => {
                 if let Some(arg) = args.first() {
                     let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
-                        message: "sqrt() expects a numeric argument".into(),
+                        message: "sqrt() 期望一个数值参数".into(),
                     })?;
                     return Ok(Some(Value::Float(n.sqrt())));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "sqrt() expects 1 argument".into(),
+                    message: "sqrt() 期望 1 个参数".into(),
                 });
             }
             "sin" => {
                 if let Some(arg) = args.first() {
                     let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
-                        message: "sin() expects a numeric argument".into(),
+                        message: "sin() 期望一个数值参数".into(),
                     })?;
                     return Ok(Some(Value::Float(n.sin())));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "sin() expects 1 argument".into(),
+                    message: "sin() 期望 1 个参数".into(),
                 });
             }
             "cos" => {
                 if let Some(arg) = args.first() {
                     let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
-                        message: "cos() expects a numeric argument".into(),
+                        message: "cos() 期望一个数值参数".into(),
                     })?;
                     return Ok(Some(Value::Float(n.cos())));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "cos() expects 1 argument".into(),
+                    message: "cos() 期望 1 个参数".into(),
                 });
             }
             "ln" => {
                 if let Some(arg) = args.first() {
                     let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
-                        message: "ln() expects a numeric argument".into(),
+                        message: "ln() 期望一个数值参数".into(),
                     })?;
                     if n <= 0.0 {
                         return Err(TenthError::RuntimeError {
-                            message: "ln() argument must be > 0".into(),
+                            message: "ln() 参数必须 > 0".into(),
                         });
                     }
                     return Ok(Some(Value::Float(n.ln())));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "ln() expects 1 argument".into(),
+                    message: "ln() 期望 1 个参数".into(),
                 });
             }
             "pow" => {
                 if args.len() >= 2 {
                     let base = args[0].as_float().ok_or_else(|| TenthError::RuntimeError {
-                        message: "pow() expects numeric arguments".into(),
+                        message: "pow() 期望数值参数".into(),
                     })?;
                     let exp = args[1].as_float().ok_or_else(|| TenthError::RuntimeError {
-                        message: "pow() expects numeric arguments".into(),
+                        message: "pow() 期望数值参数".into(),
                     })?;
                     return Ok(Some(Value::Float(base.powf(exp))));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "pow() expects 2 arguments".into(),
+                    message: "pow() 期望 2 个参数".into(),
                 });
             }
             "cross_entropy" => {
@@ -3098,7 +3098,7 @@ impl Interpreter {
 
                         // Compute softmax along last axis
                         let sm = logits_data.softmax().ok_or_else(|| {
-                            TenthError::RuntimeError { message: "softmax failed in cross_entropy".into() }
+                            TenthError::RuntimeError { message: "cross_entropy 中 softmax 失败".into() }
                         })?;
 
                         // CE loss: -mean(sum(target * log(softmax + ε)))
@@ -3141,7 +3141,7 @@ impl Interpreter {
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "cross_entropy(logits, target) expects two tensors".into(),
+                    message: "cross_entropy(logits, target) 期望两个张量".into(),
                 });
             }
             "grad" => {
@@ -3157,7 +3157,7 @@ impl Interpreter {
                     return Ok(Some(Value::Tensor(Rc::new(RefCell::new(zeros)))));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "grad() expects a tensor argument".into(),
+                    message: "grad() 期望一个张量参数".into(),
                 });
             }
             "rand" => {
@@ -3197,7 +3197,7 @@ impl Interpreter {
                             Value::Array(a) => a,
                             _ => {
                                 return Err(TenthError::RuntimeError {
-                                    message: "save_weights expects a list of tensors".into(),
+                                    message: "save_weights 期望一个张量列表".into(),
                                 });
                             }
                         };
@@ -3237,7 +3237,7 @@ impl Interpreter {
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "save_weights(path, vec_of_tensors)".into(),
+                    message: "save_weights(路径, 张量列表)".into(),
                 });
             }
             "load_weights" => {
@@ -3246,7 +3246,7 @@ impl Interpreter {
                         Ok(bytes) => {
                             if bytes.len() < 4 {
                                 return Err(TenthError::RuntimeError {
-                                    message: "load_weights: file too short".into(),
+                                    message: "load_weights: 文件过短".into(),
                                 });
                             }
                             let num = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
@@ -3292,7 +3292,7 @@ impl Interpreter {
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "load_weights(path)".into(),
+                    message: "load_weights(路径)".into(),
                 });
             }
             "read_file" => {
@@ -3300,12 +3300,12 @@ impl Interpreter {
                     match std::fs::read_to_string(path) {
                         Ok(content) => return Ok(Some(Value::String(content))),
                         Err(e) => return Err(TenthError::RuntimeError {
-                            message: format!("read_file failed: {}", e),
+                            message: format!("读取文件失败: {}", e),
                         }),
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "read_file(path) expects a string path".into(),
+                    message: "read_file(路径) 期望一个字符串路径".into(),
                 });
             }
             "write_file" => {
@@ -3314,13 +3314,13 @@ impl Interpreter {
                         match std::fs::write(path, content) {
                             Ok(()) => return Ok(Some(Value::Unit)),
                             Err(e) => return Err(TenthError::RuntimeError {
-                                message: format!("write_file failed: {}", e),
+                                message: format!("写入文件失败: {}", e),
                             }),
                         }
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "write_file(path, content) expects two string args".into(),
+                    message: "write_file(路径, 内容) 期望两个字符串参数".into(),
                 });
             }
             "write_bytes" => {
@@ -3332,13 +3332,13 @@ impl Interpreter {
                         match std::fs::write(path, &data) {
                             Ok(()) => return Ok(Some(Value::Unit)),
                             Err(e) => return Err(TenthError::RuntimeError {
-                                message: format!("write_bytes failed: {}", e),
+                                message: format!("写入字节失败: {}", e),
                             }),
                         }
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "write_bytes(path, bytes) expects a string and a byte vec".into(),
+                    message: "write_bytes(路径, 字节数组) 期望一个字符串和一个字节 Vec".into(),
                 });
             }
             "read_bytes" => {
@@ -3351,12 +3351,12 @@ impl Interpreter {
                             return Ok(Some(Value::Vec(Rc::new(RefCell::new(bytes)))));
                         }
                         Err(e) => return Err(TenthError::RuntimeError {
-                            message: format!("read_bytes failed: {}", e),
+                            message: format!("读取字节失败: {}", e),
                         }),
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "read_bytes(path) expects a string path".into(),
+                    message: "read_bytes(路径) 期望一个字符串路径".into(),
                 });
             }
             "path_join" => {
@@ -3367,7 +3367,7 @@ impl Interpreter {
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "path_join(base, rest) expects two string args".into(),
+                    message: "path_join(基础路径, 子路径) 期望两个字符串参数".into(),
                 });
             }
             "path_exists" => {
@@ -3375,7 +3375,7 @@ impl Interpreter {
                     return Ok(Some(Value::Bool(std::path::Path::new(path).exists())));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "path_exists(path) expects a string path".into(),
+                    message: "path_exists(路径) 期望一个字符串路径".into(),
                 });
             }
             "path_is_file" => {
@@ -3383,7 +3383,7 @@ impl Interpreter {
                     return Ok(Some(Value::Bool(std::path::Path::new(path).is_file())));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "path_is_file(path) expects a string path".into(),
+                    message: "path_is_file(路径) 期望一个字符串路径".into(),
                 });
             }
             "path_is_dir" => {
@@ -3391,7 +3391,7 @@ impl Interpreter {
                     return Ok(Some(Value::Bool(std::path::Path::new(path).is_dir())));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "path_is_dir(path) expects a string path".into(),
+                    message: "path_is_dir(路径) 期望一个字符串路径".into(),
                 });
             }
             "mkdir" => {
@@ -3399,12 +3399,12 @@ impl Interpreter {
                     match std::fs::create_dir_all(path) {
                         Ok(()) => return Ok(Some(Value::Unit)),
                         Err(e) => return Err(TenthError::RuntimeError {
-                            message: format!("mkdir failed: {}", e),
+                            message: format!("创建目录失败: {}", e),
                         }),
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "mkdir(path) expects a string path".into(),
+                    message: "mkdir(路径) 期望一个字符串路径".into(),
                 });
             }
             "list_dir" => {
@@ -3417,12 +3417,12 @@ impl Interpreter {
                             return Ok(Some(Value::Vec(Rc::new(RefCell::new(names)))));
                         }
                         Err(e) => return Err(TenthError::RuntimeError {
-                            message: format!("list_dir failed: {}", e),
+                            message: format!("列出目录失败: {}", e),
                         }),
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "list_dir(path) expects a string path".into(),
+                    message: "list_dir(路径) 期望一个字符串路径".into(),
                 });
             }
             "file_size" => {
@@ -3430,12 +3430,12 @@ impl Interpreter {
                     match std::fs::metadata(path) {
                         Ok(meta) => return Ok(Some(Value::Int(meta.len() as i64))),
                         Err(e) => return Err(TenthError::RuntimeError {
-                            message: format!("file_size failed: {}", e),
+                            message: format!("获取文件大小失败: {}", e),
                         }),
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "file_size(path) expects a string path".into(),
+                    message: "file_size(路径) 期望一个字符串路径".into(),
                 });
             }
             "remove_file" => {
@@ -3443,12 +3443,12 @@ impl Interpreter {
                     match std::fs::remove_file(path) {
                         Ok(()) => return Ok(Some(Value::Unit)),
                         Err(e) => return Err(TenthError::RuntimeError {
-                            message: format!("remove_file failed: {}", e),
+                            message: format!("删除文件失败: {}", e),
                         }),
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "remove_file(path) expects a string path".into(),
+                    message: "remove_file(路径) 期望一个字符串路径".into(),
                 });
             }
             "copy_file" => {
@@ -3457,13 +3457,13 @@ impl Interpreter {
                         match std::fs::copy(src, dst) {
                             Ok(_) => return Ok(Some(Value::Unit)),
                             Err(e) => return Err(TenthError::RuntimeError {
-                                message: format!("copy_file failed: {}", e),
+                                message: format!("复制文件失败: {}", e),
                             }),
                         }
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "copy_file(src, dst) expects two string args".into(),
+                    message: "copy_file(源路径, 目标路径) 期望两个字符串参数".into(),
                 });
             }
             "Vec::new" => return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new()))))),
@@ -3485,7 +3485,7 @@ impl Interpreter {
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "compile_host(src, out) expects two string args".into(),
+                    message: "compile_host(源码, 输出路径) 期望两个字符串参数".into(),
                 });
             }
             "compile_program" => {
@@ -3506,13 +3506,13 @@ impl Interpreter {
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "compile_program(program, out) expects Program struct and string path".into(),
+                    message: "compile_program(程序, 输出路径) 期望 Program 结构体和字符串路径".into(),
                 });
             }
             "format" => {
                 if args.is_empty() {
                     return Err(TenthError::RuntimeError {
-                        message: "format() expects at least a template string".into(),
+                        message: "format() 至少需要一个模板字符串".into(),
                     });
                 }
                 if let Value::String(template) = &args[0] {
@@ -3556,7 +3556,7 @@ impl Interpreter {
                     return Ok(Some(Value::String(result)));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "format() first argument must be a string template".into(),
+                    message: "format() 第一个参数必须是字符串模板".into(),
                 })
             }
             "parse_int" => {
@@ -3566,7 +3566,7 @@ impl Interpreter {
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "parse_int() expects a string argument".into(),
+                    message: "parse_int() 期望一个字符串参数".into(),
                 })
             }
             "parse_float" => {
@@ -3576,7 +3576,7 @@ impl Interpreter {
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "parse_float() expects a string argument".into(),
+                    message: "parse_float() 期望一个字符串参数".into(),
                 })
             }
             // Time functions
@@ -3632,7 +3632,7 @@ impl Interpreter {
                     return Ok(Some(Value::Unit));
                 }
                 return Err(TenthError::RuntimeError {
-                    message: "time_sleep_ms(ms) expects an integer".into(),
+                    message: "time_sleep_ms(ms) 期望一个整数".into(),
                 });
             }
             // Random functions
@@ -3811,7 +3811,7 @@ impl Interpreter {
                     }
                 }
                 return Err(TenthError::RuntimeError {
-                    message: format!("undefined function '{}'", name),
+                    message: format!("未定义函数 '{}'", name),
                 });
             }
         }
@@ -3902,7 +3902,7 @@ impl Interpreter {
             HirStmtKind::While { cond, body } => {
                 loop {
                     let c = self.eval_expr(cond)?.ok_or_else(|| TenthError::RuntimeError {
-                        message: "while condition is void".into(),
+                        message: "while 条件为空值".into(),
                     })?;
                     if !c.is_truthy() {
                         break;
@@ -3917,7 +3917,7 @@ impl Interpreter {
             }
             HirStmtKind::For { var, iter, body } => {
                 let iter_val = self.eval_expr(iter)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "for iterable is void".into(),
+                    message: "for 迭代对象为空值".into(),
                 })?;
                 match iter_val {
                     Value::Range { start, end, inclusive } => {
@@ -3977,7 +3977,7 @@ impl Interpreter {
                     }
                     _ => {
                         return Err(TenthError::RuntimeError {
-                            message: "for loop supports range, Vec, tensor, and iterator".into(),
+                            message: "for 循环支持 range、Vec、张量和迭代器".into(),
                         });
                     }
                 }

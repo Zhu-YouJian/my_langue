@@ -72,7 +72,7 @@ impl Scope {
         match self.get_ownership(name) {
             Some(Ownership::ExclusiveRef) => Err(TenthError::TypeError {
                 line: span.line, col: span.col,
-                message: format!("cannot borrow '{}' as shared because it is also borrowed as mutable", name),
+                message: format!("不可将 '{}' 共享借用，因为它已被可变借用", name),
             }),
             Some(Ownership::Moved) => Err(TenthError::TypeError {
                 line: span.line, col: span.col,
@@ -418,7 +418,7 @@ impl Lowerer {
                         return Err(TenthError::TypeError {
                             line: span.line,
                             col: span.col,
-                            message: "generic call target must be a named function".into(),
+                            message: "泛型调用的目标必须是具名函数".into(),
                         });
                     }
                 };
@@ -427,7 +427,7 @@ impl Lowerer {
                     .ok_or_else(|| TenthError::TypeError {
                         line: span.line,
                         col: span.col,
-                        message: format!("undefined generic function '{}'", func_name),
+                        message: format!("未定义的泛型函数 '{}'", func_name),
                     })?
                     .clone();
 
@@ -1011,7 +1011,7 @@ impl Lowerer {
                             line: span.line,
                             col: span.col,
                             message: format!(
-                                "function '{}' expects {} argument(s) [{}], got {} [{}]",
+                                "函数 '{}' 期望 {} 个参数 [{}]，但传入了 {} 个 [{}]",
                                 name, params.len(), expected.join(", "), args.len(), got.join(", ")
                             ),
                         });
@@ -1323,8 +1323,8 @@ impl Lowerer {
                                         line: type_name.span.line,
                                         col: type_name.span.col,
                                         message: format!(
-                                            "missing implementation of '{}' for trait '{}' on type '{}'",
-                                            method.name, trait_name_str, type_name_str
+                                            "类型 '{}' 实现 trait '{}' 时缺少方法 '{}'",
+                                            type_name_str, trait_name_str, method.name
                                         ),
                                     });
                                 }
