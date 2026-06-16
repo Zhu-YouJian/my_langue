@@ -1,5 +1,9 @@
 use super::Handler;
 use crate::lsp_types::*;
+use tenth::lexer::lexer::Lexer;
+use tenth::lexer::token::{Token, TokenKind};
+use tenth::hir::lower::Lowerer;
+use tenth::parser::parser::Parser;
 
 pub struct HoverHandler;
 
@@ -19,19 +23,307 @@ impl Handler for HoverHandler {
                 Some(Position { line, character })
             });
 
-        // Simplified: return hover info for keywords and builtins
-        // A full implementation would use a symbol table from the AST
-        let _ = (uri, position);
+        let pos = match position {
+            Some(p) => p,
+            None => return serde_json::Value::Null,
+        };
 
-        // For now, return null — a complete implementation would look up
-        // the symbol at the given position and return type info + docs
+        // Convert URI to file path
+        let file_path = uri_to_path(uri);
+        if file_path.is_empty() {
+            return serde_json::Value::Null;
+        }
+
+        // Read the source file
+        let source = match std::fs::read_to_string(&file_path) {
+            Ok(s) => s,
+            Err(_) => return serde_json::Value::Null,
+        };
+
+        // Tokenize
+        let tokens = match Lexer::new(&source).tokenize() {
+            Ok(t) => t,
+            Err(_) => return serde_json::Value::Null,
+        };
+
+        // Find the token at the cursor position
+        let target_line = (pos.line + 1) as usize; // LSP lines are 0-based, lexer is 1-based
+        let target_col = (pos.character + 1) as usize; // LSP chars are 0-based, lexer is 1-based
+
+        let token = find_token_at_position(&tokens, target_line, target_col);
+
+        // Get the text of the token for lookup
+        let token_text = match &token {
+            Some(t) => token_to_text(t),
+            None => return serde_json::Value::Null,
+        };
+
+        if token_text.is_empty() {
+            return serde_json::Value::Null;
+        }
+
+        // First, try the keyword/builtin/type lookup table
+        if let Some(hover) = lookup_hover(&token_text) {
+            return serde_json::to_value(&hover).unwrap_or(serde_json::Value::Null);
+        }
+
+        // For identifiers, try HIR-based type lookup
+        if let Some(tok) = &token {
+            if matches!(tok.kind, TokenKind::Identifier(_)) {
+                if let Some(hover) = lookup_hir_type(&source, &token_text) {
+                    return serde_json::to_value(&hover).unwrap_or(serde_json::Value::Null);
+                }
+            }
+        }
+
         serde_json::Value::Null
     }
 }
 
+/// Convert a URI string to a file system path.
+/// Strips "file://" prefix and handles URL-encoded characters.
+fn uri_to_path(uri: &str) -> String {
+    let path = if let Some(stripped) = uri.strip_prefix("file:///") {
+        stripped.to_string()
+    } else if let Some(stripped) = uri.strip_prefix("file://") {
+        stripped.to_string()
+    } else {
+        uri.to_string()
+    };
+
+    // On Windows, forward slashes in file URIs need to be converted
+    let path = path.replace('/', "\\");
+
+    // Decode percent-encoded characters
+    percent_decode(&path)
+}
+
+/// Simple percent-decode for common URL-encoded characters.
+fn percent_decode(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let hex: String = chars.by_ref().take(2).collect();
+            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                result.push(byte as char);
+            } else {
+                result.push('%');
+                result.push_str(&hex);
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Find the token at the given line and column position.
+/// The lexer uses 1-based line/col, LSP uses 0-based (already converted by caller).
+fn find_token_at_position(tokens: &[Token], line: usize, col: usize) -> Option<Token> {
+    for token in tokens {
+        if token.kind == TokenKind::Eof {
+            continue;
+        }
+
+        let token_line = token.span.line;
+        let token_col = token.span.col;
+        let token_text = token_to_text(token);
+        let token_end_col = token_col + token_text.len();
+
+        if token_line == line && col >= token_col && col <= token_end_col {
+            return Some(token.clone());
+        }
+    }
+    None
+}
+
+/// Get the display text of a token.
+fn token_to_text(token: &Token) -> String {
+    match &token.kind {
+        TokenKind::Identifier(s) => s.clone(),
+        TokenKind::IntLiteral(n) => n.to_string(),
+        TokenKind::FloatLiteral(n) => n.to_string(),
+        TokenKind::StringLiteral(s) => s.clone(),
+        TokenKind::CharLiteral(c) => c.to_string(),
+        TokenKind::InterpolatedString(parts) => {
+            let mut s = String::new();
+            for p in parts {
+                match p {
+                    tenth::lexer::token::StringPart::Literal(l) => s.push_str(l),
+                    tenth::lexer::token::StringPart::Expr(e) => {
+                        s.push('{');
+                        s.push_str(e);
+                        s.push('}');
+                    }
+                }
+            }
+            s
+        }
+        _ => token.kind.to_string(),
+    }
+}
+
+/// Try to look up type information from the HIR for a given identifier.
+fn lookup_hir_type(source: &str, name: &str) -> Option<Hover> {
+    // Parse the source
+    let tokens = Lexer::new(source).tokenize().ok()?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().ok()?;
+
+    // Lower to HIR
+    let mut lowerer = Lowerer::new();
+    let hir_program = lowerer.lower_program(&program).ok()?;
+
+    // Search through functions
+    for fn_def in &hir_program.functions {
+        if fn_def.name == name {
+            let params: Vec<String> = fn_def.params.iter()
+                .map(|(n, t)| format!("{}: {}", n, t))
+                .collect();
+            let sig = format!(
+                "fn {}({}) -> {}",
+                fn_def.name,
+                params.join(", "),
+                fn_def.return_type
+            );
+            return Some(Hover {
+                contents: MarkupContent {
+                    kind: "plaintext".to_string(),
+                    value: sig,
+                },
+            });
+        }
+    }
+
+    // Search through generic functions
+    for fn_def in &hir_program.generic_funcs {
+        if fn_def.name == name {
+            let generics = if fn_def.generics.is_empty() {
+                String::new()
+            } else {
+                format!("<{}>", fn_def.generics.join(", "))
+            };
+            let params: Vec<String> = fn_def.params.iter()
+                .map(|(n, t)| format!("{}: {}", n, t))
+                .collect();
+            let sig = format!(
+                "fn {}{}({}) -> {}",
+                fn_def.name,
+                generics,
+                params.join(", "),
+                fn_def.return_type
+            );
+            return Some(Hover {
+                contents: MarkupContent {
+                    kind: "plaintext".to_string(),
+                    value: sig,
+                },
+            });
+        }
+    }
+
+    // Search through structs
+    if let Some(fields) = hir_program.structs.get(name) {
+        let field_strs: Vec<String> = fields.iter()
+            .map(|(n, t)| format!("  {}: {}", n, t))
+            .collect();
+        let sig = format!("struct {} {{\n{}\n}}", name, field_strs.join(",\n"));
+        return Some(Hover {
+            contents: MarkupContent {
+                kind: "plaintext".to_string(),
+                value: sig,
+            },
+        });
+    }
+
+    // Search through generic structs
+    if let Some(gs) = hir_program.generic_structs.get(name) {
+        let generics = if gs.generics.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", gs.generics.join(", "))
+        };
+        let field_strs: Vec<String> = gs.fields.iter()
+            .map(|(n, t)| format!("  {}: {}", n, t))
+            .collect();
+        let sig = format!("struct {}{} {{\n{}\n}}", name, generics, field_strs.join(",\n"));
+        return Some(Hover {
+            contents: MarkupContent {
+                kind: "plaintext".to_string(),
+                value: sig,
+            },
+        });
+    }
+
+    // Search through enums
+    if let Some(variants) = hir_program.enums.get(name) {
+        let variant_strs: Vec<String> = variants.iter()
+            .map(|(v, fields)| {
+                if fields.is_empty() {
+                    format!("  {}", v)
+                } else {
+                    let field_strs: Vec<String> = fields.iter()
+                        .map(|(n, t)| format!("{}: {}", n, t))
+                        .collect();
+                    format!("  {}({})", v, field_strs.join(", "))
+                }
+            })
+            .collect();
+        let sig = format!("enum {} {{\n{}\n}}", name, variant_strs.join(",\n"));
+        return Some(Hover {
+            contents: MarkupContent {
+                kind: "plaintext".to_string(),
+                value: sig,
+            },
+        });
+    }
+
+    // Search through trait definitions
+    if let Some(trait_def) = hir_program.trait_defs.get(name) {
+        let method_strs: Vec<String> = trait_def.methods.iter()
+            .map(|m| {
+                let params: Vec<String> = m.params.iter()
+                    .map(|(n, t)| format!("{}: {}", n, t))
+                    .collect();
+                format!("  fn {}({}) -> {}", m.name, params.join(", "), m.return_type)
+            })
+            .collect();
+        let sig = format!("trait {} {{\n{}\n}}", name, method_strs.join(",\n"));
+        return Some(Hover {
+            contents: MarkupContent {
+                kind: "plaintext".to_string(),
+                value: sig,
+            },
+        });
+    }
+
+    // Search through methods on types (impl blocks)
+    for (type_name, method_map) in &hir_program.methods {
+        if let Some(fn_def) = method_map.get(name) {
+            let params: Vec<String> = fn_def.params.iter()
+                .map(|(n, t)| format!("{}: {}", n, t))
+                .collect();
+            let sig = format!(
+                "impl {} {{ fn {}({}) -> {} }}",
+                type_name,
+                fn_def.name,
+                params.join(", "),
+                fn_def.return_type
+            );
+            return Some(Hover {
+                contents: MarkupContent {
+                    kind: "plaintext".to_string(),
+                    value: sig,
+                },
+            });
+        }
+    }
+
+    None
+}
+
 /// Lookup documentation for a known symbol name.
-/// Used by a future full implementation.
-#[allow(dead_code)]
 fn lookup_hover(name: &str) -> Option<Hover> {
     let docs: &[(&str, &str)] = &[
         ("fn", "Keyword: Define a function"),
@@ -65,6 +357,49 @@ fn lookup_hover(name: &str) -> Option<Hover> {
         ("String", "Type: UTF-8 string"),
         ("Tensor", "Type: N-dimensional tensor"),
         ("Vec", "Type: Dynamic array"),
+        // Additional keywords from the lexer
+        ("match", "Keyword: Pattern matching expression"),
+        ("loop", "Keyword: Infinite loop"),
+        ("break", "Keyword: Break out of a loop"),
+        ("continue", "Keyword: Skip to next loop iteration"),
+        ("try", "Keyword: Try block for error handling"),
+        ("use", "Keyword: Import module items"),
+        ("mod", "Keyword: Define a module"),
+        ("pub", "Keyword: Public visibility modifier"),
+        ("type", "Keyword: Type alias definition"),
+        ("self", "Keyword: Self reference in method"),
+        ("spawn", "Keyword: Spawn a concurrent task"),
+        ("task", "Keyword: Define an async task"),
+        ("shard", "Keyword: Define a distributed shard"),
+        ("node", "Keyword: Define a compute node"),
+        ("macro", "Keyword: Define a macro"),
+        ("where", "Keyword: Constraint clause"),
+        ("as", "Keyword: Type cast or alias"),
+        ("move", "Keyword: Move ownership"),
+        // Additional builtins
+        ("println", "Builtin: Print a value with newline"),
+        ("eprintln", "Builtin: Print to stderr with newline"),
+        ("rand", "Builtin: Create a tensor with random uniform values"),
+        ("abs", "Builtin: Absolute value"),
+        ("sqrt", "Builtin: Square root"),
+        ("sin", "Builtin: Sine function"),
+        ("cos", "Builtin: Cosine function"),
+        ("ln", "Builtin: Natural logarithm"),
+        ("pow", "Builtin: Power function"),
+        // Additional types
+        ("i8", "Type: 8-bit signed integer"),
+        ("i16", "Type: 16-bit signed integer"),
+        ("i32", "Type: 32-bit signed integer"),
+        ("u8", "Type: 8-bit unsigned integer"),
+        ("u16", "Type: 16-bit unsigned integer"),
+        ("u32", "Type: 32-bit unsigned integer"),
+        ("u64", "Type: 64-bit unsigned integer"),
+        ("f16", "Type: 16-bit floating point"),
+        ("f32", "Type: 32-bit floating point"),
+        ("bf16", "Type: BFloat16"),
+        ("char", "Type: Unicode character"),
+        ("Option", "Type: Optional value (Some | None)"),
+        ("Result", "Type: Result value (Ok | Err)"),
     ];
 
     docs.iter()

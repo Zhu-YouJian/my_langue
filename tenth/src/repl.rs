@@ -66,6 +66,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                     println!("  :clear        reset all state (functions, vars)");
                     println!("  :mem          show memory / limits snapshot");
                     println!("  :print V      print variable value");
+                    println!("  :grad V       show tensor gradient");
                     println!("  :type EXPR    show the inferred type of an expression");
                     println!("  :load FILE    load and execute a .th file");
                     println!();
@@ -177,6 +178,21 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                     }
                     continue;
                 }
+                if trimmed.starts_with(":grad ") {
+                    let var = trimmed[6..].trim();
+                    match variables.get(var) {
+                        None => println!("  undefined variable: {}", var),
+                        Some(Value::Tensor(t)) => {
+                            let t = t.borrow();
+                            match &t.grad {
+                                Some(g) => println!("  ∇{} = {}", var, g),
+                                None => println!("  no gradient recorded"),
+                            }
+                        }
+                        Some(_) => println!("  not a tensor variable"),
+                    }
+                    continue;
+                }
                 if trimmed.starts_with(":type ") {
                     let expr_src = &trimmed[6..];
                     match show_type(expr_src) {
@@ -201,7 +217,8 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                 // ── Multi-line input ───────────────────────────────
                 let mut full_input = trimmed.to_string();
                 while !is_balanced(&full_input) {
-                    match rl.readline("...     ") {
+                    let prompt = continuation_prompt(&full_input);
+                    match rl.readline(prompt) {
                         Ok(cont) => {
                             full_input.push('\n');
                             full_input.push_str(&cont);
@@ -261,11 +278,29 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
     Ok(())
 }
 
-/// Check if braces/brackets/parens are balanced. Returns true if all openers are closed.
+/// Check if the input is complete and ready to be evaluated.
+/// Returns true when all openers are closed AND no incomplete statement is detected.
 fn is_balanced(s: &str) -> bool {
     let mut stack: Vec<char> = Vec::new();
+    let mut in_string: Option<char> = None; // Some('"' | '\'') when inside a string literal
+    let mut escape_next = false;
+
     for ch in s.chars() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if let Some(quote) = in_string {
+            if ch == '\\' {
+                escape_next = true;
+            } else if ch == quote {
+                in_string = None;
+            }
+            // Inside a string, skip brace/bracket counting
+            continue;
+        }
         match ch {
+            '"' | '\'' => in_string = Some(ch),
             '{' | '(' | '[' => stack.push(ch),
             '}' => {
                 if stack.pop() != Some('{') { return false; }
@@ -279,7 +314,101 @@ fn is_balanced(s: &str) -> bool {
             _ => {}
         }
     }
-    stack.is_empty()
+
+    // Unbalanced braces/brackets/parens → not complete
+    if !stack.is_empty() {
+        return false;
+    }
+
+    // Check for incomplete statement patterns on the last non-empty line
+    let last_line = s.lines().last().unwrap_or("").trim();
+    if last_line.is_empty() {
+        return true;
+    }
+
+    // Line ends with a trailing operator or punctuation indicating more input needed
+    if let Some(rest) = last_line.strip_suffix('=') {
+        // `=` at end but not `==` or `!=` or `<=` or `>=`
+        if !rest.ends_with('=') && !rest.ends_with('!') && !rest.ends_with('<') && !rest.ends_with('>') {
+            return false;
+        }
+    }
+    if last_line.ends_with("->") {
+        return false;
+    }
+    // Binary operators at end (but not a unary minus at start of line)
+    let binary_ops = ['+', '*', '/', '>', '<', '!', '&', '|'];
+    if let Some(ch) = last_line.chars().last() {
+        if binary_ops.contains(&ch) {
+            return false;
+        }
+    }
+    // Trailing minus: only treat as binary op if there's something before it
+    if last_line.ends_with('-') && last_line.len() > 1 {
+        let before = last_line.chars().rev().nth(1).unwrap();
+        if before.is_alphanumeric() || before == ')' || before == ']' || before == '_' {
+            return false;
+        }
+    }
+    if last_line.ends_with(',') {
+        return false;
+    }
+
+    // Keyword-started block without a closing brace (e.g. "fn foo() {", "if x {")
+    let first_word = s.lines().next().unwrap_or("").trim().split_whitespace().next().unwrap_or("");
+    let block_keywords = ["fn", "struct", "enum", "impl", "trait", "if", "while", "for"];
+    if block_keywords.contains(&first_word) {
+        // If there's an opening brace but the brace stack was empty, it means
+        // braces balanced — but if the first line starts a block keyword and
+        // the overall input has no '{' at all, the body is missing.
+        let has_brace = s.contains('{');
+        if !has_brace {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Determine a continuation prompt based on what's currently open.
+fn continuation_prompt(input: &str) -> &'static str {
+    let mut stack: Vec<char> = Vec::new();
+    let mut in_string: Option<char> = None;
+    let mut escape_next = false;
+
+    for ch in input.chars() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if let Some(quote) = in_string {
+            if ch == '\\' {
+                escape_next = true;
+            } else if ch == quote {
+                in_string = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => in_string = Some(ch),
+            '{' | '(' | '[' => stack.push(ch),
+            '}' | ')' | ']' => { stack.pop(); }
+            _ => {}
+        }
+    }
+
+    if in_string.is_some() {
+        "... \"  "
+    } else if let Some(&top) = stack.last() {
+        match top {
+            '{' => "... {  ",
+            '(' => "... (  ",
+            '[' => "... [  ",
+            _   => "...     ",
+        }
+    } else {
+        "...     "
+    }
 }
 
 /// Show the inferred type of an expression without executing it.
