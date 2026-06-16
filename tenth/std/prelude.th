@@ -19,7 +19,8 @@
 //   save_weights, load_weights — model serialization
 //   format, parse_int, parse_float — formatting & parsing
 //   path_join, path_exists, path_is_file, path_is_dir — path operations
-//   mkdir, list_dir, file_size, remove_file, copy_file — filesystem
+//   mkdir, list_dir, file_size, remove_file, copy_file, rename_file — filesystem
+//   print                    — output without newline
 
 // ── Time (built-in native functions) ──
 //   time_now()               — current Unix timestamp (f64, seconds)
@@ -81,5 +82,5 @@
 //   std::random::random::rand_int, rand_float, rand_range, choice, shuffle, rand_bool, sample
 //   std::cli::cli::args_count, arg, args, args_tail, has_flag, flag_value
 //   std::logging::logging::debug, info, warn, error, set_level, LEVEL_DEBUG, LEVEL_INFO, LEVEL_WARN, LEVEL_ERROR
-//   std::fs::fs::exists, is_file, is_dir, join, mkdir_all, list_dir, size, remove, copy, read_text, read_bytes, write_text, write_bytes, read_lines, extension, filename, parent
+//   std::fs::fs::exists, is_file, is_dir, join, mkdir_all, list_dir, size, remove, copy, rename, read_text, read_bytes, write_text, write_bytes, read_lines, extension, filename, parent
 //   std::json::json::encode, decode, encode_pretty, load, save

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use crate::manifest::{Dependency, Manifest};
+use crate::manifest::{Dependency, Lockfile, Manifest};
 
 fn is_git_url(package: &str) -> bool {
     package.starts_with("http://")
@@ -80,6 +80,11 @@ pub fn add(package: &str, version: Option<&str>) -> Result<(), Box<dyn std::erro
             .insert(package_name.clone(), dependency);
         manifest.save_to_file(manifest_path)?;
 
+        // Update lock file
+        let lock_path = Path::new("Tenth.lock");
+        let lockfile = Lockfile::from_manifest(&manifest);
+        let _ = lockfile.save_to_file(lock_path);
+
         println!(
             "Added dependency `{}` from git URL `{}`",
             package_name, package
@@ -93,6 +98,11 @@ pub fn add(package: &str, version: Option<&str>) -> Result<(), Box<dyn std::erro
 
         manifest.dependencies.insert(package.to_string(), dependency);
         manifest.save_to_file(manifest_path)?;
+
+        // Update lock file
+        let lock_path = Path::new("Tenth.lock");
+        let lockfile = Lockfile::from_manifest(&manifest);
+        let _ = lockfile.save_to_file(lock_path);
 
         println!("Added dependency `{}`", package);
     }

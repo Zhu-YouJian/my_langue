@@ -127,6 +127,15 @@ impl Tensor {
         *self.data.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0.0)
     }
 
+    /// Return the index of the maximum value (flat index).
+    pub fn argmax(&self) -> i64 {
+        self.data.iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(i, _)| i as i64)
+            .unwrap_or(0)
+    }
+
     // ── scalar ops (keep for compatibility) ────────────────────────────
 
     pub fn add_scalar(&self, scalar: f64) -> Tensor {

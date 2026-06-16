@@ -322,12 +322,12 @@ impl Lowerer {
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
                             | "cross_entropy"
-                            | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
+                            | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "tensor_from_vec"
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
                             | "format" | "parse_int" | "parse_float"
                             | "path_join" | "path_exists" | "path_is_file" | "path_is_dir"
-                            | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file"
+                            | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file" | "rename_file"
                             | "time_now" | "time_now_ms" | "time_date" | "time_time" | "time_datetime" | "time_sleep_ms"
                             | "random_int" | "random_float"
                             | "math_tan" | "math_asin" | "math_acos" | "math_atan" | "math_atan2"
@@ -1092,7 +1092,8 @@ impl Lowerer {
             "format" => Ok(Type::str_()),
             "parse_int" => Ok(Type::Enum("Option".to_string())),
             "parse_float" => Ok(Type::Enum("Option".to_string())),
-            "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" => Ok(Type::f64()),
+            "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" => Ok(Type::f64()),
+            "tensor_from_vec" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
             "zeros" | "ones" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
             "save_weights" | "load_weights" => Ok(Type::unit()),
             "cross_entropy" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),

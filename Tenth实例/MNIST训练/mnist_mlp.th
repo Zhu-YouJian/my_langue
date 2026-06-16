@@ -34,10 +34,10 @@ fn main() {
     let img_data = mnist::parse_images(train_images_path);
     let lbl_data = mnist::parse_labels(train_labels_path);
 
-    let num_images = img_data.get(0).as_int().unwrap_or(0);
-    let rows = img_data.get(1).as_int().unwrap_or(28);
-    let cols = img_data.get(2).as_int().unwrap_or(28);
-    let num_labels = lbl_data.get(0).as_int().unwrap_or(0);
+    let num_images = img_data.get(0);
+    let rows = img_data.get(1);
+    let cols = img_data.get(2);
+    let num_labels = lbl_data.get(0);
 
     println("Loaded images:");
     println(num_images);
@@ -74,19 +74,19 @@ fn main() {
             let mut pixel_vals = Vec::new();
             let mut px = 0;
             while px < rows * cols {
-                let raw = img_data.get(offset + px).as_int().unwrap_or(0);
-                pixel_vals.push(raw as f64 / 255.0);
+                let raw = img_data.get(offset + px);
+                pixel_vals.push(to_float(raw) / 255.0);
                 px = px + 1;
             }
 
             // 创建输入张量 (1 x 784)
-            let x = tensor[pixel_vals].reshape(1, 784);
+            let x = tensor_from_vec(pixel_vals, 1, 784);
 
             // 获取标签
-            let label = lbl_data.get(1 + sample).as_int().unwrap_or(0);
+            let label = lbl_data.get(1 + sample);
 
             // One-hot 编码
-            let target = tensor[mnist::one_hot(label)].reshape(1, 10);
+            let target = tensor_from_vec(mnist::one_hot(label), 1, 10);
 
             // 前向传播
             new_grad();
@@ -112,7 +112,9 @@ fn main() {
             if pred == label {
                 correct = correct + 1;
             }
-            total_loss = total_loss + loss.sum().as_float().unwrap_or(0.0);
+            // loss 是 1x1 Tensor，累加到 total_loss
+            let loss_val = loss.sum();
+            total_loss = total_loss + loss_val;
 
             sample = sample + 1;
 
@@ -123,18 +125,18 @@ fn main() {
                 println("Sample");
                 println(sample);
                 println("Loss:");
-                println(total_loss / sample as f64);
+                println(total_loss / to_float(sample));
                 println("Accuracy:");
-                println(correct as f64 / sample as f64);
+                println(to_float(correct) / to_float(sample));
             }
         }
 
         println("=== Epoch");
         println(epoch + 1);
         println("complete. Loss:");
-        println(total_loss / num_images as f64);
+        println(total_loss / to_float(num_images));
         println("Accuracy:");
-        println(correct as f64 / num_images as f64);
+        println(to_float(correct) / to_float(num_images));
 
         epoch = epoch + 1;
     }

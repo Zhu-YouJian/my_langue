@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::manifest::Manifest;
+use crate::manifest::{Lockfile, Manifest};
 
 pub fn build() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_path = Path::new("Tenth.toml");
@@ -10,6 +10,12 @@ pub fn build() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let manifest = Manifest::load_from_file(manifest_path)?;
+
+    // Generate/update lock file
+    let lock_path = Path::new("Tenth.lock");
+    let lockfile = Lockfile::from_manifest(&manifest);
+    lockfile.save_to_file(lock_path)?;
+
     println!("Building `{}` v{} ...", manifest.package.name, manifest.package.version);
 
     let src_dir = Path::new("src");

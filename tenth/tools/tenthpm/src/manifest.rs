@@ -34,6 +34,56 @@ pub struct Dependency {
     pub path: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Lockfile {
+    pub version: u32,
+    pub packages: Vec<LockPackage>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LockPackage {
+    pub name: String,
+    pub version: String,
+    pub source: Option<String>,
+    pub checksum: Option<String>,
+}
+
+impl Lockfile {
+    pub fn new() -> Self {
+        Lockfile {
+            version: 1,
+            packages: Vec::new(),
+        }
+    }
+
+    pub fn load_from_file(path: &Path) -> Result<Lockfile, Box<dyn std::error::Error>> {
+        if !path.exists() {
+            return Ok(Lockfile::new());
+        }
+        let content = fs::read_to_string(path)?;
+        let lockfile: Lockfile = toml::from_str(&content)?;
+        Ok(lockfile)
+    }
+
+    pub fn save_to_file(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let content = toml::to_string_pretty(self)?;
+        fs::write(path, content)?;
+        Ok(())
+    }
+
+    pub fn from_manifest(manifest: &Manifest) -> Lockfile {
+        let packages: Vec<LockPackage> = manifest.dependencies.iter().map(|(name, dep)| {
+            LockPackage {
+                name: name.clone(),
+                version: dep.version.clone(),
+                source: dep.path.as_ref().map(|p| format!("path:{}", p)),
+                checksum: None,
+            }
+        }).collect();
+        Lockfile { version: 1, packages }
+    }
+}
+
 impl Manifest {
     pub fn load_from_file(path: &Path) -> Result<Manifest, Box<dyn std::error::Error>> {
         let content = fs::read_to_string(path)?;

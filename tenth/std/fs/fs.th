@@ -117,3 +117,8 @@ fn parent(path: String) -> String {
         "."
     }
 }
+
+/// Rename/move a file or directory
+fn rename(src: String, dst: String) {
+    rename_file(src, dst)
+}

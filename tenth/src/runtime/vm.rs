@@ -766,6 +766,87 @@ impl Vm {
         match recv {
             Value::String(s) => match method {
                 "len" => Ok(Value::Int(s.chars().count() as i64)),
+                "trim" => Ok(Value::String(s.trim().to_string())),
+                "to_upper" => Ok(Value::String(s.to_uppercase())),
+                "to_lower" => Ok(Value::String(s.to_lowercase())),
+                "replace" => {
+                    if args.len() >= 2 {
+                        if let (Value::String(from), Value::String(to)) = (&args[0], &args[1]) {
+                            Ok(Value::String(s.replace(from.as_str(), to.as_str())))
+                        } else { err("replace() 需要 2 个字符串参数") }
+                    } else { err("replace() 需要 2 个字符串参数") }
+                }
+                "split" => {
+                    if let Some(Value::String(delim)) = args.first() {
+                        let parts: Vec<Value> = s.split(delim.as_str()).map(|p| Value::String(p.to_string())).collect();
+                        Ok(Value::Vec(Rc::new(RefCell::new(parts))))
+                    } else { err("split() 需要一个字符串分隔符") }
+                }
+                "substring" => {
+                    if args.len() >= 2 {
+                        let start = args[0].as_int().unwrap_or(0).max(0) as usize;
+                        let len = args[1].as_int().unwrap_or(0).max(0) as usize;
+                        let chars: Vec<char> = s.chars().collect();
+                        let end = (start + len).min(chars.len());
+                        let sub: String = chars[start..end].iter().collect();
+                        Ok(Value::String(sub))
+                    } else { err("substring() 需要起始位置和长度") }
+                }
+                "contains" => {
+                    if let Some(Value::String(sub)) = args.first() {
+                        Ok(Value::Bool(s.contains(sub.as_str())))
+                    } else { err("contains() 需要一个字符串参数") }
+                }
+                "find" => {
+                    if let Some(Value::String(sub)) = args.first() {
+                        Ok(Value::Int(s.find(sub.as_str()).map(|i| i as i64).unwrap_or(-1)))
+                    } else { err("find() 需要一个字符串参数") }
+                }
+                "starts_with" => {
+                    if let Some(Value::String(prefix)) = args.first() {
+                        Ok(Value::Bool(s.starts_with(prefix.as_str())))
+                    } else { err("starts_with() 需要一个字符串参数") }
+                }
+                "ends_with" => {
+                    if let Some(Value::String(suffix)) = args.first() {
+                        Ok(Value::Bool(s.ends_with(suffix.as_str())))
+                    } else { err("ends_with() 需要一个字符串参数") }
+                }
+                "parse_int" => Ok(Value::Int(s.trim().parse::<i64>().unwrap_or(0))),
+                "parse_float" => Ok(Value::Float(s.trim().parse::<f64>().unwrap_or(0.0))),
+                "is_empty" => Ok(Value::Bool(s.is_empty())),
+                "repeat" => {
+                    if let Some(arg) = args.first() {
+                        let n = arg.as_int().unwrap_or(0).max(0) as usize;
+                        Ok(Value::String(s.repeat(n)))
+                    } else { err("repeat() 需要一个整数参数") }
+                }
+                "chars" => {
+                    let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
+                    Ok(Value::Vec(Rc::new(RefCell::new(chars))))
+                }
+                "bytes" => {
+                    let bytes: Vec<Value> = s.bytes().map(|b| Value::Int(b as i64)).collect();
+                    Ok(Value::Vec(Rc::new(RefCell::new(bytes))))
+                }
+                "trim_start" => Ok(Value::String(s.trim_start().to_string())),
+                "trim_end" => Ok(Value::String(s.trim_end().to_string())),
+                "strip_prefix" => {
+                    if let Some(Value::String(prefix)) = args.first() {
+                        Ok(match s.strip_prefix(prefix.as_str()) {
+                            Some(rest) => Value::String(rest.to_string()),
+                            None => Value::String(s.to_string()),
+                        })
+                    } else { err("strip_prefix() 需要一个字符串参数") }
+                }
+                "strip_suffix" => {
+                    if let Some(Value::String(suffix)) = args.first() {
+                        Ok(match s.strip_suffix(suffix.as_str()) {
+                            Some(rest) => Value::String(rest.to_string()),
+                            None => Value::String(s.to_string()),
+                        })
+                    } else { err("strip_suffix() 需要一个字符串参数") }
+                }
                 _ => err(&format!("字符串没有方法 '{}'", method)),
             },
             Value::Vec(items) => match method {
@@ -782,10 +863,96 @@ impl Vm {
                         Ok(items.borrow().get(idx).cloned().unwrap_or(Value::Unit))
                     } else { err("get 需要 1 个参数") }
                 }
+                "pop" => {
+                    let mut vec = items.borrow_mut();
+                    match vec.pop() {
+                        Some(v) => Ok(v),
+                        None => err("对空 Vec 调用 pop()"),
+                    }
+                }
+                "set" => {
+                    if args.len() != 2 { return err("set() 需要 2 个参数 (索引, 值)"); }
+                    let idx = args[0].as_int().unwrap_or(0) as usize;
+                    let mut vec = items.borrow_mut();
+                    if idx < vec.len() {
+                        vec[idx] = args[1].clone();
+                        Ok(Value::Unit)
+                    } else { err(&format!("Vec 索引 {} 越界", idx)) }
+                }
+                "clear" => {
+                    items.borrow_mut().clear();
+                    Ok(Value::Unit)
+                }
+                "contains" => {
+                    if args.len() != 1 { return err("contains() 需要 1 个参数"); }
+                    let vec = items.borrow();
+                    let found = vec.iter().any(|v| self.vm_eq(v, &args[0]));
+                    Ok(Value::Bool(found))
+                }
+                "insert" => {
+                    if args.len() != 2 { return err("insert() 需要 2 个参数 (索引, 值)"); }
+                    let idx = args[0].as_int().unwrap_or(0) as usize;
+                    items.borrow_mut().insert(idx, args[1].clone());
+                    Ok(Value::Unit)
+                }
+                "remove" => {
+                    if args.len() != 1 { return err("remove() 需要 1 个参数 (索引)"); }
+                    let idx = args[0].as_int().unwrap_or(0) as usize;
+                    let vec_len = items.borrow().len();
+                    if idx < vec_len {
+                        Ok(items.borrow_mut().remove(idx))
+                    } else { err(&format!("Vec 索引 {} 越界", idx)) }
+                }
+                "join" => {
+                    if args.len() != 1 { return err("join() 需要 1 个参数 (分隔符)"); }
+                    if let Value::String(delim) = &args[0] {
+                        let vec = items.borrow();
+                        let parts: Vec<String> = vec.iter().map(|v| match v {
+                            Value::String(s) => s.clone(),
+                            other => format!("{:?}", other),
+                        }).collect();
+                        Ok(Value::String(parts.join(delim)))
+                    } else { err("join() 分隔符必须是字符串") }
+                }
+                "is_empty" => Ok(Value::Bool(items.borrow().is_empty())),
                 _ => err(&format!("Vec 没有方法 '{}'", method)),
             },
             Value::Map(m) => match method {
                 "len" => Ok(Value::Int(m.borrow().len() as i64)),
+                "insert" => {
+                    if args.len() != 2 { return err("insert() 需要 2 个参数 (键, 值)"); }
+                    if let Value::String(key) = &args[0] {
+                        m.borrow_mut().insert(key.clone(), args[1].clone());
+                        Ok(Value::Unit)
+                    } else { err("Map 的键必须是字符串") }
+                }
+                "get" => {
+                    if args.len() != 1 { return err("get() 需要 1 个参数 (键)"); }
+                    if let Value::String(key) = &args[0] {
+                        Ok(m.borrow().get(key).cloned().unwrap_or(Value::Unit))
+                    } else { err("Map 的键必须是字符串") }
+                }
+                "contains_key" => {
+                    if args.len() != 1 { return err("contains_key() 需要 1 个参数 (键)"); }
+                    if let Value::String(key) = &args[0] {
+                        Ok(Value::Bool(m.borrow().contains_key(key)))
+                    } else { err("Map 的键必须是字符串") }
+                }
+                "remove" => {
+                    if args.len() != 1 { return err("remove() 需要 1 个参数 (键)"); }
+                    if let Value::String(key) = &args[0] {
+                        Ok(m.borrow_mut().remove(key).unwrap_or(Value::Unit))
+                    } else { err("Map 的键必须是字符串") }
+                }
+                "keys" => {
+                    let keys: Vec<Value> = m.borrow().keys().map(|k| Value::String(k.clone())).collect();
+                    Ok(Value::Vec(Rc::new(RefCell::new(keys))))
+                }
+                "values" => {
+                    let values: Vec<Value> = m.borrow().values().cloned().collect();
+                    Ok(Value::Vec(Rc::new(RefCell::new(values))))
+                }
+                "is_empty" => Ok(Value::Bool(m.borrow().is_empty())),
                 _ => err(&format!("Map 没有方法 '{}'", method)),
             },
             Value::Tensor(t) => {
@@ -865,6 +1032,7 @@ impl Vm {
                         if self.recording { self.record_unary(TapeOp::Softmax, &t, &result); }
                         Ok(Value::Tensor(result))
                     }
+                    "argmax" => Ok(Value::Int(tensor.argmax())),
 
                     // ── Shape operations ──
                     "reshape" | "view" => {

@@ -673,6 +673,182 @@ fn register_natives(vm: &mut Vm) {
             Err(tenth::error::TenthError::RuntimeError { message: "cross_entropy(logits, target) 期望两个张量".into() })
         }
     });
+    // File system functions
+    vm.add_native("write_file".into(), |_vm, args| {
+        if args.len() >= 2 {
+            if let (Value::String(path), Value::String(content)) = (&args[0], &args[1]) {
+                match std::fs::write(path, content) {
+                    Ok(()) => Ok(Value::Unit),
+                    Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("写入文件失败: {}", e) }),
+                }
+            } else {
+                Err(tenth::error::TenthError::RuntimeError { message: "write_file(路径, 内容) 期望两个字符串参数".into() })
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "write_file(路径, 内容) 期望两个字符串参数".into() })
+        }
+    });
+    vm.add_native("path_join".into(), |_vm, args| {
+        if args.len() >= 2 {
+            if let (Value::String(base), Value::String(rest)) = (&args[0], &args[1]) {
+                let joined = std::path::Path::new(base).join(rest);
+                Ok(Value::String(joined.to_string_lossy().to_string()))
+            } else {
+                Err(tenth::error::TenthError::RuntimeError { message: "path_join(基础路径, 子路径) 期望两个字符串参数".into() })
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "path_join(基础路径, 子路径) 期望两个字符串参数".into() })
+        }
+    });
+    vm.add_native("path_exists".into(), |_vm, args| {
+        if let Some(Value::String(path)) = args.first() {
+            Ok(Value::Bool(std::path::Path::new(path).exists()))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "path_exists(路径) 期望一个字符串路径".into() })
+        }
+    });
+    vm.add_native("path_is_file".into(), |_vm, args| {
+        if let Some(Value::String(path)) = args.first() {
+            Ok(Value::Bool(std::path::Path::new(path).is_file()))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "path_is_file(路径) 期望一个字符串路径".into() })
+        }
+    });
+    vm.add_native("path_is_dir".into(), |_vm, args| {
+        if let Some(Value::String(path)) = args.first() {
+            Ok(Value::Bool(std::path::Path::new(path).is_dir()))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "path_is_dir(路径) 期望一个字符串路径".into() })
+        }
+    });
+    vm.add_native("mkdir".into(), |_vm, args| {
+        if let Some(Value::String(path)) = args.first() {
+            match std::fs::create_dir_all(path) {
+                Ok(()) => Ok(Value::Unit),
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("创建目录失败: {}", e) }),
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "mkdir(路径) 期望一个字符串路径".into() })
+        }
+    });
+    vm.add_native("list_dir".into(), |_vm, args| {
+        if let Some(Value::String(path)) = args.first() {
+            match std::fs::read_dir(path) {
+                Ok(entries) => {
+                    let items: Vec<Value> = entries
+                        .filter_map(|e| e.ok())
+                        .map(|e| Value::String(e.file_name().to_string_lossy().to_string()))
+                        .collect();
+                    Ok(Value::Vec(Rc::new(RefCell::new(items))))
+                }
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("列出目录失败: {}", e) }),
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "list_dir(路径) 期望一个字符串路径".into() })
+        }
+    });
+    vm.add_native("file_size".into(), |_vm, args| {
+        if let Some(Value::String(path)) = args.first() {
+            match std::fs::metadata(path) {
+                Ok(meta) => Ok(Value::Int(meta.len() as i64)),
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("获取文件大小失败: {}", e) }),
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "file_size(路径) 期望一个字符串路径".into() })
+        }
+    });
+    vm.add_native("remove_file".into(), |_vm, args| {
+        if let Some(Value::String(path)) = args.first() {
+            match std::fs::remove_file(path) {
+                Ok(()) => Ok(Value::Unit),
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("删除文件失败: {}", e) }),
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "remove_file(路径) 期望一个字符串路径".into() })
+        }
+    });
+    vm.add_native("copy_file".into(), |_vm, args| {
+        if args.len() >= 2 {
+            if let (Value::String(src), Value::String(dst)) = (&args[0], &args[1]) {
+                match std::fs::copy(src, dst) {
+                    Ok(_) => Ok(Value::Unit),
+                    Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("复制文件失败: {}", e) }),
+                }
+            } else {
+                Err(tenth::error::TenthError::RuntimeError { message: "copy_file(源路径, 目标路径) 期望两个字符串参数".into() })
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "copy_file(源路径, 目标路径) 期望两个字符串参数".into() })
+        }
+    });
+    vm.add_native("rename_file".into(), |_vm, args| {
+        if args.len() >= 2 {
+            if let (Value::String(src), Value::String(dst)) = (&args[0], &args[1]) {
+                match std::fs::rename(src, dst) {
+                    Ok(()) => Ok(Value::Unit),
+                    Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("重命名文件失败: {}", e) }),
+                }
+            } else {
+                Err(tenth::error::TenthError::RuntimeError { message: "rename_file(源路径, 目标路径) 期望两个字符串参数".into() })
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "rename_file(源路径, 目标路径) 期望两个字符串参数".into() })
+        }
+    });
+    vm.add_native("randn".into(), |_vm, args| {
+        let rows = match args.first() { Some(Value::Int(n)) => *n as usize, _ => 1 };
+        let cols = match args.get(1) { Some(Value::Int(n)) => *n as usize, _ => 1 };
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let data: Vec<f64> = (0..rows * cols).map(|_| {
+            // Box-Muller transform for normal distribution
+            let u1: f64 = rng.r#gen::<f64>().max(1e-10);
+            let u2: f64 = rng.r#gen::<f64>();
+            (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+        }).collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec(data, vec![rows, cols])))))
+    });
+    vm.add_native("HashMap::new".into(), |_vm, _args| {
+        Ok(Value::Map(Rc::new(RefCell::new(std::collections::HashMap::new()))))
+    });
+    vm.add_native("print".into(), |_vm, args| {
+        for a in args { print!("{a}"); }
+        Ok(Value::Unit)
+    });
+    vm.add_native("abs".into(), |_vm, args| {
+        match args.first() {
+            Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
+            Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
+            _ => Err(tenth::error::TenthError::RuntimeError { message: "abs() 需要一个数值参数".into() }),
+        }
+    });
+    vm.add_native("sqrt".into(), |_vm, args| {
+        match args.first() {
+            Some(Value::Float(f)) => Ok(Value::Float(f.sqrt())),
+            Some(Value::Int(n)) => Ok(Value::Float((*n as f64).sqrt())),
+            _ => Err(tenth::error::TenthError::RuntimeError { message: "sqrt() 需要一个数值参数".into() }),
+        }
+    });
+    vm.add_native("to_float".into(), |_vm, args| {
+        match args.first() {
+            Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
+            Some(Value::Float(f)) => Ok(Value::Float(*f)),
+            _ => Err(tenth::error::TenthError::RuntimeError { message: "to_float() 需要一个数值参数".into() }),
+        }
+    });
+    vm.add_native("tensor_from_vec".into(), |_vm, args| {
+        if args.len() >= 3 {
+            if let (Value::Vec(items), Value::Int(rows), Value::Int(cols)) = (&args[0], &args[1], &args[2]) {
+                let data: Vec<f64> = items.borrow().iter().map(|v| v.as_float().unwrap_or(0.0)).collect();
+                let tensor = Tensor::from_vec(data, vec![*rows as usize, *cols as usize]);
+                Ok(Value::Tensor(Rc::new(RefCell::new(tensor))))
+            } else {
+                Err(tenth::error::TenthError::RuntimeError { message: "tensor_from_vec(vec, rows, cols) 期望一个 Vec 和两个整数".into() })
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "tensor_from_vec(vec, rows, cols) 期望 3 个参数".into() })
+        }
+    });
 }
 
 /// Compile a .th file to a .wasm binary.

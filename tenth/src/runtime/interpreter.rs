@@ -472,12 +472,12 @@ impl Interpreter {
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
                             | "cross_entropy"
-                            | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
+                            | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "tensor_from_vec"
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
                             | "format" | "parse_int" | "parse_float"
                             | "path_join" | "path_exists" | "path_is_file" | "path_is_dir"
-                            | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file"
+                            | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file" | "rename_file"
                             | "time_now" | "time_now_ms" | "time_date" | "time_time" | "time_datetime" | "time_sleep_ms"
                             | "random_int" | "random_float"
                             | "math_tan" | "math_asin" | "math_acos" | "math_atan" | "math_atan2"
@@ -2772,6 +2772,7 @@ impl Interpreter {
                         }
                         Ok(Value::Tensor(result))
                     }
+                    "argmax" => Ok(Value::Int(tensor.argmax())),
                     _ => Err(TenthError::RuntimeError {
                         message: format!("未知的张量方法: {}", method),
                     }),
@@ -3036,6 +3037,32 @@ impl Interpreter {
                 }
                 return Err(TenthError::RuntimeError {
                     message: "sqrt() 期望 1 个参数".into(),
+                });
+            }
+            "to_float" => {
+                if let Some(arg) = args.first() {
+                    return Ok(Some(match arg {
+                        Value::Int(n) => Value::Float(*n as f64),
+                        Value::Float(f) => Value::Float(*f),
+                        _ => return Err(TenthError::RuntimeError {
+                            message: "to_float() 期望一个数值参数".into(),
+                        }),
+                    }));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "to_float() 期望 1 个参数".into(),
+                });
+            }
+            "tensor_from_vec" => {
+                if args.len() >= 3 {
+                    if let (Value::Vec(items), Value::Int(rows), Value::Int(cols)) = (&args[0], &args[1], &args[2]) {
+                        let data: Vec<f64> = items.borrow().iter().map(|v| v.as_float().unwrap_or(0.0)).collect();
+                        let tensor = Tensor::from_vec(data, vec![*rows as usize, *cols as usize]);
+                        return Ok(Some(Value::Tensor(Rc::new(RefCell::new(tensor)))));
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "tensor_from_vec(vec, rows, cols) 期望一个 Vec 和两个整数".into(),
                 });
             }
             "sin" => {
@@ -3464,6 +3491,21 @@ impl Interpreter {
                 }
                 return Err(TenthError::RuntimeError {
                     message: "copy_file(源路径, 目标路径) 期望两个字符串参数".into(),
+                });
+            }
+            "rename_file" => {
+                if args.len() >= 2 {
+                    if let (Value::String(src), Value::String(dst)) = (&args[0], &args[1]) {
+                        match std::fs::rename(src, dst) {
+                            Ok(()) => return Ok(Some(Value::Unit)),
+                            Err(e) => return Err(TenthError::RuntimeError {
+                                message: format!("重命名文件失败: {}", e),
+                            }),
+                        }
+                    }
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "rename_file(源路径, 目标路径) 期望两个字符串参数".into(),
                 });
             }
             "Vec::new" => return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new()))))),
