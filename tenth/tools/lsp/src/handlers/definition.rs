@@ -1,6 +1,3 @@
-use std::fs;
-use std::path::Path;
-
 use tenth::lexer::lexer::Lexer;
 use tenth::lexer::token::{Token, TokenKind};
 use tenth::parser::parser::Parser;
@@ -48,10 +45,9 @@ fn uri_to_path(uri: &str) -> String {
 }
 
 fn find_definition(uri: &str, line: u32, character: u32) -> Vec<Location> {
-    let path = uri_to_path(uri);
-    let content = match fs::read_to_string(Path::new(&path)) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
+    let content = match crate::document_store::get_content_or_disk_global(uri) {
+        Some(c) => c,
+        None => return Vec::new(),
     };
 
     // Tokenize to find the identifier at the cursor position

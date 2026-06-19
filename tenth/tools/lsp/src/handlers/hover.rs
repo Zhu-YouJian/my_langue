@@ -28,16 +28,10 @@ impl Handler for HoverHandler {
             None => return serde_json::Value::Null,
         };
 
-        // Convert URI to file path
-        let file_path = uri_to_path(uri);
-        if file_path.is_empty() {
-            return serde_json::Value::Null;
-        }
-
-        // Read the source file
-        let source = match std::fs::read_to_string(&file_path) {
-            Ok(s) => s,
-            Err(_) => return serde_json::Value::Null,
+        // Read the source file (from document store or disk)
+        let source = match crate::document_store::get_content_or_disk_global(uri) {
+            Some(s) => s,
+            None => return serde_json::Value::Null,
         };
 
         // Tokenize
@@ -192,6 +186,7 @@ fn lookup_hir_type(source: &str, name: &str) -> Option<Hover> {
                     kind: "plaintext".to_string(),
                     value: sig,
                 },
+                range: None,
             });
         }
     }
@@ -219,6 +214,7 @@ fn lookup_hir_type(source: &str, name: &str) -> Option<Hover> {
                     kind: "plaintext".to_string(),
                     value: sig,
                 },
+                range: None,
             });
         }
     }
@@ -234,6 +230,7 @@ fn lookup_hir_type(source: &str, name: &str) -> Option<Hover> {
                 kind: "plaintext".to_string(),
                 value: sig,
             },
+            range: None,
         });
     }
 
@@ -253,6 +250,7 @@ fn lookup_hir_type(source: &str, name: &str) -> Option<Hover> {
                 kind: "plaintext".to_string(),
                 value: sig,
             },
+            range: None,
         });
     }
 
@@ -276,6 +274,7 @@ fn lookup_hir_type(source: &str, name: &str) -> Option<Hover> {
                 kind: "plaintext".to_string(),
                 value: sig,
             },
+            range: None,
         });
     }
 
@@ -295,6 +294,7 @@ fn lookup_hir_type(source: &str, name: &str) -> Option<Hover> {
                 kind: "plaintext".to_string(),
                 value: sig,
             },
+            range: None,
         });
     }
 
@@ -316,6 +316,7 @@ fn lookup_hir_type(source: &str, name: &str) -> Option<Hover> {
                     kind: "plaintext".to_string(),
                     value: sig,
                 },
+                range: None,
             });
         }
     }
@@ -409,5 +410,6 @@ fn lookup_hover(name: &str) -> Option<Hover> {
                 kind: "plaintext".to_string(),
                 value: doc.to_string(),
             },
+            range: None,
         })
 }

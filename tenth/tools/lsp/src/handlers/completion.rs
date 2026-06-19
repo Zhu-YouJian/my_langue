@@ -24,7 +24,8 @@ impl Handler for CompletionHandler {
                 Some(Position { line, character })
             });
 
-        let source = read_source(uri);
+        let source = crate::document_store::get_content_or_disk_global(uri)
+            .unwrap_or_default();
         let is_method_context = position
             .map(|pos| is_after_dot(&source, pos))
             .unwrap_or(false);
@@ -95,7 +96,9 @@ fn method_completion_items(source: &str) -> Vec<CompletionItem> {
                                 label: name.name.clone(),
                                 kind: CompletionItemKind::Method,
                                 detail: Some(format!("method {}", name.name)),
-                            });
+                            documentation: None,
+                            insert_text: None,
+                        });
                         }
                     }
                 }
@@ -152,6 +155,8 @@ fn add_user_defined_items(items: &mut Vec<CompletionItem>, program: &tenth::pars
                         label: name.name.clone(),
                         kind: CompletionItemKind::Function,
                         detail: Some(format!("fn {}", name.name)),
+                        documentation: None,
+                        insert_text: None,
                     });
                 }
             }
@@ -161,6 +166,8 @@ fn add_user_defined_items(items: &mut Vec<CompletionItem>, program: &tenth::pars
                         label: name.name.clone(),
                         kind: CompletionItemKind::Class,
                         detail: Some(format!("struct {}", name.name)),
+                        documentation: None,
+                        insert_text: None,
                     });
                 }
             }
@@ -170,6 +177,8 @@ fn add_user_defined_items(items: &mut Vec<CompletionItem>, program: &tenth::pars
                         label: name.name.clone(),
                         kind: CompletionItemKind::Class,
                         detail: Some(format!("enum {}", name.name)),
+                        documentation: None,
+                        insert_text: None,
                     });
                 }
             }
@@ -184,6 +193,8 @@ fn add_user_defined_items(items: &mut Vec<CompletionItem>, program: &tenth::pars
                                 label: name.name.clone(),
                                 kind: CompletionItemKind::Function,
                                 detail: Some(format!("fn {}", name.name)),
+                                documentation: None,
+                                insert_text: None,
                             });
                         }
                     }
@@ -206,6 +217,8 @@ fn add_keywords(items: &mut Vec<CompletionItem>) {
             label: kw.to_string(),
             kind: CompletionItemKind::Keyword,
             detail: Some(format!("keyword {}", kw)),
+            documentation: None,
+            insert_text: None,
         });
     }
 }
@@ -254,6 +267,8 @@ fn add_builtins(items: &mut Vec<CompletionItem>) {
             label: name.to_string(),
             kind: CompletionItemKind::Function,
             detail: Some(doc.to_string()),
+            documentation: None,
+            insert_text: None,
         });
     }
 }
@@ -274,6 +289,8 @@ fn add_types(items: &mut Vec<CompletionItem>) {
             label: name.to_string(),
             kind: CompletionItemKind::Class,
             detail: Some(doc.to_string()),
+            documentation: None,
+            insert_text: None,
         });
     }
 }

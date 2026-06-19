@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, Read, Write};
 
-use crate::lsp_types::{LspRequest, LspResponse};
+use crate::lsp_types::{LspNotification, LspRequest, LspResponse};
 
 /// Read an LSP message from stdin (Content-Length header + JSON body).
 pub fn read_message() -> Option<LspRequest> {
@@ -43,12 +43,26 @@ pub fn read_message() -> Option<LspRequest> {
 }
 
 /// Write an LSP response to stdout (Content-Length header + JSON body).
-pub fn write_message(response: LspResponse) {
+pub fn write_response(response: LspResponse) {
     let json = match serde_json::to_string(&response) {
         Ok(j) => j,
         Err(_) => return,
     };
 
+    write_json(&json);
+}
+
+/// Write an LSP notification to stdout (Content-Length header + JSON body).
+pub fn write_notification(notification: LspNotification) {
+    let json = match serde_json::to_string(&notification) {
+        Ok(j) => j,
+        Err(_) => return,
+    };
+
+    write_json(&json);
+}
+
+fn write_json(json: &str) {
     let stdout = io::stdout();
     let mut stdout_lock = stdout.lock();
 
