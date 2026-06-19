@@ -12,6 +12,7 @@ use tenth::runtime::autodiff::Tape;
 use tenth::runtime::tensor::Tensor;
 use tenth::compile;
 use tenth::compile::bytecode::BytecodeCompiler;
+use tenth::compile::jit;
 
 fn main() {
     if let Err(e) = run_main() {
@@ -190,7 +191,7 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
     }
 
     if vm.has_fn("main") {
-        vm.call("main")
+        jit::run_jit(&mut vm, "main")
     } else if let Some(ref expr) = hir.main_expr {
         let compiler = BytecodeCompiler::new();
         if let Ok((chunk, closures)) = compiler.compile_main(expr) {
@@ -203,7 +204,7 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
                 message: "VM 编译失败".into(),
             });
         }
-        vm.call("main")
+        jit::run_jit(&mut vm, "main")
     } else if hir.functions.is_empty() {
         Ok(Value::Unit)
     } else {

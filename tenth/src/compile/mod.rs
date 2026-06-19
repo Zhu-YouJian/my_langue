@@ -3,6 +3,7 @@ pub mod bridge;
 pub mod bytecode;
 pub mod gpu;
 pub mod optimizations;
+pub mod jit;
 
 use crate::error::TenthResult;
 use crate::hir::hir::HirProgram;

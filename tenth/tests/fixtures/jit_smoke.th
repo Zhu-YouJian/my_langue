@@ -1,0 +1,11 @@
+fn main() {
+    println(42 + 10);
+    if (true) {
+        println(100);
+    } else {
+        println(200);
+    }
+    let x = 5;
+    let y = 7;
+    println(x * y);
+}

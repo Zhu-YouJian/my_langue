@@ -107,7 +107,7 @@ impl Chunk {
         macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if *ip + n > self.code.len() { return Ret; } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&self.code[*ip..*ip+n]); *ip += n; <$t>::from_le_bytes(buf) }}; }
         match b {
             0 => PushInt(r!(i64)), 1 => PushFloat(r!(f64)),
-            2 => PushBool(self.code[*ip] != 0),
+            2 => { let v = self.code[*ip] != 0; *ip += 1; PushBool(v) },
             3 => PushStr(r!(u64) as usize),
             4 => PushUnit, 5 => Pop, 6 => Dup,
             7 => Load(r!(u64) as usize), 8 => Store(r!(u64) as usize),
@@ -163,11 +163,124 @@ pub struct Vm {
     pub step_budget: Option<u64>,
     /// Optional wall-clock deadline (Unix ms). Checked periodically.
     pub deadline_ms: Option<u128>,
+    /// Lazily-initialised Cranelift JIT context. `None` until first JIT use.
+    pub jit_ctx: Option<crate::compile::jit::context::JitContext>,
+    /// Last error message set by a JIT hostcall trampoline.
+    last_error: Option<String>,
+    /// Index of the chunk currently being executed by JIT (for string lookup).
+    pub current_chunk_idx: usize,
 }
 
 impl Vm {
     pub fn new() -> Self {
-        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new(), tape: None, recording: false, step_budget: None, deadline_ms: None }
+        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new(), tape: None, recording: false, step_budget: None, deadline_ms: None, jit_ctx: None, last_error: None, current_chunk_idx: 0 }
+    }
+
+    // ── JIT accessors ──────────────────────────────────────────────────────
+
+    pub fn is_recording(&self) -> bool { self.recording }
+    pub fn stack_len(&self) -> usize { self.stack.len() }
+    pub fn stack_push(&mut self, v: Value) { self.stack.push(v); }
+    pub fn stack_pop(&mut self) -> Value { self.stack.pop().unwrap_or(Value::Unit) }
+    pub fn get_global(&self, name: &str) -> Option<Value> { self.globals.get(name).cloned() }
+    pub fn set_last_error(&mut self, msg: String) { self.last_error = Some(msg); }
+    pub fn take_last_error(&mut self) -> Option<String> { self.last_error.take() }
+
+    pub fn chunk_index_of(&self, name: &str) -> Option<usize> {
+        self.functions.get(name).copied()
+    }
+    pub fn chunk_at(&self, idx: usize) -> &Chunk { &self.chunks[idx] }
+    pub fn string_at(&self, idx: usize) -> Option<String> {
+        self.chunks.get(self.current_chunk_idx)
+            .and_then(|c| c.strings.get(idx).cloned())
+    }
+    pub fn chunk_name_at(&self, idx: usize) -> Option<String> {
+        self.chunk_names.get(idx).cloned()
+    }
+
+    /// Call a function by name with explicit args (used by JIT hostcalls).
+    pub fn call_with_args(&mut self, name: &str, args: &[Value]) -> TenthResult<Value> {
+        // Try native first
+        if let Some(native_fn) = self.natives.get(name).copied() {
+            return native_fn(self, args);
+        }
+        // Push args and call user function
+        for a in args { self.stack.push(a.clone()); }
+        self.call(name)
+    }
+
+    // ── Public arithmetic/method wrappers (for JIT hostcalls) ──────────────
+
+    pub fn add(&mut self, a: &Value, b: &Value) -> TenthResult<Value> { self.add_priv(a, b) }
+    pub fn sub(&mut self, a: &Value, b: &Value) -> TenthResult<Value> { self.sub_priv(a, b) }
+    pub fn mul(&mut self, a: &Value, b: &Value) -> TenthResult<Value> { self.mul_priv(a, b) }
+    pub fn div(&mut self, a: &Value, b: &Value) -> TenthResult<Value> { self.div_priv(a, b) }
+    pub fn rem(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+        match (a, b) {
+            (Value::Int(x), Value::Int(y)) => {
+                if *y == 0 { return Err(TenthError::RuntimeError { message: "整数取模除零".into() }); }
+                Ok(Value::Int(x % y))
+            }
+            _ => Err(TenthError::RuntimeError { message: "% 需要整数".into() }),
+        }
+    }
+    pub fn neg(&mut self, a: &Value) -> TenthResult<Value> {
+        match a {
+            Value::Int(n) => Ok(Value::Int(-n)),
+            Value::Float(n) => Ok(Value::Float(-n)),
+            Value::Tensor(t) => Ok(Value::Tensor(Rc::new(RefCell::new(t.borrow().neg())))),
+            _ => Err(TenthError::RuntimeError { message: "无法取负".into() }),
+        }
+    }
+    pub fn not(&mut self, a: &Value) -> TenthResult<Value> {
+        Ok(Value::Bool(!a.is_truthy()))
+    }
+    pub fn eq(&mut self, a: &Value, b: &Value) -> TenthResult<Value> { Ok(Value::Bool(self.vm_eq(a, b))) }
+    pub fn neq(&mut self, a: &Value, b: &Value) -> TenthResult<Value> { Ok(Value::Bool(!self.vm_eq(a, b))) }
+    pub fn lt(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+        Ok(Value::Bool(self.compare(a, b, |x, y| x < y, |x, y| x < y)?))
+    }
+    pub fn gt(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+        Ok(Value::Bool(self.compare(a, b, |x, y| x > y, |x, y| x > y)?))
+    }
+    pub fn lte(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+        Ok(Value::Bool(self.compare(a, b, |x, y| x <= y, |x, y| x <= y)?))
+    }
+    pub fn gte(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+        Ok(Value::Bool(self.compare(a, b, |x, y| x >= y, |x, y| x >= y)?))
+    }
+    pub fn index_get(&mut self, target: &Value, idx: &Value) -> TenthResult<Value> {
+        match target {
+            Value::Vec(items) => {
+                let i = idx.as_int().unwrap_or(0) as usize;
+                Ok(items.borrow().get(i).cloned().unwrap_or(Value::Unit))
+            }
+            Value::String(s) => {
+                let i = idx.as_int().unwrap_or(0) as usize;
+                Ok(Value::String(s.chars().nth(i).map(|c| c.to_string()).unwrap_or_default()))
+            }
+            _ => Err(TenthError::RuntimeError { message: "无法索引".into() }),
+        }
+    }
+    pub fn slice_str(&mut self, target: &Value, start: &Value, end: &Value) -> TenthResult<Value> {
+        let start_idx = start.as_int().unwrap_or(0) as usize;
+        let end_idx = end.as_int().unwrap_or(0) as usize;
+        match target {
+            Value::String(s) => {
+                let chars: Vec<char> = s.chars().collect();
+                let len = chars.len();
+                let si = start_idx.min(len);
+                let ei = end_idx.min(len);
+                if si > ei {
+                    return Err(TenthError::RuntimeError { message: "字符串切片起始位置大于结束位置".into() });
+                }
+                Ok(Value::String(chars[si..ei].iter().collect()))
+            }
+            _ => Err(TenthError::RuntimeError { message: "SliceStr 需要字符串目标".into() }),
+        }
+    }
+    pub fn call_method(&mut self, receiver: &Value, method: &str, args: &[Value]) -> TenthResult<Value> {
+        self.call_method_priv(receiver, method, args)
     }
 
     pub fn add_fn(&mut self, name: String, chunk: Chunk) {
@@ -206,8 +319,12 @@ impl Vm {
 
     fn run(&mut self, mut chunk_idx: usize) -> TenthResult<Value> {
         let mut ip: usize = 0;
-        let base = self.stack.len();
         let num_args = self.chunks[chunk_idx].num_args;
+        // `base` is the stack position BEFORE args. When called via
+        // `call_with_args`, args are already pushed on the stack, so we
+        // subtract num_args. When called directly (e.g. `vm.call("main")`
+        // with num_args=0), this is a no-op.
+        let base = self.stack.len().saturating_sub(num_args);
         let num_locals = self.chunks[chunk_idx].num_locals;
         let mut locals = vec![Value::Unit; num_locals.max(num_args)];
 
@@ -315,10 +432,10 @@ impl Vm {
                     self.globals.insert(name, v);
                 }
 
-                Op::Add => { let (a,b)=self.pop2(); let r=self.add(&a,&b)?; self.stack.push(r); }
-                Op::Sub => { let (a,b)=self.pop2(); let r=self.sub(&a,&b)?; self.stack.push(r); }
-                Op::Mul => { let (a,b)=self.pop2(); let r=self.mul(&a,&b)?; self.stack.push(r); }
-                Op::Div => { let (a,b)=self.pop2(); let r=self.div(&a,&b)?; self.stack.push(r); }
+                Op::Add => { let (a,b)=self.pop2(); let r=self.add_priv(&a,&b)?; self.stack.push(r); }
+                Op::Sub => { let (a,b)=self.pop2(); let r=self.sub_priv(&a,&b)?; self.stack.push(r); }
+                Op::Mul => { let (a,b)=self.pop2(); let r=self.mul_priv(&a,&b)?; self.stack.push(r); }
+                Op::Div => { let (a,b)=self.pop2(); let r=self.div_priv(&a,&b)?; self.stack.push(r); }
                 Op::Mod => {
                     let b = self.pop_int()?; let a = self.pop_int()?;
                     if b == 0 {
@@ -429,7 +546,7 @@ impl Vm {
                     let mut args = vec![Value::Unit; n];
                     for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
                     let receiver = self.stack.pop().unwrap_or(Value::Unit);
-                    let result = self.call_method(&receiver, &name, &args)?;
+                    let result = self.call_method_priv(&receiver, &name, &args)?;
                     self.stack.push(result);
                 }
 
@@ -641,7 +758,7 @@ impl Vm {
         }
     }
 
-    fn add(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+    fn add_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
             (Value::Int(x), Value::Int(y)) => Value::Int(x + y),
             (Value::Float(x), Value::Float(y)) => Value::Float(x + y),
@@ -675,7 +792,7 @@ impl Vm {
         })
     }
 
-    fn sub(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+    fn sub_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
             (Value::Int(x), Value::Int(y)) => Value::Int(x - y),
             (Value::Float(x), Value::Float(y)) => Value::Float(x - y),
@@ -708,7 +825,7 @@ impl Vm {
         })
     }
 
-    fn mul(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+    fn mul_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
             (Value::Int(x), Value::Int(y)) => Value::Int(x * y),
             (Value::Float(x), Value::Float(y)) => Value::Float(x * y),
@@ -741,7 +858,7 @@ impl Vm {
         })
     }
 
-    fn div(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+    fn div_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
             (Value::Int(x), Value::Int(y)) => {
                 if *y == 0 {
@@ -791,7 +908,7 @@ impl Vm {
         })
     }
 
-    fn call_method(&mut self, receiver: &Value, method: &str, args: &[Value]) -> TenthResult<Value> {
+    fn call_method_priv(&mut self, receiver: &Value, method: &str, args: &[Value]) -> TenthResult<Value> {
         // Auto-deref via cloning (avoids borrow issues)
         let recv = match receiver {
             Value::Ref(rc) => rc.borrow().clone(),

@@ -8,6 +8,7 @@ use tenth::runtime::interpreter::Interpreter;
 use tenth::runtime::value::Value;
 use tenth::runtime::vm::Vm;
 use tenth::compile::bytecode::BytecodeCompiler;
+use tenth::compile::jit;
 
 /// Build the list of search paths for `use` imports.
 ///
@@ -129,7 +130,7 @@ fn vm_execute(hir: &HirProgram) -> Result<Value, String> {
     }
 
     if vm.has_fn("main") {
-        vm.call("main").map_err(|e| format!("{}", e))
+        jit::run_jit(&mut vm, "main").map_err(|e| format!("{}", e))
     } else if let Some(ref expr) = hir.main_expr {
         let compiler = BytecodeCompiler::new();
         if let Ok((chunk, closures)) = compiler.compile_main(expr) {
@@ -137,7 +138,7 @@ fn vm_execute(hir: &HirProgram) -> Result<Value, String> {
             for (name, closure_chunk) in closures {
                 vm.add_fn(name, closure_chunk);
             }
-            vm.call("main").map_err(|e| format!("{}", e))
+            jit::run_jit(&mut vm, "main").map_err(|e| format!("{}", e))
         } else {
             Err("VM 编译失败".to_string())
         }
