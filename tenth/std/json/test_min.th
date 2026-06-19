@@ -1,0 +1,9 @@
+// Minimal JSON test
+use std::json::json::parse
+
+fn main() {
+    println("=== Minimal JSON Test ===");
+    let n = parse("42");
+    println("parsed 42 = {n}");
+    println("=== Done ===");
+}

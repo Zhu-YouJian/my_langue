@@ -1,34 +1,441 @@
-// JSON serialization and deserialization utilities
+// JSON parser and serializer — pure Tenth implementation
 //
-// Provides basic JSON encoding/decoding for Tenth values.
-// Supports: Int, Float, String, Bool, Vec, HashMap, Unit/None → null
+// Provides JSON parsing (parse) and serialization (stringify) without
+// relying on native json_encode/json_decode functions.
 //
-// Usage:
-//   use std::json::json
+// Parser design: each _parse_* function returns a Vec [value, new_pos].
+// This works around Tenth's immutable struct fields.
+//
+// Supported types:
+//   Object → HashMap, Array → Vec, String → String
+//   Number → i64 or f64, Boolean → bool, null → Unit ()
 
-/// Encode a value to a JSON string
-fn encode(value) -> String {
-    json_encode(value)
+// ── Public API ──
+
+fn parse(json_str: String) {
+    let len = json_str.len();
+    if len == 0 { return (); };
+    let result = _parse_value(json_str, 0, len);
+    result.get(0)
 }
 
-/// Decode a JSON string to a Tenth value
-fn decode(json_str: String) {
-    json_decode(json_str)
+fn stringify(value) -> String {
+    _stringify_value(value, 0, false)
 }
 
-/// Encode a value to a pretty-printed JSON string
-fn encode_pretty(value) -> String {
-    json_encode_pretty(value)
+fn stringify_pretty(value) -> String {
+    _stringify_value(value, 0, true)
 }
 
-/// Read a JSON file and decode it
 fn load(path: String) {
     let content = read_file(path);
-    json_decode(content)
+    parse(content)
 }
 
-/// Encode a value and write it to a JSON file
 fn save(path: String, value) {
-    let json_str = json_encode(value);
+    let json_str = stringify(value);
     write_file(path, json_str)
+}
+
+// ── Parser: returns [value, new_pos] ──
+
+fn _parse_value(text: String, pos: i64, len: i64) -> Vec {
+    let p = _skip_ws(text, pos, len);
+    if p >= len {
+        let r = Vec::new();
+        r.push(());
+        r.push(p);
+        return r;
+    };
+
+    let chars = text.chars();
+    let c = chars.get(p);
+
+    if c == "{" {
+        _parse_object(text, p, len)
+    } else if c == "[" {
+        _parse_array(text, p, len)
+    } else if c == "\"" {
+        _parse_string(text, p, len)
+    } else if c == "t" {
+        _parse_true(text, p, len)
+    } else if c == "f" {
+        _parse_false(text, p, len)
+    } else if c == "n" {
+        _parse_null(text, p, len)
+    } else {
+        _parse_number(text, p, len)
+    }
+}
+
+fn _parse_object(text: String, pos: i64, len: i64) -> Vec {
+    let chars = text.chars();
+    let mut p = pos + 1;
+    let mut map = HashMap::new();
+
+    p = _skip_ws(text, p, len);
+    if p < len && chars.get(p) == "}" {
+        let r = Vec::new();
+        r.push(map);
+        r.push(p + 1);
+        return r;
+    };
+
+    loop {
+        p = _skip_ws(text, p, len);
+        if p >= len { break; };
+
+        let key_result = _parse_string(text, p, len);
+        let key = key_result.get(0);
+        p = key_result.get(1);
+        p = _skip_ws(text, p, len);
+
+        if p >= len { break; };
+        let colon = chars.get(p);
+        if colon != ":" { break; };
+        p = p + 1;
+
+        let val_result = _parse_value(text, p, len);
+        let val = val_result.get(0);
+        p = val_result.get(1);
+        map.insert(key, val);
+
+        p = _skip_ws(text, p, len);
+        if p >= len { break; };
+
+        let next = chars.get(p);
+        if next == "," {
+            p = p + 1;
+        } else if next == "}" {
+            p = p + 1;
+            break;
+        } else {
+            break;
+        };
+    };
+
+    let r = Vec::new();
+    r.push(map);
+    r.push(p);
+    r
+}
+
+fn _parse_array(text: String, pos: i64, len: i64) -> Vec {
+    let chars = text.chars();
+    let mut p = pos + 1;
+    let mut arr = Vec::new();
+
+    p = _skip_ws(text, p, len);
+    if p < len && chars.get(p) == "]" {
+        let r = Vec::new();
+        r.push(arr);
+        r.push(p + 1);
+        return r;
+    };
+
+    loop {
+        p = _skip_ws(text, p, len);
+        if p >= len { break; };
+
+        let val_result = _parse_value(text, p, len);
+        let val = val_result.get(0);
+        p = val_result.get(1);
+        arr.push(val);
+
+        p = _skip_ws(text, p, len);
+        if p >= len { break; };
+
+        let next = chars.get(p);
+        if next == "," {
+            p = p + 1;
+        } else if next == "]" {
+            p = p + 1;
+            break;
+        } else {
+            break;
+        };
+    };
+
+    let r = Vec::new();
+    r.push(arr);
+    r.push(p);
+    r
+}
+
+fn _parse_string(text: String, pos: i64, len: i64) -> Vec {
+    let chars = text.chars();
+    let mut p = pos + 1;
+    let mut result = "";
+
+    while p < len {
+        let c = chars.get(p);
+        p = p + 1;
+
+        if c == "\"" {
+            let r = Vec::new();
+            r.push(result);
+            r.push(p);
+            return r;
+        } else if c == "\\" {
+            if p >= len { break; };
+            let esc = chars.get(p);
+            p = p + 1;
+            if esc == "n" { result = result + "\n"; }
+            else if esc == "r" { result = result + "\r"; }
+            else if esc == "t" { result = result + "\t"; }
+            else if esc == "\"" { result = result + "\""; }
+            else if esc == "\\" { result = result + "\\"; }
+            else if esc == "/" { result = result + "/"; }
+            else if esc == "b" { result = result + "\u{08}"; }
+            else if esc == "f" { result = result + "\u{0c}"; }
+            else if esc == "u" {
+                if p + 4 <= len {
+                    let hex = text.substring(p, 4);
+                    p = p + 4;
+                    let code = _parse_hex(hex);
+                    if code > 0 {
+                        result = result + _char_from_code(code);
+                    };
+                };
+            } else {
+                result = result + esc;
+            };
+        } else {
+            result = result + c;
+        };
+    };
+
+    let r = Vec::new();
+    r.push(result);
+    r.push(p);
+    r
+}
+
+fn _parse_number(text: String, pos: i64, len: i64) -> Vec {
+    let chars = text.chars();
+    let mut p = pos;
+
+    if p < len && chars.get(p) == "-" { p = p + 1; };
+
+    while p < len {
+        let c = chars.get(p);
+        if c >= "0" && c <= "9" { p = p + 1; } else { break; };
+    };
+
+    let mut is_float = false;
+    if p < len && chars.get(p) == "." {
+        is_float = true;
+        p = p + 1;
+        while p < len {
+            let c = chars.get(p);
+            if c >= "0" && c <= "9" { p = p + 1; } else { break; };
+        };
+    };
+
+    if p < len {
+        let c = chars.get(p);
+        if c == "e" || c == "E" {
+            is_float = true;
+            p = p + 1;
+            if p < len {
+                let sign = chars.get(p);
+                if sign == "+" || sign == "-" { p = p + 1; };
+            };
+            while p < len {
+                let c = chars.get(p);
+                if c >= "0" && c <= "9" { p = p + 1; } else { break; };
+            };
+        };
+    };
+
+    let num_str = text.substring(pos, p - pos);
+    let val = if is_float { num_str.parse_float() } else { num_str.parse_int() };
+
+    let r = Vec::new();
+    r.push(val);
+    r.push(p);
+    r
+}
+
+fn _parse_true(text: String, pos: i64, len: i64) -> Vec {
+    let r = Vec::new();
+    r.push(true);
+    r.push(pos + 4);
+    r
+}
+
+fn _parse_false(text: String, pos: i64, len: i64) -> Vec {
+    let r = Vec::new();
+    r.push(false);
+    r.push(pos + 5);
+    r
+}
+
+fn _parse_null(text: String, pos: i64, len: i64) -> Vec {
+    let r = Vec::new();
+    r.push(());
+    r.push(pos + 4);
+    r
+}
+
+fn _skip_ws(text: String, pos: i64, len: i64) -> i64 {
+    let chars = text.chars();
+    let mut p = pos;
+    while p < len {
+        let c = chars.get(p);
+        if c == " " || c == "\n" || c == "\r" || c == "\t" {
+            p = p + 1;
+        } else {
+            break;
+        };
+    };
+    p
+}
+
+// ── Serializer ──
+
+fn _stringify_value(value, indent: i64, pretty: bool) -> String {
+    let tn = type_name(value);
+    if tn == "unit" { "null" }
+    else if tn == "bool" { _stringify_bool(value) }
+    else if tn == "int" { to_string(value) }
+    else if tn == "float" { _stringify_float(value) }
+    else if tn == "string" { _escape_string(value) }
+    else if tn == "map" { _stringify_object(value, indent, pretty) }
+    else if tn == "vec" || tn == "array" { _stringify_array(value, indent, pretty) }
+    else { "null" }
+}
+
+fn _stringify_bool(value) -> String {
+    if value { "true" } else { "false" }
+}
+
+fn _stringify_float(value) -> String {
+    let s = to_string(value);
+    if !s.contains(".") && !s.contains("e") && !s.contains("E") {
+        s + ".0"
+    } else {
+        s
+    }
+}
+
+fn _stringify_array(value, indent: i64, pretty: bool) -> String {
+    let n = value.len();
+    if n == 0 { return "[]"; };
+
+    let mut parts = Vec::new();
+    let child_indent = indent + 1;
+    for i in 0..n {
+        let item_str = _stringify_value(value.get(i), child_indent, pretty);
+        parts.push(item_str);
+    };
+
+    if pretty {
+        let pad = _indent_str(indent + 1);
+        let close_pad = _indent_str(indent);
+        "[" + "\n" + pad + parts.join("," + "\n" + pad) + "\n" + close_pad + "]"
+    } else {
+        "[" + parts.join(",") + "]"
+    }
+}
+
+fn _stringify_object(value, indent: i64, pretty: bool) -> String {
+    let keys = value.keys();
+    let n = keys.len();
+    if n == 0 { return "{}"; };
+
+    let mut parts = Vec::new();
+    let child_indent = indent + 1;
+    for i in 0..n {
+        let key = keys.get(i);
+        let val = value.get(key);
+        let key_str = _escape_string(key);
+        let val_str = _stringify_value(val, child_indent, pretty);
+        let sep = if pretty { ": " } else { ":" };
+        parts.push(key_str + sep + val_str);
+    };
+
+    if pretty {
+        let pad = _indent_str(indent + 1);
+        let close_pad = _indent_str(indent);
+        "{" + "\n" + pad + parts.join("," + "\n" + pad) + "\n" + close_pad + "}"
+    } else {
+        "{" + parts.join(",") + "}"
+    }
+}
+
+fn _indent_str(indent: i64) -> String {
+    let mut s = "";
+    let mut i = 0;
+    while i < indent { s = s + "  "; i = i + 1; };
+    s
+}
+
+fn _escape_string(s: String) -> String {
+    let mut result = "\"";
+    let chars = s.chars();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        let c = chars.get(i);
+        if c == "\"" { result = result + "\\\""; }
+        else if c == "\\" { result = result + "\\\\"; }
+        else if c == "\n" { result = result + "\\n"; }
+        else if c == "\r" { result = result + "\\r"; }
+        else if c == "\t" { result = result + "\\t"; }
+        else if c == "\u{08}" { result = result + "\\b"; }
+        else if c == "\u{0c}" { result = result + "\\f"; }
+        else { result = result + c; };
+        i = i + 1;
+    };
+    result + "\""
+}
+
+// ── Helpers ──
+
+fn _parse_hex(hex: String) -> i64 {
+    let chars = hex.chars();
+    let n = chars.len();
+    let mut result = 0;
+    let mut i = 0;
+    while i < n {
+        let c = chars.get(i);
+        let digit = if c >= "0" && c <= "9" {
+            c.parse_int()
+        } else if c >= "a" && c <= "f" {
+            _char_code(c) - 87
+        } else if c >= "A" && c <= "F" {
+            _char_code(c) - 55
+        } else {
+            0
+        };
+        result = result * 16 + digit;
+        i = i + 1;
+    };
+    result
+}
+
+fn _char_code(c: String) -> i64 {
+    let alphabet = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    let idx = alphabet.find(c);
+    if idx >= 0 { idx + 32 } else { 0 }
+}
+
+fn _char_from_code(code: i64) -> String {
+    if code < 128 { _ascii_char(code) } else { "?" }
+}
+
+fn _ascii_char(code: i64) -> String {
+    if code == 34 { "\"" }
+    else if code == 92 { "\\" }
+    else if code == 47 { "/" }
+    else if code == 8 { "\u{08}" }
+    else if code == 12 { "\u{0c}" }
+    else if code == 10 { "\n" }
+    else if code == 13 { "\r" }
+    else if code == 9 { "\t" }
+    else if code >= 32 && code <= 126 {
+        let alphabet = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+        alphabet.substring(code - 32, 1)
+    } else { "" }
 }

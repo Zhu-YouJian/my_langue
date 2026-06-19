@@ -1,0 +1,60 @@
+// 执行约束器测试 — 仅内置函数
+// 运行: tenth run std/test_runtime.th
+
+fn main() {
+    println("=== 执行约束器测试 ===");
+
+    // 测试 1: 正常完成的步数限制
+    let r1 = with_step_limit(1000000, |_| {
+        let mut sum = 0;
+        let mut i = 0;
+        while i < 100 {
+            sum = sum + i;
+            i = i + 1;
+        };
+        sum
+    });
+    println("测试 1: 正常完成 = {r1}");
+
+    // 测试 2: 步数耗尽（死循环）
+    let r2 = with_step_limit(1000, |_| {
+        let mut i = 0;
+        while i < 100000000 {
+            i = i + 1;
+        };
+        i
+    });
+    let t2 = is_timeout(r2);
+    println("测试 2: 步数耗尽 is_timeout = {t2}");
+
+    // 测试 3: is_timeout 对正常结果返回 false
+    let r3 = with_step_limit(1000000, |_| { 42 });
+    let t3 = is_timeout(r3);
+    println("测试 3: 正常结果 is_timeout = {t3}");
+
+    // 测试 4: 时间限制 - 正常完成
+    let r4 = with_timeout_ms(5000, |_| {
+        let mut s = 0;
+        let mut i = 0;
+        while i < 1000 {
+            s = s + i;
+            i = i + 1;
+        };
+        s
+    });
+    println("测试 4: 时间限制内完成 = {r4}");
+
+    // 测试 5: 时间限制 - 超时
+    let r5 = with_timeout_ms(100, |_| {
+        let mut i = 0;
+        while i < 1000000000 {
+            i = i + 1;
+        };
+        i
+    });
+    let t5 = is_timeout(r5);
+    println("测试 5: 时间超时 is_timeout = {t5}");
+
+    println("");
+    println("=== 所有约束器测试完成 ===");
+}

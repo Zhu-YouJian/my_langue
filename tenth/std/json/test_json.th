@@ -1,0 +1,87 @@
+// JSON module test — verify parse and stringify work
+//
+// Run with: tenth run std/json/test_json.th
+
+use std::json::json::parse
+use std::json::json::stringify
+use std::json::json::stringify_pretty
+
+fn main() {
+    println("=== JSON Parse Tests ===");
+
+    // Test 1: Parse a simple object
+    let obj = parse("{\"name\": \"Alice\", \"age\": 30}");
+    println("Test 1: parse object");
+    let name = obj.get("name");
+    let age = obj.get("age");
+    println("  name = {name}");
+    println("  age = {age}");
+
+    // Test 2: Parse an array
+    let arr = parse("[1, 2, 3, 4, 5]");
+    println("Test 2: parse array");
+    let arr_len = arr.len();
+    let arr_first = arr.get(0);
+    let arr_last = arr.get(4);
+    println("  length = {arr_len}");
+    println("  first = {arr_first}");
+    println("  last = {arr_last}");
+
+    // Test 3: Parse nested structure
+    let nested = parse("{\"user\": {\"name\": \"Bob\", \"scores\": [90, 85, 95]}}");
+    println("Test 3: parse nested");
+    let user = nested.get("user");
+    let user_name = user.get("name");
+    let scores = user.get("scores");
+    let scores_len = scores.len();
+    println("  user.name = {user_name}");
+    println("  scores.len = {scores_len}");
+
+    // Test 4: Parse primitives
+    let b = parse("true");
+    println("Test 4: parse bool = {b}");
+
+    let n = parse("42");
+    println("Test 5: parse int = {n}");
+
+    let f = parse("3.14");
+    println("Test 6: parse float = {f}");
+
+    let null_val = parse("null");
+    println("Test 7: parse null = {null_val}");
+
+    // Test 8: Parse string with escapes
+    let s = parse("\"hello\\nworld\"");
+    println("Test 8: parse escaped string = {s}");
+
+    println("");
+    println("=== JSON Stringify Tests ===");
+
+    // Test 9: Stringify a HashMap
+    let mut map = HashMap::new();
+    map.insert("name", "Charlie");
+    map.insert("age", 25);
+    let json_str = stringify(map);
+    println("Test 9: stringify object = {json_str}");
+
+    // Test 10: Stringify an array
+    let mut arr2 = Vec::new();
+    arr2.push(1);
+    arr2.push(2);
+    arr2.push(3);
+    let arr2_str = stringify(arr2);
+    println("Test 10: stringify array = {arr2_str}");
+
+    // Test 11: Stringify pretty
+    println("Test 11: stringify_pretty");
+    println(stringify_pretty(map));
+
+    // Test 12: Round-trip
+    let original = "{\"key\": \"value\", \"num\": 42}";
+    let parsed = parse(original);
+    let roundtrip = stringify(parsed);
+    println("Test 12: round-trip = {roundtrip}");
+
+    println("");
+    println("=== All JSON tests completed ===");
+}

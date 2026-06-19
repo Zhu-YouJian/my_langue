@@ -1,0 +1,393 @@
+// TOML parser and serializer — pure Tenth implementation
+//
+// Supports the subset of TOML used by Tenth.toml manifests:
+//   - [section] headers (including [a.b.c] dotted keys)
+//   - key = value pairs
+//   - String values: "..."
+//   - Integer values: 42
+//   - Float values: 3.14
+//   - Boolean values: true / false
+//   - Array values: [1, 2, 3] (of strings/ints/floats/bools)
+//   - Inline tables: { key = val, ... } (limited support)
+//   - Comments: # ...
+//   - Multi-line not supported (single-line only)
+//
+// Usage:
+//   use std::toml::toml::parse
+//   use std::toml::toml::stringify
+
+// ── Public API ──
+
+fn parse(toml_str: String) {
+    let lines = toml_str.split("\n");
+    let n = lines.len();
+    let mut root = HashMap::new();
+    let mut current_table = root;
+    let mut current_path = "";
+
+    let mut i = 0;
+    while i < n {
+        let line = lines.get(i);
+        let trimmed = line.trim();
+
+        // Skip empty lines and comments
+        if trimmed.is_empty() || trimmed.starts_with("#") {
+            i = i + 1;
+            continue;
+        };
+
+        // Section header [section] or [a.b.c]
+        if trimmed.starts_with("[") && trimmed.ends_with("]") {
+            let path = trimmed.substring(1, trimmed.len() - 2);
+            current_path = path.trim();
+            // Navigate to or create the table
+            current_table = _get_or_create_table(root, current_path);
+            i = i + 1;
+            continue;
+        };
+
+        // key = value
+        let eq_pos = trimmed.find("=");
+        if eq_pos >= 0 {
+            let key = trimmed.substring(0, eq_pos).trim();
+            let val_str = trimmed.substring(eq_pos + 1, trimmed.len() - eq_pos - 1).trim();
+            let val = _parse_toml_value(val_str);
+            current_table.insert(key, val);
+        };
+
+        i = i + 1;
+    };
+
+    root
+}
+
+fn stringify(value) -> String {
+    _stringify_toml(value, "")
+}
+
+fn load(path: String) {
+    let content = read_file(path);
+    parse(content)
+}
+
+fn save(path: String, value) {
+    let toml_str = stringify(value);
+    write_file(path, toml_str)
+}
+
+// ── Internal: table navigation ──
+
+fn _get_or_create_table(root, path: String) {
+    if path.is_empty() { return root; };
+
+    let parts = path.split(".");
+    let n = parts.len();
+    let mut current = root;
+
+    let mut i = 0;
+    while i < n {
+        let part = parts.get(i).trim();
+        let existing = current.get(part);
+        // Check if existing is a HashMap (table) or doesn't exist
+        let tn = type_name(existing);
+        if tn == "unit" {
+            // Create new table
+            let new_table = HashMap::new();
+            current.insert(part, new_table);
+            current = new_table;
+        } else {
+            // Navigate into existing table
+            current = existing;
+        };
+        i = i + 1;
+    };
+
+    current
+}
+
+// ── Internal: value parsing ──
+
+fn _parse_toml_value(s: String) {
+    let trimmed = s.trim();
+
+    if trimmed.is_empty() { return (); };
+
+    // String
+    if trimmed.starts_with("\"") && trimmed.ends_with("\"") && trimmed.len() >= 2 {
+        return _parse_toml_string(trimmed);
+    };
+
+    // Boolean
+    if trimmed == "true" { return true; };
+    if trimmed == "false" { return false; };
+
+    // Array
+    if trimmed.starts_with("[") && trimmed.ends_with("]") {
+        return _parse_toml_array(trimmed);
+    };
+
+    // Inline table (limited support)
+    if trimmed.starts_with("{") && trimmed.ends_with("}") {
+        return _parse_toml_inline_table(trimmed);
+    };
+
+    // Number (int or float)
+    if _is_numeric(trimmed) {
+        if trimmed.contains(".") || trimmed.contains("e") || trimmed.contains("E") {
+            return trimmed.parse_float();
+        } else {
+            return trimmed.parse_int();
+        };
+    };
+
+    // Fallback: treat as string
+    trimmed
+}
+
+fn _parse_toml_string(s: String) -> String {
+    let len = s.len();
+    if len < 2 { return ""; };
+    let inner = s.substring(1, len - 2);
+    // Process escape sequences
+    _unescape_string(inner)
+}
+
+fn _parse_toml_array(s: String) -> Vec {
+    let len = s.len();
+    if len < 2 { return Vec::new(); };
+    let inner = s.substring(1, len - 2).trim();
+    if inner.is_empty() { return Vec::new(); };
+
+    let mut result = Vec::new();
+    let parts = _split_array_elements(inner);
+    let n = parts.len();
+    let mut i = 0;
+    while i < n {
+        let part = parts.get(i).trim();
+        if !part.is_empty() {
+            result.push(_parse_toml_value(part));
+        };
+        i = i + 1;
+    };
+    result
+}
+
+fn _parse_toml_inline_table(s: String) {
+    let len = s.len();
+    if len < 2 { return HashMap::new(); };
+    let inner = s.substring(1, len - 2).trim();
+    if inner.is_empty() { return HashMap::new(); };
+
+    let mut map = HashMap::new();
+    let parts = _split_inline_table(inner);
+    let n = parts.len();
+    let mut i = 0;
+    while i < n {
+        let part = parts.get(i).trim();
+        let eq_pos = part.find("=");
+        if eq_pos >= 0 {
+            let key = part.substring(0, eq_pos).trim();
+            let val_str = part.substring(eq_pos + 1, part.len() - eq_pos - 1).trim();
+            map.insert(key, _parse_toml_value(val_str));
+        };
+        i = i + 1;
+    };
+
+    map
+}
+
+// Split array elements respecting quoted strings
+fn _split_array_elements(s: String) -> Vec {
+    let mut result = Vec::new();
+    let mut current = "";
+    let mut in_string = false;
+    let chars = s.chars();
+    let n = chars.len();
+    let mut i = 0;
+
+    while i < n {
+        let c = chars.get(i);
+        if c == "\"" && (i == 0 || chars.get(i - 1) != "\\") {
+            in_string = !in_string;
+            current = current + c;
+        } else if c == "," && !in_string {
+            result.push(current);
+            current = "";
+        } else {
+            current = current + c;
+        };
+        i = i + 1;
+    };
+
+    if !current.is_empty() { result.push(current); };
+    result
+}
+
+// Split inline table elements respecting quoted strings
+fn _split_inline_table(s: String) -> Vec {
+    _split_array_elements(s)
+}
+
+// ── Internal: serializer ──
+
+fn _stringify_toml(value, prefix: String) -> String {
+    let mut result = "";
+    let mut tables = Vec::new();
+    let mut simple_keys = Vec::new();
+
+    // Separate simple values from nested tables
+    let keys = value.keys();
+    let n = keys.len();
+    let mut i = 0;
+    while i < n {
+        let key = keys.get(i);
+        let val = value.get(key);
+        if type_name(val) == "map" {
+            tables.push(key);
+        } else {
+            simple_keys.push(key);
+        };
+        i = i + 1;
+    };
+
+    // Write simple key-value pairs first
+    let sn = simple_keys.len();
+    let mut si = 0;
+    while si < sn {
+        let key = simple_keys.get(si);
+        let val = value.get(key);
+        let val_str = _stringify_toml_value(val);
+        result = result + key + " = " + val_str + "\n";
+        si = si + 1;
+    };
+
+    // Write nested tables
+    let tn = tables.len();
+    let mut ti = 0;
+    while ti < tn {
+        let key = tables.get(ti);
+        let val = value.get(key);
+        let section = if prefix.is_empty() { key } else { prefix + "." + key };
+        if !result.is_empty() { result = result + "\n"; };
+        result = result + "[" + section + "]\n";
+        result = result + _stringify_toml(val, section);
+        ti = ti + 1;
+    };
+
+    result
+}
+
+fn _stringify_toml_value(value) -> String {
+    let tn = type_name(value);
+    if tn == "unit" { return "\"\""; };
+    if tn == "bool" { return to_string(value); };
+    if tn == "int" { return to_string(value); };
+    if tn == "float" {
+        let s = to_string(value);
+        if !s.contains(".") { return s + ".0"; };
+        return s;
+    };
+    if tn == "string" { return _escape_string(value); };
+    if tn == "vec" || tn == "array" { return _stringify_toml_array(value); };
+    if tn == "map" { return _stringify_toml_inline(value); };
+    "\"\""
+}
+
+fn _stringify_toml_array(value) -> String {
+    let n = value.len();
+    if n == 0 { return "[]"; };
+    let mut parts = Vec::new();
+    let mut i = 0;
+    while i < n {
+        parts.push(_stringify_toml_value(value.get(i)));
+        i = i + 1;
+    };
+    "[" + parts.join(", ") + "]"
+}
+
+fn _stringify_toml_inline(value) -> String {
+    let keys = value.keys();
+    let n = keys.len();
+    if n == 0 { return "{}"; };
+    let mut parts = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let key = keys.get(i);
+        let val = value.get(key);
+        parts.push(key + " = " + _stringify_toml_value(val));
+        i = i + 1;
+    };
+    "{ " + parts.join(", ") + " }"
+}
+
+// ── Helpers ──
+
+fn _is_numeric(s: String) -> bool {
+    if s.is_empty() { return false; };
+    let chars = s.chars();
+    let n = chars.len();
+    if n == 0 { return false; };
+
+    let mut i = 0;
+    if chars.get(0) == "-" { i = 1; };
+    if i >= n { return false; };
+
+    let mut has_digit = false;
+    let mut has_dot = false;
+    while i < n {
+        let c = chars.get(i);
+        if c >= "0" && c <= "9" { has_digit = true; }
+        else if c == "." && !has_dot { has_dot = true; }
+        else if c == "e" || c == "E" {
+            i = i + 1;
+            if i < n {
+                let next = chars.get(i);
+                if next == "+" || next == "-" { i = i + 1; };
+            };
+        } else { return false; };
+        i = i + 1;
+    };
+    has_digit
+}
+
+fn _escape_string(s: String) -> String {
+    let mut result = "\"";
+    let chars = s.chars();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        let c = chars.get(i);
+        if c == "\"" { result = result + "\\\""; }
+        else if c == "\\" { result = result + "\\\\"; }
+        else if c == "\n" { result = result + "\\n"; }
+        else if c == "\t" { result = result + "\\t"; }
+        else { result = result + c; };
+        i = i + 1;
+    };
+    result + "\""
+}
+
+fn _unescape_string(s: String) -> String {
+    let mut result = "";
+    let chars = s.chars();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        let c = chars.get(i);
+        if c == "\\" {
+            i = i + 1;
+            if i >= n { break; };
+            let esc = chars.get(i);
+            if esc == "n" { result = result + "\n"; }
+            else if esc == "t" { result = result + "\t"; }
+            else if esc == "r" { result = result + "\r"; }
+            else if esc == "\"" { result = result + "\""; }
+            else if esc == "\\" { result = result + "\\"; }
+            else { result = result + esc; };
+        } else {
+            result = result + c;
+        };
+        i = i + 1;
+    };
+    result
+}

@@ -1,0 +1,78 @@
+// TOML module test — verify parse and stringify work
+//
+// Run with: tenth run std/toml/test_toml.th
+
+use std::toml::toml::parse
+use std::toml::toml::stringify
+
+fn main() {
+    println("=== TOML Parse Tests ===");
+
+    // Test 1: Parse a simple TOML
+    let toml_str = "# A comment\nname = \"Alice\"\nage = 30\nactive = true\n";
+    let config = parse(toml_str);
+    println("Test 1: parse simple");
+    let name = config.get("name");
+    let age = config.get("age");
+    let active = config.get("active");
+    println("  name = {name}");
+    println("  age = {age}");
+    println("  active = {active}");
+
+    // Test 2: Parse with sections
+    let toml_str2 = "[package]\nname = \"mylib\"\nversion = \"1.0.0\"\n\n[dependencies]\nserde = \"1.0\"\n";
+    let config2 = parse(toml_str2);
+    println("Test 2: parse with sections");
+    let pkg = config2.get("package");
+    let pkg_name = pkg.get("name");
+    let pkg_ver = pkg.get("version");
+    println("  package.name = {pkg_name}");
+    println("  package.version = {pkg_ver}");
+    let deps = config2.get("dependencies");
+    let dep_serde = deps.get("serde");
+    println("  dependencies.serde = {dep_serde}");
+
+    // Test 3: Parse array value
+    let toml_str3 = "items = [1, 2, 3]\nnames = [\"a\", \"b\", \"c\"]\n";
+    let config3 = parse(toml_str3);
+    println("Test 3: parse arrays");
+    let items = config3.get("items");
+    let items_len = items.len();
+    let items_0 = items.get(0);
+    println("  items.len = {items_len}");
+    println("  items[0] = {items_0}");
+    let names = config3.get("names");
+    let names_len = names.len();
+    let names_0 = names.get(0);
+    println("  names.len = {names_len}");
+    println("  names[0] = {names_0}");
+
+    // Test 4: Parse float
+    let toml_str4 = "pi = 3.14\n";
+    let config4 = parse(toml_str4);
+    println("Test 4: parse float");
+    let pi = config4.get("pi");
+    println("  pi = {pi}");
+
+    println("");
+    println("=== TOML Stringify Tests ===");
+
+    // Test 5: Stringify a simple map
+    let mut map = HashMap::new();
+    map.insert("name", "test");
+    map.insert("version", "0.1.0");
+    println("Test 5: stringify simple");
+    println(stringify(map));
+
+    // Test 6: Stringify with nested table
+    let mut root = HashMap::new();
+    let mut pkg = HashMap::new();
+    pkg.insert("name", "mypkg");
+    pkg.insert("version", "2.0.0");
+    root.insert("package", pkg);
+    println("Test 6: stringify with table");
+    println(stringify(root));
+
+    println("");
+    println("=== All TOML tests completed ===");
+}

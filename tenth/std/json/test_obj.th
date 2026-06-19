@@ -1,0 +1,11 @@
+// Simple object test
+use std::json::json::parse
+
+fn main() {
+    println("=== Simple Object Test ===");
+    let obj = parse("{\"a\": 1}");
+    println("parsed object");
+    let v = obj.get("a");
+    println("a = {v}");
+    println("=== Done ===");
+}
