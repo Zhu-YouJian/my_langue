@@ -1,8 +1,11 @@
 target/
 *.exe
 *.wasm
+*.thw
 dbg_out.txt
 test_out.txt
+stdout.txt
+stderr.txt
 tenthc.c
 test_mini.c
 /test_*.th
