@@ -84,3 +84,5 @@
 //   std::logging::logging::debug, info, warn, error, set_level, LEVEL_DEBUG, LEVEL_INFO, LEVEL_WARN, LEVEL_ERROR
 //   std::fs::fs::exists, is_file, is_dir, join, mkdir_all, list_dir, size, remove, copy, rename, read_text, read_bytes, write_text, write_bytes, read_lines, extension, filename, parent
 //   std::json::json::encode, decode, encode_pretty, load, save
+//   std::runtime::run_with_limit, limit_or_default, run_with_timeout, timeout_or_default
+//   (built-in, no import needed) with_step_limit, with_timeout_ms, is_timeout

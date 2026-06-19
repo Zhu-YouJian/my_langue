@@ -157,11 +157,17 @@ pub struct Vm {
     pub tape: Option<Tape>,
     /// Whether tensor operations should be recorded on the tape.
     pub recording: bool,
+    /// Execution step budget. When `Some(n)`, each dispatched opcode
+    /// decrements the counter; reaching zero raises `TenthError::Timeout`.
+    /// `None` means unlimited (default).
+    pub step_budget: Option<u64>,
+    /// Optional wall-clock deadline (Unix ms). Checked periodically.
+    pub deadline_ms: Option<u128>,
 }
 
 impl Vm {
     pub fn new() -> Self {
-        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new(), tape: None, recording: false }
+        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new(), tape: None, recording: false, step_budget: None, deadline_ms: None }
     }
 
     pub fn add_fn(&mut self, name: String, chunk: Chunk) {
@@ -217,6 +223,28 @@ impl Vm {
         let mut strings = self.chunks[chunk_idx].strings.clone();
 
         loop {
+            // Step budget check (no-op when unset).
+            if let Some(ref mut budget) = self.step_budget {
+                if *budget == 0 {
+                    return Err(TenthError::Timeout {
+                        message: "VM 步数预算耗尽".into(),
+                    });
+                }
+                *budget -= 1;
+                if (*budget & 0xFFF) == 0 {
+                    if let Some(deadline) = self.deadline_ms {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis())
+                            .unwrap_or(0);
+                        if now >= deadline {
+                            return Err(TenthError::Timeout {
+                                message: "VM 时间预算耗尽".into(),
+                            });
+                        }
+                    }
+                }
+            }
             // Inline opcode read (no closure, so code/strings can be reassigned)
             let op: Op = {
                 use Op::*;
@@ -293,6 +321,9 @@ impl Vm {
                 Op::Div => { let (a,b)=self.pop2(); let r=self.div(&a,&b)?; self.stack.push(r); }
                 Op::Mod => {
                     let b = self.pop_int()?; let a = self.pop_int()?;
+                    if b == 0 {
+                        return err("整数取模除零");
+                    }
                     self.stack.push(Value::Int(a % b));
                 }
                 Op::Neg => {
@@ -712,7 +743,12 @@ impl Vm {
 
     fn div(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
-            (Value::Int(x), Value::Int(y)) => Value::Int(x / y),
+            (Value::Int(x), Value::Int(y)) => {
+                if *y == 0 {
+                    return err("整数除零");
+                }
+                Value::Int(x / y)
+            }
             (Value::Float(x), Value::Float(y)) => Value::Float(x / y),
             (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 / y),
             (Value::Float(x), Value::Int(y)) => Value::Float(x / *y as f64),

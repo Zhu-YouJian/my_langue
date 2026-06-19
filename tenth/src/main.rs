@@ -94,7 +94,28 @@ fn source_to_hir(source: &str) -> TenthResult<tenth::hir::hir::HirProgram> {
     // Add tenth/std/ relative to working directory (for development)
     let std_dev = std::path::Path::new("tenth/std");
     if std_dev.exists() {
+        // Add the parent of std/ (i.e., tenth/) so that `use std::json::json::parse`
+        // resolves to tenth/std/json/json.th
+        if let Some(parent) = std_dev.parent() {
+            search_paths.push(parent.to_string_lossy().to_string());
+        }
+        // Also add tenth/std/ itself for use statements without the std:: prefix
         search_paths.push(std_dev.to_string_lossy().to_string());
+    }
+
+    // Also handle the case where cwd is already inside tenth/ (e.g., cwd = tenth/)
+    let std_local = std::path::Path::new("std");
+    if std_local.exists() {
+        if let Some(parent) = std_local.parent() {
+            let parent_str = parent.to_string_lossy().to_string();
+            if !search_paths.iter().any(|p| *p == parent_str) {
+                search_paths.push(parent_str);
+            }
+        }
+        let std_str = std_local.to_string_lossy().to_string();
+        if !search_paths.iter().any(|p| *p == std_str) {
+            search_paths.push(std_str);
+        }
     }
 
     let mut lowerer = tenth::hir::lower::Lowerer::with_search_paths(search_paths);
@@ -115,12 +136,26 @@ fn run_file(path: &str) -> TenthResult<()> {
         }
     };
 
-    match vm_execute(&hir) {
-        Ok(val) => {
-            if !matches!(val, Value::Unit) { println!("= {}", val); }
-            return Ok(());
+    // Skip VM if TENTH_NO_VM env var is set (for debugging interpreter)
+    let skip_vm = std::env::var("TENTH_NO_VM").is_ok();
+    if !skip_vm {
+        match vm_execute(&hir) {
+            Ok(val) => {
+                if !matches!(val, Value::Unit) { println!("= {}", val); }
+                return Ok(());
+            }
+            Err(e) => {
+                // Print a warning so the user knows why output may be duplicated or
+                // why the interpreter is being used. VM may have partially executed
+                // statements (e.g. println) before failing, so the interpreter
+                // re-running from the start can produce duplicate side effects.
+                eprintln!("[warning] VM 执行失败，回退到解释器重新执行整个程序。");
+                eprintln!("[warning] 回退原因: {}", e);
+                eprintln!("[warning] 注意: VM 可能已部分执行并产生副作用（如 println 输出），");
+                eprintln!("[warning]       解释器将从头重新执行，可能导致副作用重复。");
+                eprintln!("[warning] 如需禁用 VM，请设置环境变量 TENTH_NO_VM=1。");
+            }
         }
-        Err(_) => {}
     }
     let mut interpreter = Interpreter::new(&hir);
     match interpreter.execute_program(&hir)? {
@@ -142,6 +177,15 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
             for (name, closure_chunk) in closures {
                 vm.add_fn(name, closure_chunk);
             }
+            // Also register the function as a global FnRef so it can be passed
+            // as a value (e.g. compose(double, inc)) and called by name from
+            // closures. Without this, LoadGlobal for a function name returns
+            // Unit, breaking higher-order function scenarios.
+            vm.set_global(func.name.clone(), Value::FnRef {
+                name: func.name.clone(),
+                params: func.params.clone(),
+                return_type: func.return_type.clone(),
+            });
         }
     }
 

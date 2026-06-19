@@ -1,0 +1,32 @@
+// 执行约束器 — 限制闭包的执行步数或墙钟时间
+//
+// 底层能力由内置函数提供（全局可用，无需 use）：
+//   with_step_limit(limit: Int, f) -> Any   执行 f，最多 limit 步，超时返回 ()
+//   with_timeout_ms(ms: Int, f) -> Any      执行 f，最多 ms 毫秒，超时返回 ()
+//   is_timeout(result) -> Bool              判断结果是否为超时哨兵 ()
+//
+// 本模块提供更高层的便利封装：
+
+// 带超时回调：超时则执行 on_timeout 并返回其结果
+fn run_with_limit(limit: i64, f, on_timeout) {
+    let r = with_step_limit(limit, f);
+    if is_timeout(r) { on_timeout() } else { r }
+}
+
+// 超时返回默认值
+fn limit_or_default(limit: i64, f, default) {
+    let r = with_step_limit(limit, f);
+    if is_timeout(r) { default } else { r }
+}
+
+// 带时间限制和超时回调
+fn run_with_timeout(ms: i64, f, on_timeout) {
+    let r = with_timeout_ms(ms, f);
+    if is_timeout(r) { on_timeout() } else { r }
+}
+
+// 时间限制 + 默认值
+fn timeout_or_default(ms: i64, f, default) {
+    let r = with_timeout_ms(ms, f);
+    if is_timeout(r) { default } else { r }
+}

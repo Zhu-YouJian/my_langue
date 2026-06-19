@@ -31,6 +31,14 @@ pub struct Interpreter {
     pub tape: Option<Tape>,
     /// Whether tensor operations should be recorded on the tape.
     pub recording: bool,
+    /// Execution step budget. When `Some(n)`, each `eval_expr`/`eval_stmt`
+    /// decrements the counter; reaching zero raises `TenthError::Timeout`.
+    /// `None` means unlimited (default). Set via `with_step_limit`.
+    pub step_budget: Option<u64>,
+    /// Optional wall-clock deadline (Unix ms). When set, the step counter
+    /// periodically checks `now >= deadline` and raises `Timeout`.
+    /// Set via `with_timeout_ms`.
+    pub deadline_ms: Option<u128>,
 }
 
 fn days_to_date(days: u64) -> (u64, u64, u64) {
@@ -183,6 +191,8 @@ impl Interpreter {
             arena: Arena::new(DEFAULT_ARENA_CAPACITY),
             tape: None,
             recording: false,
+            step_budget: None,
+            deadline_ms: None,
         }
     }
 
@@ -400,15 +410,61 @@ impl Interpreter {
                 }
             }
         }
-        // Check all scopes for Shared to update in-place
+        // Find the most recent scope that has this variable and update it there.
+        // This handles both Shared (update in-place) and plain values (overwrite).
+        // We iterate from innermost (last) to outermost (first).
         for scope in self.scopes.iter_mut().rev() {
-            if let Some(Value::Shared(rc)) = scope.get(&name) {
-                *rc.borrow_mut() = val;
-                return;
+            match scope.get(&name) {
+                Some(Value::Shared(rc)) => {
+                    *rc.borrow_mut() = val;
+                    return;
+                }
+                Some(Value::Moved) => {
+                    // Variable was moved; re-insert the new value in this scope.
+                    scope.insert(name, val);
+                    return;
+                }
+                Some(_) => {
+                    // Plain value: overwrite in the same scope where it was found.
+                    scope.insert(name, val);
+                    return;
+                }
+                None => continue,
             }
         }
-        // Otherwise, insert/overwrite in current scope
+        // Variable not found in any scope: insert into current scope (new definition).
         self.current_scope().insert(name, val);
+    }
+
+    /// Execution step counter. Called once per `eval_expr`/`eval_stmt`.
+    /// Raises `Timeout` when the budget is exhausted or the wall-clock
+    /// deadline passes. No-op when neither limit is set (default).
+    #[inline]
+    fn tick(&mut self) -> TenthResult<()> {
+        if let Some(ref mut budget) = self.step_budget {
+            if *budget == 0 {
+                return Err(TenthError::Timeout {
+                    message: "步数预算耗尽".into(),
+                });
+            }
+            *budget -= 1;
+            // Only check the wall-clock deadline every 4096 steps to keep
+            // the overhead negligible.
+            if (*budget & 0xFFF) == 0 {
+                if let Some(deadline) = self.deadline_ms {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0);
+                    if now >= deadline {
+                        return Err(TenthError::Timeout {
+                            message: "时间预算耗尽".into(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Guarded tensor creation: checks element count against limits.
@@ -425,6 +481,7 @@ impl Interpreter {
     fn eval_expr(&mut self, expr: &HirExpr) -> TenthResult<Option<Value>> {
         use HirExprKind;
 
+        self.tick()?;
         match &expr.kind {
             HirExprKind::Literal(lit) => {
                 Ok(Some(match lit {
@@ -476,6 +533,8 @@ impl Interpreter {
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
                             | "format" | "parse_int" | "parse_float"
+                            | "to_string" | "type_name"
+                            | "with_step_limit" | "with_timeout_ms" | "is_timeout"
                             | "path_join" | "path_exists" | "path_is_file" | "path_is_dir"
                             | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file" | "rename_file"
                             | "time_now" | "time_now_ms" | "time_date" | "time_time" | "time_datetime" | "time_sleep_ms"
@@ -501,13 +560,42 @@ impl Interpreter {
             }
 
             HirExprKind::Binary { op, left, right, .. } => {
-                let l = self.eval_expr(left)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "左操作数为空值".into(),
-                })?;
-                let r = self.eval_expr(right)?.ok_or_else(|| TenthError::RuntimeError {
-                    message: "右操作数为空值".into(),
-                })?;
-                self.eval_binary(op, &l, &r).map(Some)
+                // Short-circuit evaluation for && and ||
+                match op {
+                    BinOp::And => {
+                        let l = self.eval_expr(left)?.ok_or_else(|| TenthError::RuntimeError {
+                            message: "左操作数为空值".into(),
+                        })?;
+                        if !l.is_truthy() {
+                            return Ok(Some(Value::Bool(false)));
+                        }
+                        let r = self.eval_expr(right)?.ok_or_else(|| TenthError::RuntimeError {
+                            message: "右操作数为空值".into(),
+                        })?;
+                        Ok(Some(Value::Bool(r.is_truthy())))
+                    }
+                    BinOp::Or => {
+                        let l = self.eval_expr(left)?.ok_or_else(|| TenthError::RuntimeError {
+                            message: "左操作数为空值".into(),
+                        })?;
+                        if l.is_truthy() {
+                            return Ok(Some(Value::Bool(true)));
+                        }
+                        let r = self.eval_expr(right)?.ok_or_else(|| TenthError::RuntimeError {
+                            message: "右操作数为空值".into(),
+                        })?;
+                        Ok(Some(Value::Bool(r.is_truthy())))
+                    }
+                    _ => {
+                        let l = self.eval_expr(left)?.ok_or_else(|| TenthError::RuntimeError {
+                            message: "左操作数为空值".into(),
+                        })?;
+                        let r = self.eval_expr(right)?.ok_or_else(|| TenthError::RuntimeError {
+                            message: "右操作数为空值".into(),
+                        })?;
+                        self.eval_binary(op, &l, &r).map(Some)
+                    }
+                }
             }
 
             HirExprKind::Unary { op, expr: inner, .. } => {
@@ -935,6 +1023,9 @@ impl Interpreter {
             }
 
             HirExprKind::Tuple(elems) => {
+                if elems.is_empty() {
+                    return Ok(Some(Value::Unit));
+                }
                 let mut values = Vec::new();
                 for e in elems {
                     if let Some(v) = self.eval_expr(e)? {
@@ -1339,7 +1430,14 @@ impl Interpreter {
                 }),
             },
             BinOp::Div => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
+                (Value::Int(a), Value::Int(b)) => {
+                    if *b == 0 {
+                        return Err(TenthError::RuntimeError {
+                            message: "整数除零".into(),
+                        });
+                    }
+                    Ok(Value::Int(a / b))
+                }
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
@@ -1365,7 +1463,14 @@ impl Interpreter {
                 }),
             },
             BinOp::Mod => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a % b)),
+                (Value::Int(a), Value::Int(b)) => {
+                    if *b == 0 {
+                        return Err(TenthError::RuntimeError {
+                            message: "整数取模除零".into(),
+                        });
+                    }
+                    Ok(Value::Int(a % b))
+                }
                 _ => Err(TenthError::RuntimeError {
                     message: "取模仅支持整数".into(),
                 }),
@@ -2964,6 +3069,99 @@ impl Interpreter {
                 println!();
                 return Ok(Some(Value::Unit));
             }
+            "to_string" => {
+                if let Some(arg) = args.first() {
+                    return Ok(Some(Value::String(self.value_to_string(arg))));
+                }
+                return Ok(Some(Value::String(String::new())));
+            }
+            "type_name" => {
+                if let Some(arg) = args.first() {
+                    let tn = match arg {
+                        Value::Int(_) => "int",
+                        Value::Float(_) => "float",
+                        Value::Bool(_) => "bool",
+                        Value::String(_) => "string",
+                        Value::Unit => "unit",
+                        Value::Vec(_) => "vec",
+                        Value::Array(_) => "array",
+                        Value::Map(_) => "map",
+                        Value::Tuple(_) => "tuple",
+                        Value::Closure { .. } => "closure",
+                        Value::FnRef { .. } => "fn",
+                        _ => "unknown",
+                    };
+                    return Ok(Some(Value::String(tn.to_string())));
+                }
+                return Ok(Some(Value::String("unknown".to_string())));
+            }
+            "with_step_limit" => {
+                // with_step_limit(limit: Int, fn) -> runs fn with a step budget.
+                // Returns whatever fn returns, or () on timeout.
+                if args.len() < 2 {
+                    return Err(TenthError::RuntimeError {
+                        message: "with_step_limit(limit, fn) 需要 2 个参数".into(),
+                    });
+                }
+                let limit = args[0].as_int().ok_or_else(|| TenthError::RuntimeError {
+                    message: "with_step_limit 的第一个参数必须是整数步数".into(),
+                })?;
+                let closure = args[1].clone();
+                // Save and set the budget.
+                let saved_budget = self.step_budget;
+                let saved_deadline = self.deadline_ms;
+                self.step_budget = Some(limit.max(0) as u64);
+                self.deadline_ms = None;
+                let result = self.eval_call(&closure, &[], &crate::lexer::token::Span { line: 0, col: 0 });
+                // Restore previous budget so the limit is scoped to this call.
+                self.step_budget = saved_budget;
+                self.deadline_ms = saved_deadline;
+                return match result {
+                    Ok(v) => Ok(v),
+                    Err(TenthError::Timeout { .. }) => Ok(Some(Value::Unit)),
+                    Err(e) => Err(e),
+                };
+            }
+            "with_timeout_ms" => {
+                // with_timeout_ms(ms: Int, fn) -> runs fn with a wall-clock deadline.
+                if args.len() < 2 {
+                    return Err(TenthError::RuntimeError {
+                        message: "with_timeout_ms(ms, fn) 需要 2 个参数".into(),
+                    });
+                }
+                let ms = args[0].as_int().ok_or_else(|| TenthError::RuntimeError {
+                    message: "with_timeout_ms 的第一个参数必须是整数毫秒".into(),
+                })?;
+                let closure = args[1].clone();
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let saved_budget = self.step_budget;
+                let saved_deadline = self.deadline_ms;
+                // Use a large step budget as the tick vehicle; the deadline
+                // check inside tick() does the actual time comparison.
+                self.step_budget = Some(u64::MAX);
+                self.deadline_ms = Some(now + (ms.max(0) as u128));
+                let result = self.eval_call(&closure, &[], &crate::lexer::token::Span { line: 0, col: 0 });
+                self.step_budget = saved_budget;
+                self.deadline_ms = saved_deadline;
+                return match result {
+                    Ok(v) => Ok(v),
+                    Err(TenthError::Timeout { .. }) => Ok(Some(Value::Unit)),
+                    Err(e) => Err(e),
+                };
+            }
+            "is_timeout" => {
+                // is_timeout(result) -> true if the result is the unit value
+                // returned by a timed-out with_step_limit/with_timeout_ms call.
+                // This is a best-effort sentinel check; for precise control
+                // prefer matching on the returned value directly.
+                if let Some(arg) = args.first() {
+                    return Ok(Some(Value::Bool(matches!(arg, Value::Unit))));
+                }
+                return Ok(Some(Value::Bool(false)));
+            }
             "tensor" => {
                 if let Some(arg) = args.first() {
                     return Ok(Some(arg.clone()));
@@ -3881,6 +4079,7 @@ impl Interpreter {
     }
 
     fn eval_stmt(&mut self, stmt: &HirStmt) -> TenthResult<()> {
+        self.tick()?;
         match &stmt.kind {
             HirStmtKind::Expr(e) => {
                 self.eval_expr(e)?;
@@ -3966,7 +4165,11 @@ impl Interpreter {
                         let e = if inclusive { end + 1 } else { end };
                         for i in start..e {
                             self.current_scope().insert(var.clone(), Value::Int(i));
-                            self.eval_stmt(body)?;
+                            match self.eval_stmt(body) {
+                                Err(TenthError::BreakSignal) => break,
+                                Err(TenthError::ContinueSignal) => continue,
+                                other => { other?; }
+                            }
                         }
                     }
                     Value::Vec(items) => {
@@ -3977,7 +4180,11 @@ impl Interpreter {
                                 other => other.clone(),
                             };
                             self.current_scope().insert(var.clone(), val);
-                            self.eval_stmt(body)?;
+                            match self.eval_stmt(body) {
+                                Err(TenthError::BreakSignal) => break,
+                                Err(TenthError::ContinueSignal) => continue,
+                                other => { other?; }
+                            }
                         }
                     }
                     Value::Tensor(t) => {
@@ -3999,7 +4206,11 @@ impl Interpreter {
                             let row_tensor = Tensor::from_vec(row_data, row_shape);
                             let val = Value::Tensor(Rc::new(RefCell::new(row_tensor)));
                             self.current_scope().insert(var.clone(), val);
-                            self.eval_stmt(body)?;
+                            match self.eval_stmt(body) {
+                                Err(TenthError::BreakSignal) => break,
+                                Err(TenthError::ContinueSignal) => continue,
+                                other => { other?; }
+                            }
                         }
                     }
                     Value::Iterator(lazy_iter) => {
@@ -4013,7 +4224,11 @@ impl Interpreter {
                                     other => other.clone(),
                                 };
                                 self.current_scope().insert(var.clone(), val);
-                                self.eval_stmt(body)?;
+                                match self.eval_stmt(body) {
+                                    Err(TenthError::BreakSignal) => break,
+                                    Err(TenthError::ContinueSignal) => continue,
+                                    other => { other?; }
+                                }
                             }
                         }
                     }

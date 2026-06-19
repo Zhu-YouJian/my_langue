@@ -184,7 +184,11 @@ impl BytecodeCompiler {
                     self.locals.push(target.clone());
                     self.chunk.emit(Op::Store(pos));
                 }
-                // Also store as global so closure FnRef values can be called by name
+                // Also store as global so closure FnRef values can be called by name.
+                // Dup again so the assigned value remains on the stack (Assign is an
+                // expression and must produce a value — needed for block expressions
+                // like `{ x = 5; x }` and `let y = { x = 5; x }`).
+                self.chunk.emit(Op::Dup);
                 let gi = self.chunk.add_string(target);
                 self.chunk.emit(Op::StoreGlobal(gi));
             }
@@ -305,15 +309,21 @@ impl BytecodeCompiler {
                 self.compile_expr(scrutinee)?;
                 let end_label = self.new_label();
                 for arm in arms {
+                    let next_label = self.new_label();
+                    let has_guard = arm.guard.is_some();
                     match &arm.pattern {
                         HirPattern::EnumVariant { enum_name: _, variant, field_bind, tuple_binds } => {
                             self.chunk.emit(Op::Dup); // dup for IsEnumVariant check
                             let variant_i = self.chunk.add_string(variant);
                             self.chunk.emit(Op::IsEnumVariant(variant_i));
-                            let next_label = self.new_label();
                             self.chunk.emit(Op::JmpFalse(0));
                             self.patch_jump(next_label);
                             // IsEnumVariant consumed the dup; scrutinee remains
+                            // If there's a guard, keep an extra copy so the next arm
+                            // can retry if the guard fails.
+                            if has_guard {
+                                self.chunk.emit(Op::Dup);
+                            }
                             if let Some((bind_name, field_name)) = field_bind {
                                 let fi = self.chunk.add_string(field_name);
                                 self.chunk.emit(Op::EnumGetField(fi)); // pops scrutinee, pushes field
@@ -334,19 +344,79 @@ impl BytecodeCompiler {
                             } else {
                                 self.chunk.emit(Op::Pop); // drop scrutinee (no field needed)
                             }
+                            // Guard
+                            if let Some(guard) = &arm.guard {
+                                self.compile_expr(guard)?;
+                                self.chunk.emit(Op::JmpFalse(0));
+                                self.patch_jump(next_label);
+                                self.chunk.emit(Op::Pop); // drop the extra scrutinee copy
+                            }
                             self.compile_expr(&arm.body)?;
                             self.chunk.emit(Op::Jump(0));
                             self.patch_jump(end_label);
                             self.label(next_label);
                         }
                         HirPattern::Wildcard => {
-                            self.chunk.emit(Op::Pop); // drop scrutinee (wildcard ignores value)
+                            // Wildcard matches everything. If there's a guard, evaluate it
+                            // before popping the scrutinee (guard may reference outer vars).
+                            if let Some(guard) = &arm.guard {
+                                self.compile_expr(guard)?;
+                                self.chunk.emit(Op::JmpFalse(0));
+                                self.patch_jump(next_label);
+                            }
+                            self.chunk.emit(Op::Pop); // drop scrutinee
                             self.compile_expr(&arm.body)?;
                             self.chunk.emit(Op::Jump(0));
                             self.patch_jump(end_label);
+                            self.label(next_label);
+                        }
+                        HirPattern::Binding(name) => {
+                            // `x` or `x if guard => body`: bind scrutinee to x, then
+                            // optionally check guard.
+                            self.chunk.emit(Op::Dup); // [scrut, scrut]
+                            let pos = self.locals.len();
+                            self.locals.push(name.clone());
+                            self.chunk.emit(Op::Store(pos)); // [scrut], x bound
+                            if let Some(guard) = &arm.guard {
+                                self.compile_expr(guard)?; // [scrut, bool]
+                                self.chunk.emit(Op::JmpFalse(0));
+                                self.patch_jump(next_label); // [scrut]
+                            }
+                            self.chunk.emit(Op::Pop); // drop scrutinee
+                            self.compile_expr(&arm.body)?;
+                            self.chunk.emit(Op::Jump(0));
+                            self.patch_jump(end_label);
+                            self.label(next_label);
+                        }
+                        HirPattern::Literal(lit) => {
+                            // `0 => body` or `0 if guard => body`
+                            self.chunk.emit(Op::Dup); // [scrut, scrut]
+                            match lit {
+                                crate::hir::hir::Literal::Int(n) => self.chunk.emit(Op::PushInt(*n)),
+                                crate::hir::hir::Literal::Float(f) => self.chunk.emit(Op::PushFloat(*f)),
+                                crate::hir::hir::Literal::Bool(b) => self.chunk.emit(Op::PushBool(*b)),
+                                crate::hir::hir::Literal::String(s) => {
+                                    let i = self.chunk.add_string(s);
+                                    self.chunk.emit(Op::PushStr(i));
+                                }
+                            }
+                            self.chunk.emit(Op::Eq); // [scrut, bool]
+                            self.chunk.emit(Op::JmpFalse(0));
+                            self.patch_jump(next_label); // [scrut]
+                            if let Some(guard) = &arm.guard {
+                                self.compile_expr(guard)?; // [scrut, bool]
+                                self.chunk.emit(Op::JmpFalse(0));
+                                self.patch_jump(next_label); // [scrut]
+                            }
+                            self.chunk.emit(Op::Pop); // drop scrutinee
+                            self.compile_expr(&arm.body)?;
+                            self.chunk.emit(Op::Jump(0));
+                            self.patch_jump(end_label);
+                            self.label(next_label);
                         }
                         _ => {
-                            // Other patterns: ignore for now
+                            // Other patterns (Tuple, Range): not yet supported in VM.
+                            // Fall through to next arm.
                         }
                     }
                 }
@@ -415,9 +485,26 @@ impl BytecodeCompiler {
                 }
                 // TODO: proper tuple support in bytecode
             }
-            HirExprKind::Range { start: _, end: _, inclusive } => {
-                // Compile as constant range (start/end expressions simplified)
-                self.chunk.emit(Op::PushRange(0, 0, *inclusive));
+            HirExprKind::Range { start, end, inclusive } => {
+                // Compile range expression. Extract integer literals when possible
+                // so `let r = 1..5` produces a correct Range value. Non-literal
+                // start/end fall back to 0 (the for-in loop path compiles them
+                // directly and does not use PushRange).
+                let s = start.as_ref().and_then(|e| match &e.kind {
+                    HirExprKind::Literal(lit) => match lit {
+                        crate::hir::hir::Literal::Int(n) => Some(*n),
+                        _ => None,
+                    },
+                    _ => None,
+                }).unwrap_or(0);
+                let e = end.as_ref().and_then(|e| match &e.kind {
+                    HirExprKind::Literal(lit) => match lit {
+                        crate::hir::hir::Literal::Int(n) => Some(*n),
+                        _ => None,
+                    },
+                    _ => None,
+                }).unwrap_or(0);
+                self.chunk.emit(Op::PushRange(s, e, *inclusive));
             }
 
             // Tensor literal: [[1.0, 2.0], [3.0, 4.0]]

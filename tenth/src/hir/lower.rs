@@ -326,6 +326,8 @@ impl Lowerer {
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
                             | "format" | "parse_int" | "parse_float"
+                            | "to_string" | "type_name"
+                            | "with_step_limit" | "with_timeout_ms" | "is_timeout"
                             | "path_join" | "path_exists" | "path_is_file" | "path_is_dir"
                             | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file" | "rename_file"
                             | "time_now" | "time_now_ms" | "time_date" | "time_time" | "time_datetime" | "time_sleep_ms"
@@ -1090,6 +1092,9 @@ impl Lowerer {
             "HashMap::new" => Ok(Type::Unknown),
             "compile_host" => Ok(Type::Base(BaseType::I32)),
             "format" => Ok(Type::str_()),
+            "to_string" | "type_name" => Ok(Type::str_()),
+            "with_step_limit" | "with_timeout_ms" => Ok(Type::Unknown),
+            "is_timeout" => Ok(Type::bool_()),
             "parse_int" => Ok(Type::Enum("Option".to_string())),
             "parse_float" => Ok(Type::Enum("Option".to_string())),
             "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" => Ok(Type::f64()),
@@ -1389,40 +1394,63 @@ impl Lowerer {
 
                     if *glob {
                         // `use path::*` — import all public functions from the module
-                        let mod_name = &path_strs[0];
-
-                        // Try to load the module from file if not already loaded
-                        if !self.modules.contains_key(mod_name) && path_strs.len() > 1 {
-                            if let Ok(Some(imported_hir)) = self.try_import_file(&path_strs[..path_strs.len()-1]) {
-                                self.modules.insert(mod_name.clone(), imported_hir);
-                            }
-                        }
-
-                        // Also check nested modules
-                        let module = if path_strs.len() == 1 {
-                            self.modules.get(mod_name)
-                        } else {
-                            // Navigate nested modules: a::b::c
-                            let mut current = self.modules.get(&path_strs[0]);
-                            for seg in &path_strs[1..] {
-                                if let Some(m) = current {
-                                    current = m.modules.get(seg);
-                                } else {
-                                    break;
+                        // First try to load the file at <path>.th
+                        let mut loaded_module: Option<&HirProgram> = None;
+                        let mod_key = path_strs.join("::");
+                        if !self.modules.contains_key(&mod_key) {
+                            match self.try_import_file(&path_strs) {
+                                Ok(Some(imported_hir)) => {
+                                    self.modules.insert(mod_key.clone(), imported_hir);
+                                }
+                                Ok(None) => {
+                                    // File not found or circular import — fall back to inline mod navigation below
+                                }
+                                Err(e) => {
+                                    // Propagate the import error so the user sees the real cause
+                                    // (e.g. a syntax error in the imported module) instead of a
+                                    // confusing "undefined variable" later.
+                                    return Err(e);
                                 }
                             }
-                            current
-                        };
+                        }
+                        if let Some(m) = self.modules.get(&mod_key) {
+                            loaded_module = Some(m);
+                        }
 
-                        if let Some(module) = module {
+                        if let Some(module) = loaded_module {
                             for fn_def in &module.functions {
                                 let param_types = fn_def.params.clone();
                                 let ret_ty = fn_def.return_type.clone();
                                 self.scope.define_fn(fn_def.name.clone(), param_types, ret_ty);
-                                // Also add the function definition to the top-level function list
-                                // so the interpreter can find and execute it
                                 if !self.functions.iter().any(|f| f.name == fn_def.name) {
                                     self.functions.push(fn_def.clone());
+                                }
+                            }
+                        } else {
+                            // Fall back to nested module navigation (for inline mod blocks)
+                            let mod_name = &path_strs[0];
+                            let module = if path_strs.len() == 1 {
+                                self.modules.get(mod_name)
+                            } else {
+                                let mut current = self.modules.get(&path_strs[0]);
+                                for seg in &path_strs[1..] {
+                                    if let Some(m) = current {
+                                        current = m.modules.get(seg);
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                current
+                            };
+
+                            if let Some(module) = module {
+                                for fn_def in &module.functions {
+                                    let param_types = fn_def.params.clone();
+                                    let ret_ty = fn_def.return_type.clone();
+                                    self.scope.define_fn(fn_def.name.clone(), param_types, ret_ty);
+                                    if !self.functions.iter().any(|f| f.name == fn_def.name) {
+                                        self.functions.push(fn_def.clone());
+                                    }
                                 }
                             }
                         }
@@ -1430,39 +1458,70 @@ impl Lowerer {
                         // `use path::name` — import a single function
                         let alias = path_strs.last().cloned().unwrap_or_default();
                         self.uses.push((path_strs.clone(), alias.clone()));
-                        let mod_name = &path_strs[0];
+                        let fn_name = path_strs.last().unwrap();
 
-                        // If the module is not already loaded, try to import it from file
-                        if !self.modules.contains_key(mod_name) && !path_strs.is_empty() {
-                            if let Ok(Some(imported_hir)) = self.try_import_file(&path_strs[..path_strs.len()-1]) {
-                                self.modules.insert(mod_name.clone(), imported_hir);
-                            }
-                        }
-
-                        // Navigate nested modules for the target function
-                        let (module, fn_name) = if path_strs.len() == 2 {
-                            (self.modules.get(mod_name), &path_strs[1])
-                        } else {
-                            // Navigate to the parent module of the target
-                            let mut current = self.modules.get(&path_strs[0]);
-                            for seg in &path_strs[1..path_strs.len()-1] {
-                                if let Some(m) = current {
-                                    current = m.modules.get(seg);
-                                } else {
-                                    break;
+                        // First try to load the file at <path[..len-1]>.th
+                        let parent_path = &path_strs[..path_strs.len()-1];
+                        let mod_key = parent_path.join("::");
+                        let mut loaded_module: Option<&HirProgram> = None;
+                        if !self.modules.contains_key(&mod_key) {
+                            match self.try_import_file(parent_path) {
+                                Ok(Some(imported_hir)) => {
+                                    self.modules.insert(mod_key.clone(), imported_hir);
+                                }
+                                Ok(None) => {
+                                    // File not found or circular import — fall back to inline mod navigation below
+                                }
+                                Err(e) => {
+                                    // Propagate the import error so the user sees the real cause
+                                    return Err(e);
                                 }
                             }
-                            (current, path_strs.last().unwrap())
-                        };
+                        }
+                        if let Some(m) = self.modules.get(&mod_key) {
+                            loaded_module = Some(m);
+                        }
 
-                        if let Some(module) = module {
+                        if let Some(module) = loaded_module {
+                            // Add ALL functions from the module so that the
+                            // imported function can call its helpers
+                            // (e.g., parse calls _parse_value)
+                            for fn_def in &module.functions {
+                                if !self.functions.iter().any(|f| f.name == fn_def.name) {
+                                    self.functions.push(fn_def.clone());
+                                }
+                            }
+                            // Define the specifically requested function in scope
                             if let Some(fn_def) = module.functions.iter().find(|f| &f.name == fn_name) {
                                 let param_types = fn_def.params.clone();
                                 let ret_ty = fn_def.return_type.clone();
                                 self.scope.define_fn(alias.clone(), param_types, ret_ty);
-                                // Also add the function definition to the top-level function list
-                                if !self.functions.iter().any(|f| f.name == fn_def.name) {
-                                    self.functions.push(fn_def.clone());
+                            }
+                        } else {
+                            // Fall back to nested module navigation (for inline mod blocks)
+                            let mod_name = &path_strs[0];
+                            let (module, fn_name) = if path_strs.len() == 2 {
+                                (self.modules.get(mod_name), &path_strs[1])
+                            } else {
+                                let mut current = self.modules.get(&path_strs[0]);
+                                for seg in &path_strs[1..path_strs.len()-1] {
+                                    if let Some(m) = current {
+                                        current = m.modules.get(seg);
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                (current, path_strs.last().unwrap())
+                            };
+
+                            if let Some(module) = module {
+                                if let Some(fn_def) = module.functions.iter().find(|f| &f.name == fn_name) {
+                                    let param_types = fn_def.params.clone();
+                                    let ret_ty = fn_def.return_type.clone();
+                                    self.scope.define_fn(alias.clone(), param_types, ret_ty);
+                                    if !self.functions.iter().any(|f| f.name == fn_def.name) {
+                                        self.functions.push(fn_def.clone());
+                                    }
                                 }
                             }
                         }
