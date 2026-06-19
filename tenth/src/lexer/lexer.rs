@@ -271,33 +271,53 @@ impl Lexer {
                 }
             } else if ch == '{' {
                 // String interpolation: {expr}
-                // Only treat as interpolation if the content looks like a valid identifier
-                self.advance(); // consume {
-                let mut expr = String::new();
-                while let Some(c) = self.peek() {
-                    if c == '}' {
-                        self.advance(); // consume }
-                        break;
+                // Only treat as interpolation if the next character looks like
+                // the start of a valid identifier (alphabetic or _). Otherwise
+                // treat { as a literal character (e.g., the string "{").
+                let next = self.peek_next();
+                if next.map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) {
+                    self.advance(); // consume {
+                    let mut expr = String::new();
+                    let mut found_close = false;
+                    while let Some(c) = self.peek() {
+                        if c == '}' {
+                            self.advance(); // consume }
+                            found_close = true;
+                            break;
+                        }
+                        if c == '"' {
+                            // Reached end of string literal without finding }
+                            // — treat { as literal and stop
+                            break;
+                        }
+                        expr.push(c);
+                        self.advance();
                     }
-                    expr.push(c);
-                    self.advance();
-                }
-                let trimmed = expr.trim();
-                // Check if the expression is a valid identifier (alphanumeric + _)
-                let is_valid_ident = !trimmed.is_empty()
-                    && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.');
-                if is_valid_ident {
-                    has_interpolation = true;
-                    if !current_literal.is_empty() {
-                        parts.push(StringPart::Literal(current_literal));
-                        current_literal = String::new();
+                    let trimmed = expr.trim();
+                    // Check if the expression is a valid identifier (alphanumeric + _)
+                    let is_valid_ident = found_close
+                        && !trimmed.is_empty()
+                        && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+                        && trimmed.contains(|c: char| c.is_alphanumeric());
+                    if is_valid_ident {
+                        has_interpolation = true;
+                        if !current_literal.is_empty() {
+                            parts.push(StringPart::Literal(current_literal));
+                            current_literal = String::new();
+                        }
+                        parts.push(StringPart::Expr(trimmed.to_string()));
+                    } else {
+                        // Not a valid identifier — treat { } as literal text
+                        current_literal.push('{');
+                        current_literal.push_str(&expr);
+                        if found_close {
+                            current_literal.push('}');
+                        }
                     }
-                    parts.push(StringPart::Expr(trimmed.to_string()));
                 } else {
-                    // Not a valid identifier — treat { } as literal text
-                    current_literal.push('{');
-                    current_literal.push_str(&expr);
-                    current_literal.push('}');
+                    // { followed by non-identifier — treat as literal
+                    current_literal.push(ch);
+                    self.advance();
                 }
             } else {
                 current_literal.push(ch);

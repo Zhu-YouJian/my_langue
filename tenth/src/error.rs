@@ -49,6 +49,13 @@ pub enum TenthError {
     /// Caught by `try { }` blocks and function boundaries.
     #[error("try propagate")]
     TryPropagate(Value),
+
+    /// Execution budget exhausted: step limit or timeout reached.
+    /// Raised by the step counter in the interpreter/VM when the configured
+    /// budget hits zero. Users enable this explicitly via
+    /// `std::runtime::with_step_limit` / `with_timeout_ms`.
+    #[error("执行超时：{message}")]
+    Timeout { message: String },
 }
 
 pub type TenthResult<T> = Result<T, TenthError>;

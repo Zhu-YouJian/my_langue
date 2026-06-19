@@ -389,6 +389,14 @@ impl Parser {
                 }
             }
             TokenKind::LParen => {
+                // Handle () as unit literal (empty tuple)
+                if matches!(self.peek_kind(), TokenKind::RParen) {
+                    self.advance();
+                    return Ok(Expr {
+                        kind: ExprKind::Tuple(vec![]),
+                        span: self.span(),
+                    });
+                }
                 let expr = self.parse_expr()?;
                 if matches!(self.peek_kind(), TokenKind::Comma) {
                     // Tuple expression: (expr, expr, ...)
