@@ -136,7 +136,7 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 
 ## 七、已知缺陷与不完整（历史参考 — C 后端已移除）
 
-### 5.1 自举编译器 Tenth 源码中的已知问题
+### 7.1 自举编译器 Tenth 源码中的已知问题
 
 | # | 位置 | 问题 |
 |---|------|------|
@@ -145,62 +145,53 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 
 > ~~原 #1 (cgen 函数调用参数丢弃) 随 codegen 移除而消除。~~
 
-### 5.2 语言功能缺口
-| 3 | `tenth/src/compile/lower.rs` | **Match pattern binding 未生成**  |
-
-> ~~以下条目 (#5-#8) 引用已删除的 C 代码生成文件 (`tenthc/codegen/`, `tenthc/runtime.c`)，保留作为历史记录。~~
-
-### 5.2 高优（已废弃 — C 后端移除）
+### 7.2 语言功能缺口
 
 | # | 位置 | 问题 |
 |---|------|------|
-| 5 | ~~`tenthc/runtime.c:50-54`~~ | ~~HashMap 纯桩~~ — 文件已删除 |
-| 6 | ~~`tenthc/codegen/cgen.th:178`~~ | ~~结构体字段类型硬编码 int~~ — 文件已删除 |
-| 7 | ~~`tenthc/codegen/cgen.th:123`~~ | ~~变量类型硬编码 int~~ — 文件已删除 |
+| 3 | `tenth/src/compile/lower.rs` | **Match pattern binding 未生成** |
 | 8 | `tenthc/main.th:11` | **依赖 tenthc_combined.th** — 需在编译前手动拼接 |
 
-### 5.3 中优
+> ~~#5-#7/#10/#12 引用已删除的 C 代码生成文件 (`tenthc/codegen/`, `tenthc/runtime.c`)，随 C 后端移除而消除，不再罗列。~~
+
+### 7.3 中优
 
 | # | 位置 | 问题 |
 |---|------|------|
 | 9 | `tenthc/parser/parser.th:631` | **无 for 循环解析** — lexer 识别 `for` 但 parser 未处理 |
-| 10 | ~~`tenthc/codegen/cgen.th:209`~~ | ~~float_to_str 截断~~ — 文件已删除 |
 | 11 | `tenthc/parser/parser.th:180` | **parse_unary 纯透传** — 一元运算在 parse_primary 内处理，此函数冗余 |
-| 12 | ~~`tenthc/runtime.c`~~ | ~~Vec_push 未检查 realloc~~ — 文件已删除 |
 
-### 5.4 架构债务
+### 7.4 架构债务
 
 | # | 问题 |
 |---|------|
-| 13 | ~~解释器与 C 编译路径分歧~~ — C 后端已移除，不再适用 |
 | 14 | ~~borrow checker 双向放宽~~ — 已恢复，`check_borrow_shared` 和 `check_borrow_mut` 现执行 ExclusiveRef/SharedRef 检查 |
-| 15 | ~~C 类型系统薄弱~~ — C 后端已移除，不再适用 |
 | 16 | **Test 覆盖盲区** — `tenthc_test.rs` 只测解析，未测执行；tenthc 子编译器的正确性无自动化验证 |
 
 ---
 
-## 六、灵感与改进方向
+## 八、灵感与改进方向
 
-### 6.1 短期 (解锁自举)
+### 8.1 短期 (解锁自举)
 
 - **~~修复致命缺陷 #1-#4~~** → ✅ 已修复，自举闭环可达
 - **添加 `tenthc_combined.th` 自动生成** — build script 或 Makefile，而非手动拼接
 - **`tenthc_test.rs` 加执行测试** — 改为 VM/WASM 路径验证
 
-### 6.2 中期 (质量加固)
+### 8.2 中期 (质量加固)
 
 - **VM 补全** — closure/generic call/match 仍偶有 fallback
 - **~~恢复 borrow checker~~** — 已恢复，`check_borrow_shared`/`check_borrow_mut` 现执行完整检查
 - **WASM Host import 真实现** — Vec/String 在 WASM 模块中仍以占位形式存在，待实现
 
-### 6.3 长期 (生态)
+### 8.3 长期 (生态)
 
 - **激活死模块** — shape.rs (张量形状优化)、docgen.rs (API 文档生成)；~~autodiff.rs (自动微分训练)~~ ✅ 已完整集成（21 算子，张量级，已集成解释器）
 - **tenthpm 包管理器** — `tools/tenthpm/` **完整实现**，支持 init/build/test/run/add/remove/list/clean/publish/install + Tenth.toml + Tenth.lock + .tenthpkg 打包 + path/git/registry 三种依赖类型
-- **LSP 服务器** — `tools/lsp/` 脚手架已就绪，待实现完整协议对接
+- **LSP 服务器** — `tools/lsp/` **完整实现**（文档同步/diagnostics/hover/completion/definition/documentSymbol/references/rename/signatureHelp/foldingRange/semanticTokens/formatting）
 - **CUDA 后端** — `compile/gpu/` + `compile/optimizations/` 脚手架已就绪，待安装 CUDA Toolkit
 
-### 6.4 过程改进
+### 8.4 过程改进
 
 - **`.gitignore` 已更新** — 添加 `*.exe` / 构建产物排除
 - **清理 19 个构建产物** — 15 个 .exe + 2 个空 .txt + tenthc.c + test_mini.c 已从 git 跟踪移除
@@ -208,7 +199,7 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 
 ---
 
-## 七、清理记录
+## 九、清理记录
 
 | 操作 | 数量 |
 |------|------|
@@ -217,6 +208,10 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 | 从 git 移除构建 C 文件 | 2 (tenthc.c, test_mini.c) |
 | 删除临时 .th | 1 (test_input.th) |
 | 更新 .gitignore | 覆盖 *.exe, *.txt, tenthc.c, test_mini.c |
+| 删除游离产物 (2026-06-15) | 3 (stderr.txt, stdout.txt, test_w.thw) |
+| .gitignore 加固 (2026-06-15) | 新增 *.thw / stdout.txt / stderr.txt |
+| 文档对齐 (2026-06-15) | 8 文件：版本号 0.3.0→0.3.3，测试数 134→350，算子数 19→21，LSP/tenthpm 状态脚手架→完整实现 |
+| AUDIT §5/§7 重构 (2026-06-15) | 修复重复小节号 (5.2×2)，移除 6 条已废弃 C 后端条目，章节号六/七→八/九 |
 
 保留的历史 C 文件 (tenthc_v3.c ~ v9.c, tenthc_dbg5.c, tenthc_dbg6.c, tenthc_fix.c, tenthc_analyze.c, tenthc_chk.c, tenthc_out.c, tenthc_rust.c) 作为自举进化见证，暂时保留不删。
 
