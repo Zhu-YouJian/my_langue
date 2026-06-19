@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-06-15 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 | 134 项测试（133 passed + 1 ignored）
+> 日期：2026-06-15 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 | 350 项测试（349 passed + 1 ignored）
 
 ---
 
@@ -23,12 +23,12 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 │   │   ├── compile/          ← WASM 编译 + 字节码编译 + GPU 脚手架 + 优化 Pass (wasm.rs + bytecode.rs + bridge.rs + gpu/ + optimizations/)
 │   │   ├── runtime/          ← 解释器 + VM + 值系统 (interpreter.rs + vm.rs + value.rs + tensor.rs + arena.rs + autodiff.rs + limits.rs)
 │   │   └── repl.rs           ← 交互环境
-│   ├── tests/                ← 测试 (14 文件, 134 项 — 133 激活 + 1 忽略)
+│   ├── tests/                ← 测试 (20 文件, 350 项 — 349 通过 + 1 忽略)
 │   ├── std/                  ← Tenth 标准库 (.th 源码: nn/, optim/)
 │   └── target/               ← (gitignored)
 ├── tools/                    ← 开发工具
 │   ├── tenthpm/              ← 包管理器 CLI (init/build/test/run/add/publish/install + Tenth.toml)
-│   └── lsp/                  ← LSP 服务器 (诊断/悬停/补全/定义/格式化)
+│   └── lsp/                  ← LSP 服务器 (完整实现: 12 个 LSP 功能 + 文档同步)
 ├── tenthc/                   ← Tenth 自举编译器 (.th 源码, 自举验证通过)
 │   ├── main.th               ← 入口 (编排脚本, ~500B)
 │   ├── lexer/token.th        ← TokenKind 枚举 (50+ 变体)
@@ -79,15 +79,21 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `enum_test.rs` | 9 | 枚举定义/字段/match/通配/元组变体/match 绑定 |
 | `generic_test.rs` | 11 | 泛型函数/泛型结构体/trait bound/泛型返回/Vec<Token>/>>拆分 |
 | `struct_test.rs` | 8 | 结构体/嵌套/impl/默认字段/..语法 |
-| `trait_test.rs` | 4 | trait 定义/builtin bound/inherent impl |
-| `module_test.rs` | 2 | mod/use |
+| `trait_test.rs` | 9 | trait 定义/builtin bound/inherent impl/默认方法/多 trait |
+| `module_test.rs` | 6 | mod/use/嵌套模块/重导出 |
 | `ownership_test.rs` | 11 | 移动/借用/引用/解引用 |
-| `stdlib_test.rs` | 8 | Vec/HashMap/String/Option/文件 I/O |
+| `stdlib_test.rs` | 114 | Vec/HashMap/String/Option/文件 I/O/json/toml/runtime 限制 |
 | `memory_test.rs` | 17 | 内存护栏: arena/limits/计数器 |
 | `selfhost_verify.rs` | 1 | WASM 自举闭环验证 |
-| `autodiff_test.rs` | 20 | 自动微分/闭包/张量/错误位置（21 算子） |
+| `autodiff_test.rs` | 52 | 自动微分/闭包/张量/错误位置（21 算子） |
+| `vm_autodiff_test.rs` | 15 | 字节码 VM 上的自动微分回归 |
+| `type_inference_test.rs` | 29 | 类型推断/统一/泛型实例化 |
+| `pattern_match_test.rs` | 11 | 模式匹配/解构/守卫 |
+| `iterator_test.rs` | 10 | 迭代器/for/生成器 |
+| `error_recovery_test.rs` | 7 | 解析错误恢复/续接 |
+| `mnist_loader_test.rs` | 4 | MNIST 数据加载 |
 | `three_stage.rs` | 1 | 三段式自举（忽略 — wasmi 慢） |
-| **总计** | **134** | 133 激活 + 1 忽略 |
+| **总计** | **350** | 349 通过 + 1 忽略 |
 
 ---
 
@@ -190,7 +196,7 @@ Tenth 编译器由 Tenth 自身编写，三路径验证通过：
 ### 6.3 长期 (生态)
 
 - **激活死模块** — shape.rs (张量形状优化)、docgen.rs (API 文档生成)；~~autodiff.rs (自动微分训练)~~ ✅ 已完整集成（21 算子，张量级，已集成解释器）
-- **tenthpm 包管理器** — `tools/tenthpm/` 脚手架已就绪，待实现依赖解析/锁文件/注册中心
+- **tenthpm 包管理器** — `tools/tenthpm/` **完整实现**，支持 init/build/test/run/add/remove/list/clean/publish/install + Tenth.toml + Tenth.lock + .tenthpkg 打包 + path/git/registry 三种依赖类型
 - **LSP 服务器** — `tools/lsp/` 脚手架已就绪，待实现完整协议对接
 - **CUDA 后端** — `compile/gpu/` + `compile/optimizations/` 脚手架已就绪，待安装 CUDA Toolkit
 

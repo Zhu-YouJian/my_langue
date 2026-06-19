@@ -41,7 +41,7 @@ tenth.bat run file.th
 | 泛型返回类型 (Vec<Token>) | ✅ |
 | 枚举元组变体 (Some(T) 构造 + match 绑定) | ✅ |
 | GPU 后端脚手架 (CudaKernel + Device + 融合/并行) | ✅ |
-| tenthpm 包管理器 (init/build/test/run/add/publish/install) | ✅ |
+| tenthpm 包管理器 (init/build/test/run/add/remove/list/clean/publish/install) | ✅ |
 | LSP 服务器 (诊断/悬停/补全/定义/格式化) | ✅ |
 
 ## 标准库

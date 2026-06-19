@@ -29,7 +29,7 @@ Tenth 的定位是**通用编程语言的超集**——用户可以把它当作�
 
 ## 现状
 
-**v0.3.3** — 字节码 VM (45 指令) + 自举编译器 (Tenth 全链路) + WASM 输出 + **张量级自动微分** + **闭包捕获** + **文件级导入** + **GPU 脚手架** + **tenthpm 包管理器** + **LSP 服务器**。134 项测试全过（共 134 项，1 项忽略）。
+**v0.3.3** — 字节码 VM (45 指令) + 自举编译器 (Tenth 全链路) + WASM 输出 + **张量级自动微分** + **闭包捕获** + **文件级导入** + **GPU 脚手架** + **tenthpm 包管理器** + **LSP 服务器**。349 项测试通过（共 350 项，1 项忽略）。
 
 | 组件 | 状态 |
 |------|------|
@@ -60,8 +60,8 @@ Tenth 的定位是**通用编程语言的超集**——用户可以把它当作�
 | **错误信息增强（源码位置）** | ✅ **span 信息** |
 | **块注释 /* */** | ✅ 支持嵌套 |
 | **GPU 后端脚手架** | ✅ CudaKernel 模板 + Device 抽象 + 算子融合/并行分解 |
-| **tenthpm 包管理器** | ✅ init/build/test/run/add/publish/install |
-| **LSP 服务器** | ✅ 诊断/悬停/补全/定义/格式化 |
+| **tenthpm 包管理器** | ✅ init/build/test/run/add/remove/list/clean/publish/install |
+| **LSP 服务器** | ✅ 文档同步/diagnostics/hover/completion/definition/documentSymbol/references/rename/signatureHelp/foldingRange/semanticTokens/formatting |
 | **结构体字段默认值 (..)** | ✅ 全管线支持 |
 | **泛型返回类型** | ✅ Vec<Token> / HashMap<str, Vec<i64>> |
 | **枚举元组变体** | ✅ Some(T) 构造 + match 绑定 |

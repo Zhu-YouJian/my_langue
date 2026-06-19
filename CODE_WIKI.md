@@ -31,7 +31,7 @@
 
 Tenth 是一门面向 AI/ML 研究的编程语言，核心特性包括：
 
-- **张量级自动微分**：内置 19 个算子的反向传播全链路，支持 `new_grad()` / `param()` / `backward()` / `grad()` 等控制函数
+- **张量级自动微分**：内置 21 个算子的反向传播全链路，支持 `new_grad()` / `param()` / `backward()` / `grad()` 等控制函数
 - **双执行引擎**：字节码 VM（默认，45 指令）+ 树遍历解释器（fallback）
 - **WASM 编译**：通过 `wasm-encoder` 生成 WASM 字节码，`wasmi` 执行验证
 - **自举编译器**：用 Tenth 自身编写的编译器（`tenthc/`），经三阶段验证闭环
@@ -955,7 +955,7 @@ cargo run --release --manifest-path tenth/Cargo.toml -- --max-memory 256
 ### 测试
 
 ```bash
-# 运行所有测试（134 项通过）
+# 运行所有测试（349 项通过 + 1 忽略）
 cargo test --manifest-path tenth/Cargo.toml
 
 # 测试文件列表

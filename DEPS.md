@@ -253,7 +253,7 @@ git config --unset https.proxy
     │   │   ├── math.th
     │   │   └── serialization.th
     │   └── prelude.th
-    └── tests/          ← 134 项测试（14 文件）
+    └── tests/          ← 350 项测试（20 文件）
         ├── integration_test.rs
         ├── memory_test.rs
         ├── lexer_test.rs

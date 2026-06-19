@@ -172,8 +172,13 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 
 | 组件 | 状态 |
 |------|------|
-| `tools/tenthpm/` CLI (init/build/test/run/add/publish/install) | ✅ 脚手架 |
-| Tenth.toml manifest 格式 | ✅ |
+| `tools/tenthpm/` CLI (init/build/test/run/add/remove/list/clean/publish/install) | ✅ **完整实现** |
+| Tenth.toml manifest 格式 (含 license 字段) | ✅ |
+| 共享引擎模块 (engine.rs) — search_paths + in-process 编译/运行 | ✅ |
+| 依赖类型：registry / path / git 三种 | ✅ |
+| Tenth.lock 锁文件 (含 checksum) | ✅ |
+| .tenthpkg 打包归档 (publish) | ✅ |
+| 版本号校验 (X.Y.Z semver) | ✅ |
 
 #### LSP 服务器
 
@@ -208,7 +213,7 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 | enum_test.rs | 5→9（+4 枚举元组变体/match 绑定） | ✅ |
 | generic_test.rs | 5→11（+6 泛型返回/Vec<Token>/>>拆分） | ✅ |
 | struct_test.rs | 5→8（+3 字段默认值/..语法） | ✅ |
-| 总计 | 121→134（+13） | ✅ 133 passed + 1 ignored |
+| 总计 | 121→350（+229，含 v0.3.1 autodiff + v0.3.3 LSP/tenthpm/类型推断/模式匹配/迭代器/错误恢复/MNIST） | ✅ 349 passed + 1 ignored |
 
 ---
 
@@ -287,8 +292,8 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 
 ### Phase 6: 生态与工具
 
-- [x] ~~包管理器 tenthpm~~ → `tools/tenthpm/` 脚手架已就绪 (CLI: init/build/test/run/add/publish/install + Tenth.toml)
-- [x] ~~LSP 服务器~~ → `tools/lsp/` 脚手架已就绪 (诊断/悬停/补全/定义/格式化 handler)
+- [x] ~~包管理器 tenthpm~~ → `tools/tenthpm/` **完整实现** (CLI: init/build/test/run/add/remove/list/clean/publish/install + Tenth.toml + Tenth.lock + .tenthpkg 打包 + path/git/registry 依赖)
+- [x] ~~LSP 服务器~~ → `tools/lsp/` **完整实现** (文档同步/diagnostics推送/hover/completion/definition/documentSymbol/references/rename/signatureHelp/foldingRange/semanticTokens/formatting)
 - [ ] 调试器进阶（断点插桩、调用栈、条件断点）
 - [ ] 官网 / 论坛 / RFC 流程 / 贡献指南
 
