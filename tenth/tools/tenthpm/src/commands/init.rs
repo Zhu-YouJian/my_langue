@@ -24,7 +24,7 @@ pub fn init(name: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     manifest.save_to_file(&project_dir.join("Tenth.toml"))?;
 
     // Generate src/main.th
-    let main_th = format!("fn main() {{ print(\"Hello from {}!\"); }}", project_name);
+    let main_th = format!("fn main() {{ println(\"Hello from {}!\"); }}", project_name);
     fs::write(project_dir.join("src/main.th"), main_th)?;
 
     println!("Created Tenth project `{}`", project_name);
