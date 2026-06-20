@@ -824,10 +824,22 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 27 {
-        // DerefAssignOp — same as DerefAssign for now
+        // DerefAssignOp (*p += y) — load current value via i64.load, compile rhs, apply op, i64.store
         compile_expr(ctx, out, hir, e.left);
         wasm_i32_wrap_i64(out);
+        // Duplicate address for later store (use a temp local)
+        let addr_local = ctx.temp_local + 1 + ctx.local_count;
+        ctx.local_count = ctx.local_count + 1;
+        wasm_local_set(out, addr_local);
+        wasm_local_get(out, addr_local);
+        wasm_i64_load(out, 3, 0);
         compile_expr(ctx, out, hir, e.right);
+        let op = e.op;
+        if op == "+" { wasm_i64_add(out); }
+        else if op == "-" { wasm_i64_sub(out); }
+        else if op == "*" { wasm_i64_mul(out); }
+        else if op == "/" { wasm_i64_div_s(out); };
+        wasm_local_get(out, addr_local);
         wasm_i64_store(out, 3, 0);
         return;
     };
