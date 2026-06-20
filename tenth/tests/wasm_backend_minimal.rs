@@ -149,4 +149,11 @@ mod wasm_backend_minimal {
         func.call(&mut store, &[], &mut results).expect("call");
         assert_eq!(match results[0] { wasmi::Val::I64(v) => v, _ => panic!() }, 0);
     }
+
+    #[test]
+    fn test_let_reassign() {
+        // B8: let x = 1; x = x + 2; should yield 3
+        let src = "fn let_test()->i64{ let x=1; x=x+2; x }";
+        assert_eq!(call_fn_i64(src, "let_test", &[]), 3);
+    }
 }
