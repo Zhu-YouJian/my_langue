@@ -883,6 +883,18 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         compile_expr(ctx, out, hir, e.left);
         return;
     };
+    if d == 31 {
+        // Slice s[a..b] — placeholder: compile target+start+end (for side effects), return 0
+        // TODO: needs host str_slice import for proper implementation
+        compile_expr(ctx, out, hir, e.left);
+        wasm_drop(out);
+        compile_expr(ctx, out, hir, e.right);
+        wasm_drop(out);
+        compile_expr(ctx, out, hir, e.extra_start);
+        wasm_drop(out);
+        wasm_i32_const(out, 0); // empty string pointer
+        return;
+    };
     // Default: unreachable
     wasm_unreachable(out);
 }

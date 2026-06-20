@@ -348,14 +348,31 @@ fn parse_postfix(p: &mut Parser) -> i64 {
             p.expr_nodes[expr_idx - 1].arg_start = start;
             p.expr_nodes[expr_idx - 1].arg_count = count;
         } else if d == 51 {
-            // LBracket (51) — index expression s[i]
+            // LBracket (51) — index expression s[i] or slice s[a..b]
             parser_advance(p); // skip [
-            let index_expr = parse_expr(p);
-            parser_advance(p); // skip ]
-            let idx = add_expr(p, "index");
-            p.expr_nodes[idx - 1].left = expr_idx;
-            p.expr_nodes[idx - 1].right = index_expr;
-            expr_idx = idx;
+            let first_expr = parse_expr(p);
+            // Check for slice: .. or ..=
+            let next_tok = parser_peek(p);
+            if next_tok.disc == 57 || next_tok.disc == 62 {
+                // Range token (57=.., 62=..=)
+                let inclusive = next_tok.disc == 62;
+                parser_advance(p); // skip ..
+                let end_expr = parse_expr(p);
+                parser_advance(p); // skip ]
+                let idx = add_expr(p, "slice");
+                p.expr_nodes[idx - 1].left = expr_idx;
+                p.expr_nodes[idx - 1].right = first_expr;
+                p.expr_nodes[idx - 1].extra_start = end_expr;
+                p.expr_nodes[idx - 1].ival = if inclusive { 1 } else { 0 };
+                expr_idx = idx;
+            } else {
+                // Plain index s[i]
+                parser_advance(p); // skip ]
+                let idx = add_expr(p, "index");
+                p.expr_nodes[idx - 1].left = expr_idx;
+                p.expr_nodes[idx - 1].right = first_expr;
+                expr_idx = idx;
+            };
         } else if d == 56 {
             // Dot (56) — field access or method call
             parser_advance(p); // skip .

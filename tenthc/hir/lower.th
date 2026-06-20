@@ -218,6 +218,18 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         return push_expr(p, 9, 0, 0.0, "", false, target, index, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
     };
 
+    if kind == "slice" {
+        // Slice expression s[a..b] — stored as disc 31 with left=target, right=start, extra_start=end
+        let target = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        let start = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
+        let end = lower_expr(p, e.extra_start, exprs, stmts, match_arms, depth + 1);
+        let str_ty = add_type(p, 0, 5, "", 0, 0, 0);
+        let idx = push_expr(p, 31, 0, 0.0, "", false, target, start, 0, 0, 0, 0, 0, 0, 0, "", "", "", str_ty);
+        p.expr_nodes[idx - 1].extra_start = end;
+        p.expr_nodes[idx - 1].ival = e.ival; // inclusive flag
+        return idx;
+    };
+
     if kind == "ref" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 18, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
