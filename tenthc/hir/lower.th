@@ -157,8 +157,8 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         // Infer result type
         let op = e.sval;
         let mut bty: i64 = 0;
-        if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" {
-            // Comparison → bool
+        if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" || op == "&&" || op == "||" {
+            // Comparison / logical → bool
             bty = add_type(p, 0, 4, "", 0, 0, 0);
         } else if op == "+" && (is_type_str(p, get_expr_ty(p, l)) || is_type_str(p, get_expr_ty(p, r))) {
             // String concatenation: str + str → str
