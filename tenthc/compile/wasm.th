@@ -145,6 +145,84 @@ fn struct_field_offset(hir: HirProgram, struct_name: str, field_name: str) -> i6
     0
 }
 
+// ── ASCII encoding helper ──
+
+fn char_to_ascii(ch: str) -> i64 {
+    // 大写字母 A-Z
+    if ch == "A" { return 65; }
+    if ch == "B" { return 66; }
+    if ch == "C" { return 67; }
+    if ch == "D" { return 68; }
+    if ch == "E" { return 69; }
+    if ch == "F" { return 70; }
+    if ch == "G" { return 71; }
+    if ch == "H" { return 72; }
+    if ch == "I" { return 73; }
+    if ch == "J" { return 74; }
+    if ch == "K" { return 75; }
+    if ch == "L" { return 76; }
+    if ch == "M" { return 77; }
+    if ch == "N" { return 78; }
+    if ch == "O" { return 79; }
+    if ch == "P" { return 80; }
+    if ch == "Q" { return 81; }
+    if ch == "R" { return 82; }
+    if ch == "S" { return 83; }
+    if ch == "T" { return 84; }
+    if ch == "U" { return 85; }
+    if ch == "V" { return 86; }
+    if ch == "W" { return 87; }
+    if ch == "X" { return 88; }
+    if ch == "Y" { return 89; }
+    if ch == "Z" { return 90; }
+    // 小写字母 a-z
+    if ch == "a" { return 97; }
+    if ch == "b" { return 98; }
+    if ch == "c" { return 99; }
+    if ch == "d" { return 100; }
+    if ch == "e" { return 101; }
+    if ch == "f" { return 102; }
+    if ch == "g" { return 103; }
+    if ch == "h" { return 104; }
+    if ch == "i" { return 105; }
+    if ch == "j" { return 106; }
+    if ch == "k" { return 107; }
+    if ch == "l" { return 108; }
+    if ch == "m" { return 109; }
+    if ch == "n" { return 110; }
+    if ch == "o" { return 111; }
+    if ch == "p" { return 112; }
+    if ch == "q" { return 113; }
+    if ch == "r" { return 114; }
+    if ch == "s" { return 115; }
+    if ch == "t" { return 116; }
+    if ch == "u" { return 117; }
+    if ch == "v" { return 118; }
+    if ch == "w" { return 119; }
+    if ch == "x" { return 120; }
+    if ch == "y" { return 121; }
+    if ch == "z" { return 122; }
+    // 数字 0-9
+    if ch == "0" { return 48; }
+    if ch == "1" { return 49; }
+    if ch == "2" { return 50; }
+    if ch == "3" { return 51; }
+    if ch == "4" { return 52; }
+    if ch == "5" { return 53; }
+    if ch == "6" { return 54; }
+    if ch == "7" { return 55; }
+    if ch == "8" { return 56; }
+    if ch == "9" { return 57; }
+    // 特殊字符
+    if ch == "_" { return 95; }
+    if ch == ":" { return 58; }
+    if ch == "!" { return 33; }
+    if ch == "?" { return 63; }
+    if ch == "." { return 46; }
+    if ch == "-" { return 45; }
+    63 // 默认 '?' for unknown chars
+}
+
 fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64) {
     if idx <= 0 || idx > hir.expr_nodes.len() { return; };
     let e = hir.expr_nodes[idx - 1];
@@ -638,52 +716,10 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     leb128_u(num_funcs, &mut export_sec);
     for fi in 0..num_funcs {
         let f = hir.fns[fi];
-        // Export name
+        // Export name — use char_to_ascii for full A-Z, a-z, 0-9, _ support
         leb128_u(f.name.len(), &mut export_sec);
         for ci in 0..f.name.len() {
-            let ch = f.name[ci];
-            // Simple ASCII byte
-            let mut byte: i64 = 0;
-            if ch == "a" { byte = 97; }
-            else if ch == "b" { byte = 98; }
-            else if ch == "c" { byte = 99; }
-            else if ch == "d" { byte = 100; }
-            else if ch == "e" { byte = 101; }
-            else if ch == "f" { byte = 102; }
-            else if ch == "g" { byte = 103; }
-            else if ch == "h" { byte = 104; }
-            else if ch == "i" { byte = 105; }
-            else if ch == "j" { byte = 106; }
-            else if ch == "k" { byte = 107; }
-            else if ch == "l" { byte = 108; }
-            else if ch == "m" { byte = 109; }
-            else if ch == "n" { byte = 110; }
-            else if ch == "o" { byte = 111; }
-            else if ch == "p" { byte = 112; }
-            else if ch == "q" { byte = 113; }
-            else if ch == "r" { byte = 114; }
-            else if ch == "s" { byte = 115; }
-            else if ch == "t" { byte = 116; }
-            else if ch == "u" { byte = 117; }
-            else if ch == "v" { byte = 118; }
-            else if ch == "w" { byte = 119; }
-            else if ch == "x" { byte = 120; }
-            else if ch == "y" { byte = 121; }
-            else if ch == "z" { byte = 122; }
-            else if ch == "A" { byte = 65; }
-            else if ch == "0" { byte = 48; }
-            else if ch == "1" { byte = 49; }
-            else if ch == "2" { byte = 50; }
-            else if ch == "3" { byte = 51; }
-            else if ch == "4" { byte = 52; }
-            else if ch == "5" { byte = 53; }
-            else if ch == "6" { byte = 54; }
-            else if ch == "7" { byte = 55; }
-            else if ch == "8" { byte = 56; }
-            else if ch == "9" { byte = 57; }
-            else if ch == "_" { byte = 95; }
-            else { byte = 63; }; // '?' for unknown chars
-            export_sec.push(byte);
+            export_sec.push(char_to_ascii(f.name[ci]));
         };
         export_sec.push(0); // export kind: function
         leb128_u(fi + 7, &mut export_sec);
