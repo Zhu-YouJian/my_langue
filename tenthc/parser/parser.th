@@ -73,10 +73,60 @@ fn parse_primary(p: &mut Parser) -> i64 {
         p.expr_nodes[idx - 1].fval = tok.fval;
         return idx;
     };
-    // StringLiteral (2)
+    // StringLiteral (2) — may be interpolated
     if d == 2 {
-        let idx = add_expr(p, "str");
-        p.expr_nodes[idx - 1].sval = tok.sval;
+        let s = tok.sval;
+        // Check for interpolation: scan for '{'
+        let mut has_brace = false;
+        let mut scan = 0;
+        while scan < s.len() {
+            if s[scan] == "{" { has_brace = true; break; };
+            scan = scan + 1;
+        };
+        if !has_brace {
+            let idx = add_expr(p, "str");
+            p.expr_nodes[idx - 1].sval = s;
+            return idx;
+        };
+        // Interpolated string: split into parts
+        let parts_start = p.expr_nodes.len() + 1;
+        let mut parts_count = 0;
+        scan = 0;
+        let mut lit_start = 0;
+        while scan < s.len() {
+            if s[scan] == "{" {
+                // Flush literal part before '{'
+                if scan > lit_start {
+                    let lit = s[lit_start..scan];
+                    let idx = add_expr(p, "str");
+                    p.expr_nodes[idx - 1].sval = lit;
+                    parts_count = parts_count + 1;
+                };
+                // Find closing '}'
+                scan = scan + 1;
+                let name_start = scan;
+                while scan < s.len() && s[scan] != "}" { scan = scan + 1; };
+                let name = s[name_start..scan];
+                if scan < s.len() { scan = scan + 1; }; // skip '}'
+                lit_start = scan;
+                // Add ident part
+                let idx = add_expr(p, "ident");
+                p.expr_nodes[idx - 1].sval = name;
+                parts_count = parts_count + 1;
+            } else {
+                scan = scan + 1;
+            };
+        };
+        // Flush trailing literal
+        if lit_start < s.len() {
+            let lit = s[lit_start..s.len()];
+            let idx = add_expr(p, "str");
+            p.expr_nodes[idx - 1].sval = lit;
+            parts_count = parts_count + 1;
+        };
+        let idx = add_expr(p, "interp");
+        p.expr_nodes[idx - 1].extra_start = parts_start;
+        p.expr_nodes[idx - 1].extra_count = parts_count;
         return idx;
     };
     // Identifier (3)

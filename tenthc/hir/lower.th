@@ -112,6 +112,40 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         return push_expr(p, 3, 0, 0.0, e.sval, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
     };
 
+    if kind == "interp" {
+        // Interpolated string: build chain of str_add (binary +) expressions
+        let parts_start = e.extra_start;
+        let parts_count = e.extra_count;
+        let str_ty = add_type(p, 0, 5, "", 0, 0, 0);
+        if parts_count == 0 {
+            return push_expr(p, 3, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", str_ty);
+        };
+        // Lower first part, wrapping in str_int if not str type
+        let mut prev = lower_expr(p, parts_start, exprs, stmts, match_arms, depth + 1);
+        let prev_ty = get_expr_ty(p, prev);
+        if !is_type_str(p, prev_ty) {
+            // Wrap in str_int call: args_start=prev, args_count=1
+            let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "str_int", "", 0);
+            prev = push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, prev, 1, 0, 0, "", "", "", str_ty);
+        };
+        // Chain remaining parts with binary +
+        let mut pi = 1;
+        while pi < parts_count {
+            let part = lower_expr(p, parts_start + pi, exprs, stmts, match_arms, depth + 1);
+            let part_ty = get_expr_ty(p, part);
+            let part_wrapped = if is_type_str(p, part_ty) {
+                part
+            } else {
+                // Wrap in str_int call
+                let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "str_int", "", 0);
+                push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, part, 1, 0, 0, "", "", "", str_ty)
+            };
+            prev = push_expr(p, 5, 0, 0.0, "", false, prev, part_wrapped, 0, 0, 0, 0, 0, 0, 0, "+", "", "", str_ty);
+            pi = pi + 1;
+        };
+        return prev;
+    };
+
     if kind == "ident" {
         let vty = lookup_var_type(p, e.sval);
         return push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", vty);
