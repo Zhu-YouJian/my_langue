@@ -595,8 +595,22 @@ fn parse_stmt(p: &mut Parser) -> i64 {
     if disc == 11 {
         parser_advance(p);
         let cond = parse_expr(p);
-        parser_advance(p); parser_advance(p);
-        return add_stmt(p, "while");
+        parser_advance(p); // skip {
+        let body_start = p.stmt_nodes.len() + 1;
+        let mut body_count: i64 = 0;
+        loop {
+            let t2 = parser_peek(p);
+            if is_end_of_block(t2) { break; };
+            parse_stmt(p);
+            body_count = body_count + 1;
+            let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
+        };
+        parser_advance(p); // skip }
+        let idx = add_stmt(p, "while");
+        p.stmt_nodes[idx - 1].expr_idx = cond;
+        p.stmt_nodes[idx - 1].body_start = body_start;
+        p.stmt_nodes[idx - 1].body_count = body_count;
+        return idx;
     };
 
     // For (12) — for-in loop
