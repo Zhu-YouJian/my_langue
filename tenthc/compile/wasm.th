@@ -113,10 +113,37 @@ struct WasmCtx {
     local_names: Vec<str>,    // let 绑定的变量名
     local_indices: Vec<i64>,  // 对应的 local index
     local_count: i64,    // 当前函数的 let local 数量
+    string_data: Vec<i64>,    // 字符串数据段（字节数组）
+    string_names: Vec<str>,   // 已驻留的字符串内容
+    string_addrs: Vec<i64>,   // 对应的内存偏移
 }
 
 fn ctx_new() -> WasmCtx {
-    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0, local_names: Vec::new(), local_indices: Vec::new(), local_count: 0 }
+    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0, local_names: Vec::new(), local_indices: Vec::new(), local_count: 0, string_data: Vec::new(), string_names: Vec::new(), string_addrs: Vec::new() }
+}
+
+// ── String interning ──
+
+fn intern_string(ctx: &mut WasmCtx, s: str) -> i64 {
+    // 查找已驻留的字符串
+    let mut i: i64 = 0;
+    while i < ctx.string_names.len() {
+        if ctx.string_names[i] == s {
+            return ctx.string_addrs[i];
+        };
+        i = i + 1;
+    };
+    // 未命中：追加到 string_data，偏移 = string_data.len() + 4（跳过 bump pointer global）
+    let addr = ctx.string_data.len() + 4;
+    let mut j: i64 = 0;
+    while j < s.len() {
+        ctx.string_data.push(char_to_ascii(s[j]));
+        j = j + 1;
+    };
+    ctx.string_data.push(0); // 终止符
+    ctx.string_names.push(s);
+    ctx.string_addrs.push(addr);
+    addr
 }
 
 // ── Compile one function body ──
@@ -282,6 +309,12 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if d == 1 {
         // FloatLiteral
         wasm_f64_const(out, e.lit_fval);
+        return;
+    };
+    if d == 3 {
+        // StringLiteral — 驻留字符串，返回内存偏移作为 i32
+        let addr = intern_string(ctx, e.lit_sval);
+        wasm_i32_const(out, addr);
         return;
     };
     if d == 4 {
@@ -849,6 +882,22 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
         leb128_u(fi + 7, &mut export_sec);
     };
 
+    // ---- Build data section (字符串驻留数据) ----
+    let mut data_sec: Vec<i64> = Vec::new();
+    if ctx.string_data.len() > 0 {
+        leb128_u(1, &mut data_sec); // 1 data segment
+        leb128_u(0, &mut data_sec); // memory index 0
+        // init expr: i32.const 4 (跳过 bump pointer global)
+        data_sec.push(65); // i32.const
+        leb128_s(4, &mut data_sec);
+        data_sec.push(11); // end
+        // data bytes
+        leb128_u(ctx.string_data.len(), &mut data_sec);
+        for i in 0..ctx.string_data.len() {
+            data_sec.push(ctx.string_data[i]);
+        };
+    };
+
     // ---- Assemble module ----
     // Magic header
     ctx.out.push(0); ctx.out.push(97); ctx.out.push(115); ctx.out.push(109);
@@ -869,6 +918,10 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     emit_section(&mut ctx.out, 7, export_sec);
     // Code section (10)
     emit_section(&mut ctx.out, 10, ctx.code_out);
+    // Data section (11) — 仅当有字符串数据时
+    if data_sec.len() > 0 {
+        emit_section(&mut ctx.out, 11, data_sec);
+    };
 
     ctx.out
 }
