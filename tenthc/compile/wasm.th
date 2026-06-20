@@ -298,8 +298,10 @@ fn is_expr_float(hir: HirProgram, idx: i64) -> bool {
     let e = hir.expr_nodes[idx - 1];
     // FloatLiteral 直接是 f64
     if e.disc == 1 { return true; };
-    // 检查 ty 字段：ty=2 表示 f64（与 lower.th 的 parse_type 一致）
-    if e.ty == 2 { return true; };
+    // 检查 ty 字段：查 type_nodes 的 sub == 2 表示 f64
+    if e.ty > 0 && e.ty <= hir.type_nodes.len() {
+        if hir.type_nodes[e.ty - 1].sub == 2 { return true; };
+    };
     // Binary 表达式：递归检查左操作数
     if e.disc == 5 { return is_expr_float(hir, e.left); };
     false

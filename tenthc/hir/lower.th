@@ -47,6 +47,40 @@ fn push_stmt(p: &mut HirProgram, disc: i64, name: str, expr: i64, cond: i64, bod
     p.stmt_nodes.len()
 }
 
+// Look up a variable's type index by name (backward search for shadowing)
+fn lookup_var_type(p: &mut HirProgram, name: str) -> i64 {
+    let mut i: i64 = p.var_types.len() - 1;
+    while i >= 0 {
+        if p.var_types[i].name == name {
+            return p.var_types[i].ty;
+        };
+        i = i - 1;
+    };
+    0
+}
+
+// Look up a function's return type index by name
+fn lookup_fn_return_type(p: &mut HirProgram, name: str) -> i64 {
+    for i in 0..p.fns.len() {
+        if p.fns[i].name == name {
+            return p.fns[i].return_type;
+        };
+    };
+    0
+}
+
+// Check if a type index is f64 (sub == 2)
+fn is_type_f64(p: &mut HirProgram, ty: i64) -> bool {
+    if ty <= 0 || ty > p.type_nodes.len() { return false; };
+    p.type_nodes[ty - 1].sub == 2
+}
+
+// Get the type index of an expression by its 1-based index
+fn get_expr_ty(p: &mut HirProgram, idx: i64) -> i64 {
+    if idx <= 0 || idx > p.expr_nodes.len() { return 0; };
+    p.expr_nodes[idx - 1].ty
+}
+
 fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, match_arms: Vec<MatchArm>, depth: i64) -> i64 {
     if idx <= 0 { return 0; };
     if idx > exprs.len() { return 0; };
@@ -73,13 +107,28 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
 
     if kind == "ident" {
-        return push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
+        let vty = lookup_var_type(p, e.sval);
+        return push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", vty);
     };
 
     if kind == "binary" {
         let l = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         let r = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
-        return push_expr(p, 5, 0, 0.0, "", false, l, r, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", 0);
+        // Infer result type
+        let op = e.sval;
+        let mut bty: i64 = 0;
+        if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" {
+            // Comparison → bool
+            bty = add_type(p, 0, 4, "", 0, 0, 0);
+        } else {
+            // Arithmetic: f64 if either operand is f64, else i64
+            if is_type_f64(p, get_expr_ty(p, l)) || is_type_f64(p, get_expr_ty(p, r)) {
+                bty = add_type(p, 0, 2, "", 0, 0, 0);
+            } else {
+                bty = add_type(p, 0, 0, "", 0, 0, 0);
+            };
+        };
+        return push_expr(p, 5, 0, 0.0, "", false, l, r, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", bty);
     };
 
     if kind == "unary" {
@@ -97,7 +146,8 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
                 count = count + 1;
             };
         };
-        return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
+        let cty = lookup_fn_return_type(p, e.sval);
+        return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, start, count, 0, 0, "", "", "", cty);
     };
 
     if kind == "method_call" {
@@ -258,6 +308,9 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         if s.expr_idx > 0 {
             init = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
         };
+        // Record variable type for type inference
+        let init_ty = get_expr_ty(p, init);
+        p.var_types.push(HirVarType { name: s.name, ty: init_ty });
         return push_stmt(p, 0, s.name, 0, 0, 0, 0, init, true);
     };
 
@@ -325,7 +378,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 }
 
 fn lower_program(program: Program) -> HirProgram {
-    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), captures: Vec::new() };
+    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), captures: Vec::new(), var_types: Vec::new() };
 
     // Lower struct definitions
     for si in 0..program.structs.len() {
@@ -341,18 +394,25 @@ fn lower_program(program: Program) -> HirProgram {
 
     for i in 0..program.fns.len() {
         let f = program.fns[i];
-        let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
-        let ret_ty = parse_type(&mut p, f.return_type);
+        // Clear var_types for this function scope
+        p.var_types = Vec::new();
+        // Parse param types first, add to var_types for body type inference
         let mut params = Vec::new();
         for j in 0..f.params.len() {
             let param = f.params[j];
             let pty = parse_type(&mut p, param.type_ann);
             params.push(HirParam { name: param.name, ty: pty });
+            p.var_types.push(HirVarType { name: param.name, ty: pty });
         };
+        // Lower body (var_types now has params for type lookup)
+        let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
+        let ret_ty = parse_type(&mut p, f.return_type);
         let hf = HirFnDef { name: f.name, params: params, return_type: ret_ty, body: body_expr, generics: Vec::new() };
         p.fns.push(hf);
     };
 
+    // Clear var_types for main scope
+    p.var_types = Vec::new();
     if program.main_stmts_count > 0 {
         let start = p.stmt_nodes.len() + 1;
         let mut count: i64 = 0;

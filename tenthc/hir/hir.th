@@ -107,6 +107,9 @@ struct HirStructDef { name: str, fields: Vec<HirStructField> }
 // ── Capture name entry (for closure captures) ──
 struct HirCapture { name: str }
 
+// ── Variable type entry (for type inference) ──
+struct HirVarType { name: str, ty: i64 }
+
 // ── HirProgram ──
 struct HirProgram {
     fns: Vec<HirFnDef>,
@@ -119,4 +122,5 @@ struct HirProgram {
     match_arms: Vec<HirMatchArm>,
     structs: Vec<HirStructDef>,
     captures: Vec<HirCapture>,  // flat: closure capture names
+    var_types: Vec<HirVarType>, // variable name → type index (for type inference)
 }
