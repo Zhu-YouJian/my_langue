@@ -698,6 +698,79 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_i64_const(out, 0);
         return;
     };
+    if d == 17 {
+        // Match — scrutinee in e.left, arms in match_arms[stmts_start..stmts_start+stmts_count]
+        let scrut_idx = e.left;
+        // Allocate temp local for scrutinee
+        let scrut_local = ctx.temp_local + 1 + ctx.local_count;
+        ctx.local_count = ctx.local_count + 1;
+        compile_expr(ctx, out, hir, scrut_idx);
+        wasm_local_set(out, scrut_local);
+        // Outer block (result type i64 = blocktype 0x7e)
+        wasm_block(out, 126);
+        let arms_start = e.stmts_start;
+        let arms_count = e.stmts_count;
+        let mut ai = 0;
+        while ai < arms_count {
+            let arm_idx = arms_start + ai;
+            if arm_idx > 0 && arm_idx <= hir.match_arms.len() {
+                let arm = hir.match_arms[arm_idx - 1];
+                if arm.pat_disc == 1 {
+                    // Wildcard — compile body, br to outer
+                    compile_expr(ctx, out, hir, arm.body_expr);
+                    wasm_br(out, 0);
+                } else {
+                    // Literal/variant — inner block, br_if to skip if NOT equal
+                    wasm_block(out, 64);
+                    wasm_local_get(out, scrut_local);
+                    // Parse variant name as i64 literal
+                    let vname = arm.pat_variant;
+                    let mut variant_val: i64 = 0;
+                    let mut parsed = false;
+                    let mut vi = 0;
+                    let vlen = vname.len();
+                    let mut neg = false;
+                    if vlen > 0 && vname[0] == "-" { neg = true; vi = 1; };
+                    let mut val: i64 = 0;
+                    let mut ok = true;
+                    while vi < vlen {
+                        let c = vname[vi];
+                        if c == "0" { val = val * 10; }
+                        else if c == "1" { val = val * 10 + 1; }
+                        else if c == "2" { val = val * 10 + 2; }
+                        else if c == "3" { val = val * 10 + 3; }
+                        else if c == "4" { val = val * 10 + 4; }
+                        else if c == "5" { val = val * 10 + 5; }
+                        else if c == "6" { val = val * 10 + 6; }
+                        else if c == "7" { val = val * 10 + 7; }
+                        else if c == "8" { val = val * 10 + 8; }
+                        else if c == "9" { val = val * 10 + 9; }
+                        else { ok = false; break; };
+                        vi = vi + 1;
+                    };
+                    if ok && vi > (if neg { 1 } else { 0 }) {
+                        if neg { val = -val; };
+                        variant_val = val;
+                        parsed = true;
+                    };
+                    if parsed {
+                        wasm_i64_const(out, variant_val);
+                        wasm_i64_eq(out);
+                        wasm_i64_eqz(out); // invert: br_if skips body if NOT equal
+                        wasm_br_if(out, 0); // skip inner block if not matching
+                        compile_expr(ctx, out, hir, arm.body_expr);
+                        wasm_br(out, 1); // jump to outer block end with result
+                    };
+                    wasm_end(out); // end inner block
+                };
+            };
+            ai = ai + 1;
+        };
+        // No arm matched — push default 0
+        wasm_i64_const(out, 0);
+        wasm_end(out); // end outer block
+        return;
+    };
     if d == 23 {
         // Closure — not representable in WASM, push 0 placeholder
         wasm_i64_const(out, 0);

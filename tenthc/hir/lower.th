@@ -326,7 +326,26 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 
     if kind == "match" {
         let scrutinee = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
-        return push_expr(p, 17, 0, 0.0, "", false, scrutinee, 0, 0, 0, 0, 0, 0, e.extra_start, e.extra_count, "", "", "", 0);
+        // Lower each arm's body and push to HirProgram.match_arms
+        let arms_start = p.match_arms.len() + 1;
+        let mut arms_count: i64 = 0;
+        let mut ai = e.extra_start;
+        while ai < e.extra_start + e.extra_count && ai <= match_arms.len() {
+            let arm = match_arms[ai - 1];
+            let body = lower_expr(p, arm.body_expr, exprs, stmts, match_arms, depth + 1);
+            let pat_disc = if arm.pat_kind == "wildcard" { 1 } else if arm.pat_kind == "enum_variant" { 0 } else { 2 };
+            let hma = HirMatchArm {
+                pat_disc: pat_disc,
+                pat_enum: "",
+                pat_variant: arm.pat_name,
+                pat_bind: arm.pat_bind,
+                body_expr: body,
+            };
+            p.match_arms.push(hma);
+            arms_count = arms_count + 1;
+            ai = ai + 1;
+        };
+        return push_expr(p, 17, 0, 0.0, "", false, scrutinee, 0, 0, 0, 0, 0, 0, arms_start, arms_count, "", "", "", 0);
     };
 
     if kind == "range" {
