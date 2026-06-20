@@ -79,6 +79,30 @@ fn wasm_local_tee(out: &mut Vec<i64>, idx: i64) { out.push(34); leb128_u(idx, ou
 fn wasm_global_get(out: &mut Vec<i64>, idx: i64) { out.push(35); leb128_u(idx, out); }
 fn wasm_global_set(out: &mut Vec<i64>, idx: i64) { out.push(36); leb128_u(idx, out); }
 
+// ── f64 opcodes ──
+
+fn wasm_f64_const(out: &mut Vec<i64>, val: f64) {
+    out.push(68); // f64.const
+    // 用 f64_bits 将 f64 转为 i64 位表示，然后按小端拆字节
+    let bits = f64_bits(val);
+    let mut i: i64 = 0;
+    while i < 8 {
+        out.push(bits % 256);
+        bits = bits / 256;
+        i = i + 1;
+    };
+}
+fn wasm_f64_add(out: &mut Vec<i64>) { out.push(160); }
+fn wasm_f64_sub(out: &mut Vec<i64>) { out.push(161); }
+fn wasm_f64_mul(out: &mut Vec<i64>) { out.push(162); }
+fn wasm_f64_div(out: &mut Vec<i64>) { out.push(163); }
+fn wasm_f64_eq(out: &mut Vec<i64>) { out.push(99); }
+fn wasm_f64_ne(out: &mut Vec<i64>) { out.push(100); }
+fn wasm_f64_lt(out: &mut Vec<i64>) { out.push(101); }
+fn wasm_f64_gt(out: &mut Vec<i64>) { out.push(102); }
+fn wasm_f64_le(out: &mut Vec<i64>) { out.push(103); }
+fn wasm_f64_ge(out: &mut Vec<i64>) { out.push(104); }
+
 // ── Compiler state ──
 
 struct WasmCtx {
@@ -231,6 +255,20 @@ fn char_to_ascii(ch: str) -> i64 {
     63 // 默认 '?' for unknown chars
 }
 
+// ── Type helper: 判断表达式是否为 f64 类型 ──
+
+fn is_expr_float(hir: HirProgram, idx: i64) -> bool {
+    if idx <= 0 || idx > hir.expr_nodes.len() { return false; };
+    let e = hir.expr_nodes[idx - 1];
+    // FloatLiteral 直接是 f64
+    if e.disc == 1 { return true; };
+    // 检查 ty 字段：ty=2 表示 f64（与 lower.th 的 parse_type 一致）
+    if e.ty == 2 { return true; };
+    // Binary 表达式：递归检查左操作数
+    if e.disc == 5 { return is_expr_float(hir, e.left); };
+    false
+}
+
 fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64) {
     if idx <= 0 || idx > hir.expr_nodes.len() { return; };
     let e = hir.expr_nodes[idx - 1];
@@ -239,6 +277,11 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if d == 0 {
         // IntLiteral
         wasm_i64_const(out, e.lit_ival);
+        return;
+    };
+    if d == 1 {
+        // FloatLiteral
+        wasm_f64_const(out, e.lit_fval);
         return;
     };
     if d == 4 {
@@ -273,10 +316,25 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 5 {
-        // Binary
+        // Binary — 根据操作数类型选 i64 或 f64 操作码
         compile_expr(ctx, out, hir, e.left);
         compile_expr(ctx, out, hir, e.right);
         let op = e.op;
+        // 启发式：检查左操作数类型（后续 A11 类型推断会改进）
+        let is_float = is_expr_float(hir, e.left);
+        if is_float {
+            if op == "+" { wasm_f64_add(out); return; };
+            if op == "-" { wasm_f64_sub(out); return; };
+            if op == "*" { wasm_f64_mul(out); return; };
+            if op == "/" { wasm_f64_div(out); return; };
+            if op == "==" { wasm_f64_eq(out); return; };
+            if op == "!=" { wasm_f64_ne(out); return; };
+            if op == "<" { wasm_f64_lt(out); return; };
+            if op == ">" { wasm_f64_gt(out); return; };
+            if op == "<=" { wasm_f64_le(out); return; };
+            if op == ">=" { wasm_f64_ge(out); return; };
+            return;
+        };
         if op == "+" { wasm_i64_add(out); return; };
         if op == "-" { wasm_i64_sub(out); return; };
         if op == "*" { wasm_i64_mul(out); return; };

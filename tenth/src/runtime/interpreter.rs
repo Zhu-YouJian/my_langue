@@ -3289,6 +3289,28 @@ impl Interpreter {
                     message: "to_float() 期望 1 个参数".into(),
                 });
             }
+            "f64_bits" => {
+                if let Some(arg) = args.first() {
+                    let f = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+                        message: "f64_bits() 期望一个 f64 参数".into(),
+                    })?;
+                    return Ok(Some(Value::Int(f.to_bits() as i64)));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "f64_bits() 期望 1 个参数".into(),
+                });
+            }
+            "f64_from_bits" => {
+                if let Some(arg) = args.first() {
+                    let n = arg.as_int().ok_or_else(|| TenthError::RuntimeError {
+                        message: "f64_from_bits() 期望一个 i64 参数".into(),
+                    })?;
+                    return Ok(Some(Value::Float(f64::from_bits(n as u64))));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "f64_from_bits() 期望 1 个参数".into(),
+                });
+            }
             "tensor_from_vec" => {
                 if args.len() >= 3 {
                     if let (Value::Vec(items), Value::Int(rows), Value::Int(cols)) = (&args[0], &args[1], &args[2]) {

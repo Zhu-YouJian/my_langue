@@ -323,6 +323,7 @@ impl Lowerer {
                             | "param" | "backward" | "grad" | "zero_grad"
                             | "cross_entropy"
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "tensor_from_vec"
+                            | "f64_bits" | "f64_from_bits"
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
                             | "format" | "parse_int" | "parse_float"
@@ -1098,6 +1099,8 @@ impl Lowerer {
             "parse_int" => Ok(Type::Enum("Option".to_string())),
             "parse_float" => Ok(Type::Enum("Option".to_string())),
             "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" => Ok(Type::f64()),
+            "f64_bits" => Ok(Type::Base(BaseType::I64)),
+            "f64_from_bits" => Ok(Type::f64()),
             "tensor_from_vec" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
             "zeros" | "ones" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
             "save_weights" | "load_weights" => Ok(Type::unit()),
