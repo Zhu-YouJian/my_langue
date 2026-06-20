@@ -80,7 +80,7 @@ mod three_stage {
         let m2 = Module::new(&e2, &wasm_b).expect("compile");
         let mut s2 = Store::new(&e2, ());
         let mut l2 = Linker::new(&e2);
-        // Tenth wasm.th uses module "env"
+        // Tenth wasm.th uses module "env" with 15 imports
         l2.func_wrap("env", "println", |_: Caller<()>, _: i64| {}).unwrap();
         l2.func_wrap("env", "vec_new", |_: Caller<()>| -> i64 { 0 }).unwrap();
         l2.func_wrap("env", "vec_len", |_: Caller<()>, _: i64| -> i64 { 0 }).unwrap();
@@ -88,6 +88,14 @@ mod three_stage {
         l2.func_wrap("env", "vec_get", |_: Caller<()>, _: i64, _: i64| -> i64 { 0 }).unwrap();
         l2.func_wrap("env", "read_file", |_: Caller<()>, _: i64| -> i64 { 0 }).unwrap();
         l2.func_wrap("env", "write_bytes", |_: Caller<()>, _: i64, _: i64| -> i64 { 0 }).unwrap();
+        l2.func_wrap("env", "str_add", |_: Caller<()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "str_eq", |_: Caller<()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "str_int", |_: Caller<()>, _: i64| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "tenth_alloc", |_: Caller<()>, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "compile_host", |_: Caller<()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "str_len", |_: Caller<()>, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "str_at", |_: Caller<()>, _: i32, _: i64| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "str_cmp", |_: Caller<()>, _: i32, _: i32, _: i32| -> i32 { 0 }).unwrap();
         let i2 = l2.instantiate(&mut s2, &m2).expect("inst").start(&mut s2).expect("start");
         let add = i2.get_func(&s2, "add").expect("add");
         let mut r2 = [wasmi::Val::I64(0)];

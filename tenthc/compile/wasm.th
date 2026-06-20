@@ -282,6 +282,15 @@ fn char_to_ascii(ch: str) -> i64 {
     63 // 默认 '?' for unknown chars
 }
 
+// 将字符串的 ASCII 字节推入 Vec
+fn push_str_bytes(out: &mut Vec<i64>, s: str) {
+    let mut i: i64 = 0;
+    while i < s.len() {
+        out.push(char_to_ascii(s[i]));
+        i = i + 1;
+    };
+}
+
 // ── Type helper: 判断表达式是否为 f64 类型 ──
 
 fn is_expr_float(hir: HirProgram, idx: i64) -> bool {
@@ -571,10 +580,82 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             wasm_call(out, 6); // import 6: env.write_bytes
             return;
         };
-        // Regular function call (indices offset by 7 imports)
-        let mut call_idx: i64 = 7;
+        if func_name == "str_add" {
+            if e.args_count > 0 {
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
+            };
+            wasm_call(out, 7); // import 7: env.str_add
+            return;
+        };
+        if func_name == "str_eq" {
+            if e.args_count > 0 {
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
+            };
+            wasm_call(out, 8); // import 8: env.str_eq
+            return;
+        };
+        if func_name == "str_int" {
+            if e.args_count > 0 {
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
+            };
+            wasm_call(out, 9); // import 9: env.str_int
+            return;
+        };
+        if func_name == "tenth_alloc" {
+            if e.args_count > 0 {
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
+            };
+            wasm_call(out, 10); // import 10: env.tenth_alloc
+            return;
+        };
+        if func_name == "compile_host" {
+            if e.args_count > 0 {
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
+            };
+            wasm_call(out, 11); // import 11: env.compile_host
+            return;
+        };
+        if func_name == "str_len" {
+            if e.args_count > 0 {
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
+            };
+            wasm_call(out, 12); // import 12: env.str_len
+            return;
+        };
+        if func_name == "str_at" {
+            if e.args_count > 0 {
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
+            };
+            wasm_call(out, 13); // import 13: env.str_at
+            return;
+        };
+        if func_name == "str_cmp" {
+            if e.args_count > 0 {
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, ai);
+                };
+            };
+            wasm_call(out, 14); // import 14: env.str_cmp
+            return;
+        };
+        // Regular function call (indices offset by 15 imports)
+        let mut call_idx: i64 = 15;
         for fi in 0..hir.fns.len() {
-            if hir.fns[fi].name == func_name { call_idx = 7 + fi; break; };
+            if hir.fns[fi].name == func_name { call_idx = 15 + fi; break; };
         };
         if e.args_count > 0 {
             for ai in e.args_start..(e.args_start + e.args_count) {
@@ -752,17 +833,22 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     ctx.func_count = num_funcs;
 
     // Import count
-    let num_imports: i64 = 7;
+    let num_imports: i64 = 15;
 
     // ---- Build type section ----
-    // Import types come first: 5 signatures
+    // Import types come first: 10 signatures
     // Type 0: (i64) -> ()    — println
-    // Type 1: () -> i64      — read_file, Vec::new
-    // Type 2: (i64) -> i64   — vec_len, str_len
+    // Type 1: () -> i64      — vec_new
+    // Type 2: (i64) -> i64   — vec_len, read_file
     // Type 3: (i64,i64) -> () — vec_push
     // Type 4: (i64,i64) -> i64 — vec_get, write_bytes
+    // Type 5: (i32,i32) -> i32 — str_add, str_eq, compile_host
+    // Type 6: (i64) -> i32    — str_int
+    // Type 7: (i32) -> i32    — tenth_alloc, str_len
+    // Type 8: (i32,i64) -> i32 — str_at
+    // Type 9: (i32,i32,i32) -> i32 — str_cmp
     let mut types: Vec<i64> = Vec::new();
-    leb128_u(5 + num_funcs, &mut types); // total type count
+    leb128_u(10 + num_funcs, &mut types); // total type count
 
     // Type 0: (i64) -> ()
     types.push(96); leb128_u(1, &mut types); types.push(126); // params
@@ -784,7 +870,27 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
     leb128_u(1, &mut types); types.push(126);
 
-    // Function types (type index 5+)
+    // Type 5: (i32,i32) -> i32
+    types.push(96); leb128_u(2, &mut types); types.push(127); types.push(127);
+    leb128_u(1, &mut types); types.push(127);
+
+    // Type 6: (i64) -> i32
+    types.push(96); leb128_u(1, &mut types); types.push(126);
+    leb128_u(1, &mut types); types.push(127);
+
+    // Type 7: (i32) -> i32
+    types.push(96); leb128_u(1, &mut types); types.push(127);
+    leb128_u(1, &mut types); types.push(127);
+
+    // Type 8: (i32,i64) -> i32
+    types.push(96); leb128_u(2, &mut types); types.push(127); types.push(126);
+    leb128_u(1, &mut types); types.push(127);
+
+    // Type 9: (i32,i32,i32) -> i32
+    types.push(96); leb128_u(3, &mut types); types.push(127); types.push(127); types.push(127);
+    leb128_u(1, &mut types); types.push(127);
+
+    // Function types (type index 10+)
     for fi in 0..num_funcs {
         let f = hir.fns[fi];
         types.push(96);
@@ -841,10 +947,50 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     import_sec.push(119);import_sec.push(114);import_sec.push(105);import_sec.push(116);import_sec.push(101);import_sec.push(95);import_sec.push(98);import_sec.push(121);import_sec.push(116);import_sec.push(101);import_sec.push(115);
     import_sec.push(0); leb128_u(4, &mut import_sec);
 
+    // Import 7: env.str_add (type 5: (i32,i32)->i32)
+    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_add");
+    import_sec.push(0); leb128_u(5, &mut import_sec);
+
+    // Import 8: env.str_eq (type 5: (i32,i32)->i32)
+    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    leb128_u(6, &mut import_sec); push_str_bytes(&mut import_sec, "str_eq");
+    import_sec.push(0); leb128_u(5, &mut import_sec);
+
+    // Import 9: env.str_int (type 6: (i64)->i32)
+    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_int");
+    import_sec.push(0); leb128_u(6, &mut import_sec);
+
+    // Import 10: env.tenth_alloc (type 7: (i32)->i32)
+    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    leb128_u(11, &mut import_sec); push_str_bytes(&mut import_sec, "tenth_alloc");
+    import_sec.push(0); leb128_u(7, &mut import_sec);
+
+    // Import 11: env.compile_host (type 5: (i32,i32)->i32)
+    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    leb128_u(12, &mut import_sec); push_str_bytes(&mut import_sec, "compile_host");
+    import_sec.push(0); leb128_u(5, &mut import_sec);
+
+    // Import 12: env.str_len (type 7: (i32)->i32)
+    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    leb128_u(8, &mut import_sec); push_str_bytes(&mut import_sec, "str_len");
+    import_sec.push(0); leb128_u(7, &mut import_sec);
+
+    // Import 13: env.str_at (type 8: (i32,i64)->i32)
+    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    leb128_u(6, &mut import_sec); push_str_bytes(&mut import_sec, "str_at");
+    import_sec.push(0); leb128_u(8, &mut import_sec);
+
+    // Import 14: env.str_cmp (type 9: (i32,i32,i32)->i32)
+    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_cmp");
+    import_sec.push(0); leb128_u(9, &mut import_sec);
+
     // ---- Build function section ----
     let mut func_sec: Vec<i64> = Vec::new();
     leb128_u(num_funcs, &mut func_sec);
-    for idx in 0..num_funcs { leb128_u(idx + 5, &mut func_sec); };
+    for idx in 0..num_funcs { leb128_u(idx + 10, &mut func_sec); };
 
     // ---- Build global section ----
     let mut glob_sec: Vec<i64> = Vec::new();
@@ -879,7 +1025,7 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
             export_sec.push(char_to_ascii(f.name[ci]));
         };
         export_sec.push(0); // export kind: function
-        leb128_u(fi + 7, &mut export_sec);
+        leb128_u(fi + 15, &mut export_sec);
     };
 
     // ---- Build data section (字符串驻留数据) ----

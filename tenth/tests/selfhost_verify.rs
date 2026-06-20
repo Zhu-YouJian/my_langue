@@ -28,7 +28,7 @@ mod selfhost_verify {
         let mut store = Store::new(&engine, ());
         let mut linker = Linker::new(&engine);
         
-        // All 7 host imports that the self-hosting WASM expects
+        // All 15 host imports that the self-hosting WASM expects
         linker.func_wrap("env", "println", |_: Caller<'_, ()>, _: i64| {}).unwrap();
         linker.func_wrap("env", "vec_new", |_: Caller<'_, ()>| -> i64 { 0 }).unwrap();
         linker.func_wrap("env", "vec_len", |_: Caller<'_, ()>, _: i64| -> i64 { 0 }).unwrap();
@@ -36,6 +36,14 @@ mod selfhost_verify {
         linker.func_wrap("env", "vec_get", |_: Caller<'_, ()>, _: i64, _: i64| -> i64 { 0 }).unwrap();
         linker.func_wrap("env", "read_file", |_: Caller<'_, ()>, _: i64| -> i64 { 0 }).unwrap();
         linker.func_wrap("env", "write_bytes", |_: Caller<'_, ()>, _: i64, _: i64| -> i64 { 0 }).unwrap();
+        linker.func_wrap("env", "str_add", |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        linker.func_wrap("env", "str_eq", |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        linker.func_wrap("env", "str_int", |_: Caller<'_, ()>, _: i64| -> i32 { 0 }).unwrap();
+        linker.func_wrap("env", "tenth_alloc", |_: Caller<'_, ()>, _: i32| -> i32 { 0 }).unwrap();
+        linker.func_wrap("env", "compile_host", |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        linker.func_wrap("env", "str_len", |_: Caller<'_, ()>, _: i32| -> i32 { 0 }).unwrap();
+        linker.func_wrap("env", "str_at", |_: Caller<'_, ()>, _: i32, _: i64| -> i32 { 0 }).unwrap();
+        linker.func_wrap("env", "str_cmp", |_: Caller<'_, ()>, _: i32, _: i32, _: i32| -> i32 { 0 }).unwrap();
         
         let instance = linker.instantiate(&mut store, &module)
             .expect("instantiate")
