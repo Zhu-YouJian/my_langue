@@ -75,6 +75,12 @@ fn is_type_f64(p: &mut HirProgram, ty: i64) -> bool {
     p.type_nodes[ty - 1].sub == 2
 }
 
+// Check if a type index is str (sub == 5)
+fn is_type_str(p: &mut HirProgram, ty: i64) -> bool {
+    if ty <= 0 || ty > p.type_nodes.len() { return false; };
+    p.type_nodes[ty - 1].sub == 5
+}
+
 // Get the type index of an expression by its 1-based index
 fn get_expr_ty(p: &mut HirProgram, idx: i64) -> i64 {
     if idx <= 0 || idx > p.expr_nodes.len() { return 0; };
@@ -120,6 +126,9 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" {
             // Comparison → bool
             bty = add_type(p, 0, 4, "", 0, 0, 0);
+        } else if op == "+" && (is_type_str(p, get_expr_ty(p, l)) || is_type_str(p, get_expr_ty(p, r))) {
+            // String concatenation: str + str → str
+            bty = add_type(p, 0, 5, "", 0, 0, 0);
         } else {
             // Arithmetic: f64 if either operand is f64, else i64
             if is_type_f64(p, get_expr_ty(p, l)) || is_type_f64(p, get_expr_ty(p, r)) {

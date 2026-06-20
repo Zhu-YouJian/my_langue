@@ -307,6 +307,19 @@ fn is_expr_float(hir: HirProgram, idx: i64) -> bool {
     false
 }
 
+// Check if an expression's inferred type is str (sub == 5)
+fn is_expr_str(hir: HirProgram, idx: i64) -> bool {
+    if idx <= 0 || idx > hir.expr_nodes.len() { return false; };
+    let e = hir.expr_nodes[idx - 1];
+    // StringLiteral 直接是 str
+    if e.disc == 3 { return true; };
+    // 检查 ty 字段：查 type_nodes 的 sub == 5 表示 str
+    if e.ty > 0 && e.ty <= hir.type_nodes.len() {
+        if hir.type_nodes[e.ty - 1].sub == 5 { return true; };
+    };
+    false
+}
+
 fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64) {
     if idx <= 0 || idx > hir.expr_nodes.len() { return; };
     let e = hir.expr_nodes[idx - 1];
@@ -360,10 +373,17 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 5 {
-        // Binary — 根据操作数类型选 i64 或 f64 操作码
+        // Binary — 根据操作数类型选 i64 / f64 / str 操作码
+        let op = e.op;
+        // 字符串拼接：str + str → 调用 str_add (import 7)
+        if op == "+" && (is_expr_str(hir, e.left) || is_expr_str(hir, e.right)) {
+            compile_expr(ctx, out, hir, e.left);
+            compile_expr(ctx, out, hir, e.right);
+            wasm_call(out, 7);
+            return;
+        };
         compile_expr(ctx, out, hir, e.left);
         compile_expr(ctx, out, hir, e.right);
-        let op = e.op;
         // 启发式：检查左操作数类型（后续 A11 类型推断会改进）
         let is_float = is_expr_float(hir, e.left);
         if is_float {
