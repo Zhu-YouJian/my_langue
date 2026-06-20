@@ -528,6 +528,25 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_i64_const(out, 0);
         return;
     };
+    if d == 9 {
+        // Index — s[i] or v[i]
+        // For Vec: compile target (vec_id as i64), compile index (i64), call vec_get (import 4)
+        // For str: compile target (str_ptr as i32), compile index (i64), call str_at (import 13)
+        // Heuristic: if target is StringLiteral or has str type, use str_at; else vec_get
+        let target_is_str = is_expr_str(hir, e.left);
+        compile_expr(ctx, out, hir, e.left);
+        compile_expr(ctx, out, hir, e.right);
+        if target_is_str {
+            // str_at(str_ptr: i32, idx: i64) -> i32
+            // target is i32 on stack (from StringLiteral), index is i64
+            wasm_call(out, 13);
+            wasm_i64_extend_i32_u(out); // promote i32 result to i64
+        } else {
+            // vec_get(vec_id: i64, idx: i64) -> i64
+            wasm_call(out, 4);
+        };
+        return;
+    };
     if d == 10 {
         // Field access
         compile_expr(ctx, out, hir, e.left);

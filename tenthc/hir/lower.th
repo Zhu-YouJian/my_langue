@@ -211,6 +211,13 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         return push_expr(p, 10, 0, 0.0, "", false, target, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
     };
 
+    if kind == "index" {
+        // Index expression s[i] or v[i]
+        let target = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        let index = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
+        return push_expr(p, 9, 0, 0.0, "", false, target, index, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+    };
+
     if kind == "ref" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 18, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
