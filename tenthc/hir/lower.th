@@ -236,6 +236,14 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         return push_expr(p, 17, 0, 0.0, "", false, scrutinee, 0, 0, 0, 0, 0, 0, e.extra_start, e.extra_count, "", "", "", 0);
     };
 
+    if kind == "range" {
+        let l = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        let r = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
+        let idx = push_expr(p, 28, 0, 0.0, "", false, l, r, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+        p.expr_nodes[idx - 1].range_inclusive = (e.ival != 0);
+        return idx;
+    };
+
     push_expr(p, 0, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0)
 }
 
@@ -295,6 +303,19 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             };
         };
         return push_stmt(p, 3, "", 0, cond, bstart, bcount, 0, false);
+    };
+
+    if kind == "for" {
+        let iter = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
+        let bstart = p.stmt_nodes.len() + 1;
+        let mut bcount: i64 = 0;
+        if s.body_count > 0 {
+            for i in s.body_start..(s.body_start + s.body_count) {
+                lower_stmt(p, i, exprs, stmts, match_arms, depth + 1);
+                bcount = bcount + 1;
+            };
+        };
+        return push_stmt(p, 4, s.name, iter, 0, bstart, bcount, 0, false);
     };
 
     if kind == "break" { return push_stmt(p, 5, "", 0, 0, 0, 0, 0, false); };

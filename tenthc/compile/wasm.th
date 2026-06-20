@@ -795,6 +795,60 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_end(out);   // end block
         return;
     };
+    if d == 4 {
+        // For — for name in iterable { body }
+        // Currently supports Range (disc 28): for i in start..end
+        let iter_idx = s.expr;
+        if iter_idx > 0 && iter_idx <= hir.expr_nodes.len() {
+            let iter = hir.expr_nodes[iter_idx - 1];
+            if iter.disc == 28 {
+                // Range: allocate locals for loop var ($i) and end ($end)
+                let slot_i = ctx.temp_local + 1 + ctx.local_count;
+                let slot_end = ctx.temp_local + 1 + ctx.local_count + 1;
+                ctx.local_count = ctx.local_count + 2;
+                ctx.local_names.push(s.name);
+                ctx.local_indices.push(slot_i);
+
+                // Compile start → local.set $i
+                compile_expr(ctx, out, hir, iter.left);
+                wasm_local_set(out, slot_i);
+                // Compile end → local.set $end
+                compile_expr(ctx, out, hir, iter.right);
+                wasm_local_set(out, slot_end);
+
+                // block { loop { cond; br_if 1; body; i++; br 0; } }
+                wasm_block(out, 64);
+                wasm_loop(out, 64);
+                // cond: i < end (or i <= end for inclusive)
+                wasm_local_get(out, slot_i);
+                wasm_local_get(out, slot_end);
+                if iter.range_inclusive {
+                    wasm_i64_le_s(out);
+                } else {
+                    wasm_i64_lt_s(out);
+                };
+                wasm_i64_eqz(out);
+                wasm_br_if(out, 1); // break if !(cond)
+                // body
+                if s.body_count > 0 {
+                    for bi in s.body_start..(s.body_start + s.body_count) {
+                        compile_stmt(ctx, out, hir, bi);
+                    };
+                };
+                // i += 1
+                wasm_local_get(out, slot_i);
+                wasm_i64_const(out, 1);
+                wasm_i64_add(out);
+                wasm_local_set(out, slot_i);
+                wasm_br(out, 0); // continue loop
+                wasm_end(out);   // end loop
+                wasm_end(out);   // end block
+                return;
+            };
+        };
+        // Non-range iterable: no-op for now
+        return;
+    };
     if d == 0 {
         // Let — 分配新 local 并记录变量名
         if s.init > 0 {
