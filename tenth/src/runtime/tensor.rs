@@ -115,8 +115,15 @@ impl Tensor {
         self.data.sum()
     }
 
-    pub fn sum_axis(&self, axis: usize) -> Tensor {
-        Tensor::from_data(self.data.sum_axis(ndarray::Axis(axis)))
+    pub fn sum_axis(&self, axis: usize) -> Result<Tensor, String> {
+        let ndim = self.ndim();
+        if axis >= ndim {
+            return Err(format!(
+                "sum_axis: axis {} out of bounds for {}-D tensor",
+                axis, ndim
+            ));
+        }
+        Ok(Tensor::from_data(self.data.sum_axis(ndarray::Axis(axis))))
     }
 
     pub fn mean(&self) -> f64 {
@@ -124,16 +131,17 @@ impl Tensor {
     }
 
     pub fn max_val(&self) -> f64 {
-        *self.data.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0.0)
+        self.data.iter().copied().fold(f64::NEG_INFINITY, f64::max)
     }
 
     /// Return the index of the maximum value (flat index).
+    /// Returns -1 for an empty tensor.
     pub fn argmax(&self) -> i64 {
         self.data.iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i as i64)
-            .unwrap_or(0)
+            .unwrap_or(-1)
     }
 
     // ── scalar ops (keep for compatibility) ────────────────────────────
@@ -161,61 +169,64 @@ impl Tensor {
 
     // ── tensor-tensor element-wise ops (with broadcasting) ─────────────
 
+    /// Compute the numpy-style broadcast shape of two shapes.
+    /// Returns `None` if the shapes are not broadcast-compatible.
+    fn broadcast_shape(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
+        let na = a.len();
+        let nb = b.len();
+        let n = na.max(nb);
+        let mut out = vec![0usize; n];
+        for i in 0..n {
+            let da = if i < na { a[na - 1 - i] } else { 1 };
+            let db = if i < nb { b[nb - 1 - i] } else { 1 };
+            out[n - 1 - i] = match (da, db) {
+                (1, x) | (x, 1) => x,
+                (x, y) if x == y => x,
+                _ => return None,
+            };
+        }
+        Some(out)
+    }
+
     /// Element-wise addition with broadcasting.  Errors if shapes are incompatible.
     pub fn add_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
         let a = self.data.view();
         let b = other.data.view();
-        if a.broadcast(b.shape()).is_some() {
-            let a_br = a.broadcast(b.shape()).unwrap();
-            Ok(Tensor::from_data(a_br.to_owned() + &b))
-        } else if b.broadcast(a.shape()).is_some() {
-            let b_br = b.broadcast(a.shape()).unwrap();
-            Ok(Tensor::from_data(&a + b_br.to_owned()))
-        } else {
-            Err(format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))
-        }
+        let out_shape = Self::broadcast_shape(a.shape(), b.shape())
+            .ok_or_else(|| format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))?;
+        let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
+        let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
+        Ok(Tensor::from_data(&a_br.to_owned() + &b_br.to_owned()))
     }
 
     pub fn sub_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
         let a = self.data.view();
         let b = other.data.view();
-        if a.broadcast(b.shape()).is_some() {
-            let a_br = a.broadcast(b.shape()).unwrap();
-            Ok(Tensor::from_data(a_br.to_owned() - &b))
-        } else if b.broadcast(a.shape()).is_some() {
-            let b_br = b.broadcast(a.shape()).unwrap();
-            Ok(Tensor::from_data(&a - b_br.to_owned()))
-        } else {
-            Err(format!("cannot broadcast shapes {:?} - {:?}", self.shape(), other.shape()))
-        }
+        let out_shape = Self::broadcast_shape(a.shape(), b.shape())
+            .ok_or_else(|| format!("cannot broadcast shapes {:?} - {:?}", self.shape(), other.shape()))?;
+        let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
+        let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
+        Ok(Tensor::from_data(&a_br.to_owned() - &b_br.to_owned()))
     }
 
     pub fn mul_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
         let a = self.data.view();
         let b = other.data.view();
-        if a.broadcast(b.shape()).is_some() {
-            let a_br = a.broadcast(b.shape()).unwrap();
-            Ok(Tensor::from_data(a_br.to_owned() * &b))
-        } else if b.broadcast(a.shape()).is_some() {
-            let b_br = b.broadcast(a.shape()).unwrap();
-            Ok(Tensor::from_data(&a * b_br.to_owned()))
-        } else {
-            Err(format!("cannot broadcast shapes {:?} * {:?}", self.shape(), other.shape()))
-        }
+        let out_shape = Self::broadcast_shape(a.shape(), b.shape())
+            .ok_or_else(|| format!("cannot broadcast shapes {:?} * {:?}", self.shape(), other.shape()))?;
+        let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
+        let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
+        Ok(Tensor::from_data(&a_br.to_owned() * &b_br.to_owned()))
     }
 
     pub fn div_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
         let a = self.data.view();
         let b = other.data.view();
-        if a.broadcast(b.shape()).is_some() {
-            let a_br = a.broadcast(b.shape()).unwrap();
-            Ok(Tensor::from_data(a_br.to_owned() / &b))
-        } else if b.broadcast(a.shape()).is_some() {
-            let b_br = b.broadcast(a.shape()).unwrap();
-            Ok(Tensor::from_data(&a / b_br.to_owned()))
-        } else {
-            Err(format!("cannot broadcast shapes {:?} / {:?}", self.shape(), other.shape()))
-        }
+        let out_shape = Self::broadcast_shape(a.shape(), b.shape())
+            .ok_or_else(|| format!("cannot broadcast shapes {:?} / {:?}", self.shape(), other.shape()))?;
+        let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
+        let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
+        Ok(Tensor::from_data(&a_br.to_owned() / &b_br.to_owned()))
     }
 
     // ── matrix multiplication ─────────────────────────────────────────
@@ -340,14 +351,30 @@ impl Tensor {
     /// Layer normalization along the last dimension.
     /// x: (..., D), gamma: (D,), beta: (D,), eps: f64
     /// Returns (x - mean) / sqrt(var + eps) * gamma + beta
-    pub fn layer_norm(&self, gamma: &Tensor, beta: &Tensor, eps: f64) -> Tensor {
+    pub fn layer_norm(&self, gamma: &Tensor, beta: &Tensor, eps: f64) -> Result<Tensor, String> {
         let shape = self.shape();
         let ndim = shape.len();
         if ndim == 0 || shape[ndim - 1] == 0 {
-            return self.clone();
+            return Ok(self.clone());
         }
         let axis_len = shape[ndim - 1];
         let outer_len: usize = shape[..ndim - 1].iter().product();
+
+        // Validate gamma/beta shapes: must be 1-D and match the last axis length.
+        let g_shape = gamma.shape();
+        let b_shape = beta.shape();
+        if g_shape.len() != 1 || g_shape[0] != axis_len {
+            return Err(format!(
+                "layer_norm: gamma shape {:?} does not match last axis length {}",
+                g_shape, axis_len
+            ));
+        }
+        if b_shape.len() != 1 || b_shape[0] != axis_len {
+            return Err(format!(
+                "layer_norm: beta shape {:?} does not match last axis length {}",
+                b_shape, axis_len
+            ));
+        }
 
         let contiguous = self.data.as_standard_layout().to_owned();
         let flat = match contiguous.as_slice() {
@@ -369,12 +396,12 @@ impl Tensor {
             let std_inv = 1.0 / (var + eps).sqrt();
             for j in 0..axis_len {
                 let x_hat = (slice[j] - mean) * std_inv;
-                let g = g_slice.get(j).copied().unwrap_or(1.0);
-                let b = b_slice.get(j).copied().unwrap_or(0.0);
+                let g = g_slice[j];
+                let b = b_slice[j];
                 result_data.push(g * x_hat + b);
             }
         }
-        Tensor::from_vec(result_data, shape)
+        Ok(Tensor::from_vec(result_data, shape))
     }
 
     /// GELU activation (tanh approximation).
@@ -548,14 +575,21 @@ impl Tensor {
 
     /// In-place element-wise assignment: `self[i..] = src`.
     /// This mutates the underlying ArrayD in-place.
-    pub fn assign_(&mut self, src: &Tensor) {
-        // Use zip_mut_with for element-wise assignment with broadcasting
+    /// Returns `Err` if shapes are incompatible (neither equal nor broadcastable to self's shape).
+    pub fn assign_(&mut self, src: &Tensor) -> Result<(), String> {
         if self.shape() == src.shape() {
             self.data.zip_mut_with(&src.data, |s, &x| *s = x);
-        } else if let Some(src_br) = src.data.view().broadcast(self.shape().as_slice()) {
-            self.data.zip_mut_with(&src_br, |s, &x| *s = x);
+            return Ok(());
         }
-        // otherwise no-op (shapes incompatible)
+        if let Some(src_br) = src.data.view().broadcast(self.shape().as_slice()) {
+            self.data.zip_mut_with(&src_br, |s, &x| *s = x);
+            return Ok(());
+        }
+        Err(format!(
+            "assign_: shape mismatch, cannot broadcast {:?} into {:?}",
+            src.shape(),
+            self.shape()
+        ))
     }
 }
 

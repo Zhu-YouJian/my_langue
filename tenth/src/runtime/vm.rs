@@ -1124,7 +1124,10 @@ impl Vm {
                             }
                         } else {
                             let axis = args[0].as_int().unwrap_or(0) as usize;
-                            Ok(Value::Tensor(Rc::new(RefCell::new(tensor.sum_axis(axis)))))
+                            match tensor.sum_axis(axis) {
+                                Ok(t) => Ok(Value::Tensor(Rc::new(RefCell::new(t)))),
+                                Err(msg) => err(&msg),
+                            }
                         }
                     }
                     "mean" => {
@@ -1276,11 +1279,24 @@ impl Vm {
                         let pad = args[4].as_int().unwrap_or(0) as usize;
                         if let Value::Tensor(w_rc) = &args[0] {
                             let w_data = w_rc.borrow();
+                            let w_shape = w_data.shape();
+                            // Validate weight shape: must be 4D (C_out, C_in, kH, kW)
+                            if w_shape.len() != 4 {
+                                return err(&format!(
+                                    "conv2d: 权重必须是 4D (C_out, C_in, kH, kW)，得到 {:?}D",
+                                    w_shape.len()
+                                ));
+                            }
+                            if w_shape[2] != k_h || w_shape[3] != k_w {
+                                return err(&format!(
+                                    "conv2d: 权重 kernel 尺寸 {:?} 与参数 kH={}, kW={} 不匹配",
+                                    &w_shape[2..4], k_h, k_w
+                                ));
+                            }
                             let (cols, h_out, w_out) = tensor.im2col(k_h, k_w, stride, pad)
                                 .ok_or_else(|| TenthError::RuntimeError {
                                     message: "im2col 失败（输入必须是 4D）".into(),
                                 })?;
-                            let w_shape = w_data.shape();
                             let c_out = w_shape[0];
                             let w_flat = w_data.reshape(&[c_out, w_shape[1] * w_shape[2] * w_shape[3]])
                                 .ok_or_else(|| TenthError::RuntimeError {
@@ -1409,6 +1425,21 @@ impl Vm {
                                 return Ok(Value::Tensor(Rc::new(RefCell::new(tensor.clone()))));
                             }
                             let axis_len = x_shape[ndim - 1];
+                            // Validate gamma/beta shapes
+                            let g_shape = gamma_rc.borrow().shape();
+                            let b_shape = beta_rc.borrow().shape();
+                            if g_shape.len() != 1 || g_shape[0] != axis_len {
+                                return err(&format!(
+                                    "layer_norm: gamma shape {:?} does not match last axis length {}",
+                                    g_shape, axis_len
+                                ));
+                            }
+                            if b_shape.len() != 1 || b_shape[0] != axis_len {
+                                return err(&format!(
+                                    "layer_norm: beta shape {:?} does not match last axis length {}",
+                                    b_shape, axis_len
+                                ));
+                            }
                             let outer_len: usize = x_shape[..ndim - 1].iter().product();
                             let contiguous = tensor.data.as_standard_layout().to_owned();
                             let flat = match contiguous.as_slice() {
@@ -1434,8 +1465,8 @@ impl Vm {
                                 for j in 0..axis_len {
                                     let x_hat = (slice[j] - mean) * std_inv;
                                     x_hat_data.push(x_hat);
-                                    let g = g_slice.get(j).copied().unwrap_or(1.0);
-                                    let b = b_slice.get(j).copied().unwrap_or(0.0);
+                                    let g = g_slice[j];
+                                    let b = b_slice[j];
                                     result_data.push(g * x_hat + b);
                                 }
                             }
