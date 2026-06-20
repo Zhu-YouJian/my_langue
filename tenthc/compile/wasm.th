@@ -85,11 +85,14 @@ struct WasmCtx {
     out: Vec<i64>,       // final output bytes
     code_out: Vec<i64>,  // code section body
     func_count: i64,     // number of functions
-    temp_local: i64,     // index of temp local slot
+    temp_local: i64,     // index of temp local slot (for StructLiteral)
+    local_names: Vec<str>,    // let 绑定的变量名
+    local_indices: Vec<i64>,  // 对应的 local index
+    local_count: i64,    // 当前函数的 let local 数量
 }
 
 fn ctx_new() -> WasmCtx {
-    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0 }
+    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0, local_names: Vec::new(), local_indices: Vec::new(), local_count: 0 }
 }
 
 // ── Compile one function body ──
@@ -100,21 +103,26 @@ fn compile_fn_body(ctx: &mut WasmCtx, hir: HirProgram, fn_idx: i64) {
     // Count locals (params + let bindings)
     let num_params = f.params.len();
 
-    // Function body header
-    let mut body: Vec<i64> = Vec::new();
+    // 重置 local 信息（每个函数独立）
+    ctx.local_names = Vec::new();
+    ctx.local_indices = Vec::new();
+    ctx.local_count = 0;
+    ctx.temp_local = num_params; // temp_local 用于 StructLiteral 的临时槽
 
-    // Local declaration count: 16 temp locals (i64)
+    // 先编译 body 到临时 Vec（不含 local 声明）
+    let mut body_code: Vec<i64> = Vec::new();
+    compile_expr(ctx, &mut body_code, hir, f.body);
+    wasm_end(&mut body_code);
+
+    // 构建 local 声明：local_count 个 let local + 1 个 temp local
+    let total_locals = ctx.local_count + 1;
+    let mut body: Vec<i64> = Vec::new();
     leb128_u(1, &mut body); // 1 group
-    leb128_u(16, &mut body); // 16 locals
+    leb128_u(total_locals, &mut body);
     body.push(126); // i64
 
-    // Set temp local index
-    ctx.temp_local = num_params;
-
-    // Compile body expression
-    compile_expr(ctx, &mut body, hir, f.body);
-
-    wasm_end(&mut body);
+    // 拼接 body_code
+    for i in 0..body_code.len() { body.push(body_code[i]); };
 
     // Emit function body size + body
     leb128_u(body.len(), &mut ctx.code_out);
@@ -234,7 +242,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 4 {
-        // Var — look up local index by name
+        // Var — 先查 params，再查 let 绑定的 local
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
@@ -248,6 +256,18 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 };
             };
             if found { break; };
+        };
+        // 查 let 绑定的 local（倒序查找，支持 shadowing）
+        if !found {
+            let mut li: i64 = ctx.local_names.len() - 1;
+            while li >= 0 {
+                if ctx.local_names[li] == name {
+                    local_idx = ctx.local_indices[li];
+                    found = true;
+                    break;
+                };
+                li = li - 1;
+            };
         };
         wasm_local_get(out, local_idx);
         return;
@@ -298,6 +318,18 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 };
             };
             if found { break; };
+        };
+        // 查 let 绑定的 local（倒序查找，支持 shadowing）
+        if !found {
+            let mut li: i64 = ctx.local_names.len() - 1;
+            while li >= 0 {
+                if ctx.local_names[li] == name {
+                    local_idx = ctx.local_indices[li];
+                    found = true;
+                    break;
+                };
+                li = li - 1;
+            };
         };
         wasm_local_set(out, local_idx);
         return;
@@ -478,8 +510,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 24 {
-        // AssignOp — compile right side, then local.set (same as disc 14)
-        compile_expr(ctx, out, hir, e.right);
+        // AssignOp (x += y) — load current value, compile rhs, apply op, store
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
@@ -494,6 +525,26 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             };
             if found { break; };
         };
+        // 查 let 绑定的 local（倒序查找，支持 shadowing）
+        if !found {
+            let mut li: i64 = ctx.local_names.len() - 1;
+            while li >= 0 {
+                if ctx.local_names[li] == name {
+                    local_idx = ctx.local_indices[li];
+                    found = true;
+                    break;
+                };
+                li = li - 1;
+            };
+        };
+        // local.get → compile rhs → apply op → local.set
+        wasm_local_get(out, local_idx);
+        compile_expr(ctx, out, hir, e.right);
+        let op = e.op;
+        if op == "+" { wasm_i64_add(out); }
+        else if op == "-" { wasm_i64_sub(out); }
+        else if op == "*" { wasm_i64_mul(out); }
+        else if op == "/" { wasm_i64_div_s(out); };
         wasm_local_set(out, local_idx);
         return;
     };
@@ -559,14 +610,15 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 0 {
-        // Let — store init value to a temp local
+        // Let — 分配新 local 并记录变量名
         if s.init > 0 {
             compile_expr(ctx, out, hir, s.init);
-            // Store to next available local slot
-            let slot = ctx.temp_local + 1; // after temp
+            // 分配新 local: params + temp(1) + local_count
+            let slot = ctx.temp_local + 1 + ctx.local_count;
             wasm_local_set(out, slot);
-            // Track in temp_local for now (single-let support)
-            ctx.temp_local = slot;
+            ctx.local_count = ctx.local_count + 1;
+            ctx.local_names.push(s.name);
+            ctx.local_indices.push(slot);
         };
         return;
     };
