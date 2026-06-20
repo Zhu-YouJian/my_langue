@@ -609,6 +609,20 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_end(out);   // end block
         return;
     };
+    if d == 7 {
+        // Loop — WASM: block $break { loop $continue { body; br $continue; } }
+        wasm_block(out, 64);
+        wasm_loop(out, 64);
+        if s.body_count > 0 {
+            for bi in s.body_start..(s.body_start + s.body_count) {
+                compile_stmt(ctx, out, hir, bi);
+            };
+        };
+        wasm_br(out, 0); // continue loop
+        wasm_end(out);   // end loop
+        wasm_end(out);   // end block
+        return;
+    };
     if d == 0 {
         // Let — 分配新 local 并记录变量名
         if s.init > 0 {
