@@ -104,6 +104,12 @@ struct HirStructField { name: str, ty: i64 }
 // ── Struct definition ──
 struct HirStructDef { name: str, fields: Vec<HirStructField> }
 
+// ── Enum variant definition (for enum literal layout) ──
+struct HirEnumVariantDef { name: str, fields: Vec<HirStructField> }
+
+// ── Enum definition ──
+struct HirEnumDef { name: str, variants: Vec<HirEnumVariantDef> }
+
 // ── Capture name entry (for closure captures) ──
 struct HirCapture { name: str }
 
@@ -121,6 +127,7 @@ struct HirProgram {
     type_params: Vec<i64>,  // flat: type indices for FnType params
     match_arms: Vec<HirMatchArm>,
     structs: Vec<HirStructDef>,
+    enums: Vec<HirEnumDef>,  // enum definitions for enum literal layout
     captures: Vec<HirCapture>,  // flat: closure capture names
     var_types: Vec<HirVarType>, // variable name → type index (for type inference)
 }

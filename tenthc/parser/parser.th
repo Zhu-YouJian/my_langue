@@ -1,7 +1,7 @@
 // Self-hosting Parser — v0.3.3 recursive descent
 // Uses v0.3.3 idioms: `..` defaults, for-in, tuple variants
 
-struct Expr { kind: str, ival: i64, fval: f64, sval: str, left: i64, right: i64, arg_start: i64, arg_count: i64, extra_start: i64, extra_count: i64 }
+struct Expr { kind: str, ival: i64, fval: f64, sval: str, left: i64, right: i64, arg_start: i64, arg_count: i64, extra_start: i64, extra_count: i64, name: str, variant: str }
 struct Stmt { kind: str, name: str, expr_idx: i64, body_start: i64, body_count: i64, else_start: i64, else_count: i64 }
 struct Param { name: str, type_ann: str }
 struct StructField { name: str, type_ann: str }
@@ -131,8 +131,80 @@ fn parse_primary(p: &mut Parser) -> i64 {
     };
     // Identifier (3)
     if d == 3 {
+        let name = tok.sval;
+        // Check for :: (enum variant path, ColonColon disc 60)
+        let next = parser_peek(p);
+        if next.disc == 60 {
+            parser_advance(p); // skip ::
+            let variant_tok = parser_advance(p);
+            let variant_name = variant_tok.sval;
+            // Check for ( (tuple variant with fields, LParen disc 47)
+            let next2 = parser_peek(p);
+            if next2.disc == 47 {
+                parser_advance(p); // skip (
+                let start = p.expr_nodes.len() + 1;
+                let count = parse_arg_list(p);
+                let idx = add_expr(p, "enum_literal");
+                p.expr_nodes[idx - 1].name = name;
+                p.expr_nodes[idx - 1].variant = variant_name;
+                p.expr_nodes[idx - 1].arg_start = start;
+                p.expr_nodes[idx - 1].arg_count = count;
+                return idx;
+            };
+            // Unit variant — no fields
+            let idx = add_expr(p, "enum_literal");
+            p.expr_nodes[idx - 1].name = name;
+            p.expr_nodes[idx - 1].variant = variant_name;
+            return idx;
+        };
+        // Check for { (struct literal, LBrace disc 49)
+        if next.disc == 49 {
+            parser_advance(p); // skip {
+            // First pass: parse all fields, store names and value expr indices
+            let mut field_names: Vec<str> = Vec::new();
+            let mut field_vals: Vec<i64> = Vec::new();
+            loop {
+                let t = parser_peek(p);
+                if t.disc == 50 { break; }; // RBrace
+                if t.disc == 61 { break; }; // Eof
+                // Skip .. (DotDot disc 57) — default field marker
+                if t.disc == 57 {
+                    parser_advance(p); // skip ..
+                    let t2 = parser_peek(p);
+                    if t2.disc == 53 { parser_advance(p); }; // skip ,
+                    break;
+                };
+                // Parse field: name : value
+                let field_tok = parser_advance(p);
+                let field_name = field_tok.sval;
+                let colon_tok = parser_peek(p);
+                if colon_tok.disc == 55 { parser_advance(p); }; // skip :
+                let val_idx = parse_expr(p);
+                field_names.push(field_name);
+                field_vals.push(val_idx);
+                let t2 = parser_peek(p);
+                if t2.disc == 53 { parser_advance(p); } // skip ,
+                else { break; };
+            };
+            parser_advance(p); // skip }
+            // Second pass: push field_init nodes contiguously so arg_start..arg_start+arg_count
+            // contains only field_init nodes (lowerer relies on this)
+            let start = p.expr_nodes.len() + 1;
+            let count = field_names.len();
+            for i in 0..count {
+                let fidx = add_expr(p, "field_init");
+                p.expr_nodes[fidx - 1].sval = field_names[i];
+                p.expr_nodes[fidx - 1].left = field_vals[i];
+            };
+            let idx = add_expr(p, "struct_literal");
+            p.expr_nodes[idx - 1].name = name;
+            p.expr_nodes[idx - 1].arg_start = start;
+            p.expr_nodes[idx - 1].arg_count = count;
+            return idx;
+        };
+        // Plain identifier
         let idx = add_expr(p, "ident");
-        p.expr_nodes[idx - 1].sval = tok.sval;
+        p.expr_nodes[idx - 1].sval = name;
         return idx;
     };
     // True (22)
@@ -860,15 +932,25 @@ fn parse_enum_def(p: &mut Parser) -> EnumDef {
         let t2 = parser_peek(p);
         if t2.disc == 47 {
                 parser_advance(p);
+                let mut fidx: i64 = 0;
                 loop {
                     let t3 = parser_peek(p);
                     if is_end_of_paren(t3) { break; };
                     let fname_tok = parser_advance(p);
                     let fname = fname_tok.sval;
-                    parser_advance(p); // skip :
-                    let ftype_tok = parser_advance(p);
-                    let ftype = ftype_tok.sval;
-                    vfields.push(StructField { name: fname, type_ann: ftype });
+                    // Check if next is : (named field) or ,/) (tuple field)
+                    let t_after = parser_peek(p);
+                    if t_after.disc == 55 {
+                        // Named field: name: type
+                        parser_advance(p); // skip :
+                        let ftype_tok = parser_advance(p);
+                        let ftype = ftype_tok.sval;
+                        vfields.push(StructField { name: fname, type_ann: ftype });
+                    } else {
+                        // Tuple field: type only (fname is actually the type)
+                        vfields.push(StructField { name: fname, type_ann: fname });
+                    };
+                    fidx = fidx + 1;
                     let t4 = parser_peek(p);
                     if t4.disc == 53 { parser_advance(p); }
                     else { break; };

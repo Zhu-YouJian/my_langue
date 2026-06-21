@@ -468,7 +468,8 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 15 {
-        // StructLiteral — allocate using global bump pointer
+        // StructLiteral — allocate using global bump pointer, then write fields
+        // Note: all locals are i64, so temp stores the pointer as i64
         let sname = e.name;
         let mut size: i64 = 0;
         for si in 0..hir.structs.len() {
@@ -477,17 +478,79 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 break;
             };
         };
-        // global.get $bump (idx 0) → local.tee $temp (idx = num_params)
+        // global.get $bump (i32) → i64.extend_i32_u → local.tee $temp (i64)
         wasm_global_get(out, 0);
+        wasm_i64_extend_i32_u(out);
         let temp_idx = ctx.temp_local;
         wasm_local_tee(out, temp_idx);
-        // i32.const size → i32.add → global.set $bump
+        // i32.const size → i64.extend_i32_u → i64.add → i32.wrap_i64 → global.set $bump
         wasm_i32_const(out, size);
-        wasm_i32_add(out);
-        wasm_global_set(out, 0);
-        // Return allocated address as i64
-        wasm_local_get(out, temp_idx);
         wasm_i64_extend_i32_u(out);
+        wasm_i64_add(out);
+        wasm_i32_wrap_i64(out);
+        wasm_global_set(out, 0);
+        // Write each field value at offset = field_index * 8
+        // args_start..args_start+args_count contains field values in struct definition order
+        if e.args_count > 0 {
+            let mut fi: i64 = 0;
+            while fi < e.args_count {
+                // address: local.get $temp (i64) → i32.wrap_i64
+                wasm_local_get(out, temp_idx);
+                wasm_i32_wrap_i64(out);
+                // value: compile field expression (i64)
+                compile_expr(ctx, out, hir, e.args_start + fi);
+                // i64.store at offset fi*8
+                wasm_i64_store(out, 3, fi * 8);
+                fi = fi + 1;
+            };
+        };
+        // Return allocated address as i64 (already i64 in temp)
+        wasm_local_get(out, temp_idx);
+        return;
+    };
+    if d == 16 {
+        // EnumLiteral — allocate using global bump pointer, write tuple fields
+        // Note: all locals are i64, so temp stores the pointer as i64
+        let ename = e.name;
+        let vname = e.variant;
+        // Determine size from enum variant definition
+        let mut size: i64 = 8; // default: at least 8 bytes
+        for ei in 0..hir.enums.len() {
+            if hir.enums[ei].name == ename {
+                for vi in 0..hir.enums[ei].variants.len() {
+                    if hir.enums[ei].variants[vi].name == vname {
+                        let nf = hir.enums[ei].variants[vi].fields.len();
+                        if nf > 0 { size = nf * 8; };
+                        break;
+                    };
+                };
+                break;
+            };
+        };
+        // global.get $bump (i32) → i64.extend_i32_u → local.tee $temp (i64)
+        wasm_global_get(out, 0);
+        wasm_i64_extend_i32_u(out);
+        let temp_idx = ctx.temp_local;
+        wasm_local_tee(out, temp_idx);
+        // i32.const size → i64.extend_i32_u → i64.add → i32.wrap_i64 → global.set $bump
+        wasm_i32_const(out, size);
+        wasm_i64_extend_i32_u(out);
+        wasm_i64_add(out);
+        wasm_i32_wrap_i64(out);
+        wasm_global_set(out, 0);
+        // Write each tuple field value at offset = index * 8
+        if e.args_count > 0 {
+            let mut fi: i64 = 0;
+            while fi < e.args_count {
+                wasm_local_get(out, temp_idx);
+                wasm_i32_wrap_i64(out);
+                compile_expr(ctx, out, hir, e.args_start + fi);
+                wasm_i64_store(out, 3, fi * 8);
+                fi = fi + 1;
+            };
+        };
+        // Return allocated address as i64 (already i64 in temp)
+        wasm_local_get(out, temp_idx);
         return;
     };
     if d == 18 || d == 19 {

@@ -72,7 +72,8 @@ mod three_stage {
     }
 
     fn run_test() {
-        let test_src = "fn add(a:i64,b:i64)->i64{a+b}";
+        // C4: test struct literal — check p.x + p.y field access
+        let test_src = "struct P { x: i64, y: i64 } fn add(a:i64,b:i64)->i64{let p=P{x:a,y:b,..};p.x+p.y}";
         println!("=== Stage 1: Rust compile_to_wasm ===");
         let t0 = Instant::now();
         let wasm_a = compile_selfhost_to_wasm(test_src);
