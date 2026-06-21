@@ -72,6 +72,8 @@ mod wasm_backend_minimal {
         linker.func_wrap("host", "str_cmp", |_: Caller<HostState>, _: i32, _: i32, _: i32| -> i32 { 0 }).unwrap();
         linker.func_wrap("host", "tenth_alloc", |_: Caller<HostState>, _: i32| -> i32 { 0 }).unwrap();
         linker.func_wrap("host", "compile_host", |_: Caller<HostState>, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        linker.func_wrap("host", "f64_bits", |_: Caller<HostState>, _: f64| -> i64 { 0 }).unwrap();
+        linker.func_wrap("host", "str_slice", |_: Caller<HostState>, _: i32, _: i64, _: i64| -> i32 { 0 }).unwrap();
 
         (store, linker)
     }

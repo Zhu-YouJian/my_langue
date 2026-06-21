@@ -1,14 +1,30 @@
 //! Three-stage self-hosting verification
+//!
+//! Stage 1: Rust mother compiler compiles tenthc source → WASM-A
+//! Stage 2: wasmi executes WASM-A, which compiles `fn add(a,b){a+b}` → WASM-B
+//! Stage 3: Verify WASM-B executes add(3,4) = 7
+//!
+//! This test is slow (~5 min) because wasmi interprets the full tenthc compiler.
+//! It is kept in the default test suite to catch regressions in the self-hosting
+//! pipeline. To skip it during local iteration, use `cargo test -- --skip three_stage`.
 #[cfg(test)]
 mod three_stage {
-    use wasmi::{Engine, Module, Store, Linker, Caller};
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use wasmi::{Config, Engine, Module, Store, Linker, Caller, StackLimits};
+    use tenth::compile::wasm::register_host_functions;
+    use std::time::Instant;
 
-    struct HostState {
-        vecs: Mutex<HashMap<i64, Vec<i64>>>,
-        next_vec_id: Mutex<i64>,
-        input_source: Mutex<String>,
+    /// Build a wasmi Config with enlarged stack limits for the tenthc compiler's
+    /// recursive descent parser and deep call chains.
+    fn selfhost_config() -> Config {
+        let mut config = Config::default();
+        let limits = StackLimits::new(
+            65536,       // initial_value_stack_height
+            1_048_576,   // maximum_value_stack_height (1M entries)
+            65536,       // maximum_recursion_depth
+        ).expect("valid stack limits");
+        config.set_stack_limits(limits);
+        config.compilation_mode(wasmi::CompilationMode::Eager);
+        config
     }
 
     fn compile_selfhost_to_wasm(test_source: &str) -> Vec<u8> {
@@ -25,7 +41,7 @@ mod three_stage {
             include_str!("../../tenthc/compile/wasm.th"),
         ].join("\n");
         let escaped = test_source.replace('\\', "\\\\").replace('"', "\\\"");
-        let full_src = format!("{}fn main()->Vec<i64>{{let mut lex=lexer_new(\"{}\");let tokens=lexer_tokenize(&mut lex);let program=parse_program(tokens);let hir=lower_program(program);compile_to_wasm(hir)}}", selfhost_src, escaped);
+        let full_src = format!("{}fn main()->Vec<i64>{{let mut lex=lexer_new(\"{}\");let tokens=lexer_tokenize(&mut lex);println(\"tokens_done\");let program=parse_program(tokens);println(\"parsed\");let hir=lower_program(program);println(\"lowered\");let wasm=compile_to_wasm(hir);println(\"compiled\");wasm}}", selfhost_src, escaped);
         let mut lexer = Lexer::new(&full_src);
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = Parser::new(tokens);
@@ -35,52 +51,65 @@ mod three_stage {
         compile::compile_to_wasm(&hir).expect("compile")
     }
 
+    /// Read a Vec<i64> from WASM memory given its pointer.
+    /// Vec layout: cap(8) + len(8) + data_ptr(4) + data...
+    fn read_vec_from_memory(store: &Store<u32>, mem: &wasmi::Memory, vec_ptr: i64) -> Vec<u8> {
+        let data = mem.data(store);
+        let vp = vec_ptr as i32 as usize;
+        if vp + 20 > data.len() {
+            return Vec::new();
+        }
+        let len = i64::from_le_bytes(data[vp+8..vp+16].try_into().unwrap());
+        let dp = i32::from_le_bytes(data[vp+16..vp+20].try_into().unwrap()) as usize;
+        let mut bytes = Vec::with_capacity(len as usize);
+        for i in 0..len as usize {
+            let pos = dp + i * 8;
+            if pos + 8 > data.len() { break; }
+            let val = i64::from_le_bytes(data[pos..pos+8].try_into().unwrap());
+            bytes.push(val as u8);
+        }
+        bytes
+    }
+
     fn run_test() {
         let test_src = "fn add(a:i64,b:i64)->i64{a+b}";
         println!("=== Stage 1: Rust compile_to_wasm ===");
+        let t0 = Instant::now();
         let wasm_a = compile_selfhost_to_wasm(test_src);
-        println!("WASM-A: {} bytes", wasm_a.len());
+        println!("WASM-A: {} bytes (compiled in {:?})", wasm_a.len(), t0.elapsed());
         assert_eq!(&wasm_a[..4], b"\0asm");
 
         println!("=== Stage 2: wasmi executes compiler ===");
-        let engine = Engine::default();
+        let t1 = Instant::now();
+        let config = selfhost_config();
+        let engine = Engine::new(&config);
         let module = Module::new(&engine, &wasm_a).expect("compile");
-        let state = HostState { vecs: Mutex::new(HashMap::new()), next_vec_id: Mutex::new(1), input_source: Mutex::new(test_src.to_string()) };
-        let mut store = Store::new(&engine, state);
+        // Store state is the bump-allocator offset (same as run_wasm_module).
+        let mut store = Store::new(&engine, 8192u32);
         let mut linker = Linker::new(&engine);
-        
-        // Rust wasm.rs uses module "host" with these exact imports
-        linker.func_wrap("host", "println",     |_: Caller<HostState>, _: i32| {}).unwrap();
-        linker.func_wrap("host", "write_file",  |_: Caller<HostState>, _: i32, _: i32| {}).unwrap();
-        linker.func_wrap("host", "read_file",   |_: Caller<HostState>, _: i32| -> i32 { 0 }).unwrap();
-        linker.func_wrap("host", "str_add",     |_: Caller<HostState>, _: i32, _: i32| -> i32 { 0 }).unwrap();
-        linker.func_wrap("host", "str_eq",      |_: Caller<HostState>, _: i32, _: i32| -> i32 { 0 }).unwrap();
-        linker.func_wrap("host", "str_int",     |_: Caller<HostState>, _: i64| -> i32 { 0 }).unwrap();
-        linker.func_wrap("host", "str_len",     |_: Caller<HostState>, _: i32| -> i32 { 0 }).unwrap();
-        linker.func_wrap("host", "str_at",      |_: Caller<HostState>, _: i32, _: i64| -> i32 { 0 }).unwrap();
-        linker.func_wrap("host", "str_cmp",     |_: Caller<HostState>, _: i32, _: i32, _: i32| -> i32 { 0 }).unwrap();
-        linker.func_wrap("host", "tenth_alloc", |_: Caller<HostState>, _: i32| -> i32 { 0 }).unwrap();
-        linker.func_wrap("host", "Vec_new",     |c: Caller<HostState>| -> i64 { let s=c.data(); let mut i=s.next_vec_id.lock().unwrap(); let v=*i; *i+=1; s.vecs.lock().unwrap().insert(v,Vec::new()); v }).unwrap();
-        linker.func_wrap("host", "Vec_push",    |c: Caller<HostState>, p: i64, v: i64| -> i64 { if let Some(vv)=c.data().vecs.lock().unwrap().get_mut(&p) { vv.push(v); } 0 }).unwrap();
-        linker.func_wrap("host", "Vec_len",     |c: Caller<HostState>, p: i64| -> i64 { c.data().vecs.lock().unwrap().get(&p).map(|v|v.len() as i64).unwrap_or(0) }).unwrap();
-        linker.func_wrap("host", "Vec_get",     |c: Caller<HostState>, p: i64, i: i64| -> i64 { c.data().vecs.lock().unwrap().get(&p).and_then(|v|v.get(i as usize).copied()).unwrap_or(0) }).unwrap();
-        linker.func_wrap("host", "compile_host",|_: Caller<HostState>, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        register_host_functions(&mut linker).expect("register host functions");
 
         let inst = linker.instantiate(&mut store, &module).expect("inst").start(&mut store).expect("start");
         let main_fn = inst.get_func(&store, "main").expect("main");
+        // main returns Vec<i64> which compile_main wraps to i32 (pointer)
         let mut r = [wasmi::Val::I32(0)];
         main_fn.call(&mut store, &[], &mut r).expect("call main");
-        let out_id = match r[0] { wasmi::Val::I32(v) => v as i64, _ => panic!() };
-        let wasm_b: Vec<u8> = store.data().vecs.lock().unwrap().get(&out_id).map(|v| v.iter().map(|&b| b as u8).collect()).unwrap_or_default();
-        println!("WASM-B: {} bytes", wasm_b.len());
+        let vec_ptr = match r[0] {
+            wasmi::Val::I32(v) => v as i64,
+            wasmi::Val::I64(v) => v,
+            _ => panic!("expected i32/i64 return from main, got {:?}", r[0]),
+        };
+        let mem = inst.get_memory(&store, "memory").expect("memory");
+        let wasm_b = read_vec_from_memory(&store, &mem, vec_ptr);
+        println!("WASM-B: {} bytes (stage 2 took {:?})", wasm_b.len(), t1.elapsed());
 
         println!("=== Stage 3: Verify output WASM ===");
-        assert!(!wasm_b.is_empty() && &wasm_b[..4] == b"\0asm");
+        assert!(!wasm_b.is_empty() && &wasm_b[..4] == b"\0asm", "WASM-B must be non-empty and have valid magic");
         let e2 = Engine::default();
-        let m2 = Module::new(&e2, &wasm_b).expect("compile");
+        let m2 = Module::new(&e2, &wasm_b).expect("compile wasm-b");
         let mut s2 = Store::new(&e2, ());
         let mut l2 = Linker::new(&e2);
-        // Tenth wasm.th uses module "env" with 15 imports
+        // tenthc wasm.th uses module "env" with 15 imports
         l2.func_wrap("env", "println", |_: Caller<()>, _: i64| {}).unwrap();
         l2.func_wrap("env", "vec_new", |_: Caller<()>| -> i64 { 0 }).unwrap();
         l2.func_wrap("env", "vec_len", |_: Caller<()>, _: i64| -> i64 { 0 }).unwrap();
@@ -105,8 +134,14 @@ mod three_stage {
     }
 
     #[test]
-    #[ignore] // Stage 2 works but wasmi is slow (~5min for full compile)
     fn three_stage_selfhost() {
-        std::thread::Builder::new().stack_size(64*1024*1024).spawn(run_test).unwrap().join().unwrap();
+        // 128MB stack to accommodate wasmi's interpreter overhead when running
+        // the full tenthc compiler (lexer/parser/lowerer/codegen) in WASM.
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(run_test)
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

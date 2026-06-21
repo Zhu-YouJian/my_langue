@@ -105,7 +105,7 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
     if kind == "bool" {
         let ty = add_type(p, 0, 4, "", 0, 0, 0);
-        return push_expr(p, 2, 0, 0.0, "", e.ival != 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
+        return push_expr(p, 2, 0, 0.0, "", e.ival != 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
     };
     if kind == "str" {
         let ty = add_type(p, 0, 5, "", 0, 0, 0);

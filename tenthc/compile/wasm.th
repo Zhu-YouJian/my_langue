@@ -1177,7 +1177,7 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
 
     // Import 12: env.str_len (type 7: (i32)->i32)
     import_sec.push(3); push_str_bytes(&mut import_sec, "env");
-    leb128_u(8, &mut import_sec); push_str_bytes(&mut import_sec, "str_len");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_len");
     import_sec.push(0); leb128_u(7, &mut import_sec);
 
     // Import 13: env.str_at (type 8: (i32,i64)->i32)

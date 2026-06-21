@@ -57,7 +57,7 @@ fn field_size_and_type(ty: &Type) -> (u32, ValType) {
 // ── Compiler state ─────────────────────────────────────────────────────────
 
 /// First user-function index (after all host imports).
-const IMPORT_COUNT: u32 = 15; // 0-11 original + str_len(12) + str_at(13) + str_cmp(14)
+const IMPORT_COUNT: u32 = 17; // 0-11 original + str_len(12) + str_at(13) + str_cmp(14) + f64_bits(15) + str_slice(16)
 
 pub struct WasmCompiler {
     type_cache: HashMap<(Vec<ValType>, Vec<ValType>), u32>,
@@ -72,6 +72,9 @@ pub struct WasmCompiler {
     local_count: u32,
     /// Number of function parameters (params use correct WASM types, not i64)
     param_count: u32,
+    /// Stack of If-block depths, one entry per enclosing loop.
+    /// Break emits Br(1 + top), Continue emits Br(top).
+    if_depths: Vec<u32>,
 }
 
 impl WasmCompiler {
@@ -86,6 +89,7 @@ impl WasmCompiler {
             local_map: HashMap::new(),
             local_count: 0,
             param_count: 0,
+            if_depths: Vec::new(),
         }
     }
 
@@ -202,6 +206,8 @@ impl WasmCompiler {
         reg(vec![ValType::I32], vec![ValType::I32]);                        // 12: str_len
         reg(vec![ValType::I32, ValType::I64], vec![ValType::I32]);          // 13: str_at
         reg(vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32]); // 14: str_cmp(op, a, b) -> bool
+        reg(vec![ValType::F64], vec![ValType::I64]);                            // 15: f64_bits(f64) -> i64
+        reg(vec![ValType::I32, ValType::I64, ValType::I64], vec![ValType::I32]); // 16: str_slice(ptr, start, end) -> ptr
         for func in &program.functions {
             let p: Vec<ValType> = func.params.iter().filter_map(|(_, t)| to_val_type(t)).collect();
             let r: Vec<ValType> = to_val_type(&func.return_type).into_iter().collect();
@@ -233,6 +239,8 @@ impl WasmCompiler {
         imports.import("host", "str_len", EntityType::Function(ti(vec![ValType::I32], vec![ValType::I32])));
         imports.import("host", "str_at", EntityType::Function(ti(vec![ValType::I32, ValType::I64], vec![ValType::I32])));
         imports.import("host", "str_cmp", EntityType::Function(ti(vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I32])));
+        imports.import("host", "f64_bits", EntityType::Function(ti(vec![ValType::F64], vec![ValType::I64])));
+        imports.import("host", "str_slice", EntityType::Function(ti(vec![ValType::I32, ValType::I64, ValType::I64], vec![ValType::I32])));
         module.section(&imports);
     }
 
@@ -302,7 +310,7 @@ impl WasmCompiler {
             self.local_count += 1;
         }
         self.param_count = self.local_count; // parameters use correct types
-        let locals: Vec<ValType> = (0..64).map(|_| ValType::I64).collect();
+        let locals: Vec<ValType> = (0..256).map(|_| ValType::I64).collect();
         let mut body = Function::new_with_locals_types(locals);
         self.compile_expr(&mut body, &func.body)?;
         if matches!(&func.return_type, Type::Base(BaseType::Unit)) {
@@ -315,7 +323,7 @@ impl WasmCompiler {
     fn compile_main(&mut self, program: &HirProgram) -> TenthResult<Function> {
         self.local_map.clear();
         self.local_count = 0;
-        let locals: Vec<ValType> = (0..16).map(|_| ValType::I64).collect();
+        let locals: Vec<ValType> = (0..256).map(|_| ValType::I64).collect();
         let mut body = Function::new_with_locals_types(locals);
         if let Some(ref expr) = program.main_expr {
             self.compile_expr(&mut body, expr)?;
@@ -503,6 +511,13 @@ impl WasmCompiler {
                     "Vec::new" | "Vec_new" => {
                         body.instruction(&Instruction::Call(7)); // Vec_new() -> i64
                     }
+                    "f64_bits" => {
+                        // f64_bits(f64) -> i64: reinterpret f64 bit pattern as i64
+                        if let Some(a) = args.first() {
+                            self.compile_expr(body, a)?;
+                        }
+                        body.instruction(&Instruction::Call(15));
+                    }
                     _ => {
                         for a in args { self.compile_expr(body, a)?; }
                         body.instruction(&Instruction::Call(self.resolve_func(&fname)?));
@@ -527,6 +542,9 @@ impl WasmCompiler {
                 } else {
                     body.instruction(&Instruction::If(BlockType::Empty));
                 }
+                // Track If depth inside loops so Break/Continue emit correct Br depth.
+                let in_loop = !self.if_depths.is_empty();
+                if in_loop { *self.if_depths.last_mut().unwrap() += 1; }
                 self.compile_expr(body, then_branch)?;
                 // If the If block is Empty but then_branch produces a value, drop it.
                 if !has_value && !matches!(&then_branch.ty, Type::Base(BaseType::Unit)) {
@@ -540,6 +558,7 @@ impl WasmCompiler {
                     }
                 }
                 body.instruction(&Instruction::End);
+                if in_loop { *self.if_depths.last_mut().unwrap() -= 1; }
             }
 
             HirExprKind::Assign { target, value } => {
@@ -567,7 +586,9 @@ impl WasmCompiler {
                 body.instruction(&Instruction::I32Const(sz as i32));
                 body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32
                 body.instruction(&Instruction::I64ExtendI32U);
-                let tmp = if self.local_count > 0 { self.local_count } else { 1 };
+                // Save in a freshly-allocated temp local so nested exprs don't clobber it
+                let tmp = self.local_count;
+                self.local_count += 1;
                 body.instruction(&Instruction::LocalSet(tmp));
                 let layout = self.struct_layouts.get(&layout_key).cloned()
                     .ok_or_else(|| TenthError::RuntimeError {
@@ -595,8 +616,9 @@ impl WasmCompiler {
                 body.instruction(&Instruction::I32Const(sz as i32));
                 body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32
                 body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
-                // Save in temp, then push copy for result
-                let tmp = if self.local_count > 0 { self.local_count } else { 1 };
+                // Save in a freshly-allocated temp local so nested exprs don't clobber it
+                let tmp = self.local_count;
+                self.local_count += 1;
                 body.instruction(&Instruction::LocalSet(tmp));
                 let layout = self.struct_layouts.get(name).cloned()
                     .ok_or_else(|| TenthError::RuntimeError {
@@ -732,16 +754,58 @@ impl WasmCompiler {
             }
 
             HirExprKind::Index { target, indices } => {
-                // String indexing: target is a string pointer (i32 after conversion)
+                // Distinguish String indexing (str_at) from Vec indexing (vec_get)
+                // based on the target's type. Unknown types default to vec_get
+                // since Vec indexing is far more common in tenthc.
+                let is_string = matches!(&target.ty, Type::Base(BaseType::Str));
                 self.compile_expr(body, target)?;
-                body.instruction(&Instruction::I32WrapI64); // pointer i64 -> i32
-                if let Some(Index::Single(idx)) = indices.first() {
-                    self.compile_expr(body, idx)?; // compile index expression (i64)
-                } else {
-                    body.instruction(&Instruction::I64Const(0));
+                if is_string {
+                    // String pointer is stored as i64; str_at expects i32
+                    body.instruction(&Instruction::I32WrapI64);
                 }
-                body.instruction(&Instruction::Call(13)); // str_at(i32, i64) -> i32
-                body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
+                // For Vec: target stays as i64 (vec ptr) for vec_get
+                match indices.first() {
+                    Some(Index::Single(idx)) => {
+                        self.compile_expr(body, idx)?; // compile index expression (i64)
+                        if is_string {
+                            body.instruction(&Instruction::Call(13)); // str_at(i32, i64) -> i32
+                            body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
+                        } else {
+                            body.instruction(&Instruction::Call(10)); // vec_get(i64, i64) -> i64
+                        }
+                    }
+                    Some(Index::Range { start, end }) => {
+                        // String slice: s[start..end] -> str_slice(ptr, start, end) -> ptr
+                        if !is_string {
+                            return Err(TenthError::RuntimeError {
+                                message: "WASM: Vec range slicing not yet supported".to_string(),
+                            });
+                        }
+                        if let Some(s) = start {
+                            self.compile_expr(body, s)?;
+                        } else {
+                            body.instruction(&Instruction::I64Const(0));
+                        }
+                        if let Some(e) = end {
+                            self.compile_expr(body, e)?;
+                        } else {
+                            // No end: use string length — push a sentinel and let host handle it
+                            // For now, push a large value; the host will clamp to strlen
+                            body.instruction(&Instruction::I64Const(i64::MAX));
+                        }
+                        body.instruction(&Instruction::Call(16)); // str_slice(i32, i64, i64) -> i32
+                        body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
+                    }
+                    _ => {
+                        body.instruction(&Instruction::I64Const(0));
+                        if is_string {
+                            body.instruction(&Instruction::Call(13)); // str_at fallback
+                            body.instruction(&Instruction::I64ExtendI32U);
+                        } else {
+                            body.instruction(&Instruction::Call(10)); // vec_get fallback
+                        }
+                    }
+                }
             }
 
             _ => return Err(TenthError::RuntimeError {
@@ -784,14 +848,17 @@ impl WasmCompiler {
                 }
             }
             HirStmtKind::Loop { body: lb } => {
+                self.if_depths.push(0);
                 body.instruction(&Instruction::Block(BlockType::Empty));
                 body.instruction(&Instruction::Loop(BlockType::Empty));
                 for s in lb { self.compile_stmt(body, s)?; }
                 body.instruction(&Instruction::Br(0));
                 body.instruction(&Instruction::End);
                 body.instruction(&Instruction::End);
+                self.if_depths.pop();
             }
             HirStmtKind::While { cond, body: lb } => {
+                self.if_depths.push(0);
                 body.instruction(&Instruction::Block(BlockType::Empty));
                 body.instruction(&Instruction::Loop(BlockType::Empty));
                 self.compile_expr(body, cond)?;
@@ -801,6 +868,7 @@ impl WasmCompiler {
                 body.instruction(&Instruction::Br(0));
                 body.instruction(&Instruction::End);
                 body.instruction(&Instruction::End);
+                self.if_depths.pop();
             }
             HirStmtKind::Return(expr) => {
                 if let Some(e) = expr {
@@ -808,8 +876,70 @@ impl WasmCompiler {
                 }
                 body.instruction(&Instruction::Return);
             }
-            HirStmtKind::Break => { body.instruction(&Instruction::Br(1)); }
-            HirStmtKind::Continue => { body.instruction(&Instruction::Br(0)); }
+            HirStmtKind::Break => {
+                let depth = 1 + self.if_depths.last().copied().unwrap_or(0);
+                body.instruction(&Instruction::Br(depth));
+            }
+            HirStmtKind::Continue => {
+                let depth = self.if_depths.last().copied().unwrap_or(0);
+                body.instruction(&Instruction::Br(depth));
+            }
+            HirStmtKind::For { var, iter, body: lb } => {
+                // Only Range iterators are supported (for x in start..end { ... })
+                match &iter.kind {
+                    HirExprKind::Range { start, end, inclusive } => {
+                        // Allocate local for the loop variable
+                        let var_local = self.local_count;
+                        self.local_map.insert(var.clone(), var_local);
+                        self.local_count += 1;
+
+                        // var = start (default 0)
+                        if let Some(s) = start {
+                            self.compile_expr(body, s)?;
+                        } else {
+                            body.instruction(&Instruction::I64Const(0));
+                        }
+                        body.instruction(&Instruction::LocalSet(var_local));
+
+                        self.if_depths.push(0);
+                        // block (break target) + loop (continue/back-edge target)
+                        body.instruction(&Instruction::Block(BlockType::Empty));
+                        body.instruction(&Instruction::Loop(BlockType::Empty));
+
+                        // condition: var < end (or var <= end if inclusive)
+                        body.instruction(&Instruction::LocalGet(var_local));
+                        if let Some(e) = end {
+                            self.compile_expr(body, e)?;
+                        } else {
+                            body.instruction(&Instruction::I64Const(i64::MAX));
+                        }
+                        if *inclusive {
+                            body.instruction(&Instruction::I64LeS);
+                        } else {
+                            body.instruction(&Instruction::I64LtS);
+                        }
+                        body.instruction(&Instruction::I32Eqz);
+                        body.instruction(&Instruction::BrIf(1)); // exit block when condition false
+
+                        // loop body
+                        self.compile_stmt(body, lb.as_ref())?;
+
+                        // var += 1
+                        body.instruction(&Instruction::LocalGet(var_local));
+                        body.instruction(&Instruction::I64Const(1));
+                        body.instruction(&Instruction::I64Add);
+                        body.instruction(&Instruction::LocalSet(var_local));
+
+                        body.instruction(&Instruction::Br(0)); // back-edge to loop header
+                        body.instruction(&Instruction::End); // loop
+                        body.instruction(&Instruction::End); // block
+                        self.if_depths.pop();
+                    }
+                    _ => return Err(TenthError::RuntimeError {
+                        message: format!("WASM: For 循环仅支持 Range 迭代器, got {:?}", iter.kind),
+                    }),
+                }
+            }
             _ => return Err(TenthError::RuntimeError {
                 message: format!("WASM: 不支持的语句 {:?}", stmt.kind),
             }),
@@ -994,16 +1124,9 @@ impl WasmCompiler {
 
 use wasmi::{Engine, Store, Linker, Caller};
 
-/// Execute a WASM bytecode module in-process using wasmi.
-pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
-    let engine = Engine::default();
-    let module = wasmi::Module::new(&engine, wasm_bytes).map_err(|e| {
-        TenthError::RuntimeError { message: format!("WASM 模块解析错误：{}", e) }
-    })?;
-
-    let mut store = Store::new(&engine, 8192u32);
-    let mut linker = Linker::new(&engine);
-
+/// Register all host imports (module "host") on the given linker.
+/// The store state must be a `u32` representing the bump-allocator offset.
+pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
     linker.func_wrap("host", "println", |caller: Caller<'_, u32>, ptr: i32| {
         let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
         let data = mem.data(&caller);
@@ -1118,6 +1241,14 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
     linker.func_wrap("host", "Vec_new",
         |mut caller: Caller<'_, u32>| -> i64 {
             let ptr = *caller.data();
+            // Zero-initialize the Vec header (cap=0, len=0, dp=0) so that
+            // Vec_push correctly triggers the first allocation.
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let data = mem.data_mut(&mut caller);
+            let p = ptr as usize;
+            data[p..p+8].copy_from_slice(&0i64.to_le_bytes());       // cap
+            data[p+8..p+16].copy_from_slice(&0i64.to_le_bytes());    // len
+            data[p+16..p+20].copy_from_slice(&0i32.to_le_bytes());   // dp
             *caller.data_mut() = ptr + 24;
             ptr as i64
     }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
@@ -1167,6 +1298,13 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
                 let new_sz = nc as usize * 8;
                 let np = *caller.data();
                 *caller.data_mut() = np + new_sz as u32;
+                // Copy old data from dp to new allocation (if any)
+                if dp != 0 && len > 0 {
+                    let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+                    let data = mem.data_mut(&mut caller);
+                    let old_sz = len as usize * 8;
+                    data.copy_within(dp as usize..dp as usize + old_sz, np as usize);
+                }
                 (nc, np as i32)
             } else {
                 (cap, dp)
@@ -1278,6 +1416,58 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
             };
             result as i32
     }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+
+    // f64_bits(f64) -> i64: convert f64 to its IEEE 754 bit representation
+    linker.func_wrap("host", "f64_bits",
+        |val: f64| -> i64 {
+            val.to_bits() as i64
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+
+    // str_slice(ptr: i32, start: i64, end: i64) -> i32: allocate new string s[start..end]
+    linker.func_wrap("host", "str_slice",
+        |mut caller: Caller<'_, u32>, ptr: i32, start: i64, end: i64| -> i32 {
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            // Phase 1: read source slice into an owned Vec so the immutable
+            // borrow of `caller` ends before any mutable operation below.
+            let slice_bytes: Vec<u8> = {
+                let data = mem.data(&caller);
+                let off = ptr as usize;
+                let slen = data[off..].iter().position(|&b| b == 0).unwrap_or(0);
+                let s = start.max(0) as usize;
+                let e = if end >= i64::MAX { slen } else { end.max(0) as usize };
+                let s = s.min(slen);
+                let e = e.min(slen).max(s);
+                data[off + s..off + e].to_vec()
+            };
+            let slice_len = slice_bytes.len();
+            // Phase 2: bump-allocate and write the slice.
+            let np = *caller.data();
+            let needed = np as usize + slice_len + 1;
+            let current_len = mem.data(&caller).len();
+            if needed > current_len {
+                let pages = ((needed - current_len + 65535) / 65536) as u32;
+                mem.grow(&mut caller, pages).ok();
+            }
+            *caller.data_mut() = np + slice_len as u32 + 1;
+            let d = mem.data_mut(&mut caller);
+            d[np as usize..np as usize + slice_len].copy_from_slice(&slice_bytes);
+            d[np as usize + slice_len] = 0;
+            np as i32
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+
+    Ok(())
+}
+
+/// Execute a WASM bytecode module in-process using wasmi.
+pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
+    let engine = Engine::default();
+    let module = wasmi::Module::new(&engine, wasm_bytes).map_err(|e| {
+        TenthError::RuntimeError { message: format!("WASM 模块解析错误：{}", e) }
+    })?;
+
+    let mut store = Store::new(&engine, 8192u32);
+    let mut linker = Linker::new(&engine);
+    register_host_functions(&mut linker)?;
 
     let instance = linker.instantiate(&mut store, &module)
         .and_then(|pre| pre.start(&mut store))

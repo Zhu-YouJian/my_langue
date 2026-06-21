@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::error::{TenthError, TenthResult};
 use crate::lexer::token::Span;
 use crate::parser::ast as ast;
+use crate::parser::ast::{ExprKind, StmtKind};
 use super::hir::*;
 use super::types::*;
 
@@ -105,6 +106,26 @@ impl Scope {
         self.ownership.insert(name, Ownership::Owned);
     }
 
+    /// Release all shared and exclusive borrows in the current scope.
+    ///
+    /// The borrow checker does not implement NLL or two-phase borrows, so without
+    /// this, any `&x` or `&mut x` permanently marks `x` as borrowed for the rest
+    /// of the enclosing scope. Releasing borrows after each statement and after
+    /// sub-expressions like `if` conditions is a pragmatic approximation that
+    /// allows common patterns like `if peek(&p).disc == 54 { advance(&mut p); }`
+    /// while still catching double-mut-borrow within a single expression.
+    /// `Moved` state is preserved so use-after-move is still detected.
+    fn release_borrows(&mut self) {
+        for (_, state) in self.ownership.iter_mut() {
+            match state {
+                Ownership::SharedRef(_) | Ownership::ExclusiveRef => {
+                    *state = Ownership::Owned;
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn define_fn(&mut self, name: String, params: Vec<(String, Type)>, ret: Type) {
         self.functions.insert(name, (params, ret));
     }
@@ -136,6 +157,18 @@ pub struct Lowerer {
 }
 
 impl Lowerer {
+    /// Returns true if the statement is a `let` with a direct reference initializer
+    /// (e.g., `let r = &x;` or `let m = &mut x;`), which creates a persistent
+    /// borrow that should NOT be released after the statement.
+    fn creates_persistent_borrow(stmt: &ast::Stmt) -> bool {
+        match &stmt.kind {
+            StmtKind::Let { init: Some(init), .. } => {
+                matches!(init.kind, ExprKind::Ref(_) | ExprKind::MutRef(_))
+            }
+            _ => false
+        }
+    }
+
     pub fn new() -> Self {
         let mut scope = Scope::new();
         scope.define_fn(
@@ -539,8 +572,14 @@ impl Lowerer {
 
             ExprKind::If { cond, then_branch, else_branch } => {
                 let c = self.lower_expr(cond)?;
+                // Release borrows from the condition so the body can reborrow.
+                // Without this, `if peek(&p).disc == 54 { advance(&mut p); }` fails
+                // because the condition's shared borrow of `p` persists into the body.
+                self.scope.release_borrows();
                 let t = self.lower_expr(then_branch)?;
+                self.scope.release_borrows();
                 let e = else_branch.as_ref().map(|eb| self.lower_expr(eb)).transpose()?;
+                self.scope.release_borrows();
                 let ty = if let Some(ref eb) = e {
                     eb.ty.clone()
                 } else {
@@ -553,9 +592,16 @@ impl Lowerer {
                 let inner_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
                 self.scope = inner_scope;
 
-                let lowered_stmts: Vec<HirStmt> = stmts.iter()
-                    .map(|s| self.lower_stmt(s))
-                    .collect::<TenthResult<_>>()?;
+                let mut lowered_stmts: Vec<HirStmt> = Vec::new();
+                for s in stmts {
+                    let lowered = self.lower_stmt(s)?;
+                    // Release borrows after each statement, unless the statement
+                    // creates a persistent borrow (e.g., `let r = &x;`).
+                    if !Self::creates_persistent_borrow(s) {
+                        self.scope.release_borrows();
+                    }
+                    lowered_stmts.push(lowered);
+                }
 
                 let final_expr = lowered_stmts.last().and_then(|s| match &s.kind {
                     HirStmtKind::Expr(e) => Some(e.clone()),
@@ -743,6 +789,8 @@ impl Lowerer {
 
             ExprKind::Match { scrutinee, arms } => {
                 let lowered_scrutinee = self.lower_expr(scrutinee)?;
+                // Release borrows from the scrutinee so arms can reborrow.
+                self.scope.release_borrows();
                 let lowered_arms: Vec<HirMatchArm> = arms.iter()
                     .map(|arm| {
                         let hir_pattern = self.lower_pattern(&arm.pattern)?;
@@ -958,6 +1006,21 @@ impl Lowerer {
                     Type::Tensor { dtype: dtype.clone(), dims: remaining }
                 }
             }
+            // Vec<T> or [T] indexing returns the element type T
+            Type::Array(inner) => self.resolve_struct_type((**inner).clone()),
+            Type::Generic { base, args } => {
+                // Vec<T> -> T
+                if let Type::TypeParam { name } = base.as_ref() {
+                    if name == "Vec" {
+                        return args.first()
+                            .map(|t| self.resolve_struct_type(t.clone()))
+                            .unwrap_or(Type::Unknown);
+                    }
+                }
+                Type::Unknown
+            }
+            // String indexing (s[i] or s[a..b]) returns a String (char or slice)
+            Type::Base(BaseType::Str) => Type::Base(BaseType::Str),
             // For non-tensor types (Vec, etc.), we don't track element types
             _ => Type::Unknown,
         }
@@ -1151,11 +1214,15 @@ impl Lowerer {
             }
             StmtKind::While { cond, body } => {
                 let c = self.lower_expr(cond)?;
+                // Release borrows from the condition so the body can reborrow.
+                self.scope.release_borrows();
                 let b = self.lower_stmt(body)?;
                 HirStmtKind::While { cond: c, body: Box::new(b) }
             }
             StmtKind::For { var, iter, body } => {
                 let it = self.lower_expr(iter)?;
+                // Release borrows from the iterator expression so the body can reborrow.
+                self.scope.release_borrows();
                 // Push loop variable into scope so body can reference it
                 let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
                 self.scope = body_scope;
@@ -1167,9 +1234,14 @@ impl Lowerer {
             StmtKind::Break => HirStmtKind::Break,
             StmtKind::Continue => HirStmtKind::Continue,
             StmtKind::Loop { body } => {
-                let lowered_body: Vec<HirStmt> = body.iter()
-                    .map(|s| self.lower_stmt(s))
-                    .collect::<TenthResult<_>>()?;
+                let mut lowered_body: Vec<HirStmt> = Vec::new();
+                for s in body {
+                    let lowered = self.lower_stmt(s)?;
+                    if !Self::creates_persistent_borrow(s) {
+                        self.scope.release_borrows();
+                    }
+                    lowered_body.push(lowered);
+                }
                 HirStmtKind::Loop { body: lowered_body }
             }
 
