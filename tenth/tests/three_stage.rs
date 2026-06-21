@@ -1,10 +1,10 @@
 //! Three-stage self-hosting verification
 //!
 //! Stage 1: Rust mother compiler compiles tenthc source → WASM-A
-//! Stage 2: wasmi executes WASM-A, which compiles `fn add(a,b){a+b}` → WASM-B
-//! Stage 3: Verify WASM-B executes add(3,4) = 7
+//! Stage 2: wasmi executes WASM-A, which compiles a test program → WASM-B
+//! Stage 3: Verify WASM-B executes correctly
 //!
-//! This test is slow (~5 min) because wasmi interprets the full tenthc compiler.
+//! This test is slow (~1s) because wasmi interprets the full tenthc compiler.
 //! It is kept in the default test suite to catch regressions in the self-hosting
 //! pipeline. To skip it during local iteration, use `cargo test -- --skip three_stage`.
 #[cfg(test)]
@@ -72,8 +72,8 @@ mod three_stage {
     }
 
     fn run_test() {
-        // C4: test passing struct as function argument
-        let test_src = "struct S { a: i64, b: i64 } fn make_s(x: i64, y: i64) -> S { S { a: x, b: y, .. } } fn get_b(s: S) -> i64 { s.b } fn add(a: i64, b: i64) -> i64 { a + get_b(make_s(a, b)) }";
+        // C4: test for loop through bootstrap pipeline
+        let test_src = "fn add(a: i64, b: i64) -> i64 { let mut s: i64 = 0; for i in 0..b { s = s + a; }; s }";
         println!("=== Stage 1: Rust compile_to_wasm ===");
         let t0 = Instant::now();
         let wasm_a = compile_selfhost_to_wasm(test_src);
@@ -128,9 +128,9 @@ mod three_stage {
         let mut r2 = [wasmi::Val::I64(0)];
         add.call(&mut s2, &[wasmi::Val::I64(3), wasmi::Val::I64(4)], &mut r2).expect("call");
         let result = match r2[0] { wasmi::Val::I64(v) => v, _ => panic!() };
-        println!("=== Result: add(3,4) = {} (expected 7) ===", result);
-        assert_eq!(result, 7);
-        println!("=== VERIFIED: struct argument passing works ===");
+        println!("=== Result: add(3,4) = {} (expected 12) ===", result);
+        assert_eq!(result, 12);
+        println!("=== VERIFIED: for loop works through bootstrap ===");
     }
 
     #[test]

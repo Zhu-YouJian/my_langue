@@ -649,7 +649,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         // Block — compile statements, then final expr
         if e.stmts_count > 0 {
             for s in e.stmts_start..(e.stmts_start + e.stmts_count) {
-                compile_stmt(ctx, out, hir, s);
+                compile_stmt(ctx, out, hir, hir.stmt_list[s - 1]);
             };
         };
         return;
@@ -849,7 +849,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                     if parsed {
                         wasm_i64_const(out, variant_val);
                         wasm_i64_eq(out);
-                        wasm_i64_eqz(out); // invert: br_if skips body if NOT equal
+                        wasm_i32_eqz(out); // invert: i64.eq returns i32, use i32.eqz; br_if skips body if NOT equal
                         wasm_br_if(out, 0); // skip inner block if not matching
                         compile_expr(ctx, out, hir, arm.body_expr);
                         wasm_br(out, 1); // jump to outer block end with result
@@ -975,17 +975,17 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 3 {
-        // While — WASM: block $break { loop $continue { cond; i64.eqz; br_if $break; body; br $continue; } }
+        // While — WASM: block $break { loop $continue { cond; i32.eqz; br_if $break; body; br $continue; } }
         wasm_block(out, 64);
         wasm_loop(out, 64);
         if s.cond > 0 {
             compile_expr(ctx, out, hir, s.cond);
-            wasm_i64_eqz(out);
+            wasm_i32_eqz(out);
             wasm_br_if(out, 1); // break to block (label idx 1 = outer block)
         };
         if s.body_count > 0 {
             for bi in s.body_start..(s.body_start + s.body_count) {
-                compile_stmt(ctx, out, hir, bi);
+                compile_stmt(ctx, out, hir, hir.body_list[bi - 1]);
             };
         };
         wasm_br(out, 0); // continue loop
@@ -999,7 +999,7 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_loop(out, 64);
         if s.body_count > 0 {
             for bi in s.body_start..(s.body_start + s.body_count) {
-                compile_stmt(ctx, out, hir, bi);
+                compile_stmt(ctx, out, hir, hir.body_list[bi - 1]);
             };
         };
         wasm_br(out, 0); // continue loop
@@ -1039,12 +1039,12 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 } else {
                     wasm_i64_lt_s(out);
                 };
-                wasm_i64_eqz(out);
+                wasm_i32_eqz(out);
                 wasm_br_if(out, 1); // break if !(cond)
                 // body
                 if s.body_count > 0 {
                     for bi in s.body_start..(s.body_start + s.body_count) {
-                        compile_stmt(ctx, out, hir, bi);
+                        compile_stmt(ctx, out, hir, hir.body_list[bi - 1]);
                     };
                 };
                 // i += 1
