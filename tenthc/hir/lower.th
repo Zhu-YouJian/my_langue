@@ -124,9 +124,11 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         let mut prev = lower_expr(p, parts_start, exprs, stmts, match_arms, depth + 1);
         let prev_ty = get_expr_ty(p, prev);
         if !is_type_str(p, prev_ty) {
-            // Wrap in str_int call: args_start=prev, args_count=1
+            // Wrap in str_int call
             let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "str_int", "", 0);
-            prev = push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, prev, 1, 0, 0, "", "", "", str_ty);
+            let arg_start = p.arg_list.len() + 1;
+            p.arg_list.push(prev);
+            prev = push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, arg_start, 1, 0, 0, "", "", "", str_ty);
         };
         // Chain remaining parts with binary +
         let mut pi = 1;
@@ -138,7 +140,9 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             } else {
                 // Wrap in str_int call
                 let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "str_int", "", 0);
-                push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, part, 1, 0, 0, "", "", "", str_ty)
+                let arg_start = p.arg_list.len() + 1;
+                p.arg_list.push(part);
+                push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, arg_start, 1, 0, 0, "", "", "", str_ty)
             };
             prev = push_expr(p, 5, 0, 0.0, "", false, prev, part_wrapped, 0, 0, 0, 0, 0, 0, 0, "+", "", "", str_ty);
             pi = pi + 1;
@@ -167,7 +171,8 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         let sd = p.structs[sidx];
         let num_fields = sd.fields.len();
-        let start = p.expr_nodes.len() + 1;
+        // Lower all field values into temp buffer FIRST (nested calls push to arg_list during lowering)
+        let mut lowered_args: Vec<i64> = Vec::new();
         // For each field in struct definition, find matching field_init or use default 0
         for fi in 0..num_fields {
             let fname = sd.fields[fi].name;
@@ -175,33 +180,45 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             for ai in e.arg_start..(e.arg_start + e.arg_count) {
                 let field_expr = exprs[ai - 1];
                 if field_expr.kind == "field_init" && field_expr.sval == fname {
-                    lower_expr(p, field_expr.left, exprs, stmts, match_arms, depth + 1);
+                    let lowered = lower_expr(p, field_expr.left, exprs, stmts, match_arms, depth + 1);
+                    lowered_args.push(lowered);
                     found = 1;
                     break;
                 };
             };
             if found == 0 {
                 // Default value: int 0
-                push_expr(p, 0, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+                let def_idx = push_expr(p, 0, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+                lowered_args.push(def_idx);
             };
         };
-        let idx = push_expr(p, 15, 0, 0.0, "", false, 0, 0, 0, 0, 0, start, num_fields, 0, 0, "", sname, "", struct_ty);
+        // NOW capture arg_start and push contiguously
+        let arg_start = p.arg_list.len() + 1;
+        for j in 0..lowered_args.len() {
+            p.arg_list.push(lowered_args[j]);
+        };
+        let idx = push_expr(p, 15, 0, 0.0, "", false, 0, 0, 0, 0, 0, arg_start, num_fields, 0, 0, "", sname, "", struct_ty);
         return idx;
     };
 
     if kind == "enum_literal" {
         let ename = e.name;
         let vname = e.variant;
-        // Lower field arguments (positional, for tuple variants)
-        let start = p.expr_nodes.len() + 1;
-        let mut count: i64 = 0;
+        // Lower field arguments (positional, for tuple variants) into temp buffer FIRST
+        let mut lowered_args: Vec<i64> = Vec::new();
         if e.arg_count > 0 {
             for ai in e.arg_start..(e.arg_start + e.arg_count) {
-                lower_expr(p, ai, exprs, stmts, match_arms, depth + 1);
-                count = count + 1;
+                let lowered = lower_expr(p, ai, exprs, stmts, match_arms, depth + 1);
+                lowered_args.push(lowered);
             };
         };
-        let idx = push_expr(p, 16, 0, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", ename, vname, 0);
+        let arg_start = p.arg_list.len() + 1;
+        let mut count: i64 = 0;
+        for j in 0..lowered_args.len() {
+            p.arg_list.push(lowered_args[j]);
+            count = count + 1;
+        };
+        let idx = push_expr(p, 16, 0, 0.0, "", false, 0, 0, 0, 0, 0, arg_start, count, 0, 0, "", ename, vname, 0);
         return idx;
     };
 
@@ -235,29 +252,42 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 
     if kind == "call" {
         let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
-        let start = p.expr_nodes.len() + 1;
-        let mut count: i64 = 0;
+        // Lower all args into temp buffer FIRST (nested calls push to arg_list during lowering)
+        let mut lowered_args: Vec<i64> = Vec::new();
         if e.arg_count > 0 {
             for i in e.arg_start..(e.arg_start + e.arg_count) {
-                lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
-                count = count + 1;
+                let lowered = lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                lowered_args.push(lowered);
             };
         };
+        // NOW capture arg_start and push contiguously
+        let arg_start = p.arg_list.len() + 1;
+        let mut count: i64 = 0;
+        for j in 0..lowered_args.len() {
+            p.arg_list.push(lowered_args[j]);
+            count = count + 1;
+        };
         let cty = lookup_fn_return_type(p, e.sval);
-        return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, start, count, 0, 0, "", "", "", cty);
+        return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, arg_start, count, 0, 0, "", "", "", cty);
     };
 
     if kind == "method_call" {
         let recv = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
-        let start = p.expr_nodes.len() + 1;
-        let mut count: i64 = 0;
+        // Lower all args into temp buffer FIRST
+        let mut lowered_args: Vec<i64> = Vec::new();
         if e.arg_count > 0 {
             for i in e.arg_start..(e.arg_start + e.arg_count) {
-                lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
-                count = count + 1;
+                let lowered = lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                lowered_args.push(lowered);
             };
         };
-        return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, start, count, 0, 0, "", e.sval, "", 0);
+        let arg_start = p.arg_list.len() + 1;
+        let mut count: i64 = 0;
+        for j in 0..lowered_args.len() {
+            p.arg_list.push(lowered_args[j]);
+            count = count + 1;
+        };
+        return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", 0);
     };
 
     if kind == "field" {
@@ -376,27 +406,39 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
 
     if kind == "array" {
-        let start = p.expr_nodes.len() + 1;
-        let mut count: i64 = 0;
+        // Lower all elements into temp buffer FIRST
+        let mut lowered_args: Vec<i64> = Vec::new();
         if e.arg_count > 0 {
             for i in e.arg_start..(e.arg_start + e.arg_count) {
-                lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
-                count = count + 1;
+                let lowered = lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                lowered_args.push(lowered);
             };
         };
-        return push_expr(p, 22, 0, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
+        let arg_start = p.arg_list.len() + 1;
+        let mut count: i64 = 0;
+        for j in 0..lowered_args.len() {
+            p.arg_list.push(lowered_args[j]);
+            count = count + 1;
+        };
+        return push_expr(p, 22, 0, 0.0, "", false, 0, 0, 0, 0, 0, arg_start, count, 0, 0, "", "", "", 0);
     };
 
     if kind == "tensor" {
-        let start = p.expr_nodes.len() + 1;
-        let mut count: i64 = 0;
+        // Lower all elements into temp buffer FIRST
+        let mut lowered_args: Vec<i64> = Vec::new();
         if e.arg_count > 0 {
             for i in e.arg_start..(e.arg_start + e.arg_count) {
-                lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
-                count = count + 1;
+                let lowered = lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                lowered_args.push(lowered);
             };
         };
-        return push_expr(p, 29, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, start, count, 0, 0, "", "", "", 0);
+        let arg_start = p.arg_list.len() + 1;
+        let mut count: i64 = 0;
+        for j in 0..lowered_args.len() {
+            p.arg_list.push(lowered_args[j]);
+            count = count + 1;
+        };
+        return push_expr(p, 29, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, arg_start, count, 0, 0, "", "", "", 0);
     };
 
     if kind == "match" {
@@ -515,7 +557,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 }
 
 fn lower_program(program: Program) -> HirProgram {
-    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new() };
+    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new() };
 
     // Lower struct definitions
     for si in 0..program.structs.len() {

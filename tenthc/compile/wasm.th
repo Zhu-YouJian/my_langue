@@ -498,7 +498,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 wasm_local_get(out, temp_idx);
                 wasm_i32_wrap_i64(out);
                 // value: compile field expression (i64)
-                compile_expr(ctx, out, hir, e.args_start + fi);
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start + fi - 1]);
                 // i64.store at offset fi*8
                 wasm_i64_store(out, 3, fi * 8);
                 fi = fi + 1;
@@ -544,7 +544,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             while fi < e.args_count {
                 wasm_local_get(out, temp_idx);
                 wasm_i32_wrap_i64(out);
-                compile_expr(ctx, out, hir, e.args_start + fi);
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start + fi - 1]);
                 wasm_i64_store(out, 3, fi * 8);
                 fi = fi + 1;
             };
@@ -569,7 +569,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if e.left > 0 { compile_expr(ctx, out, hir, e.left); };
         if e.args_count > 0 {
             for ai in e.args_start..(e.args_start + e.args_count) {
-                compile_expr(ctx, out, hir, ai);
+                compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
             };
         };
         if method == "len" {
@@ -667,7 +667,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if func_name == "println" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, ai);
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
             wasm_call(out, 0); // import 0: env.println
@@ -680,7 +680,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if func_name == "read_file" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, ai);
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
             wasm_call(out, 5); // import 5: env.read_file
@@ -689,7 +689,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if func_name == "write_bytes" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, ai);
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
             wasm_call(out, 6); // import 6: env.write_bytes
@@ -698,7 +698,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if func_name == "str_add" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, ai);
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
             wasm_call(out, 7); // import 7: env.str_add
@@ -707,7 +707,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if func_name == "str_eq" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, ai);
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
             wasm_call(out, 8); // import 8: env.str_eq
@@ -716,7 +716,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if func_name == "str_int" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, ai);
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
             wasm_call(out, 9); // import 9: env.str_int
@@ -725,7 +725,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if func_name == "tenth_alloc" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, ai);
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
             wasm_call(out, 10); // import 10: env.tenth_alloc
@@ -734,7 +734,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if func_name == "compile_host" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, ai);
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
             wasm_call(out, 11); // import 11: env.compile_host
@@ -743,7 +743,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if func_name == "str_len" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, ai);
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
             wasm_call(out, 12); // import 12: env.str_len
@@ -752,7 +752,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if func_name == "str_at" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, ai);
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
             wasm_call(out, 13); // import 13: env.str_at
@@ -761,7 +761,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if func_name == "str_cmp" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, ai);
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
             wasm_call(out, 14); // import 14: env.str_cmp
@@ -774,7 +774,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         };
         if e.args_count > 0 {
             for ai in e.args_start..(e.args_start + e.args_count) {
-                compile_expr(ctx, out, hir, ai);
+                compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
             };
         };
         wasm_call(out, call_idx);
@@ -784,7 +784,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         // ArrayLiteral — compile elements and drop, return 0
         if e.args_count > 0 {
             for ai in e.args_start..(e.args_start + e.args_count) {
-                compile_expr(ctx, out, hir, ai);
+                compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 wasm_drop(out);
             };
         };

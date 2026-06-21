@@ -72,8 +72,8 @@ mod three_stage {
     }
 
     fn run_test() {
-        // C4: test struct literal — check p.x + p.y field access
-        let test_src = "struct P { x: i64, y: i64 } fn add(a:i64,b:i64)->i64{let p=P{x:a,y:b,..};p.x+p.y}";
+        // C4: test passing struct as function argument
+        let test_src = "struct S { a: i64, b: i64 } fn make_s(x: i64, y: i64) -> S { S { a: x, b: y, .. } } fn get_b(s: S) -> i64 { s.b } fn add(a: i64, b: i64) -> i64 { a + get_b(make_s(a, b)) }";
         println!("=== Stage 1: Rust compile_to_wasm ===");
         let t0 = Instant::now();
         let wasm_a = compile_selfhost_to_wasm(test_src);
@@ -85,14 +85,12 @@ mod three_stage {
         let config = selfhost_config();
         let engine = Engine::new(&config);
         let module = Module::new(&engine, &wasm_a).expect("compile");
-        // Store state is the bump-allocator offset (same as run_wasm_module).
         let mut store = Store::new(&engine, 8192u32);
         let mut linker = Linker::new(&engine);
         register_host_functions(&mut linker).expect("register host functions");
 
         let inst = linker.instantiate(&mut store, &module).expect("inst").start(&mut store).expect("start");
         let main_fn = inst.get_func(&store, "main").expect("main");
-        // main returns Vec<i64> which compile_main wraps to i32 (pointer)
         let mut r = [wasmi::Val::I32(0)];
         main_fn.call(&mut store, &[], &mut r).expect("call main");
         let vec_ptr = match r[0] {
@@ -110,7 +108,6 @@ mod three_stage {
         let m2 = Module::new(&e2, &wasm_b).expect("compile wasm-b");
         let mut s2 = Store::new(&e2, ());
         let mut l2 = Linker::new(&e2);
-        // tenthc wasm.th uses module "env" with 15 imports
         l2.func_wrap("env", "println", |_: Caller<()>, _: i64| {}).unwrap();
         l2.func_wrap("env", "vec_new", |_: Caller<()>| -> i64 { 0 }).unwrap();
         l2.func_wrap("env", "vec_len", |_: Caller<()>, _: i64| -> i64 { 0 }).unwrap();
@@ -130,8 +127,10 @@ mod three_stage {
         let add = i2.get_func(&s2, "add").expect("add");
         let mut r2 = [wasmi::Val::I64(0)];
         add.call(&mut s2, &[wasmi::Val::I64(3), wasmi::Val::I64(4)], &mut r2).expect("call");
-        assert_eq!(match r2[0] { wasmi::Val::I64(v) => v, _ => panic!() }, 7);
-        println!("=== VERIFIED: add(3,4) = 7 ===");
+        let result = match r2[0] { wasmi::Val::I64(v) => v, _ => panic!() };
+        println!("=== Result: add(3,4) = {} (expected 7) ===", result);
+        assert_eq!(result, 7);
+        println!("=== VERIFIED: struct argument passing works ===");
     }
 
     #[test]

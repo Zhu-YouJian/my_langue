@@ -130,4 +130,5 @@ struct HirProgram {
     enums: Vec<HirEnumDef>,  // enum definitions for enum literal layout
     captures: Vec<HirCapture>,  // flat: closure capture names
     var_types: Vec<HirVarType>, // variable name → type index (for type inference)
+    arg_list: Vec<i64>,   // flat: actual expr indices for Call/StructLiteral/EnumLiteral/MethodCall args
 }
