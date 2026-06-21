@@ -10,9 +10,9 @@ struct FnDef { name: str, params: Vec<Param>, return_type: str, body_start: i64,
 struct StructDef { name: str, fields: Vec<StructField> }
 struct EnumDef { name: str, variants: Vec<EnumVariant> }
 struct MatchArm { pat_kind: str, pat_name: str, pat_bind: str, body_expr: i64 }
-struct Program { structs: Vec<StructDef>, enums: Vec<EnumDef>, fns: Vec<FnDef>, main_stmts_start: i64, main_stmts_count: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm> }
+struct Program { structs: Vec<StructDef>, enums: Vec<EnumDef>, fns: Vec<FnDef>, main_stmts_start: i64, main_stmts_count: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, block_idxs: Vec<i64>, loop_idxs: Vec<i64> }
 
-struct Parser { tokens: Vec<Token>, pos: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm> }
+struct Parser { tokens: Vec<Token>, pos: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, no_struct_literal: bool, block_idxs: Vec<i64>, loop_idxs: Vec<i64> }
 
 fn parser_new(tokens: Vec<Token>) -> Parser {
     Parser {
@@ -21,6 +21,9 @@ fn parser_new(tokens: Vec<Token>) -> Parser {
         expr_nodes: Vec::new(),
         stmt_nodes: Vec::new(),
         match_arms: Vec::new(),
+        no_struct_literal: false,
+        block_idxs: Vec::new(),
+        loop_idxs: Vec::new(),
     }
 }
 
@@ -157,8 +160,8 @@ fn parse_primary(p: &mut Parser) -> i64 {
             p.expr_nodes[idx - 1].variant = variant_name;
             return idx;
         };
-        // Check for { (struct literal, LBrace disc 49)
-        if next.disc == 49 {
+        // Check for { (struct literal, LBrace disc 49) — unless suppressed (e.g. in for/if/while condition)
+        if next.disc == 49 && !p.no_struct_literal {
             parser_advance(p); // skip {
             // First pass: parse all fields, store names and value expr indices
             let mut field_names: Vec<str> = Vec::new();
@@ -606,15 +609,20 @@ fn parse_expr(p: &mut Parser) -> i64 {
 }
 
 fn parse_block_expr(p: &mut Parser) -> i64 {
-    let body_start = p.stmt_nodes.len() + 1;
+    let body_start = p.block_idxs.len() + 1;
     let mut count: i64 = 0;
     loop {
         let tok = parser_peek(p);
         let d = tok.disc;
         if d == 50 { break; };
         if d == 61 { break; };
-        parse_stmt(p);
-        count = count + 1;
+        // Skip semicolons between statements
+        if d == 54 { parser_advance(p); } else {
+            let sidx = parse_stmt(p);
+            p.block_idxs.push(sidx);
+            count = count + 1;
+            let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
+        };
     };
     parser_advance(p); // skip }
     let idx = add_expr(p, "block");
@@ -625,7 +633,9 @@ fn parse_block_expr(p: &mut Parser) -> i64 {
 
 fn parse_if_expr(p: &mut Parser) -> i64 {
     // if cond then-expr [else else-expr]
+    p.no_struct_literal = true;
     let cond = parse_expr(p);
+    p.no_struct_literal = false;
     let then_expr = parse_expr(p);
 
     let mut else_idx: i64 = 0;
@@ -742,14 +752,17 @@ fn parse_stmt(p: &mut Parser) -> i64 {
     // While (11)
     if disc == 11 {
         parser_advance(p);
+        p.no_struct_literal = true;
         let cond = parse_expr(p);
+        p.no_struct_literal = false;
         parser_advance(p); // skip {
-        let body_start = p.stmt_nodes.len() + 1;
+        let body_start = p.loop_idxs.len() + 1;
         let mut body_count: i64 = 0;
         loop {
             let t2 = parser_peek(p);
             if is_end_of_block(t2) { break; };
-            parse_stmt(p);
+            let sidx = parse_stmt(p);
+            p.loop_idxs.push(sidx);
             body_count = body_count + 1;
             let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
         };
@@ -767,14 +780,18 @@ fn parse_stmt(p: &mut Parser) -> i64 {
         let name_tok = parser_advance(p);
         let name = name_tok.sval;
         parser_advance(p); // skip in
+        // Suppress struct literal parsing for iterable — { belongs to for body
+        p.no_struct_literal = true;
         let iterable = parse_expr(p);
+        p.no_struct_literal = false;
         parser_advance(p); // skip {
-        let body_start = p.stmt_nodes.len() + 1;
+        let body_start = p.loop_idxs.len() + 1;
         let mut body_count: i64 = 0;
         loop {
             let t2 = parser_peek(p);
             if is_end_of_block(t2) { break; };
-            parse_stmt(p);
+            let sidx = parse_stmt(p);
+            p.loop_idxs.push(sidx);
             body_count = body_count + 1;
             let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
         };
@@ -803,12 +820,13 @@ fn parse_stmt(p: &mut Parser) -> i64 {
     if disc == 13 {
         parser_advance(p);
         parser_advance(p); // skip {
-        let body_start = p.stmt_nodes.len() + 1;
+        let body_start = p.loop_idxs.len() + 1;
         let mut body_count: i64 = 0;
         loop {
             let t2 = parser_peek(p);
             if is_end_of_block(t2) { break; };
-            parse_stmt(p);
+            let sidx = parse_stmt(p);
+            p.loop_idxs.push(sidx);
             body_count = body_count + 1;
             let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
         };
@@ -871,12 +889,13 @@ fn parse_fn(p: &mut Parser) -> FnDef {
     };
 
     parser_advance(p); // skip {
-    let body_start = p.stmt_nodes.len() + 1;
+    let body_start = p.block_idxs.len() + 1;
     let mut body_count: i64 = 0;
     loop {
         let t4 = parser_peek(p);
         if is_end_of_block(t4) { break; };
-        parse_stmt(p);
+        let sidx = parse_stmt(p);
+        p.block_idxs.push(sidx);
         body_count = body_count + 1;
         // skip optional semicolon
         let ts = parser_peek(p);
@@ -1013,8 +1032,9 @@ fn parse_program(tokens: Vec<Token>) -> Program {
             break;
         } else {
             // Top-level expression statement
-            if main_stmts_start == 1 { main_stmts_start = p.stmt_nodes.len() + 1; };
-            parse_stmt(&mut p);
+            if main_count == 0 { main_stmts_start = p.block_idxs.len() + 1; };
+            let sidx = parse_stmt(&mut p);
+            p.block_idxs.push(sidx);
             main_count = main_count + 1;
             if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
         };
@@ -1029,5 +1049,7 @@ fn parse_program(tokens: Vec<Token>) -> Program {
         expr_nodes: p.expr_nodes,
         stmt_nodes: p.stmt_nodes,
         match_arms: p.match_arms,
+        block_idxs: p.block_idxs,
+        loop_idxs: p.loop_idxs,
     }
 }

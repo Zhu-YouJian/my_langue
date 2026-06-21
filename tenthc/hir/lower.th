@@ -342,14 +342,15 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
 
     if kind == "block" {
-        let start = p.stmt_nodes.len() + 1;
-        let mut count: i64 = 0;
+        let start = p.stmt_list.len() + 1;
         if e.extra_count > 0 {
             for i in e.extra_start..(e.extra_start + e.extra_count) {
-                lower_stmt(p, i, exprs, stmts, match_arms, depth + 1);
-                count = count + 1;
+                let actual_idx = p.block_idxs[i - 1];
+                let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
+                p.stmt_list.push(sidx);
             };
         };
+        let count = p.stmt_list.len() - (start - 1);
         return push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
     };
 
@@ -510,14 +511,15 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
 
     if kind == "loop" {
-        let bstart = p.stmt_nodes.len() + 1;
-        let mut bcount: i64 = 0;
+        let bstart = p.body_list.len() + 1;
         if s.body_count > 0 {
             for i in s.body_start..(s.body_start + s.body_count) {
-                lower_stmt(p, i, exprs, stmts, match_arms, depth + 1);
-                bcount = bcount + 1;
+                let actual_idx = p.loop_idxs[i - 1];
+                let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
+                p.body_list.push(sidx);
             };
         };
+        let bcount = p.body_list.len() - (bstart - 1);
         return push_stmt(p, 7, "", 0, 0, bstart, bcount, 0, false);
     };
 
@@ -526,27 +528,29 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         if s.expr_idx > 0 {
             cond = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
         };
-        let bstart = p.stmt_nodes.len() + 1;
-        let mut bcount: i64 = 0;
+        let bstart = p.body_list.len() + 1;
         if s.body_count > 0 {
             for i in s.body_start..(s.body_start + s.body_count) {
-                lower_stmt(p, i, exprs, stmts, match_arms, depth + 1);
-                bcount = bcount + 1;
+                let actual_idx = p.loop_idxs[i - 1];
+                let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
+                p.body_list.push(sidx);
             };
         };
+        let bcount = p.body_list.len() - (bstart - 1);
         return push_stmt(p, 3, "", 0, cond, bstart, bcount, 0, false);
     };
 
     if kind == "for" {
         let iter = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
-        let bstart = p.stmt_nodes.len() + 1;
-        let mut bcount: i64 = 0;
+        let bstart = p.body_list.len() + 1;
         if s.body_count > 0 {
             for i in s.body_start..(s.body_start + s.body_count) {
-                lower_stmt(p, i, exprs, stmts, match_arms, depth + 1);
-                bcount = bcount + 1;
+                let actual_idx = p.loop_idxs[i - 1];
+                let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
+                p.body_list.push(sidx);
             };
         };
+        let bcount = p.body_list.len() - (bstart - 1);
         return push_stmt(p, 4, s.name, iter, 0, bstart, bcount, 0, false);
     };
 
@@ -557,7 +561,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 }
 
 fn lower_program(program: Program) -> HirProgram {
-    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new() };
+    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new(), stmt_list: Vec::new(), body_list: Vec::new(), block_idxs: program.block_idxs, loop_idxs: program.loop_idxs };
 
     // Lower struct definitions
     for si in 0..program.structs.len() {
@@ -610,12 +614,13 @@ fn lower_program(program: Program) -> HirProgram {
     // Clear var_types for main scope
     p.var_types = Vec::new();
     if program.main_stmts_count > 0 {
-        let start = p.stmt_nodes.len() + 1;
-        let mut count: i64 = 0;
+        let start = p.stmt_list.len() + 1;
         for k in program.main_stmts_start..(program.main_stmts_start + program.main_stmts_count) {
-            lower_stmt(&mut p, k, program.expr_nodes, program.stmt_nodes, program.match_arms, 0);
-            count = count + 1;
+            let actual_idx = p.block_idxs[k - 1];
+            let sidx = lower_stmt(&mut p, actual_idx, program.expr_nodes, program.stmt_nodes, program.match_arms, 0);
+            p.stmt_list.push(sidx);
         };
+        let count = p.stmt_list.len() - (start - 1);
         let ni = push_expr(&mut p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
         p.main_expr = ni;
     };
@@ -625,11 +630,12 @@ fn lower_program(program: Program) -> HirProgram {
 
 fn lower_fn_body(p: &mut HirProgram, body_start: i64, body_count: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, match_arms: Vec<MatchArm>) -> i64 {
     if body_count <= 0 { return 0; };
-    let start = p.stmt_nodes.len() + 1;
-    let mut count: i64 = 0;
+    let start = p.stmt_list.len() + 1;
     for i in body_start..(body_start + body_count) {
-        lower_stmt(p, i, exprs, stmts, match_arms, 0);
-        count = count + 1;
+        let actual_idx = p.block_idxs[i - 1];
+        let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, 0);
+        p.stmt_list.push(sidx);
     };
+    let count = p.stmt_list.len() - (start - 1);
     push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0)
 }

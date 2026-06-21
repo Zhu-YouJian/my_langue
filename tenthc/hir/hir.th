@@ -131,4 +131,8 @@ struct HirProgram {
     captures: Vec<HirCapture>,  // flat: closure capture names
     var_types: Vec<HirVarType>, // variable name → type index (for type inference)
     arg_list: Vec<i64>,   // flat: actual expr indices for Call/StructLiteral/EnumLiteral/MethodCall args
+    stmt_list: Vec<i64>,  // flat: actual stmt indices for Block bodies
+    body_list: Vec<i64>,  // flat: actual stmt indices for For/While/Loop bodies
+    block_idxs: Vec<i64>, // parser: actual stmt indices for block scopes (fn body, block expr)
+    loop_idxs: Vec<i64>,  // parser: actual stmt indices for loop scopes (for/while/loop body)
 }

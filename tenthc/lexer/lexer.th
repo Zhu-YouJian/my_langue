@@ -51,7 +51,16 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         let mut frac_val: i64 = 0;
         let mut frac_len: i64 = 0;
         while is_digit(ch) { ival = ival * 10 + char_to_digit(ch); ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
-        if ch == "." { is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer); while is_digit(ch) { frac_val = frac_val * 10 + char_to_digit(ch); frac_len = frac_len + 1; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; let mut div: f64 = 1.0; let mut i: i64 = 0; while i < frac_len { div = div * 10.0; i = i + 1; }; let fv: f64 = ival; let ff: f64 = frac_val; return Token { kind: TokenKind::FloatLiteral(fv + (ff / div)), span: span, disc: 1, ival: ival, fval: fv + (ff / div), .. }; };
+        // Check for float: only if . is followed by a digit (not .. range or .field)
+        if ch == "." {
+            let save_pos = lexer.pos;
+            lexer_advance(lexer);
+            let after_dot = lexer_peek(lexer);
+            lexer.pos = save_pos;
+            if is_digit(after_dot) {
+                is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer); while is_digit(ch) { frac_val = frac_val * 10 + char_to_digit(ch); frac_len = frac_len + 1; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; let mut div: f64 = 1.0; let mut i: i64 = 0; while i < frac_len { div = div * 10.0; i = i + 1; }; let fv: f64 = ival; let ff: f64 = frac_val; return Token { kind: TokenKind::FloatLiteral(fv + (ff / div)), span: span, disc: 1, ival: ival, fval: fv + (ff / div), .. };
+            };
+        };
         return Token { kind: TokenKind::IntLiteral(ival), span: span, disc: 0, ival: ival, .. };
     };
 
