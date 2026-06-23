@@ -480,4 +480,11 @@ mod parity {
         assert_parity(src, "find_sqrt", &[49], 7);
         assert_parity(src, "find_sqrt", &[50], 0); // not a perfect square
     }
+
+    // NOTE: Match expressions are supported by tenthc but NOT by the Rust
+    // mother compiler's WASM backend (wasm.rs emits "unsupported expression"
+    // for Match). The tenthc match parser fix (handling _ as wildcard and
+    // IntLiteral as literal pattern) is still valuable for self-hosting.
+    // Match parity tests deferred until the Rust mother compiler supports
+    // Match in its WASM backend.
 }
