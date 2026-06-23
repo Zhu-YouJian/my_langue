@@ -467,9 +467,17 @@ mod parity {
         assert_parity(src, "classify", &[100], 3);
     }
 
-    // NOTE: parity_loop_with_break_cond (while + if/else statement with else
-    // branch) triggers a "type mismatch: expected i64 but nothing on stack"
-    // WASM validation error. This is a separate bug to investigate: if/else
-    // statements (not expressions) inside loop bodies may have incorrect
-    // block type handling. See lower.th "if" stmt case and wasm.th if stmt.
+    #[test]
+    fn parity_loop_with_break_cond() {
+        // while loop with if/else where both branches contain only assignments
+        // (no trailing expression). This tests that tenthc correctly sets the
+        // if block type to void when branches don't produce values.
+        let src = "fn find_sqrt(target: i64) -> i64 { let mut i = 0; let mut found = 0; while i < 100 { if i * i == target { found = i; i = 100; } else { i = i + 1; }; }; found }";
+        assert_parity(src, "find_sqrt", &[0], 0);
+        assert_parity(src, "find_sqrt", &[1], 1);
+        assert_parity(src, "find_sqrt", &[4], 2);
+        assert_parity(src, "find_sqrt", &[9], 3);
+        assert_parity(src, "find_sqrt", &[49], 7);
+        assert_parity(src, "find_sqrt", &[50], 0); // not a perfect square
+    }
 }

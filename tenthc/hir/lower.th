@@ -347,7 +347,9 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         if e.extra_start > 0 {
             else_ = lower_expr(p, e.extra_start, exprs, stmts, match_arms, depth + 1);
         };
-        return push_expr(p, 12, 0, 0.0, "", false, 0, 0, cond, then_, else_, 0, 0, 0, 0, "", "", "", 0);
+        // If type = then-branch type (blocks with only assignments have ty=0 → void)
+        let if_ty = get_expr_ty(p, then_);
+        return push_expr(p, 12, 0, 0.0, "", false, 0, 0, cond, then_, else_, 0, 0, 0, 0, "", "", "", if_ty);
     };
 
     if kind == "block" {
@@ -368,7 +370,15 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         for i in 0..count {
             p.stmt_list.push(local_idxs[i]);
         };
-        return push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
+        // Infer block type: if last stmt is an expr stmt, block produces that value
+        let mut block_ty: i64 = 0;
+        if count > 0 {
+            let last_stmt = p.stmt_nodes[local_idxs[count - 1] - 1];
+            if last_stmt.disc == 1 && last_stmt.expr > 0 {
+                block_ty = get_expr_ty(p, last_stmt.expr);
+            };
+        };
+        return push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", block_ty);
     };
 
     if kind == "assign" {

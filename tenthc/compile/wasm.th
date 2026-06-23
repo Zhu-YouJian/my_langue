@@ -634,14 +634,14 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 12 {
-        // If — block type must match the value produced by then/else branches.
-        // For i64-returning if-expressions (with else), use 0x7E (126);
-        // for void if-statements (no else), use 0x40 (64).
-        // NOTE: tenthc block expressions don't return values, so we use
-        // assignment rather than if-as-expression to compute bt.
+        // If — block type determined by e.ty (set in lower.th):
+        // ty > 0 means branches produce values → i64 (0x7E=126)
+        // ty == 0 means branches don't produce values → void (0x40=64)
         compile_expr(ctx, out, hir, e.cond);
         let mut bt: i64 = 64;
-        if e.alt > 0 { bt = 126; };
+        if e.alt > 0 && e.ty > 0 {
+            bt = 126;
+        };
         wasm_if(out, bt);
         compile_expr(ctx, out, hir, e.body);
         if e.alt > 0 {
