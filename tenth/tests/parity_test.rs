@@ -327,6 +327,63 @@ mod parity {
         assert_parity(src, "increment", &[5], 15);
     }
 
+    // ── Advanced if-expression and control flow ───────────────────────────
+
+    #[test]
+    fn parity_nested_if() {
+        // Nested if-else-if chain
+        let src = "fn classify(x: i64) -> i64 { if x < 0 { 0 - 1 } else { if x == 0 { 0 } else { 1 } } }";
+        assert_parity(src, "classify", &[-5], 0 - 1);
+        // Also test with 0 and positive
+        let wasm = compile_via_tenthc(src);
+        assert_eq!(run_wasm_i64(&wasm, "classify", &[0]), 0);
+        assert_eq!(run_wasm_i64(&wasm, "classify", &[42]), 1);
+    }
+
+    #[test]
+    fn parity_if_no_else() {
+        // if without else as a statement (not producing a value)
+        let src = "fn maybe_add(x: i64) -> i64 { let mut r = x; if x < 10 { r = r + 100; }; r }";
+        assert_parity(src, "maybe_add", &[5], 105);
+        // x >= 10: r stays x
+        let wasm = compile_via_tenthc(src);
+        assert_eq!(run_wasm_i64(&wasm, "maybe_add", &[20]), 20);
+    }
+
+    #[test]
+    fn parity_early_return() {
+        // Early return inside if
+        let src = "fn sign(x: i64) -> i64 { if x < 0 { return 0 - 1; }; if x > 0 { return 1; }; 0 }";
+        assert_parity(src, "sign", &[-5], 0 - 1);
+        let wasm = compile_via_tenthc(src);
+        assert_eq!(run_wasm_i64(&wasm, "sign", &[5]), 1);
+        assert_eq!(run_wasm_i64(&wasm, "sign", &[0]), 0);
+    }
+
+    #[test]
+    fn parity_bool_logic() {
+        // Boolean logic: && and ||
+        let src = "fn band(a: i64, b: i64) -> i64 { if a > 0 && b > 0 { 1 } else { 0 } }";
+        assert_parity(src, "band", &[1, 1], 1);
+        let wasm = compile_via_tenthc(src);
+        assert_eq!(run_wasm_i64(&wasm, "band", &[1, 0]), 0);
+        assert_eq!(run_wasm_i64(&wasm, "band", &[0, 1]), 0);
+    }
+
+    #[test]
+    fn parity_multi_stmt_fn() {
+        // Function with multiple statements before if
+        let src = "fn compute(a: i64, b: i64) -> i64 { let s = a + b; let d = a - b; if s > d { s } else { d } }";
+        assert_parity(src, "compute", &[3, 4], 7);
+    }
+
+    #[test]
+    fn parity_if_in_loop() {
+        // if inside a while loop — tests loop body + if interaction
+        let src = "fn sum_odd(n: i64) -> i64 { let mut i = 0; let mut s = 0; while i < n { if i % 2 == 1 { s = s + i; }; i = i + 1; } s }";
+        assert_parity(src, "sum_odd", &[10], 25); // 1+3+5+7+9 = 25
+    }
+
     // ── Debug tests for if-expression investigation ────────────────────────
 
     #[test]
