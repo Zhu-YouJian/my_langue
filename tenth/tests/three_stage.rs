@@ -144,4 +144,79 @@ mod three_stage {
             .join()
             .unwrap();
     }
+
+    /// C4: Self-compilation test — tenthc compiles its own source.
+    /// Stage 1: Rust compiles tenthc + main(tenthc_src) → WASM-A
+    /// Stage 2: WASM-A compiles tenthc_src → WASM-B (tenthc compiled by tenthc)
+    /// Stage 3: Verify WASM-B is valid WASM with expected exports
+    ///
+    /// NOTE: This test is `#[ignore]` because wasmi (interpreter) is too slow
+    /// to run the full tenthc compiler on 133KB of source in reasonable time.
+    /// Stage 1 completes (~250ms) but Stage 2 takes 10+ minutes and may not
+    /// finish. To run this test, use a JIT-capable runtime like Wasmtime, or
+    /// wait for Phase D to add a native tenthc binary.
+    #[test]
+    #[ignore]
+    fn three_stage_self_compile() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(run_self_compile_test)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    fn run_self_compile_test() {
+        let tenthc_src = [
+            include_str!("../../tenthc/lexer/token.th"),
+            include_str!("../../tenthc/lexer/lexer.th"),
+            include_str!("../../tenthc/parser/parser.th"),
+            include_str!("../../tenthc/hir/hir.th"),
+            include_str!("../../tenthc/hir/lower.th"),
+            include_str!("../../tenthc/compile/wasm.th"),
+        ].join("\n");
+        println!("tenthc source: {} bytes", tenthc_src.len());
+
+        println!("=== Stage 1: Rust compile tenthc (with self-compile main) ===");
+        let t0 = Instant::now();
+        let wasm_a = compile_selfhost_to_wasm(&tenthc_src);
+        println!("WASM-A: {} bytes (compiled in {:?})", wasm_a.len(), t0.elapsed());
+        assert_eq!(&wasm_a[..4], b"\0asm");
+
+        println!("=== Stage 2: WASM-A compiles tenthc source ===");
+        let t1 = Instant::now();
+        let config = selfhost_config();
+        let engine = Engine::new(&config);
+        let module = Module::new(&engine, &wasm_a).expect("compile wasm-a");
+        let mut store = Store::new(&engine, 8192u32);
+        let mut linker = Linker::new(&engine);
+        register_host_functions(&mut linker).expect("register host functions");
+
+        let inst = linker.instantiate(&mut store, &module).expect("inst").start(&mut store).expect("start");
+        let main_fn = inst.get_func(&store, "main").expect("main");
+        let mut r = [wasmi::Val::I32(0)];
+        main_fn.call(&mut store, &[], &mut r).expect("call main");
+        let vec_ptr = match r[0] {
+            wasmi::Val::I32(v) => v as i64,
+            wasmi::Val::I64(v) => v,
+            _ => panic!("expected i32/i64 return from main, got {:?}", r[0]),
+        };
+        let mem = inst.get_memory(&store, "memory").expect("memory");
+        let wasm_b = read_vec_from_memory(&store, &mem, vec_ptr);
+        println!("WASM-B: {} bytes (tenthc compiled by tenthc, took {:?})", wasm_b.len(), t1.elapsed());
+
+        println!("=== Stage 3: Verify WASM-B is valid ===");
+        assert!(!wasm_b.is_empty() && &wasm_b[..4] == b"\0asm", "WASM-B must be valid WASM");
+        let e2 = Engine::default();
+        let m2 = Module::new(&e2, &wasm_b).expect("compile wasm-b");
+        let exports: Vec<&str> = m2.exports().map(|e| e.name()).collect();
+        println!("WASM-B exports ({} total): {:?}", exports.len(), &exports[..exports.len().min(30)]);
+
+        // Verify key compiler functions are exported
+        for name in &["lexer_new", "parse_program", "lower_program", "compile_to_wasm"] {
+            assert!(exports.contains(name), "WASM-B must export {}", name);
+        }
+
+        println!("=== VERIFIED: tenthc can self-compile ===");
+    }
 }
