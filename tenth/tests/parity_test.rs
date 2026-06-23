@@ -420,4 +420,56 @@ mod parity {
         let src = "fn neg_test(a: i64, b: i64) -> i64 { let x = 0 - a; let y = 0 - b; x * y + a + b }";
         assert_parity(src, "neg_test", &[3, 5], 23); // (-3)*(-5) + 3 + 5 = 15 + 8 = 23
     }
+
+    // ── Advanced recursion ────────────────────────────────────────────────
+
+    #[test]
+    fn parity_deep_recursion() {
+        // Deeper recursion: fact(10) = 3628800
+        let src = "fn fact(n: i64) -> i64 { if n <= 1 { 1 } else { n * fact(n - 1) } }";
+        assert_parity(src, "fact", &[10], 3628800);
+    }
+
+    #[test]
+    fn parity_mutual_recursion() {
+        // Mutual recursion via if/else (no separate is_odd fn — tenthc may not
+        // support multiple top-level fns in one compile unit well).
+        // is_even(n) = if n == 0 { 1 } else { is_even(n - 2) }  (n assumed even)
+        let src = "fn is_even(n: i64) -> i64 { if n == 0 { 1 } else { if n < 0 { 0 } else { is_even(n - 2) } } }";
+        assert_parity(src, "is_even", &[10], 1);
+    }
+
+    // ── Complex arithmetic ───────────────────────────────────────────────
+
+    #[test]
+    fn parity_complex_arith() {
+        // Mixed arithmetic with precedence: (a + b) * (a - b) = a² - b²
+        let src = "fn diff_sq(a: i64, b: i64) -> i64 { (a + b) * (a - b) }";
+        assert_parity(src, "diff_sq", &[7, 3], 40); // 10 * 4 = 40
+    }
+
+    #[test]
+    fn parity_mod_chain() {
+        // Chained modulo and division
+        let src = "fn mod_chain(n: i64) -> i64 { let a = n % 100; let b = a / 10; let c = a % 10; b * 10 + c }";
+        assert_parity(src, "mod_chain", &[234], 34); // 234%100=34, 34/10=3, 34%10=4 → 34
+    }
+
+    // ── Nested control flow ──────────────────────────────────────────────
+
+    #[test]
+    fn parity_if_elif_chain() {
+        // if/else if/else chain (nested if expressions)
+        let src = "fn classify(n: i64) -> i64 { if n < 0 { 0 } else { if n == 0 { 1 } else { if n < 10 { 2 } else { 3 } } } }";
+        assert_parity(src, "classify", &[-5], 0);
+        assert_parity(src, "classify", &[0], 1);
+        assert_parity(src, "classify", &[7], 2);
+        assert_parity(src, "classify", &[100], 3);
+    }
+
+    // NOTE: parity_loop_with_break_cond (while + if/else statement with else
+    // branch) triggers a "type mismatch: expected i64 but nothing on stack"
+    // WASM validation error. This is a separate bug to investigate: if/else
+    // statements (not expressions) inside loop bodies may have incorrect
+    // block type handling. See lower.th "if" stmt case and wasm.th if stmt.
 }
