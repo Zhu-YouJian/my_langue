@@ -145,8 +145,28 @@ fn parse_primary(p: &mut Parser) -> i64 {
             let next2 = parser_peek(p);
             if next2.disc == 47 {
                 parser_advance(p); // skip (
+                // Collect arg indices locally, then emit contiguous "arg" reference nodes.
+                // Same fix as parse_postfix call/method_call: parse_arg_list discards
+                // parse_expr's return value, so arg_start would point to an intermediate
+                // node instead of the final node for expressions like `Some(n - 1)`.
+                let mut arg_idxs: Vec<i64> = Vec::new();
+                loop {
+                    let t = parser_peek(p);
+                    if t.disc == 48 { break; }; // RParen
+                    if t.disc == 61 { break; }; // Eof
+                    let arg_idx = parse_expr(p);
+                    arg_idxs.push(arg_idx);
+                    let t2 = parser_peek(p);
+                    if t2.disc == 53 { parser_advance(p); } // skip ,
+                    else { break; };
+                };
+                parser_advance(p); // skip )
                 let start = p.expr_nodes.len() + 1;
-                let count = parse_arg_list(p);
+                let count = arg_idxs.len();
+                for i in 0..count {
+                    let aidx = add_expr(p, "arg");
+                    p.expr_nodes[aidx - 1].left = arg_idxs[i];
+                };
                 let idx = add_expr(p, "enum_literal");
                 p.expr_nodes[idx - 1].name = name;
                 p.expr_nodes[idx - 1].variant = variant_name;
@@ -307,20 +327,19 @@ fn parse_primary(p: &mut Parser) -> i64 {
         if next.disc == 51 {
             // Tensor literal: [[...], [...]]
             parser_advance(p); // skip inner [
-            let start = p.expr_nodes.len() + 1;
-            let mut count: i64 = 0;
+            // Collect element indices locally; emit contiguous "arg" nodes at the end.
+            let mut arg_idxs: Vec<i64> = Vec::new();
             loop {
                 let t = parser_peek(p);
                 if t.disc == 52 { break; }; // ]
-                parse_expr(p);
-                count = count + 1;
+                let arg_idx = parse_expr(p);
+                arg_idxs.push(arg_idx);
                 let t2 = parser_peek(p);
                 if t2.disc == 53 { parser_advance(p); }; // ,
             };
             parser_advance(p); // skip inner ]
             // Check for more rows
             let mut rows: i64 = 1;
-            let mut total_count = count;
             let t3 = parser_peek(p);
             if t3.disc == 53 {
                 // Multiple rows
@@ -334,8 +353,8 @@ fn parse_primary(p: &mut Parser) -> i64 {
                         loop {
                             let t6 = parser_peek(p);
                             if t6.disc == 52 { break; };
-                            parse_expr(p);
-                            total_count = total_count + 1;
+                            let arg_idx = parse_expr(p);
+                            arg_idxs.push(arg_idx);
                             let t7 = parser_peek(p);
                             if t7.disc == 53 { parser_advance(p); };
                         };
@@ -345,6 +364,12 @@ fn parse_primary(p: &mut Parser) -> i64 {
                 };
             };
             parser_advance(p); // skip outer ]
+            let total_count = arg_idxs.len();
+            let start = p.expr_nodes.len() + 1;
+            for i in 0..total_count {
+                let aidx = add_expr(p, "arg");
+                p.expr_nodes[aidx - 1].left = arg_idxs[i];
+            };
             let idx = add_expr(p, "tensor");
             p.expr_nodes[idx - 1].arg_start = start;
             p.expr_nodes[idx - 1].arg_count = total_count;
@@ -352,19 +377,24 @@ fn parse_primary(p: &mut Parser) -> i64 {
             return idx;
         };
         // Array literal: [1, 2, 3]
-        let start = p.expr_nodes.len() + 1;
-        let mut count: i64 = 0;
+        let mut arg_idxs: Vec<i64> = Vec::new();
         loop {
             let t = parser_peek(p);
             if t.disc == 52 { break; }; // ]
             if t.disc == 61 { break; }; // Eof
-            parse_expr(p);
-            count = count + 1;
+            let arg_idx = parse_expr(p);
+            arg_idxs.push(arg_idx);
             let t2 = parser_peek(p);
             if t2.disc == 53 { parser_advance(p); }
             else { break; };
         };
         parser_advance(p); // skip ]
+        let start = p.expr_nodes.len() + 1;
+        let count = arg_idxs.len();
+        for i in 0..count {
+            let aidx = add_expr(p, "arg");
+            p.expr_nodes[aidx - 1].left = arg_idxs[i];
+        };
         let idx = add_expr(p, "array");
         p.expr_nodes[idx - 1].arg_start = start;
         p.expr_nodes[idx - 1].arg_count = count;
@@ -417,8 +447,29 @@ fn parse_postfix(p: &mut Parser) -> i64 {
         // LParen (47) — function call
         if d == 47 {
             parser_advance(p); // skip (
+            // Collect argument expression indices in a local Vec first.
+            // parse_expr pushes intermediate nodes (ident, int, etc.) before
+            // the final node, so arg_start would point to an intermediate node.
+            // We create contiguous "arg" reference nodes after collecting all args.
+            let mut arg_idxs: Vec<i64> = Vec::new();
+            loop {
+                let t = parser_peek(p);
+                if t.disc == 48 { break; }; // RParen
+                if t.disc == 61 { break; }; // Eof
+                let arg_idx = parse_expr(p);
+                arg_idxs.push(arg_idx);
+                let t2 = parser_peek(p);
+                if t2.disc == 53 { parser_advance(p); } // skip ,
+                else { break; };
+            };
+            parser_advance(p); // skip )
+            // Create contiguous "arg" nodes that reference the actual expressions
             let start = p.expr_nodes.len() + 1;
-            let count = parse_arg_list(p);
+            let count = arg_idxs.len();
+            for i in 0..count {
+                let aidx = add_expr(p, "arg");
+                p.expr_nodes[aidx - 1].left = arg_idxs[i];
+            };
             p.expr_nodes[expr_idx - 1].kind = "call";
             p.expr_nodes[expr_idx - 1].arg_start = start;
             p.expr_nodes[expr_idx - 1].arg_count = count;
@@ -457,8 +508,28 @@ fn parse_postfix(p: &mut Parser) -> i64 {
             let next = parser_peek(p);
             if next.disc == 47 {
                 parser_advance(p); // skip (
+                // Collect arg indices locally, then emit contiguous "arg" reference nodes.
+                // parse_arg_list discards parse_expr's return value, so arg_start would
+                // point to an intermediate node (e.g. ident) instead of the final node
+                // (e.g. binary) for expressions like `vec.push(n - 1)`.
+                let mut arg_idxs: Vec<i64> = Vec::new();
+                loop {
+                    let t = parser_peek(p);
+                    if t.disc == 48 { break; }; // RParen
+                    if t.disc == 61 { break; }; // Eof
+                    let arg_idx = parse_expr(p);
+                    arg_idxs.push(arg_idx);
+                    let t2 = parser_peek(p);
+                    if t2.disc == 53 { parser_advance(p); } // skip ,
+                    else { break; };
+                };
+                parser_advance(p); // skip )
                 let start = p.expr_nodes.len() + 1;
-                let count = parse_arg_list(p);
+                let count = arg_idxs.len();
+                for i in 0..count {
+                    let aidx = add_expr(p, "arg");
+                    p.expr_nodes[aidx - 1].left = arg_idxs[i];
+                };
                 let idx = add_expr(p, "method_call");
                 p.expr_nodes[idx - 1].sval = field_name;
                 p.expr_nodes[idx - 1].left = expr_idx;
@@ -477,23 +548,6 @@ fn parse_postfix(p: &mut Parser) -> i64 {
     };
 
     expr_idx
-}
-
-fn parse_arg_list(p: &mut Parser) -> i64 {
-    let mut count: i64 = 0;
-    loop {
-        let tok = parser_peek(p);
-        let d = tok.disc;
-        if d == 48 { break; };
-        if d == 61 { break; };
-        parse_expr(p);
-        count = count + 1;
-        let tok2 = parser_peek(p);
-        if tok2.disc == 53 { parser_advance(p); }
-        else { break; };
-    };
-    parser_advance(p); // skip )
-    count
 }
 
 fn binop_prec(op: str) -> i64 {

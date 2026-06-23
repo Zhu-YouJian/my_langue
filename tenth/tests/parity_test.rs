@@ -16,8 +16,8 @@ mod parity {
     use tenth::compile::wasm::register_host_functions;
     use std::time::Instant;
 
-    /// Build a wasmi Config with enlarged stack limits for the tenthc compiler's
-    /// recursive descent parser and deep call chains. Mirrors three_stage.rs.
+    /// Build a wasmi Config with enlarged stack limits for recursive functions
+    /// and the tenthc compiler's recursive descent parser.
     fn selfhost_config() -> Config {
         let mut config = Config::default();
         let limits = StackLimits::new(
@@ -26,7 +26,6 @@ mod parity {
             65536,       // maximum_recursion_depth
         ).expect("valid stack limits");
         config.set_stack_limits(limits);
-        config.compilation_mode(wasmi::CompilationMode::Eager);
         config
     }
 
@@ -182,9 +181,10 @@ mod parity {
     }
 
     /// Run a WASM module, call `fn_name(args)` and return the i64 result.
+    /// Uses enlarged stack limits to support recursive functions (e.g. fib, fact).
     fn run_wasm_i64(wasm: &[u8], fn_name: &str, args: &[i64]) -> i64 {
         assert_eq!(&wasm[..4], b"\0asm", "WASM must have valid magic");
-        let engine = Engine::default();
+        let engine = Engine::new(&selfhost_config());
         let module = Module::new(&engine, wasm).expect("module compile");
         let (mut store, linker) = setup_output_store_and_linker(&engine);
         let instance = linker
@@ -384,43 +384,40 @@ mod parity {
         assert_parity(src, "sum_odd", &[10], 25); // 1+3+5+7+9 = 25
     }
 
-    // ── Debug tests for if-expression investigation ────────────────────────
+    // ── Recursion and complex control flow ────────────────────────────────
 
     #[test]
-    fn debug_if_true() {
-        // if with true condition: should return then-branch (42)
-        let src = "fn test_if() -> i64 { if 1 > 0 { 42 } else { 99 } }";
-        let wasm_tenthc = compile_via_tenthc(src);
-        let result = run_wasm_i64(&wasm_tenthc, "test_if", &[]);
-        println!("debug_if_true: tenthc returned {} (expected 42)", result);
-        let wasm_rust = compile_via_rust(src);
-        let result_rust = run_wasm_i64(&wasm_rust, "test_if", &[]);
-        println!("debug_if_true: rust returned {} (expected 42)", result_rust);
+    fn parity_recursion() {
+        // Recursive function: factorial
+        let src = "fn fact(n: i64) -> i64 { if n <= 1 { 1 } else { n * fact(n - 1) } }";
+        assert_parity(src, "fact", &[5], 120);
     }
 
     #[test]
-    fn debug_if_false() {
-        // if with false condition: should return else-branch (99)
-        let src = "fn test_if() -> i64 { if 0 > 1 { 42 } else { 99 } }";
-        let wasm_tenthc = compile_via_tenthc(src);
-        println!("=== tenthc WASM-B ({} bytes) ===", wasm_tenthc.len());
-        for (i, b) in wasm_tenthc.iter().enumerate() {
-            print!("{:02x} ", b);
-            if (i + 1) % 16 == 0 { println!(); }
-        }
-        println!();
-        let result = run_wasm_i64(&wasm_tenthc, "test_if", &[]);
-        println!("debug_if_false: tenthc returned {} (expected 99)", result);
+    fn parity_fibonacci() {
+        // Recursive fibonacci
+        let src = "fn fib(n: i64) -> i64 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }";
+        assert_parity(src, "fib", &[10], 55);
     }
 
     #[test]
-    fn debug_if_no_braces() {
-        // Simple if without block braces — tenthc parser may handle this differently
-        let src = "fn test_if(x: i64) -> i64 { if x > 0 { 1 } else { 0 } }";
-        let wasm_tenthc = compile_via_tenthc(src);
-        let result = run_wasm_i64(&wasm_tenthc, "test_if", &[5]);
-        println!("debug_if_no_braces(5): tenthc returned {} (expected 1)", result);
-        let result0 = run_wasm_i64(&wasm_tenthc, "test_if", &[-5]);
-        println!("debug_if_no_braces(-5): tenthc returned {} (expected 0)", result0);
+    fn parity_gcd() {
+        // Euclidean GCD algorithm
+        let src = "fn gcd(a: i64, b: i64) -> i64 { if b == 0 { a } else { gcd(b, a % b) } }";
+        assert_parity(src, "gcd", &[48, 18], 6);
+    }
+
+    #[test]
+    fn parity_accumulate() {
+        // Multiple lets, reassignment, and return
+        let src = "fn accumulate(n: i64) -> i64 { let mut s = 0; let mut i = 1; while i <= n { s = s + i * i; i = i + 1; } s }";
+        assert_parity(src, "accumulate", &[4], 30); // 1+4+9+16 = 30
+    }
+
+    #[test]
+    fn parity_negative_arith() {
+        // Negative number arithmetic: (0-a)*(0-b) + a + b = ab + a + b
+        let src = "fn neg_test(a: i64, b: i64) -> i64 { let x = 0 - a; let y = 0 - b; x * y + a + b }";
+        assert_parity(src, "neg_test", &[3, 5], 23); // (-3)*(-5) + 3 + 5 = 15 + 8 = 23
     }
 }

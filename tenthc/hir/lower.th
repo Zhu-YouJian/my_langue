@@ -208,7 +208,10 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         let mut lowered_args: Vec<i64> = Vec::new();
         if e.arg_count > 0 {
             for ai in e.arg_start..(e.arg_start + e.arg_count) {
-                let lowered = lower_expr(p, ai, exprs, stmts, match_arms, depth + 1);
+                // Dereference "arg" wrapper nodes created by parse_postfix/parse_primary
+                let arg_expr = exprs[ai - 1];
+                let actual_idx = if arg_expr.kind == "arg" { arg_expr.left } else { ai };
+                let lowered = lower_expr(p, actual_idx, exprs, stmts, match_arms, depth + 1);
                 lowered_args.push(lowered);
             };
         };
@@ -253,10 +256,13 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     if kind == "call" {
         let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", 0);
         // Lower all args into temp buffer FIRST (nested calls push to arg_list during lowering)
+        // Each arg node is an "arg" reference whose `left` points to the actual expression
         let mut lowered_args: Vec<i64> = Vec::new();
         if e.arg_count > 0 {
             for i in e.arg_start..(e.arg_start + e.arg_count) {
-                let lowered = lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                let arg_expr = exprs[i - 1];
+                let actual_idx = if arg_expr.kind == "arg" { arg_expr.left } else { i };
+                let lowered = lower_expr(p, actual_idx, exprs, stmts, match_arms, depth + 1);
                 lowered_args.push(lowered);
             };
         };
@@ -274,10 +280,13 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     if kind == "method_call" {
         let recv = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         // Lower all args into temp buffer FIRST
+        // Each arg node is an "arg" reference whose `left` points to the actual expression
         let mut lowered_args: Vec<i64> = Vec::new();
         if e.arg_count > 0 {
             for i in e.arg_start..(e.arg_start + e.arg_count) {
-                let lowered = lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                let arg_expr = exprs[i - 1];
+                let actual_idx = if arg_expr.kind == "arg" { arg_expr.left } else { i };
+                let lowered = lower_expr(p, actual_idx, exprs, stmts, match_arms, depth + 1);
                 lowered_args.push(lowered);
             };
         };
@@ -419,7 +428,10 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         let mut lowered_args: Vec<i64> = Vec::new();
         if e.arg_count > 0 {
             for i in e.arg_start..(e.arg_start + e.arg_count) {
-                let lowered = lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                // Dereference "arg" wrapper nodes created by parse_primary
+                let arg_expr = exprs[i - 1];
+                let actual_idx = if arg_expr.kind == "arg" { arg_expr.left } else { i };
+                let lowered = lower_expr(p, actual_idx, exprs, stmts, match_arms, depth + 1);
                 lowered_args.push(lowered);
             };
         };
@@ -437,7 +449,10 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         let mut lowered_args: Vec<i64> = Vec::new();
         if e.arg_count > 0 {
             for i in e.arg_start..(e.arg_start + e.arg_count) {
-                let lowered = lower_expr(p, i, exprs, stmts, match_arms, depth + 1);
+                // Dereference "arg" wrapper nodes created by parse_primary
+                let arg_expr = exprs[i - 1];
+                let actual_idx = if arg_expr.kind == "arg" { arg_expr.left } else { i };
+                let lowered = lower_expr(p, actual_idx, exprs, stmts, match_arms, depth + 1);
                 lowered_args.push(lowered);
             };
         };
