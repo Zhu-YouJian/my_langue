@@ -609,8 +609,10 @@ fn parse_expr(p: &mut Parser) -> i64 {
 }
 
 fn parse_block_expr(p: &mut Parser) -> i64 {
-    let body_start = p.block_idxs.len() + 1;
-    let mut count: i64 = 0;
+    // Collect statements in a LOCAL Vec first, then push to shared block_idxs
+    // AFTER the loop. This prevents nested block expressions from interleaving
+    // their statements with this block's statements in the shared array.
+    let mut local_idxs: Vec<i64> = Vec::new();
     loop {
         let tok = parser_peek(p);
         let d = tok.disc;
@@ -619,12 +621,17 @@ fn parse_block_expr(p: &mut Parser) -> i64 {
         // Skip semicolons between statements
         if d == 54 { parser_advance(p); } else {
             let sidx = parse_stmt(p);
-            p.block_idxs.push(sidx);
-            count = count + 1;
+            local_idxs.push(sidx);
             let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
         };
     };
     parser_advance(p); // skip }
+    // NOW push all collected statements contiguously to the shared array
+    let body_start = p.block_idxs.len() + 1;
+    let count = local_idxs.len();
+    for i in 0..count {
+        p.block_idxs.push(local_idxs[i]);
+    };
     let idx = add_expr(p, "block");
     p.expr_nodes[idx - 1].extra_start = body_start;
     p.expr_nodes[idx - 1].extra_count = count;
@@ -756,17 +763,21 @@ fn parse_stmt(p: &mut Parser) -> i64 {
         let cond = parse_expr(p);
         p.no_struct_literal = false;
         parser_advance(p); // skip {
-        let body_start = p.loop_idxs.len() + 1;
-        let mut body_count: i64 = 0;
+        // Collect statements locally first, then push to shared loop_idxs AFTER
+        let mut local_idxs: Vec<i64> = Vec::new();
         loop {
             let t2 = parser_peek(p);
             if is_end_of_block(t2) { break; };
             let sidx = parse_stmt(p);
-            p.loop_idxs.push(sidx);
-            body_count = body_count + 1;
+            local_idxs.push(sidx);
             let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
         };
         parser_advance(p); // skip }
+        let body_start = p.loop_idxs.len() + 1;
+        let body_count = local_idxs.len();
+        for i in 0..body_count {
+            p.loop_idxs.push(local_idxs[i]);
+        };
         let idx = add_stmt(p, "while");
         p.stmt_nodes[idx - 1].expr_idx = cond;
         p.stmt_nodes[idx - 1].body_start = body_start;
@@ -785,17 +796,21 @@ fn parse_stmt(p: &mut Parser) -> i64 {
         let iterable = parse_expr(p);
         p.no_struct_literal = false;
         parser_advance(p); // skip {
-        let body_start = p.loop_idxs.len() + 1;
-        let mut body_count: i64 = 0;
+        // Collect statements locally first, then push to shared loop_idxs AFTER
+        let mut local_idxs: Vec<i64> = Vec::new();
         loop {
             let t2 = parser_peek(p);
             if is_end_of_block(t2) { break; };
             let sidx = parse_stmt(p);
-            p.loop_idxs.push(sidx);
-            body_count = body_count + 1;
+            local_idxs.push(sidx);
             let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
         };
         parser_advance(p); // skip }
+        let body_start = p.loop_idxs.len() + 1;
+        let body_count = local_idxs.len();
+        for i in 0..body_count {
+            p.loop_idxs.push(local_idxs[i]);
+        };
         let idx = add_stmt(p, "for");
         p.stmt_nodes[idx - 1].name = name;
         p.stmt_nodes[idx - 1].expr_idx = iterable;
@@ -820,17 +835,21 @@ fn parse_stmt(p: &mut Parser) -> i64 {
     if disc == 13 {
         parser_advance(p);
         parser_advance(p); // skip {
-        let body_start = p.loop_idxs.len() + 1;
-        let mut body_count: i64 = 0;
+        // Collect statements locally first, then push to shared loop_idxs AFTER
+        let mut local_idxs: Vec<i64> = Vec::new();
         loop {
             let t2 = parser_peek(p);
             if is_end_of_block(t2) { break; };
             let sidx = parse_stmt(p);
-            p.loop_idxs.push(sidx);
-            body_count = body_count + 1;
+            local_idxs.push(sidx);
             let ts = parser_peek(p); if ts.disc == 54 { parser_advance(p); };
         };
         parser_advance(p); // skip }
+        let body_start = p.loop_idxs.len() + 1;
+        let body_count = local_idxs.len();
+        for i in 0..body_count {
+            p.loop_idxs.push(local_idxs[i]);
+        };
         let idx = add_stmt(p, "loop");
         p.stmt_nodes[idx - 1].body_start = body_start;
         p.stmt_nodes[idx - 1].body_count = body_count;
@@ -889,19 +908,26 @@ fn parse_fn(p: &mut Parser) -> FnDef {
     };
 
     parser_advance(p); // skip {
-    let body_start = p.block_idxs.len() + 1;
-    let mut body_count: i64 = 0;
+    // Collect statements in a LOCAL Vec first, then push to shared block_idxs
+    // AFTER the loop. This prevents nested block expressions (e.g. if expressions)
+    // from interleaving their statements with the function body in the shared array.
+    let mut local_idxs: Vec<i64> = Vec::new();
     loop {
         let t4 = parser_peek(p);
         if is_end_of_block(t4) { break; };
         let sidx = parse_stmt(p);
-        p.block_idxs.push(sidx);
-        body_count = body_count + 1;
+        local_idxs.push(sidx);
         // skip optional semicolon
         let ts = parser_peek(p);
         if ts.disc == 54 { parser_advance(p); };
     };
     parser_advance(p); // skip }
+    // NOW push all collected statements contiguously to the shared array
+    let body_start = p.block_idxs.len() + 1;
+    let body_count = local_idxs.len();
+    for i in 0..body_count {
+        p.block_idxs.push(local_idxs[i]);
+    };
 
     FnDef { name: name, params: params, return_type: return_type, body_start: body_start, body_count: body_count }
 }
@@ -1008,8 +1034,9 @@ fn parse_program(tokens: Vec<Token>) -> Program {
     let mut structs = Vec::new();
     let mut enums = Vec::new();
     let mut fns = Vec::new();
-    let mut main_stmts_start: i64 = 1;
-    let mut main_count: i64 = 0;
+    // Collect main statements in a LOCAL Vec first, then push to shared block_idxs
+    // AFTER the loop. This prevents nested block expressions from interleaving.
+    let mut main_local_idxs: Vec<i64> = Vec::new();
 
     loop {
         if parser_at_eof(&p) { break; };
@@ -1032,12 +1059,16 @@ fn parse_program(tokens: Vec<Token>) -> Program {
             break;
         } else {
             // Top-level expression statement
-            if main_count == 0 { main_stmts_start = p.block_idxs.len() + 1; };
             let sidx = parse_stmt(&mut p);
-            p.block_idxs.push(sidx);
-            main_count = main_count + 1;
+            main_local_idxs.push(sidx);
             if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
         };
+    };
+    // NOW push all collected main statements contiguously to the shared array
+    let main_stmts_start = p.block_idxs.len() + 1;
+    let main_count = main_local_idxs.len();
+    for i in 0..main_count {
+        p.block_idxs.push(main_local_idxs[i]);
     };
 
     Program {

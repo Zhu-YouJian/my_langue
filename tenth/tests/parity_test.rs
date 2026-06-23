@@ -281,4 +281,89 @@ mod parity {
         let src = "fn sq(x: i64) -> i64 { x * x } fn sum_sq(a: i64, b: i64) -> i64 { sq(a) + sq(b) }";
         assert_parity(src, "sum_sq", &[3, 4], 25);
     }
+
+    // ── Comparisons and conditionals ───────────────────────────────────────
+
+    #[test]
+    fn parity_div_mod() {
+        let src = "fn divmod(a: i64, b: i64) -> i64 { let q = a / b; let r = a % b; q * 100 + r }";
+        assert_parity(src, "divmod", &[17, 5], 302);
+    }
+
+    #[test]
+    fn parity_max_if() {
+        // if-expression: both compilers should support this.
+        let src = "fn my_max(a: i64, b: i64) -> i64 { if a > b { a } else { b } }";
+        assert_parity(src, "my_max", &[3, 7], 7);
+    }
+
+    #[test]
+    fn parity_abs_if() {
+        let src = "fn my_abs(x: i64) -> i64 { if x < 0 { 0 - x } else { x } }";
+        assert_parity(src, "my_abs", &[-5], 5);
+    }
+
+    #[test]
+    fn parity_comparison_chain() {
+        // Use comparison results in arithmetic (bool → i64).
+        let src = "fn cmp_test(a: i64, b: i64) -> i64 { let lt = if a < b { 1 } else { 0 }; let eq = if a == b { 1 } else { 0 }; lt * 10 + eq }";
+        assert_parity(src, "cmp_test", &[3, 5], 10);
+    }
+
+    // ── Struct field access ────────────────────────────────────────────────
+
+    #[test]
+    fn parity_struct_field() {
+        // struct literal + field access. Both compilers allocate struct on
+        // heap (tenth_alloc) and access fields by offset.
+        let src = "struct Pair { a: i64, b: i64 } fn make_and_sum(x: i64, y: i64) -> i64 { let p = Pair { a: x, b: y }; p.a + p.b }";
+        assert_parity(src, "make_and_sum", &[3, 4], 7);
+    }
+
+    #[test]
+    fn parity_struct_reassign() {
+        // Create struct, mutate field, read it back.
+        let src = "struct Counter { n: i64 } fn increment(start: i64) -> i64 { let mut c = Counter { n: start }; c.n = c.n + 10; c.n }";
+        assert_parity(src, "increment", &[5], 15);
+    }
+
+    // ── Debug tests for if-expression investigation ────────────────────────
+
+    #[test]
+    fn debug_if_true() {
+        // if with true condition: should return then-branch (42)
+        let src = "fn test_if() -> i64 { if 1 > 0 { 42 } else { 99 } }";
+        let wasm_tenthc = compile_via_tenthc(src);
+        let result = run_wasm_i64(&wasm_tenthc, "test_if", &[]);
+        println!("debug_if_true: tenthc returned {} (expected 42)", result);
+        let wasm_rust = compile_via_rust(src);
+        let result_rust = run_wasm_i64(&wasm_rust, "test_if", &[]);
+        println!("debug_if_true: rust returned {} (expected 42)", result_rust);
+    }
+
+    #[test]
+    fn debug_if_false() {
+        // if with false condition: should return else-branch (99)
+        let src = "fn test_if() -> i64 { if 0 > 1 { 42 } else { 99 } }";
+        let wasm_tenthc = compile_via_tenthc(src);
+        println!("=== tenthc WASM-B ({} bytes) ===", wasm_tenthc.len());
+        for (i, b) in wasm_tenthc.iter().enumerate() {
+            print!("{:02x} ", b);
+            if (i + 1) % 16 == 0 { println!(); }
+        }
+        println!();
+        let result = run_wasm_i64(&wasm_tenthc, "test_if", &[]);
+        println!("debug_if_false: tenthc returned {} (expected 99)", result);
+    }
+
+    #[test]
+    fn debug_if_no_braces() {
+        // Simple if without block braces — tenthc parser may handle this differently
+        let src = "fn test_if(x: i64) -> i64 { if x > 0 { 1 } else { 0 } }";
+        let wasm_tenthc = compile_via_tenthc(src);
+        let result = run_wasm_i64(&wasm_tenthc, "test_if", &[5]);
+        println!("debug_if_no_braces(5): tenthc returned {} (expected 1)", result);
+        let result0 = run_wasm_i64(&wasm_tenthc, "test_if", &[-5]);
+        println!("debug_if_no_braces(-5): tenthc returned {} (expected 0)", result0);
+    }
 }

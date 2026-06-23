@@ -342,15 +342,23 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
 
     if kind == "block" {
-        let start = p.stmt_list.len() + 1;
+        // Collect lowered statements in a LOCAL Vec first, then push to shared
+        // stmt_list AFTER the loop. This prevents nested block expressions
+        // (e.g. if-branches) from interleaving their statements with this
+        // block's statements in the shared array.
+        let mut local_idxs: Vec<i64> = Vec::new();
         if e.extra_count > 0 {
             for i in e.extra_start..(e.extra_start + e.extra_count) {
                 let actual_idx = p.block_idxs[i - 1];
                 let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
-                p.stmt_list.push(sidx);
+                local_idxs.push(sidx);
             };
         };
-        let count = p.stmt_list.len() - (start - 1);
+        let start = p.stmt_list.len() + 1;
+        let count = local_idxs.len();
+        for i in 0..count {
+            p.stmt_list.push(local_idxs[i]);
+        };
         return push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
     };
 
@@ -614,13 +622,18 @@ fn lower_program(program: Program) -> HirProgram {
     // Clear var_types for main scope
     p.var_types = Vec::new();
     if program.main_stmts_count > 0 {
-        let start = p.stmt_list.len() + 1;
+        // Collect lowered statements locally first, then push to shared stmt_list
+        let mut local_idxs: Vec<i64> = Vec::new();
         for k in program.main_stmts_start..(program.main_stmts_start + program.main_stmts_count) {
             let actual_idx = p.block_idxs[k - 1];
             let sidx = lower_stmt(&mut p, actual_idx, program.expr_nodes, program.stmt_nodes, program.match_arms, 0);
-            p.stmt_list.push(sidx);
+            local_idxs.push(sidx);
         };
-        let count = p.stmt_list.len() - (start - 1);
+        let start = p.stmt_list.len() + 1;
+        let count = local_idxs.len();
+        for i in 0..count {
+            p.stmt_list.push(local_idxs[i]);
+        };
         let ni = push_expr(&mut p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
         p.main_expr = ni;
     };
@@ -630,12 +643,18 @@ fn lower_program(program: Program) -> HirProgram {
 
 fn lower_fn_body(p: &mut HirProgram, body_start: i64, body_count: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, match_arms: Vec<MatchArm>) -> i64 {
     if body_count <= 0 { return 0; };
-    let start = p.stmt_list.len() + 1;
+    // Collect lowered statements locally first, then push to shared stmt_list
+    // AFTER the loop. Prevents nested block expressions from interleaving.
+    let mut local_idxs: Vec<i64> = Vec::new();
     for i in body_start..(body_start + body_count) {
         let actual_idx = p.block_idxs[i - 1];
         let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, 0);
-        p.stmt_list.push(sidx);
+        local_idxs.push(sidx);
     };
-    let count = p.stmt_list.len() - (start - 1);
+    let start = p.stmt_list.len() + 1;
+    let count = local_idxs.len();
+    for i in 0..count {
+        p.stmt_list.push(local_idxs[i]);
+    };
     push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0)
 }
