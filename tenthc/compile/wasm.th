@@ -122,10 +122,11 @@ struct WasmCtx {
     if_depth: i64,            // if-block depth within innermost loop (for break/continue)
     in_loop: i64,             // 1 if inside a loop, 0 otherwise
     current_fn_idx: i64,      // index of the function currently being compiled
+    break_offset: i64,        // extra depth for break: 0 for while/loop, 1 for for (inner body block)
 }
 
 fn ctx_new() -> WasmCtx {
-    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0, local_names: Vec::new(), local_indices: Vec::new(), local_count: 0, string_data: Vec::new(), string_names: Vec::new(), string_addrs: Vec::new(), if_depth: 0, in_loop: 0, current_fn_idx: 0 }
+    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0, local_names: Vec::new(), local_indices: Vec::new(), local_count: 0, string_data: Vec::new(), string_names: Vec::new(), string_addrs: Vec::new(), if_depth: 0, in_loop: 0, current_fn_idx: 0, break_offset: 0 }
 }
 
 // ── String interning ──
@@ -997,8 +998,10 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_loop(out, 64);
         let saved_if_depth = ctx.if_depth;
         let saved_in_loop = ctx.in_loop;
+        let saved_break_offset = ctx.break_offset;
         ctx.if_depth = 0;
         ctx.in_loop = 1;
+        ctx.break_offset = 0; // while has no inner body block
         if s.cond > 0 {
             compile_expr(ctx, out, hir, s.cond);
             wasm_i32_eqz(out);
@@ -1014,6 +1017,7 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_end(out);   // end block
         ctx.if_depth = saved_if_depth;
         ctx.in_loop = saved_in_loop;
+        ctx.break_offset = saved_break_offset;
         return;
     };
     if d == 7 {
@@ -1022,8 +1026,10 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_loop(out, 64);
         let saved_if_depth = ctx.if_depth;
         let saved_in_loop = ctx.in_loop;
+        let saved_break_offset = ctx.break_offset;
         ctx.if_depth = 0;
         ctx.in_loop = 1;
+        ctx.break_offset = 0; // loop has no inner body block
         if s.body_count > 0 {
             for bi in s.body_start..(s.body_start + s.body_count) {
                 compile_stmt(ctx, out, hir, hir.body_list[bi - 1]);
@@ -1034,6 +1040,7 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_end(out);   // end block
         ctx.if_depth = saved_if_depth;
         ctx.in_loop = saved_in_loop;
+        ctx.break_offset = saved_break_offset;
         return;
     };
     if d == 4 {
@@ -1057,13 +1064,20 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 compile_expr(ctx, out, hir, iter.right);
                 wasm_local_set(out, slot_end);
 
-                // block { loop { cond; br_if 1; body; i++; br 0; } }
+                // block $break { loop $cont { cond; br_if $break; block $body { body }; i++; br $cont; } }
+                // Structure depths from inside body (no if):
+                //   $body = depth 0, $cont = depth 1, $break = depth 2
+                // continue = br(if_depth) where if_depth=0 → br 0 = $body end → falls to i++ ✓
+                // break = br(1 + if_depth) where if_depth=0 → br 1 = $cont end → WRONG! should be $break
+                // Fix: break = br(2 + if_depth), continue = br(if_depth)
                 wasm_block(out, 64);
                 wasm_loop(out, 64);
                 let saved_if_depth = ctx.if_depth;
                 let saved_in_loop = ctx.in_loop;
+                let saved_break_offset = ctx.break_offset;
                 ctx.if_depth = 0;
                 ctx.in_loop = 1;
+                ctx.break_offset = 1; // for has inner body block
                 // cond: i < end (or i <= end for inclusive)
                 wasm_local_get(out, slot_i);
                 wasm_local_get(out, slot_end);
@@ -1073,23 +1087,27 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                     wasm_i64_lt_s(out);
                 };
                 wasm_i32_eqz(out);
-                wasm_br_if(out, 1); // break if !(cond)
-                // body
+                wasm_br_if(out, 1); // break if !(cond) — br 1 = $break end
+                // Wrap body in inner block so continue (br 0) breaks it → falls to i++
+                wasm_block(out, 64);
+                // body (if_depth stays 0; if blocks inside will increment it)
                 if s.body_count > 0 {
                     for bi in s.body_start..(s.body_start + s.body_count) {
                         compile_stmt(ctx, out, hir, hir.body_list[bi - 1]);
                     };
                 };
+                wasm_end(out); // end inner body block
                 // i += 1
                 wasm_local_get(out, slot_i);
                 wasm_i64_const(out, 1);
                 wasm_i64_add(out);
                 wasm_local_set(out, slot_i);
-                wasm_br(out, 0); // continue loop
+                wasm_br(out, 0); // continue loop — br 0 = $cont start
                 wasm_end(out);   // end loop
                 wasm_end(out);   // end block
                 ctx.if_depth = saved_if_depth;
                 ctx.in_loop = saved_in_loop;
+                ctx.break_offset = saved_break_offset;
                 return;
             };
         };
@@ -1111,13 +1129,19 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     };
     if d == 5 {
         // Break — branch to enclosing loop's block
-        // depth = 1 (loop's block) + number of intervening if blocks
-        wasm_br(out, 1 + ctx.if_depth);
+        // depth = 1 (loop's block) + break_offset (for's inner body block) + if_depth
+        wasm_br(out, 1 + ctx.break_offset + ctx.if_depth);
         return;
     };
     if d == 6 {
-        // Continue — branch to enclosing loop's loop start
-        // depth = number of intervening if blocks
+        // Continue — branch to enclosing loop's loop start (while/loop) or body block end (for)
+        // For while/loop: br(if_depth) → loop start
+        // For for: br(if_depth) → body block end (since body block is depth 0, if_depth=0)
+        //   Wait — for for, continue should br to body block end (depth 0 when if_depth=0)
+        //   But break_offset=1 for for, so we need continue = br(if_depth) not br(if_depth + break_offset)
+        //   Actually continue = br(if_depth) works for both:
+        //   - while/loop: if_depth=0, br 0 = loop start ✓
+        //   - for: if_depth=0, br 0 = body block end ✓ (body block is innermost)
         wasm_br(out, ctx.if_depth);
         return;
     };

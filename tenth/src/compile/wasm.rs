@@ -72,9 +72,10 @@ pub struct WasmCompiler {
     local_count: u32,
     /// Number of function parameters (params use correct WASM types, not i64)
     param_count: u32,
-    /// Stack of If-block depths, one entry per enclosing loop.
-    /// Break emits Br(1 + top), Continue emits Br(top).
-    if_depths: Vec<u32>,
+    /// Stack of (If-block depth, break_offset) per enclosing loop.
+    /// Break emits Br(1 + break_offset + if_depth), Continue emits Br(if_depth).
+    /// break_offset=0 for while/loop, 1 for for (inner body block).
+    if_depths: Vec<(u32, u32)>,
 }
 
 impl WasmCompiler {
@@ -544,7 +545,7 @@ impl WasmCompiler {
                 }
                 // Track If depth inside loops so Break/Continue emit correct Br depth.
                 let in_loop = !self.if_depths.is_empty();
-                if in_loop { *self.if_depths.last_mut().unwrap() += 1; }
+                if in_loop { self.if_depths.last_mut().unwrap().0 += 1; }
                 self.compile_expr(body, then_branch)?;
                 // If the If block is Empty but then_branch produces a value, drop it.
                 if !has_value && !matches!(&then_branch.ty, Type::Base(BaseType::Unit)) {
@@ -558,7 +559,7 @@ impl WasmCompiler {
                     }
                 }
                 body.instruction(&Instruction::End);
-                if in_loop { *self.if_depths.last_mut().unwrap() -= 1; }
+                if in_loop { self.if_depths.last_mut().unwrap().0 -= 1; }
             }
 
             HirExprKind::Assign { target, value } => {
@@ -876,7 +877,7 @@ impl WasmCompiler {
                 }
             }
             HirStmtKind::Loop { body: lb } => {
-                self.if_depths.push(0);
+                self.if_depths.push((0, 0));
                 body.instruction(&Instruction::Block(BlockType::Empty));
                 body.instruction(&Instruction::Loop(BlockType::Empty));
                 for s in lb { self.compile_stmt(body, s)?; }
@@ -886,7 +887,7 @@ impl WasmCompiler {
                 self.if_depths.pop();
             }
             HirStmtKind::While { cond, body: lb } => {
-                self.if_depths.push(0);
+                self.if_depths.push((0, 0));
                 body.instruction(&Instruction::Block(BlockType::Empty));
                 body.instruction(&Instruction::Loop(BlockType::Empty));
                 self.compile_expr(body, cond)?;
@@ -905,11 +906,13 @@ impl WasmCompiler {
                 body.instruction(&Instruction::Return);
             }
             HirStmtKind::Break => {
-                let depth = 1 + self.if_depths.last().copied().unwrap_or(0);
+                let &(if_depth, break_offset) = self.if_depths.last().unwrap_or(&(0, 0));
+                let depth = 1 + break_offset + if_depth;
                 body.instruction(&Instruction::Br(depth));
             }
             HirStmtKind::Continue => {
-                let depth = self.if_depths.last().copied().unwrap_or(0);
+                let &(if_depth, _) = self.if_depths.last().unwrap_or(&(0, 0));
+                let depth = if_depth;
                 body.instruction(&Instruction::Br(depth));
             }
             HirStmtKind::For { var, iter, body: lb } => {
@@ -929,7 +932,7 @@ impl WasmCompiler {
                         }
                         body.instruction(&Instruction::LocalSet(var_local));
 
-                        self.if_depths.push(0);
+                        self.if_depths.push((0, 1)); // break_offset=1 for for's inner body block
                         // block (break target) + loop (continue/back-edge target)
                         body.instruction(&Instruction::Block(BlockType::Empty));
                         body.instruction(&Instruction::Loop(BlockType::Empty));
@@ -949,8 +952,15 @@ impl WasmCompiler {
                         body.instruction(&Instruction::I32Eqz);
                         body.instruction(&Instruction::BrIf(1)); // exit block when condition false
 
+                        // Wrap body in inner block so `continue` (br if_depth=0) breaks
+                        // the inner body block and falls through to var += 1, avoiding
+                        // infinite loop where continue skips the increment.
+                        body.instruction(&Instruction::Block(BlockType::Empty));
+
                         // loop body
                         self.compile_stmt(body, lb.as_ref())?;
+
+                        body.instruction(&Instruction::End); // end inner body block
 
                         // var += 1
                         body.instruction(&Instruction::LocalGet(var_local));
