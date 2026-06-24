@@ -116,7 +116,7 @@
 **测试文件**：`tenth/tests/parity_test.rs`
 
 - [ ] tenthc 能编译 Rust 母编译器测试套件中 90%+ 的程序
-- [x] 对同一输入，tenthc 和 Rust 编译器产出的 WASM 执行结果一致（75 个用例通过：算术、变量、循环、嵌套调用、if 表达式、比较链、struct 字段、递归、fibonacci、gcd、负数算术、深层递归、互相递归、复杂算术、取模链、if/elif 链、while+if/else 赋值分支、一元取负、变量遮蔽、函数组合、三函数链、复合 while 条件、四字段 struct、struct 字段突变、嵌套块、for 积累、算术优先级、括号表达式、嵌套 while、for-in-while、while-in-for、嵌套 for 循环、嵌套 for 带计算体、break/continue、bool 返回、逻辑运算符、多 return 路径、struct 作为函数参数、struct 修改并返回、混合算术、深层嵌套调用、零和负数、大数运算、if/elif/else 链、嵌套 break、两种 struct 类型、三字段 struct、struct 多函数传递、变量遮蔽 in block、if 体内 let、递归 struct 累加）
+- [x] 对同一输入，tenthc 和 Rust 编译器产出的 WASM 执行结果一致（112 个用例通过：算术、变量、循环、嵌套调用、if 表达式、比较链、struct 字段、递归、fibonacci、gcd、负数算术、深层递归、互相递归、复杂算术、取模链、if/elif 链、while+if/else 赋值分支、一元取负、变量遮蔽、函数组合、三函数链、复合 while 条件、四字段 struct、struct 字段突变、嵌套块、for 积累、算术优先级、括号表达式、嵌套 while、for-in-while、while-in-for、嵌套 for 循环、嵌套 for 带计算体、break/continue、bool 返回、逻辑运算符、多 return 路径、struct 作为函数参数、struct 修改并返回、混合算术、深层嵌套调用、零和负数、大数运算、if/elif/else 链、嵌套 break、两种 struct 类型、三字段 struct、struct 多函数传递、变量遮蔽 in block、if 体内 let、递归 struct 累加、复合赋值、整除取模、比较运算符、struct 字段赋值/修改、提前返回、多参数函数、for+continue、for+break+continue、多 local 压力测试、复杂函数调用、while 累加、边界情况）
 - [ ] Trait 定义和实现能正确解析和分派
 - [ ] 泛型函数能正确实例化
 - [ ] 借用检查能检测 use-after-move 和双重借用
