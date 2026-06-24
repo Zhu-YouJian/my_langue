@@ -571,10 +571,50 @@ mod parity {
         assert_parity(src, "factorial_loop", &[6], 120); // 1*2*3*4*5 = 120 (1..6 is exclusive)
     }
 
-    // NOTE: Nested for loops (for-in-for-in) have a parity issue in tenthc
-    // where the inner loop appears to run one extra iteration. This needs
-    // investigation — possibly related to loop variable local slot management
-    // or range end value compilation in nested contexts.
+    // ── Nested loops ─────────────────────────────────────────────────────
+
+    #[test]
+    fn parity_nested_while() {
+        // Nested while loops
+        let src = "fn nested_while(n: i64) -> i64 { let mut c = 0; let mut i = 0; while i < n { let mut j = 0; while j < n { c = c + 1; j = j + 1; } i = i + 1; } c }";
+        assert_parity(src, "nested_while", &[3], 9);
+    }
+
+    #[test]
+    fn parity_for_in_while() {
+        // For loop inside while loop
+        let src = "fn for_in_while(n: i64) -> i64 { let mut c = 0; let mut i = 0; while i < n { for j in 0..n { c = c + 1; } i = i + 1; } c }";
+        assert_parity(src, "for_in_while", &[3], 9);
+    }
+
+    #[test]
+    fn parity_fixed_for_in_while() {
+        // For loop with FIXED range inside while loop — isolates range vs loop issue
+        let src = "fn fixed_for_in_while(n: i64) -> i64 { let mut c = 0; let mut i = 0; while i < n { for j in 0..3 { c = c + 1; } i = i + 1; } c }";
+        assert_parity(src, "fixed_for_in_while", &[3], 9); // 3 * 3 = 9
+    }
+
+    #[test]
+    fn parity_while_in_for() {
+        // While loop inside for loop
+        let src = "fn while_in_for(n: i64) -> i64 { let mut c = 0; for i in 0..n { let mut j = 0; while j < n { c = c + 1; j = j + 1; } } c }";
+        assert_parity(src, "while_in_for", &[3], 9);
+    }
+
+    #[test]
+    fn parity_nested_for() {
+        // Nested for loops — for inside for
+        let src = "fn nested_for(n: i64) -> i64 { let mut c = 0; for i in 0..n { for j in 0..n { c = c + 1; } } c }";
+        assert_parity(src, "nested_for", &[3], 9); // 3 * 3 = 9
+    }
+
+    #[test]
+    fn parity_nested_for_with_body() {
+        // Nested for loops with computation in inner body
+        let src = "fn nested_for_sum(n: i64) -> i64 { let mut s = 0; for i in 0..n { for j in 0..n { s = s + i * j; } } s }";
+        // n=3: (0*0+0*1+0*2) + (1*0+1*1+1*2) + (2*0+2*1+2*2) = 0 + 3 + 6 = 9
+        assert_parity(src, "nested_for_sum", &[3], 9);
+    }
 
     // ── Complex arithmetic with precedence ───────────────────────────────
 

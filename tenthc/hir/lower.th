@@ -546,15 +546,22 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
 
     if kind == "loop" {
-        let bstart = p.body_list.len() + 1;
+        // Collect lowered children in temp list FIRST, then push to body_list.
+        // This prevents nested loop body statements from interleaving with
+        // this loop's direct children in body_list.
+        let mut lowered_children: Vec<i64> = Vec::new();
         if s.body_count > 0 {
             for i in s.body_start..(s.body_start + s.body_count) {
                 let actual_idx = p.loop_idxs[i - 1];
                 let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
-                p.body_list.push(sidx);
+                lowered_children.push(sidx);
             };
         };
-        let bcount = p.body_list.len() - (bstart - 1);
+        let bstart = p.body_list.len() + 1;
+        let bcount = lowered_children.len();
+        for i in 0..bcount {
+            p.body_list.push(lowered_children[i]);
+        };
         return push_stmt(p, 7, "", 0, 0, bstart, bcount, 0, false);
     };
 
@@ -563,29 +570,39 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         if s.expr_idx > 0 {
             cond = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
         };
-        let bstart = p.body_list.len() + 1;
+        // Collect lowered children in temp list FIRST, then push to body_list.
+        let mut lowered_children: Vec<i64> = Vec::new();
         if s.body_count > 0 {
             for i in s.body_start..(s.body_start + s.body_count) {
                 let actual_idx = p.loop_idxs[i - 1];
                 let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
-                p.body_list.push(sidx);
+                lowered_children.push(sidx);
             };
         };
-        let bcount = p.body_list.len() - (bstart - 1);
+        let bstart = p.body_list.len() + 1;
+        let bcount = lowered_children.len();
+        for i in 0..bcount {
+            p.body_list.push(lowered_children[i]);
+        };
         return push_stmt(p, 3, "", 0, cond, bstart, bcount, 0, false);
     };
 
     if kind == "for" {
         let iter = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
-        let bstart = p.body_list.len() + 1;
+        // Collect lowered children in temp list FIRST, then push to body_list.
+        let mut lowered_children: Vec<i64> = Vec::new();
         if s.body_count > 0 {
             for i in s.body_start..(s.body_start + s.body_count) {
                 let actual_idx = p.loop_idxs[i - 1];
                 let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
-                p.body_list.push(sidx);
+                lowered_children.push(sidx);
             };
         };
-        let bcount = p.body_list.len() - (bstart - 1);
+        let bstart = p.body_list.len() + 1;
+        let bcount = lowered_children.len();
+        for i in 0..bcount {
+            p.body_list.push(lowered_children[i]);
+        };
         return push_stmt(p, 4, s.name, iter, 0, bstart, bcount, 0, false);
     };
 
