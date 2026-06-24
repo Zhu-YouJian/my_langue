@@ -6,8 +6,8 @@ struct Stmt { kind: str, name: str, expr_idx: i64, body_start: i64, body_count: 
 struct Param { name: str, type_ann: str }
 struct StructField { name: str, type_ann: str }
 struct EnumVariant { name: str, fields: Vec<StructField> }
-struct FnDef { name: str, params: Vec<Param>, return_type: str, body_start: i64, body_count: i64 }
-struct StructDef { name: str, fields: Vec<StructField> }
+struct FnDef { name: str, params: Vec<Param>, return_type: str, body_start: i64, body_count: i64, generics: Vec<str> }
+struct StructDef { name: str, fields: Vec<StructField>, generics: Vec<str> }
 struct EnumDef { name: str, variants: Vec<EnumVariant> }
 struct TraitMethodSig { name: str, params: Vec<Param>, return_type: str }
 struct TraitDef { name: str, methods: Vec<TraitMethodSig> }
@@ -324,8 +324,8 @@ fn parse_primary(p: &mut Parser) -> i64 {
     };
 
     // LBracket (51) — array literal or tensor literal
+    // Note: parse_primary already consumed the opening `[` via parser_advance above.
     if d == 51 {
-        parser_advance(p); // skip [
         let next = parser_peek(p);
         if next.disc == 51 {
             // Tensor literal: [[...], [...]]
@@ -440,6 +440,43 @@ fn parse_unary(p: &mut Parser) -> i64 {
     parse_primary(p)
 }
 
+// Heuristic: check if `<` at current position starts a generic call.
+// Scans `<Ident, Ident, ..., >` and checks if `(` follows.
+// Saves and restores parser position.
+fn looks_like_generic_call(p: &mut Parser) -> bool {
+    let saved_pos = p.pos;
+    let mut ok = true;
+    // Expect <
+    let t0 = parser_peek(p);
+    if t0.disc != 33 { ok = false; };
+    if ok {
+        parser_advance(p); // skip <
+        // Collect type args
+        loop {
+            let t = parser_peek(p);
+            if t.disc == 34 || t.disc == 63 { break; }; // > or >>
+            // Expect identifier (disc=1) or keyword-like ident
+            if t.disc != 1 && t.sval == "" { ok = false; break; };
+            parser_advance(p); // skip ident
+            let t2 = parser_peek(p);
+            if t2.disc == 53 { parser_advance(p); } // skip ,
+            else { break; };
+        };
+        // Expect > or >>
+        let tg = parser_peek(p);
+        if tg.disc != 34 && tg.disc != 63 { ok = false; };
+        if ok {
+            parser_advance(p); // skip >
+            // Expect (
+            let tp = parser_peek(p);
+            if tp.disc != 47 { ok = false; };
+        };
+    };
+    // Restore position
+    p.pos = saved_pos;
+    ok
+}
+
 fn parse_postfix(p: &mut Parser) -> i64 {
     let mut expr_idx = parse_unary(p);
 
@@ -447,8 +484,79 @@ fn parse_postfix(p: &mut Parser) -> i64 {
         let tok = parser_peek(p);
         let d = tok.disc;
 
-        // LParen (47) — function call
-        if d == 47 {
+        // Lt (33) — generic call foo<T, U>(args), if it looks like one
+        if d == 33 {
+            if looks_like_generic_call(p) {
+                // Parse generic type args <T, U>
+                parser_advance(p); // skip <
+                let mut type_arg_idxs: Vec<i64> = Vec::new();
+                loop {
+                    let t = parser_peek(p);
+                    if t.disc == 34 || t.disc == 63 { break; }; // > or >>
+                    let type_tok = parser_advance(p);
+                    let type_name = type_tok.sval;
+                    // Create ident node for type arg
+                    let tidx = add_expr(p, "ident");
+                    p.expr_nodes[tidx - 1].sval = type_name;
+                    type_arg_idxs.push(tidx);
+                    let t2 = parser_peek(p);
+                    if t2.disc == 53 { parser_advance(p); } // skip ,
+                    else { break; };
+                };
+                // Consume > (or >> treated as >)
+                let gt_tok = parser_peek(p);
+                if gt_tok.disc == 34 || gt_tok.disc == 63 {
+                    parser_advance(p); // skip > (or >>)
+                };
+                // Now expect ( for call args
+                let next = parser_peek(p);
+                if next.disc == 47 {
+                    parser_advance(p); // skip (
+                    let mut arg_idxs: Vec<i64> = Vec::new();
+                    loop {
+                        let t = parser_peek(p);
+                        if t.disc == 48 { break; }; // RParen
+                        if t.disc == 61 { break; }; // Eof
+                        let arg_idx = parse_expr(p);
+                        arg_idxs.push(arg_idx);
+                        let t2 = parser_peek(p);
+                        if t2.disc == 53 { parser_advance(p); } // skip ,
+                        else { break; };
+                    };
+                    parser_advance(p); // skip )
+                    // Create contiguous "arg" nodes for call args
+                    let arg_start = p.expr_nodes.len() + 1;
+                    let arg_count = arg_idxs.len();
+                    for i in 0..arg_count {
+                        let aidx = add_expr(p, "arg");
+                        p.expr_nodes[aidx - 1].left = arg_idxs[i];
+                    };
+                    // Create contiguous ident nodes for type args (extra)
+                    let extra_start = p.expr_nodes.len() + 1;
+                    let extra_count = type_arg_idxs.len();
+                    for i in 0..extra_count {
+                        let aidx = add_expr(p, "ident");
+                        p.expr_nodes[aidx - 1].sval = p.expr_nodes[type_arg_idxs[i] - 1].sval;
+                    };
+                    // Create generic_call node
+                    let fn_name = p.expr_nodes[expr_idx - 1].sval;
+                    let idx = add_expr(p, "generic_call");
+                    p.expr_nodes[idx - 1].sval = fn_name;
+                    p.expr_nodes[idx - 1].arg_start = arg_start;
+                    p.expr_nodes[idx - 1].arg_count = arg_count;
+                    p.expr_nodes[idx - 1].extra_start = extra_start;
+                    p.expr_nodes[idx - 1].extra_count = extra_count;
+                    expr_idx = idx;
+                } else {
+                    // < followed by type args but no ( — not a generic call after all
+                    // This shouldn't happen if looks_like_generic_call is correct
+                    break;
+                };
+            } else {
+                break;
+            };
+        } else if d == 47 {
+            // LParen (47) — function call
             parser_advance(p); // skip (
             // Collect argument expression indices in a local Vec first.
             // parse_expr pushes intermediate nodes (ident, int, etc.) before
@@ -958,10 +1066,40 @@ fn parse_stmt(p: &mut Parser) -> i64 {
 
 // ── Top-level parsing ──
 
+// Parse optional generic params `<T, U>` after a name. Returns Vec<str>.
+// If next token is not `<` (disc=33), returns empty Vec.
+fn parse_generic_params(p: &mut Parser) -> Vec<str> {
+    let mut generics = Vec::new();
+    let t = parser_peek(p);
+    if t.disc != 33 { return generics; }; // not `<`
+    parser_advance(p); // skip `<`
+    loop {
+        let t2 = parser_peek(p);
+        if t2.disc == 34 || t2.disc == 63 { break; }; // `>` or `>>`
+        let name_tok = parser_advance(p);
+        generics.push(name_tok.sval);
+        let t3 = parser_peek(p);
+        if t3.disc == 53 { parser_advance(p); } // skip `,`
+        else { break; };
+    };
+    let t4 = parser_peek(p);
+    if t4.disc == 34 {
+        parser_advance(p); // skip `>`
+    } else if t4.disc == 63 {
+        // `>>` — consume as `>` (caller context handles the other `>`)
+        // For simplicity, treat `>>` as closing one `>`; replace with `>` token
+        // Actually tenthc lexer produces Shr (disc=63) for `>>`. We consume it as `>`.
+        parser_advance(p);
+    };
+    generics
+}
+
 fn parse_fn(p: &mut Parser) -> FnDef {
     parser_advance(p); // skip fn
     let name_tok = parser_advance(p);
     let name = name_tok.sval;
+    // Parse optional generic params `<T, U>`
+    let generics = parse_generic_params(p);
     parser_advance(p); // skip (
     let mut params = Vec::new();
     loop {
@@ -1067,13 +1205,15 @@ fn parse_fn(p: &mut Parser) -> FnDef {
         p.block_idxs.push(local_idxs[i]);
     };
 
-    FnDef { name: name, params: params, return_type: return_type, body_start: body_start, body_count: body_count }
+    FnDef { name: name, params: params, return_type: return_type, body_start: body_start, body_count: body_count, generics: generics }
 }
 
 fn parse_struct_def(p: &mut Parser) -> StructDef {
     parser_advance(p); // skip struct
     let name_tok = parser_advance(p);
     let mut name = name_tok.sval;
+    // Parse optional generic params `<T, U>`
+    let generics = parse_generic_params(p);
     parser_advance(p); // skip {
     let mut fields = Vec::new();
     loop {
@@ -1097,7 +1237,7 @@ fn parse_struct_def(p: &mut Parser) -> StructDef {
         else { break; };
     };
     parser_advance(p); // skip }
-    StructDef { name: name, fields: fields }
+    StructDef { name: name, fields: fields, generics: generics }
 }
 
 fn parse_enum_def(p: &mut Parser) -> EnumDef {

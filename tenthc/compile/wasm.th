@@ -76,6 +76,7 @@ fn wasm_i64_load(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(41); le
 fn wasm_i64_store(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(55); leb128_u(align, out); leb128_u(offset, out); }
 fn wasm_i32_load(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(40); leb128_u(align, out); leb128_u(offset, out); }
 fn wasm_i32_store(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(54); leb128_u(align, out); leb128_u(offset, out); }
+fn wasm_f64_store(out: &mut Vec<i64>, align: i64, offset: i64) { out.push(57); leb128_u(align, out); leb128_u(offset, out); }
 fn wasm_i64_extend_i32_u(out: &mut Vec<i64>) { out.push(173); }
 fn wasm_drop(out: &mut Vec<i64>) { out.push(26); }
 fn wasm_local_tee(out: &mut Vec<i64>, idx: i64) { out.push(34); leb128_u(idx, out); }
@@ -860,10 +861,10 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
-        // Regular function call (indices offset by 17 imports)
-        let mut call_idx: i64 = 17;
+        // Regular function call (indices offset by 18 imports)
+        let mut call_idx: i64 = 18;
         for fi in 0..hir.fns.len() {
-            if hir.fns[fi].name == func_name { call_idx = 17 + fi; break; };
+            if hir.fns[fi].name == func_name { call_idx = 18 + fi; break; };
         };
         if e.args_count > 0 {
             for ai in e.args_start..(e.args_start + e.args_count) {
@@ -1028,8 +1029,54 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 29 {
-        // TensorLiteral — not representable in WASM, push 0
-        wasm_i64_const(out, 0);
+        // TensorLiteral — allocate memory, write f64 elements, call tensor_from_vec
+        let rows = e.lit_ival;
+        let total_count = e.args_count;
+        let size = total_count * 8; // each f64 is 8 bytes
+
+        // Allocate a fresh local for the data pointer (avoids clobbering temp_local
+        // when element expressions contain nested struct/tensor literals)
+        let ptr_local = ctx.temp_local + 1 + ctx.local_count;
+        ctx.local_count = ctx.local_count + 1;
+
+        // global.get $bump (i32) → i64.extend_i32_u → local.tee $ptr_local (i64)
+        // tee leaves a copy on the stack for the bump update below
+        wasm_global_get(out, 0);
+        wasm_i64_extend_i32_u(out);
+        wasm_local_tee(out, ptr_local);
+        // i32.const size → i64.extend_i32_u → i64.add → i32.wrap_i64 → global.set $bump
+        wasm_i32_const(out, size);
+        wasm_i64_extend_i32_u(out);
+        wasm_i64_add(out);
+        wasm_i32_wrap_i64(out);
+        wasm_global_set(out, 0);
+
+        // Write each element (f64) at offset = index * 8
+        if total_count > 0 {
+            let mut i: i64 = 0;
+            while i < total_count {
+                // address: local.get $ptr_local (i64) → i32.wrap_i64
+                wasm_local_get(out, ptr_local);
+                wasm_i32_wrap_i64(out);
+                // value: compile element expression (f64 for FloatLiteral)
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start + i - 1]);
+                // f64.store at offset i*8
+                wasm_f64_store(out, 3, i * 8);
+                i = i + 1;
+            };
+        };
+
+        // Call tensor_from_vec(data_ptr, len, rank) — import 17
+        // data_ptr: local.get $ptr_local → i32.wrap_i64
+        wasm_local_get(out, ptr_local);
+        wasm_i32_wrap_i64(out);
+        // len: i32.const total_count
+        wasm_i32_const(out, total_count);
+        // rank: i32.const rows
+        wasm_i32_const(out, rows);
+        // call import 17: env.tensor_from_vec (i32, i32, i32) -> i64
+        wasm_call(out, 17);
+        // result (i64 tensor_handle) is on stack
         return;
     };
     if d == 30 {
@@ -1236,10 +1283,10 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     ctx.func_count = num_funcs;
 
     // Import count
-    let num_imports: i64 = 17;
+    let num_imports: i64 = 18;
 
     // ---- Build type section ----
-    // Import types come first: 12 signatures
+    // Import types come first: 13 signatures
     // Type 0: (i64) -> ()    — println
     // Type 1: () -> i64      — vec_new
     // Type 2: (i64) -> i64   — vec_len, read_file
@@ -1252,8 +1299,9 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     // Type 9: (i32,i32,i32) -> i32 — str_cmp
     // Type 10: (f64) -> i64   — f64_bits
     // Type 11: (i32,i64,i64) -> i32 — str_slice
+    // Type 12: (i32,i32,i32) -> i64 — tensor_from_vec
     let mut types: Vec<i64> = Vec::new();
-    leb128_u(12 + num_funcs, &mut types); // total type count
+    leb128_u(13 + num_funcs, &mut types); // total type count
 
     // Type 0: (i64) -> ()
     types.push(96); leb128_u(1, &mut types); types.push(126); // params
@@ -1303,7 +1351,11 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     types.push(96); leb128_u(3, &mut types); types.push(127); types.push(126); types.push(126);
     leb128_u(1, &mut types); types.push(127);
 
-    // Function types (type index 12+)
+    // Type 12: (i32,i32,i32) -> i64 — tensor_from_vec
+    types.push(96); leb128_u(3, &mut types); types.push(127); types.push(127); types.push(127);
+    leb128_u(1, &mut types); types.push(126);
+
+    // Function types (type index 13+)
     for fi in 0..num_funcs {
         let f = hir.fns[fi];
         types.push(96);
@@ -1410,10 +1462,15 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     leb128_u(9, &mut import_sec); push_str_bytes(&mut import_sec, "str_slice");
     import_sec.push(0); leb128_u(11, &mut import_sec);
 
+    // Import 17: env.tensor_from_vec (type 12: (i32,i32,i32)->i64)
+    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    leb128_u(15, &mut import_sec); push_str_bytes(&mut import_sec, "tensor_from_vec");
+    import_sec.push(0); leb128_u(12, &mut import_sec);
+
     // ---- Build function section ----
     let mut func_sec: Vec<i64> = Vec::new();
     leb128_u(num_funcs, &mut func_sec);
-    for idx in 0..num_funcs { leb128_u(idx + 12, &mut func_sec); };
+    for idx in 0..num_funcs { leb128_u(idx + 13, &mut func_sec); };
 
     // ---- Build global section ----
     let mut glob_sec: Vec<i64> = Vec::new();
@@ -1459,7 +1516,7 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
             export_sec.push(char_to_ascii(f.name[ci]));
         };
         export_sec.push(0); // export kind: function
-        leb128_u(fi + 17, &mut export_sec);
+        leb128_u(fi + 18, &mut export_sec);
     };
 
     // ---- Build data section (字符串驻留数据) ----

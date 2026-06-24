@@ -21,6 +21,26 @@ fn parse_type(p: &mut HirProgram, s: str) -> i64 {
     add_type(p, 4, 0, s, 0, 0, 0)
 }
 
+// Substitute type parameters with concrete types.
+// type_map_names / type_map_tys are parallel arrays (name → ty index).
+// If ty_idx is a TypeParam (disc=4) whose name matches, return the mapped type.
+// Otherwise return ty_idx unchanged.
+fn substitute_type(p: &mut HirProgram, ty_idx: i64, type_map_names: Vec<str>, type_map_tys: Vec<i64>) -> i64 {
+    if ty_idx <= 0 || ty_idx > p.type_nodes.len() { return ty_idx; };
+    let t = p.type_nodes[ty_idx - 1];
+    if t.disc == 4 {
+        // TypeParam — look up in map
+        for i in 0..type_map_names.len() {
+            if type_map_names[i] == t.name {
+                return type_map_tys[i];
+            };
+        };
+        return ty_idx; // not found, return as-is
+    };
+    // For other types, could recursively substitute inner types, but for simplicity return as-is
+    ty_idx
+}
+
 // Push a fully-formed HirExpr and return its 1-based index
 // Uses `..` to fill zero-value fields not explicitly set
 fn push_expr(p: &mut HirProgram, disc: i64, lit_ival: i64, lit_fval: f64, lit_sval: str, lit_bval: bool, left: i64, right: i64, cond: i64, body: i64, alt: i64, args_start: i64, args_count: i64, stmts_start: i64, stmts_count: i64, op: str, name: str, variant: str, ty: i64) -> i64 {
@@ -251,6 +271,98 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     if kind == "unary" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         return push_expr(p, 6, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", 0);
+    };
+
+    if kind == "generic_call" {
+        // 泛型函数调用：e.sval = 函数名，e.extra_start/extra_count = 泛型类型实参（ident 节点）
+        // e.arg_start/arg_count = 调用参数
+        let fn_name = e.sval;
+        // 在 generic_funcs 中查找模板
+        let mut tmpl_idx: i64 = -1;
+        for gi in 0..p.generic_funcs.len() {
+            if p.generic_funcs[gi].name == fn_name { tmpl_idx = gi; break; };
+        };
+        if tmpl_idx < 0 {
+            // 模板未找到 — 回退为普通 Call（可能后续实例化或报错）
+            let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", fn_name, "", 0);
+            let mut lowered_args: Vec<i64> = Vec::new();
+            if e.arg_count > 0 {
+                for i in e.arg_start..(e.arg_start + e.arg_count) {
+                    let arg_expr = exprs[i - 1];
+                    let actual_idx = if arg_expr.kind == "arg" { arg_expr.left } else { i };
+                    let lowered = lower_expr(p, actual_idx, exprs, stmts, match_arms, depth + 1);
+                    lowered_args.push(lowered);
+                };
+            };
+            let arg_start = p.arg_list.len() + 1;
+            let mut count: i64 = 0;
+            for j in 0..lowered_args.len() {
+                p.arg_list.push(lowered_args[j]);
+                count = count + 1;
+            };
+            let cty = lookup_fn_return_type(p, fn_name);
+            return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, arg_start, count, 0, 0, "", "", "", cty);
+        };
+        // 找到模板 — 构建类型映射
+        let tmpl = p.generic_funcs[tmpl_idx];
+        // 收集泛型类型实参名称（从 extra 节点的 sval）
+        let mut type_arg_names: Vec<str> = Vec::new();
+        for ei in e.extra_start..(e.extra_start + e.extra_count) {
+            let type_arg_expr = exprs[ei - 1];
+            type_arg_names.push(type_arg_expr.sval);
+        };
+        // 为每个类型实参创建 HirType（parse_type 将 "i64" 等解析为具体类型）
+        let mut type_map_names: Vec<str> = Vec::new();
+        let mut type_map_tys: Vec<i64> = Vec::new();
+        for gi in 0..tmpl.generics.len() {
+            type_map_names.push(tmpl.generics[gi]);
+            let ty_str = if gi < type_arg_names.len() { type_arg_names[gi] } else { "" };
+            type_map_tys.push(parse_type(p, ty_str));
+        };
+        // 生成 mangled name: fn_name_T1_T2
+        let mut mangled = fn_name;
+        for gi in 0..type_arg_names.len() {
+            mangled = mangled + "_" + type_arg_names[gi];
+        };
+        // 检查是否已实例化（避免重复）
+        let mut already_inst: i64 = 0;
+        for fi in 0..p.fns.len() {
+            if p.fns[fi].name == mangled { already_inst = 1; break; };
+        };
+        if already_inst == 0 {
+            // 实例化：克隆模板，替换类型参数，推入 p.fns
+            // 注意：tenthc 无 clone，需手动复制
+            let mut inst_params: Vec<HirParam> = Vec::new();
+            for pi in 0..tmpl.params.len() {
+                let tp = tmpl.params[pi];
+                let inst_ty = substitute_type(p, tp.ty, type_map_names, type_map_tys);
+                inst_params.push(HirParam { name: tp.name, ty: inst_ty });
+            };
+            let inst_ret = substitute_type(p, tmpl.return_type, type_map_names, type_map_tys);
+            let inst_hf = HirFnDef { name: mangled, params: inst_params, return_type: inst_ret, body: tmpl.body, generics: Vec::new() };
+            p.fns.push(inst_hf);
+        };
+        // 生成普通 Call(disc 7) 指向 mangled name
+        let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", mangled, "", 0);
+        // Lower 调用参数
+        let mut lowered_args: Vec<i64> = Vec::new();
+        if e.arg_count > 0 {
+            for i in e.arg_start..(e.arg_start + e.arg_count) {
+                let arg_expr = exprs[i - 1];
+                let actual_idx = if arg_expr.kind == "arg" { arg_expr.left } else { i };
+                let lowered = lower_expr(p, actual_idx, exprs, stmts, match_arms, depth + 1);
+                lowered_args.push(lowered);
+            };
+        };
+        let arg_start = p.arg_list.len() + 1;
+        let mut count: i64 = 0;
+        for j in 0..lowered_args.len() {
+            p.arg_list.push(lowered_args[j]);
+            count = count + 1;
+        };
+        // 返回类型 = 实例化后的模板返回类型
+        let inst_ret = substitute_type(p, tmpl.return_type, type_map_names, type_map_tys);
+        return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, arg_start, count, 0, 0, "", "", "", inst_ret);
     };
 
     if kind == "call" {
@@ -632,7 +744,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 }
 
 fn lower_program(program: Program) -> HirProgram {
-    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new(), stmt_list: Vec::new(), body_list: Vec::new(), block_idxs: program.block_idxs, loop_idxs: program.loop_idxs, trait_defs: Vec::new(), trait_impls: Vec::new(), trait_methods: Vec::new(), trait_method_params: Vec::new(), impl_fn_indices: Vec::new(), impl_method_names: Vec::new() };
+    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new(), stmt_list: Vec::new(), body_list: Vec::new(), block_idxs: program.block_idxs, loop_idxs: program.loop_idxs, trait_defs: Vec::new(), trait_impls: Vec::new(), trait_methods: Vec::new(), trait_method_params: Vec::new(), impl_fn_indices: Vec::new(), impl_method_names: Vec::new(), generic_funcs: Vec::new() };
 
     // Lower struct definitions
     for si in 0..program.structs.len() {
@@ -643,7 +755,7 @@ fn lower_program(program: Program) -> HirProgram {
             let fty = parse_type(&mut p, sf.type_ann);
             fields.push(HirStructField { name: sf.name, ty: fty });
         };
-        p.structs.push(HirStructDef { name: sd.name, fields: fields });
+        p.structs.push(HirStructDef { name: sd.name, fields: fields, generics: sd.generics });
     };
 
     // Lower enum definitions
@@ -733,8 +845,13 @@ fn lower_program(program: Program) -> HirProgram {
         // Lower body (var_types now has params for type lookup)
         let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
         let ret_ty = parse_type(&mut p, f.return_type);
-        let hf = HirFnDef { name: f.name, params: params, return_type: ret_ty, body: body_expr, generics: Vec::new() };
-        p.fns.push(hf);
+        let hf = HirFnDef { name: f.name, params: params, return_type: ret_ty, body: body_expr, generics: f.generics };
+        // 泛型函数（generics 非空）收集到 generic_funcs 模板，不直接输出到 WASM
+        if f.generics.len() > 0 {
+            p.generic_funcs.push(hf);
+        } else {
+            p.fns.push(hf);
+        };
     };
 
     // Clear var_types for main scope

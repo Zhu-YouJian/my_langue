@@ -484,13 +484,34 @@ impl Lowerer {
                     .map(|a| self.lower_expr(a))
                     .collect::<TenthResult<_>>()?;
 
-                (HirExprKind::GenericCall {
-                    func: Box::new(HirExpr {
-                        kind: HirExprKind::Var(func_name),
-                        ty: Type::Unknown,
-                        span: span.clone(),
-                    }),
-                    generics: type_args,
+                // Generate mangled name and instantiate if not already done
+                let mangled_name: String = type_args.iter()
+                    .fold(func_name.clone(), |acc, ty| format!("{}_{}", acc, ty));
+                let already_instantiated = self.functions.iter().any(|f| f.name == mangled_name);
+                if !already_instantiated {
+                    let inst_params: Vec<(String, Type)> = template.params.iter()
+                        .map(|(n, t)| (n.clone(), substitute_type(t, &type_map)))
+                        .collect();
+                    let inst_fn = HirFnDef {
+                        name: mangled_name.clone(),
+                        params: inst_params,
+                        return_type: inst_ret_ty.clone(),
+                        body: template.body.clone(),
+                        generics: vec![],
+                        generics_bounds: std::collections::HashMap::new(),
+                        span: template.span.clone(),
+                    };
+                    self.functions.push(inst_fn);
+                }
+
+                // Generate a regular Call to the mangled function name
+                let call_func = HirExpr {
+                    kind: HirExprKind::Var(mangled_name),
+                    ty: Type::Unknown,
+                    span: span.clone(),
+                };
+                (HirExprKind::Call {
+                    func: Box::new(call_func),
                     args: lowered_args,
                     ret_ty: inst_ret_ty.clone(),
                 }, inst_ret_ty)

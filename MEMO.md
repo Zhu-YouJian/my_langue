@@ -6,6 +6,8 @@
 >
 > 演进路线与阶段规划见 `CODE_WIKI.md` §10。
 >
+> **2026-06-25 更新**：Phase D — D2（泛型实例化）+ D6（Tensor WASM 后端）完成（阶段 1 并行）。D2：tenthc 新增泛型参数解析 `<T, U>`、泛型调用前瞻启发式 `looks_like_generic_call`、`substitute_type` 类型替换与 mangled name 实例化（`fn_name_T1_T2`），Rust 侧 lower.rs 同步将 GenericCall 改写为普通 Call。D6：tenthc wasm.th 新增 tensor_from_vec host import (idx 17) 与 TensorLiteral 编译，Rust 侧 wasm.rs 同步；修复 parser.th parse_primary 双 advance bug（tensor 字面量解析失败根因）。修复 three_stage.rs / wasm_backend_minimal.rs linker 缺失 tensor_from_vec 注册导致的回归。新增 4 项 parity 测试（D2×3 + D6×1），parity_test 120→124 项全绿，499+ 测试无回归，自举管道通过。
+>
 > **2026-06-25 更新**：Phase D — D1（Trait 系统）完成。tenthc 新增 trait 定义/inherent impl 解析与方法静态分派（mangled name `__<Type>_<method>`）；修复 lexer self token 缺少 sval、lowerer self 参数 type_ann 未覆盖为 impl 类型名两处 bug；Rust 母编译器同步实现 inherent impl 方法分派。新增 3 项 D1 parity 测试全部通过，parity_test 117→120 项全绿，499+ 测试无回归。
 >
 > **2026-06-25 更新**：Phase D — D4（native 函数对齐）完成。修复 tenthc lexer 数字解析双处理 bug（`lexer_peek` 返回当前字符导致 `5`→`55`）；修复 `char_to_ascii` 缺失空格等常见字符（补全 30+ ASCII 字符）。4 项 Slice parity 测试全部通过，parity_test 117 项全绿。

@@ -234,6 +234,10 @@ mod parity {
             mem.data_mut(&mut caller)[new_ptr as usize + slice_len] = 0;
             new_ptr as i32
         }).unwrap();
+        // tensor_from_vec(data_ptr: i32, len: i32, rank: i32) -> i64 — simplified: return len
+        linker.func_wrap("host", "tensor_from_vec", |_: Caller<()>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
+            len as i64
+        }).unwrap();
 
         // ── `env` module (tenthc wasm.th signatures) ──
         // Type 0: println(i64) -> ()
@@ -347,6 +351,10 @@ mod parity {
             mem.data_mut(&mut caller)[new_ptr as usize + slice_len] = 0;
             new_ptr as i32
         }).unwrap();
+        // Type 12: tensor_from_vec(data_ptr: i32, len: i32, rank: i32) -> i64 — simplified: return len
+        linker.func_wrap("env", "tensor_from_vec", |_: Caller<()>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
+            len as i64
+        }).unwrap();
 
         (store, linker)
     }
@@ -453,8 +461,17 @@ mod parity {
         let wasm_tenthc = compile_via_tenthc(src);
         let t2 = Instant::now();
 
+        eprintln!("DEBUG: wasm_rust size={}, wasm_tenthc size={}", wasm_rust.len(), wasm_tenthc.len());
+        // Dump full wasm_tenthc bytes
+        eprintln!("DEBUG: full wasm_tenthc hex:");
+        for chunk in wasm_tenthc.chunks(16) {
+            let hex: String = chunk.iter().map(|b| format!("{:02x} ", b)).collect();
+            eprintln!("  {}", hex);
+        }
+        eprintln!("DEBUG: running wasm_rust...");
         let result_rust = run_wasm_i64(&wasm_rust, fn_name, args);
         let t3 = Instant::now();
+        eprintln!("DEBUG: running wasm_tenthc...");
         let result_tenthc = run_wasm_i64(&wasm_tenthc, fn_name, args);
         let t4 = Instant::now();
 
@@ -1433,5 +1450,37 @@ mod parity {
         // must also resolve the method call to a function call in WASM.
         let src = "struct Pair { a: i64, b: i64 } impl Pair { fn sum(self) -> i64 { self.a + self.b } } fn test(x: i64, y: i64) -> i64 { let p = Pair { a: x, b: y }; p.sum() }";
         assert_parity(src, "test", &[3, 4], 7);
+    }
+
+    // ── D6: Tensor literal compilation ───────────────────────────────────
+
+    #[test]
+    fn parity_tensor_literal() {
+        // Create a 2x2 tensor literal. The WASM backend allocates memory,
+        // writes f64 elements, and calls tensor_from_vec host import.
+        // Simplified host returns total element count (4) as the handle.
+        let src = "fn test() -> i64 { let t = [[1.0, 2.0], [3.0, 4.0]]; t }";
+        assert_parity(src, "test", &[], 4);
+    }
+
+    // ── D2: Generic function instantiation ──────────────────────────────
+
+    #[test]
+    fn parity_generic_id_i64() {
+        let src = "fn id<T>(x: T) -> T { x } fn test() -> i64 { id<i64>(42) }";
+        assert_parity(src, "test", &[], 42);
+    }
+
+    #[test]
+    fn parity_generic_id_str() {
+        let src = "fn id<T>(x: T) -> T { x } fn test() -> i64 { let s = id<str>(\"hello\"); 99 }";
+        assert_parity(src, "test", &[], 99);
+    }
+
+    #[test]
+    fn parity_generic_multi_instance() {
+        // Instantiate id with two different types in same program
+        let src = "fn id<T>(x: T) -> T { x } fn test() -> i64 { let a = id<i64>(10); let b = id<i64>(20); a + b }";
+        assert_parity(src, "test", &[], 30);
     }
 }

@@ -102,7 +102,7 @@ struct HirFnDef {
 struct HirStructField { name: str, ty: i64 }
 
 // ── Struct definition ──
-struct HirStructDef { name: str, fields: Vec<HirStructField> }
+struct HirStructDef { name: str, fields: Vec<HirStructField>, generics: Vec<str> }
 
 // ── Enum variant definition (for enum literal layout) ──
 struct HirEnumVariantDef { name: str, fields: Vec<HirStructField> }
@@ -164,4 +164,5 @@ struct HirProgram {
     trait_method_params: Vec<HirParam>,       // 扁平：所有 trait 方法参数
     impl_fn_indices: Vec<i64>,                // 扁平：impl 方法的 p.fns 索引（1-based）
     impl_method_names: Vec<str>,              // 扁平：impl 方法原始名（与 impl_fn_indices 并行）
+    generic_funcs: Vec<HirFnDef>,             // 泛型函数模板（不输出到 WASM，仅用于实例化）
 }
