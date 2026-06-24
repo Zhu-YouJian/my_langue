@@ -638,4 +638,94 @@ mod parity {
     // IntLiteral as literal pattern) is still valuable for self-hosting.
     // Match parity tests deferred until the Rust mother compiler supports
     // Match in its WASM backend.
+
+    // ── Break and continue ───────────────────────────────────────────────
+
+    #[test]
+    fn parity_break_in_for() {
+        // Break out of for loop early
+        let src = "fn break_for(n: i64) -> i64 { let mut s = 0; for i in 0..n { if i == 3 { break; } s = s + i; } s }";
+        // i=0,1,2 → s=3, break at i=3
+        assert_parity(src, "break_for", &[10], 3);
+    }
+
+    // NOTE: Continue in a for loop (for i in 0..n { if ... { continue; } ... })
+    // is not tested because both compilers emit `br` to the loop start, which
+    // skips the compiler-managed i++ increment, causing an infinite loop.
+    // Continue in while loops works because the user manages the increment.
+
+    #[test]
+    fn parity_break_in_while() {
+        let src = "fn break_while(n: i64) -> i64 { let mut i = 0; let mut s = 0; while i < n { if i == 5 { break; } s = s + i; i = i + 1; } s }";
+        // 0+1+2+3+4 = 10, break at i=5
+        assert_parity(src, "break_while", &[10], 10);
+    }
+
+    #[test]
+    fn parity_continue_in_while() {
+        let src = "fn continue_while(n: i64) -> i64 { let mut i = 0; let mut s = 0; while i < n { i = i + 1; if i == 3 { continue; } s = s + i; } s }";
+        // 1+2+4+5+6+7+8+9+10 = 52 (skip 3)
+        assert_parity(src, "continue_while", &[10], 52);
+    }
+
+    // ── Boolean and comparison ───────────────────────────────────────────
+
+    #[test]
+    fn parity_bool_return() {
+        let src = "fn is_even(n: i64) -> i64 { if n % 2 == 0 { 1 } else { 0 } }";
+        assert_parity(src, "is_even", &[4], 1);
+    }
+
+    #[test]
+    fn parity_bool_false() {
+        let src = "fn is_even(n: i64) -> i64 { if n % 2 == 0 { 1 } else { 0 } }";
+        assert_parity(src, "is_even", &[7], 0);
+    }
+
+    #[test]
+    fn parity_logical_and() {
+        let src = "fn both(a: i64, b: i64) -> i64 { if a > 0 && b > 0 { 1 } else { 0 } }";
+        assert_parity(src, "both", &[5, 3], 1);
+    }
+
+    #[test]
+    fn parity_logical_or() {
+        let src = "fn either(a: i64, b: i64) -> i64 { if a > 0 || b > 0 { 1 } else { 0 } }";
+        assert_parity(src, "either", &[-1, 5], 1);
+    }
+
+    // ── Multiple return paths ────────────────────────────────────────────
+
+    #[test]
+    fn parity_multi_return() {
+        let src = "fn classify(n: i64) -> i64 { if n < 0 { return -1; } if n == 0 { return 0; } 1 }";
+        assert_parity(src, "classify", &[-5], -1);
+    }
+
+    #[test]
+    fn parity_multi_return_mid() {
+        let src = "fn classify(n: i64) -> i64 { if n < 0 { return -1; } if n == 0 { return 0; } 1 }";
+        assert_parity(src, "classify", &[0], 0);
+    }
+
+    #[test]
+    fn parity_multi_return_end() {
+        let src = "fn classify(n: i64) -> i64 { if n < 0 { return -1; } if n == 0 { return 0; } 1 }";
+        assert_parity(src, "classify", &[42], 1);
+    }
+
+    // ── Struct as function parameter ─────────────────────────────────────
+
+    #[test]
+    fn parity_struct_as_param() {
+        let src = "struct Point { x: i64, y: i64 } fn get_x(p: Point) -> i64 { p.x } fn make_and_get(a: i64, b: i64) -> i64 { let p = Point { x: a, y: b }; get_x(p) }";
+        assert_parity(src, "make_and_get", &[7, 3], 7);
+    }
+
+    #[test]
+    fn parity_struct_modify_and_return() {
+        let src = "struct Point { x: i64, y: i64 } fn shift(p: Point, dx: i64, dy: i64) -> i64 { p.x = p.x + dx; p.y = p.y + dy; p.x + p.y } fn run(a: i64, b: i64) -> i64 { let p = Point { x: a, y: b }; shift(p, 10, 20) }";
+        // (a+10) + (b+20) = (3+10) + (4+20) = 13 + 24 = 37
+        assert_parity(src, "run", &[3, 4], 37);
+    }
 }

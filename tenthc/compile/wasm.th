@@ -119,10 +119,13 @@ struct WasmCtx {
     string_data: Vec<i64>,    // 字符串数据段（字节数组）
     string_names: Vec<str>,   // 已驻留的字符串内容
     string_addrs: Vec<i64>,   // 对应的内存偏移
+    if_depth: i64,            // if-block depth within innermost loop (for break/continue)
+    in_loop: i64,             // 1 if inside a loop, 0 otherwise
+    current_fn_idx: i64,      // index of the function currently being compiled
 }
 
 fn ctx_new() -> WasmCtx {
-    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0, local_names: Vec::new(), local_indices: Vec::new(), local_count: 0, string_data: Vec::new(), string_names: Vec::new(), string_addrs: Vec::new() }
+    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0, local_names: Vec::new(), local_indices: Vec::new(), local_count: 0, string_data: Vec::new(), string_names: Vec::new(), string_addrs: Vec::new(), if_depth: 0, in_loop: 0, current_fn_idx: 0 }
 }
 
 // ── String interning ──
@@ -162,6 +165,9 @@ fn compile_fn_body(ctx: &mut WasmCtx, hir: HirProgram, fn_idx: i64) {
     ctx.local_indices = Vec::new();
     ctx.local_count = 0;
     ctx.temp_local = num_params; // temp_local 用于 StructLiteral 的临时槽
+    ctx.if_depth = 0;
+    ctx.in_loop = 0;
+    ctx.current_fn_idx = fn_idx;
 
     // 先编译 body 到临时 Vec（不含 local 声明）
     let mut body_code: Vec<i64> = Vec::new();
@@ -350,20 +356,18 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 4 {
-        // Var — 先查 params，再查 let 绑定的 local
+        // Var — 先查 current fn params，再查 let 绑定的 local
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
-        for fi in 0..hir.fns.len() {
-            let func = hir.fns[fi];
-            for pi in 0..func.params.len() {
-                if func.params[pi].name == name {
-                    local_idx = pi;
-                    found = true;
-                    break;
-                };
+        // Only search the current function's params (not all functions')
+        let func = hir.fns[ctx.current_fn_idx];
+        for pi in 0..func.params.len() {
+            if func.params[pi].name == name {
+                local_idx = pi;
+                found = true;
+                break;
             };
-            if found { break; };
         };
         // 查 let 绑定的 local（倒序查找，支持 shadowing）
         if !found {
@@ -445,16 +449,14 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
-        for fi in 0..hir.fns.len() {
-            let func = hir.fns[fi];
-            for pi in 0..func.params.len() {
-                if func.params[pi].name == name {
-                    local_idx = pi;
-                    found = true;
-                    break;
-                };
+        // Only search the current function's params (not all functions')
+        let func = hir.fns[ctx.current_fn_idx];
+        for pi in 0..func.params.len() {
+            if func.params[pi].name == name {
+                local_idx = pi;
+                found = true;
+                break;
             };
-            if found { break; };
         };
         // 查 let 绑定的 local（倒序查找，支持 shadowing）
         if !found {
@@ -647,12 +649,19 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             bt = 126;
         };
         wasm_if(out, bt);
+        // Track if depth inside loops so break/continue emit correct br depth
+        if ctx.in_loop == 1 {
+            ctx.if_depth = ctx.if_depth + 1;
+        };
         compile_expr(ctx, out, hir, e.body);
         if e.alt > 0 {
             wasm_else(out);
             compile_expr(ctx, out, hir, e.alt);
         };
         wasm_end(out);
+        if ctx.in_loop == 1 {
+            ctx.if_depth = ctx.if_depth - 1;
+        };
         return;
     };
     if d == 13 {
@@ -884,16 +893,14 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
-        for fi in 0..hir.fns.len() {
-            let func = hir.fns[fi];
-            for pi in 0..func.params.len() {
-                if func.params[pi].name == name {
-                    local_idx = pi;
-                    found = true;
-                    break;
-                };
+        // Only search the current function's params (not all functions')
+        let func = hir.fns[ctx.current_fn_idx];
+        for pi in 0..func.params.len() {
+            if func.params[pi].name == name {
+                local_idx = pi;
+                found = true;
+                break;
             };
-            if found { break; };
         };
         // 查 let 绑定的 local（倒序查找，支持 shadowing）
         if !found {
@@ -988,6 +995,10 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         // While — WASM: block $break { loop $continue { cond; i32.eqz; br_if $break; body; br $continue; } }
         wasm_block(out, 64);
         wasm_loop(out, 64);
+        let saved_if_depth = ctx.if_depth;
+        let saved_in_loop = ctx.in_loop;
+        ctx.if_depth = 0;
+        ctx.in_loop = 1;
         if s.cond > 0 {
             compile_expr(ctx, out, hir, s.cond);
             wasm_i32_eqz(out);
@@ -1001,12 +1012,18 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_br(out, 0); // continue loop
         wasm_end(out);   // end loop
         wasm_end(out);   // end block
+        ctx.if_depth = saved_if_depth;
+        ctx.in_loop = saved_in_loop;
         return;
     };
     if d == 7 {
         // Loop — WASM: block $break { loop $continue { body; br $continue; } }
         wasm_block(out, 64);
         wasm_loop(out, 64);
+        let saved_if_depth = ctx.if_depth;
+        let saved_in_loop = ctx.in_loop;
+        ctx.if_depth = 0;
+        ctx.in_loop = 1;
         if s.body_count > 0 {
             for bi in s.body_start..(s.body_start + s.body_count) {
                 compile_stmt(ctx, out, hir, hir.body_list[bi - 1]);
@@ -1015,6 +1032,8 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_br(out, 0); // continue loop
         wasm_end(out);   // end loop
         wasm_end(out);   // end block
+        ctx.if_depth = saved_if_depth;
+        ctx.in_loop = saved_in_loop;
         return;
     };
     if d == 4 {
@@ -1041,6 +1060,10 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 // block { loop { cond; br_if 1; body; i++; br 0; } }
                 wasm_block(out, 64);
                 wasm_loop(out, 64);
+                let saved_if_depth = ctx.if_depth;
+                let saved_in_loop = ctx.in_loop;
+                ctx.if_depth = 0;
+                ctx.in_loop = 1;
                 // cond: i < end (or i <= end for inclusive)
                 wasm_local_get(out, slot_i);
                 wasm_local_get(out, slot_end);
@@ -1065,6 +1088,8 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 wasm_br(out, 0); // continue loop
                 wasm_end(out);   // end loop
                 wasm_end(out);   // end block
+                ctx.if_depth = saved_if_depth;
+                ctx.in_loop = saved_in_loop;
                 return;
             };
         };
@@ -1085,13 +1110,15 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 5 {
-        // Break — branch to enclosing block
-        wasm_br(out, 1);
+        // Break — branch to enclosing loop's block
+        // depth = 1 (loop's block) + number of intervening if blocks
+        wasm_br(out, 1 + ctx.if_depth);
         return;
     };
     if d == 6 {
-        // Continue — branch to enclosing loop
-        wasm_br(out, 0);
+        // Continue — branch to enclosing loop's loop start
+        // depth = number of intervening if blocks
+        wasm_br(out, ctx.if_depth);
         return;
     };
     if d == 1 {
