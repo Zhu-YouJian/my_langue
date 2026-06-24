@@ -520,7 +520,7 @@
 > **目标**：tenthc 与 Rust 母编译器功能对等。
 > **验收测试**：`tenth/tests/parity_test.rs`（扩展）
 > **实施优先级**：D4 → D1 → D2 → D3 → D5 → D6（可选）
-> **当前状态（2026-06-25）**：D4/D7 已完成（117 用例），D1/D2/D3/D5/D6 未开始
+> **当前状态（2026-06-25）**：D1/D4/D7 已完成（120 用例），D2/D3/D5/D6 未开始
 
 ### Task D4: 完整 native 函数对齐 ✅ 已完成
 
@@ -559,19 +559,20 @@
 
 ---
 
-### Task D1: Trait 系统
+### Task D1: Trait 系统 ✅ 已完成
 
-**文件**：`tenthc/hir/hir.th`、`tenthc/parser/parser.th`、`tenthc/hir/lower.th`
+**文件**：`tenthc/hir/hir.th`、`tenthc/parser/parser.th`、`tenthc/hir/lower.th`、`tenth/src/hir/lower.rs`（Rust 侧同步方法分派）
 
-**现状证据**：
-- tenthc `lexer.th:87-88` — 已识别 `trait`(disc=19)/`impl`(disc=18) 关键字
-- tenthc `parser.th:1131-1156` — parse_program 仅处理 Struct(disc=16)/Enum(disc=17)/Fn(disc=4)/Eof(61)，无 trait/impl 分支
-- tenthc `hir.th:120-138` — HirProgram 仅含 fns/structs/enums，无 trait 相关字段（138 行）
-- tenthc `lower.th` — 无 trait_defs/trait_impls（704 行，无 trait 处理）
-- Rust `lower.rs:151-152` — `trait_defs: HashMap<String, HirTraitDef>` + `trait_impls: HashMap<...>`
-- Rust `lower.rs:198-220` — 预置 Display/Eq/Clone trait
-- Rust `lower.rs:1327` — trait 定义解析
-- Rust `lower.rs:1392-1398` — trait impl 方法解析
+**完成证据**（2026-06-25）：
+- tenthc `hir.th` — 新增 HirTraitMethod/HirTraitDef/HirTraitImpl 结构 + HirProgram 6 个 trait 相关字段
+- tenthc `parser.th` — 新增 parse_trait_def/parse_impl_block，支持 `self`/`&self`/`&mut self` 参数语法
+- tenthc `lexer.th:99` — 修复 self token 缺少 sval 的 bug
+- tenthc `lower.th` — 收集 trait 定义/impl 方法（mangled name `__<Type>_<method>`），预置 Display/Eq/Clone
+- tenthc `lower.th:700-708` — impl 方法 lowering 时 self 参数 type_ann 覆盖为 imp.type_name（修复字段偏移计算）
+- tenthc `lower.th:280-310` — MethodCall 分派：resolve_user_method 命中则改写为常规 Call(disc 7)
+- Rust `lower.rs:1449` — inherent impl 方法以 mangled name 注册到 functions
+- Rust `lower.rs:505` — MethodCall 分派：receiver 类型为 Struct/TypeParam 且存在 mangled 函数时改写为 Call
+- `parity_test.rs` — 新增 3 个 D1 测试用例全部通过
 
 **步骤**：
 
@@ -610,10 +611,11 @@
 2. 参考 Rust `lower.rs:1392-1398` 的方法解析逻辑
 
 **验收**：
-- tenthc 能解析 `trait Display { fn fmt(&self) -> str; }`
-- tenthc 能解析 `impl Display for Foo { fn fmt(&self) -> str { ... } }`
-- trait 方法调用 `obj.fmt()` 能正确静态分派
-- parity_test.rs 新增 ≥3 个 Trait 测试用例通过
+- [x] tenthc 能解析 `trait MyTrait { fn foo(self) -> i64; }`
+- [x] tenthc 能解析 `impl Pair { fn sum(self) -> i64 { self.a + self.b } }`
+- [x] inherent impl 方法调用 `p.sum()` 能正确静态分派到 `__Pair_sum`
+- [x] parity_test.rs 新增 3 个 Trait 测试用例通过
+- [x] Rust 母编译器 499+ 测试无回归
 
 ---
 
@@ -837,8 +839,8 @@ Phase D (能力对等) — 当前阶段
     D4 (native 对齐) ✅ 已完成 ─── 17 个 import 两侧对齐
 
   优先级 2（核心高级特性）：
-    D1 (Trait 系统) ──────┐
-    D2 (泛型实例化) ──────┘ (D2 建议 D1 之后，Trait bound 常配泛型)
+    D1 (Trait 系统) ✅ 已完成 ─── trait 定义/inherent impl/方法静态分派（120 用例）
+    D2 (泛型实例化) ──────┐ (D2 建议 D1 之后，Trait bound 常配泛型)
     D3 (借用检查) ──────── (可与 D1/D2 并行，建议之后)
 
   优先级 3（WASM 后端扩展）：

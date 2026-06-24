@@ -110,6 +110,29 @@ struct HirEnumVariantDef { name: str, fields: Vec<HirStructField> }
 // ── Enum definition ──
 struct HirEnumDef { name: str, variants: Vec<HirEnumVariantDef> }
 
+// ── Trait method signature (in trait definition) ──
+struct HirTraitMethod {
+    name: str,
+    params_start: i64,   // 扁平索引 → trait_method_params
+    params_count: i64,
+    return_type: i64,    // 类型索引
+}
+
+// ── Trait definition ──
+struct HirTraitDef {
+    name: str,
+    methods_start: i64,  // 扁平索引 → trait_methods
+    methods_count: i64,
+}
+
+// ── Trait implementation (trait_name for type_name) ──
+struct HirTraitImpl {
+    trait_name: str,     // 空字符串 = inherent impl（impl Type { ... }）
+    type_name: str,
+    fn_indices_start: i64,  // 扁平索引 → impl_fn_indices（指向 p.fns 的 1-based 索引）
+    fn_indices_count: i64,
+}
+
 // ── Capture name entry (for closure captures) ──
 struct HirCapture { name: str }
 
@@ -135,4 +158,10 @@ struct HirProgram {
     body_list: Vec<i64>,  // flat: actual stmt indices for For/While/Loop bodies
     block_idxs: Vec<i64>, // parser: actual stmt indices for block scopes (fn body, block expr)
     loop_idxs: Vec<i64>,  // parser: actual stmt indices for loop scopes (for/while/loop body)
+    trait_defs: Vec<HirTraitDef>,
+    trait_impls: Vec<HirTraitImpl>,
+    trait_methods: Vec<HirTraitMethod>,       // 扁平：所有 trait 方法签名
+    trait_method_params: Vec<HirParam>,       // 扁平：所有 trait 方法参数
+    impl_fn_indices: Vec<i64>,                // 扁平：impl 方法的 p.fns 索引（1-based）
+    impl_method_names: Vec<str>,              // 扁平：impl 方法原始名（与 impl_fn_indices 并行）
 }

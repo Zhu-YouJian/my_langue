@@ -502,6 +502,37 @@ impl Lowerer {
                     .map(|a| self.lower_expr(a))
                     .collect::<TenthResult<_>>()?;
 
+                // Try user-defined method resolution (inherent impl).
+                // If the receiver is a struct type and a mangled function
+                // __<Type>_<method> exists, rewrite to a regular Call so the
+                // WASM backend can compile it without special method support.
+                let recv_type_name = match &recv.ty {
+                    Type::Struct(name) | Type::TypeParam { name } => Some(name.clone()),
+                    _ => None,
+                };
+                if let Some(type_name) = recv_type_name {
+                    let mangled = format!("__{}_{}", type_name, method.name);
+                    if self.functions.iter().any(|f| f.name == mangled) {
+                        let mut all_args = vec![recv.clone()];
+                        all_args.extend(lowered_args.clone());
+                        let ret_ty = self.resolve_method_type(&recv.ty, &method.name, &all_args);
+                        let func = HirExpr {
+                            kind: HirExprKind::Var(mangled),
+                            ty: Type::Unknown,
+                            span: expr.span.clone(),
+                        };
+                        return Ok(HirExpr {
+                            kind: HirExprKind::Call {
+                                func: Box::new(func),
+                                args: all_args,
+                                ret_ty: ret_ty.clone(),
+                            },
+                            ty: ret_ty,
+                            span: expr.span.clone(),
+                        });
+                    }
+                }
+
                 let ret_ty = self.resolve_method_type(&recv.ty, &method.name, &lowered_args);
 
                 (HirExprKind::MethodCall {
@@ -1446,6 +1477,11 @@ impl Lowerer {
                                     body: lowered_body,
                                     span: fn_item.span.clone(),
                                 };
+                                // Also register with mangled name for WASM backend method dispatch
+                                let mangled_name = format!("__{}_{}", type_name.name, fn_def.name);
+                                let mut mangled_fn = fn_def.clone();
+                                mangled_fn.name = mangled_name;
+                                self.functions.push(mangled_fn);
                                 method_map.insert(fn_def.name.clone(), fn_def);
                             }
                         }

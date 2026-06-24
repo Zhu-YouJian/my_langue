@@ -1407,4 +1407,31 @@ mod parity {
         let src = "fn test() -> i64 { let s = \"hello\"; let t = s[0..5]; str_len(t) }";
         assert_parity(src, "test", &[], 5);
     }
+
+    // ── D1: Trait system (trait defs, inherent impl, method dispatch) ──────
+
+    #[test]
+    fn parity_trait_def_parse() {
+        // Just define a trait — no impl, no call. Verifies both compilers
+        // accept the `trait` keyword and method signatures without error.
+        let src = "trait MyTrait { fn foo(self) -> i64; } fn test() -> i64 { 42 }";
+        assert_parity(src, "test", &[], 42);
+    }
+
+    #[test]
+    fn parity_inherent_impl_parse() {
+        // Define struct + inherent impl block, but don't call the method.
+        // Verifies both compilers parse `impl Type { fn ... }` without error.
+        let src = "struct Pair { a: i64, b: i64 } impl Pair { fn sum(self) -> i64 { self.a + self.b } } fn test(x: i64, y: i64) -> i64 { x + y }";
+        assert_parity(src, "test", &[3, 4], 7);
+    }
+
+    #[test]
+    fn parity_inherent_impl_dispatch() {
+        // Define struct + inherent impl, then call the method.
+        // tenthc lowers p.sum() → Call(__Pair_sum, [p]); Rust mother compiler
+        // must also resolve the method call to a function call in WASM.
+        let src = "struct Pair { a: i64, b: i64 } impl Pair { fn sum(self) -> i64 { self.a + self.b } } fn test(x: i64, y: i64) -> i64 { let p = Pair { a: x, b: y }; p.sum() }";
+        assert_parity(src, "test", &[3, 4], 7);
+    }
 }

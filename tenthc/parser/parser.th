@@ -9,8 +9,11 @@ struct EnumVariant { name: str, fields: Vec<StructField> }
 struct FnDef { name: str, params: Vec<Param>, return_type: str, body_start: i64, body_count: i64 }
 struct StructDef { name: str, fields: Vec<StructField> }
 struct EnumDef { name: str, variants: Vec<EnumVariant> }
+struct TraitMethodSig { name: str, params: Vec<Param>, return_type: str }
+struct TraitDef { name: str, methods: Vec<TraitMethodSig> }
+struct ImplBlock { trait_name: str, type_name: str, fns: Vec<FnDef> }
 struct MatchArm { pat_kind: str, pat_name: str, pat_bind: str, body_expr: i64 }
-struct Program { structs: Vec<StructDef>, enums: Vec<EnumDef>, fns: Vec<FnDef>, main_stmts_start: i64, main_stmts_count: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, block_idxs: Vec<i64>, loop_idxs: Vec<i64> }
+struct Program { structs: Vec<StructDef>, enums: Vec<EnumDef>, fns: Vec<FnDef>, trait_defs: Vec<TraitDef>, impls: Vec<ImplBlock>, main_stmts_start: i64, main_stmts_count: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, block_idxs: Vec<i64>, loop_idxs: Vec<i64> }
 
 struct Parser { tokens: Vec<Token>, pos: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, no_struct_literal: bool, block_idxs: Vec<i64>, loop_idxs: Vec<i64> }
 
@@ -964,22 +967,67 @@ fn parse_fn(p: &mut Parser) -> FnDef {
     loop {
         let t = parser_peek(p);
         if is_end_of_paren(t) { break; };
-        let pname_tok = parser_advance(p);
-        let pname = pname_tok.sval;
-        parser_advance(p); // skip :
-        // Skip type tokens until , or ) (handles &Vec<Expr>, &mut Lexer, etc.)
-        let mut ptype = "";
-        loop {
-            let tt = parser_peek(p);
-            if tt.disc == 53 || tt.disc == 48 || tt.disc == 61 { break; }; // Comma/RParen/Eof
-            let type_tok = parser_advance(p);
-            if ptype != "" { ptype = ptype + " "; };
-            ptype = ptype + type_tok.sval;
+        // Handle self/&self/&mut self params (for impl methods)
+        if t.sval == "self" {
+            parser_advance(p); // skip self
+            params.push(Param { name: "self", type_ann: "self" });
+            let t2 = parser_peek(p);
+            if t2.disc == 53 { parser_advance(p); }
+            else { break; };
+        } else if t.disc == 38 {
+            // &self or &mut self
+            parser_advance(p); // skip &
+            let mut ptype = "&";
+            let t3 = parser_peek(p);
+            if t3.sval == "mut" {
+                parser_advance(p); // skip mut
+                ptype = "&mut ";
+            };
+            let t4 = parser_peek(p);
+            if t4.sval == "self" {
+                parser_advance(p); // skip self
+                ptype = ptype + "self";
+                params.push(Param { name: "self", type_ann: ptype });
+                let t5 = parser_peek(p);
+                if t5.disc == 53 { parser_advance(p); }
+                else { break; };
+            } else {
+                // Not a self param — & is part of type, backtrack not possible
+                // Treat as normal param with & prefix (shouldn't happen in practice)
+                let pname_tok = parser_advance(p);
+                let pname = pname_tok.sval;
+                parser_advance(p); // skip :
+                ptype = ptype + " ";
+                loop {
+                    let tt = parser_peek(p);
+                    if tt.disc == 53 || tt.disc == 48 || tt.disc == 61 { break; };
+                    let type_tok = parser_advance(p);
+                    if ptype != "" { ptype = ptype + " "; };
+                    ptype = ptype + type_tok.sval;
+                };
+                params.push(Param { name: pname, type_ann: ptype });
+                let t6 = parser_peek(p);
+                if t6.disc == 53 { parser_advance(p); }
+                else { break; };
+            };
+        } else {
+            let pname_tok = parser_advance(p);
+            let pname = pname_tok.sval;
+            parser_advance(p); // skip :
+            // Skip type tokens until , or ) (handles &Vec<Expr>, &mut Lexer, etc.)
+            let mut ptype = "";
+            loop {
+                let tt = parser_peek(p);
+                if tt.disc == 53 || tt.disc == 48 || tt.disc == 61 { break; }; // Comma/RParen/Eof
+                let type_tok = parser_advance(p);
+                if ptype != "" { ptype = ptype + " "; };
+                ptype = ptype + type_tok.sval;
+            };
+            params.push(Param { name: pname, type_ann: ptype });
+            let t2 = parser_peek(p);
+            if t2.disc == 53 { parser_advance(p); }
+            else { break; };
         };
-        params.push(Param { name: pname, type_ann: ptype });
-        let t2 = parser_peek(p);
-        if t2.disc == 53 { parser_advance(p); }
-        else { break; };
     };
     parser_advance(p); // skip )
 
@@ -1101,6 +1149,122 @@ fn parse_enum_def(p: &mut Parser) -> EnumDef {
     EnumDef { name: name, variants: variants }
 }
 
+// ── Trait definition parsing ──
+// trait Name { fn method(params) -> ret; fn method2(params) -> ret; }
+fn parse_trait_def(p: &mut Parser) -> TraitDef {
+    parser_advance(p); // skip trait
+    let name_tok = parser_advance(p);
+    let name = name_tok.sval;
+    parser_advance(p); // skip {
+    let mut methods = Vec::new();
+    loop {
+        let t = parser_peek(p);
+        if is_end_of_block(t) { break; };
+        // Expect fn (disc 4)
+        if t.disc != 4 { break; };
+        parser_advance(p); // skip fn
+        let mname_tok = parser_advance(p);
+        let mname = mname_tok.sval;
+        parser_advance(p); // skip (
+        // Parse params (same pattern as parse_fn, with self support)
+        let mut params = Vec::new();
+        loop {
+            let pt = parser_peek(p);
+            if is_end_of_paren(pt) { break; };
+            // Handle self/&self/&mut self
+            if pt.sval == "self" {
+                parser_advance(p);
+                params.push(Param { name: "self", type_ann: "self" });
+                let t2 = parser_peek(p);
+                if t2.disc == 53 { parser_advance(p); }
+                else { break; };
+            } else if pt.disc == 38 {
+                parser_advance(p); // skip &
+                let mut ptype = "&";
+                let t3 = parser_peek(p);
+                if t3.sval == "mut" { parser_advance(p); ptype = "&mut "; };
+                let t4 = parser_peek(p);
+                if t4.sval == "self" {
+                    parser_advance(p);
+                    ptype = ptype + "self";
+                    params.push(Param { name: "self", type_ann: ptype });
+                    let t5 = parser_peek(p);
+                    if t5.disc == 53 { parser_advance(p); }
+                    else { break; };
+                } else {
+                    break;
+                };
+            } else {
+                let pname_tok = parser_advance(p);
+                let pname = pname_tok.sval;
+                parser_advance(p); // skip :
+                let mut ptype = "";
+                loop {
+                    let tt = parser_peek(p);
+                    if tt.disc == 53 || tt.disc == 48 || tt.disc == 61 { break; };
+                    let type_tok = parser_advance(p);
+                    if ptype != "" { ptype = ptype + " "; };
+                    ptype = ptype + type_tok.sval;
+                };
+                params.push(Param { name: pname, type_ann: ptype });
+                let t2 = parser_peek(p);
+                if t2.disc == 53 { parser_advance(p); }
+                else { break; };
+            };
+        };
+        parser_advance(p); // skip )
+        // Optional return type
+        let mut return_type = "";
+        let t3 = parser_peek(p);
+        if t3.disc == 58 {
+            parser_advance(p); // skip :
+            loop {
+                let tt = parser_peek(p);
+                if tt.disc == 54 || tt.disc == 50 || tt.disc == 61 { break; }; // Semicolon/RBrace/Eof
+                let ret_tok = parser_advance(p);
+                if return_type != "" { return_type = return_type + " "; };
+                return_type = return_type + ret_tok.sval;
+            };
+        };
+        // Skip semicolon (method signature, no body)
+        let t4 = parser_peek(p);
+        if t4.disc == 54 { parser_advance(p); };
+        methods.push(TraitMethodSig { name: mname, params: params, return_type: return_type });
+    };
+    parser_advance(p); // skip }
+    TraitDef { name: name, methods: methods }
+}
+
+// ── Impl block parsing ──
+// impl Trait for Type { fn method(...) {...} }  or  impl Type { fn method(...) {...} }
+fn parse_impl_block(p: &mut Parser) -> ImplBlock {
+    parser_advance(p); // skip impl
+    let name1_tok = parser_advance(p);
+    let name1 = name1_tok.sval;
+    let mut trait_name = "";
+    let mut type_name = name1;
+    // Check for `for` (disc 12)
+    let t = parser_peek(p);
+    if t.disc == 12 {
+        trait_name = name1;
+        parser_advance(p); // skip for
+        let type_tok = parser_advance(p);
+        type_name = type_tok.sval;
+    };
+    parser_advance(p); // skip {
+    let mut fns = Vec::new();
+    loop {
+        let t2 = parser_peek(p);
+        if is_end_of_block(t2) { break; };
+        if t2.disc != 4 { break; }; // expect fn
+        fns.push(parse_fn(p));
+        let t3 = parser_peek(p);
+        if t3.disc == 54 { parser_advance(p); };
+    };
+    parser_advance(p); // skip }
+    ImplBlock { trait_name: trait_name, type_name: type_name, fns: fns }
+}
+
 // ── Pattern helpers (avoids OR-patterns) ──
 
 fn is_end_of_block(tok: Token) -> bool {
@@ -1124,6 +1288,8 @@ fn parse_program(tokens: Vec<Token>) -> Program {
     let mut structs = Vec::new();
     let mut enums = Vec::new();
     let mut fns = Vec::new();
+    let mut trait_defs = Vec::new();
+    let mut impls = Vec::new();
     // Collect main statements in a LOCAL Vec first, then push to shared block_idxs
     // AFTER the loop. This prevents nested block expressions from interleaving.
     let mut main_local_idxs: Vec<i64> = Vec::new();
@@ -1143,6 +1309,14 @@ fn parse_program(tokens: Vec<Token>) -> Program {
         } else if d == 4 {
             // Fn (4)
             fns.push(parse_fn(&mut p));
+            if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
+        } else if d == 19 {
+            // Trait (19)
+            trait_defs.push(parse_trait_def(&mut p));
+            if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
+        } else if d == 18 {
+            // Impl (18)
+            impls.push(parse_impl_block(&mut p));
             if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
         } else if d == 61 {
             // Eof (61)
@@ -1165,6 +1339,8 @@ fn parse_program(tokens: Vec<Token>) -> Program {
         structs: structs,
         enums: enums,
         fns: fns,
+        trait_defs: trait_defs,
+        impls: impls,
         main_stmts_start: main_stmts_start,
         main_stmts_count: main_count,
         expr_nodes: p.expr_nodes,

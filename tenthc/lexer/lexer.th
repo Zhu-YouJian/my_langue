@@ -96,7 +96,7 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         if ident == "true" { return Token { kind: TokenKind::True, span: span, disc: 22, .. }; };
         if ident == "false" { return Token { kind: TokenKind::False, span: span, disc: 23, .. }; };
         if ident == "move" { return Token { kind: TokenKind::Move, span: span, disc: 24, .. }; };
-        if ident == "self" { return Token { kind: TokenKind::Self_, span: span, disc: 25, .. }; };
+        if ident == "self" { return Token { kind: TokenKind::Self_, span: span, disc: 25, sval: "self", .. }; };
         return Token { kind: TokenKind::Identifier(ident), span: span, disc: 3, sval: ident, .. };
     };
 

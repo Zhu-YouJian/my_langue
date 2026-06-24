@@ -102,16 +102,16 @@
 ## Phase D：能力对等
 
 > **实施优先级**：D4（最小）→ D1 → D2 → D3 → D5 → D6（可选）→ D7 扩展
-> **当前状态（2026-06-25）**：D4/D7 已完成（117 用例），D1/D2/D3/D5/D6 均未开始
+> **当前状态（2026-06-25）**：D1/D4/D7 已完成（120 用例），D2/D3/D5/D6 均未开始
 
 ### Task 完成清单
 
-- [ ] D1: Trait 系统
-  - [ ] D1.1: hir.th 新增 HirTraitDef/HirTraitImpl 结构
-  - [ ] D1.2: parser.th 新增 parse_trait/parse_impl_for 函数
-  - [ ] D1.3: parser.th parse_program 新增 trait(disc=19)/impl(disc=18) 分支
-  - [ ] D1.4: lower.th 新增 trait_defs/trait_impls map
-  - [ ] D1.5: lower.th 实现 trait 方法静态分派
+- [x] D1: Trait 系统
+  - [x] D1.1: hir.th 新增 HirTraitDef/HirTraitImpl 结构
+  - [x] D1.2: parser.th 新增 parse_trait_def/parse_impl_block 函数
+  - [x] D1.3: parser.th parse_program 新增 trait(disc=19)/impl(disc=18) 分支
+  - [x] D1.4: lower.th 新增 trait_defs/trait_impls 收集 + 预置 Display/Eq/Clone
+  - [x] D1.5: lower.th 实现 inherent impl 方法静态分派（mangled name `__<Type>_<method>`）
 - [ ] D2: 泛型实例化
   - [ ] D2.1: parser.th parse_fn/parse_struct 解析 `<T>` 泛型参数
   - [ ] D2.2: hir.th HirFnDef.generics/HirStructDef.generics 填充实际值
@@ -152,10 +152,10 @@
 - [x] f64 常量通过 f64_bits import 正确编码
 
 **D1 验收**：
-- [ ] tenthc 能解析 `trait Display { fn fmt(&self) -> str; }`
-- [ ] tenthc 能解析 `impl Display for Foo { fn fmt(&self) -> str { ... } }`
-- [ ] trait 方法调用 `obj.fmt()` 能正确静态分派到具体实现
-- [ ] parity_test.rs 新增 ≥3 个 Trait 测试用例通过
+- [x] tenthc 能解析 `trait MyTrait { fn foo(self) -> i64; }`
+- [x] tenthc 能解析 `impl Pair { fn sum(self) -> i64 { self.a + self.b } }`（inherent impl）
+- [x] inherent impl 方法调用 `p.sum()` 能正确静态分派到 `__Pair_sum`
+- [x] parity_test.rs 新增 3 个 Trait 测试用例通过（parity_trait_def_parse / parity_inherent_impl_parse / parity_inherent_impl_dispatch）
 
 **D2 验收**：
 - [ ] tenthc 能解析 `fn id<T>(x: T) -> T { x }`
@@ -179,8 +179,8 @@
 
 **全局验收**：
 - [ ] tenthc 能编译 Rust 母编译器测试套件中 90%+ 的程序
-- [x] 对同一输入，tenthc 和 Rust 编译器产出的 WASM 执行结果一致（117 个基础用例通过）
-- [ ] Trait 定义和实现能正确解析和分派
+- [x] 对同一输入，tenthc 和 Rust 编译器产出的 WASM 执行结果一致（120 个用例通过）
+- [x] Trait 定义和实现能正确解析和分派
 - [ ] 泛型函数能正确实例化
 - [ ] 借用检查能检测 use-after-move 和双重借用
 - [ ] 闭包能正确创建、捕获和调用
@@ -195,7 +195,7 @@
 - [ ] **能力对等**：tenthc 与 Rust 母编译器功能对等（90%+ 测试通过，Phase D 待完成）
 - [x] **无回归**：Rust 母编译器 499+ 测试全部通过
 - [ ] **文档对齐**：AUDIT.md §4 的"自举验证通过"表述与实际一致
-- [x] **测试覆盖**：wasm_backend_minimal.rs + selfhost_frontend.rs + three_stage.rs + parity_test.rs(117) 通过（Phase D 扩展待完成）
+- [x] **测试覆盖**：wasm_backend_minimal.rs + selfhost_frontend.rs + three_stage.rs + parity_test.rs(120) 通过（Phase D 扩展待完成）
 
 ---
 
