@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-06-15 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 | 350 项测试（349 passed + 1 ignored）
+> 日期：2026-06-24 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 | 499 项测试（498 passed + 1 ignored）
 
 ---
 
@@ -10,60 +10,13 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 ### 目录地图
 
-```
-├── tenth/                    ← Rust bootstrap 编译器
-│   ├── Cargo.toml            ← ndarray, rustyline, thiserror, rand, wasm-encoder, wasmi
-│   ├── src/
-│   │   ├── main.rs           ← CLI: REPL / run / build / wasm
-│   │   ├── lib.rs            ← 导出 7 个顶层模块
-│   │   ├── error.rs          ← TenthError 统一错误类型
-│   │   ├── lexer/            ← 词法分析 (token.rs + lexer.rs)
-│   │   ├── parser/           ← 递归下降解析 (ast.rs + parser.rs)
-│   │   ├── hir/              ← HIR + 类型推断 + 借用检查 (hir.rs + types.rs + lower.rs)
-│   │   ├── compile/          ← WASM 编译 + 字节码编译 + GPU 脚手架 + 优化 Pass (wasm.rs + bytecode.rs + bridge.rs + gpu/ + optimizations/)
-│   │   ├── runtime/          ← 解释器 + VM + 值系统 (interpreter.rs + vm.rs + value.rs + tensor.rs + arena.rs + autodiff.rs + limits.rs)
-│   │   └── repl.rs           ← 交互环境
-│   ├── tests/                ← 测试 (20 文件, 350 项 — 349 通过 + 1 忽略)
-│   ├── std/                  ← Tenth 标准库 (.th 源码: nn/, optim/)
-│   └── target/               ← (gitignored)
-├── tools/                    ← 开发工具
-│   ├── tenthpm/              ← 包管理器 CLI (init/build/test/run/add/publish/install + Tenth.toml)
-│   └── lsp/                  ← LSP 服务器 (完整实现: 12 个 LSP 功能 + 文档同步)
-├── tenthc/                   ← Tenth 自举编译器 (.th 源码, 自举验证通过)
-│   ├── main.th               ← 入口 (编排脚本, ~500B)
-│   ├── lexer/token.th        ← TokenKind 枚举 (50+ 变体)
-│   ├── lexer/lexer.th        ← O(1) 源切片词法分析器
-│   └── parser/parser.th      ← 递归下降解析器 (method_call 支持)
-├── docs/                     ← 语言参考手册 + 实施计划
-├── Tenth实例/                ← 33 个语言示例程序
-├── README.md / MEMO.md / DEPS.md / SECURITY.md / AUDIT.md
-└── .gitignore
-```
+> 完整目录结构及模块注解见 `CODE_WIKI.md` §1。
 
 ---
 
 ## 二、编译器管线
 
-### 路径 A：VM 字节码执行（默认）
-```
-源码 (.th) → Lexer → Parser → AST → Lowerer → HIR
-  → BytecodeCompiler → Chunk (字节码)
-  → Vm::run() → 运行时值
-  (不支持的特性自动回退到路径 C)
-```
-
-### 路径 B：WASM 编译
-```
-源码 (.th) → Lexer → Parser → AST → Lowerer → HIR
-  → WasmCompiler → .wasm 文件
-  → wasmi 加载执行
-```
-
-### 路径 C：树遍历解释器（兼容性保障）
-```
-源码 (.th) → Lexer → Parser → AST → Lowerer → HIR
-  → Interpreter (tree-walk) → 运行时值
-```
+> 完整管线架构见 `CODE_WIKI.md` §2-3。
 
 > ~~C 编译路径 (MIR → C → GCC → .exe)~~ 已于 2026-06-04 移除。原因：生成的 C 代码无内存管理，详见 SECURITY.md。
 
@@ -84,7 +37,9 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `ownership_test.rs` | 11 | 移动/借用/引用/解引用 |
 | `stdlib_test.rs` | 114 | Vec/HashMap/String/Option/文件 I/O/json/toml/runtime 限制 |
 | `memory_test.rs` | 17 | 内存护栏: arena/limits/计数器 |
-| `selfhost_verify.rs` | 1 | WASM 自举闭环验证 |
+| `selfhost_frontend.rs` | 4 | 自举前端验证（lex/parse/lower） |
+| `parity_test.rs` | 112 | VM vs Interpreter 行为一致（全指令覆盖） |
+| `shape_check_test.rs` | 16 | 张量 shape 检查/广播/层归一化验证 |
 | `autodiff_test.rs` | 52 | 自动微分/闭包/张量/错误位置（21 算子） |
 | `vm_autodiff_test.rs` | 15 | 字节码 VM 上的自动微分回归 |
 | `type_inference_test.rs` | 29 | 类型推断/统一/泛型实例化 |
@@ -93,19 +48,13 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `error_recovery_test.rs` | 7 | 解析错误恢复/续接 |
 | `mnist_loader_test.rs` | 4 | MNIST 数据加载 |
 | `three_stage.rs` | 1 | 三段式自举（忽略 — wasmi 慢） |
-| **总计** | **350** | 349 通过 + 1 忽略 |
+| **总计** | **499** | 498 通过 + 1 忽略 |
 
 ---
 
 ## 四、自举状态
 
-Tenth 编译器由 Tenth 自身编写，三路径验证通过：
-
-| 路径 | 词法 | 语法 | 编译 | 速度 | 验证 |
-|------|------|------|------|------|------|
-| A (VM) | Rust | Rust | compile_host | 秒级 | 36 函数 → WASM ✅ |
-| B (真正) | Tenth | Tenth | compile_program | ~30s | 14 tokens → WASM ✅ |
-| C (wasmi) | WASM | wasmi | 内嵌编译 | 秒级 | 36 函数闭环 ✅ |
+> 自举演进详情见 `MEMO.md`。
 
 ---
 

@@ -4,14 +4,9 @@
 >
 > **当前阶段：v0.3.3 → 阶段 1（可用）**
 >
-> **最终目标**：Tenth 是**通用编程语言的超集**——用户可以把它当作日常编程语言来写脚本、构建工具、开发服务，同时发现 AI 能力就在手边。不是 Python+PyTorch 的替代品，而是一种新的可能性：一门语言同时覆盖通用编程和 AI 研究，且在类型安全上超越两者。
+> 演进路线与阶段规划见 `CODE_WIKI.md` §10。
 >
-> **演进路线**：
-> - **阶段 1：可用** — 补全 VM 张量方法 + 日常标准库 + tenthpm 基本可用 → 能写日常脚本，能跑小模型训练
-> - **阶段 2：好用** — Cranelift JIT 编译热函数 → 标量/控制流性能接近 Go（慢 5-10x C）
-> - **阶段 3：不可替代** — 编译期张量 shape 检查 → shape 不匹配在编译期报错，而非运行时
->
-> 每个阶段独立可用，不依赖下一阶段。
+> **2026-06-24 更新**：测试数 350→499（新增 parity_test 112 项 VM/Interpreter 一致性、shape_check_test 16 项 shape 检查；selfhost_verify→selfhost_frontend 重构）。文档重复信息全面清理，交叉引用体系建立。
 >
 > **2026-06-15 更新**：文档维护 — 自动微分算子数修正为 21（新增 LayerNorm/GELU），标准库模块补全（collections/string/utils/nn 扩展），张量方法补全（gelu/layer_norm/cat/masked_fill/permute/broadcast_to/max_val）。
 >
@@ -83,7 +78,9 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 - [x] 永久回归测试：`tenth/tests/selfhost_verify.rs` (83/83 pass)
 - [x] 性能基准：`tenth run tenthc/boot_full.th` → 0.2s
 
-### 已知限制
+### 已知限制（当前活跃）
+
+> 带编号的完整缺陷清单见 `AUDIT.md` §六/七。此处为逐版演化日志。
 
 - [x] ~~Closure/GenericCall VM fallback~~ → GenericCall/Move/Range/MakeTensor/MakeClosure 已补全
 - [ ] Host import (Vec/String) 为占位实现，WASM 模块需宿主提供真实运行时
@@ -213,7 +210,7 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 | enum_test.rs | 5→9（+4 枚举元组变体/match 绑定） | ✅ |
 | generic_test.rs | 5→11（+6 泛型返回/Vec<Token>/>>拆分） | ✅ |
 | struct_test.rs | 5→8（+3 字段默认值/..语法） | ✅ |
-| 总计 | 121→350（+229，含 v0.3.1 autodiff + v0.3.3 LSP/tenthpm/类型推断/模式匹配/迭代器/错误恢复/MNIST） | ✅ 349 passed + 1 ignored |
+| 总计 | 121→499（+378，含 v0.3.1 autodiff + v0.3.3 LSP/tenthpm/类型推断/模式匹配/迭代器/错误恢复/MNIST/parity/shape_check） | ✅ 498 passed + 1 ignored |
 
 ---
 
@@ -299,44 +296,10 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 
 ---
 
-## 环境依赖速查
+## 环境配置
 
-| 依赖 | 状态 | 路径 |
-|------|------|------|
-| Rust | ✅ 1.95.0 | `C:\Users\史蒂夫\.cargo\bin\` |
-| GCC | ✅ 15.2.0 | `D:\msys64\mingw64\bin\gcc.exe` |
-| Git | ✅ | 已配 github 代理 |
-| CUDA Toolkit 12.6 | ❌ | https://developer.nvidia.com/cuda-downloads |
-| NCCL | ❌ | 随 CUDA Toolkit |
-| MPI | ❌ | MS-MPI / OpenMPI |
+> 环境依赖、网络代理、构建/测试命令详见 `DEPS.md`。
 
 ---
 
-## 网络代理
 
-Clash `127.0.0.1:7892`
-
-```cmd
-# cargo / curl
-set HTTP_PROXY=http://127.0.0.1:7892
-set HTTPS_PROXY=http://127.0.0.1:7892
-
-# git（已配好）
-git config http.proxy http://127.0.0.1:7892
-git config https.proxy http://127.0.0.1:7892
-```
-
----
-
-## 测试命令
-
-```bash
-# 全量
-cargo test --manifest-path tenth/Cargo.toml
-
-# 单项
-cargo test --manifest-path tenth/Cargo.toml -- autodiff
-
-# 编译运行
-cargo run --manifest-path tenth/Cargo.toml
-```

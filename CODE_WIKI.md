@@ -847,47 +847,7 @@ tenth/std/
 
 ## 8. 依赖关系
 
-### Rust 依赖 (Cargo.toml)
-
-#### 主编译器 (tenth/Cargo.toml)
-
-| 依赖 | 版本 | 用途 |
-|------|------|------|
-| `ndarray` | 0.16 | 多维数组（张量底层数据结构） |
-| `rustyline` | 15 | REPL 行编辑库 |
-| `thiserror` | 2 | 错误类型派生宏 |
-| `rand` | 0.8 | 随机数生成 |
-| `rand_distr` | 0.4 | 随机分布（正态分布等） |
-| `wasm-encoder` | 0.215 | WASM 字节码生成 |
-| `wasmi` | 0.39 | WASM 解释器 |
-
-#### tenthpm 包管理器 (tools/tenthpm/Cargo.toml)
-
-| 依赖 | 版本 | 用途 |
-|------|------|------|
-| `serde` | 1 | 序列化框架（derive） |
-| `serde_json` | 1 | JSON 解析（包注册表通信） |
-| `toml` | 0.8 | Tenth.toml 清单文件解析 |
-
-#### LSP 服务器 (tools/lsp/Cargo.toml)
-
-| 依赖 | 版本 | 用途 |
-|------|------|------|
-| `serde` | 1 | 序列化框架（derive） |
-| `serde_json` | 1 | LSP 协议 JSON-RPC 消息解析 |
-| `tenth` | path | 编译器前端（词法/语法/HIR） |
-
-### 编译工具链
-
-- Rust ≥ 1.95（edition 2024）
-- 所有 crate 依赖通过 Cargo 自动下载
-
-### Feature Flags
-
-| Flag | 说明 |
-|------|------|
-| `mem-debug` | 启用内存追踪计数器和硬限制检查（~2% 性能开销） |
-| `mem-strict` | 严格模式：限制违反时 panic 而非软警告（隐含 `mem-debug`） |
+> crate 版本及 Feature Flags 详见 `DEPS.md`。
 
 ### 模块间依赖图
 
@@ -920,60 +880,18 @@ tools/lsp/ ←── serde, serde_json, tenth (path)
 
 ## 9. 项目运行方式
 
-### 编译
+Tenth 提供四种运行模式：
 
-```bash
-# Release 模式编译（推荐）
-cargo build --release --manifest-path tenth/Cargo.toml
+| 模式 | 用途 |
+|------|------|
+| REPL | 交互式执行，适合探索与调试 |
+| `run <file.th>` | 编译并执行 .th 文件（VM 优先，解释器 fallback） |
+| `build <file.th>` | 编译 .th 为 .wasm 文件 |
+| `wasm <file.th>` | 编译为 WASM 并通过 wasmi 执行 |
 
-# Debug 模式（带内存调试）
-cargo build --manifest-path tenth/Cargo.toml --features mem-debug
+> 具体构建/运行命令及环境配置见 `DEPS.md`。
 
-# 严格内存模式
-cargo build --manifest-path tenth/Cargo.toml --features mem-strict
-```
-
-### 运行
-
-```bash
-# 启动 REPL
-cargo run --release --manifest-path tenth/Cargo.toml
-
-# 运行 .th 文件
-cargo run --release --manifest-path tenth/Cargo.toml run path/to/file.th
-
-# 编译为 WASM
-cargo run --release --manifest-path tenth/Cargo.toml build path/to/file.th
-
-# 运行 WASM
-cargo run --release --manifest-path tenth/Cargo.toml wasm path/to/file.th
-
-# 带内存限制的 REPL
-cargo run --release --manifest-path tenth/Cargo.toml -- --max-memory 256
-```
-
-### 测试
-
-```bash
-# 运行所有测试（349 项通过 + 1 忽略）
-cargo test --manifest-path tenth/Cargo.toml
-
-# 测试文件列表
-# tests/lexer_test.rs       — 词法分析测试
-# tests/parser_test.rs      — 语法分析测试
-# tests/integration_test.rs — 集成测试
-# tests/struct_test.rs      — 结构体测试
-# tests/enum_test.rs        — 枚举测试
-# tests/generic_test.rs     — 泛型测试
-# tests/trait_test.rs       — Trait 测试
-# tests/ownership_test.rs   — 所有权/借用测试
-# tests/memory_test.rs      — 内存限制测试
-# tests/module_test.rs      — 模块系统测试
-# tests/stdlib_test.rs      — 标准库测试
-# tests/selfhost_verify.rs  — 自举验证测试
-# tests/three_stage.rs      — 三阶段编译测试
-# tests/autodiff_test.rs    — 自动微分/闭包/张量/错误位置测试（20 项）
-```
+> 测试覆盖详见 `AUDIT.md` §三。
 
 ### 分发
 
@@ -998,42 +916,8 @@ cargo test --manifest-path tenth/Cargo.toml
 | Phase 7 | 核心标准库 | ✅ 完成 |
 | Phase 8 | 自举编译器 | ✅ 完成 |
 
-### 当前能力总结
-
-| 能力 | 状态 |
-|------|------|
-| Lexer / Parser / AST | ✅ |
-| HIR + 类型推断 + 借用检查 | ✅ |
-| 树遍历解释器 | ✅ (VM fallback) |
-| 字节码 VM（栈式，45 指令） | ✅ 默认执行路径（含 MakeTensor/MakeClosure） |
-| 泛型函数 / 结构体 | ✅ |
-| Trait 定义与实现 | ✅ |
-| 引用 / 移动语义 | ✅ |
-| struct / enum / match | ✅ VM 全支持 |
-| REPL 交互环境 | ✅ 多行输入支持 |
-| 内存护栏 (arena + limits) | ✅ |
-| WASM 编译 (wasm-encoder + wasmi) | ✅ |
-| 张量级自动微分 (21 算子) | ✅ backward 全链路 |
-| 张量间运算 (matmul/广播/转置) | ✅ |
-| Conv2D / Dropout / BatchNorm | ✅ |
-| Vec / HashMap / String 标准库 | ✅ pop/split/trim 等 10+ 方法 |
-| 自举编译器 (Tenth 编写，全链路) | ✅ ~0.2s |
-| WASM import 输出 | ✅ wasmi 验证通过 |
-| 闭包捕获环境变量 | ✅ HIR captures 字段 + Lowerer free_vars_in() |
-| 文件级导入（use 自动搜索 std/） | ✅ Lowerer search_paths + try_import_file() |
-| 错误信息增强（源码位置） | ✅ Scope check_use/check_borrow 带 span |
-| VM for-in 循环 | ✅ 字节码编译器 Range/Vec 迭代 |
-| VM 闭包调用 | ✅ MakeClosure + FnRef 全局查找 |
-| VM 字符串切片 | ✅ SliceStr + Range 索引解析 |
-| 严格借用检查 | ✅ check_borrow_shared/check_borrow_mut 恢复 |
-| 块注释 /* */ | ✅ 支持嵌套 |
-| 结构体字段默认值（`..` 语法） | ✅ StructLiteral use_defaults + HIR has_default |
-| 泛型返回类型（`Vec<Token>` 解析） | ✅ GenericCall 返回类型推断 |
-| 枚举元组变体（`Some(T)` 构造+匹配） | ✅ EnumVariantKind 三变体 + tuple_binds |
-| GPU 后端脚手架 | 🔧 compile/gpu/ + compile/optimizations/ |
-| tenthpm 包管理器 | 🔧 tools/tenthpm/（init/build/run/publish） |
-| LSP 服务器 | 🔧 tools/lsp/（completion/hover/diagnostics） |
+> 完整能力清单（479 项逐条状态）见 `能力梳理/能力全梳理.md`。
 
 ---
 
-> 本文档基于项目 v0.3.3 版本源码自动生成，最后更新：2026-06-15
+> 本文档基于项目 v0.3.3 版本源码自动生成，最后更新：2026-06-24
