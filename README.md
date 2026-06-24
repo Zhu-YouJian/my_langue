@@ -29,7 +29,7 @@ Tenth 的定位是**通用编程语言的超集**——用户可以把它当作�
 
 ## 现状
 
-**v0.3.3** — 字节码 VM (45 指令) + 自举编译器 (Tenth 全链路) + WASM 输出 + **张量级自动微分** + **闭包捕获** + **文件级导入** + **GPU 脚手架** + **tenthpm 包管理器** + **LSP 服务器**。349 项测试通过（共 350 项，1 项忽略）。
+**v0.3.3** — 字节码 VM (45 指令) + 自举编译器 (Tenth 全链路) + WASM 输出 + **张量级自动微分** + **闭包捕获** + **文件级导入** + **GPU 脚手架** + **tenthpm 包管理器** + **LSP 服务器**。498 项测试通过（共 499 项，1 项忽略）。
 
 | 组件 | 状态 |
 |------|------|
@@ -136,7 +136,7 @@ fn main() {
 }
 ```
 
-更多示例见 `Tenth实例/` 目录（33 个）和 `tenth/std/` 标准库（16 个文件）。
+更多示例见 `Tenth实例/` 目录（33 个）和 `tenth/std/` 标准库（36 个源文件）。
 
 ## 自动微分
 
@@ -161,12 +161,20 @@ Tenth 内置张量级自动微分，通过 7 个内置函数控制：
 tenth/std/
 ├── nn/          ← linear, loss (MSE/L1/BCE), activations, dropout, batchnorm, conv2d, embedding, attention, multihead_attention, layer_norm, positional_encoding, feedforward, transformer
 ├── optim/       ← SGD (vanilla/momentum/decay), Adam, AdaGrad, RMSProp (全部可运行)
-├── data/        ← DataLoader (new/has_next/next_batch/reset/num_batches)
+├── data/        ← DataLoader, MNIST 加载器
 ├── init/        ← xavier_uniform/xavier_normal/he_normal/he_uniform/zeros_init/constant_init
 ├── collections/ ← iter (map/filter/reduce/zip/enumerate 等), collections (flat_map/partition 等)
 ├── string/      ← join_lines/join_comma/repeat_sep/indent/word_wrap/capitalize 等
 ├── utils/       ← 序列化 (save_model/load_model/save_checkpoint), math (min/max/clamp 等)
-├── math/        ← 数学函数参考
+├── fs/          ← 文件系统操作 (exists/is_file/is_dir/mkdir/list_dir/remove/copy 等)
+├── json/        ← JSON 编解码 (encode/decode/encode_pretty/load/save)
+├── toml/        ← TOML 解析
+├── cli/         ← 命令行参数处理
+├── logging/     ← 日志 (debug/info/warn/error + set_level)
+├── time/        ← 时间工具 (now/now_ms/date/datetime/sleep_ms/timer)
+├── random/      ← 随机数 (rand_int/rand_float/choice/shuffle 等)
+├── math/        ← 数学函数与常量
+├── runtime.th   ← 资源限制 (with_step_limit/with_timeout_ms)
 └── prelude.th   ← 可用项总目录
 ```
 
