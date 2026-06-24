@@ -387,7 +387,9 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         let rhs = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
         if lexpr.kind == "field" {
             let target = lower_expr(p, lexpr.left, exprs, stmts, match_arms, depth + 1);
-            return push_expr(p, 11, 0, 0.0, "", false, target, rhs, 0, 0, 0, 0, 0, 0, 0, "", lexpr.sval, "", 0);
+            // Propagate target's type so wasm codegen can find struct name for field offset
+            let target_ty = get_expr_ty(p, target);
+            return push_expr(p, 11, 0, 0.0, "", false, target, rhs, 0, 0, 0, 0, 0, 0, 0, "", lexpr.sval, "", target_ty);
         };
         if lexpr.kind == "deref" {
             let target = lower_expr(p, lexpr.left, exprs, stmts, match_arms, depth + 1);

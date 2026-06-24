@@ -424,13 +424,17 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     };
     if d == 6 {
         // Unary
-        compile_expr(ctx, out, hir, e.left);
         let op = e.op;
         if op == "-" {
+            // Negation: 0 - n. Push 0 FIRST, then inner, then sub.
+            // WASM i64.sub pops b then a, computes a - b.
+            // Stack: [0, n] → 0 - n = -n
             wasm_i64_const(out, 0);
+            compile_expr(ctx, out, hir, e.left);
             wasm_i64_sub(out);
         } else {
             // ! or other: eqz
+            compile_expr(ctx, out, hir, e.left);
             wasm_i64_eqz(out);
         };
         return;
