@@ -356,29 +356,29 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 4 {
-        // Var — 先查 current fn params，再查 let 绑定的 local
+        // Var — 先查 let 绑定的 local（倒序，支持 shadowing），再查 current fn params
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
-        // Only search the current function's params (not all functions')
-        let func = hir.fns[ctx.current_fn_idx];
-        for pi in 0..func.params.len() {
-            if func.params[pi].name == name {
-                local_idx = pi;
+        // Search let bindings first (backward for shadowing)
+        let mut li: i64 = ctx.local_names.len() - 1;
+        while li >= 0 {
+            if ctx.local_names[li] == name {
+                local_idx = ctx.local_indices[li];
                 found = true;
                 break;
             };
+            li = li - 1;
         };
-        // 查 let 绑定的 local（倒序查找，支持 shadowing）
+        // Fall back to current function's params
         if !found {
-            let mut li: i64 = ctx.local_names.len() - 1;
-            while li >= 0 {
-                if ctx.local_names[li] == name {
-                    local_idx = ctx.local_indices[li];
+            let func = hir.fns[ctx.current_fn_idx];
+            for pi in 0..func.params.len() {
+                if func.params[pi].name == name {
+                    local_idx = pi;
                     found = true;
                     break;
                 };
-                li = li - 1;
             };
         };
         wasm_local_get(out, local_idx);
@@ -449,25 +449,25 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
-        // Only search the current function's params (not all functions')
-        let func = hir.fns[ctx.current_fn_idx];
-        for pi in 0..func.params.len() {
-            if func.params[pi].name == name {
-                local_idx = pi;
+        // Search let bindings first (backward for shadowing)
+        let mut li: i64 = ctx.local_names.len() - 1;
+        while li >= 0 {
+            if ctx.local_names[li] == name {
+                local_idx = ctx.local_indices[li];
                 found = true;
                 break;
             };
+            li = li - 1;
         };
-        // 查 let 绑定的 local（倒序查找，支持 shadowing）
+        // Fall back to current function's params
         if !found {
-            let mut li: i64 = ctx.local_names.len() - 1;
-            while li >= 0 {
-                if ctx.local_names[li] == name {
-                    local_idx = ctx.local_indices[li];
+            let func = hir.fns[ctx.current_fn_idx];
+            for pi in 0..func.params.len() {
+                if func.params[pi].name == name {
+                    local_idx = pi;
                     found = true;
                     break;
                 };
-                li = li - 1;
             };
         };
         wasm_local_set(out, local_idx);
@@ -893,25 +893,25 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
-        // Only search the current function's params (not all functions')
-        let func = hir.fns[ctx.current_fn_idx];
-        for pi in 0..func.params.len() {
-            if func.params[pi].name == name {
-                local_idx = pi;
+        // Search let bindings first (backward for shadowing)
+        let mut li: i64 = ctx.local_names.len() - 1;
+        while li >= 0 {
+            if ctx.local_names[li] == name {
+                local_idx = ctx.local_indices[li];
                 found = true;
                 break;
             };
+            li = li - 1;
         };
-        // 查 let 绑定的 local（倒序查找，支持 shadowing）
+        // Fall back to current function's params
         if !found {
-            let mut li: i64 = ctx.local_names.len() - 1;
-            while li >= 0 {
-                if ctx.local_names[li] == name {
-                    local_idx = ctx.local_indices[li];
+            let func = hir.fns[ctx.current_fn_idx];
+            for pi in 0..func.params.len() {
+                if func.params[pi].name == name {
+                    local_idx = pi;
                     found = true;
                     break;
                 };
-                li = li - 1;
             };
         };
         // local.get → compile rhs → apply op → local.set

@@ -128,8 +128,14 @@ mod parity {
     /// returns (), Rust's Vec_push returns i64), so each module is registered
     /// with its own correct signature.
     fn setup_output_store_and_linker(engine: &Engine) -> (Store<()>, Linker<()>) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
         let store = Store::new(engine, ());
         let mut linker = Linker::new(engine);
+        // Bump allocator pointer shared between host/env modules. Starts at 4096
+        // to avoid overlapping with string data (stored at low offsets by both
+        // the Rust mother compiler and tenthc).
+        let bump = Arc::new(AtomicU32::new(4096));
 
         // ── `host` module (Rust mother compiler's wasm.rs signatures) ──
         linker.func_wrap("host", "println", |_: Caller<()>, _: i32| {}).unwrap();
@@ -138,7 +144,22 @@ mod parity {
         linker.func_wrap("host", "str_add", |_: Caller<()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
         linker.func_wrap("host", "str_eq", |_: Caller<()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
         linker.func_wrap("host", "str_int", |_: Caller<()>, _: i64| -> i32 { 0 }).unwrap();
-        linker.func_wrap("host", "tenth_alloc", |_: Caller<()>, _: i32| -> i32 { 0 }).unwrap();
+        // tenth_alloc — proper bump allocator (was returning 0, causing struct aliasing)
+        let b = bump.clone();
+        linker.func_wrap("host", "tenth_alloc", move |mut caller: Caller<()>, size: i32| -> i32 {
+            let ptr = b.fetch_add(size as u32, Ordering::SeqCst);
+            let needed = ptr as usize + size as usize;
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let mut current_len = mem.data(&caller).len();
+            while needed > current_len {
+                let pages = ((needed - current_len + 65535) / 65536) as u32;
+                mem.grow(&mut caller, pages).ok();
+                let new_len = mem.data(&caller).len();
+                if new_len == current_len { break; }
+                current_len = new_len;
+            }
+            ptr as i32
+        }).unwrap();
         linker.func_wrap("host", "Vec_new", |_: Caller<()>| -> i64 { 0 }).unwrap();
         linker.func_wrap("host", "Vec_push", |_: Caller<()>, _: i64, _: i64| -> i64 { 0 }).unwrap();
         linker.func_wrap("host", "Vec_len", |_: Caller<()>, _: i64| -> i64 { 0 }).unwrap();
@@ -170,7 +191,21 @@ mod parity {
         // Type 6: str_int(i64) -> i32
         linker.func_wrap("env", "str_int", |_: Caller<()>, _: i64| -> i32 { 0 }).unwrap();
         // Type 7: tenth_alloc(i32) -> i32, str_len(i32) -> i32
-        linker.func_wrap("env", "tenth_alloc", |_: Caller<()>, _: i32| -> i32 { 0 }).unwrap();
+        let b = bump.clone();
+        linker.func_wrap("env", "tenth_alloc", move |mut caller: Caller<()>, size: i32| -> i32 {
+            let ptr = b.fetch_add(size as u32, Ordering::SeqCst);
+            let needed = ptr as usize + size as usize;
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let mut current_len = mem.data(&caller).len();
+            while needed > current_len {
+                let pages = ((needed - current_len + 65535) / 65536) as u32;
+                mem.grow(&mut caller, pages).ok();
+                let new_len = mem.data(&caller).len();
+                if new_len == current_len { break; }
+                current_len = new_len;
+            }
+            ptr as i32
+        }).unwrap();
         linker.func_wrap("env", "str_len", |_: Caller<()>, _: i32| -> i32 { 0 }).unwrap();
         // Type 8: str_at(i32, i64) -> i32
         linker.func_wrap("env", "str_at", |_: Caller<()>, _: i32, _: i64| -> i32 { 0 }).unwrap();
@@ -727,5 +762,121 @@ mod parity {
         let src = "struct Point { x: i64, y: i64 } fn shift(p: Point, dx: i64, dy: i64) -> i64 { p.x = p.x + dx; p.y = p.y + dy; p.x + p.y } fn run(a: i64, b: i64) -> i64 { let p = Point { x: a, y: b }; shift(p, 10, 20) }";
         // (a+10) + (b+20) = (3+10) + (4+20) = 13 + 24 = 37
         assert_parity(src, "run", &[3, 4], 37);
+    }
+
+    // ── Complex expressions ─────────────────────────────────────────────
+
+    #[test]
+    fn parity_mixed_arith() {
+        // Mixed +, -, *, /, % in one expression
+        let src = "fn mixed(a: i64, b: i64, c: i64) -> i64 { a * b + c - a / b % c }";
+        // 6 * 3 + 10 - 6 / 3 % 10 = 18 + 10 - 2 % 10 = 18 + 10 - 2 = 26
+        assert_parity(src, "mixed", &[6, 3, 10], 26);
+    }
+
+    #[test]
+    fn parity_deep_nesting() {
+        // Deeply nested function calls: f(x)=x+1, g(x)=f(x)*2, h(x)=g(f(x))+f(g(x))
+        let src = "fn f(x: i64) -> i64 { x + 1 } fn g(x: i64) -> i64 { f(x) * 2 } fn h(x: i64) -> i64 { g(f(x)) + f(g(x)) } fn deep(n: i64) -> i64 { h(f(g(n))) }";
+        // g(5)=f(5)*2=12, f(g(5))=f(12)=13, h(13)=g(f(13))+f(g(13))=g(14)+f(28)=30+29=59
+        assert_parity(src, "deep", &[5], 59);
+    }
+
+    #[test]
+    fn parity_nested_call_arith() {
+        // Nested calls with arithmetic: f(g(a) + g(b))
+        let src = "fn g(x: i64) -> i64 { x * x } fn f(a: i64, b: i64) -> i64 { g(a) + g(b) } fn run(x: i64, y: i64) -> i64 { f(g(x) + 1, g(y) + 1) }";
+        // g(3)=9, g(4)=16; f(9+1, 16+1) = f(10, 17) = g(10)+g(17) = 100+289 = 389
+        assert_parity(src, "run", &[3, 4], 389);
+    }
+
+    #[test]
+    fn parity_zero_and_negatives() {
+        let src = "fn test(a: i64, b: i64) -> i64 { a * b + a - b }";
+        assert_parity(src, "test", &[0, 5], 0 - 5);
+    }
+
+    #[test]
+    fn parity_large_numbers() {
+        let src = "fn big(a: i64) -> i64 { a * a * a }";
+        assert_parity(src, "big", &[1000], 1_000_000_000);
+    }
+
+    // ── Complex control flow ────────────────────────────────────────────
+
+    #[test]
+    fn parity_if_elif_else_chain() {
+        let src = "fn classify(n: i64) -> i64 { if n < 0 { 0 - 1 } else { if n == 0 { 0 } else { if n < 10 { 1 } else { if n < 100 { 2 } else { 3 } } } } }";
+        assert_parity(src, "classify", &[0 - 5], 0 - 1);
+        let wasm = compile_via_tenthc(src);
+        assert_eq!(run_wasm_i64(&wasm, "classify", &[0]), 0);
+        assert_eq!(run_wasm_i64(&wasm, "classify", &[7]), 1);
+        assert_eq!(run_wasm_i64(&wasm, "classify", &[42]), 2);
+        assert_eq!(run_wasm_i64(&wasm, "classify", &[500]), 3);
+    }
+
+    #[test]
+    fn parity_while_with_complex_cond() {
+        let src = "fn loop_test(n: i64) -> i64 { let mut i = 0; let mut s = 0; while i < n && s < 100 { s = s + i * i; i = i + 1; } s }";
+        // i=0: s=0, i=1; i=1: s=1, i=2; i=2: s=5, i=3; i=3: s=14, i=4; i=4: s=30, i=5
+        // i=5: s=55, i=6; i=6: s=91, i=7; i=7: s=140 >= 100, break → s=140
+        assert_parity(src, "loop_test", &[10], 140);
+    }
+
+    #[test]
+    fn parity_nested_break() {
+        // Break in nested if inside loop
+        let src = "fn nb(n: i64) -> i64 { let mut s = 0; for i in 0..n { if i > 0 { if i > 3 { break; }; s = s + i; }; }; s }";
+        // i=0: skip (i>0 false); i=1: s=1; i=2: s=3; i=3: s=6; i=4: break → s=6
+        assert_parity(src, "nb", &[10], 6);
+    }
+
+    // ── Multiple struct types ───────────────────────────────────────────
+
+    #[test]
+    fn parity_two_struct_types() {
+        let src = "struct A { v: i64 } struct B { w: i64 } fn make_ab(x: i64) -> i64 { let a = A { v: x }; let b = B { w: x + 1 }; a.v + b.w }";
+        // a.v=5, b.w=6 → 5+6=11
+        assert_parity(src, "make_ab", &[5], 11);
+    }
+
+    #[test]
+    fn parity_struct_three_fields_access() {
+        let src = "struct Triple { a: i64, b: i64, c: i64 } fn sum_triple(x: i64, y: i64, z: i64) -> i64 { let t = Triple { a: x, b: y, c: z }; t.a + t.b + t.c }";
+        assert_parity(src, "sum_triple", &[10, 20, 30], 60);
+    }
+
+    #[test]
+    fn parity_struct_pass_through_fn() {
+        // Function creates struct, passes to another, which passes to third
+        let src = "struct P { v: i64 } fn third(p: P) -> i64 { p.v } fn second(p: P) -> i64 { third(p) } fn first(v: i64) -> i64 { let p = P { v: v }; second(p) }";
+        assert_parity(src, "first", &[42], 42);
+    }
+
+    // ── Variable shadowing and scoping ──────────────────────────────────
+
+    #[test]
+    fn parity_shadow_in_block() {
+        let src = "fn shadow(x: i64) -> i64 { let x = x + 1; let x = x * 2; x }";
+        // x=5 → x=6 → x=12
+        assert_parity(src, "shadow", &[5], 12);
+    }
+
+    #[test]
+    fn parity_let_in_if_body() {
+        // Variable declared inside if body
+        let src = "fn test(n: i64) -> i64 { let mut r = 0; if n > 0 { let t = n * 2; r = t + 1; }; r }";
+        // n=5: t=10, r=11
+        assert_parity(src, "test", &[5], 11);
+    }
+
+    // ── Recursion with struct ───────────────────────────────────────────
+
+    #[test]
+    fn parity_recursive_struct_sum() {
+        // Recursive function that accumulates struct field values
+        let src = "struct Acc { v: i64 } fn rec(n: i64, a: Acc) -> i64 { if n <= 0 { a.v } else { let a2 = Acc { v: a.v + n }; rec(n - 1, a2) } } fn run(start: i64) -> i64 { let a = Acc { v: 0 }; rec(start, a) }";
+        // rec(5, Acc{0}) → rec(4, Acc{5}) → rec(3, Acc{9}) → rec(2, Acc{12}) → rec(1, Acc{14}) → rec(0, Acc{15}) → 15
+        assert_parity(src, "run", &[5], 15);
     }
 }
