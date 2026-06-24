@@ -518,28 +518,152 @@
 ## Phase D：能力对等
 
 > **目标**：tenthc 与 Rust 母编译器功能对等。
-> **验收测试**：`tenth/tests/parity_test.rs`
+> **验收测试**：`tenth/tests/parity_test.rs`（扩展）
+> **实施优先级**：D4 → D1 → D2 → D3 → D5 → D6（可选）
+> **当前状态（2026-06-25）**：D4/D7 已完成（117 用例），D1/D2/D3/D5/D6 未开始
+
+### Task D4: 完整 native 函数对齐 ✅ 已完成
+
+**文件**：`tenthc/compile/wasm.th`、`tenth/src/compile/wasm.rs`（host 侧已就绪）
+
+**现状证据**（2026-06-25 复核）：
+- tenthc `wasm.th:1239` — `let num_imports: i64 = 17;`（已从 15 扩展到 17）
+- tenthc `wasm.th:1298-1304` — Type 10 (f64_bits) 和 Type 11 (str_slice) 已声明
+- tenthc `wasm.th:1321+` — 17 个 import 已全部写入 import section
+- Rust `wasm.rs:60` — `const IMPORT_COUNT: u32 = 17;`
+- Rust `wasm.rs:243-244` — `host.f64_bits` (idx 15) 和 `host.str_slice` (idx 16) 已存在
+- Rust `wasm.rs:515-555` — f64_bits/str_slice host 实现已就绪
+- Rust `wasm.rs:850-868` — Slice 表达式已编译为 str_slice 调用
+
+**完成状态**：D4.1-D4.5 全部完成，两侧 import 对齐，Slice 表达式正确编译。
+
+**步骤**：
+1. `wasm.th:1239` — `num_imports` 从 15 改为 17（已完成）
+2. `wasm.th` import section（第 1235-1315 行附近）新增：
+   - idx 15: `env.f64_bits` (f64)->i64 — 模块名 `env`，函数名 `f64_bits`，1 个 f64 参数，返回 i64
+   - idx 16: `env.str_slice` (i32,i64,i64)->i32 — 3 个参数（str_ptr, start, end），返回 i32
+3. `wasm.th:87-97` wasm_f64_const 函数：将 `f64_bits(val)` 调用改为 `call_import(15, val)`（使用 import 15）
+4. `wasm.th:967-978` compile_expr 的 Slice 分支：
+   - 编译 target 表达式（str 指针）
+   - 编译 start 表达式（i64）
+   - 编译 end 表达式（i64）
+   - 调用 `call_import(16, target, start, end)` 返回切片指针
+   - 移除 `TODO: needs host str_slice import` 注释和占位 `wasm_i64_const(out, 0)`
+5. Rust 侧 `wasm.rs:243-244` 已有 f64_bits/str_slice 的 host 实现，无需改动
+6. `parity_test.rs` 新增 Slice 测试用例：`fn slice_test() -> i64 { let s = "hello"; let t = s[1..3]; str_len(t) }`
+
+**验收**：
+- tenthc 生成的 WASM import 数量 = 17
+- Slice 表达式正确编译并执行
+- Rust 母编译器 499+ 测试无回归
+
+---
 
 ### Task D1: Trait 系统
 
-**文件**：`tenthc/hir/hir.th`、`tenthc/hir/lower.th`
+**文件**：`tenthc/hir/hir.th`、`tenthc/parser/parser.th`、`tenthc/hir/lower.th`
+
+**现状证据**：
+- tenthc `lexer.th:87-88` — 已识别 `trait`(disc=19)/`impl`(disc=18) 关键字
+- tenthc `parser.th:1131-1156` — parse_program 仅处理 Struct(disc=16)/Enum(disc=17)/Fn(disc=4)/Eof(61)，无 trait/impl 分支
+- tenthc `hir.th:120-138` — HirProgram 仅含 fns/structs/enums，无 trait 相关字段（138 行）
+- tenthc `lower.th` — 无 trait_defs/trait_impls（704 行，无 trait 处理）
+- Rust `lower.rs:151-152` — `trait_defs: HashMap<String, HirTraitDef>` + `trait_impls: HashMap<...>`
+- Rust `lower.rs:198-220` — 预置 Display/Eq/Clone trait
+- Rust `lower.rs:1327` — trait 定义解析
+- Rust `lower.rs:1392-1398` — trait impl 方法解析
 
 **步骤**：
-1. HIR 新增 HirTraitDef、HirTraitImpl 结构
-2. Lowerer 新增 trait_defs、trait_impls map
-3. `lower_program`：收集 trait 定义和实现
-4. 方法调用分派：按 receiver 类型查 methods map
+
+**D1.1: hir.th 新增 Trait 结构**
+1. `hir.th` 新增 `struct HirTraitDef { name: str, method_names: Vec<str>, method_sigs: Vec<HirFnSig> }`
+2. `hir.th` 新增 `struct HirTraitImpl { trait_name: str, type_name: str, methods: Vec<HirFnDef> }`
+3. `hir.th` HirProgram 新增字段：`trait_defs: Vec<HirTraitDef>` + `trait_impls: Vec<HirTraitImpl>`
+
+**D1.2: parser.th 新增 parse_trait/parse_impl_for**
+1. `parser.th` 新增 `fn parse_trait() -> Item`：
+   - 消费 `trait` token (disc=19)
+   - 解析 trait 名（Identifier）
+   - 解析 `{ fn method(...); ... }` 方法签名列表（无方法体，以 `;` 结尾）
+2. `parser.th` 新增 `fn parse_impl_for() -> Item`：
+   - 消费 `impl` token (disc=18)
+   - 解析 trait 名 + `for` + 类型名
+   - 解析 `{ fn method(...) {...} ... }` 方法定义列表（有方法体）
+3. 参考 Rust 侧 `parser.rs` 的 trait/impl 解析逻辑
+
+**D1.3: parser.th parse_program 新增分支**
+1. `parser.th:1131-1156` parse_program 新增：
+   - disc=19 (trait) → 调用 parse_trait
+   - disc=18 (impl) → 调用 parse_impl_for
+
+**D1.4: lower.th 收集 trait 定义和实现**
+1. `lower.th` 新增 `trait_defs: Vec<(String, HirTraitDef)>` 和 `trait_impls: Vec<(String, String, Vec<HirFnDef>)>`（trait_name, type_name, methods）
+2. `lower.th` lower_program 第一遍：收集所有 trait 定义到 trait_defs
+3. `lower.th` lower_program 第二遍：收集所有 trait impl 到 trait_impls
+4. 参考 Rust `lower.rs:1327`（trait 定义）和 `lower.rs:1392-1398`（trait impl）
+
+**D1.5: lower.th 实现 trait 方法静态分派**
+1. `lower.th` lower_expr 的 MethodCall 分支：
+   - 查 receiver 类型
+   - 查 trait_impls 找到 (trait_name, type_name) 匹配的方法
+   - 将方法调用改写为普通 Call（mangled name: `type_name_method_name`）
+2. 参考 Rust `lower.rs:1392-1398` 的方法解析逻辑
+
+**验收**：
+- tenthc 能解析 `trait Display { fn fmt(&self) -> str; }`
+- tenthc 能解析 `impl Display for Foo { fn fmt(&self) -> str { ... } }`
+- trait 方法调用 `obj.fmt()` 能正确静态分派
+- parity_test.rs 新增 ≥3 个 Trait 测试用例通过
 
 ---
 
 ### Task D2: 泛型实例化
 
-**文件**：`tenthc/hir/lower.th`
+**文件**：`tenthc/parser/parser.th`、`tenthc/hir/hir.th`、`tenthc/hir/lower.th`
+
+**现状证据**：
+- tenthc `hir.th:98` — HirFnDef 有 `generics: Vec<str>` 字段
+- tenthc `lower.th:662` — `generics: Vec::new()` 始终为空
+- tenthc `parser.th` parse_fn — 不解析 `<T>` 语法
+- Rust `lower.rs:144` — `generic_funcs: HashMap<String, HirFnDef>`
+- Rust `lower.rs:464` — 泛型函数实例化 `self.generic_funcs.get(&func_name)`
+- Rust `lower.rs:1871` — `substitute_type` 函数
 
 **步骤**：
-1. 新增 `substitute_type(ty, type_map)`
-2. Lowerer 新增 generic_funcs map
-3. GenericCall 处理：构建 type_map，实例化参数和返回类型
+
+**D2.1: parser.th 解析泛型参数**
+1. `parser.th` parse_fn 新增：解析 `fn` 后可选的 `<T, U>` 部分
+   - 遇到 `<` (disc=lt) 开始解析泛型参数列表
+   - 收集 Identifier 列表到 fn.generics
+   - 遇到 `>` 结束
+2. `parser.th` parse_struct 同理：解析 `struct Name<T, U> { ... }` 中的 `<T, U>`
+
+**D2.2: hir.th 填充 generics 字段**
+1. `lower.th:662` — 将 `generics: Vec::new()` 改为从 AST 读取实际的泛型参数列表
+
+**D2.3: lower.th 新增 generic_funcs map**
+1. `lower.th` 新增 `generic_funcs: Vec<(String, HirFnDef)>`（函数名, 模板定义）
+2. lower_program 第一遍：收集所有带 generics 的函数到 generic_funcs（不立即 lower 函数体）
+
+**D2.4: lower.th 新增 substitute_type**
+1. `lower.th` 新增 `fn substitute_type(ty: HirType, type_map: Vec<(String, HirType)>) -> HirType`：
+   - 若 ty 是类型参数（在 type_map 中找到），返回映射的具体类型
+   - 否则原样返回
+2. 参考 Rust `lower.rs:1871`
+
+**D2.5: lower.th GenericCall 实例化**
+1. `lower.th` lower_expr 的 Call 分支：
+   - 若函数名在 generic_funcs 中且调用点有泛型实参：
+     - 根据实参类型构建 type_map
+     - 用 substitute_type 实例化参数和返回类型
+     - lower 实例化后的函数体（mangled name: `fn_name_T1_T2`）
+2. 参考 Rust `lower.rs:464`
+
+**验收**：
+- tenthc 能解析 `fn id<T>(x: T) -> T { x }`
+- tenthc 能解析 `struct Pair<T, U> { first: T, second: U }`
+- 泛型函数调用 `id(42)` 能正确实例化
+- parity_test.rs 新增 ≥3 个泛型测试用例通过
 
 ---
 
@@ -547,52 +671,155 @@
 
 **文件**：`tenthc/hir/lower.th`
 
-**步骤**：
-1. 新增 Ownership enum
-2. Scope 维护 ownership map
-3. check_use / check_borrow_shared / check_borrow_mut
-
----
-
-### Task D4: 完整 native 函数对齐
-
-**文件**：`tenthc/compile/wasm.th`、`tenth/src/compile/wasm.rs`
+**现状证据**：
+- tenthc `lower.th` — 完全无 Ownership/check_borrow 相关代码
+- Rust `lower.rs:11-16` — `Ownership` enum（Owned/SharedRef(usize)/ExclusiveRef/Moved）
+- Rust `lower.rs:21` — `Scope.ownership: HashMap<String, Ownership>`
+- Rust `lower.rs:62` — `check_use`：检查变量是否被 move
+- Rust `lower.rs:72` — `check_borrow_shared`：检查共享借用冲突
+- Rust `lower.rs:86` — `check_borrow_mut`：检查独占借用冲突
+- Rust `lower.rs:833-872` — ref/mutref/move 表达式更新 ownership
 
 **步骤**：
-1. 扩展 WASM import 到覆盖 85+ 个 native 函数
-2. 或：通过 compile_host 委托给 Rust 解释器执行（过渡方案）
+
+**D3.1: lower.th 新增 Ownership enum**
+1. `lower.th` 新增 Ownership 常量：`const OWNED: i64 = 0; const SHARED_REF: i64 = 1; const EXCLUSIVE_REF: i64 = 2; const MOVED: i64 = 3;`
+
+**D3.2: lower.th Scope 新增 ownership 字段**
+1. `lower.th` Scope 结构新增 `ownership: Vec<(String, i64)>`（变量名, Ownership 状态）
+
+**D3.3: lower.th 实现 check_use**
+1. `lower.th` 新增 `fn check_use(scope: Scope, name: str)`：
+   - 查 scope.ownership 找到变量的 ownership 状态
+   - 若为 MOVED，报 use-after-move 错误
+2. 参考 Rust `lower.rs:62`
+
+**D3.4: lower.th 实现 check_borrow_shared/check_borrow_mut**
+1. `lower.th` 新增 `fn check_borrow_shared(scope: Scope, name: str)`：
+   - 若已有 EXCLUSIVE_REF，报借用冲突错误
+2. `lower.th` 新增 `fn check_borrow_mut(scope: Scope, name: str)`：
+   - 若已有 SHARED_REF 或 EXCLUSIVE_REF，报借用冲突错误
+3. 参考 Rust `lower.rs:72,86`
+
+**D3.5: lower.th 更新 ownership 状态**
+1. `lower.th` lower_expr 的 Ref 分支：调用 check_borrow_shared，设置 ownership=SHARED_REF
+2. `lower.th` lower_expr 的 MutRef 分支：调用 check_borrow_mut，设置 ownership=EXCLUSIVE_REF
+3. `lower.th` lower_expr 的 Move 分支：设置 ownership=MOVED
+4. `lower.th` lower_stmt 的 Let/Assign 分支：调用 check_use 验证变量未被 move
+5. 参考 Rust `lower.rs:833-872`
+
+**验收**：
+- `let a = String::new(); let b = a; a.len();` 报 use-after-move 错误
+- `let mut a = 1; let r = &mut a; let s = &mut a;` 报双重借用错误
+- parity_test.rs 新增 ≥3 个借用检查测试用例通过
 
 ---
 
 ### Task D5: 闭包 WASM 后端实现
 
-**文件**：`tenthc/compile/wasm.th`
+**文件**：`tenthc/hir/lower.th`、`tenthc/compile/wasm.th`、`tenth/src/compile/wasm.rs`
+
+**现状证据**：
+- tenthc `wasm.th:960-963` — 闭包占位：`if d == 23 { wasm_i64_const(out, 0); return; }`
+- tenthc `lower.th:427-434` — 有闭包 lowering，但第 429 行 `let captures_count: i64 = 0;` 注释 `Captures — simplified: no deep analysis in self-hosting compiler`，captures_count 始终为 0
+- tenthc `parser.th` — 有闭包解析（`|params| body` 语法）
+- Rust `wasm.rs:840` — `_ => return Err(...)` 闭包返回错误
 
 **步骤**：
-1. 闭包表示：struct { fn_ptr, env_ptr }
-2. Closure 节点：分配 env struct，填充捕获变量，返回 fn_ptr+env_ptr
-3. 闭包调用：调用 fn_ptr(env_ptr, args)
+
+**D5.1: lower.th 实现闭包捕获分析**
+1. `lower.th:429` — 实现 `fn free_vars_in(expr: Expr, scope: Vec<str>) -> Vec<str>`：
+   - 递归遍历表达式，收集不在 params 中的变量引用
+2. `lower.th:427-434` Closure 分支：调用 free_vars_in 填充 captures_start/captures_count
+
+**D5.2: wasm.th 闭包表示设计**
+1. 闭包表示为两个 i64：`fn_ptr`（函数索引）+ `env_ptr`（捕获环境指针）
+2. 无捕获闭包：env_ptr = 0
+3. 有捕获闭包：env_ptr 指向 tenth_alloc 分配的 struct，字段为捕获变量
+
+**D5.3: wasm.th compile_expr disc 23 (Closure) 实现**
+1. `wasm.th:960-963` 替换占位代码：
+   - 将闭包体编译为独立函数（mangled name: `closure_N`）
+   - 若有捕获：调用 tenth_alloc 分配 env struct，填充捕获变量
+   - 压入 fn_ptr（i64.const function_index）
+   - 压入 env_ptr（i64.const env 地址或 0）
+
+**D5.4: wasm.th 闭包调用实现**
+1. 闭包调用：从栈上取出 fn_ptr + env_ptr
+2. 调用 fn_ptr(env_ptr, args...)
+3. 需要间接调用支持（call_indirect 或函数表）
+
+**D5.5: Rust 侧 wasm.rs 同步实现**
+1. `wasm.rs:840` _ 分支替换为 Closure 处理（与 tenthc 对齐）
+2. 新增闭包相关 host import（若需要）
+
+**验收**：
+- 无捕获闭包 `let f = |x: i64| x + 1; f(2)` 返回 3
+- 有捕获闭包 `let n = 10; let f = |x: i64| x + n; f(5)` 返回 15
+- parity_test.rs 新增 ≥2 个闭包测试用例通过
+
+**风险**：闭包 env 捕获需要堆分配；建议先实现无捕获闭包，再扩展到有捕获
 
 ---
 
-### Task D6: Tensor WASM 后端实现
+### Task D6: Tensor WASM 后端实现（可选）
 
-**文件**：`tenthc/compile/wasm.th`
+**文件**：`tenthc/compile/wasm.th`、`tenth/src/compile/wasm.rs`
+
+**现状证据**：
+- tenthc `wasm.th:1030-1031` — Tensor 占位：`if d == 29 { wasm_i64_const(out, 0); return; }`
+- tenthc `lower.th` — 有 tensor lowering（e.ival 存储行数）
+- tenthc `parser.th` — 有 tensor 字面量解析（`[[...], [...]]` 语法）
+- Rust `wasm.rs:840` — `_ => return Err(...)` tensor 返回错误
 
 **步骤**：
-1. Tensor 通过 host import 实现（tensor/tensor_from_vec/zeros/ones 等作为 import）
-2. TensorLiteral → 调用 tensor_from_vec import
+
+**D6.1: wasm.th 新增 tensor host import**
+1. `wasm.th` import section 新增：
+   - `env.tensor_from_vec` (i32, i32, i32) -> i64 — (data_ptr, len, rank) -> tensor_handle
+   - `env.tensor_dot` (i64, i64) -> i64 — (a, b) -> result
+   - `env.tensor_matmul` (i64, i64) -> i64
+   - 其他必要操作（zeros/ones/shape 等）
+2. Rust 侧 `wasm.rs` 同步新增对应 import 和 host 实现（复用 `runtime/tensor.rs`）
+
+**D6.2: wasm.th compile_expr disc 29 实现**
+1. `wasm.th:1030-1031` 替换占位代码：
+   - 将 tensor 元素展开为 i64 数组（存入 memory）
+   - 调用 `tensor_from_vec(data_ptr, len, rank)` 创建 tensor
+   - 压入 tensor_handle
+
+**D6.3: Rust 侧 wasm.rs 同步实现**
+1. `wasm.rs:840` _ 分支替换为 TensorLiteral 处理
+2. 新增 tensor 相关 host import 实现
+
+**验收**：
+- `let t = [[1, 2], [3, 4]];` 能编译为 tensor_from_vec 调用
+- parity_test.rs 新增 ≥1 个 Tensor 测试用例通过
+
+**风险**：Tensor host import 套件庞大；可标记为可选，Tensor 操作主要走 VM/解释器路径
 
 ---
 
-### Task D7: parity_test.rs
+### Task D7: parity_test.rs 扩展（已完成基础，待扩展）
 
-**文件**：`tenth/tests/parity_test.rs`（新建）
+**文件**：`tenth/tests/parity_test.rs`
+
+**现状**：117 个测试用例通过，覆盖算术/变量/控制流/struct/递归等基础特性
+
+**未覆盖特性（待 D1-D6 完成后扩展）**：
+- Trait 方法分派（待 D1）
+- 泛型函数实例化（待 D2）
+- 借用检查场景（待 D3）
+- Slice 表达式（待 D4）
+- 闭包创建和调用（待 D5）
+- Tensor 字面量（待 D6，可选）
+- Match 表达式（Rust 侧 WASM 不支持，待后续）
+- Float 算术（tenthc 函数签名推断问题，待修复）
 
 **步骤**：
-1. 对同一 Tenth 程序，分别用 Rust 母编译器和 tenthc 编译
-2. 用 wasmi 执行两者产出的 WASM
-3. 验证结果一致
+1. 随 D1-D6 完成逐步新增对应测试用例
+2. 每完成一项 D 任务，新增 ≥2 个 parity 测试用例
+3. 目标：用例数从 117 扩展到 150+
 
 **验收**：90%+ 测试用例通过
 
@@ -601,37 +828,23 @@
 ## 执行顺序与依赖关系
 
 ```
-Phase A (WASM 后端最小可用)
-  A1 (f64) ──────────────────────┐
-  A2 (字符串驻留) ──┐             │
-  A3 (import 对齐) ─┤             │
-  A4 (InterpString) ┤ (依赖 A2,A3)│
-  A5 (for) ─────────┤             │
-  A6 (loop) ────────┤             │
-  A7 (while) ───────┤             │
-  A8 (Match) ───────┤             │
-  A9 (export 编码) ─┤             │
-  A10 (local 动态) ─┤             │
-  A11 (类型推断) ───┘ (依赖 A1)   │
-  A12 (集成测试) ──── (依赖全部 A) │
-                                   │
-Phase B (前端对齐)                 │
-  B1 (模块系统) ──────┐            │
-  B2 (impl 块) ───────┤            │
-  B3 (enum 收集) ─────┤            │
-  B4 (struct 类型) ───┤ (依赖 A11) │
-  B5 (闭包捕获) ──────┤            │
-  B6 (Range lower) ───┤            │
-  B7 (AssignOp 修复) ─┤            │
-  B8 (Var/Let 修复) ──┘ (依赖 A10) │
-  B9 (集成测试) ────── (依赖全部 B)│
-                                   │
-Phase C (自举闭环)                 │
-  C1 (源码适配) ──┐                │
-  C2 (boot.th) ───┤ (依赖 B1)      │
-  C3 (three_stage)┤ (依赖 A,B)     │
-  C4 (固定点) ────┘ (依赖 C3)      │
-                                   │
-Phase D (能力对等)                 │
-  D1-D7 (独立任务，可并行) ────────┘
+Phase A (WASM 后端最小可用) ✅ 已完成
+Phase B (前端对齐) ✅ 已完成
+Phase C (自举闭环) ✅ 已完成（固定点除外）
+
+Phase D (能力对等) — 当前阶段
+  优先级 1（最小补齐）：
+    D4 (native 对齐) ✅ 已完成 ─── 17 个 import 两侧对齐
+
+  优先级 2（核心高级特性）：
+    D1 (Trait 系统) ──────┐
+    D2 (泛型实例化) ──────┘ (D2 建议 D1 之后，Trait bound 常配泛型)
+    D3 (借用检查) ──────── (可与 D1/D2 并行，建议之后)
+
+  优先级 3（WASM 后端扩展）：
+    D5 (闭包 WASM) ─────── (依赖 D4 ✅ 的 tenth_alloc import)
+    D6 (Tensor WASM) ──── (依赖 D4 ✅，可选，建议 D5 之后)
+
+  优先级 4（测试覆盖）：
+    D7 扩展 ────────────── 随 D1-D6 完成逐步新增用例（当前 117 用例）
 ```
