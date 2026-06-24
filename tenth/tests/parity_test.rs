@@ -165,11 +165,75 @@ mod parity {
         linker.func_wrap("host", "Vec_len", |_: Caller<()>, _: i64| -> i64 { 0 }).unwrap();
         linker.func_wrap("host", "Vec_get", |_: Caller<()>, _: i64, _: i64| -> i64 { 0 }).unwrap();
         linker.func_wrap("host", "compile_host", |_: Caller<()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
-        linker.func_wrap("host", "str_len", |_: Caller<()>, _: i32| -> i32 { 0 }).unwrap();
+        linker.func_wrap("host", "str_len", |caller: Caller<()>, ptr: i32| -> i32 {
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let data = mem.data(&caller);
+            let base = ptr as usize;
+            let mut len: i32 = 0;
+            while base + (len as usize) < data.len() && data[base + (len as usize)] != 0 {
+                len += 1;
+            }
+            len
+        }).unwrap();
         linker.func_wrap("host", "str_at", |_: Caller<()>, _: i32, _: i64| -> i32 { 0 }).unwrap();
         linker.func_wrap("host", "str_cmp", |_: Caller<()>, _: i32, _: i32, _: i32| -> i32 { 0 }).unwrap();
-        linker.func_wrap("host", "f64_bits", |_: Caller<()>, _: f64| -> i64 { 0 }).unwrap();
-        linker.func_wrap("host", "str_slice", |_: Caller<()>, _: i32, _: i64, _: i64| -> i32 { 0 }).unwrap();
+        linker.func_wrap("host", "f64_bits", |_: Caller<()>, x: f64| -> i64 {
+            x.to_bits() as i64
+        }).unwrap();
+        // str_slice — share implementation with env module via bump allocator
+        let b = bump.clone();
+        linker.func_wrap("host", "str_slice", move |mut caller: Caller<()>, ptr: i32, start: i64, end: i64| -> i32 {
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let src_bytes: Vec<u8> = {
+                let data = mem.data(&caller);
+                let base = ptr as usize;
+                let mut src_len: i64 = 0;
+                while base + (src_len as usize) < data.len() && data[base + (src_len as usize)] != 0 {
+                    src_len += 1;
+                }
+                let s = if start < 0 { 0 } else if start > src_len { src_len } else { start };
+                let e = if end < 0 { 0 } else if end > src_len { src_len } else { end };
+                if s >= e {
+                    Vec::new()
+                } else {
+                    let src_start = base + s as usize;
+                    let slice_len = (e - s) as usize;
+                    data[src_start..src_start + slice_len].to_vec()
+                }
+            };
+            if src_bytes.is_empty() {
+                let new_ptr = b.fetch_add(1, Ordering::SeqCst);
+                let needed = new_ptr as usize + 1;
+                let mut current_len = mem.data(&caller).len();
+                while needed > current_len {
+                    let pages = ((needed - current_len + 65535) / 65536) as u32;
+                    mem.grow(&mut caller, pages).ok();
+                    let new_len = mem.data(&caller).len();
+                    if new_len == current_len { break; }
+                    current_len = new_len;
+                }
+                let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+                mem.data_mut(&mut caller)[new_ptr as usize] = 0;
+                return new_ptr as i32;
+            }
+            let slice_len = src_bytes.len();
+            let new_ptr = b.fetch_add((slice_len + 1) as u32, Ordering::SeqCst);
+            let needed = new_ptr as usize + slice_len + 1;
+            let mut current_len = mem.data(&caller).len();
+            while needed > current_len {
+                let pages = ((needed - current_len + 65535) / 65536) as u32;
+                mem.grow(&mut caller, pages).ok();
+                let new_len = mem.data(&caller).len();
+                if new_len == current_len { break; }
+                current_len = new_len;
+            }
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            for i in 0..slice_len {
+                mem.data_mut(&mut caller)[new_ptr as usize + i] = src_bytes[i];
+            }
+            mem.data_mut(&mut caller)[new_ptr as usize + slice_len] = 0;
+            new_ptr as i32
+        }).unwrap();
 
         // ── `env` module (tenthc wasm.th signatures) ──
         // Type 0: println(i64) -> ()
@@ -206,11 +270,83 @@ mod parity {
             }
             ptr as i32
         }).unwrap();
-        linker.func_wrap("env", "str_len", |_: Caller<()>, _: i32| -> i32 { 0 }).unwrap();
+        linker.func_wrap("env", "str_len", |caller: Caller<()>, ptr: i32| -> i32 {
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let data = mem.data(&caller);
+            let base = ptr as usize;
+            let mut len: i32 = 0;
+            while base + (len as usize) < data.len() && data[base + (len as usize)] != 0 {
+                len += 1;
+            }
+            len
+        }).unwrap();
         // Type 8: str_at(i32, i64) -> i32
         linker.func_wrap("env", "str_at", |_: Caller<()>, _: i32, _: i64| -> i32 { 0 }).unwrap();
         // Type 9: str_cmp(i32, i32, i32) -> i32
         linker.func_wrap("env", "str_cmp", |_: Caller<()>, _: i32, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        // Type 10: f64_bits(f64) -> i64 — reinterpret f64 bit pattern as i64
+        linker.func_wrap("env", "f64_bits", |_: Caller<()>, x: f64| -> i64 {
+            x.to_bits() as i64
+        }).unwrap();
+        // Type 11: str_slice(ptr: i32, start: i64, end: i64) -> i32 — allocate new string s[start..end]
+        let b = bump.clone();
+        linker.func_wrap("env", "str_slice", move |mut caller: Caller<()>, ptr: i32, start: i64, end: i64| -> i32 {
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            // Read source string content (scan for null terminator) into a local Vec
+            // to release the immutable borrow before any mutable operations.
+            let src_bytes: Vec<u8> = {
+                let data = mem.data(&caller);
+                let base = ptr as usize;
+                let mut src_len: i64 = 0;
+                while base + (src_len as usize) < data.len() && data[base + (src_len as usize)] != 0 {
+                    src_len += 1;
+                }
+                let s = if start < 0 { 0 } else if start > src_len { src_len } else { start };
+                let e = if end < 0 { 0 } else if end > src_len { src_len } else { end };
+                if s >= e {
+                    Vec::new()
+                } else {
+                    let src_start = base + s as usize;
+                    let slice_len = (e - s) as usize;
+                    let bytes = data[src_start..src_start + slice_len].to_vec();
+                    bytes
+                }
+            };
+            if src_bytes.is_empty() {
+                // Empty slice — allocate a single null byte
+                let new_ptr = b.fetch_add(1, Ordering::SeqCst);
+                let needed = new_ptr as usize + 1;
+                let mut current_len = mem.data(&caller).len();
+                while needed > current_len {
+                    let pages = ((needed - current_len + 65535) / 65536) as u32;
+                    mem.grow(&mut caller, pages).ok();
+                    let new_len = mem.data(&caller).len();
+                    if new_len == current_len { break; }
+                    current_len = new_len;
+                }
+                let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+                mem.data_mut(&mut caller)[new_ptr as usize] = 0;
+                return new_ptr as i32;
+            }
+            let slice_len = src_bytes.len();
+            // Allocate slice_len + 1 bytes (content + null terminator)
+            let new_ptr = b.fetch_add((slice_len + 1) as u32, Ordering::SeqCst);
+            let needed = new_ptr as usize + slice_len + 1;
+            let mut current_len = mem.data(&caller).len();
+            while needed > current_len {
+                let pages = ((needed - current_len + 65535) / 65536) as u32;
+                mem.grow(&mut caller, pages).ok();
+                let new_len = mem.data(&caller).len();
+                if new_len == current_len { break; }
+                current_len = new_len;
+            }
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            for i in 0..slice_len {
+                mem.data_mut(&mut caller)[new_ptr as usize + i] = src_bytes[i];
+            }
+            mem.data_mut(&mut caller)[new_ptr as usize + slice_len] = 0;
+            new_ptr as i32
+        }).unwrap();
 
         (store, linker)
     }
@@ -1225,5 +1361,50 @@ mod parity {
         let src = "fn test(n: i64) -> i64 { let mut s = 0; for i in 0..n { if s > 20 { break; } s = s + i; } s }";
         // i=0:s=0, i=1:s=1, i=2:s=3, i=3:s=6, i=4:s=10, i=5:s=15, i=6:s=21, i=7:s>20 break → s=21
         assert_parity(src, "test", &[20], 21);
+    }
+
+    // ── String slice (D4: str_slice import) ────────────────────────────────
+
+    #[test]
+    fn parity_str_slice_len() {
+        // Slice "hello world"[0..5] → "hello" (length 5)
+        // str_slice returns i32 ptr; str_len returns i32 length; both extended to i64
+        let src = "fn test() -> i64 { let s = \"hello world\"; let t = s[0..5]; str_len(t) }";
+        assert_parity(src, "test", &[], 5);
+    }
+
+    #[test]
+    fn parity_str_slice_ptr() {
+        // Just return the slice pointer — isolates str_slice from str_len
+        let src = "fn test() -> i64 { let s = \"hello\"; s[0..3] }";
+        // Both compilers should return the same non-zero pointer
+        let wasm_rust = compile_via_rust(src);
+        let wasm_tenthc = compile_via_tenthc(src);
+        let result_rust = run_wasm_i64(&wasm_rust, "test", &[]);
+        let result_tenthc = run_wasm_i64(&wasm_tenthc, "test", &[]);
+        println!("slice ptr: rust={}, tenthc={}", result_rust, result_tenthc);
+        assert_eq!(result_rust, result_tenthc, "PARITY: slice pointers differ");
+        assert!(result_rust > 0, "slice pointer should be non-zero");
+    }
+
+    #[test]
+    fn parity_str_len_direct() {
+        // Direct str_len call to isolate str_len from str_slice
+        let src = "fn test() -> i64 { str_len(\"hello\") }";
+        assert_parity(src, "test", &[], 5);
+    }
+
+    #[test]
+    fn parity_str_slice_middle() {
+        // Slice "hello world"[6..11] → "world" (length 5)
+        let src = "fn test() -> i64 { let s = \"hello world\"; let t = s[6..11]; str_len(t) }";
+        assert_parity(src, "test", &[], 5);
+    }
+
+    #[test]
+    fn parity_str_slice_full() {
+        // Slice "hello"[0..5] → "hello" (length 5)
+        let src = "fn test() -> i64 { let s = \"hello\"; let t = s[0..5]; str_len(t) }";
+        assert_parity(src, "test", &[], 5);
     }
 }

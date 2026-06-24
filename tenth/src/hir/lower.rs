@@ -350,7 +350,9 @@ impl Lowerer {
                     if var_info.is_none() && fn_info.is_none() {
                         match ident.name.as_str() {
                             "println" | "eprintln" | "tensor" | "rand" | "randn"
-                            | "read_file" | "write_file" | "write_bytes" | "read_bytes" | "str_at" | "Vec::new" | "HashMap::new"
+                            | "read_file" | "write_file" | "write_bytes" | "read_bytes"
+                            | "str_at" | "str_len" | "str_cmp" | "str_slice" | "str_add" | "str_eq" | "str_int"
+                            | "Vec::new" | "HashMap::new"
                             | "compile_host" | "compile_program"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"

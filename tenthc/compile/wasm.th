@@ -283,12 +283,41 @@ fn char_to_ascii(ch: str) -> i64 {
     if ch == "8" { return 56; }
     if ch == "9" { return 57; }
     // 特殊字符
+    if ch == " " { return 32; }
+    if ch == "\t" { return 9; }
+    if ch == "\n" { return 10; }
+    if ch == "\r" { return 13; }
     if ch == "_" { return 95; }
     if ch == ":" { return 58; }
     if ch == "!" { return 33; }
     if ch == "?" { return 63; }
     if ch == "." { return 46; }
     if ch == "-" { return 45; }
+    if ch == "," { return 44; }
+    if ch == ";" { return 59; }
+    if ch == "(" { return 40; }
+    if ch == ")" { return 41; }
+    if ch == "[" { return 91; }
+    if ch == "]" { return 93; }
+    if ch == "{" { return 123; }
+    if ch == "}" { return 125; }
+    if ch == "/" { return 47; }
+    if ch == "\\" { return 92; }
+    if ch == "\"" { return 34; }
+    if ch == "'" { return 39; }
+    if ch == "+" { return 43; }
+    if ch == "=" { return 61; }
+    if ch == "<" { return 60; }
+    if ch == ">" { return 62; }
+    if ch == "&" { return 38; }
+    if ch == "|" { return 124; }
+    if ch == "^" { return 94; }
+    if ch == "~" { return 126; }
+    if ch == "@" { return 64; }
+    if ch == "#" { return 35; }
+    if ch == "$" { return 36; }
+    if ch == "%" { return 37; }
+    if ch == "*" { return 42; }
     63 // 默认 '?' for unknown chars
 }
 
@@ -351,9 +380,9 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 3 {
-        // StringLiteral — 驻留字符串，返回内存偏移作为 i32
+        // StringLiteral — 驻留字符串，返回内存偏移作为 i64（统一 i64 栈）
         let addr = intern_string(ctx, e.lit_sval);
-        wasm_i32_const(out, addr);
+        wasm_i64_const(out, addr);
         return;
     };
     if d == 4 {
@@ -391,8 +420,11 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         // 字符串拼接：str + str → 调用 str_add (import 7)
         if op == "+" && (is_expr_str(hir, e.left) || is_expr_str(hir, e.right)) {
             compile_expr(ctx, out, hir, e.left);
+            wasm_i32_wrap_i64(out); // i64 str ptr -> i32
             compile_expr(ctx, out, hir, e.right);
-            wasm_call(out, 7);
+            wasm_i32_wrap_i64(out); // i64 str ptr -> i32
+            wasm_call(out, 7); // str_add(i32, i32) -> i32
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
         compile_expr(ctx, out, hir, e.left);
@@ -600,20 +632,22 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     };
     if d == 9 {
         // Index — s[i] or v[i]
-        // For Vec: compile target (vec_id as i64), compile index (i64), call vec_get (import 4)
-        // For str: compile target (str_ptr as i32), compile index (i64), call str_at (import 13)
+        // For Vec: vec_get(i64 vec_id, i64 idx) -> i64
+        // For str: str_at(i32 ptr, i64 idx) -> i32 — target needs wrap to i32
         // Heuristic: if target is StringLiteral or has str type, use str_at; else vec_get
         let target_is_str = is_expr_str(hir, e.left);
-        compile_expr(ctx, out, hir, e.left);
-        compile_expr(ctx, out, hir, e.right);
         if target_is_str {
-            // str_at(str_ptr: i32, idx: i64) -> i32
-            // target is i32 on stack (from StringLiteral), index is i64
-            wasm_call(out, 13);
-            wasm_i64_extend_i32_u(out); // promote i32 result to i64
+            // str_at: compile target first, wrap to i32, then compile index
+            compile_expr(ctx, out, hir, e.left);
+            wasm_i32_wrap_i64(out); // i64 str ptr -> i32
+            compile_expr(ctx, out, hir, e.right);
+            wasm_call(out, 13); // str_at(i32, i64) -> i32
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
         } else {
-            // vec_get(vec_id: i64, idx: i64) -> i64
-            wasm_call(out, 4);
+            // vec_get: compile target (i64), compile index (i64)
+            compile_expr(ctx, out, hir, e.left);
+            compile_expr(ctx, out, hir, e.right);
+            wasm_call(out, 4); // vec_get(i64, i64) -> i64
         };
         return;
     };
@@ -716,81 +750,120 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             return;
         };
         if func_name == "str_add" {
-            if e.args_count > 0 {
-                for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
-                };
+            // str_add(i32, i32) -> i32: both args need wrap to i32
+            if e.args_count >= 2 {
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
+                wasm_i32_wrap_i64(out);
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start]);
+                wasm_i32_wrap_i64(out);
             };
             wasm_call(out, 7); // import 7: env.str_add
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
         if func_name == "str_eq" {
-            if e.args_count > 0 {
-                for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
-                };
+            // str_eq(i32, i32) -> i32: both args need wrap to i32
+            if e.args_count >= 2 {
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
+                wasm_i32_wrap_i64(out);
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start]);
+                wasm_i32_wrap_i64(out);
             };
             wasm_call(out, 8); // import 8: env.str_eq
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
         if func_name == "str_int" {
+            // str_int(i64) -> i32: arg is i64, no wrap needed
             if e.args_count > 0 {
-                for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
-                };
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
             };
             wasm_call(out, 9); // import 9: env.str_int
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
         if func_name == "tenth_alloc" {
+            // tenth_alloc(i32) -> i32: arg needs wrap to i32
             if e.args_count > 0 {
-                for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
-                };
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
+                wasm_i32_wrap_i64(out);
             };
             wasm_call(out, 10); // import 10: env.tenth_alloc
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
         if func_name == "compile_host" {
-            if e.args_count > 0 {
-                for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
-                };
+            // compile_host(i32, i32) -> i32: both args need wrap to i32
+            if e.args_count >= 2 {
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
+                wasm_i32_wrap_i64(out);
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start]);
+                wasm_i32_wrap_i64(out);
             };
             wasm_call(out, 11); // import 11: env.compile_host
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
         if func_name == "str_len" {
+            // str_len(i32 ptr) -> i32: arg is i64 string ptr, needs wrap to i32
             if e.args_count > 0 {
-                for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
-                };
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
+                wasm_i32_wrap_i64(out);
             };
             wasm_call(out, 12); // import 12: env.str_len
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
         if func_name == "str_at" {
-            if e.args_count > 0 {
-                for ai in e.args_start..(e.args_start + e.args_count) {
-                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
-                };
+            // str_at(i32 ptr, i64 idx) -> i32: first arg needs wrap to i32
+            if e.args_count >= 2 {
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
+                wasm_i32_wrap_i64(out);
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start]);
             };
             wasm_call(out, 13); // import 13: env.str_at
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
         if func_name == "str_cmp" {
+            // str_cmp(i32 op, i32 a, i32 b) -> i32: all args need wrap to i32
+            if e.args_count >= 3 {
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
+                wasm_i32_wrap_i64(out);
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start]);
+                wasm_i32_wrap_i64(out);
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start + 1]);
+                wasm_i32_wrap_i64(out);
+            };
+            wasm_call(out, 14); // import 14: env.str_cmp
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
+            return;
+        };
+        if func_name == "f64_bits" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
                     compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
-            wasm_call(out, 14); // import 14: env.str_cmp
+            wasm_call(out, 15); // import 15: env.f64_bits
             return;
         };
-        // Regular function call (indices offset by 15 imports)
-        let mut call_idx: i64 = 15;
+        if func_name == "str_slice" {
+            // str_slice(i32 ptr, i64 start, i64 end) -> i32: first arg needs wrap to i32
+            if e.args_count >= 3 {
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
+                wasm_i32_wrap_i64(out);
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start]);
+                compile_expr(ctx, out, hir, hir.arg_list[e.args_start + 1]);
+            };
+            wasm_call(out, 16); // import 16: env.str_slice
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
+            return;
+        };
+        // Regular function call (indices offset by 17 imports)
+        let mut call_idx: i64 = 17;
         for fi in 0..hir.fns.len() {
-            if hir.fns[fi].name == func_name { call_idx = 15 + fi; break; };
+            if hir.fns[fi].name == func_name { call_idx = 17 + fi; break; };
         };
         if e.args_count > 0 {
             for ai in e.args_start..(e.args_start + e.args_count) {
@@ -965,15 +1038,18 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 31 {
-        // Slice s[a..b] — placeholder: compile target+start+end (for side effects), return 0
-        // TODO: needs host str_slice import for proper implementation
+        // Slice s[a..b] — str_slice(target: i32, start: i64, end: i64) -> i32
+        // target: str pointer — always i64 (unified stack), needs wrap to i32
+        // start: i64 (e.right), end: i64 (e.alt — reused field)
+        // result: i32 str pointer, extend to i64 for tenthc's uniform i64 stack
         compile_expr(ctx, out, hir, e.left);
-        wasm_drop(out);
+        wasm_i32_wrap_i64(out); // i64 str ptr -> i32
         compile_expr(ctx, out, hir, e.right);
-        wasm_drop(out);
-        compile_expr(ctx, out, hir, e.extra_start);
-        wasm_drop(out);
-        wasm_i32_const(out, 0); // empty string pointer
+        // start is i64, already correct
+        compile_expr(ctx, out, hir, e.alt);
+        // end is i64, already correct
+        wasm_call(out, 16); // import 16: env.str_slice (i32, i64, i64) -> i32
+        wasm_i64_extend_i32_u(out); // promote i32 result to i64
         return;
     };
     // Default: unreachable
@@ -1160,10 +1236,10 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     ctx.func_count = num_funcs;
 
     // Import count
-    let num_imports: i64 = 15;
+    let num_imports: i64 = 17;
 
     // ---- Build type section ----
-    // Import types come first: 10 signatures
+    // Import types come first: 12 signatures
     // Type 0: (i64) -> ()    — println
     // Type 1: () -> i64      — vec_new
     // Type 2: (i64) -> i64   — vec_len, read_file
@@ -1174,8 +1250,10 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     // Type 7: (i32) -> i32    — tenth_alloc, str_len
     // Type 8: (i32,i64) -> i32 — str_at
     // Type 9: (i32,i32,i32) -> i32 — str_cmp
+    // Type 10: (f64) -> i64   — f64_bits
+    // Type 11: (i32,i64,i64) -> i32 — str_slice
     let mut types: Vec<i64> = Vec::new();
-    leb128_u(10 + num_funcs, &mut types); // total type count
+    leb128_u(12 + num_funcs, &mut types); // total type count
 
     // Type 0: (i64) -> ()
     types.push(96); leb128_u(1, &mut types); types.push(126); // params
@@ -1217,7 +1295,15 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     types.push(96); leb128_u(3, &mut types); types.push(127); types.push(127); types.push(127);
     leb128_u(1, &mut types); types.push(127);
 
-    // Function types (type index 10+)
+    // Type 10: (f64) -> i64 — f64_bits
+    types.push(96); leb128_u(1, &mut types); types.push(124); // f64 param
+    leb128_u(1, &mut types); types.push(126); // i64 result
+
+    // Type 11: (i32,i64,i64) -> i32 — str_slice
+    types.push(96); leb128_u(3, &mut types); types.push(127); types.push(126); types.push(126);
+    leb128_u(1, &mut types); types.push(127);
+
+    // Function types (type index 12+)
     for fi in 0..num_funcs {
         let f = hir.fns[fi];
         types.push(96);
@@ -1314,10 +1400,20 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_cmp");
     import_sec.push(0); leb128_u(9, &mut import_sec);
 
+    // Import 15: env.f64_bits (type 10: (f64)->i64)
+    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    leb128_u(8, &mut import_sec); push_str_bytes(&mut import_sec, "f64_bits");
+    import_sec.push(0); leb128_u(10, &mut import_sec);
+
+    // Import 16: env.str_slice (type 11: (i32,i64,i64)->i32)
+    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    leb128_u(9, &mut import_sec); push_str_bytes(&mut import_sec, "str_slice");
+    import_sec.push(0); leb128_u(11, &mut import_sec);
+
     // ---- Build function section ----
     let mut func_sec: Vec<i64> = Vec::new();
     leb128_u(num_funcs, &mut func_sec);
-    for idx in 0..num_funcs { leb128_u(idx + 10, &mut func_sec); };
+    for idx in 0..num_funcs { leb128_u(idx + 12, &mut func_sec); };
 
     // ---- Build global section ----
     let mut glob_sec: Vec<i64> = Vec::new();
@@ -1343,7 +1439,18 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
 
     // ---- Build export section ----
     let mut export_sec: Vec<i64> = Vec::new();
-    leb128_u(num_funcs, &mut export_sec);
+    leb128_u(num_funcs + 1, &mut export_sec); // +1 for memory export
+    // Export memory first (so host functions can access it)
+    leb128_u(6, &mut export_sec); // "memory" length
+    // "memory" = [109, 101, 109, 111, 114, 121]
+    export_sec.push(109);  // m
+    export_sec.push(101);  // e
+    export_sec.push(109);  // m
+    export_sec.push(111);  // o
+    export_sec.push(114);  // r
+    export_sec.push(121);  // y
+    export_sec.push(2); // export kind: memory
+    leb128_u(0, &mut export_sec); // memory index 0
     for fi in 0..num_funcs {
         let f = hir.fns[fi];
         // Export name — use char_to_ascii for full A-Z, a-z, 0-9, _ support
@@ -1352,7 +1459,7 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
             export_sec.push(char_to_ascii(f.name[ci]));
         };
         export_sec.push(0); // export kind: function
-        leb128_u(fi + 15, &mut export_sec);
+        leb128_u(fi + 17, &mut export_sec);
     };
 
     // ---- Build data section (字符串驻留数据) ----

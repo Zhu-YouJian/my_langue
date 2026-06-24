@@ -123,6 +123,8 @@ mod three_stage {
         l2.func_wrap("env", "str_len", |_: Caller<()>, _: i32| -> i32 { 0 }).unwrap();
         l2.func_wrap("env", "str_at", |_: Caller<()>, _: i32, _: i64| -> i32 { 0 }).unwrap();
         l2.func_wrap("env", "str_cmp", |_: Caller<()>, _: i32, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "f64_bits", |_: Caller<()>, x: f64| -> i64 { x.to_bits() as i64 }).unwrap();
+        l2.func_wrap("env", "str_slice", |_: Caller<()>, _: i32, _: i64, _: i64| -> i32 { 0 }).unwrap();
         let i2 = l2.instantiate(&mut s2, &m2).expect("inst").start(&mut s2).expect("start");
         let add = i2.get_func(&s2, "add").expect("add");
         let mut r2 = [wasmi::Val::I64(0)];

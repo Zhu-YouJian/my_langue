@@ -519,6 +519,49 @@ impl WasmCompiler {
                         }
                         body.instruction(&Instruction::Call(15));
                     }
+                    "str_len" => {
+                        // str_len(i32 ptr) -> i32: string length
+                        if let Some(a) = args.first() {
+                            self.compile_expr(body, a)?;
+                            body.instruction(&Instruction::I32WrapI64); // i64 ptr -> i32
+                        }
+                        body.instruction(&Instruction::Call(12));
+                        body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
+                    }
+                    "str_at" => {
+                        // str_at(i32 ptr, i64 idx) -> i32: char at index
+                        if args.len() >= 2 {
+                            self.compile_expr(body, &args[0])?;
+                            body.instruction(&Instruction::I32WrapI64); // i64 ptr -> i32
+                            self.compile_expr(body, &args[1])?;
+                        }
+                        body.instruction(&Instruction::Call(13));
+                        body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
+                    }
+                    "str_cmp" => {
+                        // str_cmp(i32 op, i32 a, i32 b) -> i32: compare strings
+                        if args.len() >= 3 {
+                            self.compile_expr(body, &args[0])?;
+                            body.instruction(&Instruction::I32WrapI64);
+                            self.compile_expr(body, &args[1])?;
+                            body.instruction(&Instruction::I32WrapI64);
+                            self.compile_expr(body, &args[2])?;
+                            body.instruction(&Instruction::I32WrapI64);
+                        }
+                        body.instruction(&Instruction::Call(14));
+                        body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
+                    }
+                    "str_slice" => {
+                        // str_slice(i32 ptr, i64 start, i64 end) -> i32: substring
+                        if args.len() >= 3 {
+                            self.compile_expr(body, &args[0])?;
+                            body.instruction(&Instruction::I32WrapI64); // i64 ptr -> i32
+                            self.compile_expr(body, &args[1])?;
+                            self.compile_expr(body, &args[2])?;
+                        }
+                        body.instruction(&Instruction::Call(16));
+                        body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
+                    }
                     _ => {
                         for a in args { self.compile_expr(body, a)?; }
                         body.instruction(&Instruction::Call(self.resolve_func(&fname)?));

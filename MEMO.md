@@ -6,6 +6,8 @@
 >
 > 演进路线与阶段规划见 `CODE_WIKI.md` §10。
 >
+> **2026-06-25 更新**：Phase D — D4（native 函数对齐）完成。修复 tenthc lexer 数字解析双处理 bug（`lexer_peek` 返回当前字符导致 `5`→`55`）；修复 `char_to_ascii` 缺失空格等常见字符（补全 30+ ASCII 字符）。4 项 Slice parity 测试全部通过，parity_test 117 项全绿。
+>
 > **2026-06-24 更新**：测试数 350→499（新增 parity_test 112 项 VM/Interpreter 一致性、shape_check_test 16 项 shape 检查；selfhost_verify→selfhost_frontend 重构）。文档重复信息全面清理，交叉引用体系建立。
 >
 > **2026-06-15 更新**：文档维护 — 自动微分算子数修正为 21（新增 LayerNorm/GELU），标准库模块补全（collections/string/utils/nn 扩展），张量方法补全（gelu/layer_norm/cat/masked_fill/permute/broadcast_to/max_val）。

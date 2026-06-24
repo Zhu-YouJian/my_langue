@@ -50,7 +50,12 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         let mut is_float = false;
         let mut frac_val: i64 = 0;
         let mut frac_len: i64 = 0;
-        while is_digit(ch) { ival = ival * 10 + char_to_digit(ch); ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+        while is_digit(ch) {
+            ival = ival * 10 + char_to_digit(ch);
+            lexer_advance(lexer);
+            ch = lexer_peek(lexer);
+            if !is_digit(ch) { break; };
+        };
         // Check for float: only if . is followed by a digit (not .. range or .field)
         if ch == "." {
             let save_pos = lexer.pos;
