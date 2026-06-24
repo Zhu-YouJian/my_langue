@@ -481,6 +481,117 @@ mod parity {
         assert_parity(src, "find_sqrt", &[50], 0); // not a perfect square
     }
 
+    // ── Unary operations ─────────────────────────────────────────────────
+
+    #[test]
+    fn parity_unary_neg() {
+        // Unary negation: -n = 0 - n
+        let src = "fn neg(n: i64) -> i64 { -n }";
+        assert_parity(src, "neg", &[5], -5);
+        assert_parity(src, "neg", &[0], 0);
+        let wasm = compile_via_tenthc(src);
+        assert_eq!(run_wasm_i64(&wasm, "neg", &[-7]), 7);
+    }
+
+    #[test]
+    fn parity_unary_neg_in_expr() {
+        // Unary negation within a larger expression
+        let src = "fn calc(a: i64, b: i64) -> i64 { -a + -b }";
+        assert_parity(src, "calc", &[3, 5], -8);
+    }
+
+    // ── Variable shadowing ───────────────────────────────────────────────
+
+    #[test]
+    fn parity_variable_shadowing() {
+        // Variable shadowing: let x = 1; let x = x + 1;
+        let src = "fn shadow(n: i64) -> i64 { let x = n; let x = x + 10; let x = x * 2; x }";
+        assert_parity(src, "shadow", &[5], 30); // (5+10)*2 = 30
+    }
+
+    // ── Nested function composition ──────────────────────────────────────
+
+    #[test]
+    fn parity_nested_function_composition() {
+        // Multiple functions calling each other
+        let src = "fn double(x: i64) -> i64 { x * 2 } fn inc(x: i64) -> i64 { x + 1 } fn compose(n: i64) -> i64 { double(inc(double(n))) }";
+        assert_parity(src, "compose", &[3], 14); // double(3)=6, inc(6)=7, double(7)=14
+    }
+
+    #[test]
+    fn parity_three_function_chain() {
+        // Chain of three function calls
+        let src = "fn f(x: i64) -> i64 { x + 1 } fn g(x: i64) -> i64 { x * 2 } fn h(x: i64) -> i64 { x - 3 } fn chain(n: i64) -> i64 { h(g(f(n))) }";
+        assert_parity(src, "chain", &[10], 19); // f(10)=11, g(11)=22, h(22)=19
+    }
+
+    // ── Complex while conditions ─────────────────────────────────────────
+
+    #[test]
+    fn parity_while_complex_cond() {
+        // While loop with compound condition (&&)
+        let src = "fn sum_limit(n: i64, limit: i64) -> i64 { let mut s = 0; let mut i = 1; while i <= n && s < limit { s = s + i; i = i + 1; } s }";
+        // s: 1,3,6,10,15,21 — when s=21, s < 20 is false → exit. Result=21
+        assert_parity(src, "sum_limit", &[10, 20], 21);
+        // s: 1,3,6,10,15 — all within limit, i reaches 6 > 5 → exit. Result=15
+        assert_parity(src, "sum_limit", &[5, 100], 15);
+    }
+
+    // ── Multiple struct fields ───────────────────────────────────────────
+
+    #[test]
+    fn parity_struct_four_fields() {
+        // Struct with 4 fields, read and combine
+        let src = "struct Quad { a: i64, b: i64, c: i64, d: i64 } fn quad_sum(w: i64, x: i64, y: i64, z: i64) -> i64 { let q = Quad { a: w, b: x, c: y, d: z }; q.a + q.b + q.c + q.d }";
+        assert_parity(src, "quad_sum", &[1, 2, 3, 4], 10);
+    }
+
+    #[test]
+    fn parity_struct_field_mutation() {
+        // Create struct, mutate multiple fields, read back
+        let src = "struct Point { x: i64, y: i64 } fn move_point(p_x: i64, p_y: i64, dx: i64, dy: i64) -> i64 { let mut p = Point { x: p_x, y: p_y }; p.x = p.x + dx; p.y = p.y + dy; p.x * 100 + p.y }";
+        assert_parity(src, "move_point", &[1, 2, 3, 4], 406); // (1+3)*100 + (2+4) = 406
+    }
+
+    // ── Deeply nested blocks ─────────────────────────────────────────────
+
+    #[test]
+    fn parity_nested_blocks() {
+        // Nested blocks with let bindings
+        let src = "fn nested(n: i64) -> i64 { let a = { let b = n + 1; let c = b * 2; c + 1 }; a + 10 }";
+        assert_parity(src, "nested", &[5], 23); // b=6, c=12, a=13, 13+10=23
+    }
+
+    // ── For loop variations ──────────────────────────────────────────────
+
+    #[test]
+    fn parity_for_with_accumulation() {
+        // For loop accumulating product
+        let src = "fn factorial_loop(n: i64) -> i64 { let mut p = 1; for i in 1..n { p = p * i; } p }";
+        assert_parity(src, "factorial_loop", &[6], 120); // 1*2*3*4*5 = 120 (1..6 is exclusive)
+    }
+
+    // NOTE: Nested for loops (for-in-for-in) have a parity issue in tenthc
+    // where the inner loop appears to run one extra iteration. This needs
+    // investigation — possibly related to loop variable local slot management
+    // or range end value compilation in nested contexts.
+
+    // ── Complex arithmetic with precedence ───────────────────────────────
+
+    #[test]
+    fn parity_arith_precedence() {
+        // Operator precedence: * and / before + and -
+        let src = "fn prec(a: i64, b: i64, c: i64) -> i64 { a + b * c - a / c }";
+        assert_parity(src, "prec", &[10, 3, 5], 23); // 10 + 15 - 2 = 23
+    }
+
+    #[test]
+    fn parity_arith_parens() {
+        // Parenthesized expressions override precedence
+        let src = "fn parens(a: i64, b: i64, c: i64) -> i64 { (a + b) * (c - a) }";
+        assert_parity(src, "parens", &[2, 3, 10], 40); // 5 * 8 = 40
+    }
+
     // NOTE: Match expressions are supported by tenthc but NOT by the Rust
     // mother compiler's WASM backend (wasm.rs emits "unsupported expression"
     // for Match). The tenthc match parser fix (handling _ as wildcard and
