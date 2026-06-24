@@ -879,4 +879,150 @@ mod parity {
         // rec(5, Acc{0}) → rec(4, Acc{5}) → rec(3, Acc{9}) → rec(2, Acc{12}) → rec(1, Acc{14}) → rec(0, Acc{15}) → 15
         assert_parity(src, "run", &[5], 15);
     }
+
+    // ── Compound assignment (AssignOp) ─────────────────────────────────
+
+    #[test]
+    fn parity_add_assign() {
+        let src = "fn test(x: i64) -> i64 { let mut y = x; y += 10; y }";
+        assert_parity(src, "test", &[5], 15);
+    }
+
+    #[test]
+    fn parity_sub_assign() {
+        let src = "fn test(x: i64) -> i64 { let mut y = x; y -= 3; y }";
+        assert_parity(src, "test", &[10], 7);
+    }
+
+    #[test]
+    fn parity_mul_assign() {
+        let src = "fn test(x: i64) -> i64 { let mut y = x; y *= 4; y }";
+        assert_parity(src, "test", &[6], 24);
+    }
+
+    #[test]
+    fn parity_div_assign() {
+        let src = "fn test(x: i64) -> i64 { let mut y = x; y /= 3; y }";
+        assert_parity(src, "test", &[20], 6);
+    }
+
+    #[test]
+    fn parity_chained_assign_op() {
+        let src = "fn test(x: i64) -> i64 { let mut y = x; y += 10; y *= 2; y -= 5; y }";
+        // x=5: y=15, y=30, y=25
+        assert_parity(src, "test", &[5], 25);
+    }
+
+    // ── Integer division and modulo ────────────────────────────────────
+
+    #[test]
+    fn parity_int_div() {
+        let src = "fn test(a: i64, b: i64) -> i64 { a / b }";
+        assert_parity(src, "test", &[17, 5], 3);
+    }
+
+    #[test]
+    fn parity_int_mod() {
+        let src = "fn test(a: i64, b: i64) -> i64 { a % b }";
+        assert_parity(src, "test", &[17, 5], 2);
+    }
+
+    #[test]
+    fn parity_div_mod_chain() {
+        let src = "fn test(n: i64) -> i64 { let q = n / 10; let r = n % 10; q * 10 + r }";
+        assert_parity(src, "test", &[42], 42);
+    }
+
+    // ── Comparison operators ───────────────────────────────────────────
+
+    #[test]
+    fn parity_lt() {
+        let src = "fn test(a: i64, b: i64) -> i64 { if a < b { 1 } else { 0 } }";
+        assert_parity(src, "test", &[3, 5], 1);
+    }
+
+    #[test]
+    fn parity_gt() {
+        let src = "fn test(a: i64, b: i64) -> i64 { if a > b { 1 } else { 0 } }";
+        assert_parity(src, "test", &[7, 5], 1);
+    }
+
+    #[test]
+    fn parity_le() {
+        let src = "fn test(a: i64, b: i64) -> i64 { if a <= b { 1 } else { 0 } }";
+        assert_parity(src, "test", &[5, 5], 1);
+    }
+
+    #[test]
+    fn parity_ge() {
+        let src = "fn test(a: i64, b: i64) -> i64 { if a >= b { 1 } else { 0 } }";
+        assert_parity(src, "test", &[5, 5], 1);
+    }
+
+    #[test]
+    fn parity_eq() {
+        let src = "fn test(a: i64, b: i64) -> i64 { if a == b { 1 } else { 0 } }";
+        assert_parity(src, "test", &[7, 7], 1);
+    }
+
+    #[test]
+    fn parity_ne() {
+        let src = "fn test(a: i64, b: i64) -> i64 { if a != b { 1 } else { 0 } }";
+        assert_parity(src, "test", &[3, 5], 1);
+    }
+
+    // ── Struct field mutation (FieldAssign) ────────────────────────────
+
+    #[test]
+    fn parity_struct_field_assign() {
+        let src = "struct P { x: i64, y: i64 } fn test(x: i64, y: i64) -> i64 { let mut p = P { x: 0, y: 0 }; p.x = x; p.y = y; p.x + p.y }";
+        assert_parity(src, "test", &[3, 4], 7);
+    }
+
+    #[test]
+    fn parity_struct_field_modify() {
+        let src = "struct P { x: i64 } fn test(n: i64) -> i64 { let mut p = P { x: 10 }; p.x = p.x + n; p.x }";
+        assert_parity(src, "test", &[5], 15);
+    }
+
+    // ── Early return in branches ───────────────────────────────────────
+
+    #[test]
+    fn parity_early_return_in_if() {
+        let src = "fn test(n: i64) -> i64 { if n < 0 { return 0 - n; }; n }";
+        assert_parity(src, "test", &[5], 5);
+    }
+
+    #[test]
+    fn parity_early_return_negative() {
+        let src = "fn test(n: i64) -> i64 { if n < 0 { return 0 - n; }; n }";
+        assert_parity(src, "test", &[-5], 5);
+    }
+
+    #[test]
+    fn parity_return_in_else_if() {
+        let src = "fn test(n: i64) -> i64 { if n < 0 { return 0 - 1; } else { if n == 0 { return 0; } }; n }";
+        assert_parity(src, "test", &[0], 0);
+    }
+
+    #[test]
+    fn parity_return_in_else_if_positive() {
+        let src = "fn test(n: i64) -> i64 { if n < 0 { return 0 - 1; } else { if n == 0 { return 0; } }; n }";
+        assert_parity(src, "test", &[42], 42);
+    }
+
+    // ── Multiple parameters ────────────────────────────────────────────
+
+    #[test]
+    fn parity_four_params() {
+        let src = "fn test(a: i64, b: i64, c: i64, d: i64) -> i64 { a + b + c + d }";
+        assert_parity(src, "test", &[1, 2, 3, 4], 10);
+    }
+
+    #[test]
+    fn parity_five_params_mixed() {
+        let src = "fn test(a: i64, b: i64, c: i64, d: i64, e: i64) -> i64 { a * b - c * d + e }";
+        // 2*3 - 4*5 + 6 = 6 - 20 + 6 = -8
+        assert_parity(src, "test", &[2, 3, 4, 5, 6], -8);
+    }
 }

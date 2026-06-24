@@ -578,6 +578,34 @@ impl WasmCompiler {
                 }
             }
 
+            HirExprKind::AssignOp { target, op, value } => {
+                let idx = if let Some(&idx) = self.local_map.get(target) {
+                    idx
+                } else {
+                    self.local_map.insert(target.clone(), self.local_count);
+                    let idx = self.local_count;
+                    self.local_count += 1;
+                    idx
+                };
+                let is_float = matches!(&value.ty, Type::Base(BaseType::F32 | BaseType::F64));
+                // Load current value, convert to f64 if needed
+                body.instruction(&Instruction::LocalGet(idx));
+                if is_float {
+                    body.instruction(&Instruction::F64ConvertI64S);
+                }
+                // Compile RHS
+                self.compile_expr(body, value)?;
+                // Apply binary op
+                self.compile_binop(body, op, &value.ty, &value.ty)?;
+                // Convert result back to i64 for local storage
+                if is_float {
+                    body.instruction(&Instruction::I64ReinterpretF64);
+                } else if matches!(&value.ty, Type::Base(BaseType::Bool)) {
+                    body.instruction(&Instruction::I64ExtendI32U);
+                }
+                body.instruction(&Instruction::LocalSet(idx));
+            }
+
             HirExprKind::EnumLiteral { enum_name, variant, fields } => {
                 // Enum variants are stored like structs — allocate and write fields.
                 // Layout keyed as "EnumName::VariantName".
@@ -1079,6 +1107,7 @@ impl WasmCompiler {
                 if let Some(e) = else_branch { self.cs_expr(e); }
             }
             HirExprKind::Assign { value, .. } => self.cs_expr(value),
+            HirExprKind::AssignOp { value, .. } => self.cs_expr(value),
             HirExprKind::StructLiteral { fields, .. } => {
                 for (_, e) in fields { self.cs_expr(e); }
             }

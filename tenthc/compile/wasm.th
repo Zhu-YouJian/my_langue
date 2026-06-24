@@ -918,10 +918,10 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_local_get(out, local_idx);
         compile_expr(ctx, out, hir, e.right);
         let op = e.op;
-        if op == "+" { wasm_i64_add(out); }
-        else if op == "-" { wasm_i64_sub(out); }
-        else if op == "*" { wasm_i64_mul(out); }
-        else if op == "/" { wasm_i64_div_s(out); };
+        if op == "+" || op == "+=" { wasm_i64_add(out); }
+        else if op == "-" || op == "-=" { wasm_i64_sub(out); }
+        else if op == "*" || op == "*=" { wasm_i64_mul(out); }
+        else if op == "/" || op == "/=" { wasm_i64_div_s(out); };
         wasm_local_set(out, local_idx);
         return;
     };
@@ -945,10 +945,10 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_i64_load(out, 3, 0);
         compile_expr(ctx, out, hir, e.right);
         let op = e.op;
-        if op == "+" { wasm_i64_add(out); }
-        else if op == "-" { wasm_i64_sub(out); }
-        else if op == "*" { wasm_i64_mul(out); }
-        else if op == "/" { wasm_i64_div_s(out); };
+        if op == "+" || op == "+=" { wasm_i64_add(out); }
+        else if op == "-" || op == "-=" { wasm_i64_sub(out); }
+        else if op == "*" || op == "*=" { wasm_i64_mul(out); }
+        else if op == "/" || op == "/=" { wasm_i64_div_s(out); };
         wasm_local_get(out, addr_local);
         wasm_i64_store(out, 3, 0);
         return;
