@@ -116,7 +116,7 @@
 **测试文件**：`tenth/tests/parity_test.rs`
 
 - [ ] tenthc 能编译 Rust 母编译器测试套件中 90%+ 的程序
-- [x] 对同一输入，tenthc 和 Rust 编译器产出的 WASM 执行结果一致（31 个用例通过：算术、变量、循环、嵌套调用、if 表达式、比较链、struct 字段、递归、fibonacci、gcd、负数算术、深层递归、互相递归、复杂算术、取模链、if/elif 链、while+if/else 赋值分支）
+- [x] 对同一输入，tenthc 和 Rust 编译器产出的 WASM 执行结果一致（43 个用例通过：算术、变量、循环、嵌套调用、if 表达式、比较链、struct 字段、递归、fibonacci、gcd、负数算术、深层递归、互相递归、复杂算术、取模链、if/elif 链、while+if/else 赋值分支、一元取负、变量遮蔽、函数组合、三函数链、复合 while 条件、四字段 struct、struct 字段突变、嵌套块、for 积累、算术优先级、括号表达式）
 - [ ] Trait 定义和实现能正确解析和分派
 - [ ] 泛型函数能正确实例化
 - [ ] 借用检查能检测 use-after-move 和双重借用
