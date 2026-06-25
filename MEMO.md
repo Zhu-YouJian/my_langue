@@ -6,6 +6,8 @@
 >
 > 演进路线与阶段规划见 `CODE_WIKI.md` §10。
 >
+> **2026-06-25 更新**：自举固定点攻关 spec 重构。前置 spec `docs/superpowers/specs/2026-06-20-self-hosting-master-plan/` 已归档（Phase A-D 全部完成，D1-D7 共 129 用例全绿，仅 C4 固定点未达成）。新建 `docs/superpowers/specs/2026-06-25-self-hosting-fixpoint/`（含 spec.md / tasks.md / checklist.md），重新设计 C4 攻关方案：5 阶段架构（运行时迁移→确定性保证→端到端跑通→固定点达成→CI 集成），锁定 4 项设计决策（Wasmtime JIT / wasmi 保留 / 字节级等价不可达成则终止 / 大重构需求则终止），明确 4 项硬性退出条件（不允许降级实现）。同步修正旧 spec 文档不一致：spec.md 能力差距矩阵（Trait/泛型/借用/闭包/Tensor 已实现）、tasks.md D2/D6 验收 checkbox、checklist.md 状态描述。
+>
 > **2026-06-25 更新**：Phase D — D3（借用检查）+ D5（闭包 WASM 后端）完成，Phase D 全部 7 项（D1-D7）达成。D3：tenthc lower.th 新增 Ownership 状态存储（Owned/SharedRef/ExclusiveRef/Moved）、check_use/check_borrow_shared/check_borrow_mut 借用检查函数、release_borrows 借用释放；parser.th 补全 `&mut` 解析。D5：tenthc lower.th 实现 free_vars_in 递归捕获分析；wasm.th 新增 table/elem section + call_indirect 闭包调用 + env 装箱（tenth_alloc 分配 captures struct）；修复闭包解析双 advance bug（parse_primary 已消费 `|`，闭包块重复 advance 吞掉首个参数）；修复 `&&`/`||` 误用 i64 and/or 指令（WASM 比较结果为 i32，需用 I32And/I32Or）。新增 5 项 parity 测试（D3×3 + D5×2），parity_test 124→129 项全绿，499+ 测试无回归。
 >
 > **2026-06-25 更新**：Phase D — D2（泛型实例化）+ D6（Tensor WASM 后端）完成（阶段 1 并行）。D2：tenthc 新增泛型参数解析 `<T, U>`、泛型调用前瞻启发式 `looks_like_generic_call`、`substitute_type` 类型替换与 mangled name 实例化（`fn_name_T1_T2`），Rust 侧 lower.rs 同步将 GenericCall 改写为普通 Call。D6：tenthc wasm.th 新增 tensor_from_vec host import (idx 17) 与 TensorLiteral 编译，Rust 侧 wasm.rs 同步；修复 parser.th parse_primary 双 advance bug（tensor 字面量解析失败根因）。修复 three_stage.rs / wasm_backend_minimal.rs linker 缺失 tensor_from_vec 注册导致的回归。新增 4 项 parity 测试（D2×3 + D6×1），parity_test 120→124 项全绿，499+ 测试无回归，自举管道通过。
