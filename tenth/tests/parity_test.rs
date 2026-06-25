@@ -1483,4 +1483,43 @@ mod parity {
         let src = "fn id<T>(x: T) -> T { x } fn test() -> i64 { let a = id<i64>(10); let b = id<i64>(20); a + b }";
         assert_parity(src, "test", &[], 30);
     }
+
+    // ── D5: Closure WASM backend ────────────────────────────────────────
+
+    #[test]
+    fn parity_closure_no_capture() {
+        // Closure with no captured variables: |x| x + 1
+        let src = "fn test() -> i64 { let f = |x: i64| x + 1; f(2) }";
+        assert_parity(src, "test", &[], 3);
+    }
+
+    #[test]
+    fn parity_closure_with_capture() {
+        // Closure capturing an outer variable n
+        let src = "fn test() -> i64 { let n = 10; let f = |x: i64| x + n; f(5) }";
+        assert_parity(src, "test", &[], 15);
+    }
+
+    // ── D3: Borrow checking (legal borrows compile correctly) ──────────
+
+    #[test]
+    fn parity_move_copy_semantics() {
+        // i64 is Copy, so move doesn't invalidate the variable
+        let src = "fn test() -> i64 { let a = 10; let b = a; a + b }";
+        assert_parity(src, "test", &[], 20);
+    }
+
+    #[test]
+    fn parity_legal_shared_borrow() {
+        // Legal shared borrow: take a reference and dereference it
+        let src = "fn test() -> i64 { let a = 42; let r = &a; *r }";
+        assert_parity(src, "test", &[], 42);
+    }
+
+    #[test]
+    fn parity_multiple_legal_borrows() {
+        // Multiple shared borrows are legal
+        let src = "fn test() -> i64 { let a = 5; let r = &a; let s = &a; *r + *s }";
+        assert_parity(src, "test", &[], 10);
+    }
 }

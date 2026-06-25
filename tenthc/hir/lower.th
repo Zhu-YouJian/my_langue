@@ -79,6 +79,89 @@ fn lookup_var_type(p: &mut HirProgram, name: str) -> i64 {
     0
 }
 
+// ── Borrow checking helpers (D3) ──
+// Ownership state encoding: 0=Owned, 100+n=SharedRef(n), 2=ExclusiveRef, 3=Moved
+
+// Look up a variable's ownership state by name (backward search). Returns 0 (Owned) if not found.
+fn lookup_ownership(p: &mut HirProgram, name: str) -> i64 {
+    let mut i: i64 = p.ownership.len() - 1;
+    while i >= 0 {
+        if p.ownership[i].name == name {
+            return p.ownership[i].state;
+        };
+        i = i - 1;
+    };
+    0
+}
+
+// Set a variable's ownership state. Updates existing entry or creates a new one.
+fn set_ownership(p: &mut HirProgram, name: str, state: i64) {
+    let mut found = false;
+    let mut i: i64 = 0;
+    while i < p.ownership.len() {
+        if p.ownership[i].name == name {
+            p.ownership[i].state = state;
+            found = true;
+            break;
+        };
+        i = i + 1;
+    };
+    if !found {
+        p.ownership.push(HirOwnership { name: name, state: state });
+    };
+}
+
+// Push a borrow-check error message (does not abort compilation).
+fn push_error(p: &mut HirProgram, message: str) {
+    p.errors.push(HirError { message: message });
+}
+
+// Check if a variable can be used (not Moved). Returns true if ok.
+fn check_use(p: &mut HirProgram, name: str) -> bool {
+    let state = lookup_ownership(p, name);
+    state != 3
+}
+
+// Check if a variable can be shared-borrowed (not ExclusiveRef, not Moved). Returns true if ok.
+fn check_borrow_shared(p: &mut HirProgram, name: str) -> bool {
+    let state = lookup_ownership(p, name);
+    if state == 2 { return false; };
+    if state == 3 { return false; };
+    true
+}
+
+// Check if a variable can be mutably borrowed (not SharedRef, not ExclusiveRef, not Moved). Returns true if ok.
+fn check_borrow_mut(p: &mut HirProgram, name: str) -> bool {
+    let state = lookup_ownership(p, name);
+    if state >= 100 { return false; };
+    if state == 2 { return false; };
+    if state == 3 { return false; };
+    true
+}
+
+// Release all shared and exclusive borrows, resetting them to Owned. Preserves Moved state.
+fn release_borrows(p: &mut HirProgram) {
+    let mut i: i64 = 0;
+    while i < p.ownership.len() {
+        let state = p.ownership[i].state;
+        if state == 2 || state >= 100 {
+            p.ownership[i].state = 0;
+        };
+        i = i + 1;
+    };
+}
+
+// Returns true if the statement is a `let` with a ref/mut_ref initializer (persistent borrow).
+fn creates_persistent_borrow(stmts: Vec<Stmt>, exprs: Vec<Expr>, stmt_idx: i64) -> bool {
+    if stmt_idx <= 0 || stmt_idx > stmts.len() { return false; };
+    let s = stmts[stmt_idx - 1];
+    if s.kind != "let" { return false; };
+    if s.expr_idx <= 0 { return false; };
+    if s.expr_idx > exprs.len() { return false; };
+    let init = exprs[s.expr_idx - 1];
+    init.kind == "ref" || init.kind == "mut_ref"
+}
+
 // Look up a function's return type index by name
 fn lookup_fn_return_type(p: &mut HirProgram, name: str) -> i64 {
     for i in 0..p.fns.len() {
@@ -105,6 +188,146 @@ fn is_type_str(p: &mut HirProgram, ty: i64) -> bool {
 fn get_expr_ty(p: &mut HirProgram, idx: i64) -> i64 {
     if idx <= 0 || idx > p.expr_nodes.len() { return 0; };
     p.expr_nodes[idx - 1].ty
+}
+
+// ── D5.1: Free variable analysis for closure captures ──
+
+fn is_builtin_name(name: str) -> bool {
+    if name == "println" { return true; };
+    if name == "eprintln" { return true; };
+    if name == "tensor" { return true; };
+    if name == "rand" { return true; };
+    if name == "randn" { return true; };
+    if name == "read_file" { return true; };
+    if name == "write_file" { return true; };
+    if name == "str_at" { return true; };
+    if name == "compile_host" { return true; };
+    if name == "compile_program" { return true; };
+    if name == "write_bytes" { return true; };
+    if name == "self" { return true; };
+    if name == "Vec_new" { return true; };
+    if name == "Vec_push" { return true; };
+    if name == "Vec_len" { return true; };
+    if name == "Vec_get" { return true; };
+    if name == "str_add" { return true; };
+    if name == "str_eq" { return true; };
+    if name == "str_int" { return true; };
+    if name == "str_len" { return true; };
+    if name == "str_cmp" { return true; };
+    if name == "str_slice" { return true; };
+    if name == "tenth_alloc" { return true; };
+    if name == "f64_bits" { return true; };
+    if name == "tensor_from_vec" { return true; };
+    if name == "lexer_new" { return true; };
+    if name == "lexer_tokenize" { return true; };
+    if name == "parse_program" { return true; };
+    if name == "lower_program" { return true; };
+    if name == "compile_to_wasm" { return true; };
+    if name == "abs" { return true; };
+    if name == "sqrt" { return true; };
+    if name == "sin" { return true; };
+    if name == "cos" { return true; };
+    if name == "ln" { return true; };
+    if name == "pow" { return true; };
+    if name == "zeros" { return true; };
+    if name == "ones" { return true; };
+    if name == "save_weights" { return true; };
+    if name == "load_weights" { return true; };
+    if name == "start_grad" { return true; };
+    if name == "new_grad" { return true; };
+    if name == "stop_grad" { return true; };
+    if name == "param" { return true; };
+    if name == "backward" { return true; };
+    if name == "grad" { return true; };
+    if name == "zero_grad" { return true; };
+    if name == "cross_entropy" { return true; };
+    if name == "Vec::new" { return true; };
+    if name == "HashMap::new" { return true; };
+    false
+}
+
+fn collect_free_vars(exprs: Vec<Expr>, idx: i64) -> Vec<str> {
+    let mut result: Vec<str> = Vec::new();
+    if idx <= 0 || idx > exprs.len() { return result; };
+    let e = exprs[idx - 1];
+    let kind = e.kind;
+
+    if kind == "ident" {
+        result.push(e.sval);
+    };
+
+    // Traverse left child
+    if e.left > 0 {
+        let subs = collect_free_vars(exprs, e.left);
+        let mut i: i64 = 0;
+        while i < subs.len() { result.push(subs[i]); i = i + 1; };
+    };
+
+    // Traverse right child
+    if e.right > 0 {
+        let subs = collect_free_vars(exprs, e.right);
+        let mut i: i64 = 0;
+        while i < subs.len() { result.push(subs[i]); i = i + 1; };
+    };
+
+    // Traverse arg children
+    if e.arg_count > 0 {
+        let mut i: i64 = e.arg_start;
+        let iend: i64 = e.arg_start + e.arg_count;
+        while i < iend {
+            if i > 0 && i <= exprs.len() {
+                let subs = collect_free_vars(exprs, i);
+                let mut j: i64 = 0;
+                while j < subs.len() { result.push(subs[j]); j = j + 1; };
+            };
+            i = i + 1;
+        };
+    };
+
+    // Traverse extra children
+    if e.extra_count > 0 {
+        let mut i: i64 = e.extra_start;
+        let iend: i64 = e.extra_start + e.extra_count;
+        while i < iend {
+            if i > 0 && i <= exprs.len() {
+                let subs = collect_free_vars(exprs, i);
+                let mut j: i64 = 0;
+                while j < subs.len() { result.push(subs[j]); j = j + 1; };
+            };
+            i = i + 1;
+        };
+    };
+
+    result
+}
+
+fn free_vars_in(exprs: Vec<Expr>, idx: i64, param_names: Vec<str>) -> Vec<str> {
+    let raw = collect_free_vars(exprs, idx);
+    let mut result: Vec<str> = Vec::new();
+    let mut i: i64 = 0;
+    while i < raw.len() {
+        let name = raw[i];
+        // Skip parameter names
+        let mut is_param = false;
+        let mut j: i64 = 0;
+        while j < param_names.len() {
+            if param_names[j] == name { is_param = true; break; };
+            j = j + 1;
+        };
+        if is_param { i = i + 1; continue; };
+        // Skip built-in names
+        if is_builtin_name(name) { i = i + 1; continue; };
+        // Deduplicate
+        let mut found = false;
+        let mut j2: i64 = 0;
+        while j2 < result.len() {
+            if result[j2] == name { found = true; break; };
+            j2 = j2 + 1;
+        };
+        if !found { result.push(name); };
+        i = i + 1;
+    };
+    result
 }
 
 fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, match_arms: Vec<MatchArm>, depth: i64) -> i64 {
@@ -171,6 +394,9 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
 
     if kind == "ident" {
+        if !check_use(p, e.sval) {
+            push_error(p, "use of moved value '" + e.sval + "'");
+        };
         let vty = lookup_var_type(p, e.sval);
         return push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", e.sval, "", vty);
     };
@@ -457,8 +683,51 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
 
     if kind == "ref" {
+        let inner_idx = e.left;
+        let mut inner_name = "";
+        let mut is_ident = false;
+        if inner_idx > 0 && inner_idx <= exprs.len() {
+            let inner_expr = exprs[inner_idx - 1];
+            if inner_expr.kind == "ident" {
+                inner_name = inner_expr.sval;
+                is_ident = true;
+            };
+        };
+        if is_ident {
+            if !check_borrow_shared(p, inner_name) {
+                push_error(p, "cannot borrow '" + inner_name + "' as shared");
+            };
+        };
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        if is_ident {
+            let cur = lookup_ownership(p, inner_name);
+            let new_state = if cur >= 100 { cur + 1 } else { 100 };
+            set_ownership(p, inner_name, new_state);
+        };
         return push_expr(p, 18, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+    };
+
+    if kind == "mut_ref" {
+        let inner_idx = e.left;
+        let mut inner_name = "";
+        let mut is_ident = false;
+        if inner_idx > 0 && inner_idx <= exprs.len() {
+            let inner_expr = exprs[inner_idx - 1];
+            if inner_expr.kind == "ident" {
+                inner_name = inner_expr.sval;
+                is_ident = true;
+            };
+        };
+        if is_ident {
+            if !check_borrow_mut(p, inner_name) {
+                push_error(p, "cannot borrow '" + inner_name + "' as mutable");
+            };
+        };
+        let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        if is_ident {
+            set_ownership(p, inner_name, 2);
+        };
+        return push_expr(p, 19, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
     };
 
     if kind == "deref" {
@@ -467,17 +736,33 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
 
     if kind == "move" {
+        let inner_idx = e.left;
+        let mut inner_name = "";
+        let mut is_ident = false;
+        if inner_idx > 0 && inner_idx <= exprs.len() {
+            let inner_expr = exprs[inner_idx - 1];
+            if inner_expr.kind == "ident" {
+                inner_name = inner_expr.sval;
+                is_ident = true;
+            };
+        };
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        if is_ident {
+            set_ownership(p, inner_name, 3);
+        };
         return push_expr(p, 30, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
     };
 
     if kind == "if" {
         let cond = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        release_borrows(p);
         let then_ = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
+        release_borrows(p);
         let mut else_: i64 = 0;
         if e.extra_start > 0 {
             else_ = lower_expr(p, e.extra_start, exprs, stmts, match_arms, depth + 1);
         };
+        release_borrows(p);
         // If type = then-branch type (blocks with only assignments have ty=0 → void)
         let if_ty = get_expr_ty(p, then_);
         return push_expr(p, 12, 0, 0.0, "", false, 0, 0, cond, then_, else_, 0, 0, 0, 0, "", "", "", if_ty);
@@ -493,6 +778,9 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             for i in e.extra_start..(e.extra_start + e.extra_count) {
                 let actual_idx = p.block_idxs[i - 1];
                 let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
+                if !creates_persistent_borrow(stmts, exprs, actual_idx) {
+                    release_borrows(p);
+                };
                 local_idxs.push(sidx);
             };
         };
@@ -546,24 +834,39 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         // Collect param names from extra_start..extra_start+extra_count
         let params_start = p.expr_nodes.len() + 1;
         let mut params_count: i64 = 0;
-        if e.extra_count > 0 {
-            for i in e.extra_start..(e.extra_start + e.extra_count) {
-                if i <= exprs.len() {
-                    let param_expr = exprs[i - 1];
-                    let pidx = push_expr(p, 4, 0, 0.0, param_expr.sval, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", param_expr.sval, "", 0);
-                    params_count = params_count + 1;
-                };
+        let mut param_names: Vec<str> = Vec::new();
+        let mut ei: i64 = e.extra_start;
+        let eend: i64 = e.extra_start + e.extra_count;
+        while ei < eend {
+            if ei <= exprs.len() {
+                let param_expr = exprs[ei - 1];
+                let pidx = push_expr(p, 4, 0, 0.0, param_expr.sval, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", param_expr.sval, "", 0);
+                params_count = params_count + 1;
+                param_names.push(param_expr.sval);
             };
+            ei = ei + 1;
         };
-        // Captures — simplified: no deep analysis in self-hosting compiler
+        // D5.1: Collect free variables (captures) via recursive analysis
         let captures_start = p.captures.len() + 1;
-        let captures_count: i64 = 0;
-        let result = push_expr(p, 23, 0, 0.0, "", false, 0, 0, 0, body, 0, 0, 0, 0, 0, "", "", "", 0);
-        p.expr_nodes[result - 1].params_start = params_start;
-        p.expr_nodes[result - 1].params_count = params_count;
-        p.expr_nodes[result - 1].captures_start = captures_start;
-        p.expr_nodes[result - 1].captures_count = captures_count;
-        return result;
+        let free_vars = free_vars_in(exprs, e.left, param_names);
+        let captures_count: i64 = free_vars.len();
+        let mut ci: i64 = 0;
+        while ci < free_vars.len() {
+            p.captures.push(HirCapture { name: free_vars[ci] });
+            ci = ci + 1;
+        };
+        // Construct closure node with all fields set (avoid post-push field mutation)
+        let ce = HirExpr {
+            disc: 23,
+            body: body,
+            params_start: params_start,
+            params_count: params_count,
+            captures_start: captures_start,
+            captures_count: captures_count,
+            ..
+        };
+        p.expr_nodes.push(ce);
+        return p.expr_nodes.len();
     };
 
     if kind == "array" {
@@ -610,6 +913,7 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 
     if kind == "match" {
         let scrutinee = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        release_borrows(p);
         // Lower each arm's body and push to HirProgram.match_arms
         let arms_start = p.match_arms.len() + 1;
         let mut arms_count: i64 = 0;
@@ -657,6 +961,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         // Record variable type for type inference
         let init_ty = get_expr_ty(p, init);
         p.var_types.push(HirVarType { name: s.name, ty: init_ty });
+        set_ownership(p, s.name, 0);
         return push_stmt(p, 0, s.name, 0, 0, 0, 0, init, true);
     };
 
@@ -685,6 +990,9 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             for i in s.body_start..(s.body_start + s.body_count) {
                 let actual_idx = p.loop_idxs[i - 1];
                 let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
+                if !creates_persistent_borrow(stmts, exprs, actual_idx) {
+                    release_borrows(p);
+                };
                 lowered_children.push(sidx);
             };
         };
@@ -701,12 +1009,16 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         if s.expr_idx > 0 {
             cond = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
         };
+        release_borrows(p);
         // Collect lowered children in temp list FIRST, then push to body_list.
         let mut lowered_children: Vec<i64> = Vec::new();
         if s.body_count > 0 {
             for i in s.body_start..(s.body_start + s.body_count) {
                 let actual_idx = p.loop_idxs[i - 1];
                 let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
+                if !creates_persistent_borrow(stmts, exprs, actual_idx) {
+                    release_borrows(p);
+                };
                 lowered_children.push(sidx);
             };
         };
@@ -720,12 +1032,16 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 
     if kind == "for" {
         let iter = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
+        release_borrows(p);
         // Collect lowered children in temp list FIRST, then push to body_list.
         let mut lowered_children: Vec<i64> = Vec::new();
         if s.body_count > 0 {
             for i in s.body_start..(s.body_start + s.body_count) {
                 let actual_idx = p.loop_idxs[i - 1];
                 let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, depth + 1);
+                if !creates_persistent_borrow(stmts, exprs, actual_idx) {
+                    release_borrows(p);
+                };
                 lowered_children.push(sidx);
             };
         };
@@ -744,7 +1060,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 }
 
 fn lower_program(program: Program) -> HirProgram {
-    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new(), stmt_list: Vec::new(), body_list: Vec::new(), block_idxs: program.block_idxs, loop_idxs: program.loop_idxs, trait_defs: Vec::new(), trait_impls: Vec::new(), trait_methods: Vec::new(), trait_method_params: Vec::new(), impl_fn_indices: Vec::new(), impl_method_names: Vec::new(), generic_funcs: Vec::new() };
+    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new(), stmt_list: Vec::new(), body_list: Vec::new(), block_idxs: program.block_idxs, loop_idxs: program.loop_idxs, trait_defs: Vec::new(), trait_impls: Vec::new(), trait_methods: Vec::new(), trait_method_params: Vec::new(), impl_fn_indices: Vec::new(), impl_method_names: Vec::new(), generic_funcs: Vec::new(), ownership: Vec::new(), errors: Vec::new() };
 
     // Lower struct definitions
     for si in 0..program.structs.len() {
@@ -808,6 +1124,7 @@ fn lower_program(program: Program) -> HirProgram {
             let mangled = "__" + imp.type_name + "_" + f.name;
             // Lower the method (same as regular fn lowering)
             p.var_types = Vec::new();
+            p.ownership = Vec::new();
             let mut params = Vec::new();
             for j in 0..f.params.len() {
                 let param = f.params[j];
@@ -817,6 +1134,7 @@ fn lower_program(program: Program) -> HirProgram {
                 let pty = parse_type(&mut p, ann);
                 params.push(HirParam { name: param.name, ty: pty });
                 p.var_types.push(HirVarType { name: param.name, ty: pty });
+                set_ownership(&mut p, param.name, 0);
             };
             let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
             let ret_ty = parse_type(&mut p, f.return_type);
@@ -832,8 +1150,9 @@ fn lower_program(program: Program) -> HirProgram {
 
     for i in 0..program.fns.len() {
         let f = program.fns[i];
-        // Clear var_types for this function scope
+        // Clear var_types and ownership for this function scope
         p.var_types = Vec::new();
+        p.ownership = Vec::new();
         // Parse param types first, add to var_types for body type inference
         let mut params = Vec::new();
         for j in 0..f.params.len() {
@@ -841,6 +1160,7 @@ fn lower_program(program: Program) -> HirProgram {
             let pty = parse_type(&mut p, param.type_ann);
             params.push(HirParam { name: param.name, ty: pty });
             p.var_types.push(HirVarType { name: param.name, ty: pty });
+            set_ownership(&mut p, param.name, 0);
         };
         // Lower body (var_types now has params for type lookup)
         let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
@@ -854,14 +1174,18 @@ fn lower_program(program: Program) -> HirProgram {
         };
     };
 
-    // Clear var_types for main scope
+    // Clear var_types and ownership for main scope
     p.var_types = Vec::new();
+    p.ownership = Vec::new();
     if program.main_stmts_count > 0 {
         // Collect lowered statements locally first, then push to shared stmt_list
         let mut local_idxs: Vec<i64> = Vec::new();
         for k in program.main_stmts_start..(program.main_stmts_start + program.main_stmts_count) {
             let actual_idx = p.block_idxs[k - 1];
             let sidx = lower_stmt(&mut p, actual_idx, program.expr_nodes, program.stmt_nodes, program.match_arms, 0);
+            if !creates_persistent_borrow(program.stmt_nodes, program.expr_nodes, actual_idx) {
+                release_borrows(&mut p);
+            };
             local_idxs.push(sidx);
         };
         let start = p.stmt_list.len() + 1;
@@ -896,6 +1220,9 @@ fn lower_fn_body(p: &mut HirProgram, body_start: i64, body_count: i64, exprs: Ve
     for i in body_start..(body_start + body_count) {
         let actual_idx = p.block_idxs[i - 1];
         let sidx = lower_stmt(p, actual_idx, exprs, stmts, match_arms, 0);
+        if !creates_persistent_borrow(stmts, exprs, actual_idx) {
+            release_borrows(p);
+        };
         local_idxs.push(sidx);
     };
     let start = p.stmt_list.len() + 1;

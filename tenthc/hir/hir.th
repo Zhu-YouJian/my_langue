@@ -139,6 +139,13 @@ struct HirCapture { name: str }
 // ── Variable type entry (for type inference) ──
 struct HirVarType { name: str, ty: i64 }
 
+// ── Ownership state entry (for borrow checking) ──
+// state encoding: 0=Owned, 100+n=SharedRef(n), 2=ExclusiveRef, 3=Moved
+struct HirOwnership { name: str, state: i64 }
+
+// ── Borrow check error (collected during lowering, does not abort) ──
+struct HirError { message: str }
+
 // ── HirProgram ──
 struct HirProgram {
     fns: Vec<HirFnDef>,
@@ -165,4 +172,6 @@ struct HirProgram {
     impl_fn_indices: Vec<i64>,                // 扁平：impl 方法的 p.fns 索引（1-based）
     impl_method_names: Vec<str>,              // 扁平：impl 方法原始名（与 impl_fn_indices 并行）
     generic_funcs: Vec<HirFnDef>,             // 泛型函数模板（不输出到 WASM，仅用于实例化）
+    ownership: Vec<HirOwnership>,             // 借用检查：变量所有权状态
+    errors: Vec<HirError>,                    // 借用检查错误（不中断编译）
 }

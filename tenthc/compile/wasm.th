@@ -52,8 +52,10 @@ fn wasm_i64_sub(out: &mut Vec<i64>) { out.push(125); }
 fn wasm_i64_mul(out: &mut Vec<i64>) { out.push(126); }
 fn wasm_i64_div_s(out: &mut Vec<i64>) { out.push(127); }
 fn wasm_i64_rem_s(out: &mut Vec<i64>) { out.push(129); }
-fn wasm_i64_and(out: &mut Vec<i64>) { out.push(113); }
-fn wasm_i64_or(out: &mut Vec<i64>) { out.push(114); }
+fn wasm_i64_and(out: &mut Vec<i64>) { out.push(131); }
+fn wasm_i64_or(out: &mut Vec<i64>) { out.push(132); }
+fn wasm_i32_and(out: &mut Vec<i64>) { out.push(113); }
+fn wasm_i32_or(out: &mut Vec<i64>) { out.push(114); }
 fn wasm_i64_eq(out: &mut Vec<i64>) { out.push(81); }
 fn wasm_i64_ne(out: &mut Vec<i64>) { out.push(82); }
 fn wasm_i64_lt_s(out: &mut Vec<i64>) { out.push(83); }
@@ -82,6 +84,12 @@ fn wasm_drop(out: &mut Vec<i64>) { out.push(26); }
 fn wasm_local_tee(out: &mut Vec<i64>, idx: i64) { out.push(34); leb128_u(idx, out); }
 fn wasm_global_get(out: &mut Vec<i64>, idx: i64) { out.push(35); leb128_u(idx, out); }
 fn wasm_global_set(out: &mut Vec<i64>, idx: i64) { out.push(36); leb128_u(idx, out); }
+fn wasm_i64_shr_u(out: &mut Vec<i64>) { out.push(136); }
+fn wasm_call_indirect(out: &mut Vec<i64>, type_idx: i64, table_idx: i64) {
+    out.push(17);
+    leb128_u(type_idx, out);
+    leb128_u(table_idx, out);
+}
 
 // ── f64 opcodes ──
 
@@ -124,10 +132,19 @@ struct WasmCtx {
     in_loop: i64,             // 1 if inside a loop, 0 otherwise
     current_fn_idx: i64,      // index of the function currently being compiled
     break_offset: i64,        // extra depth for break: 0 for while/loop, 1 for for (inner body block)
+    // Closure tracking (D5)
+    closure_exprs: Vec<i64>,      // 1-based expr indices of Closure nodes
+    closure_func_idxs: Vec<i64>,  // WASM function indices for closures
+    closure_type_idxs: Vec<i64>,  // WASM type indices for closures
+    closure_param_counts: Vec<i64>, // param counts (excluding env_ptr)
+    closure_vars: Vec<str>,       // variable names holding closure values
+    closure_var_types: Vec<i64>,  // type_idx for each closure variable (parallel to closure_vars)
+    compiling_closure: i64,       // 1 if compiling a closure body, 0 otherwise
+    current_closure_idx: i64,     // current closure index into closure_* vectors, -1 if none
 }
 
 fn ctx_new() -> WasmCtx {
-    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0, local_names: Vec::new(), local_indices: Vec::new(), local_count: 0, string_data: Vec::new(), string_names: Vec::new(), string_addrs: Vec::new(), if_depth: 0, in_loop: 0, current_fn_idx: 0, break_offset: 0 }
+    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0, local_names: Vec::new(), local_indices: Vec::new(), local_count: 0, string_data: Vec::new(), string_names: Vec::new(), string_addrs: Vec::new(), if_depth: 0, in_loop: 0, current_fn_idx: 0, break_offset: 0, closure_exprs: Vec::new(), closure_func_idxs: Vec::new(), closure_type_idxs: Vec::new(), closure_param_counts: Vec::new(), closure_vars: Vec::new(), closure_var_types: Vec::new(), compiling_closure: 0, current_closure_idx: -1 }
 }
 
 // ── String interning ──
@@ -152,6 +169,80 @@ fn intern_string(ctx: &mut WasmCtx, s: str) -> i64 {
     ctx.string_names.push(s);
     ctx.string_addrs.push(addr);
     addr
+}
+
+// ── Closure helpers (D5) ──
+
+fn find_closure_idx(ctx: WasmCtx, expr_idx: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < ctx.closure_exprs.len() {
+        if ctx.closure_exprs[i] == expr_idx { return i; };
+        i = i + 1;
+    };
+    -1
+}
+
+fn is_closure_var(ctx: WasmCtx, name: str) -> i64 {
+    // Returns type_idx (>=0) if name is a closure variable, -1 otherwise
+    let mut i: i64 = 0;
+    while i < ctx.closure_vars.len() {
+        if ctx.closure_vars[i] == name { return ctx.closure_var_types[i]; };
+        i = i + 1;
+    };
+    -1
+}
+
+fn compile_closure_body(ctx: &mut WasmCtx, hir: HirProgram, closure_idx: i64) {
+    let expr_idx = ctx.closure_exprs[closure_idx];
+    let e = hir.expr_nodes[expr_idx - 1];
+
+    // 重置 local 信息
+    ctx.local_names = Vec::new();
+    ctx.local_indices = Vec::new();
+    ctx.local_count = 0;
+    ctx.if_depth = 0;
+    ctx.in_loop = 0;
+    ctx.compiling_closure = 1;
+    ctx.current_closure_idx = closure_idx;
+
+    // Param 0 = env_ptr (i64), Param 1..N = closure params (i64)
+    let num_params = 1 + e.params_count;
+    ctx.temp_local = num_params;
+
+    // Pre-register closure params in local_names (param 0 is env_ptr, not named)
+    if e.params_count > 0 {
+        let mut pi: i64 = 0;
+        while pi < e.params_count {
+            let param_expr_idx = e.params_start + pi;
+            if param_expr_idx > 0 && param_expr_idx <= hir.expr_nodes.len() {
+                let param_var = hir.expr_nodes[param_expr_idx - 1];
+                ctx.local_names.push(param_var.name);
+                ctx.local_indices.push(pi + 1); // param 0 is env_ptr
+            };
+            pi = pi + 1;
+        };
+    };
+
+    // Compile body to temp Vec
+    let mut body_code: Vec<i64> = Vec::new();
+    compile_expr(ctx, &mut body_code, hir, e.body);
+    wasm_end(&mut body_code);
+
+    // Build local declarations: local_count let-locals + 1 temp
+    let total_locals = ctx.local_count + 1;
+    let mut body: Vec<i64> = Vec::new();
+    leb128_u(1, &mut body); // 1 group
+    leb128_u(total_locals, &mut body);
+    body.push(126); // i64
+
+    for i in 0..body_code.len() { body.push(body_code[i]); };
+
+    // Emit function body size + body
+    leb128_u(body.len(), &mut ctx.code_out);
+    for i in 0..body.len() { ctx.code_out.push(body[i]); };
+
+    ctx.compiling_closure = 0;
+    ctx.current_closure_idx = -1;
 }
 
 // ── Compile one function body ──
@@ -401,6 +492,32 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             };
             li = li - 1;
         };
+        // If compiling a closure body, check captures (env struct loads)
+        if !found && ctx.compiling_closure == 1 {
+            let cidx = ctx.current_closure_idx;
+            if cidx >= 0 && cidx < ctx.closure_exprs.len() {
+                let closure_expr_idx = ctx.closure_exprs[cidx];
+                let ce = hir.expr_nodes[closure_expr_idx - 1];
+                if ce.captures_count > 0 {
+                    let mut ci: i64 = 0;
+                    while ci < ce.captures_count {
+                        let cap_idx = ce.captures_start + ci;
+                        if cap_idx > 0 && cap_idx <= hir.captures.len() {
+                            if hir.captures[cap_idx - 1].name == name {
+                                // Load from env_ptr (local 0) + ci * 8
+                                wasm_local_get(out, 0);
+                                wasm_i32_wrap_i64(out);
+                                wasm_i32_const(out, ci * 8);
+                                wasm_i32_add(out);
+                                wasm_i64_load(out, 3, 0);
+                                return;
+                            };
+                        };
+                        ci = ci + 1;
+                    };
+                };
+            };
+        };
         // Fall back to current function's params
         if !found {
             let func = hir.fns[ctx.current_fn_idx];
@@ -450,8 +567,8 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         if op == "*" { wasm_i64_mul(out); return; };
         if op == "/" { wasm_i64_div_s(out); return; };
         if op == "%" { wasm_i64_rem_s(out); return; };
-        if op == "&&" { wasm_i64_and(out); return; };
-        if op == "||" { wasm_i64_or(out); return; };
+        if op == "&&" { wasm_i32_and(out); return; };
+        if op == "||" { wasm_i32_or(out); return; };
         if op == "==" { wasm_i64_eq(out); return; };
         if op == "!=" { wasm_i64_ne(out); return; };
         if op == "<" { wasm_i64_lt_s(out); return; };
@@ -861,6 +978,45 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
+        // Closure call detection: if func_name is a closure variable, use call_indirect
+        let type_idx = is_closure_var(*ctx, func_name);
+        if type_idx >= 0 {
+            // Unpack closure value (i64): high 32 = fn_ptr, low 32 = env_ptr
+            // 1. local.get cv → i64.const 32 → i64.shr_u → local.set $temp (fn_ptr)
+            // 2. local.get cv → i64.const 0xFFFFFFFF → i64.and (env_ptr)
+            // 3. Push args
+            // 4. local.get $temp → i32.wrap_i64 → call_indirect(type_idx, 0)
+            let cv_local: i64 = 0;
+            // Find the closure variable's local index
+            let mut li2: i64 = ctx.local_names.len() - 1;
+            while li2 >= 0 {
+                if ctx.local_names[li2] == func_name {
+                    cv_local = ctx.local_indices[li2];
+                    break;
+                };
+                li2 = li2 - 1;
+            };
+            // Compute fn_ptr = cv >> 32, store in temp
+            wasm_local_get(out, cv_local);
+            wasm_i64_const(out, 32);
+            wasm_i64_shr_u(out);
+            wasm_local_set(out, ctx.temp_local);
+            // Push env_ptr = cv & 0xFFFFFFFF
+            wasm_local_get(out, cv_local);
+            wasm_i64_const(out, 4294967295);
+            wasm_i64_and(out);
+            // Push args
+            if e.args_count > 0 {
+                for ai in e.args_start..(e.args_start + e.args_count) {
+                    compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
+                };
+            };
+            // Push fn_ptr (from temp), wrap to i32, call_indirect
+            wasm_local_get(out, ctx.temp_local);
+            wasm_i32_wrap_i64(out);
+            wasm_call_indirect(out, type_idx, 0);
+            return;
+        };
         // Regular function call (indices offset by 18 imports)
         let mut call_idx: i64 = 18;
         for fi in 0..hir.fns.len() {
@@ -959,8 +1115,70 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 23 {
-        // Closure — not representable in WASM, push 0 placeholder
-        wasm_i64_const(out, 0);
+        // Closure — compile as packed i64 (fn_ptr << 32 | env_ptr)
+        let cidx = find_closure_idx(*ctx, idx);
+        if cidx < 0 {
+            // Closure not pre-registered (shouldn't happen) — push 0
+            wasm_i64_const(out, 0);
+            return;
+        };
+        let func_idx = ctx.closure_func_idxs[cidx];
+        let captures_count = e.captures_count;
+        if captures_count == 0 {
+            // No captures: env_ptr = 0, packed = cidx << 32 (cidx = table position)
+            wasm_i64_const(out, cidx * 4294967296);
+        } else {
+            // Allocate env struct via tenth_alloc (import 10)
+            // size = captures_count * 8
+            wasm_i32_const(out, captures_count * 8);
+            wasm_call(out, 10); // tenth_alloc -> i32
+            wasm_i64_extend_i32_u(out); // i32 -> i64 env_ptr
+            // Store env_ptr in temp
+            wasm_local_set(out, ctx.temp_local);
+            // Write each captured variable to env struct
+            let mut ci: i64 = 0;
+            while ci < captures_count {
+                let cap_idx = e.captures_start + ci;
+                if cap_idx > 0 && cap_idx <= hir.captures.len() {
+                    let cap_name = hir.captures[cap_idx - 1].name;
+                    // address: local.get temp → i32.wrap_i64
+                    wasm_local_get(out, ctx.temp_local);
+                    wasm_i32_wrap_i64(out);
+                    // value: compile the captured variable (i64)
+                    // Look up the captured var as a local
+                    let mut cap_local: i64 = 0;
+                    let mut cap_found: bool = false;
+                    let mut li3: i64 = ctx.local_names.len() - 1;
+                    while li3 >= 0 {
+                        if ctx.local_names[li3] == cap_name {
+                            cap_local = ctx.local_indices[li3];
+                            cap_found = true;
+                            break;
+                        };
+                        li3 = li3 - 1;
+                    };
+                    if !cap_found {
+                        // Check fn params
+                        let func = hir.fns[ctx.current_fn_idx];
+                        for pi in 0..func.params.len() {
+                            if func.params[pi].name == cap_name {
+                                cap_local = pi;
+                                cap_found = true;
+                                break;
+                            };
+                        };
+                    };
+                    wasm_local_get(out, cap_local);
+                    // i64.store at offset ci*8
+                    wasm_i64_store(out, 3, ci * 8);
+                };
+                ci = ci + 1;
+            };
+            // Push packed value: (cidx << 32) | env_ptr  (cidx = table position)
+            wasm_i64_const(out, cidx * 4294967296);
+            wasm_local_get(out, ctx.temp_local);
+            wasm_i64_or(out);
+        };
         return;
     };
     if d == 24 {
@@ -1240,6 +1458,17 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if d == 0 {
         // Let — 分配新 local 并记录变量名
         if s.init > 0 {
+            // Check if init is a Closure (disc=23) — register as closure var
+            let init_expr_idx = s.init;
+            if init_expr_idx > 0 && init_expr_idx <= hir.expr_nodes.len() {
+                if hir.expr_nodes[init_expr_idx - 1].disc == 23 {
+                    let cidx = find_closure_idx(*ctx, init_expr_idx);
+                    if cidx >= 0 {
+                        ctx.closure_vars.push(s.name);
+                        ctx.closure_var_types.push(ctx.closure_type_idxs[cidx]);
+                    };
+                };
+            };
             compile_expr(ctx, out, hir, s.init);
             // 分配新 local: params + temp(1) + local_count
             let slot = ctx.temp_local + 1 + ctx.local_count;
@@ -1285,6 +1514,27 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     // Import count
     let num_imports: i64 = 18;
 
+    // ---- Collect closures (D5) ----
+    // Scan all expr_nodes for Closure (disc=23) and register them
+    let mut ei: i64 = 0;
+    while ei < hir.expr_nodes.len() {
+        if hir.expr_nodes[ei].disc == 23 {
+            let expr_idx = ei + 1; // 1-based
+            ctx.closure_exprs.push(expr_idx);
+            let cidx = ctx.closure_exprs.len() - 1; // 0-based closure index
+            let param_count = hir.expr_nodes[ei].params_count;
+            // Function index: 18 (imports) + num_funcs + cidx
+            let func_idx = 18 + num_funcs + cidx;
+            // Type index: 13 (import types) + num_funcs + cidx
+            let type_idx = 13 + num_funcs + cidx;
+            ctx.closure_func_idxs.push(func_idx);
+            ctx.closure_type_idxs.push(type_idx);
+            ctx.closure_param_counts.push(param_count);
+        };
+        ei = ei + 1;
+    };
+    let num_closures = ctx.closure_exprs.len();
+
     // ---- Build type section ----
     // Import types come first: 13 signatures
     // Type 0: (i64) -> ()    — println
@@ -1301,7 +1551,7 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     // Type 11: (i32,i64,i64) -> i32 — str_slice
     // Type 12: (i32,i32,i32) -> i64 — tensor_from_vec
     let mut types: Vec<i64> = Vec::new();
-    leb128_u(13 + num_funcs, &mut types); // total type count
+    leb128_u(13 + num_funcs + num_closures, &mut types); // total type count
 
     // Type 0: (i64) -> ()
     types.push(96); leb128_u(1, &mut types); types.push(126); // params
@@ -1361,6 +1611,18 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
         types.push(96);
         leb128_u(f.params.len(), &mut types);
         for pi in 0..f.params.len() { types.push(126); };
+        leb128_u(1, &mut types); types.push(126); // 1 result: i64
+    };
+    // Closure types: (i64 env_ptr, i64 param1, ..., i64 paramN) -> i64
+    for ci in 0..num_closures {
+        let cexpr_idx = ctx.closure_exprs[ci];
+        let ce = hir.expr_nodes[cexpr_idx - 1];
+        let pc = ce.params_count;
+        types.push(96);
+        leb128_u(1 + pc, &mut types); // env_ptr + params
+        types.push(126); // env_ptr: i64
+        let mut pi: i64 = 0;
+        while pi < pc { types.push(126); pi = pi + 1; };
         leb128_u(1, &mut types); types.push(126); // 1 result: i64
     };
     let mut type_sec: Vec<i64> = Vec::new();
@@ -1469,8 +1731,20 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
 
     // ---- Build function section ----
     let mut func_sec: Vec<i64> = Vec::new();
-    leb128_u(num_funcs, &mut func_sec);
+    leb128_u(num_funcs + num_closures, &mut func_sec);
     for idx in 0..num_funcs { leb128_u(idx + 13, &mut func_sec); };
+    // Closure functions: type index = 13 + num_funcs + ci
+    for ci in 0..num_closures { leb128_u(13 + num_funcs + ci, &mut func_sec); };
+
+    // ---- Build table section (D5.2) ----
+    // Only emit if there are closures (avoid empty section)
+    let mut table_sec: Vec<i64> = Vec::new();
+    if num_closures > 0 {
+        leb128_u(1, &mut table_sec); // 1 table
+        table_sec.push(112); // funcref (0x70)
+        table_sec.push(0);   // flags: no max
+        leb128_u(num_closures, &mut table_sec); // min
+    };
 
     // ---- Build global section ----
     let mut glob_sec: Vec<i64> = Vec::new();
@@ -1489,9 +1763,31 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     leb128_u(1, &mut mem_sec); // min: 1 page (64KB)
 
     // ---- Build code section ----
-    leb128_u(num_funcs, &mut ctx.code_out);
+    leb128_u(num_funcs + num_closures, &mut ctx.code_out);
     for fi in 0..num_funcs {
         compile_fn_body(&mut ctx, hir, fi);
+    };
+    // Compile closure bodies
+    for ci in 0..num_closures {
+        compile_closure_body(&mut ctx, hir, ci);
+    };
+
+    // ---- Build elem section (D5.2) ----
+    // Only emit if there are closures
+    let mut elem_sec: Vec<i64> = Vec::new();
+    if num_closures > 0 {
+        leb128_u(1, &mut elem_sec); // 1 segment
+        // Active segment, table 0, offset 0 (MVP encoding: flag 0x00)
+        elem_sec.push(0); // flag: active, table 0, funcref
+        // offset expr: i32.const 0, end
+        elem_sec.push(65); // i32.const
+        leb128_s(0, &mut elem_sec);
+        elem_sec.push(11); // end
+        // function indices
+        leb128_u(num_closures, &mut elem_sec);
+        for ci in 0..num_closures {
+            leb128_u(18 + num_funcs + ci, &mut elem_sec);
+        };
     };
 
     // ---- Build export section ----
@@ -1547,12 +1843,20 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     emit_section(&mut ctx.out, 2, import_sec);
     // Function section (3)
     emit_section(&mut ctx.out, 3, func_sec);
+    // Table section (4) — only if closures exist
+    if num_closures > 0 {
+        emit_section(&mut ctx.out, 4, table_sec);
+    };
     // Memory section (5)
     emit_section(&mut ctx.out, 5, mem_sec);
     // Global section (6)
     emit_section(&mut ctx.out, 6, glob_sec);
     // Export section (7)
     emit_section(&mut ctx.out, 7, export_sec);
+    // Element section (9) — only if closures exist
+    if num_closures > 0 {
+        emit_section(&mut ctx.out, 9, elem_sec);
+    };
     // Code section (10)
     emit_section(&mut ctx.out, 10, ctx.code_out);
     // Data section (11) — 仅当有字符串数据时

@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use wasm_encoder::{
     BlockType, CodeSection, ConstExpr, DataSection, EntityType, ExportKind,
-    ExportSection, Function, FunctionSection, ImportSection, Instruction,
-    MemorySection, MemoryType, Module, TypeSection, ValType,
+    ExportSection, Elements, ElementSection, Function, FunctionSection, ImportSection, Instruction,
+    MemorySection, MemoryType, Module, RefType, TableSection, TableType, TypeSection, ValType,
 };
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
@@ -76,6 +76,19 @@ pub struct WasmCompiler {
     /// Break emits Br(1 + break_offset + if_depth), Continue emits Br(if_depth).
     /// break_offset=0 for while/loop, 1 for for (inner body block).
     if_depths: Vec<(u32, u32)>,
+    // ── Closure tracking (D5) ──
+    /// Closure idx -> (func_idx, type_idx, param_count)
+    closure_info: Vec<(u32, u32, u32)>,
+    /// Closure expr pointer -> closure idx (for lookup during compile_expr)
+    closure_expr_map: HashMap<usize, usize>,
+    /// Captures for each closure (parallel to closure_info)
+    closure_captures: Vec<Vec<String>>,
+    /// Variable name -> type_idx for closure variables (for call_indirect)
+    closure_vars: HashMap<String, u32>,
+    /// Current closure captures (when compiling a closure body)
+    current_captures: Vec<String>,
+    /// Whether we're currently compiling a closure body
+    compiling_closure: bool,
 }
 
 impl WasmCompiler {
@@ -91,6 +104,12 @@ impl WasmCompiler {
             local_count: 0,
             param_count: 0,
             if_depths: Vec::new(),
+            closure_info: Vec::new(),
+            closure_expr_map: HashMap::new(),
+            closure_captures: Vec::new(),
+            closure_vars: HashMap::new(),
+            current_captures: Vec::new(),
+            compiling_closure: false,
         }
     }
 
@@ -98,14 +117,18 @@ impl WasmCompiler {
         self.hir_funcs = program.functions.clone();
         self.build_struct_layouts(program);
         self.collect_strings(program);
+        self.collect_closures(program);
 
         let mut module = Module::new();
 
         self.emit_type_section(&mut module, program)?;
         self.emit_import_section(&mut module);
         let _fc = self.emit_function_section(&mut module, program);
+        self.emit_table_section(&mut module);
         self.emit_memory_section(&mut module);
+        self.emit_global_section(&mut module);
         self.emit_export_section(&mut module, program);
+        self.emit_elem_section(&mut module);
         self.emit_code_section(&mut module, program)?;
         if !self.string_data.is_empty() {
             self.emit_data_section(&mut module);
@@ -217,6 +240,18 @@ impl WasmCompiler {
         }
         // main
         reg(vec![], vec![ValType::I32]);
+        // Closure types (D5): (i64 env_ptr, i64 param1, ..., i64 paramN) -> i64
+        let param_counts: Vec<u32> = self.closure_info.iter().map(|&(_, _, pc)| pc).collect();
+        let mut closure_type_idxs: Vec<u32> = Vec::new();
+        for &param_count in &param_counts {
+            let mut params: Vec<ValType> = vec![ValType::I64]; // env_ptr
+            for _ in 0..param_count { params.push(ValType::I64); }
+            let ti = reg(params, vec![ValType::I64]);
+            closure_type_idxs.push(ti);
+        }
+        for (cidx, ti) in closure_type_idxs.into_iter().enumerate() {
+            self.closure_info[cidx].1 = ti;
+        }
         module.section(&types);
         Ok(())
     }
@@ -258,8 +293,15 @@ impl WasmCompiler {
             funcs.function(ti);
             idx += 1;
         }
+        // main
         let mti = *self.type_cache.get(&(vec![], vec![ValType::I32])).unwrap_or(&0);
         funcs.function(mti);
+        idx += 1;
+        // Closure functions (D5)
+        for &(_, type_idx, _) in &self.closure_info {
+            funcs.function(type_idx);
+            idx += 1;
+        }
         module.section(&funcs);
         idx
     }
@@ -268,6 +310,42 @@ impl WasmCompiler {
         let mut mem = MemorySection::new();
         mem.memory(MemoryType { minimum: 16, maximum: Some(256), memory64: false, shared: false, page_size_log2: None });
         module.section(&mem);
+    }
+
+    /// D5.2: Emit table section (funcref table for call_indirect).
+    /// Only emitted when there are closures.
+    fn emit_table_section(&self, module: &mut Module) {
+        let num_closures = self.closure_info.len() as u64;
+        if num_closures == 0 { return; }
+        let mut tables = TableSection::new();
+        tables.table(TableType {
+            element_type: RefType::FUNCREF,
+            table64: false,
+            minimum: num_closures,
+            maximum: None,
+            shared: false,
+        });
+        module.section(&tables);
+    }
+
+    /// Global section: no-op for Rust backend (bump pointer is host-managed).
+    fn emit_global_section(&self, _module: &mut Module) {
+        // The Rust host manages the bump allocator offset via store state (u32),
+        // so no WASM global is needed.
+    }
+
+    /// D5.2: Emit element section to fill the table with closure function indices.
+    /// Only emitted when there are closures.
+    fn emit_elem_section(&self, module: &mut Module) {
+        if self.closure_info.is_empty() { return; }
+        let func_idxs: Vec<u32> = self.closure_info.iter().map(|&(fi, _, _)| fi).collect();
+        let mut elements = ElementSection::new();
+        elements.active(
+            Some(0),
+            &ConstExpr::i32_const(0),
+            Elements::Functions(&func_idxs),
+        );
+        module.section(&elements);
     }
 
     fn emit_export_section(&mut self, module: &mut Module, program: &HirProgram) {
@@ -292,6 +370,8 @@ impl WasmCompiler {
             codes.function(&self.compile_function(func)?);
         }
         codes.function(&self.compile_main(program)?);
+        // D5: Compile closure bodies (traverse HIR to find Closure nodes)
+        self.compile_closure_bodies(&mut codes, program)?;
         module.section(&codes);
         Ok(())
     }
@@ -345,6 +425,159 @@ impl WasmCompiler {
         }
         body.instruction(&Instruction::End);
         Ok(body)
+    }
+
+    // ── Closure body compilation (D5) ───────────────────────────────────
+
+    /// Traverse HIR and compile each closure body in order.
+    /// Order must match collect_closures and emit_function_section.
+    fn compile_closure_bodies(&mut self, codes: &mut CodeSection, program: &HirProgram) -> TenthResult<()> {
+        for func in &program.functions {
+            self.ccb_expr(codes, &func.body)?;
+        }
+        if let Some(ref e) = program.main_expr {
+            self.ccb_expr(codes, e)?;
+        }
+        Ok(())
+    }
+
+    fn ccb_expr(&mut self, codes: &mut CodeSection, e: &HirExpr) -> TenthResult<()> {
+        match &e.kind {
+            HirExprKind::Closure { params, body, captures } => {
+                let func = self.compile_closure_body(params, body, captures)?;
+                codes.function(&func);
+                // Recurse for nested closures
+                self.ccb_expr(codes, body)?;
+            }
+            HirExprKind::Binary { left, right, .. } => {
+                self.ccb_expr(codes, left)?;
+                self.ccb_expr(codes, right)?;
+            }
+            HirExprKind::Unary { expr: inner, .. } => { self.ccb_expr(codes, inner)?; }
+            HirExprKind::Call { func, args, .. } => {
+                self.ccb_expr(codes, func)?;
+                for a in args { self.ccb_expr(codes, a)?; }
+            }
+            HirExprKind::GenericCall { func, args, .. } => {
+                self.ccb_expr(codes, func)?;
+                for a in args { self.ccb_expr(codes, a)?; }
+            }
+            HirExprKind::MethodCall { receiver, args, .. } => {
+                self.ccb_expr(codes, receiver)?;
+                for a in args { self.ccb_expr(codes, a)?; }
+            }
+            HirExprKind::Block { stmts, final_expr } => {
+                for s in stmts { self.ccb_stmt(codes, s)?; }
+                if let Some(e) = final_expr { self.ccb_expr(codes, e)?; }
+            }
+            HirExprKind::If { cond, then_branch, else_branch, .. } => {
+                self.ccb_expr(codes, cond)?;
+                self.ccb_expr(codes, then_branch)?;
+                if let Some(e) = else_branch { self.ccb_expr(codes, e)?; }
+            }
+            HirExprKind::Assign { value, .. } => { self.ccb_expr(codes, value)?; }
+            HirExprKind::AssignOp { value, .. } => { self.ccb_expr(codes, value)?; }
+            HirExprKind::StructLiteral { fields, .. } => {
+                for (_, e) in fields { self.ccb_expr(codes, e)?; }
+            }
+            HirExprKind::EnumLiteral { fields, .. } => {
+                for (_, e) in fields { self.ccb_expr(codes, e)?; }
+            }
+            HirExprKind::Field { target, .. } => { self.ccb_expr(codes, target)?; }
+            HirExprKind::FieldAssign { target, value, .. } => {
+                self.ccb_expr(codes, target)?;
+                self.ccb_expr(codes, value)?;
+            }
+            HirExprKind::Index { target, indices } => {
+                self.ccb_expr(codes, target)?;
+                for idx in indices {
+                    match idx {
+                        Index::Single(e) => { self.ccb_expr(codes, e)?; }
+                        Index::Range { start, end } => {
+                            if let Some(s) = start { self.ccb_expr(codes, s)?; }
+                            if let Some(e) = end { self.ccb_expr(codes, e)?; }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            HirExprKind::Ref(inner) | HirExprKind::MutRef(inner)
+            | HirExprKind::Deref(inner) | HirExprKind::TryBlock(inner) => {
+                self.ccb_expr(codes, inner)?;
+            }
+            HirExprKind::TensorLiteral { data, .. } => {
+                for row in data { for e in row { self.ccb_expr(codes, e)?; } }
+            }
+            HirExprKind::ArrayLiteral { elements, .. } => {
+                for e in elements { self.ccb_expr(codes, e)?; }
+            }
+            HirExprKind::Range { start, end, .. } => {
+                if let Some(s) = start { self.ccb_expr(codes, s)?; }
+                if let Some(e) = end { self.ccb_expr(codes, e)?; }
+            }
+            HirExprKind::Match { scrutinee, arms, .. } => {
+                self.ccb_expr(codes, scrutinee)?;
+                for arm in arms { self.ccb_expr(codes, &arm.body)?; }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn ccb_stmt(&mut self, codes: &mut CodeSection, s: &HirStmt) -> TenthResult<()> {
+        use crate::hir::hir::HirStmtKind;
+        match &s.kind {
+            HirStmtKind::Expr(e) => { self.ccb_expr(codes, e)?; }
+            HirStmtKind::Let { init, .. } => { if let Some(e) = init { self.ccb_expr(codes, e)?; } }
+            HirStmtKind::While { cond, body } => {
+                self.ccb_expr(codes, cond)?;
+                self.ccb_stmt(codes, body)?;
+            }
+            HirStmtKind::Loop { body } => { for s in body { self.ccb_stmt(codes, s)?; } }
+            HirStmtKind::For { body, .. } => { self.ccb_stmt(codes, body)?; }
+            HirStmtKind::Return(expr) => { if let Some(e) = expr { self.ccb_expr(codes, e)?; } }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Compile a closure body into a WASM function.
+    /// Param 0 = env_ptr (i64), params 1..N = closure params (i64).
+    fn compile_closure_body(
+        &mut self,
+        params: &[(String, Type)],
+        body: &HirExpr,
+        captures: &[String],
+    ) -> TenthResult<Function> {
+        // Reset local state for closure body
+        self.local_map.clear();
+        self.local_count = 0;
+        self.param_count = 0;
+        self.if_depths.clear();
+        // Param 0 = env_ptr (unnamed)
+        self.param_count = 1;
+        self.local_count = 1;
+        // Register closure params (param 1..N)
+        for (name, _) in params {
+            self.local_map.insert(name.clone(), self.local_count);
+            self.local_count += 1;
+            self.param_count += 1;
+        }
+        // Set closure compilation state
+        self.compiling_closure = true;
+        self.current_captures = captures.to_vec();
+        // All extra locals are i64
+        let locals: Vec<ValType> = (0..256).map(|_| ValType::I64).collect();
+        let mut func = Function::new_with_locals_types(locals);
+        self.compile_expr(&mut func, body)?;
+        if matches!(&body.ty, Type::Base(BaseType::Unit)) {
+            func.instruction(&Instruction::Return);
+        }
+        func.instruction(&Instruction::End);
+        // Reset closure compilation state
+        self.compiling_closure = false;
+        self.current_captures.clear();
+        Ok(func)
     }
 
     /// Emit conversion from a value type to i32 (for main's exit code).
@@ -414,6 +647,27 @@ impl WasmCompiler {
                         } else if matches!(&expr.ty, Type::Base(BaseType::Bool)) {
                             body.instruction(&Instruction::I32WrapI64);
                         }
+                    }
+                } else if self.compiling_closure {
+                    // D5.5: Check if this is a captured variable
+                    if let Some(ci) = self.current_captures.iter().position(|c| c == name) {
+                        // Load from env_ptr (local 0) + ci * 8
+                        body.instruction(&Instruction::LocalGet(0));
+                        body.instruction(&Instruction::I32WrapI64);
+                        body.instruction(&Instruction::I32Const(ci as i32 * 8));
+                        body.instruction(&Instruction::I32Add);
+                        let arg = wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 };
+                        body.instruction(&Instruction::I64Load(arg));
+                        // Convert to actual type if needed
+                        if matches!(&expr.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
+                            body.instruction(&Instruction::F64ReinterpretI64);
+                        } else if matches!(&expr.ty, Type::Base(BaseType::Bool)) {
+                            body.instruction(&Instruction::I32WrapI64);
+                        }
+                    } else if !["println","eprintln","write_file","read_file"].contains(&name.as_str()) {
+                        return Err(TenthError::RuntimeError {
+                            message: format!("WASM: 未定义变量 '{}'", name),
+                        });
                     }
                 } else if !["println","eprintln","write_file","read_file"].contains(&name.as_str()) {
                     return Err(TenthError::RuntimeError {
@@ -565,6 +819,34 @@ impl WasmCompiler {
                         body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                     }
                     _ => {
+                        // D5.4: Closure call detection — if fname is a closure variable,
+                        // use call_indirect instead of regular call
+                        if let Some(&type_idx) = self.closure_vars.get(&fname) {
+                            if let Some(&cv_local) = self.local_map.get(&fname) {
+                                // Unpack closure value (i64): high 32 = fn_ptr, low 32 = env_ptr
+                                // 1. fn_ptr = cv >> 32, store in temp
+                                body.instruction(&Instruction::LocalGet(cv_local));
+                                body.instruction(&Instruction::I64Const(32));
+                                body.instruction(&Instruction::I64ShrU);
+                                let tmp = self.local_count;
+                                self.local_count += 1;
+                                body.instruction(&Instruction::LocalSet(tmp));
+                                // 2. Push env_ptr = cv & 0xFFFFFFFF
+                                body.instruction(&Instruction::LocalGet(cv_local));
+                                body.instruction(&Instruction::I64Const(0xFFFFFFFF));
+                                body.instruction(&Instruction::I64And);
+                                // 3. Push args
+                                for a in args { self.compile_expr(body, a)?; }
+                                // 4. Push fn_ptr (from temp), wrap to i32, call_indirect
+                                body.instruction(&Instruction::LocalGet(tmp));
+                                body.instruction(&Instruction::I32WrapI64);
+                                body.instruction(&Instruction::CallIndirect {
+                                    type_index: type_idx,
+                                    table_index: 0,
+                                });
+                                return Ok(());
+                            }
+                        }
                         for a in args { self.compile_expr(body, a)?; }
                         body.instruction(&Instruction::Call(self.resolve_func(&fname)?));
                     }
@@ -922,6 +1204,52 @@ impl WasmCompiler {
                 body.instruction(&Instruction::Call(17)); // tensor_from_vec -> i64
             }
 
+            // D5.3/D5.6: Closure — compile as packed i64 (table_idx << 32 | env_ptr)
+            HirExprKind::Closure { captures, .. } => {
+                let ptr = expr as *const HirExpr as usize;
+                let cidx = *self.closure_expr_map.get(&ptr).ok_or_else(|| TenthError::RuntimeError {
+                    message: "WASM: 闭包未注册".into(),
+                })?;
+                let (_func_idx, _type_idx, _pc) = self.closure_info[cidx];
+                // Use closure index (table position) as fn_ptr, NOT func_idx
+                let table_idx = cidx as i64;
+                if captures.is_empty() {
+                    // No captures: env_ptr = 0, packed = table_idx << 32
+                    body.instruction(&Instruction::I64Const(table_idx << 32));
+                } else {
+                    // Allocate env struct via tenth_alloc (import 6)
+                    // size = captures_count * 8
+                    let env_size = captures.len() as i32 * 8;
+                    body.instruction(&Instruction::I32Const(env_size));
+                    body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32
+                    body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64 env_ptr
+                    // Store env_ptr in temp local
+                    let tmp = self.local_count;
+                    self.local_count += 1;
+                    body.instruction(&Instruction::LocalSet(tmp));
+                    // Write each captured variable to env struct
+                    for (ci, cap_name) in captures.iter().enumerate() {
+                        body.instruction(&Instruction::LocalGet(tmp));
+                        body.instruction(&Instruction::I32WrapI64);
+                        // Load the captured variable's value
+                        if let Some(&idx) = self.local_map.get(cap_name) {
+                            body.instruction(&Instruction::LocalGet(idx));
+                            // Convert f64/bool to i64 for storage
+                            // (locals already store as i64, so no conversion needed)
+                        } else {
+                            // Captured variable not found — push 0
+                            body.instruction(&Instruction::I64Const(0));
+                        }
+                        let arg = wasm_encoder::MemArg { offset: (ci as u64) * 8, align: 0, memory_index: 0 };
+                        body.instruction(&Instruction::I64Store(arg));
+                    }
+                    // Push packed value: (table_idx << 32) | env_ptr
+                    body.instruction(&Instruction::I64Const(table_idx << 32));
+                    body.instruction(&Instruction::LocalGet(tmp));
+                    body.instruction(&Instruction::I64Or);
+                }
+            }
+
             _ => return Err(TenthError::RuntimeError {
                 message: format!("WASM: 不支持的表达式 {:?}", expr.kind),
             }),
@@ -951,6 +1279,16 @@ impl WasmCompiler {
                         body.instruction(&Instruction::I64ReinterpretF64);
                     } else if expr_bool {
                         body.instruction(&Instruction::I64ExtendI32U);
+                    }
+                    // D5: If init is a Closure, register variable as closure var
+                    if let HirExprKind::Closure { .. } = &e.kind {
+                        let ptr = e as *const HirExpr as usize;
+                        if let Some(&cidx) = self.closure_expr_map.get(&ptr) {
+                            let (_, type_idx, _) = self.closure_info[cidx];
+                            for name in names {
+                                self.closure_vars.insert(name.clone(), type_idx);
+                            }
+                        }
                     }
                 } else {
                     body.instruction(&Instruction::I64Const(0));
@@ -1239,6 +1577,126 @@ impl WasmCompiler {
             HirStmtKind::Loop { body } => { for s in body { self.cs_stmt(s); } }
             HirStmtKind::For { body, .. } => { self.cs_stmt(body); }
             HirStmtKind::Return(expr) => { if let Some(e) = expr { self.cs_expr(e); } }
+            _ => {}
+        }
+    }
+
+    // ── Closure collection (D5) ─────────────────────────────────────────
+
+    /// Traverse HIR and register all Closure nodes. Assigns func_idx and
+    /// stores captures. type_idx is filled later during emit_type_section.
+    fn collect_closures(&mut self, program: &HirProgram) {
+        let num_user_funcs = program.functions.len() as u32;
+        for func in &program.functions {
+            self.cc_expr(&func.body, num_user_funcs);
+        }
+        if let Some(ref e) = program.main_expr {
+            self.cc_expr(e, num_user_funcs);
+        }
+    }
+
+    fn cc_expr(&mut self, e: &HirExpr, num_user_funcs: u32) {
+        match &e.kind {
+            HirExprKind::Closure { params, body, captures } => {
+                let cidx = self.closure_info.len() as u32;
+                // func_idx = IMPORT_COUNT + num_user_funcs + 1 (main) + cidx
+                let func_idx = IMPORT_COUNT + num_user_funcs + 1 + cidx;
+                let param_count = params.len() as u32;
+                self.closure_info.push((func_idx, 0, param_count));
+                self.closure_captures.push(captures.clone());
+                let ptr = e as *const HirExpr as usize;
+                self.closure_expr_map.insert(ptr, cidx as usize);
+                // Recurse for nested closures
+                self.cc_expr(body, num_user_funcs);
+            }
+            HirExprKind::Binary { left, right, .. } => {
+                self.cc_expr(left, num_user_funcs);
+                self.cc_expr(right, num_user_funcs);
+            }
+            HirExprKind::Unary { expr: inner, .. } => {
+                self.cc_expr(inner, num_user_funcs);
+            }
+            HirExprKind::Call { func, args, .. } => {
+                self.cc_expr(func, num_user_funcs);
+                for a in args { self.cc_expr(a, num_user_funcs); }
+            }
+            HirExprKind::GenericCall { func, args, .. } => {
+                self.cc_expr(func, num_user_funcs);
+                for a in args { self.cc_expr(a, num_user_funcs); }
+            }
+            HirExprKind::MethodCall { receiver, args, .. } => {
+                self.cc_expr(receiver, num_user_funcs);
+                for a in args { self.cc_expr(a, num_user_funcs); }
+            }
+            HirExprKind::Block { stmts, final_expr } => {
+                for s in stmts { self.cc_stmt(s, num_user_funcs); }
+                if let Some(e) = final_expr { self.cc_expr(e, num_user_funcs); }
+            }
+            HirExprKind::If { cond, then_branch, else_branch, .. } => {
+                self.cc_expr(cond, num_user_funcs);
+                self.cc_expr(then_branch, num_user_funcs);
+                if let Some(e) = else_branch { self.cc_expr(e, num_user_funcs); }
+            }
+            HirExprKind::Assign { value, .. } => { self.cc_expr(value, num_user_funcs); }
+            HirExprKind::AssignOp { value, .. } => { self.cc_expr(value, num_user_funcs); }
+            HirExprKind::StructLiteral { fields, .. } => {
+                for (_, e) in fields { self.cc_expr(e, num_user_funcs); }
+            }
+            HirExprKind::EnumLiteral { fields, .. } => {
+                for (_, e) in fields { self.cc_expr(e, num_user_funcs); }
+            }
+            HirExprKind::Field { target, .. } => { self.cc_expr(target, num_user_funcs); }
+            HirExprKind::FieldAssign { target, value, .. } => {
+                self.cc_expr(target, num_user_funcs);
+                self.cc_expr(value, num_user_funcs);
+            }
+            HirExprKind::Index { target, indices } => {
+                self.cc_expr(target, num_user_funcs);
+                for idx in indices {
+                    match idx {
+                        Index::Single(e) => self.cc_expr(e, num_user_funcs),
+                        Index::Range { start, end } => {
+                            if let Some(s) = start { self.cc_expr(s, num_user_funcs); }
+                            if let Some(e) = end { self.cc_expr(e, num_user_funcs); }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            HirExprKind::Ref(inner) | HirExprKind::MutRef(inner)
+            | HirExprKind::Deref(inner) | HirExprKind::TryBlock(inner) => {
+                self.cc_expr(inner, num_user_funcs);
+            }
+            HirExprKind::TensorLiteral { data, .. } => {
+                for row in data { for e in row { self.cc_expr(e, num_user_funcs); } }
+            }
+            HirExprKind::ArrayLiteral { elements, .. } => {
+                for e in elements { self.cc_expr(e, num_user_funcs); }
+            }
+            HirExprKind::Range { start, end, .. } => {
+                if let Some(s) = start { self.cc_expr(s, num_user_funcs); }
+                if let Some(e) = end { self.cc_expr(e, num_user_funcs); }
+            }
+            HirExprKind::Match { scrutinee, arms, .. } => {
+                self.cc_expr(scrutinee, num_user_funcs);
+                for arm in arms { self.cc_expr(&arm.body, num_user_funcs); }
+            }
+            _ => {}
+        }
+    }
+
+    fn cc_stmt(&mut self, s: &HirStmt, num_user_funcs: u32) {
+        use crate::hir::hir::HirStmtKind;
+        match &s.kind {
+            HirStmtKind::Expr(e) => self.cc_expr(e, num_user_funcs),
+            HirStmtKind::Let { init, .. } => { if let Some(e) = init { self.cc_expr(e, num_user_funcs); } }
+            HirStmtKind::While { cond, body } => {
+                self.cc_expr(cond, num_user_funcs);
+                self.cc_stmt(body, num_user_funcs);
+            }
+            HirStmtKind::Loop { body } => { for s in body { self.cc_stmt(s, num_user_funcs); } }
+            HirStmtKind::For { body, .. } => { self.cc_stmt(body, num_user_funcs); }
+            HirStmtKind::Return(expr) => { if let Some(e) = expr { self.cc_expr(e, num_user_funcs); } }
             _ => {}
         }
     }

@@ -263,8 +263,17 @@ fn parse_primary(p: &mut Parser) -> i64 {
     if d == 7 { return parse_if_expr(p); };
     // Match (9)
     if d == 9 { return parse_match_expr(p); };
-    // Ampersand (40)
+    // Ampersand (40) — ref or mut_ref (&mut)
     if d == 40 {
+        let next = parser_peek(p);
+        if next.disc == 6 {
+            // &mut — exclusive borrow
+            parser_advance(p); // skip mut
+            let inner = parse_unary(p);
+            let idx = add_expr(p, "mut_ref");
+            p.expr_nodes[idx - 1].left = inner;
+            return idx;
+        };
         let inner = parse_unary(p);
         let idx = add_expr(p, "ref");
         p.expr_nodes[idx - 1].left = inner;
@@ -294,9 +303,9 @@ fn parse_primary(p: &mut Parser) -> i64 {
         return idx;
     };
     // Pipe (41) — closure: |params| body
+    // Note: parse_primary already consumed the opening `|` via parser_advance above.
     if d == 41 {
-        parser_advance(p); // skip |
-        let mut closure_params = Vec::new();
+        let mut closure_param_names = Vec::new();
         loop {
             let t = parser_peek(p);
             if t.disc == 41 { parser_advance(p); break; }; // closing |
@@ -305,7 +314,7 @@ fn parse_primary(p: &mut Parser) -> i64 {
             // skip optional : Type
             let t2 = parser_peek(p);
             if t2.disc == 55 { parser_advance(p); parser_advance(p); }; // skip : and type
-            closure_params.push(Param { name: pname, type_ann: "" });
+            closure_param_names.push(pname);
             let t3 = parser_peek(p);
             if t3.disc == 53 { parser_advance(p); } // skip ,
             else if t3.disc == 41 { parser_advance(p); break; }; // closing |
@@ -315,10 +324,12 @@ fn parse_primary(p: &mut Parser) -> i64 {
         // Store params as a sub-expression list
         p.expr_nodes[idx - 1].left = body;
         p.expr_nodes[idx - 1].extra_start = p.expr_nodes.len() + 1;
-        p.expr_nodes[idx - 1].extra_count = closure_params.len();
-        for pi in 0..closure_params.len() {
+        p.expr_nodes[idx - 1].extra_count = closure_param_names.len();
+        let mut pi: i64 = 0;
+        while pi < closure_param_names.len() {
             let pidx = add_expr(p, "ident");
-            p.expr_nodes[pidx - 1].sval = closure_params[pi].name;
+            p.expr_nodes[pidx - 1].sval = closure_param_names[pi];
+            pi = pi + 1;
         };
         return idx;
     };

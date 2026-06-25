@@ -6,6 +6,8 @@
 >
 > 演进路线与阶段规划见 `CODE_WIKI.md` §10。
 >
+> **2026-06-25 更新**：Phase D — D3（借用检查）+ D5（闭包 WASM 后端）完成，Phase D 全部 7 项（D1-D7）达成。D3：tenthc lower.th 新增 Ownership 状态存储（Owned/SharedRef/ExclusiveRef/Moved）、check_use/check_borrow_shared/check_borrow_mut 借用检查函数、release_borrows 借用释放；parser.th 补全 `&mut` 解析。D5：tenthc lower.th 实现 free_vars_in 递归捕获分析；wasm.th 新增 table/elem section + call_indirect 闭包调用 + env 装箱（tenth_alloc 分配 captures struct）；修复闭包解析双 advance bug（parse_primary 已消费 `|`，闭包块重复 advance 吞掉首个参数）；修复 `&&`/`||` 误用 i64 and/or 指令（WASM 比较结果为 i32，需用 I32And/I32Or）。新增 5 项 parity 测试（D3×3 + D5×2），parity_test 124→129 项全绿，499+ 测试无回归。
+>
 > **2026-06-25 更新**：Phase D — D2（泛型实例化）+ D6（Tensor WASM 后端）完成（阶段 1 并行）。D2：tenthc 新增泛型参数解析 `<T, U>`、泛型调用前瞻启发式 `looks_like_generic_call`、`substitute_type` 类型替换与 mangled name 实例化（`fn_name_T1_T2`），Rust 侧 lower.rs 同步将 GenericCall 改写为普通 Call。D6：tenthc wasm.th 新增 tensor_from_vec host import (idx 17) 与 TensorLiteral 编译，Rust 侧 wasm.rs 同步；修复 parser.th parse_primary 双 advance bug（tensor 字面量解析失败根因）。修复 three_stage.rs / wasm_backend_minimal.rs linker 缺失 tensor_from_vec 注册导致的回归。新增 4 项 parity 测试（D2×3 + D6×1），parity_test 120→124 项全绿，499+ 测试无回归，自举管道通过。
 >
 > **2026-06-25 更新**：Phase D — D1（Trait 系统）完成。tenthc 新增 trait 定义/inherent impl 解析与方法静态分派（mangled name `__<Type>_<method>`）；修复 lexer self token 缺少 sval、lowerer self 参数 type_ann 未覆盖为 impl 类型名两处 bug；Rust 母编译器同步实现 inherent impl 方法分派。新增 3 项 D1 parity 测试全部通过，parity_test 117→120 项全绿，499+ 测试无回归。
