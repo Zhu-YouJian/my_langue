@@ -6,6 +6,8 @@
 >
 > 演进路线与阶段规划见 `CODE_WIKI.md` §10。
 >
+> **2026-06-25 架构决策**：自举长期路线图确立。重新审视 WASM 路径与"完全摆脱 Rust"终极目标的契合度，确认 WASM 路径的根本局限（执行运行时 wasmi/wasmtime 是 Rust 写的，"完全摆脱 Rust"在 WASM 路径上不可能达成）。决策采用两阶段策略：阶段 1（当前 spec）WASM 路径达成 C4 固定点，阶段 2（未来 spec）实现 native 后端达成运行时自举。Native 后端三条子路径评估：C2-直接机器码（5000-10000 行 Tenth，无外部依赖，推荐）、C2-LLVM IR（引入 C++ 依赖违背精神，不推荐）、C3-C 翻译（2026-06-04 已尝试并删除，内存管理未解决，重新评估需先解决所有权→C 内存映射）。新增 `docs/superpowers/self-hosting-roadmap.md` 长期路线图文档，spec.md §8 追加架构决策记录。
+>
 > **2026-06-25 更新**：自举固定点攻关 spec 重构。前置 spec `docs/superpowers/specs/2026-06-20-self-hosting-master-plan/` 已归档（Phase A-D 全部完成，D1-D7 共 129 用例全绿，仅 C4 固定点未达成）。新建 `docs/superpowers/specs/2026-06-25-self-hosting-fixpoint/`（含 spec.md / tasks.md / checklist.md），重新设计 C4 攻关方案：5 阶段架构（运行时迁移→确定性保证→端到端跑通→固定点达成→CI 集成），锁定 4 项设计决策（Wasmtime JIT / wasmi 保留 / 字节级等价不可达成则终止 / 大重构需求则终止），明确 4 项硬性退出条件（不允许降级实现）。同步修正旧 spec 文档不一致：spec.md 能力差距矩阵（Trait/泛型/借用/闭包/Tensor 已实现）、tasks.md D2/D6 验收 checkbox、checklist.md 状态描述。
 >
 > **2026-06-25 更新**：Phase D — D3（借用检查）+ D5（闭包 WASM 后端）完成，Phase D 全部 7 项（D1-D7）达成。D3：tenthc lower.th 新增 Ownership 状态存储（Owned/SharedRef/ExclusiveRef/Moved）、check_use/check_borrow_shared/check_borrow_mut 借用检查函数、release_borrows 借用释放；parser.th 补全 `&mut` 解析。D5：tenthc lower.th 实现 free_vars_in 递归捕获分析；wasm.th 新增 table/elem section + call_indirect 闭包调用 + env 装箱（tenth_alloc 分配 captures struct）；修复闭包解析双 advance bug（parse_primary 已消费 `|`，闭包块重复 advance 吞掉首个参数）；修复 `&&`/`||` 误用 i64 and/or 指令（WASM 比较结果为 i32，需用 I32And/I32Or）。新增 5 项 parity 测试（D3×3 + D5×2），parity_test 124→129 项全绿，499+ 测试无回归。
