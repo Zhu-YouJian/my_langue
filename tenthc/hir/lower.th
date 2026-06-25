@@ -178,6 +178,17 @@ fn is_type_f64(p: &mut HirProgram, ty: i64) -> bool {
     p.type_nodes[ty - 1].sub == 2
 }
 
+// Check if a type index is f32 (sub == 3) — Phase 5.2 step 1
+fn is_type_f32(p: &mut HirProgram, ty: i64) -> bool {
+    if ty <= 0 || ty > p.type_nodes.len() { return false; };
+    p.type_nodes[ty - 1].sub == 3
+}
+
+// Check if a type index is float (f32 or f64) — Phase 5.2 step 1
+fn is_type_float(p: &mut HirProgram, ty: i64) -> bool {
+    is_type_f64(p, ty) || is_type_f32(p, ty)
+}
+
 // Check if a type index is str (sub == 5)
 fn is_type_str(p: &mut HirProgram, ty: i64) -> bool {
     if ty <= 0 || ty > p.type_nodes.len() { return false; };
@@ -343,7 +354,11 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         return push_expr(p, 0, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
     };
     if kind == "float" {
-        let ty = add_type(p, 0, 2, "", 0, 0, 0);
+        // Phase 5.2 step 1：float 字面量按 e.ival 决定 dtype
+        // e.ival=1 → F32（sub=3），其他（含默认 0）→ F64（sub=2）
+        // 默认行为：ival=0 时仍走 F64，保持向后兼容
+        let sub: i64 = if e.ival == 1 { 3 } else { 2 };
+        let ty = add_type(p, 0, sub, "", 0, 0, 0);
         return push_expr(p, 1, 0, e.fval, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
     };
     if kind == "bool" {
@@ -484,9 +499,12 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             // String concatenation: str + str → str
             bty = add_type(p, 0, 5, "", 0, 0, 0);
         } else {
-            // Arithmetic: f64 if either operand is f64, else i64
+            // Arithmetic: 优先级 F64 > F32 > I64（与 Rust lower.rs:1286-1290 infer_binary_type 对齐）
+            // Phase 5.2 step 1：补齐 F32 分支
             if is_type_f64(p, get_expr_ty(p, l)) || is_type_f64(p, get_expr_ty(p, r)) {
                 bty = add_type(p, 0, 2, "", 0, 0, 0);
+            } else if is_type_f32(p, get_expr_ty(p, l)) || is_type_f32(p, get_expr_ty(p, r)) {
+                bty = add_type(p, 0, 3, "", 0, 0, 0);
             } else {
                 bty = add_type(p, 0, 0, "", 0, 0, 0);
             };

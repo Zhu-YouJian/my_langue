@@ -77,6 +77,8 @@ fn parse_primary(p: &mut Parser) -> i64 {
     if d == 1 {
         let idx = add_expr(p, "float");
         p.expr_nodes[idx - 1].fval = tok.fval;
+        // Phase 5.2 step 2：保留 token 的 dtype（ival: 0=F64, 1=F32）
+        p.expr_nodes[idx - 1].ival = tok.ival;
         return idx;
     };
     // StringLiteral (2) — may be interpolated
@@ -939,14 +941,32 @@ fn parse_stmt(p: &mut Parser) -> i64 {
         if t2.disc == 6 { parser_advance(p); mutable = true; };
         let name_tok = parser_advance(p);
         let mut name = name_tok.sval;
-        // skip optional : Type
+        // Phase 5.2 step 4：检测类型注解是否为 f32（单 token 类型）
+        // 用于在 `let x: f32 = <float_literal>` 时把字面量 dtype 提升为 F32，
+        // 复用 step 2 已建立的 ival 通道（1=F32），下游 lower.th step 1 据此降级为 F32 类型。
+        // 复合类型注解（如 Tensor[f32]）现有 parser 不支持，不在本 step 范围。
+        let mut type_ann_is_f32 = false;
         let t3 = parser_peek(p);
-        if t3.disc == 55 { parser_advance(p); parser_advance(p); }; // skip : and type
+        if t3.disc == 55 {
+            parser_advance(p); // skip :
+            let ty_tok = parser_peek(p);
+            if ty_tok.disc == 3 && ty_tok.sval == "f32" {
+                type_ann_is_f32 = true;
+            };
+            parser_advance(p); // skip type token
+        };
         // =
         let t4 = parser_peek(p);
         if t4.disc == 42 {
             parser_advance(p);
             let init = parse_expr(p);
+            // Phase 5.2 step 4：若类型注解为 f32 且初始表达式是直接 FloatLiteral，
+            // 把字面量 dtype 改为 F32（ival=1）。
+            if type_ann_is_f32 && init > 0 && init <= p.expr_nodes.len() {
+                if p.expr_nodes[init - 1].kind == "float" {
+                    p.expr_nodes[init - 1].ival = 1;
+                };
+            };
             let idx = add_stmt(p, "let");
             p.stmt_nodes[idx - 1].name = name;
             p.stmt_nodes[idx - 1].expr_idx = init;

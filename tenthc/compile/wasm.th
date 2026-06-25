@@ -422,16 +422,21 @@ fn push_str_bytes(out: &mut Vec<i64>, s: str) {
     };
 }
 
-// ── Type helper: 判断表达式是否为 f64 类型 ──
+// ── Type helper: 判断表达式是否为 float 类型（f32 或 f64，策略 A 统一走 f64 路径）──
+// Phase 5.2 step 3：策略 A（f32→f64 提升），与 Rust wasm.rs:22 既有 F32|F64→F64 一致
+// FloatLiteral 默认仍是 F64；带 f32 后缀的字面量经 lower.th 降级为 sub=3，
+// is_expr_float 识别 sub==3 后让下游算术路径统一发 f64 指令（无需新增 wasm_f32_* 函数族）
 
 fn is_expr_float(hir: HirProgram, idx: i64) -> bool {
     if idx <= 0 || idx > hir.expr_nodes.len() { return false; };
     let e = hir.expr_nodes[idx - 1];
-    // FloatLiteral 直接是 f64
+    // FloatLiteral 直接是 float（f32 或 f64，策略 A 都走 f64 路径）
     if e.disc == 1 { return true; };
-    // 检查 ty 字段：查 type_nodes 的 sub == 2 表示 f64
+    // 检查 ty 字段：sub == 2 (f64) 或 sub == 3 (f32) 均为 float
     if e.ty > 0 && e.ty <= hir.type_nodes.len() {
-        if hir.type_nodes[e.ty - 1].sub == 2 { return true; };
+        let sub = hir.type_nodes[e.ty - 1].sub;
+        if sub == 2 { return true; };
+        if sub == 3 { return true; };  // Phase 5.2 step 3：F32 也视为 float
     };
     // Binary 表达式：递归检查左操作数
     if e.disc == 5 { return is_expr_float(hir, e.left); };

@@ -63,7 +63,53 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
             let after_dot = lexer_peek(lexer);
             lexer.pos = save_pos;
             if is_digit(after_dot) {
-                is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer); while is_digit(ch) { frac_val = frac_val * 10 + char_to_digit(ch); frac_len = frac_len + 1; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; let mut div: f64 = 1.0; let mut i: i64 = 0; while i < frac_len { div = div * 10.0; i = i + 1; }; let fv: f64 = ival; let ff: f64 = frac_val; return Token { kind: TokenKind::FloatLiteral(fv + (ff / div)), span: span, disc: 1, ival: ival, fval: fv + (ff / div), .. };
+                is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer); while is_digit(ch) { frac_val = frac_val * 10 + char_to_digit(ch); frac_len = frac_len + 1; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; let mut div: f64 = 1.0; let mut i: i64 = 0; while i < frac_len { div = div * 10.0; i = i + 1; }; let fv: f64 = ival; let ff: f64 = frac_val;
+                // Phase 5.2 step 2：检测 f32/f64 后缀
+                // f32 → ival=1（lower.th 据此降级为 F32），f64 或无后缀 → ival=0（F64）
+                // 边界检查：后缀后必须非字母数字（避免 3.14factor 误匹配）
+                let mut dtype: i64 = 0;
+                if ch == "f" {
+                    let pos1 = lexer.pos + 1;
+                    let pos2 = lexer.pos + 2;
+                    let pos3 = lexer.pos + 3;
+                    if pos2 < lexer.source.len() && pos3 <= lexer.source.len() {
+                        let c1 = lexer.source[pos1];
+                        let c2 = lexer.source[pos2];
+                        let c3 = if pos3 < lexer.source.len() { lexer.source[pos3] } else { "" };
+                        if c1 == "3" && c2 == "2" && !is_alnum(c3) {
+                            dtype = 1;
+                            lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+                            ch = lexer_peek(lexer);
+                        } else if c1 == "6" && c2 == "4" && !is_alnum(c3) {
+                            dtype = 0;
+                            lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+                            ch = lexer_peek(lexer);
+                        };
+                    };
+                };
+                return Token { kind: TokenKind::FloatLiteral(fv + (ff / div)), span: span, disc: 1, ival: dtype, fval: fv + (ff / div), .. };
+            };
+        };
+        // Phase 5.2 step 2：整数后跟 f32 后缀也变 FloatLiteral（与 Rust 语义一致：3f32 == 3.0f32）
+        if ch == "f" {
+            let pos1 = lexer.pos + 1;
+            let pos2 = lexer.pos + 2;
+            let pos3 = lexer.pos + 3;
+            if pos2 < lexer.source.len() && pos3 <= lexer.source.len() {
+                let c1 = lexer.source[pos1];
+                let c2 = lexer.source[pos2];
+                let c3 = if pos3 < lexer.source.len() { lexer.source[pos3] } else { "" };
+                if c1 == "3" && c2 == "2" && !is_alnum(c3) {
+                    lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+                    ch = lexer_peek(lexer);
+                    let fv: f64 = ival;
+                    return Token { kind: TokenKind::FloatLiteral(fv), span: span, disc: 1, ival: 1, fval: fv, .. };
+                } else if c1 == "6" && c2 == "4" && !is_alnum(c3) {
+                    lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+                    ch = lexer_peek(lexer);
+                    let fv: f64 = ival;
+                    return Token { kind: TokenKind::FloatLiteral(fv), span: span, disc: 1, ival: 0, fval: fv, .. };
+                };
             };
         };
         return Token { kind: TokenKind::IntLiteral(ival), span: span, disc: 0, ival: ival, .. };
