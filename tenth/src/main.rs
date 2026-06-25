@@ -704,7 +704,12 @@ fn register_natives(vm: &mut Vm) {
                 let grad_tensor = Tensor::from_tensor_data(grad.clone());
                 Ok(Value::Tensor(Rc::new(RefCell::new(grad_tensor))))
             } else {
-                let zeros = Tensor::zeros(&p.shape());
+                // 按参数 dtype 返回零张量
+                let zeros = if p.is_f32() {
+                    Tensor::zeros_f32(&p.shape())
+                } else {
+                    Tensor::zeros(&p.shape())
+                };
                 Ok(Value::Tensor(Rc::new(RefCell::new(zeros))))
             }
         } else {
@@ -735,6 +740,7 @@ fn register_natives(vm: &mut Vm) {
         if let (Value::Tensor(logits), Value::Tensor(target)) = (&args[0], &args[1]) {
             let logits_data = logits.borrow();
             let target_data = target.borrow();
+            let is_f32 = logits_data.is_f32();
             let sm = logits_data.softmax().ok_or_else(|| {
                 tenth::error::TenthError::RuntimeError { message: "cross_entropy 中 softmax 失败".into() }
             })?;
@@ -743,14 +749,19 @@ fn register_natives(vm: &mut Vm) {
             let tgt_flat = target_data.data.as_standard_layout().to_owned();
             let sm_slice = sm_data.as_slice().unwrap_or(&[]);
             let tgt_slice = tgt_flat.as_slice().unwrap_or(&[]);
-            let mut loss_val = 0.0f64;
             let n = sm_slice.len() as f64;
+            let mut loss_val = 0.0f64;
             for i in 0..sm_slice.len().min(tgt_slice.len()) {
                 let p = sm_slice[i].max(eps);
                 loss_val -= tgt_slice[i] * p.ln();
             }
             loss_val /= n.max(1.0);
-            let loss_tensor = Tensor::from_vec(vec![loss_val], vec![1]);
+            // 按 logits dtype 构造对应 loss tensor
+            let loss_tensor = if is_f32 {
+                Tensor::from_vec_f32(vec![loss_val as f32], vec![1])
+            } else {
+                Tensor::from_vec(vec![loss_val], vec![1])
+            };
             let result = Rc::new(RefCell::new(loss_tensor));
             if vm.recording {
                 let sm_rc = Rc::new(RefCell::new(sm));
@@ -907,6 +918,19 @@ fn register_natives(vm: &mut Vm) {
         }).collect();
         Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec(data, vec![rows, cols])))))
     });
+    vm.add_native("randn_f32".into(), |_vm, args| {
+        let rows = match args.first() { Some(Value::Int(n)) => *n as usize, _ => 1 };
+        let cols = match args.get(1) { Some(Value::Int(n)) => *n as usize, _ => 1 };
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let data: Vec<f32> = (0..rows * cols).map(|_| {
+            // Box-Muller transform for normal distribution (f32 版本)
+            let u1: f32 = rng.r#gen::<f32>().max(1e-10);
+            let u2: f32 = rng.r#gen::<f32>();
+            (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
+        }).collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec_f32(data, vec![rows, cols])))))
+    });
     vm.add_native("HashMap::new".into(), |_vm, _args| {
         Ok(Value::Map(Rc::new(RefCell::new(std::collections::HashMap::new()))))
     });
@@ -957,9 +981,17 @@ fn register_natives(vm: &mut Vm) {
     vm.add_native("tensor_from_vec".into(), |_vm, args| {
         if args.len() >= 3 {
             if let (Value::Vec(items), Value::Int(rows), Value::Int(cols)) = (&args[0], &args[1], &args[2]) {
-                let data: Vec<f64> = items.borrow().iter().map(|v| v.as_float().unwrap_or(0.0)).collect();
-                let tensor = Tensor::from_vec(data, vec![*rows as usize, *cols as usize]);
-                Ok(Value::Tensor(Rc::new(RefCell::new(tensor))))
+                // 按 Vec 内元素 dtype 判断：含 Float32 → f32 Tensor
+                let has_f32 = items.borrow().iter().any(|v| matches!(v, Value::Float32(_)));
+                if has_f32 {
+                    let data: Vec<f32> = items.borrow().iter().map(|v| v.as_f32().unwrap_or(0.0)).collect();
+                    let tensor = Tensor::from_vec_f32(data, vec![*rows as usize, *cols as usize]);
+                    Ok(Value::Tensor(Rc::new(RefCell::new(tensor))))
+                } else {
+                    let data: Vec<f64> = items.borrow().iter().map(|v| v.as_float().unwrap_or(0.0)).collect();
+                    let tensor = Tensor::from_vec(data, vec![*rows as usize, *cols as usize]);
+                    Ok(Value::Tensor(Rc::new(RefCell::new(tensor))))
+                }
             } else {
                 Err(tenth::error::TenthError::RuntimeError { message: "tensor_from_vec(vec, rows, cols) 期望一个 Vec 和两个整数".into() })
             }

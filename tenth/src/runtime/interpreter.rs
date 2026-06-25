@@ -223,10 +223,7 @@ impl Interpreter {
             Value::FnRef {
                 name: "tensor".to_string(),
                 params: vec![("data".to_string(), Type::Unknown)],
-                return_type: Type::Tensor {
-                    dtype: BaseType::F64,
-                    dims: vec![Dim::Any],
-                },
+                return_type: Type::Unknown,
             },
         );
 
@@ -292,7 +289,7 @@ impl Interpreter {
                 Value::FnRef {
                     name: name.to_string(),
                     params: vec![("dims".to_string(), Type::Unknown)],
-                    return_type: Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] },
+                    return_type: Type::Unknown,
                 },
             );
         }
@@ -525,14 +522,14 @@ impl Interpreter {
                 self.resolve_var(name)
                     .or_else(|| {
                         match name.as_str() {
-                            "println" | "eprintln" | "tensor" | "rand" | "randn"
+                            "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32"
                             | "read_file" | "write_file" | "write_bytes" | "read_bytes" | "compile_host"
                             | "compile_program"
                             | "Vec::new" | "HashMap::new"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
                             | "cross_entropy"
-                            | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "tensor_from_vec"
+                            | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "to_f32" | "to_f64" | "tensor_from_vec"
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
                             | "format" | "parse_int" | "parse_float"
@@ -703,23 +700,44 @@ impl Interpreter {
                 Ok(Some(Value::Vec(Rc::new(RefCell::new(vals)))))
             }
 
-            HirExprKind::TensorLiteral { data, .. } => {
-                let mut rows: Vec<Vec<f64>> = Vec::new();
+            HirExprKind::TensorLiteral { data, ty, .. } => {
+                // 按 HIR 类型注解的 dtype 选择构造路径
+                let is_f32 = matches!(
+                    ty,
+                    crate::hir::types::Type::Tensor { dtype: crate::hir::types::BaseType::F32, .. }
+                );
+                let mut rows_f32: Vec<Vec<f32>> = Vec::new();
+                let mut rows_f64: Vec<Vec<f64>> = Vec::new();
                 for row in data {
-                    let mut row_vals = Vec::new();
+                    let mut row_f32: Vec<f32> = Vec::new();
+                    let mut row_f64: Vec<f64> = Vec::new();
                     for elem in row {
                         let v = self.eval_expr(elem)?.ok_or_else(|| TenthError::RuntimeError {
                             message: "张量元素为空值".into(),
                         })?;
-                        row_vals.push(v.as_float().unwrap_or(0.0));
+                        if is_f32 {
+                            row_f32.push(v.as_f32().unwrap_or(0.0));
+                        } else {
+                            row_f64.push(v.as_float().unwrap_or(0.0));
+                        }
                     }
-                    rows.push(row_vals);
+                    if is_f32 { rows_f32.push(row_f32); } else { rows_f64.push(row_f64); }
                 }
-                let nrows = rows.len();
-                let ncols = rows.first().map(|r| r.len()).unwrap_or(0);
-                let flat: Vec<f64> = rows.into_iter().flatten().collect();
-                let tensor = self.make_tensor(flat, vec![nrows, ncols])?;
-                Ok(Some(Value::Tensor(Rc::new(RefCell::new(tensor)))))
+                let nrows = if is_f32 { rows_f32.len() } else { rows_f64.len() };
+                let ncols = if is_f32 {
+                    rows_f32.first().map(|r| r.len()).unwrap_or(0)
+                } else {
+                    rows_f64.first().map(|r| r.len()).unwrap_or(0)
+                };
+                if is_f32 {
+                    let flat: Vec<f32> = rows_f32.into_iter().flatten().collect();
+                    let tensor = Tensor::from_vec_f32(flat, vec![nrows, ncols]);
+                    Ok(Some(Value::Tensor(Rc::new(RefCell::new(tensor)))))
+                } else {
+                    let flat: Vec<f64> = rows_f64.into_iter().flatten().collect();
+                    let tensor = self.make_tensor(flat, vec![nrows, ncols])?;
+                    Ok(Some(Value::Tensor(Rc::new(RefCell::new(tensor)))))
+                }
             }
 
             HirExprKind::If { cond, then_branch, else_branch, .. } => {
@@ -3319,6 +3337,13 @@ impl Interpreter {
             "tensor_from_vec" => {
                 if args.len() >= 3 {
                     if let (Value::Vec(items), Value::Int(rows), Value::Int(cols)) = (&args[0], &args[1], &args[2]) {
+                        // 按 Vec 内元素 dtype 判断：含 Float32 → f32 Tensor
+                        let has_f32 = items.borrow().iter().any(|v| matches!(v, Value::Float32(_)));
+                        if has_f32 {
+                            let data: Vec<f32> = items.borrow().iter().map(|v| v.as_f32().unwrap_or(0.0)).collect();
+                            let tensor = Tensor::from_vec_f32(data, vec![*rows as usize, *cols as usize]);
+                            return Ok(Some(Value::Tensor(Rc::new(RefCell::new(tensor)))));
+                        }
                         let data: Vec<f64> = items.borrow().iter().map(|v| v.as_float().unwrap_or(0.0)).collect();
                         let tensor = Tensor::from_vec(data, vec![*rows as usize, *cols as usize]);
                         return Ok(Some(Value::Tensor(Rc::new(RefCell::new(tensor)))));
@@ -3462,6 +3487,13 @@ impl Interpreter {
                     .map(|a| a.as_int().unwrap_or(1) as usize)
                     .collect();
                 let t = Tensor::randn(&shape);
+                return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
+            }
+            "randn_f32" => {
+                let shape: Vec<usize> = args.iter()
+                    .map(|a| a.as_int().unwrap_or(1) as usize)
+                    .collect();
+                let t = Tensor::randn_f32(&shape);
                 return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
             }
             "zeros" => {

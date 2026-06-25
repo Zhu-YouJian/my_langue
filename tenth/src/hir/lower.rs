@@ -349,7 +349,7 @@ impl Lowerer {
                     let fn_info = self.scope.lookup_fn(&ident.name);
                     if var_info.is_none() && fn_info.is_none() {
                         match ident.name.as_str() {
-                            "println" | "eprintln" | "tensor" | "rand" | "randn"
+                            "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32"
                             | "read_file" | "write_file" | "write_bytes" | "read_bytes"
                             | "str_at" | "str_len" | "str_cmp" | "str_slice" | "str_add" | "str_eq" | "str_int"
                             | "Vec::new" | "HashMap::new"
@@ -357,7 +357,7 @@ impl Lowerer {
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
                             | "cross_entropy"
-                            | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "tensor_from_vec"
+                            | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "to_f32" | "to_f64" | "tensor_from_vec"
                             | "f64_bits" | "f64_from_bits"
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
@@ -599,7 +599,11 @@ impl Lowerer {
                     .collect::<TenthResult<_>>()?;
                 let rows = lowered.len() as i64;
                 let cols = lowered.first().map_or(0, |r| r.len() as i64);
-                let ty = Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Known(rows), Dim::Known(cols)] };
+                // 按元素字面量 dtype 推断 Tensor dtype：任一元素为 F32 → F32，否则 F64
+                let dtype = lowered.iter().flatten().find_map(|e| {
+                    if matches!(e.ty, Type::Base(BaseType::F32)) { Some(BaseType::F32) } else { None }
+                }).unwrap_or(BaseType::F64);
+                let ty = Type::Tensor { dtype, dims: vec![Dim::Known(rows), Dim::Known(cols)] };
                 (HirExprKind::TensorLiteral { data: lowered, ty: ty.clone() }, ty)
             }
 
@@ -1210,6 +1214,7 @@ impl Lowerer {
             // Tensor 构造函数：dtype 从参数推断（若无 f32 线索则默认 F64）
             "tensor" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
             "rand" | "randn" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
+            "randn_f32" => Ok(Type::Tensor { dtype: BaseType::F32, dims: vec![Dim::Any] }),
             "read_file" => Ok(Type::str_()),
             "str_at" => Ok(Type::str_()),
             "write_file" | "write_bytes" => Ok(Type::unit()),
@@ -1807,7 +1812,7 @@ impl Lowerer {
                 // Skip built-in names and qualified paths (e.g. "mod::fn")
                 if name.contains("::") { return; }
                 match name.as_str() {
-                    "println" | "eprintln" | "tensor" | "rand" | "randn"
+                    "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32"
                     | "read_file" | "write_file" | "str_at" | "Vec::new" | "HashMap::new"
                     | "compile_host" | "compile_program" | "write_bytes"
                     | "start_grad" | "new_grad" | "stop_grad"
