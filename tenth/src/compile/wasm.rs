@@ -1413,10 +1413,11 @@ impl WasmCompiler {
     fn compile_literal(&mut self, body: &mut Function, lit: &Literal) -> TenthResult<()> {
         match lit {
             Literal::Int(n) => { body.instruction(&Instruction::I64Const(*n)); }
-            Literal::Float(n, dt) => match dt {
-                crate::hir::types::BaseType::F32 => { body.instruction(&Instruction::F32Const(*n as f32)); }
-                _ => { body.instruction(&Instruction::F64Const(*n)); }
-            },
+            // 策略 A：f32→f64 提升。F32 字面量在 WASM 后端统一当 f64 处理，
+            // 与下游所有 F64 处理（compile_binop/compile_unary/Var/Assign 等）保持一致，
+            // 避免 F32Const 压入 f32 栈后下游期望 f64 导致 WASM 验证失败。
+            // dtype 信息在 HIR 层已保留，仅 WASM 执行路径做精度提升。
+            Literal::Float(n, _dt) => { body.instruction(&Instruction::F64Const(*n)); }
             Literal::Bool(b) => { body.instruction(&Instruction::I32Const(if *b { 1 } else { 0 })); }
             Literal::String(s) => {
                 let off = self.intern_string(s);
