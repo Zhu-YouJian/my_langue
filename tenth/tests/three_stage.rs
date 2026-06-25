@@ -11,6 +11,9 @@
 mod three_stage {
     use wasmi::{Config, Engine, Module, Store, Linker, Caller, StackLimits};
     use tenth::compile::wasm::register_host_functions;
+    // Wasmtime JIT runtime (parallel to wasmi interpreter above).
+    // Aliased as `wt` to avoid name conflicts with wasmi types.
+    use wasmtime as wt;
     use std::time::Instant;
 
     /// Build a wasmi Config with enlarged stack limits for the tenthc compiler's
@@ -136,13 +139,109 @@ mod three_stage {
         println!("=== VERIFIED: for loop works through bootstrap ===");
     }
 
+    /// Read a Vec<i64> from wasmtime WASM memory given its pointer.
+    /// Vec layout: cap(8) + len(8) + data_ptr(4) + data...
+    fn read_vec_from_memory_wt(store: &wt::Store<u32>, mem: &wt::Memory, vec_ptr: i64) -> Vec<u8> {
+        let data = mem.data(store);
+        let vp = vec_ptr as i32 as usize;
+        if vp + 20 > data.len() {
+            return Vec::new();
+        }
+        let len = i64::from_le_bytes(data[vp+8..vp+16].try_into().unwrap());
+        let dp = i32::from_le_bytes(data[vp+16..vp+20].try_into().unwrap()) as usize;
+        let mut bytes = Vec::with_capacity(len as usize);
+        for i in 0..len as usize {
+            let pos = dp + i * 8;
+            if pos + 8 > data.len() { break; }
+            let val = i64::from_le_bytes(data[pos..pos+8].try_into().unwrap());
+            bytes.push(val as u8);
+        }
+        bytes
+    }
+
+    /// Wasmtime JIT path for three-stage self-hosting verification.
+    /// Mirrors `run_test()` (wasmi) but uses wasmtime as the Stage 2 runtime.
+    /// Both paths must pass to ensure wasmi/wasmtime semantic parity.
+    fn run_test_wasmtime() {
+        let test_src = "fn add(a: i64, b: i64) -> i64 { let mut s: i64 = 0; for i in 0..b { s = s + a; }; s }";
+        println!("=== [Wasmtime] Stage 1: Rust compile_to_wasm ===");
+        let t0 = Instant::now();
+        let wasm_a = compile_selfhost_to_wasm(test_src);
+        println!("[Wasmtime] WASM-A: {} bytes (compiled in {:?})", wasm_a.len(), t0.elapsed());
+        assert_eq!(&wasm_a[..4], b"\0asm");
+
+        println!("=== [Wasmtime] Stage 2: wasmtime executes compiler ===");
+        let t1 = Instant::now();
+        let (mut store, instance) = tenth::compile::wasmtime_host::instantiate_wasmtime(&wasm_a)
+            .expect("[Wasmtime] instantiate");
+
+        // main() returns Vec<i64> (i64 pointer) in the self-hosting pipeline.
+        // Try i64 first, fall back to i32 for robustness.
+        let vec_ptr: i64 = if let Ok(main_fn) = instance.get_typed_func::<(), i64>(&mut store, "main") {
+            main_fn.call(&mut store, ()).expect("[Wasmtime] call main")
+        } else if let Ok(main_fn) = instance.get_typed_func::<(), i32>(&mut store, "main") {
+            main_fn.call(&mut store, ()).expect("[Wasmtime] call main") as i64
+        } else {
+            panic!("[Wasmtime] main function not found or has unexpected signature");
+        };
+
+        let mem = instance.get_memory(&mut store, "memory").expect("[Wasmtime] memory export");
+        let wasm_b = read_vec_from_memory_wt(&store, &mem, vec_ptr);
+        println!("[Wasmtime] WASM-B: {} bytes (stage 2 took {:?})", wasm_b.len(), t1.elapsed());
+
+        println!("=== [Wasmtime] Stage 3: Verify output WASM ===");
+        assert!(!wasm_b.is_empty() && &wasm_b[..4] == b"\0asm",
+                "[Wasmtime] WASM-B must be non-empty and have valid magic");
+        let e2 = Engine::default();
+        let m2 = Module::new(&e2, &wasm_b).expect("[Wasmtime] compile wasm-b");
+        let mut s2 = Store::new(&e2, ());
+        let mut l2 = Linker::new(&e2);
+        l2.func_wrap("env", "println", |_: Caller<()>, _: i64| {}).unwrap();
+        l2.func_wrap("env", "vec_new", |_: Caller<()>| -> i64 { 0 }).unwrap();
+        l2.func_wrap("env", "vec_len", |_: Caller<()>, _: i64| -> i64 { 0 }).unwrap();
+        l2.func_wrap("env", "vec_push", |_: Caller<()>, _: i64, _: i64| {}).unwrap();
+        l2.func_wrap("env", "vec_get", |_: Caller<()>, _: i64, _: i64| -> i64 { 0 }).unwrap();
+        l2.func_wrap("env", "read_file", |_: Caller<()>, _: i64| -> i64 { 0 }).unwrap();
+        l2.func_wrap("env", "write_bytes", |_: Caller<()>, _: i64, _: i64| -> i64 { 0 }).unwrap();
+        l2.func_wrap("env", "str_add", |_: Caller<()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "str_eq", |_: Caller<()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "str_int", |_: Caller<()>, _: i64| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "tenth_alloc", |_: Caller<()>, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "compile_host", |_: Caller<()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "str_len", |_: Caller<()>, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "str_at", |_: Caller<()>, _: i32, _: i64| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "str_cmp", |_: Caller<()>, _: i32, _: i32, _: i32| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "f64_bits", |_: Caller<()>, x: f64| -> i64 { x.to_bits() as i64 }).unwrap();
+        l2.func_wrap("env", "str_slice", |_: Caller<()>, _: i32, _: i64, _: i64| -> i32 { 0 }).unwrap();
+        l2.func_wrap("env", "tensor_from_vec", |_: Caller<()>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
+        let i2 = l2.instantiate(&mut s2, &m2).expect("[Wasmtime] inst").start(&mut s2).expect("[Wasmtime] start");
+        let add = i2.get_func(&s2, "add").expect("[Wasmtime] add");
+        let mut r2 = [wasmi::Val::I64(0)];
+        add.call(&mut s2, &[wasmi::Val::I64(3), wasmi::Val::I64(4)], &mut r2).expect("[Wasmtime] call add");
+        let result = match r2[0] { wasmi::Val::I64(v) => v, _ => panic!() };
+        println!("=== [Wasmtime] Result: add(3,4) = {} (expected 12) ===", result);
+        assert_eq!(result, 12);
+        println!("=== [Wasmtime] VERIFIED: for loop works through wasmtime bootstrap ===");
+    }
+
     #[test]
     fn three_stage_selfhost() {
         // 128MB stack to accommodate wasmi's interpreter overhead when running
         // the full tenthc compiler (lexer/parser/lowerer/codegen) in WASM.
+        println!("------ wasmi path ------");
         std::thread::Builder::new()
             .stack_size(128 * 1024 * 1024)
             .spawn(run_test)
+            .unwrap()
+            .join()
+            .unwrap();
+
+        // Wasmtime JIT path (parallel verification, same test source).
+        // Both paths must pass to ensure wasmi/wasmtime semantic parity.
+        println!("------ wasmtime path ------");
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(run_test_wasmtime)
             .unwrap()
             .join()
             .unwrap();
