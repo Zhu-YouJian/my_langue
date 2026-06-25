@@ -4,6 +4,7 @@ target/
 *.thw
 dbg_out.txt
 test_out.txt
+test_output.txt
 stdout.txt
 stderr.txt
 tenthc.c
@@ -12,5 +13,6 @@ test_mini.c
 tenthc_full.th
 test_drv6.th
 AI_WORKFLOW.md
+.trae/
 用户反馈/
 docs/superpowers/
