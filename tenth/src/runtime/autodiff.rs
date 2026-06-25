@@ -357,12 +357,12 @@ impl Tape {
                             let a_2d: ArrayD<f64> = if a_ndim == 1 {
                                 a_ref.data.view().insert_axis(ndarray::Axis(0)).into_owned().into_dyn()
                             } else {
-                                a_ref.data.clone()
+                                a_ref.data.as_f64_view()
                             };
                             let b_2d: ArrayD<f64> = if b_ndim == 1 {
                                 b_ref.data.view().insert_axis(ndarray::Axis(1)).into_owned().into_dyn()
                             } else {
-                                b_ref.data.clone()
+                                b_ref.data.as_f64_view()
                             };
                             let grad_2d: ArrayD<f64> = if grad.ndim() == 1 {
                                 if a_ndim == 1 {
@@ -623,7 +623,7 @@ impl Tape {
                             // w_flat = weight.reshape(C_out, C_in*kH*kW)
                             let w_flat_total = c_out * w_shape[1] * w_shape[2] * w_shape[3];
                             let w_flat: ArrayD<f64> = {
-                                let v: Vec<f64> = w_ref.data.iter().cloned().collect();
+                                let v: Vec<f64> = w_ref.data.iter().collect();
                                 ArrayD::from_shape_vec(IxDyn(&[c_out, w_shape[1] * w_shape[2] * w_shape[3]]), v)
                                     .unwrap_or_else(|_| ArrayD::zeros(IxDyn(&[c_out, w_flat_total / c_out])))
                             };

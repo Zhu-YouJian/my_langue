@@ -77,7 +77,7 @@ fn run_vm_autodiff(src: &str) -> Result<Value, String> {
         if let Some(Value::Tensor(t)) = args.first() {
             let p = t.borrow();
             if let Some(ref grad) = p.grad {
-                let grad_tensor = Tensor::from_vec(grad.clone().into_raw_vec(), p.shape());
+                let grad_tensor = Tensor::from_tensor_data(grad.clone());
                 Ok(Value::Tensor(Rc::new(RefCell::new(grad_tensor))))
             } else {
                 let zeros = Tensor::zeros(&p.shape());
