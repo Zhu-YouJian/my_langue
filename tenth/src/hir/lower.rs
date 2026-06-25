@@ -349,7 +349,7 @@ impl Lowerer {
                     let fn_info = self.scope.lookup_fn(&ident.name);
                     if var_info.is_none() && fn_info.is_none() {
                         match ident.name.as_str() {
-                            "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32"
+                            "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
                             | "read_file" | "write_file" | "write_bytes" | "read_bytes"
                             | "str_at" | "str_len" | "str_cmp" | "str_slice" | "str_add" | "str_eq" | "str_int"
                             | "Vec::new" | "HashMap::new"
@@ -1215,6 +1215,8 @@ impl Lowerer {
             "tensor" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
             "rand" | "randn" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
             "randn_f32" => Ok(Type::Tensor { dtype: BaseType::F32, dims: vec![Dim::Any] }),
+            // Phase 5.5：补全 f32 构造函数 native 注册
+            "rand_f32" | "zeros_f32" | "ones_f32" => Ok(Type::Tensor { dtype: BaseType::F32, dims: vec![Dim::Any] }),
             "read_file" => Ok(Type::str_()),
             "str_at" => Ok(Type::str_()),
             "write_file" | "write_bytes" => Ok(Type::unit()),
@@ -1812,7 +1814,7 @@ impl Lowerer {
                 // Skip built-in names and qualified paths (e.g. "mod::fn")
                 if name.contains("::") { return; }
                 match name.as_str() {
-                    "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32"
+                    "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
                     | "read_file" | "write_file" | "str_at" | "Vec::new" | "HashMap::new"
                     | "compile_host" | "compile_program" | "write_bytes"
                     | "start_grad" | "new_grad" | "stop_grad"

@@ -43,3 +43,41 @@ fn zeros_init(rows: i64, cols: i64) -> Tensor[f64, ..] {
 fn constant_init(rows: i64, cols: i64, val: f64) -> Tensor[f64, ..] {
     zeros(rows, cols) + val
 }
+
+// ── Phase 5.4：f32 副本（调用 randn_f32/zeros_f32 构造 f32 tensor，标量改 f32）──
+// Tensor 参数仍标注 Tensor[f64, ..]（类型系统硬约束，Phase 5.0 调研结论），
+// 但内部构造 f32 tensor，运行时按 dtype 分支走 f32 路径。
+
+// Xavier/Glorot uniform initialization (f32).
+fn xavier_uniform_f32(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+    let limit = sqrt(6.0f32 / (fan_in + fan_out));
+    randn_f32(fan_in, fan_out) * limit
+}
+
+// Xavier/Glorot normal initialization (f32).
+fn xavier_normal_f32(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+    let std = sqrt(2.0f32 / (fan_in + fan_out));
+    randn_f32(fan_in, fan_out) * std
+}
+
+// He/Kaiming normal initialization (f32).
+fn he_normal_f32(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+    let std = sqrt(2.0f32 / fan_in);
+    randn_f32(fan_in, fan_out) * std
+}
+
+// He/Kaiming uniform initialization (f32).
+fn he_uniform_f32(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+    let limit = sqrt(6.0f32 / fan_in);
+    randn_f32(fan_in, fan_out) * limit
+}
+
+// Zeros initialization (f32).
+fn zeros_init_f32(rows: i64, cols: i64) -> Tensor[f64, ..] {
+    zeros_f32(rows, cols)
+}
+
+// Constant initialization (f32).
+fn constant_init_f32(rows: i64, cols: i64, val: f32) -> Tensor[f64, ..] {
+    zeros_f32(rows, cols) + val
+}

@@ -24,3 +24,12 @@ fn make_feedforward_params(d_model: i64, d_ff: i64) -> (Tensor[f64, ..], Tensor[
     let b2 = zeros(d_model);
     (w1, b1, w2, b2)
 }
+
+// ── Phase 5.4：f32 副本（调用 randn_f32/zeros_f32，字面量加 f32 后缀）──
+fn make_feedforward_params_f32(d_model: i64, d_ff: i64) -> (Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..]) {
+    let w1 = randn_f32(d_model, d_ff) * sqrt(2.0f32 / d_model);
+    let b1 = zeros_f32(d_ff);
+    let w2 = randn_f32(d_ff, d_model) * sqrt(2.0f32 / d_ff);
+    let b2 = zeros_f32(d_model);
+    (w1, b1, w2, b2)
+}

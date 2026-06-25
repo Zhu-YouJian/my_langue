@@ -522,7 +522,7 @@ impl Interpreter {
                 self.resolve_var(name)
                     .or_else(|| {
                         match name.as_str() {
-                            "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32"
+                            "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
                             | "read_file" | "write_file" | "write_bytes" | "read_bytes" | "compile_host"
                             | "compile_program"
                             | "Vec::new" | "HashMap::new"
@@ -1351,6 +1351,12 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
+                // Phase 5.4：f32 标量算术（按 promote_float_dtype 规则：F32 op F32/Int → F32，F32 op F64 → F64）
+                (Value::Float32(a), Value::Float32(b)) => Ok(Value::Float32(a + b)),
+                (Value::Int(a), Value::Float32(b)) => Ok(Value::Float32(*a as f32 + b)),
+                (Value::Float32(a), Value::Int(b)) => Ok(Value::Float32(a + *b as f32)),
+                (Value::Float(a), Value::Float32(b)) => Ok(Value::Float(a + *b as f64)),
+                (Value::Float32(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
                 (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
                 (Value::Tensor(t1), Value::Tensor(t2)) => {
                     let result_tensor = t1.borrow().add_tensor(&t2.borrow())
@@ -1377,6 +1383,25 @@ impl Interpreter {
                     }
                     Ok(Value::Tensor(result))
                 }
+                // Phase 5.4：f32 标量 + Tensor（add_scalar 按 tensor dtype 分支保持精度）
+                (Value::Tensor(t), Value::Float32(s)) => {
+                    let s_f64 = *s as f64;
+                    let result = Rc::new(RefCell::new(t.borrow().add_scalar(s_f64)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), s_f64)));
+                        self.record_binary(TapeOp::Add, t, &scalar_tensor, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
+                (Value::Float32(s), Value::Tensor(t)) => {
+                    let s_f64 = *s as f64;
+                    let result = Rc::new(RefCell::new(t.borrow().add_scalar(s_f64)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), s_f64)));
+                        self.record_binary(TapeOp::Add, &scalar_tensor, t, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
                 _ => Err(TenthError::RuntimeError {
                     message: "加法类型不匹配".into(),
                 }),
@@ -1386,6 +1411,12 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
+                // Phase 5.4：f32 标量算术
+                (Value::Float32(a), Value::Float32(b)) => Ok(Value::Float32(a - b)),
+                (Value::Int(a), Value::Float32(b)) => Ok(Value::Float32(*a as f32 - b)),
+                (Value::Float32(a), Value::Int(b)) => Ok(Value::Float32(a - *b as f32)),
+                (Value::Float(a), Value::Float32(b)) => Ok(Value::Float(a - *b as f64)),
+                (Value::Float32(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
                 (Value::Tensor(t1), Value::Tensor(t2)) => {
                     let result_tensor = t1.borrow().sub_tensor(&t2.borrow())
                         .map_err(|msg| TenthError::RuntimeError { message: msg })?;
@@ -1413,6 +1444,25 @@ impl Interpreter {
                     }
                     Ok(Value::Tensor(result))
                 }
+                // Phase 5.4：f32 标量 - Tensor / Tensor - f32 标量
+                (Value::Tensor(t), Value::Float32(s)) => {
+                    let s_f64 = *s as f64;
+                    let result = Rc::new(RefCell::new(t.borrow().sub_scalar(s_f64)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), s_f64)));
+                        self.record_binary(TapeOp::Sub, t, &scalar_tensor, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
+                (Value::Float32(s), Value::Tensor(t)) => {
+                    let s_f64 = *s as f64;
+                    let result = Rc::new(RefCell::new(t.borrow().sub_scalar(s_f64).neg()));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), s_f64)));
+                        self.record_binary(TapeOp::Sub, &scalar_tensor, t, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
                 _ => Err(TenthError::RuntimeError {
                     message: "减法类型不匹配".into(),
                 }),
@@ -1422,6 +1472,12 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
+                // Phase 5.4：f32 标量算术
+                (Value::Float32(a), Value::Float32(b)) => Ok(Value::Float32(a * b)),
+                (Value::Int(a), Value::Float32(b)) => Ok(Value::Float32(*a as f32 * b)),
+                (Value::Float32(a), Value::Int(b)) => Ok(Value::Float32(a * *b as f32)),
+                (Value::Float(a), Value::Float32(b)) => Ok(Value::Float(a * *b as f64)),
+                (Value::Float32(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
                 (Value::Tensor(t1), Value::Tensor(t2)) => {
                     let result_tensor = t1.borrow().mul_tensor(&t2.borrow())
                         .map_err(|msg| TenthError::RuntimeError { message: msg })?;
@@ -1447,6 +1503,25 @@ impl Interpreter {
                     }
                     Ok(Value::Tensor(result))
                 }
+                // Phase 5.4：f32 标量 × Tensor（mul_scalar 按 tensor dtype 分支保持精度）
+                (Value::Tensor(t), Value::Float32(s)) => {
+                    let s_f64 = *s as f64;
+                    let result = Rc::new(RefCell::new(t.borrow().mul_scalar(s_f64)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), s_f64)));
+                        self.record_binary(TapeOp::Mul, t, &scalar_tensor, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
+                (Value::Float32(s), Value::Tensor(t)) => {
+                    let s_f64 = *s as f64;
+                    let result = Rc::new(RefCell::new(t.borrow().mul_scalar(s_f64)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), s_f64)));
+                        self.record_binary(TapeOp::Mul, &scalar_tensor, t, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
                 _ => Err(TenthError::RuntimeError {
                     message: "乘法类型不匹配".into(),
                 }),
@@ -1463,6 +1538,12 @@ impl Interpreter {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
+                // Phase 5.4：f32 标量算术
+                (Value::Float32(a), Value::Float32(b)) => Ok(Value::Float32(a / b)),
+                (Value::Int(a), Value::Float32(b)) => Ok(Value::Float32(*a as f32 / b)),
+                (Value::Float32(a), Value::Int(b)) => Ok(Value::Float32(a / *b as f32)),
+                (Value::Float(a), Value::Float32(b)) => Ok(Value::Float(a / *b as f64)),
+                (Value::Float32(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
                 (Value::Tensor(t1), Value::Tensor(t2)) => {
                     let result_tensor = t1.borrow().div_tensor(&t2.borrow())
                         .map_err(|msg| TenthError::RuntimeError { message: msg })?;
@@ -1477,6 +1558,25 @@ impl Interpreter {
                     if self.recording {
                         let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), *s)));
                         self.record_binary(TapeOp::Div, t, &scalar_tensor, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
+                // Phase 5.4：f32 标量 / Tensor / Tensor / f32 标量
+                (Value::Tensor(t), Value::Float32(s)) => {
+                    let s_f64 = *s as f64;
+                    let result = Rc::new(RefCell::new(t.borrow().div_scalar(s_f64)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), s_f64)));
+                        self.record_binary(TapeOp::Div, t, &scalar_tensor, &result);
+                    }
+                    Ok(Value::Tensor(result))
+                }
+                (Value::Float32(s), Value::Tensor(t)) => {
+                    let s_f64 = *s as f64;
+                    let result = Rc::new(RefCell::new(t.borrow().div_scalar_inv(s_f64)));
+                    if self.recording {
+                        let scalar_tensor = Rc::new(RefCell::new(Tensor::full(&t.borrow().shape(), s_f64)));
+                        self.record_binary(TapeOp::Div, &scalar_tensor, t, &result);
                     }
                     Ok(Value::Tensor(result))
                 }
@@ -2764,11 +2864,26 @@ impl Interpreter {
                         use rand::Rng;
                         let mut rng = rand::thread_rng();
                         let scale = 1.0 / (1.0 - rate);
-                        let mask_data = tensor.data.mapv(|_| {
-                            if rng.r#gen::<f64>() < rate { 0.0 } else { scale }
-                        });
-                        let mask = Rc::new(RefCell::new(Tensor::from_data(mask_data)));
-                        let result_tensor = Tensor::from_data(&tensor.data * &mask.borrow().data);
+                        // Phase 5.4：按 tensor dtype 分支保持精度（f32 tensor → f32 mask + f32 result）
+                        let (mask_tensor, result_tensor) = if tensor.is_f32() {
+                            let scale_f32 = scale as f32;
+                            let rate_f32 = rate as f32;
+                            let mask_arr = tensor.data.as_f32().expect("is_f32 checked").mapv(|_| {
+                                if rng.r#gen::<f32>() < rate_f32 { 0.0f32 } else { scale_f32 }
+                            });
+                            let mask_t = Tensor::from_data_f32(mask_arr);
+                            let t_arr = tensor.data.as_f32().expect("is_f32 checked");
+                            let res = Tensor::from_data_f32(t_arr * mask_t.data.as_f32().expect("f32 mask"));
+                            (mask_t, res)
+                        } else {
+                            let mask_data = tensor.data.mapv(|_| {
+                                if rng.r#gen::<f64>() < rate { 0.0 } else { scale }
+                            });
+                            let mask_t = Tensor::from_data(mask_data);
+                            let res = Tensor::from_data(&tensor.data * &mask_t.data);
+                            (mask_t, res)
+                        };
+                        let mask = Rc::new(RefCell::new(mask_tensor));
                         let result = Rc::new(RefCell::new(result_tensor));
                         if self.recording {
                             let node_id = if let Some(ref mut tape) = self.tape {
@@ -3466,9 +3581,9 @@ impl Interpreter {
                         let grad_tensor = Tensor::from_tensor_data(grad.clone());
                         return Ok(Some(Value::Tensor(Rc::new(RefCell::new(grad_tensor)))));
                     }
-                    // No gradient → return zeros
+                    // No gradient → return zeros matching param dtype (Phase 5.4：f32 张量返回 f32 zeros)
                     let shape = p.shape();
-                    let zeros = Tensor::zeros(&shape);
+                    let zeros = Tensor::zeros_with_dtype(&shape, p.dtype());
                     return Ok(Some(Value::Tensor(Rc::new(RefCell::new(zeros)))));
                 }
                 return Err(TenthError::RuntimeError {
@@ -3494,6 +3609,28 @@ impl Interpreter {
                     .map(|a| a.as_int().unwrap_or(1) as usize)
                     .collect();
                 let t = Tensor::randn_f32(&shape);
+                return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
+            }
+            // Phase 5.5：补全 f32 构造函数
+            "rand_f32" => {
+                let shape: Vec<usize> = args.iter()
+                    .map(|a| a.as_int().unwrap_or(1) as usize)
+                    .collect();
+                let t = Tensor::rand_f32(&shape);
+                return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
+            }
+            "zeros_f32" => {
+                let shape: Vec<usize> = args.iter()
+                    .map(|a| a.as_int().unwrap_or(1) as usize)
+                    .collect();
+                let t = Tensor::zeros_f32(&shape);
+                return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
+            }
+            "ones_f32" => {
+                let shape: Vec<usize> = args.iter()
+                    .map(|a| a.as_int().unwrap_or(1) as usize)
+                    .collect();
+                let t = Tensor::ones_f32(&shape);
                 return Ok(Some(Value::Tensor(Rc::new(RefCell::new(t)))));
             }
             "zeros" => {

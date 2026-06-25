@@ -2,3 +2,8 @@
 fn dropout(x: Tensor[f64, ..], rate: f64) -> Tensor[f64, ..] {
     x.dropout(rate)
 }
+
+// ── Phase 5.4：f32 副本（标量参数改 f32，保持 f32 路径不提升为 f64）──
+fn dropout_f32(x: Tensor[f64, ..], rate: f32) -> Tensor[f64, ..] {
+    x.dropout(rate)
+}

@@ -51,3 +51,50 @@ fn make_transformer_block_params(d_model: i64, n_heads: i64, d_ff: i64) -> (
     let (ln2_gamma, ln2_beta) = make_layer_norm(d_model);
     (w_q, w_k, w_v, w_o, ln1_gamma, ln1_beta, w1, b1, w2, b2, ln2_gamma, ln2_beta)
 }
+
+// ── Phase 5.4：f32 副本 ──
+// transformer_encoder_block_f32：标量参数改 f32，内部调用 layer_norm_f32/multihead_attention_f32
+// 注：原 1e-5 改用 0.00001f32（lexer 不支持科学计数法，用明确写法）
+fn transformer_encoder_block_f32(
+    x: Tensor[f64, ..],
+    w_q: Tensor[f64, ..],
+    w_k: Tensor[f64, ..],
+    w_v: Tensor[f64, ..],
+    w_o: Tensor[f64, ..],
+    ln1_gamma: Tensor[f64, ..],
+    ln1_beta: Tensor[f64, ..],
+    w1: Tensor[f64, ..],
+    b1: Tensor[f64, ..],
+    w2: Tensor[f64, ..],
+    b2: Tensor[f64, ..],
+    ln2_gamma: Tensor[f64, ..],
+    ln2_beta: Tensor[f64, ..],
+    n_heads: i64,
+    dropout_p: f32,
+) -> Tensor[f64, ..] {
+    let x_norm = layer_norm_f32(x, ln1_gamma, ln1_beta, 0.00001f32);
+    let mask = zeros_f32(1);
+    let attn = multihead_attention_f32(x_norm, w_q, w_k, w_v, w_o, mask, n_heads, dropout_p);
+    let x = x + attn;
+    let x_norm2 = layer_norm_f32(x, ln2_gamma, ln2_beta, 0.00001f32);
+    let ffn_out = feedforward(x_norm2, w1, b1, w2, b2);
+    x + ffn_out
+}
+
+// make_transformer_block_params_f32：调用 randn_f32/make_layer_norm_f32/make_feedforward_params_f32
+fn make_transformer_block_params_f32(d_model: i64, n_heads: i64, d_ff: i64) -> (
+    Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..],
+    Tensor[f64, ..], Tensor[f64, ..],
+    Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..],
+    Tensor[f64, ..], Tensor[f64, ..],
+) {
+    let scale = sqrt(2.0f32 / d_model);
+    let w_q = randn_f32(d_model, d_model) * scale;
+    let w_k = randn_f32(d_model, d_model) * scale;
+    let w_v = randn_f32(d_model, d_model) * scale;
+    let w_o = randn_f32(d_model, d_model) * scale;
+    let (ln1_gamma, ln1_beta) = make_layer_norm_f32(d_model);
+    let (w1, b1, w2, b2) = make_feedforward_params_f32(d_model, d_ff);
+    let (ln2_gamma, ln2_beta) = make_layer_norm_f32(d_model);
+    (w_q, w_k, w_v, w_o, ln1_gamma, ln1_beta, w1, b1, w2, b2, ln2_gamma, ln2_beta)
+}

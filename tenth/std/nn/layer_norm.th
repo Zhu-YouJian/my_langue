@@ -19,3 +19,19 @@ fn make_layer_norm(dim: i64) -> (Tensor[f64, ..], Tensor[f64, ..]) {
     let beta = zeros(dim);
     (gamma, beta)
 }
+
+// ── Phase 5.4：f32 副本（标量参数改 f32 + 构造函数调用 ones_f32/zeros_f32）──
+fn layer_norm_f32(
+    x: Tensor[f64, ..],
+    gamma: Tensor[f64, ..],
+    beta: Tensor[f64, ..],
+    eps: f32,
+) -> Tensor[f64, ..] {
+    x.layer_norm(gamma, beta, eps)
+}
+
+fn make_layer_norm_f32(dim: i64) -> (Tensor[f64, ..], Tensor[f64, ..]) {
+    let gamma = ones_f32(dim);
+    let beta = zeros_f32(dim);
+    (gamma, beta)
+}

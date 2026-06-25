@@ -24,3 +24,22 @@ fn rmsprop_step(
     let new_w = w - lr * gw / (new_g2.sqrt() + eps);
     (new_w, new_g2)
 }
+
+// ── Phase 5.4：f32 副本（标量参数改 f32，字面量加 f32 后缀，保持 f32 路径不提升为 f64）──
+// Tensor 参数仍标注 Tensor[f64, ..]（类型系统硬约束，Phase 5.0 调研结论），
+// 但传入 f32 tensor 时运行时按 dtype 分支自动走 f32 路径。
+
+// Single RMSProp step for one parameter tensor (f32).
+// Returns (updated_w, updated_g2).
+fn rmsprop_step_f32(
+    w: Tensor[f64, ..],
+    g2: Tensor[f64, ..],
+    lr: f32,
+    decay: f32,
+    eps: f32,
+) -> (Tensor[f64, ..], Tensor[f64, ..]) {
+    let gw = grad(w);
+    let new_g2 = decay * g2 + (1.0f32 - decay) * gw * gw;
+    let new_w = w - lr * gw / (new_g2.sqrt() + eps);
+    (new_w, new_g2)
+}
