@@ -816,6 +816,23 @@ impl Vm {
                 }
                 Value::Tensor(result)
             }
+            // f32 标量 × Tensor：转为 f64 调用 scalar 方法（scalar 方法按 Tensor dtype 分支保持精度）
+            (Value::Tensor(t), Value::Float32(s)) => {
+                let result = Rc::new(RefCell::new(t.borrow().add_scalar(*s as f64)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s as f64], vec![1])));
+                    self.record_binary(TapeOp::Add, &t, &s_tensor, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Float32(s), Value::Tensor(t)) => {
+                let result = Rc::new(RefCell::new(t.borrow().add_scalar(*s as f64)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s as f64], vec![1])));
+                    self.record_binary(TapeOp::Add, &s_tensor, &t, &result);
+                }
+                Value::Tensor(result)
+            }
             (Value::Tensor(t1), Value::Tensor(t2)) => {
                 let result_tensor = t1.borrow().add_tensor(&t2.borrow())
                     .map_err(|msg| TenthError::RuntimeError { message: msg })?;
@@ -855,6 +872,25 @@ impl Vm {
                 }
                 Value::Tensor(result)
             }
+            // f32 标量 × Tensor
+            (Value::Tensor(t), Value::Float32(s)) => {
+                let s_f64 = *s as f64;
+                let result = Rc::new(RefCell::new(t.borrow().add_scalar(-s_f64)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![s_f64], vec![1])));
+                    self.record_binary(TapeOp::Sub, &t, &s_tensor, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Float32(s), Value::Tensor(t)) => {
+                let s_f64 = *s as f64;
+                let result = Rc::new(RefCell::new(t.borrow().add_scalar(-s_f64)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![s_f64], vec![1])));
+                    self.record_binary(TapeOp::Sub, &s_tensor, &t, &result);
+                }
+                Value::Tensor(result)
+            }
             (Value::Tensor(t1), Value::Tensor(t2)) => {
                 let result_tensor = t1.borrow().sub_tensor(&t2.borrow())
                     .map_err(|msg| TenthError::RuntimeError { message: msg })?;
@@ -890,6 +926,25 @@ impl Vm {
                 let result = Rc::new(RefCell::new(t.borrow().mul_scalar(*s)));
                 if self.recording {
                     let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s], vec![1])));
+                    self.record_binary(TapeOp::Mul, &s_tensor, &t, &result);
+                }
+                Value::Tensor(result)
+            }
+            // f32 标量 × Tensor
+            (Value::Tensor(t), Value::Float32(s)) => {
+                let s_f64 = *s as f64;
+                let result = Rc::new(RefCell::new(t.borrow().mul_scalar(s_f64)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![s_f64], vec![1])));
+                    self.record_binary(TapeOp::Mul, &t, &s_tensor, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Float32(s), Value::Tensor(t)) => {
+                let s_f64 = *s as f64;
+                let result = Rc::new(RefCell::new(t.borrow().mul_scalar(s_f64)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![s_f64], vec![1])));
                     self.record_binary(TapeOp::Mul, &s_tensor, &t, &result);
                 }
                 Value::Tensor(result)
@@ -935,6 +990,26 @@ impl Vm {
                 let result = Rc::new(RefCell::new(t.borrow().div_scalar_inv(*s)));
                 if self.recording {
                     let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![*s], vec![1])));
+                    self.record_binary(TapeOp::Div, &s_tensor, &t, &result);
+                }
+                Value::Tensor(result)
+            }
+            // f32 标量 × Tensor
+            (Value::Tensor(t), Value::Float32(s)) => {
+                let s_f64 = *s as f64;
+                let result = Rc::new(RefCell::new(t.borrow().div_scalar(s_f64)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![s_f64], vec![1])));
+                    self.record_binary(TapeOp::Div, &t, &s_tensor, &result);
+                }
+                Value::Tensor(result)
+            }
+            (Value::Float32(s), Value::Tensor(t)) => {
+                // s / t: scalar divided by tensor element-wise
+                let s_f64 = *s as f64;
+                let result = Rc::new(RefCell::new(t.borrow().div_scalar_inv(s_f64)));
+                if self.recording {
+                    let s_tensor = Rc::new(RefCell::new(Tensor::from_vec(vec![s_f64], vec![1])));
                     self.record_binary(TapeOp::Div, &s_tensor, &t, &result);
                 }
                 Value::Tensor(result)
