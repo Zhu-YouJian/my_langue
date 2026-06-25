@@ -486,7 +486,10 @@ impl Interpreter {
             HirExprKind::Literal(lit) => {
                 Ok(Some(match lit {
                     Literal::Int(n) => Value::Int(*n),
-                    Literal::Float(n) => Value::Float(*n),
+                    Literal::Float(n, dt) => match dt {
+                        crate::hir::types::BaseType::F32 => Value::Float32(*n as f32),
+                        _ => Value::Float(*n),
+                    },
                     Literal::Bool(b) => Value::Bool(*b),
                     Literal::String(s) => Value::String(s.clone()),
                 }))
@@ -1179,7 +1182,8 @@ impl Interpreter {
             HirPattern::Literal(lit) => {
                 match (lit, val) {
                     (Literal::Int(a), Value::Int(b)) => a == b,
-                    (Literal::Float(a), Value::Float(b)) => (a - b).abs() < 1e-10,
+                    (Literal::Float(a, _), Value::Float(b)) => (a - b).abs() < 1e-10,
+                    (Literal::Float(a, _), Value::Float32(b)) => ((a - *b as f64).abs() as f64) < 1e-6,
                     (Literal::Bool(a), Value::Bool(b)) => a == b,
                     _ => false,
                 }
@@ -1537,6 +1541,7 @@ impl Interpreter {
         match val {
             Value::Int(n) => n.to_string(),
             Value::Float(f) => f.to_string(),
+            Value::Float32(f) => f.to_string(),
             Value::Bool(b) => b.to_string(),
             Value::String(s) => s.clone(),
             Value::Unit => "()".to_string(),
@@ -2799,7 +2804,7 @@ impl Interpreter {
                             let contiguous = tensor.data.as_standard_layout().to_owned();
                             let flat = match contiguous.as_slice() {
                                 Some(s) => s.to_vec(),
-                                None => tensor.data.iter().cloned().collect(),
+                                None => tensor.data.iter().collect(),
                             };
 
                             let gamma_ref = gamma_rc.borrow();
@@ -3433,7 +3438,7 @@ impl Interpreter {
                 if let Some(Value::Tensor(param)) = args.first() {
                     let p = param.borrow();
                     if let Some(ref grad) = p.grad {
-                        let grad_tensor = Tensor::from_data(grad.clone());
+                        let grad_tensor = Tensor::from_tensor_data(grad.clone());
                         return Ok(Some(Value::Tensor(Rc::new(RefCell::new(grad_tensor)))));
                     }
                     // No gradient → return zeros

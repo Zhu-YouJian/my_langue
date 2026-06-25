@@ -17,7 +17,7 @@ pub type NativeFn = fn(&mut Vm, &[Value]) -> TenthResult<Value>;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Op {
-    PushInt(i64), PushFloat(f64), PushBool(bool), PushStr(usize), PushUnit,
+    PushInt(i64), PushFloat(f64), PushFloat32(f32), PushBool(bool), PushStr(usize), PushUnit,
     Pop, Dup,
     Load(usize), Store(usize),
     LoadGlobal(usize), StoreGlobal(usize),
@@ -34,7 +34,7 @@ pub enum Op {
     EnumGetField(usize),
     PushRange(i64, i64, bool),  // start, end, inclusive
     MoveOp,                     // no-op marker for move semantics
-    MakeTensor(usize, usize),   // rows, cols — pops rows*cols f64 values from stack
+    MakeTensor(usize, usize, u8), // rows, cols, dtype (0=F64, 1=F32) — pops rows*cols values
     MakeClosure(usize, usize),  // params_count, chunk_idx — creates a closure value
 }
 
@@ -73,12 +73,14 @@ impl Chunk {
             MakeEnum(..) => 38, IsEnumVariant(_) => 39, EnumGetField(_) => 40,
             PushRange(..) => 41, MoveOp => 42,
             MakeTensor(..) => 43, MakeClosure(..) => 44,
+            PushFloat32(_) => 45,
         });
 
         // Emit operands
         macro_rules! w { ($n:expr, $t:ty) => { self.code.extend_from_slice(&($n as $t).to_le_bytes()) } }
         match &op {
             PushInt(n) => w!(*n, i64), PushFloat(f) => w!(*f, f64),
+            PushFloat32(f) => w!(*f, f32),
             PushBool(b) => self.code.push(if *b {1} else {0}),
             PushStr(i) | LoadGlobal(i) | StoreGlobal(i) | Call(i) | LoadField(i) | StoreField(i) => w!(*i, u64),
             CallN(i, n) => { w!(*i, u64); w!(*n, u64); }
@@ -91,7 +93,7 @@ impl Chunk {
             IsEnumVariant(v) => w!(*v, u64),
             EnumGetField(f) => w!(*f, u64),
             PushRange(s, e, inc) => { w!(*s, i64); w!(*e, i64); self.code.push(if *inc {1} else {0}); }
-            MakeTensor(r, c) => { w!(*r, u64); w!(*c, u64); }
+            MakeTensor(r, c, d) => { w!(*r, u64); w!(*c, u64); self.code.push(*d); }
             MakeClosure(p, c) => { w!(*p, u64); w!(*c, u64); }
             MoveOp => {}
             _ => {}
@@ -129,8 +131,9 @@ impl Chunk {
             40 => EnumGetField(r!(u64) as usize),
             41 => PushRange(r!(i64), r!(i64), { let b = self.code[*ip]; *ip += 1; b != 0 }),
             42 => MoveOp,
-            43 => MakeTensor(r!(u64) as usize, r!(u64) as usize),
+            43 => MakeTensor(r!(u64) as usize, r!(u64) as usize, { let d = self.code[*ip]; *ip += 1; d }),
             44 => MakeClosure(r!(u64) as usize, r!(u64) as usize),
+            45 => PushFloat32(r!(f32)),
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -228,6 +231,7 @@ impl Vm {
         match a {
             Value::Int(n) => Ok(Value::Int(-n)),
             Value::Float(n) => Ok(Value::Float(-n)),
+            Value::Float32(n) => Ok(Value::Float32(-n)),
             Value::Tensor(t) => Ok(Value::Tensor(Rc::new(RefCell::new(t.borrow().neg())))),
             _ => Err(TenthError::RuntimeError { message: "无法取负".into() }),
         }
@@ -392,14 +396,16 @@ impl Vm {
                     40 => EnumGetField(r!(u64) as usize),
                     41 => PushRange(r!(i64), r!(i64), { let b = code[ip]; ip += 1; b != 0 }),
                     42 => MoveOp,
-                    43 => MakeTensor(r!(u64) as usize, r!(u64) as usize),
+                    43 => MakeTensor(r!(u64) as usize, r!(u64) as usize, { let d = code[ip]; ip += 1; d }),
                     44 => MakeClosure(r!(u64) as usize, r!(u64) as usize),
+                    45 => PushFloat32(r!(f32)),
                     _ => Ret,
                 }
             };
             match op {
                 Op::PushInt(n) => self.stack.push(Value::Int(n)),
                 Op::PushFloat(f) => self.stack.push(Value::Float(f)),
+                Op::PushFloat32(f) => self.stack.push(Value::Float32(f)),
                 Op::PushBool(b) => self.stack.push(Value::Bool(b)),
                 Op::PushStr(i) => {
                     let s = strings.get(i).cloned().unwrap_or_default();
@@ -448,6 +454,7 @@ impl Vm {
                     self.stack.push(match v {
                         Value::Int(n) => Value::Int(-n),
                         Value::Float(n) => Value::Float(-n),
+                        Value::Float32(n) => Value::Float32(-n),
                         Value::Tensor(t) => Value::Tensor(Rc::new(RefCell::new(t.borrow().neg()))),
                         _ => return err("无法取负"),
                     });
@@ -712,21 +719,43 @@ impl Vm {
                     // no-op: move semantics are checked at HIR level
                 }
 
-                Op::MakeTensor(rows, cols) => {
+                Op::MakeTensor(rows, cols, dtype) => {
                     use super::tensor::Tensor;
+                    use crate::hir::types::BaseType;
                     let total = rows * cols;
-                    let mut data = Vec::with_capacity(total);
-                    for _ in 0..total {
-                        let v = self.stack.pop().unwrap_or(Value::Float(0.0));
-                        data.push(match v {
-                            Value::Float(f) => f,
-                            Value::Int(n) => n as f64,
-                            _ => 0.0,
-                        });
+                    let dt = match dtype {
+                        1 => BaseType::F32,
+                        _ => BaseType::F64,
+                    };
+                    if dt == BaseType::F32 {
+                        let mut data: Vec<f32> = Vec::with_capacity(total);
+                        for _ in 0..total {
+                            let v = self.stack.pop().unwrap_or(Value::Float32(0.0));
+                            data.push(match v {
+                                Value::Float32(f) => f,
+                                Value::Float(f) => f as f32,
+                                Value::Int(n) => n as f32,
+                                _ => 0.0,
+                            });
+                        }
+                        data.reverse();
+                        let tensor = Tensor::from_vec_f32(data, vec![rows, cols]);
+                        self.stack.push(Value::Tensor(Rc::new(RefCell::new(tensor))));
+                    } else {
+                        let mut data = Vec::with_capacity(total);
+                        for _ in 0..total {
+                            let v = self.stack.pop().unwrap_or(Value::Float(0.0));
+                            data.push(match v {
+                                Value::Float(f) => f,
+                                Value::Float32(f) => f as f64,
+                                Value::Int(n) => n as f64,
+                                _ => 0.0,
+                            });
+                        }
+                        data.reverse();
+                        let tensor = Tensor::from_vec(data, vec![rows, cols]);
+                        self.stack.push(Value::Tensor(Rc::new(RefCell::new(tensor))));
                     }
-                    data.reverse();
-                    let tensor = Tensor::from_vec(data, vec![rows, cols]);
-                    self.stack.push(Value::Tensor(Rc::new(RefCell::new(tensor))));
                 }
 
                 Op::MakeClosure(params_count, name_idx) => {
@@ -764,6 +793,12 @@ impl Vm {
             (Value::Float(x), Value::Float(y)) => Value::Float(x + y),
             (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 + y),
             (Value::Float(x), Value::Int(y)) => Value::Float(x + *y as f64),
+            // f32 路径：相同 dtype 保持 f32，混合提升为 f64
+            (Value::Float32(x), Value::Float32(y)) => Value::Float32(x + y),
+            (Value::Int(x), Value::Float32(y)) => Value::Float32(*x as f32 + y),
+            (Value::Float32(x), Value::Int(y)) => Value::Float32(x + *y as f32),
+            (Value::Float32(x), Value::Float(y)) => Value::Float(*x as f64 + y),
+            (Value::Float(x), Value::Float32(y)) => Value::Float(x + *y as f64),
             (Value::String(x), Value::String(y)) => Value::String(format!("{x}{y}")),
             (Value::Tensor(t), Value::Float(s)) => {
                 let result = Rc::new(RefCell::new(t.borrow().add_scalar(*s)));
@@ -798,6 +833,12 @@ impl Vm {
             (Value::Float(x), Value::Float(y)) => Value::Float(x - y),
             (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 - y),
             (Value::Float(x), Value::Int(y)) => Value::Float(x - *y as f64),
+            // f32 路径
+            (Value::Float32(x), Value::Float32(y)) => Value::Float32(x - y),
+            (Value::Int(x), Value::Float32(y)) => Value::Float32(*x as f32 - y),
+            (Value::Float32(x), Value::Int(y)) => Value::Float32(x - *y as f32),
+            (Value::Float32(x), Value::Float(y)) => Value::Float(*x as f64 - y),
+            (Value::Float(x), Value::Float32(y)) => Value::Float(x - *y as f64),
             (Value::Tensor(t), Value::Float(s)) => {
                 let result = Rc::new(RefCell::new(t.borrow().add_scalar(-*s)));
                 if self.recording {
@@ -831,6 +872,12 @@ impl Vm {
             (Value::Float(x), Value::Float(y)) => Value::Float(x * y),
             (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 * y),
             (Value::Float(x), Value::Int(y)) => Value::Float(x * *y as f64),
+            // f32 路径
+            (Value::Float32(x), Value::Float32(y)) => Value::Float32(x * y),
+            (Value::Int(x), Value::Float32(y)) => Value::Float32(*x as f32 * y),
+            (Value::Float32(x), Value::Int(y)) => Value::Float32(x * *y as f32),
+            (Value::Float32(x), Value::Float(y)) => Value::Float(*x as f64 * y),
+            (Value::Float(x), Value::Float32(y)) => Value::Float(x * *y as f64),
             (Value::Tensor(t), Value::Float(s)) => {
                 let result = Rc::new(RefCell::new(t.borrow().mul_scalar(*s)));
                 if self.recording {
@@ -869,6 +916,12 @@ impl Vm {
             (Value::Float(x), Value::Float(y)) => Value::Float(x / y),
             (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 / y),
             (Value::Float(x), Value::Int(y)) => Value::Float(x / *y as f64),
+            // f32 路径
+            (Value::Float32(x), Value::Float32(y)) => Value::Float32(x / y),
+            (Value::Int(x), Value::Float32(y)) => Value::Float32(*x as f32 / y),
+            (Value::Float32(x), Value::Int(y)) => Value::Float32(x / *y as f32),
+            (Value::Float32(x), Value::Float(y)) => Value::Float(*x as f64 / y),
+            (Value::Float(x), Value::Float32(y)) => Value::Float(x / *y as f64),
             (Value::Tensor(t), Value::Float(s)) => {
                 let result = Rc::new(RefCell::new(t.borrow().div_scalar(*s)));
                 if self.recording {
@@ -903,6 +956,12 @@ impl Vm {
             (Value::Float(x), Value::Float(y)) => nf(*x, *y),
             (Value::Int(x), Value::Float(y)) => nf(*x as f64, *y),
             (Value::Float(x), Value::Int(y)) => nf(*x, *y as f64),
+            // f32 路径：提升为 f64 比较
+            (Value::Float32(x), Value::Float32(y)) => nf(*x as f64, *y as f64),
+            (Value::Int(x), Value::Float32(y)) => nf(*x as f64, *y as f64),
+            (Value::Float32(x), Value::Int(y)) => nf(*x as f64, *y as f64),
+            (Value::Float32(x), Value::Float(y)) => nf(*x as f64, *y),
+            (Value::Float(x), Value::Float32(y)) => nf(*x, *y as f64),
             (Value::String(x), Value::String(y)) => sf(x, y),
             _ => return err("无法比较"),
         })
@@ -1119,6 +1178,8 @@ impl Vm {
                                 let result = Rc::new(RefCell::new(Tensor::from_vec(vec![scalar], vec![1])));
                                 self.record_unary(TapeOp::Sum, &t, &result);
                                 Ok(Value::Tensor(result))
+                            } else if tensor.is_f32() {
+                                Ok(Value::Float32(tensor.sum() as f32))
                             } else {
                                 Ok(Value::Float(tensor.sum()))
                             }
@@ -1136,11 +1197,19 @@ impl Vm {
                             let result = Rc::new(RefCell::new(Tensor::from_vec(vec![scalar], vec![1])));
                             self.record_unary(TapeOp::Mean, &t, &result);
                             Ok(Value::Tensor(result))
+                        } else if tensor.is_f32() {
+                            Ok(Value::Float32(tensor.mean() as f32))
                         } else {
                             Ok(Value::Float(tensor.mean()))
                         }
                     }
-                    "max_val" => Ok(Value::Float(tensor.max_val())),
+                    "max_val" => {
+                        if tensor.is_f32() {
+                            Ok(Value::Float32(tensor.max_val() as f32))
+                        } else {
+                            Ok(Value::Float(tensor.max_val()))
+                        }
+                    }
 
                     // ── Elementwise unary ──
                     "abs" => {
@@ -1444,7 +1513,7 @@ impl Vm {
                             let contiguous = tensor.data.as_standard_layout().to_owned();
                             let flat = match contiguous.as_slice() {
                                 Some(s) => s.to_vec(),
-                                None => tensor.data.iter().cloned().collect(),
+                                None => tensor.data.iter().collect(),
                             };
                             let gamma_ref = gamma_rc.borrow();
                             let beta_ref = beta_rc.borrow();
@@ -1575,6 +1644,14 @@ impl Vm {
         match (a, b) {
             (Value::Int(x), Value::Int(y)) => x == y,
             (Value::Float(x), Value::Float(y)) => (x - y).abs() < 1e-10,
+            (Value::Float32(x), Value::Float32(y)) => (x - y).abs() < 1e-6,
+            // f32 与 f64 比较：按 f64 精度判等（f32 提升为 f64 无损）
+            (Value::Float32(x), Value::Float(y)) => ((*x as f64) - y).abs() < 1e-10,
+            (Value::Float(x), Value::Float32(y)) => (x - (*y as f64)).abs() < 1e-10,
+            (Value::Int(x), Value::Float32(y)) => (*x as f32 - y).abs() < 1e-6,
+            (Value::Float32(x), Value::Int(y)) => (x - *y as f32).abs() < 1e-6,
+            (Value::Int(x), Value::Float(y)) => ((*x as f64) - y).abs() < 1e-10,
+            (Value::Float(x), Value::Int(y)) => (x - (*y as f64)).abs() < 1e-10,
             (Value::Bool(x), Value::Bool(y)) => x == y,
             (Value::String(x), Value::String(y)) => x == y,
             (Value::Unit, Value::Unit) => true,

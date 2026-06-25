@@ -462,7 +462,7 @@ fn convert_expr_depth(
             span: span.clone(),
         }),
         "float" => Ok(ast::Expr {
-            kind: ast::ExprKind::Literal(ast::Literal::Float(ival as f64)),
+            kind: ast::ExprKind::Literal(ast::Literal::Float(ival as f64, crate::hir::types::BaseType::F64)),
             span: span.clone(),
         }),
         "str" => Ok(ast::Expr {

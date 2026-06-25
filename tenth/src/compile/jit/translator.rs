@@ -229,6 +229,12 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.call_hostcall_f64("host_make_float", f, out);
                 self.sp += VALUE_SIZE as i32;
             }
+            PushFloat32(f) => {
+                // JIT 路径暂降级为 f64（Phase 5 补齐真正的 f32 JIT）
+                let out = self.stack_addr_at_sp();
+                self.call_hostcall_f64("host_make_float", f as f64, out);
+                self.sp += VALUE_SIZE as i32;
+            }
             PushBool(b) => {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_u8("host_make_bool", if b { 1 } else { 0 }, out);
@@ -457,12 +463,14 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.sp += VALUE_SIZE as i32;
             }
             MoveOp => { /* no-op */ }
-            MakeTensor(rows, cols) => {
+            MakeTensor(rows, cols, dtype) => {
                 let count = rows * cols;
                 self.sp -= (count as i32) * (VALUE_SIZE as i32);
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_make_tensor("host_make_tensor", rows as u64, cols as u64, args_addr, out);
+                // 注：dtype 当前在 JIT 路径降级为 F64；后续 phase 5 中补齐 f32 路径。
+                let _ = dtype;
                 self.sp += VALUE_SIZE as i32;
             }
             MakeClosure(params, chunk_idx) => {

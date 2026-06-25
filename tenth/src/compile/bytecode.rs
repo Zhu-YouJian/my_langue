@@ -67,7 +67,10 @@ impl BytecodeCompiler {
         match &expr.kind {
             Literal(lit) => match lit {
                 crate::hir::hir::Literal::Int(n) => self.chunk.emit(Op::PushInt(*n)),
-                crate::hir::hir::Literal::Float(f) => self.chunk.emit(Op::PushFloat(*f)),
+                crate::hir::hir::Literal::Float(f, dt) => match dt {
+                    crate::hir::types::BaseType::F32 => self.chunk.emit(Op::PushFloat32(*f as f32)),
+                    _ => self.chunk.emit(Op::PushFloat(*f)),
+                },
                 crate::hir::hir::Literal::Bool(b) => self.chunk.emit(Op::PushBool(*b)),
                 crate::hir::hir::Literal::String(s) => {
                     let i = self.chunk.add_string(s);
@@ -393,7 +396,10 @@ impl BytecodeCompiler {
                             self.chunk.emit(Op::Dup); // [scrut, scrut]
                             match lit {
                                 crate::hir::hir::Literal::Int(n) => self.chunk.emit(Op::PushInt(*n)),
-                                crate::hir::hir::Literal::Float(f) => self.chunk.emit(Op::PushFloat(*f)),
+                                crate::hir::hir::Literal::Float(f, dt) => match dt {
+                                    crate::hir::types::BaseType::F32 => self.chunk.emit(Op::PushFloat32(*f as f32)),
+                                    _ => self.chunk.emit(Op::PushFloat(*f)),
+                                },
                                 crate::hir::hir::Literal::Bool(b) => self.chunk.emit(Op::PushBool(*b)),
                                 crate::hir::hir::Literal::String(s) => {
                                     let i = self.chunk.add_string(s);
@@ -508,16 +514,24 @@ impl BytecodeCompiler {
             }
 
             // Tensor literal: [[1.0, 2.0], [3.0, 4.0]]
-            TensorLiteral { data, .. } => {
+            TensorLiteral { data, ty } => {
                 let rows = data.len();
                 let cols = if rows > 0 { data[0].len() } else { 0 };
+                // 根据类型注解选择 dtype（F32 → 1，其他 → 0）
+                let dtype_code: u8 = match ty {
+                    crate::hir::types::Type::Tensor { dtype, .. } => match dtype {
+                        crate::hir::types::BaseType::F32 => 1,
+                        _ => 0,
+                    },
+                    _ => 0,
+                };
                 // Push all elements in row-major order
                 for row in data.iter() {
                     for elem in row.iter() {
                         self.compile_expr(elem)?;
                     }
                 }
-                self.chunk.emit(Op::MakeTensor(rows, cols));
+                self.chunk.emit(Op::MakeTensor(rows, cols, dtype_code));
             }
 
             // Closure: |params| body

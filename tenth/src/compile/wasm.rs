@@ -1413,7 +1413,10 @@ impl WasmCompiler {
     fn compile_literal(&mut self, body: &mut Function, lit: &Literal) -> TenthResult<()> {
         match lit {
             Literal::Int(n) => { body.instruction(&Instruction::I64Const(*n)); }
-            Literal::Float(n) => { body.instruction(&Instruction::F64Const(*n)); }
+            Literal::Float(n, dt) => match dt {
+                crate::hir::types::BaseType::F32 => { body.instruction(&Instruction::F32Const(*n as f32)); }
+                _ => { body.instruction(&Instruction::F64Const(*n)); }
+            },
             Literal::Bool(b) => { body.instruction(&Instruction::I32Const(if *b { 1 } else { 0 })); }
             Literal::String(s) => {
                 let off = self.intern_string(s);
@@ -1477,7 +1480,7 @@ impl WasmCompiler {
                 body.instruction(&Instruction::I64Const(*n));
                 body.instruction(&Instruction::Call(5));
             }
-            HirExprKind::Literal(Literal::Float(n)) => {
+            HirExprKind::Literal(Literal::Float(n, _)) => {
                 body.instruction(&Instruction::F64Const(*n));
                 body.instruction(&Instruction::I64TruncF64S);
                 body.instruction(&Instruction::Call(5));

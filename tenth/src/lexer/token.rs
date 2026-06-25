@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::hir::types::BaseType;
+
 /// A part of an interpolated string: either a literal text segment or an expression name.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StringPart {
@@ -10,7 +12,8 @@ pub enum StringPart {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     IntLiteral(i64),
-    FloatLiteral(f64),
+    /// 浮点字面量。第二字段为 dtype：`3.14f32` → F32，`3.14f64` 或 `3.14` → F64。
+    FloatLiteral(f64, BaseType),
     StringLiteral(String),
     InterpolatedString(Vec<StringPart>),
     CharLiteral(char),
@@ -112,7 +115,7 @@ impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TokenKind::IntLiteral(n) => write!(f, "{}", n),
-            TokenKind::FloatLiteral(n) => write!(f, "{}", n),
+            TokenKind::FloatLiteral(n, _) => write!(f, "{}", n),
             TokenKind::StringLiteral(s) => write!(f, "\"{}\"", s),
             TokenKind::InterpolatedString(parts) => {
                 write!(f, "\"")?;

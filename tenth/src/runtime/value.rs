@@ -68,6 +68,8 @@ impl LazyIterator {
 pub enum Value {
     Int(i64),
     Float(f64),
+    /// f32 标量值。与 Float(f64) 区分以保留 dtype 信息到运行时。
+    Float32(f32),
     Bool(bool),
     String(String),
     Tensor(Rc<RefCell<Tensor>>),
@@ -108,12 +110,13 @@ impl Value {
         match self {
             Value::Int(_) => Type::Base(BaseType::I32),
             Value::Float(_) => Type::Base(BaseType::F64),
+            Value::Float32(_) => Type::Base(BaseType::F32),
             Value::Bool(_) => Type::Base(BaseType::Bool),
             Value::String(_) => Type::Base(BaseType::Str),
             Value::Tensor(t) => {
                 let t = t.borrow();
                 let dims: Vec<Dim> = t.shape().iter().map(|&d| Dim::Known(d as i64)).collect();
-                Type::Tensor { dtype: BaseType::F64, dims }
+                Type::Tensor { dtype: t.dtype(), dims }
             }
             Value::Unit => Type::unit(),
             Value::Array(_) => Type::Unknown,
@@ -151,7 +154,19 @@ impl Value {
     pub fn as_float(&self) -> Option<f64> {
         match self {
             Value::Float(f) => Some(*f),
+            Value::Float32(f) => Some(*f as f64),
             Value::Int(i) => Some(*i as f64),
+            _ => None,
+        }
+    }
+
+    /// 以 f32 访问（用于 f32 路径）。
+    /// Float32 直接返回；Float/Int 提升为 f32；其他返回 None。
+    pub fn as_f32(&self) -> Option<f32> {
+        match self {
+            Value::Float32(f) => Some(*f),
+            Value::Float(f) => Some(*f as f32),
+            Value::Int(i) => Some(*i as f32),
             _ => None,
         }
     }
@@ -160,6 +175,7 @@ impl Value {
         match self {
             Value::Int(i) => Some(*i),
             Value::Float(f) => Some(*f as i64),
+            Value::Float32(f) => Some(*f as i64),
             _ => None,
         }
     }
@@ -169,6 +185,7 @@ impl Value {
             Value::Bool(b) => *b,
             Value::Int(n) => *n != 0,
             Value::Float(f) => *f != 0.0,
+            Value::Float32(f) => *f != 0.0,
             Value::Ref(v) => v.borrow().is_truthy(),
             Value::MutRef(v) => v.upgrade().map_or(false, |rc| rc.borrow().is_truthy()),
             Value::Shared(v) => v.borrow().is_truthy(),
@@ -186,6 +203,7 @@ impl fmt::Display for Value {
         match self {
             Value::Int(n) => write!(f, "{}", n),
             Value::Float(n) => write!(f, "{}", n),
+            Value::Float32(n) => write!(f, "{}f32", n),
             Value::Bool(b) => write!(f, "{}", b),
             Value::String(s) => write!(f, "{}", s),
             Value::Tensor(t) => write!(f, "{}", t.borrow()),

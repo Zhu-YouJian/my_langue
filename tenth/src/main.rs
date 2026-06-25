@@ -504,57 +504,111 @@ fn register_natives(vm: &mut Vm) {
         let rand_val = hasher.finish();
         Ok(Value::Float((rand_val as f64) / (u64::MAX as f64)))
     });
-    // Math functions
+    // Math functions（输入为 Float32 时返回 Float32，否则 Float）
     vm.add_native("math_tan".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.tan())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.tan())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.tan())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_asin".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.asin())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.asin())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.asin())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_acos".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.acos())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.acos())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.acos())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_atan".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.atan())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.atan())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.atan())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_atan2".into(), |_vm, args| {
         match (args.first(), args.get(1)) {
             (Some(Value::Float(y)), Some(Value::Float(x))) => Ok(Value::Float(y.atan2(*x))),
+            (Some(Value::Float32(y)), Some(Value::Float32(x))) => Ok(Value::Float32(y.atan2(*x))),
             _ => Ok(Value::Float(0.0))
         }
     });
     vm.add_native("math_sinh".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.sinh())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.sinh())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.sinh())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_cosh".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.cosh())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.cosh())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.cosh())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_tanh".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.tanh())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.tanh())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.tanh())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_log10".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.log10())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.log10())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.log10())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_log2".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.log2())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.log2())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.log2())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_exp".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.exp())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.exp())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.exp())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_pow".into(), |_vm, args| {
         match (args.first(), args.get(1)) {
             (Some(Value::Float(base)), Some(Value::Float(exp))) => Ok(Value::Float(base.powf(*exp))),
+            (Some(Value::Float32(base)), Some(Value::Float32(exp))) => Ok(Value::Float32(base.powf(*exp))),
             _ => Ok(Value::Float(0.0))
         }
     });
     vm.add_native("math_floor".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.floor())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.floor())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.floor())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_ceil".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.ceil())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.ceil())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.ceil())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     vm.add_native("math_round".into(), |_vm, args| {
-        match args.first() { Some(Value::Float(x)) => Ok(Value::Float(x.round())), _ => Ok(Value::Float(0.0)) }
+        match args.first() {
+            Some(Value::Float(x)) => Ok(Value::Float(x.round())),
+            Some(Value::Float32(x)) => Ok(Value::Float32(x.round())),
+            _ => Ok(Value::Float(0.0))
+        }
     });
     // CLI functions
     vm.add_native("cli_args_count".into(), |_vm, _args| {
@@ -647,7 +701,7 @@ fn register_natives(vm: &mut Vm) {
         if let Some(Value::Tensor(t)) = args.first() {
             let p = t.borrow();
             if let Some(ref grad) = p.grad {
-                let grad_tensor = Tensor::from_vec(grad.clone().into_raw_vec(), p.shape());
+                let grad_tensor = Tensor::from_tensor_data(grad.clone());
                 Ok(Value::Tensor(Rc::new(RefCell::new(grad_tensor))))
             } else {
                 let zeros = Tensor::zeros(&p.shape());
@@ -864,12 +918,14 @@ fn register_natives(vm: &mut Vm) {
         match args.first() {
             Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
             Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
+            Some(Value::Float32(f)) => Ok(Value::Float32(f.abs())),
             _ => Err(tenth::error::TenthError::RuntimeError { message: "abs() 需要一个数值参数".into() }),
         }
     });
     vm.add_native("sqrt".into(), |_vm, args| {
         match args.first() {
             Some(Value::Float(f)) => Ok(Value::Float(f.sqrt())),
+            Some(Value::Float32(f)) => Ok(Value::Float32(f.sqrt())),
             Some(Value::Int(n)) => Ok(Value::Float((*n as f64).sqrt())),
             _ => Err(tenth::error::TenthError::RuntimeError { message: "sqrt() 需要一个数值参数".into() }),
         }
@@ -878,7 +934,24 @@ fn register_natives(vm: &mut Vm) {
         match args.first() {
             Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
             Some(Value::Float(f)) => Ok(Value::Float(*f)),
+            Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
             _ => Err(tenth::error::TenthError::RuntimeError { message: "to_float() 需要一个数值参数".into() }),
+        }
+    });
+    vm.add_native("to_f64".into(), |_vm, args| {
+        match args.first() {
+            Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
+            Some(Value::Float(f)) => Ok(Value::Float(*f)),
+            Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
+            _ => Err(tenth::error::TenthError::RuntimeError { message: "to_f64() 需要一个数值参数".into() }),
+        }
+    });
+    vm.add_native("to_f32".into(), |_vm, args| {
+        match args.first() {
+            Some(Value::Int(n)) => Ok(Value::Float32(*n as f32)),
+            Some(Value::Float(f)) => Ok(Value::Float32(*f as f32)),
+            Some(Value::Float32(f)) => Ok(Value::Float32(*f)),
+            _ => Err(tenth::error::TenthError::RuntimeError { message: "to_f32() 需要一个数值参数".into() }),
         }
     });
     vm.add_native("tensor_from_vec".into(), |_vm, args| {

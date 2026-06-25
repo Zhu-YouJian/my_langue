@@ -315,7 +315,7 @@ impl Lowerer {
             ExprKind::Literal(lit) => {
                 let (hir_lit, ty) = match lit {
                     ast::Literal::Int(n) => (Literal::Int(*n), Type::i32()),
-                    ast::Literal::Float(n) => (Literal::Float(*n), Type::f64()),
+                    ast::Literal::Float(n, dt) => (Literal::Float(*n, *dt), Type::Base(*dt)),
                     ast::Literal::Bool(b) => (Literal::Bool(*b), Type::bool_()),
                     ast::Literal::String(s) => (Literal::String(s.clone()), Type::str_()),
                 };
@@ -782,7 +782,7 @@ impl Lowerer {
                                             span: name.span.clone(),
                                         },
                                         BaseType::F64 | BaseType::F32 | BaseType::F16 | BaseType::BF16 => HirExpr {
-                                            kind: HirExprKind::Literal(Literal::Float(0.0)),
+                                            kind: HirExprKind::Literal(Literal::Float(0.0, BaseType::F64)),
                                             ty: fty.clone(),
                                             span: name.span.clone(),
                                         },
@@ -981,7 +981,7 @@ impl Lowerer {
             ast::Pattern::Literal(lit) => {
                 let hir_lit = match lit {
                     ast::Literal::Int(n) => Literal::Int(*n),
-                    ast::Literal::Float(n) => Literal::Float(*n),
+                    ast::Literal::Float(n, dt) => Literal::Float(*n, *dt),
                     ast::Literal::Bool(b) => Literal::Bool(*b),
                     ast::Literal::String(s) => Literal::String(s.clone()),
                 };
@@ -1088,12 +1088,18 @@ impl Lowerer {
             }
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
                 match (l, r) {
+                    // Tensor 运算：保留 dtype（若两侧 dtype 不同，按 G4 提升规则取较高精度）
+                    (Type::Tensor { dtype: ld, .. }, Type::Tensor { dtype: rd, .. }) => {
+                        let promoted = Self::promote_float_dtype(*ld, *rd);
+                        Type::Tensor { dtype: promoted, dims: vec![Dim::Any] }
+                    }
                     (Type::Tensor { dtype, .. }, _) | (_, Type::Tensor { dtype, .. }) => {
                         Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] }
                     }
-                    // Mixed int/float: promote to float
-                    (Type::Base(_), Type::Base(rb)) if matches!(rb, BaseType::F16 | BaseType::F32 | BaseType::F64 | BaseType::BF16) => r.clone(),
-                    (Type::Base(lb), Type::Base(_)) if matches!(lb, BaseType::F16 | BaseType::F32 | BaseType::F64 | BaseType::BF16) => l.clone(),
+                    // 混合标量：按 G4 规则提升（f64 优先 > f32 > 整数）
+                    (Type::Base(lb), Type::Base(rb)) => {
+                        Type::Base(Self::promote_float_dtype(*lb, *rb))
+                    }
                     _ => l.clone(),
                 }
             }
@@ -1198,11 +1204,12 @@ impl Lowerer {
         }
     }
 
-    fn resolve_builtin(&self, name: &str, _args: &[HirExpr], _span: &Span) -> TenthResult<Type> {
+    fn resolve_builtin(&self, name: &str, args: &[HirExpr], _span: &Span) -> TenthResult<Type> {
         match name {
             "println" | "eprintln" => Ok(Type::unit()),
-            "tensor" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
-            "rand" | "randn" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
+            // Tensor 构造函数：dtype 从参数推断（若无 f32 线索则默认 F64）
+            "tensor" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
+            "rand" | "randn" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
             "read_file" => Ok(Type::str_()),
             "str_at" => Ok(Type::str_()),
             "write_file" | "write_bytes" => Ok(Type::unit()),
@@ -1215,14 +1222,18 @@ impl Lowerer {
             "is_timeout" => Ok(Type::bool_()),
             "parse_int" => Ok(Type::Enum("Option".to_string())),
             "parse_float" => Ok(Type::Enum("Option".to_string())),
-            "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" => Ok(Type::f64()),
+            // 标量数学函数：dtype 跟随输入
+            "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" => Ok(Self::infer_scalar_dtype(args, Type::f64())),
+            // to_float 保留为 f64 别名（向后兼容）；新增 to_f32 / to_f64
+            "to_float" | "to_f64" => Ok(Type::f64()),
+            "to_f32" => Ok(Type::f32()),
             "f64_bits" => Ok(Type::Base(BaseType::I64)),
             "f64_from_bits" => Ok(Type::f64()),
-            "tensor_from_vec" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
-            "zeros" | "ones" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
+            "tensor_from_vec" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
+            "zeros" | "ones" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
             "save_weights" | "load_weights" => Ok(Type::unit()),
-            "cross_entropy" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
-            "start_grad" | "new_grad" | "stop_grad" | "param" => Ok(Type::Tensor { dtype: BaseType::F64, dims: vec![Dim::Any] }),
+            "cross_entropy" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
+            "start_grad" | "new_grad" | "stop_grad" | "param" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
             "backward" => Ok(Type::unit()),
             "grad" | "zero_grad" => Ok(Type::Unknown),
             "path_join" => Ok(Type::str_()),
@@ -1233,6 +1244,46 @@ impl Lowerer {
             "remove_file" | "copy_file" => Ok(Type::unit()),
             "lexer_new" | "lexer_tokenize" | "parse_program" | "lower_program" | "compile_to_wasm" | "compile_program" => Ok(Type::Unknown),
             _ => Ok(Type::Unknown),
+        }
+    }
+
+    /// 根据参数列表推断 Tensor dtype。
+    /// 规则：若任一参数是 F32（字面量或类型注解为 F32），则结果为 F32；否则默认 F64。
+    fn infer_tensor_dtype(args: &[HirExpr]) -> BaseType {
+        for a in args {
+            match &a.ty {
+                Type::Base(BaseType::F32) => return BaseType::F32,
+                Type::Tensor { dtype, .. } if *dtype == BaseType::F32 => return BaseType::F32,
+                _ => {}
+            }
+        }
+        BaseType::F64
+    }
+
+    /// 标量函数 dtype 推断：若输入为 F32 则返回 F32，否则返回默认（fallback）。
+    fn infer_scalar_dtype(args: &[HirExpr], fallback: Type) -> Type {
+        for a in args {
+            if matches!(&a.ty, Type::Base(BaseType::F32)) {
+                return Type::f32();
+            }
+        }
+        fallback
+    }
+
+    /// 按 spec §4.3 隐式转换规则提升两个 dtype：
+    /// - f64 与任意浮点 → f64
+    /// - f32 与 f32 → f32
+    /// - f32 与整数 → f32
+    /// - f64 与整数 → f64
+    /// - 整数与整数 → 左侧（保留现有整数运算语义）
+    fn promote_float_dtype(l: BaseType, r: BaseType) -> BaseType {
+        use BaseType::*;
+        match (l, r) {
+            (F64, _) | (_, F64) => F64,
+            (F32, _) | (_, F32) => F32,
+            (F16, _) | (_, F16) => F16,
+            (BF16, _) | (_, BF16) => BF16,
+            _ => l,
         }
     }
 

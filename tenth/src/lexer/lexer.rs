@@ -1,4 +1,5 @@
 use crate::error::{TenthError, TenthResult};
+use crate::hir::types::BaseType;
 use super::token::{Span, Token, TokenKind, StringPart};
 
 pub struct Lexer {
@@ -146,14 +147,46 @@ impl Lexer {
             }
         }
 
-        if is_float {
+        // f32/f64 后缀检测：`3.14f32` / `3f64` / `1e5f32` 等。
+        // 后缀使整数字面量也变为浮点（与 Rust 语义一致：`3f32` == `3.0f32`）。
+        let mut suffix_dtype: Option<BaseType> = None;
+        if self.peek() == Some('f') {
+            let c1 = self.source.get(self.pos + 1).copied();
+            let c2 = self.source.get(self.pos + 2).copied();
+            let c3 = self.source.get(self.pos + 3).copied();
+            let boundary_ok = c3.map_or(true, |c| !c.is_alphanumeric() && c != '_');
+            match (c1, c2, boundary_ok) {
+                (Some('3'), Some('2'), true) => {
+                    self.advance(); self.advance(); self.advance();
+                    suffix_dtype = Some(BaseType::F32);
+                }
+                (Some('6'), Some('4'), true) => {
+                    self.advance(); self.advance(); self.advance();
+                    suffix_dtype = Some(BaseType::F64);
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(dt) = suffix_dtype {
+            // 有 f32/f64 后缀 → 浮点字面量（即使数字部分无小数点，如 `3f32`）
             let n: f64 = s.parse().map_err(|_| TenthError::LexerError {
                 line: span.line,
                 col: span.col,
                 message: format!("无效的浮点数：{}", s),
             })?;
             Ok(Token {
-                kind: TokenKind::FloatLiteral(n),
+                kind: TokenKind::FloatLiteral(n, dt),
+                span,
+            })
+        } else if is_float {
+            let n: f64 = s.parse().map_err(|_| TenthError::LexerError {
+                line: span.line,
+                col: span.col,
+                message: format!("无效的浮点数：{}", s),
+            })?;
+            Ok(Token {
+                kind: TokenKind::FloatLiteral(n, BaseType::F64),
                 span,
             })
         } else {

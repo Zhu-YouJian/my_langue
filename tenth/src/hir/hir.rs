@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::lexer::token::Span;
-use super::types::Type;
+use super::types::{BaseType, Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InterpPart {
@@ -159,7 +159,8 @@ pub struct HirExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Int(i64),
-    Float(f64),
+    /// 浮点字面量。第二字段为 dtype（F32 或 F64），保留到字节码与运行时。
+    Float(f64, BaseType),
     Bool(bool),
     String(String),
 }

@@ -194,7 +194,7 @@ impl Parser {
 
         let kind = match &token.kind {
             TokenKind::IntLiteral(n) => ExprKind::Literal(Literal::Int(*n)),
-            TokenKind::FloatLiteral(n) => ExprKind::Literal(Literal::Float(*n)),
+            TokenKind::FloatLiteral(n, dt) => ExprKind::Literal(Literal::Float(*n, *dt)),
             TokenKind::True => ExprKind::Literal(Literal::Bool(true)),
             TokenKind::False => ExprKind::Literal(Literal::Bool(false)),
             TokenKind::StringLiteral(s) => ExprKind::Literal(Literal::String(s.clone())),
@@ -1824,10 +1824,11 @@ impl Parser {
                 }
                 Ok(Pattern::Literal(Literal::Int(n)))
             }
-            TokenKind::FloatLiteral(n) => {
+            TokenKind::FloatLiteral(n, dt) => {
                 let n = *n;
+                let dt = *dt;
                 self.advance();
-                Ok(Pattern::Literal(Literal::Float(n)))
+                Ok(Pattern::Literal(Literal::Float(n, dt)))
             }
             TokenKind::True => {
                 self.advance();
