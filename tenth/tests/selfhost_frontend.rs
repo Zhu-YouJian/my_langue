@@ -1,6 +1,9 @@
-//! Phase B integration test: tenthc frontend can parse its own source.
-//! Uses the Rust mother compiler to run tenthc's lexer/parser/lowerer
-//! on tenthc's own .th files, verifying no parse/lower errors.
+//! Self-hosting frontend contract test: tenthc must lex/parse/lower its own
+//! source without errors. This is the basic contract for self-hosting —
+//! if these fail, the self-hosting pipeline is broken.
+//!
+//! Execution coverage (compile → WASM → run) is provided by
+//! `fixpoint_runtime.rs` and `parity_test.rs`.
 
 #[cfg(test)]
 mod selfhost_frontend {
@@ -37,18 +40,10 @@ mod selfhost_frontend {
         let mut lexer = Lexer::new(&src);
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = Parser::new(tokens);
-        let program = parser.parse_program();
-        // Parser may produce errors for unsupported features; verify it doesn't panic
-        match program {
-            Ok(p) => {
-                println!("Parsed: {} items", p.items.len());
-                assert!(p.items.len() > 0, "expected items in tenthc source");
-            }
-            Err(e) => {
-                // Log but don't fail — Phase B is about identifying gaps
-                println!("Parse error (expected during Phase B): {:?}", e);
-            }
-        }
+        let program = parser.parse_program()
+            .expect("tenthc must parse its own source — self-hosting frontend contract");
+        println!("Parsed: {} items", program.items.len());
+        assert!(program.items.len() > 0, "expected items in tenthc source");
     }
 
     #[test]
@@ -57,23 +52,13 @@ mod selfhost_frontend {
         let mut lexer = Lexer::new(&src);
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = Parser::new(tokens);
-        let program = match parser.parse_program() {
-            Ok(p) => p,
-            Err(e) => {
-                println!("SKIP lower: parse error: {:?}", e);
-                return;
-            }
-        };
+        let program = parser.parse_program()
+            .expect("tenthc must parse its own source — self-hosting frontend contract");
         let mut lowerer = Lowerer::new();
-        match lowerer.lower_program(&program) {
-            Ok(hir) => {
-                println!("Lowered: {} functions", hir.functions.len());
-                assert!(hir.functions.len() > 0, "expected functions in HIR");
-            }
-            Err(e) => {
-                println!("Lower error (expected during Phase B): {:?}", e);
-            }
-        }
+        let hir = lowerer.lower_program(&program)
+            .expect("tenthc must lower its own source — self-hosting frontend contract");
+        println!("Lowered: {} functions", hir.functions.len());
+        assert!(hir.functions.len() > 0, "expected functions in HIR");
     }
 
     #[test]
