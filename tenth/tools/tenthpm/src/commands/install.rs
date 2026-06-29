@@ -1,8 +1,10 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
-use crate::manifest::{Dependency, Lockfile, Manifest};
+use crate::manifest::{
+    ensure_within, is_git_url, safe_package_name_from_git, safe_to_remove_dir, Dependency,
+    Lockfile, Manifest,
+};
 
 /// Install a package from a git URL or local path into deps/ and add it
 /// to the project's Tenth.toml.
@@ -33,8 +35,8 @@ fn install_local(package: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut manifest = Manifest::load_from_file(manifest_path)?;
 
     if is_git_url(package) {
-        let package_name = extract_package_name(package)
-            .ok_or("无法从 git URL 提取包名")?;
+        // 安全：拒绝 `https://attacker.invalid/..` 之类路径穿越输入
+        let package_name = safe_package_name_from_git(package)?;
 
         let deps_dir = Path::new("deps");
         if !deps_dir.exists() {
@@ -42,14 +44,18 @@ fn install_local(package: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let target_dir = deps_dir.join(&package_name);
+        // 安全闸门：确保 target_dir 始终位于 deps/ 之内
+        ensure_within(deps_dir, &target_dir).map_err(|e| -> Box<dyn std::error::Error> {
+            e.into()
+        })?;
         if target_dir.exists() {
             println!("Updating `{}` in deps/{}...", package, package_name);
-            let _ = Command::new("git")
+            let _ = std::process::Command::new("git")
                 .args(["-C", &format!("deps/{}", package_name), "pull"])
                 .status();
         } else {
             println!("Installing `{}` into deps/{}...", package, package_name);
-            let status = Command::new("git")
+            let status = std::process::Command::new("git")
                 .args(["clone", package, &format!("deps/{}", package_name)])
                 .status()
                 .map_err(|e| {
@@ -90,6 +96,8 @@ fn install_local(package: &str) -> Result<(), Box<dyn std::error::Error>> {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .ok_or("无法从路径提取包名")?;
+        // 安全：本地路径依赖也要校验包名，避免 `deps/../` 之类
+        crate::manifest::validate_package_name(&package_name)?;
 
         let deps_dir = Path::new("deps");
         if !deps_dir.exists() {
@@ -97,7 +105,11 @@ fn install_local(package: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let target_dir = deps_dir.join(&package_name);
+        ensure_within(deps_dir, &target_dir).map_err(|e| -> Box<dyn std::error::Error> {
+            e.into()
+        })?;
         if target_dir.exists() {
+            safe_to_remove_dir(&target_dir)?;
             fs::remove_dir_all(&target_dir)?;
         }
         copy_dir(dep_path, &target_dir)?;
@@ -136,16 +148,21 @@ fn install_global(package: &str) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&global_dir)?;
 
     if is_git_url(package) {
-        let package_name = extract_package_name(package)
-            .ok_or("无法从 git URL 提取包名")?;
+        // 安全：拒绝路径穿越输入
+        let package_name = safe_package_name_from_git(package)?;
 
         let target_dir = global_dir.join(&package_name);
+        ensure_within(&global_dir, &target_dir).map_err(|e| -> Box<dyn std::error::Error> {
+            e.into()
+        })?;
         if target_dir.exists() {
+            // 安全闸门：删除前必须通过校验（防止 ~/.tenth/packages/.. 之类）
+            safe_to_remove_dir(&target_dir)?;
             fs::remove_dir_all(&target_dir)?;
         }
 
         println!("Installing `{}` globally...", package);
-        let status = Command::new("git")
+        let status = std::process::Command::new("git")
             .args(["clone", package, target_dir.to_str().unwrap()])
             .status()
             .map_err(|e| format!("运行 git 失败: {}", e))?;
@@ -164,24 +181,6 @@ fn install_global(package: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-fn is_git_url(package: &str) -> bool {
-    package.starts_with("http://")
-        || package.starts_with("https://")
-        || package.starts_with("git://")
-        || package.starts_with("ssh://")
-        || package.ends_with(".git")
-}
-
-fn extract_package_name(url: &str) -> Option<String> {
-    let url = url.strip_suffix(".git").unwrap_or(url);
-    let name = url.rsplit('/').next()?;
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_string())
-    }
 }
 
 /// Recursively copy a directory.

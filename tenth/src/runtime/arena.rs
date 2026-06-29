@@ -35,15 +35,19 @@ impl Arena {
     }
 
     /// Allocate `count` f64 elements from the arena.
-    /// Returns None if insufficient space.
+    /// Returns None if insufficient space or `count` causes overflow.
     pub fn alloc(&mut self, count: usize) -> Option<ArenaSlice> {
         let start = self.offset;
-        if start + count > self.capacity {
+        // 安全：用 checked_add 防止 start + count 溢出（虽然 capacity 不会到 usize::MAX，
+        // 但恶意调用方可能传入巨大 count，导致 start + count 回绕为小值通过校验）。
+        let end = start.checked_add(count)?;
+        if end > self.capacity {
             return None;
         }
-        self.offset = start + count;
-        let byte_size = count * std::mem::size_of::<f64>();
-        self.tracked_bytes += byte_size;
+        self.offset = end;
+        // 安全：count * size_of::<f64>() 也用 checked_mul
+        let byte_size = count.checked_mul(std::mem::size_of::<f64>())?;
+        self.tracked_bytes = self.tracked_bytes.checked_add(byte_size)?;
         limits::inc_arena_bytes(byte_size);
         Some(ArenaSlice { offset: start, len: count })
     }
@@ -85,8 +89,10 @@ impl Arena {
         let saved = self.offset;
         let saved_tracked = self.tracked_bytes;
         let result = f(self);
-        // Roll back the global counter for scoped allocations
-        let diff = self.tracked_bytes - saved_tracked;
+        // 安全：用 saturating_sub 防止 tracked_bytes < saved_tracked 时下溢 panic。
+        // 这种情况理论上不应发生（scope 内不应调用 reset 或手动 dec），
+        // 但若误用，旧实现会 panic 杀进程；新实现退化 silently 不减计数。
+        let diff = self.tracked_bytes.saturating_sub(saved_tracked);
         limits::dec_arena_bytes(diff);
         self.tracked_bytes = saved_tracked;
         self.offset = saved;

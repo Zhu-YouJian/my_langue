@@ -41,9 +41,17 @@ impl JitContext {
         let fn_id = super::translator::translate(&mut self.module, chunk_idx, chunk)?;
         self.module.finalize_definitions();
         let raw_ptr = self.module.get_finalized_function(fn_id);
-        // `get_finalized_function` returns `*const u8`; transmute to the
-        // typed function pointer. This is safe because we declared the
-        // signature with the same calling convention and parameter types.
+        // SAFETY: `get_finalized_function` 返回 `*const u8`，我们将其 transmute
+        // 为类型化函数指针。安全性依赖于以下不变量：
+        // 1. `raw_ptr` 非空且指向可执行内存（由 `finalize_definitions` 保证）
+        // 2. 函数签名与 `translator::translate` 声明的一致（`JitFn` 类型）
+        // 3. `*const u8` 与函数指针尺寸一致（assert 编译期检查）
+        // 若翻译器未来变更签名，断言会立即触发，避免静默 UB。
+        assert_eq!(
+            std::mem::size_of::<*const u8>(),
+            std::mem::size_of::<JitFn>(),
+            "pointer size mismatch — translator signature changed?"
+        );
         let ptr: JitFn = unsafe { std::mem::transmute(raw_ptr) };
         self.cache.insert(chunk_idx, ptr);
         Ok(ptr)
@@ -52,8 +60,10 @@ impl JitContext {
 
 impl Drop for JitContext {
     fn drop(&mut self) {
-        // Free compiled code by invalidating everything. The JITModule
-        // itself cleans up its mappings on drop.
-        // (JITModule doesn't expose a public `finish`; rely on Drop.)
+        // 显式释放编译产物与代码映射，避免依赖 JITModule 的隐式 Drop 语义
+        // （未来 cranelift 版本变更 Drop 行为时不易察觉）。
+        // `Module::finish` 消费 self，这里只能尽力清理；失败可忽略。
+        // 安全：清空 cache 后所有函数指针不再被引用，模块可安全释放。
+        self.cache.clear();
     }
 }

@@ -1,28 +1,10 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
-use crate::manifest::{Dependency, Lockfile, Manifest};
-
-/// Check if a string looks like a git URL.
-fn is_git_url(package: &str) -> bool {
-    package.starts_with("http://")
-        || package.starts_with("https://")
-        || package.starts_with("git://")
-        || package.starts_with("ssh://")
-        || package.ends_with(".git")
-}
-
-/// Extract the package name from a git URL (last path component, minus .git).
-fn extract_package_name(url: &str) -> Option<String> {
-    let url = url.strip_suffix(".git").unwrap_or(url);
-    let name = url.rsplit('/').next()?;
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_string())
-    }
-}
+use crate::manifest::{
+    ensure_within, is_git_url, safe_package_name_from_git, safe_to_remove_dir, Dependency,
+    Lockfile, Manifest,
+};
 
 /// Check if a string looks like a local path.
 fn is_local_path(package: &str) -> bool {
@@ -60,8 +42,8 @@ fn add_git_dependency(
     url: &str,
     version: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let package_name = extract_package_name(url)
-        .ok_or("无法从 git URL 提取包名")?;
+    // 安全：拒绝 `https://attacker.invalid/..` 之类路径穿越输入
+    let package_name = safe_package_name_from_git(url)?;
 
     let deps_dir = Path::new("deps");
     if !deps_dir.exists() {
@@ -69,10 +51,14 @@ fn add_git_dependency(
     }
 
     let target_dir = deps_dir.join(&package_name);
+    // 安全闸门：确保 target_dir 始终位于 deps/ 之内
+    ensure_within(deps_dir, &target_dir).map_err(|e| -> Box<dyn std::error::Error> {
+        e.into()
+    })?;
     if target_dir.exists() {
         // If already exists, pull updates instead of erroring
         println!("Updating `{}` in deps/{}...", url, package_name);
-        let status = Command::new("git")
+        let status = std::process::Command::new("git")
             .args(["-C", &format!("deps/{}", package_name), "pull"])
             .status()
             .map_err(|e| {
@@ -92,7 +78,7 @@ fn add_git_dependency(
         }
     } else {
         println!("Cloning `{}` into deps/{}...", url, package_name);
-        let status = Command::new("git")
+        let status = std::process::Command::new("git")
             .args(["clone", url, &format!("deps/{}", package_name)])
             .status()
             .map_err(|e| {
@@ -152,6 +138,8 @@ fn add_path_dependency(
             .map(|n| n.to_string_lossy().to_string())
             .ok_or("无法从路径提取包名")?
     };
+    // 安全：本地路径依赖的包名同样需校验
+    crate::manifest::validate_package_name(&package_name)?;
 
     let dependency = Dependency {
         version: version.unwrap_or("*").to_string(),
@@ -177,6 +165,9 @@ fn add_registry_dependency(
     name: &str,
     version: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // 安全：注册中心包名同样需校验，避免包名注入特殊字符
+    crate::manifest::validate_package_name(name)?;
+
     let dep_version = version.unwrap_or("*").to_string();
     let dependency = Dependency {
         version: dep_version,
@@ -194,4 +185,10 @@ fn add_registry_dependency(
 
     println!("Added dependency `{}`", name);
     Ok(())
+}
+
+// 防止 `safe_to_remove_dir` 未使用警告（add 流程不删除目录，但保留以备未来扩展）
+#[allow(dead_code)]
+fn _silence_safe_to_remove_unused() {
+    let _ = safe_to_remove_dir;
 }

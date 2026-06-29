@@ -13,22 +13,68 @@
 //! - All trampolines are `extern "C"` (no unwinding across FFI).
 
 use std::cell::RefCell;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use crate::runtime::value::Value;
 use crate::runtime::vm::Vm;
+
+/// 单次 hostcall 可接受的最多参数个数。超过即视为翻译器/调用方异常，
+/// 直接拒绝执行 `from_raw_parts`，避免 `count * 2` 类运算溢出后造成 UB。
+const MAX_HOSTCALL_ARGS: usize = 1 << 20; // 1_048_576
 
 /// Invoke a compiled JIT function pointer.
 ///
 /// # Safety
 /// `fn_ptr` must point to a valid function with the signature
 /// `extern "C" fn(*mut Vm, *const Value, usize, *mut Value) -> bool`.
+///
+/// 实现用 `catch_unwind` 包裹 JIT 调用，防止 hostcall 内部 panic 跨 FFI 边界
+/// （跨 FFI unwind 是 UB）。若捕获到 panic，将消息写入 `vm.last_error` 并返回 `false`。
 pub unsafe fn invoke_jit(
     fn_ptr: unsafe extern "C" fn(*mut Vm, *const Value, usize, *mut Value) -> bool,
     vm: *mut Vm,
     args: &[Value],
     out: &mut Value,
 ) -> bool {
-    fn_ptr(vm, args.as_ptr(), args.len(), out as *mut Value)
+    // SAFETY: 调用方保证 fn_ptr 来自合法 JIT 模块；vm 非空且未被移动。
+    // catch_unwind 用于防止 hostcall panic 跨 FFI 边界。
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        fn_ptr(vm, args.as_ptr(), args.len(), out as *mut Value)
+    }));
+    match result {
+        Ok(ok) => ok,
+        Err(payload) => {
+            // 不要让 panic 跨 FFI 边界；写入错误后返回 false
+            let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                (*s).to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "JIT hostcall panic (non-string payload)".to_string()
+            };
+            if !vm.is_null() {
+                (*vm).set_last_error(format!("JIT panic: {}", msg));
+            }
+            std::ptr::write(out, Value::Unit);
+            false
+        }
+    }
+}
+
+/// 安全地从裸指针构造切片。若 `count` 超过 `MAX_HOSTCALL_ARGS` 或 `ptr` 为空，
+/// 返回空切片（调用方应已写好错误处理路径）。
+///
+/// 这是 JIT hostcall 中所有 `from_raw_parts` 的统一闸门。
+unsafe fn safe_slice<'a>(ptr: *const Value, count: u64) -> &'a [Value] {
+    if ptr.is_null() {
+        return &[];
+    }
+    let n = match count {
+        0 => return &[],
+        c if c as usize > MAX_HOSTCALL_ARGS => return &[],
+        c => c as usize,
+    };
+    std::slice::from_raw_parts(ptr, n)
 }
 
 // ── Value construction trampolines ─────────────────────────────────────────
@@ -183,7 +229,7 @@ unsafe extern "C" fn host_call(
 ) {
     let vm = &mut *vm;
     let name = vm.string_at(name_idx as usize).unwrap_or_default();
-    let args = std::slice::from_raw_parts(args_ptr, arg_count as usize);
+    let args = safe_slice(args_ptr, arg_count);
     match vm.call_with_args(&name, args) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
@@ -195,7 +241,7 @@ unsafe extern "C" fn host_method_call(
 ) {
     let vm = &mut *vm;
     let method = vm.string_at(name_idx as usize).unwrap_or_default();
-    let all = std::slice::from_raw_parts(args_ptr, arg_count as usize);
+    let all = safe_slice(args_ptr, arg_count);
     if all.is_empty() {
         vm.set_last_error("MethodCall: missing receiver".into());
         std::ptr::write(out, Value::Unit);
@@ -212,15 +258,27 @@ unsafe extern "C" fn host_method_call(
 // ── Heap-allocating trampolines ────────────────────────────────────────────
 
 unsafe extern "C" fn host_make_vec(_vm: *mut Vm, count: u64, args_ptr: *const Value, out: *mut Value) {
-    let items = std::slice::from_raw_parts(args_ptr, count as usize).to_vec();
+    let items = safe_slice(args_ptr, count).to_vec();
     std::ptr::write(out, Value::Vec(Rc::new(RefCell::new(items))));
 }
 
 unsafe extern "C" fn host_make_map(_vm: *mut Vm, count: u64, args_ptr: *const Value, out: *mut Value) {
-    let flat = std::slice::from_raw_parts(args_ptr, count as usize * 2);
+    // 安全：用 checked_mul 防止 count * 2 溢出（count = u64::MAX/2+1 时会回绕）
+    let pair_count = match (count as usize).checked_mul(2) {
+        Some(n) if n <= MAX_HOSTCALL_ARGS * 2 => n,
+        _ => {
+            std::ptr::write(out, Value::Map(Rc::new(RefCell::new(std::collections::HashMap::new()))));
+            return;
+        }
+    };
+    let flat = if args_ptr.is_null() || pair_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(args_ptr, pair_count)
+    };
     let mut map = std::collections::HashMap::new();
     let mut i = 0;
-    while i < flat.len() {
+    while i + 1 < flat.len() {
         if let Value::String(k) = &flat[i] {
             map.insert(k.clone(), flat[i + 1].clone());
         }
@@ -234,10 +292,23 @@ unsafe extern "C" fn host_new_struct(
 ) {
     let vm = &mut *vm;
     let name = vm.string_at(name_idx as usize).unwrap_or_default();
-    let flat = std::slice::from_raw_parts(args_ptr, field_count as usize * 2);
+    // 安全：field_count * 2 用 checked_mul
+    let flat_len = match (field_count as usize).checked_mul(2) {
+        Some(n) if n <= MAX_HOSTCALL_ARGS * 2 => n,
+        _ => {
+            vm.set_last_error("new_struct: field_count 过大".into());
+            std::ptr::write(out, Value::Unit);
+            return;
+        }
+    };
+    let flat = if args_ptr.is_null() || flat_len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(args_ptr, flat_len)
+    };
     let mut fields = Vec::with_capacity(field_count as usize);
     let mut i = 0;
-    while i < flat.len() {
+    while i + 1 < flat.len() {
         let fname = match &flat[i] { Value::String(s) => s.clone(), _ => format!("f{}", i / 2) };
         fields.push((fname, flat[i + 1].clone()));
         i += 2;
@@ -294,7 +365,8 @@ unsafe extern "C" fn host_make_enum(
     let vm = &mut *vm;
     let enum_name = vm.string_at(name_idx as usize).unwrap_or_default();
     let variant = vm.string_at(variant_idx as usize).unwrap_or_default();
-    let fields_vec: Vec<Value> = std::slice::from_raw_parts(args_ptr, field_count as usize).to_vec();
+    // 安全：field_count 经 safe_slice 校验上限
+    let fields_vec: Vec<Value> = safe_slice(args_ptr, field_count).to_vec();
     let fields: Vec<(String, Value)> = fields_vec.into_iter()
         .enumerate()
         .map(|(i, v)| (format!("_{}", i), v))
@@ -333,8 +405,19 @@ unsafe extern "C" fn host_push_range(_vm: *mut Vm, start: i64, end: i64, inclusi
 unsafe extern "C" fn host_make_tensor(
     _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *mut Value,
 ) {
-    let count = (rows as usize) * (cols as usize);
-    let flat = std::slice::from_raw_parts(args_ptr, count);
+    // 安全：rows * cols 用 checked_mul 防止溢出，并设上限防止 OOM
+    let count = match (rows as usize).checked_mul(cols as usize) {
+        Some(n) if n <= MAX_HOSTCALL_ARGS => n,
+        _ => {
+            std::ptr::write(out, Value::Unit);
+            return;
+        }
+    };
+    let flat = if args_ptr.is_null() || count == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(args_ptr, count)
+    };
     let data: Vec<f64> = flat.iter().map(|v| match v {
         Value::Float(f) => *f,
         Value::Int(i) => *i as f64,

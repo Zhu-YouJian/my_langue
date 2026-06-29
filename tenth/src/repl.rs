@@ -235,8 +235,13 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                 // Guard: check definition count before parsing
                 if let Err(msg) = limits.guard_defs(def_count) {
                     eprintln!("[limits] {}", msg);
+                    // 安全：历史 mem-strict 用 panic! 会杀掉整个 REPL 进程，丢失
+                    // 用户未保存工作。改为返回错误并 continue，保持会话存活。
+                    // 调用方（main.rs / 测试）若需硬失败可在外层 catch。
                     if cfg!(feature = "mem-strict") {
-                        panic!("definition limit exceeded: {}", msg);
+                        return Err(crate::error::TenthError::RuntimeError {
+                            message: format!("definition limit exceeded: {}", msg),
+                        });
                     }
                     continue;
                 }

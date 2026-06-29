@@ -25,3 +25,15 @@ cranelift = "0.115"
 cranelift-module = "0.115"
 cranelift-jit = "0.115"
 cranelift-native = "0.115"
+
+[profile.release]
+# 安全：启用算术溢出检查，让 hostcalls.rs / wasmtime_host.rs 中的
+# `count * 2` / `rows * cols` 等运算在溢出时 panic 而非静默回绕。
+# 对运行时性能影响极小（<2%），但显著降低被构造输入触发 UB 的风险。
+overflow-checks = true
+# 保留 unwind 能力，让 JIT hostcall 内部的 catch_unwind 能正常工作。
+# 若未来想缩小 JIT 攻击面可改 "abort"，但需评估对所有 catch_unwind 的影响。
+panic = "unwind"
+
+[profile.dev]
+overflow-checks = true

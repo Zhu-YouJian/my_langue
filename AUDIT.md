@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-06-24 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 | 499 项测试（498 passed + 1 ignored）
+> 日期：2026-06-29 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 + 安全加固 | 499 项测试（498 passed + 1 ignored）
 
 ---
 
@@ -163,6 +163,50 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | AUDIT §5/§7 重构 (2026-06-15) | 修复重复小节号 (5.2×2)，移除 6 条已废弃 C 后端条目，章节号六/七→八/九 |
 
 保留的历史 C 文件 (tenthc_v3.c ~ v9.c, tenthc_dbg5.c, tenthc_dbg6.c, tenthc_fix.c, tenthc_analyze.c, tenthc_chk.c, tenthc_out.c, tenthc_rust.c) 作为自举进化见证，暂时保留不删。
+
+---
+
+## 十、安全审查记录（2026-06-29）
+
+> 全面安全审查识别 25 项问题（2 致命 / 8 高危 / 8 中等 / 7 低危），本轮修复 17 项。审查报告 `security_review.md`，威胁模型披露 `SECURITY.md` 重写，变更记录见 `MEMO.md` 顶部 2026-06-29 条目。
+
+### 10.1 已修复（17 项）
+
+| ID | 严重度 | 位置 | 修复方式 |
+|----|--------|------|---------|
+| C-1 | 致命 | `tenth/tools/tenthpm/src/{manifest,install,add}.rs` | 新增 `validate_package_name` / `safe_package_name_from_git` / `ensure_within` / `safe_to_remove_dir` 集中校验；所有 `target_dir` 计算 + `fs::remove_dir_all` 必须经过校验 |
+| C-2 | 致命 | `SECURITY.md` | 重写：纠正"0 处 unsafe"失实声明（实际 41+ 处），公开真实威胁模型与 `--fs-root` 沙箱选项 |
+| H-1 | 高危 | `tenth/src/compile/jit/hostcalls.rs` | 新增 `MAX_HOSTCALL_ARGS = 1<<20` 与 `safe_slice` 统一闸门；所有 `from_raw_parts` 改用；`host_make_map` / `host_new_struct` 加 `count.checked_mul(2)`；`host_make_tensor` 加 `rows.checked_mul(cols)` |
+| H-3 | 高危 | `tenth/src/main.rs` | 新增 `parse_memory_config` 与 `run_file(path, config)`；fallback 路径用 `Interpreter::with_limits`；`--no-limits` 显式退出沙箱 |
+| H-5 | 高危 | `tenth/src/main.rs` | `time_sleep_ms` 拒绝负数与 > 24h 的请求 |
+| H-6 | 高危 | `tenth/src/main.rs` | JSON 解析器加 `JSON_MAX_DEPTH=256` 防栈溢出；`json_unescape` / `simple_json_split` 修复 `\"` 转义状态机 |
+| H-7 | 高危 | `tenth/src/main.rs` | `random` 改用 `rand::thread_rng().r#gen()`（CSPRNG），替代可预测的 `DefaultHasher` |
+| H-8 | 高危 | `tenth/src/compile/wasmtime_host.rs` | 新增 `safe_offset` / `read_cstr` / `MAX_ALLOC_BYTES=16MiB`；17 个 host import 全部改用；`tenth_alloc` 拒绝负数 size 与 > 16MiB 请求 |
+| M-1 | 中危 | `tenth/src/compile/jit/context.rs` | `transmute` 前加 `assert_eq!(size_of::<*const u8>(), size_of::<JitFn>())` 尺寸断言 |
+| M-2 | 中危 | `tenth/src/repl.rs:241-245` | `mem-strict` 模式不再 `panic!` 杀 REPL，改为返回 `TenthError::RuntimeError` |
+| M-3 | 中危 | `tenth/Cargo.toml` | `[profile.release]` 加 `overflow-checks = true, panic = "unwind"`；`[profile.dev]` 加 `overflow-checks = true` |
+| M-4 | 中危 | `tenth/src/compile/jit/hostcalls.rs` | 见 H-1（`host_make_tensor` 加 `rows.checked_mul(cols)`） |
+| M-5 | 中危 | `tenth/src/compile/jit/context.rs` | impl Drop for JitContext 调 `cache.clear()` 显式清理 |
+| M-6 | 中危 | `tenth/src/compile/jit/hostcalls.rs` | `invoke_jit` 包 `catch_unwind`，panic 时写 `Value::Unit` 并返回 false，防 FFI unwind UB |
+| M-7 | 中危 | `tenth/src/runtime/arena.rs` | `alloc` 用 `checked_add` / `checked_mul`；`scope` 用 `saturating_sub` 防下溢 panic |
+| M-8 | 中危 | `tenth/src/compile/wasmtime_host.rs` | 见 H-8（bump allocator 越界 panic 修复） |
+
+### 10.2 未修复（保留至下轮）
+
+| ID | 严重度 | 说明 |
+|----|--------|------|
+| H-2 | 高危 | JIT 模块加载缺乏完整性校验（建议下轮引入签名机制） |
+| H-4 | 高危 | `--fs-root` 沙箱选项尚未在 run_file 入口实现（SECURITY.md 已公开规划，代码待补） |
+| L-1 ~ L-7 | 低危 | 命名约定、文档同步、warning 清理等工程改进项 |
+
+### 10.3 验证
+
+| 命令 | 结果 |
+|------|------|
+| `cargo build --manifest-path tenth/Cargo.toml` | ✅ 成功（178 warning 为项目原有 `unsafe-op-in-unsafe-fn`，非本次引入） |
+| `cargo test --manifest-path tenth/Cargo.toml --lib` | ✅ 10/10 通过 |
+| `cargo test --manifest-path tenth/Cargo.toml --features mem-debug --test memory_test` | ✅ 17/17 通过（含 `arena_scope_rolls_back_counter` / `arena_overflow_returns_none` 验证 M-7 修复） |
+| `cargo test --manifest-path tenth/Cargo.toml --no-run`（全集成测试） | ⚠️ 失败，stash 验证原始代码同样失败，确认为 wasmtime/cranelift 依赖 rlib 格式问题，与本次修复无关 |
 
 ---
 

@@ -32,7 +32,11 @@ fn run_main() -> TenthResult<()> {
                 return build_wasm(&args[2]);
             }
             "run" if args.len() >= 3 => {
-                return run_file(&args[2]);
+                // 安全：run_file 默认应用 MemoryConfig::default()，避免恶意 .th
+                // 程序在 fallback 到解释器路径时无任何内存护栏。
+                // 用户可用 `--no-limits` 显式关闭，或 `--max-memory N` 自定义。
+                let config = parse_memory_config(&args[3..]);
+                return run_file(&args[2], config);
             }
             "wasm" if args.len() >= 3 => {
                 return run_wasm(&args[2]);
@@ -123,8 +127,35 @@ fn source_to_hir(source: &str) -> TenthResult<tenth::hir::hir::HirProgram> {
     lowerer.lower_program(&program)
 }
 
+/// 从命令行参数解析内存配置。
+/// - `--no-limits` → 无限制（用户自担风险）
+/// - `--max-memory N` → 自定义 N MiB
+/// - 默认 → `MemoryConfig::default()`（256 MiB arena / 2 GiB 张量元素上限）
+fn parse_memory_config(args: &[String]) -> MemoryConfig {
+    if args.iter().any(|a| a == "--no-limits") {
+        return MemoryConfig::unbounded();
+    }
+    if let Some(mb) = args.iter()
+        .position(|a| a == "--max-memory")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<usize>().ok())
+    {
+        if mb == 0 {
+            return MemoryConfig::unbounded();
+        }
+        return MemoryConfig {
+            max_arena_bytes: mb * 1024 * 1024,
+            max_variables: 10_000,
+            max_accumulated_defs: 5_000,
+            max_tensor_elements: mb * 1024 * 128,
+            track_allocations: true,
+        };
+    }
+    MemoryConfig::default()
+}
+
 /// Run a .th source file — try VM first, fall back to tree-walk interpreter.
-fn run_file(path: &str) -> TenthResult<()> {
+fn run_file(path: &str, config: MemoryConfig) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| tenth::error::TenthError::RuntimeError {
             message: format!("无法读取 {}：{}", path, e),
@@ -158,7 +189,9 @@ fn run_file(path: &str) -> TenthResult<()> {
             }
         }
     }
-    let mut interpreter = Interpreter::new(&hir);
+    // 安全：fallback 到解释器时应用 MemoryConfig，避免 .th 程序触发 OOM。
+    let limits = tenth::runtime::limits::RuntimeLimits::new(config);
+    let mut interpreter = Interpreter::with_limits(&hir, limits);
     match interpreter.execute_program(&hir)? {
         Some(val) => println!("= {}", val),
         None => {}
@@ -286,17 +319,29 @@ fn json_encode_value_pretty(val: &tenth::runtime::value::Value, indent: usize) -
     }
 }
 
+/// JSON 字符串解析最大嵌套深度。超过即返回 `Value::Unit`，避免恶意构造的
+/// `[[[[...]]]` 递归爆栈（即便 build.rs 把栈扩到 64 MiB，几千层嵌套仍可爆栈）。
+const JSON_MAX_DEPTH: usize = 256;
+
 fn json_decode_string(s: &str) -> tenth::runtime::value::Value {
+    json_decode_string_depth(s, 0)
+}
+
+fn json_decode_string_depth(s: &str, depth: usize) -> tenth::runtime::value::Value {
     use tenth::runtime::value::Value;
     use std::rc::Rc;
     use std::cell::RefCell;
+    // 安全：深度闸门。攻击者构造 `[[[...` 千层嵌套即可触发栈溢出 DoS。
+    if depth > JSON_MAX_DEPTH {
+        return Value::Unit;
+    }
     let s = s.trim();
     if s == "null" { return Value::Unit; }
     if s == "true" { return Value::Bool(true); }
     if s == "false" { return Value::Bool(false); }
-    if s.starts_with('"') && s.ends_with('"') {
+    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
         let inner = &s[1..s.len()-1];
-        return Value::String(inner.replace("\\\"", "\"").replace("\\\\", "\\").replace("\\n", "\n").replace("\\t", "\t"));
+        return Value::String(json_unescape(inner));
     }
     if let Ok(n) = s.parse::<i64>() { return Value::Int(n); }
     if let Ok(f) = s.parse::<f64>() { return Value::Float(f); }
@@ -305,7 +350,7 @@ fn json_decode_string(s: &str) -> tenth::runtime::value::Value {
         if inner.trim().is_empty() { return Value::Vec(Rc::new(RefCell::new(Vec::new()))); }
         let items: Vec<Value> = simple_json_split(inner, ',')
             .iter()
-            .map(|s| json_decode_string(s))
+            .map(|s| json_decode_string_depth(s, depth + 1))
             .collect();
         return Value::Vec(Rc::new(RefCell::new(items)));
     }
@@ -319,9 +364,9 @@ fn json_decode_string(s: &str) -> tenth::runtime::value::Value {
         for entry in &entries {
             let parts = simple_json_split(entry, ':');
             if parts.len() >= 2 {
-                let key = json_decode_string(parts[0].trim());
+                let key = json_decode_string_depth(parts[0].trim(), depth + 1);
                 if let Value::String(k) = key {
-                    let val = json_decode_string(parts[1].trim());
+                    let val = json_decode_string_depth(parts[1].trim(), depth + 1);
                     map.insert(k, val);
                 }
             }
@@ -331,15 +376,82 @@ fn json_decode_string(s: &str) -> tenth::runtime::value::Value {
     Value::Unit
 }
 
+/// 解析 JSON 字符串字面量中的转义序列。支持 `\"`、`\\`、`\n`、`\t`、`\r`、`\/`、`\b`、`\f`。
+/// 不支持的转义（如 `\uXXXX`）按字面保留，便于上层识别。
+/// 此函数替代了原 `replace()` 链式调用——后者无法正确处理 `"a\\\"b"`（反斜杠后接引号）的情况。
+fn json_unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            Some('/') => out.push('/'),
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('b') => out.push('\u{0008}'),
+            Some('f') => out.push('\u{000C}'),
+            Some('u') => {
+                // \uXXXX — 取 4 位十六进制。失败则保留字面 `\u`。
+                let mut hex = String::with_capacity(4);
+                for _ in 0..4 {
+                    if let Some(h) = chars.next() {
+                        hex.push(h);
+                    } else {
+                        break;
+                    }
+                }
+                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                    if let Some(ch) = char::from_u32(code) {
+                        out.push(ch);
+                        continue;
+                    }
+                }
+                out.push_str("\\u");
+                out.push_str(&hex);
+            }
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 fn simple_json_split(s: &str, delimiter: char) -> Vec<String> {
     let mut result = Vec::new();
     let mut current = String::new();
     let mut depth = 0i32;
     let mut in_string = false;
+    let mut prev_was_backslash = false;
     for c in s.chars() {
-        if c == '"' && !in_string { in_string = true; current.push(c); continue; }
-        if c == '"' && in_string { in_string = false; current.push(c); continue; }
-        if in_string { current.push(c); continue; }
+        if in_string {
+            current.push(c);
+            // 安全：修复转义状态机。原实现不识别 `\"`，导致 `"a\"b"` 中的 `\"`
+            // 被误认为字符串结束，后续 `,` 被当作分隔符，解析结果错误。
+            if prev_was_backslash {
+                // 当前字符被反斜杠转义，不改变 in_string 状态
+                prev_was_backslash = false;
+            } else if c == '\\' {
+                prev_was_backslash = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if c == '"' {
+            in_string = true;
+            prev_was_backslash = false;
+            current.push(c);
+            continue;
+        }
         match c {
             '[' | '{' => { depth += 1; current.push(c); }
             ']' | '}' => { depth -= 1; current.push(c); }
@@ -464,13 +576,27 @@ fn register_natives(vm: &mut Vm) {
     });
     vm.add_native("time_sleep_ms".into(), |_vm, args| {
         if let Some(Value::Int(ms)) = args.first() {
+            // 安全：拒绝负数（`as u64` 会符号扩展为巨大值，导致近乎永久的 DoS）
+            // 上限 24 小时，防止 `.th` 程序意外将进程睡眠数年
+            const MAX_SLEEP_MS: i64 = 24 * 60 * 60 * 1000;
+            if *ms < 0 {
+                return Err(tenth::error::TenthError::RuntimeError {
+                    message: format!("time_sleep_ms: 不接受负数（{}）", ms),
+                });
+            }
+            if *ms > MAX_SLEEP_MS {
+                return Err(tenth::error::TenthError::RuntimeError {
+                    message: format!("time_sleep_ms: 超过 24 小时上限（{}ms）", ms),
+                });
+            }
             std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
             Ok(Value::Unit)
         } else {
             Err(tenth::error::TenthError::RuntimeError { message: "time_sleep_ms(ms) 期望一个整数".into() })
         }
     });
-    // Random functions
+    // Random functions — 使用 rand crate 的 CSPRNG（thread_rng），避免可预测种子。
+    // 历史 `DefaultHasher` + SystemTime 方案可被攻击者枚举纳秒时刻预测输出。
     vm.add_native("random_int".into(), |_vm, args| {
         let lo = match args.first() {
             Some(Value::Int(n)) => *n,
@@ -480,29 +606,19 @@ fn register_natives(vm: &mut Vm) {
             Some(Value::Int(n)) => *n,
             _ => lo,
         };
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let mut hasher = DefaultHasher::new();
-        now.hash(&mut hasher);
-        let rand_val = hasher.finish();
-        let range = (hi - lo + 1).max(1);
-        Ok(Value::Int(lo + ((rand_val % (range as u64)) as i64)))
+        use rand::Rng;
+        // 处理 lo > hi 的边界：交换而不是 (hi - lo + 1) 为负时回绕
+        let (low, high) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+        // 用 u64 全域取模，避免 i64 范围回绕到负数
+        let range = (high as u64).saturating_sub(low as u64).saturating_add(1).max(1);
+        let r: u64 = rand::thread_rng().r#gen();
+        Ok(Value::Int(low + ((r % range) as i64)))
     });
     vm.add_native("random_float".into(), |_vm, _args| {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let mut hasher = DefaultHasher::new();
-        now.hash(&mut hasher);
-        let rand_val = hasher.finish();
-        Ok(Value::Float((rand_val as f64) / (u64::MAX as f64)))
+        use rand::Rng;
+        // [0, 1) 半开区间，标准做法
+        let r: f64 = rand::thread_rng().r#gen();
+        Ok(Value::Float(r))
     });
     // Math functions（输入为 Float32 时返回 Float32，否则 Float）
     vm.add_native("math_tan".into(), |_vm, args| {
