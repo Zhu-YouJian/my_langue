@@ -92,6 +92,17 @@ fn wasm_call_indirect(out: &mut Vec<i64>, type_idx: i64, table_idx: i64) {
 }
 
 // ── f64 opcodes ──
+//
+// Phase 5.3 策略 A 偏差说明（与 Task 5.1 Rust wasm.rs:1416-1420 一致）：
+// F32 在 WASM 后端统一提升为 f64，不引入 wasm_f32_const / wasm_f32_add /
+// wasm_f32_sub / wasm_f32_mul / wasm_f32_div / wasm_f32_eq / wasm_f32_ne /
+// wasm_f32_lt / wasm_f32_gt / wasm_f32_le / wasm_f32_ge / wasm_f32_store /
+// wasm_f32_load 等 f32 指令族。理由：
+//   1. Rust 侧 wasm.rs:22/48 既有 F32|F64→ValType::F64 映射，全链路统一 f64；
+//   2. F32Const 会压入 f32 栈，下游 BinOp/Var/Assign 期望 f64 导致 WASM 验证失败；
+//   3. dtype 信息在 HIR 层已保留（HirType.sub==3 表 F32），仅 WASM 执行路径做精度提升；
+//   4. TensorLiteral 内存布局保持 8 字节 stride（不改 host import 签名，R7 未触发）。
+// F32 输入经 is_expr_float（行 430-444）识别后，统一走下方 wasm_f64_* 路径。
 
 fn wasm_f64_const(out: &mut Vec<i64>, val: f64) {
     out.push(68); // f64.const
@@ -423,9 +434,10 @@ fn push_str_bytes(out: &mut Vec<i64>, s: str) {
 }
 
 // ── Type helper: 判断表达式是否为 float 类型（f32 或 f64，策略 A 统一走 f64 路径）──
-// Phase 5.2 step 3：策略 A（f32→f64 提升），与 Rust wasm.rs:22 既有 F32|F64→F64 一致
+// Phase 5.2 step 3 + Phase 5.3：策略 A（f32→f64 提升），与 Rust wasm.rs:22 既有 F32|F64→F64 一致
 // FloatLiteral 默认仍是 F64；带 f32 后缀的字面量经 lower.th 降级为 sub=3，
 // is_expr_float 识别 sub==3 后让下游算术路径统一发 f64 指令（无需新增 wasm_f32_* 函数族）
+// Task 5.3 偏差：不引入单独 is_f32/is_f64 函数——策略 A 下无需区分，统一 is_expr_float 即可。
 
 fn is_expr_float(hir: HirProgram, idx: i64) -> bool {
     if idx <= 0 || idx > hir.expr_nodes.len() { return false; };

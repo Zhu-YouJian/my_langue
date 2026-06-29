@@ -55,8 +55,17 @@ fn install_local(package: &str) -> Result<(), Box<dyn std::error::Error>> {
                 .status();
         } else {
             println!("Installing `{}` into deps/{}...", package, package_name);
+            // L-5: 克隆时禁用 file:// 和 git:// 协议（防 submodule 钩子注入），
+            // 克隆后立即将 core.hooksPath 指向空设备，让所有 hook 失效。
+            let target = format!("deps/{}", package_name);
             let status = std::process::Command::new("git")
-                .args(["clone", package, &format!("deps/{}", package_name)])
+                .args([
+                    "clone",
+                    "--config", "protocol.file.allow=deny",
+                    "--config", "protocol.git.allow=deny",
+                    package,
+                    &target,
+                ])
                 .status()
                 .map_err(|e| {
                     if e.kind() == std::io::ErrorKind::NotFound {
@@ -73,6 +82,8 @@ fn install_local(package: &str) -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+            // 纵深防御：禁用 cloned 仓库的 hooks 路径
+            crate::manifest::disable_hooks(&target);
         }
 
         let dependency = Dependency {
@@ -162,14 +173,24 @@ fn install_global(package: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         println!("Installing `{}` globally...", package);
+        // L-5: 克隆时禁用 file:// 和 git:// 协议，克隆后禁用 hooks 路径。
+        let target_str = target_dir.to_str().unwrap();
         let status = std::process::Command::new("git")
-            .args(["clone", package, target_dir.to_str().unwrap()])
+            .args([
+                "clone",
+                "--config", "protocol.file.allow=deny",
+                "--config", "protocol.git.allow=deny",
+                package,
+                target_str,
+            ])
             .status()
             .map_err(|e| format!("运行 git 失败: {}", e))?;
 
         if !status.success() {
             return Err(format!("git clone 失败 (退出码: {:?})", status.code()).into());
         }
+        // 纵深防御：禁用 cloned 仓库的 hooks 路径
+        crate::manifest::disable_hooks(target_str);
 
         println!("Installed `{}` to {}", package_name, target_dir.display());
     } else {

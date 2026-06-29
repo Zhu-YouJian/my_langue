@@ -1,8 +1,9 @@
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::path::Path;
 use tenth::error::TenthResult;
 use tenth::repl;
-use tenth::runtime::limits::MemoryConfig;
+use tenth::runtime::limits::{MemoryConfig, FsSandbox};
 use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::runtime::interpreter::Interpreter;
@@ -36,7 +37,12 @@ fn run_main() -> TenthResult<()> {
                 // 程序在 fallback 到解释器路径时无任何内存护栏。
                 // 用户可用 `--no-limits` 显式关闭，或 `--max-memory N` 自定义。
                 let config = parse_memory_config(&args[3..]);
-                return run_file(&args[2], config);
+                // H-2: 解析文件系统沙箱。默认无沙箱（向后兼容），
+                // `--fs-root <dir>` 启用沙箱，`--read-only` 进一步限制为只读。
+                let sandbox = parse_fs_sandbox(&args[3..])?;
+                // H-4: 解析墙钟超时（秒）。`--timeout <secs>` 启用。
+                let timeout_ms = parse_timeout_ms(&args[3..]);
+                return run_file(&args[2], config, sandbox, timeout_ms);
             }
             "wasm" if args.len() >= 3 => {
                 return run_wasm(&args[2]);
@@ -154,8 +160,61 @@ fn parse_memory_config(args: &[String]) -> MemoryConfig {
     MemoryConfig::default()
 }
 
+/// H-2: 解析文件系统沙箱选项。
+/// - `--fs-root <dir>` → 启用沙箱，根目录为 `dir`
+/// - `--read-only` → 沙箱只读（必须配合 `--fs-root`）
+/// - `--fs-cwd` → 以当前工作目录为沙箱根（等价 `--fs-root .`）
+/// - 默认 → `None`（无沙箱，向后兼容）
+///
+/// 沙箱启用后，所有 `.th` 程序的文件 I/O 原生函数（read_file/write_file/
+/// remove_file/mkdir/copy_file/rename_file/compile_host 等）必须经过
+/// FsSandbox::check_read/check_write 校验，防止读写沙箱外的文件
+/// （如 ~/.ssh/id_rsa、/etc/passwd）。
+fn parse_fs_sandbox(args: &[String]) -> TenthResult<Option<FsSandbox>> {
+    let read_only = args.iter().any(|a| a == "--read-only");
+    if let Some(root) = args.iter()
+        .position(|a| a == "--fs-root")
+        .and_then(|i| args.get(i + 1))
+    {
+        let sb = FsSandbox::new(Path::new(root), read_only)
+            .map_err(|e| tenth::error::TenthError::RuntimeError { message: e })?;
+        return Ok(Some(sb));
+    }
+    if args.iter().any(|a| a == "--fs-cwd") {
+        let sb = FsSandbox::cwd(read_only)
+            .map_err(|e| tenth::error::TenthError::RuntimeError { message: e })?;
+        return Ok(Some(sb));
+    }
+    if read_only {
+        return Err(tenth::error::TenthError::RuntimeError {
+            message: "--read-only 必须配合 --fs-root <dir> 或 --fs-cwd 使用".into(),
+        });
+    }
+    Ok(None)
+}
+
+/// H-4: 解析墙钟超时（秒）。
+/// - `--timeout <secs>` → 设置超时，返回 `Some(now_ms + secs * 1000)`
+/// - 默认 → `None`（无超时，向后兼容）
+///
+/// 防止 `while true {}` 永久挂起宿主进程。VM 和 Interpreter 在主循环中
+/// 周期性检查 `now >= deadline`，超时返回 `TenthError::Timeout`。
+fn parse_timeout_ms(args: &[String]) -> Option<u128> {
+    let secs = args.iter()
+        .position(|a| a == "--timeout")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<u64>().ok())?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    // 用 checked 防止 secs * 1000 溢出（u64::MAX / 1000 ≈ 10^16 秒，远超实际）
+    let timeout_ms = secs.checked_mul(1000)? as u128;
+    Some(now_ms.checked_add(timeout_ms)?)
+}
+
 /// Run a .th source file — try VM first, fall back to tree-walk interpreter.
-fn run_file(path: &str, config: MemoryConfig) -> TenthResult<()> {
+fn run_file(path: &str, config: MemoryConfig, sandbox: Option<FsSandbox>, timeout_ms: Option<u128>) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| tenth::error::TenthError::RuntimeError {
             message: format!("无法读取 {}：{}", path, e),
@@ -171,7 +230,7 @@ fn run_file(path: &str, config: MemoryConfig) -> TenthResult<()> {
     // Skip VM if TENTH_NO_VM env var is set (for debugging interpreter)
     let skip_vm = std::env::var("TENTH_NO_VM").is_ok();
     if !skip_vm {
-        match vm_execute(&hir) {
+        match vm_execute(&hir, sandbox.clone(), timeout_ms) {
             Ok(val) => {
                 if !matches!(val, Value::Unit) { println!("= {}", val); }
                 return Ok(());
@@ -192,6 +251,9 @@ fn run_file(path: &str, config: MemoryConfig) -> TenthResult<()> {
     // 安全：fallback 到解释器时应用 MemoryConfig，避免 .th 程序触发 OOM。
     let limits = tenth::runtime::limits::RuntimeLimits::new(config);
     let mut interpreter = Interpreter::with_limits(&hir, limits);
+    // H-2/H-4: 解释器也应用沙箱和超时
+    interpreter.fs_sandbox = sandbox;
+    interpreter.deadline_ms = timeout_ms;
     match interpreter.execute_program(&hir)? {
         Some(val) => println!("= {}", val),
         None => {}
@@ -200,8 +262,11 @@ fn run_file(path: &str, config: MemoryConfig) -> TenthResult<()> {
 }
 
 /// Execute a HirProgram via the VM. Returns the result or an error.
-fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
+fn vm_execute(hir: &tenth::hir::hir::HirProgram, sandbox: Option<FsSandbox>, timeout_ms: Option<u128>) -> TenthResult<Value> {
     let mut vm = Vm::new();
+    // H-2/H-4: 应用文件系统沙箱和墙钟超时
+    vm.fs_sandbox = sandbox;
+    vm.deadline_ms = timeout_ms;
     register_natives(&mut vm);
 
     for func in &hir.functions {
@@ -249,7 +314,15 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram) -> TenthResult<Value> {
 }
 
 fn days_to_date(days: u64) -> (u64, u64, u64) {
-    let z = days + 719468;
+    // L-3: 防 `days + 719468` 溢出。days 来自 SystemTime（自 1970-01-01 起的秒数 / 86400），
+    // 物理上不可能接近 u64::MAX，但显式校验以杜绝 UB（debug build 会 panic，release 会回绕）。
+    // 常量 719468 = Howard Hinnant 算法的 epoch 偏移（1970-01-01 → 0000-03-01）。
+    const EPOCH_OFFSET: u64 = 719468;
+    if days > u64::MAX - EPOCH_OFFSET {
+        // 溢出时返回零值（年/月/日 = 0），调用方据此可识别异常。
+        return (0, 0, 0);
+    }
+    let z = days + EPOCH_OFFSET;
     let era = z / 146097;
     let doe = z - era * 146097;
     let yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;
@@ -473,9 +546,18 @@ fn register_natives(vm: &mut Vm) {
         println!();
         Ok(Value::Unit)
     });
-    vm.add_native("read_file".into(), |_vm, args| {
+    vm.add_native("read_file".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
-            match std::fs::read_to_string(path) {
+            // H-2: 沙箱校验
+            let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                match sb.check_read(path) {
+                    Ok(p) => p,
+                    Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                }
+            } else {
+                std::path::PathBuf::from(path)
+            };
+            match std::fs::read_to_string(&resolved) {
                 Ok(s) => Ok(Value::String(s)),
                 Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("读取文件: {e}") }),
             }
@@ -496,21 +578,39 @@ fn register_natives(vm: &mut Vm) {
             Err(tenth::error::TenthError::RuntimeError { message: "tensor() 参数异常".into() })
         }
     });
-    vm.add_native("write_bytes".into(), |_vm, args| {
+    vm.add_native("write_bytes".into(), |vm, args| {
         if args.len() >= 2 {
             if let Value::String(path) = &args[1] {
                 if let Value::Vec(items) = &args[0] {
+                    // H-2: 沙箱校验
+                    let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                        match sb.check_write(path) {
+                            Ok(p) => p,
+                            Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                        }
+                    } else {
+                        std::path::PathBuf::from(path)
+                    };
                     let bytes: Vec<u8> = items.borrow().iter().map(|v| v.as_int().unwrap_or(0) as u8).collect();
-                    let _ = std::fs::write(path, &bytes);
+                    let _ = std::fs::write(&resolved, &bytes);
                     return Ok(Value::Int(0));
                 }
             }
         }
         Ok(Value::Int(1))
     });
-    vm.add_native("read_bytes".into(), |_vm, args| {
+    vm.add_native("read_bytes".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
-            match std::fs::read(path) {
+            // H-2: 沙箱校验
+            let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                match sb.check_read(path) {
+                    Ok(p) => p,
+                    Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                }
+            } else {
+                std::path::PathBuf::from(path)
+            };
+            match std::fs::read(&resolved) {
                 Ok(data) => {
                     let bytes: Vec<Value> = data.iter()
                         .map(|b| Value::Int(*b as i64))
@@ -755,26 +855,44 @@ fn register_natives(vm: &mut Vm) {
             Ok(Value::Unit)
         }
     });
-    vm.add_native("compile_host".into(), |_vm, args| {
+    vm.add_native("compile_host".into(), |vm, args| {
         if args.len() >= 2 {
             if let (Value::String(src), Value::String(out)) = (&args[0], &args[1]) {
+                // H-2/L-7: 沙箱校验写路径
+                let out_resolved = if let Some(ref sb) = vm.fs_sandbox {
+                    match sb.check_write(out) {
+                        Ok(p) => p,
+                        Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                    }
+                } else {
+                    std::path::PathBuf::from(out)
+                };
                 match tenth::lexer::lexer::Lexer::new(src).tokenize()
                     .and_then(|tokens| tenth::parser::parser::Parser::new(tokens).parse_program())
                     .and_then(|prog| tenth::hir::lower::Lowerer::new().lower_program(&prog))
                     .and_then(|hir| tenth::compile::compile_to_wasm(&hir))
                 {
-                    Ok(bytes) => { let _ = std::fs::write(out, &bytes); return Ok(Value::Int(0)); }
+                    Ok(bytes) => { let _ = std::fs::write(&out_resolved, &bytes); return Ok(Value::Int(0)); }
                     Err(_) => return Ok(Value::Int(1)),
                 }
             }
         }
         Ok(Value::Int(1))
     });
-    vm.add_native("compile_program".into(), |_vm, args| {
+    vm.add_native("compile_program".into(), |vm, args| {
         if args.len() >= 2 {
             if let Value::String(out) = &args[1] {
+                // H-2/L-7: 沙箱校验写路径
+                let out_resolved = if let Some(ref sb) = vm.fs_sandbox {
+                    match sb.check_write(out) {
+                        Ok(p) => p,
+                        Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                    }
+                } else {
+                    std::path::PathBuf::from(out)
+                };
                 match tenth::compile::compile_program_to_wasm(&args[0]) {
-                    Ok(bytes) => { let _ = std::fs::write(out, &bytes); return Ok(Value::Int(0)); }
+                    Ok(bytes) => { let _ = std::fs::write(&out_resolved, &bytes); return Ok(Value::Int(0)); }
                     Err(_) => return Ok(Value::Int(1)),
                 }
             }
@@ -900,10 +1018,19 @@ fn register_natives(vm: &mut Vm) {
         }
     });
     // File system functions
-    vm.add_native("write_file".into(), |_vm, args| {
+    vm.add_native("write_file".into(), |vm, args| {
         if args.len() >= 2 {
             if let (Value::String(path), Value::String(content)) = (&args[0], &args[1]) {
-                match std::fs::write(path, content) {
+                // H-2: 沙箱校验
+                let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                    match sb.check_write(path) {
+                        Ok(p) => p,
+                        Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                    }
+                } else {
+                    std::path::PathBuf::from(path)
+                };
+                match std::fs::write(&resolved, content) {
                     Ok(()) => Ok(Value::Unit),
                     Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("写入文件失败: {}", e) }),
                 }
@@ -926,30 +1053,55 @@ fn register_natives(vm: &mut Vm) {
             Err(tenth::error::TenthError::RuntimeError { message: "path_join(基础路径, 子路径) 期望两个字符串参数".into() })
         }
     });
-    vm.add_native("path_exists".into(), |_vm, args| {
+    vm.add_native("path_exists".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
+            // H-2: 沙箱校验
+            if let Some(ref sb) = vm.fs_sandbox {
+                if let Err(e) = sb.check_read(path) {
+                    return Err(tenth::error::TenthError::RuntimeError { message: e });
+                }
+            }
             Ok(Value::Bool(std::path::Path::new(path).exists()))
         } else {
             Err(tenth::error::TenthError::RuntimeError { message: "path_exists(路径) 期望一个字符串路径".into() })
         }
     });
-    vm.add_native("path_is_file".into(), |_vm, args| {
+    vm.add_native("path_is_file".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
+            if let Some(ref sb) = vm.fs_sandbox {
+                if let Err(e) = sb.check_read(path) {
+                    return Err(tenth::error::TenthError::RuntimeError { message: e });
+                }
+            }
             Ok(Value::Bool(std::path::Path::new(path).is_file()))
         } else {
             Err(tenth::error::TenthError::RuntimeError { message: "path_is_file(路径) 期望一个字符串路径".into() })
         }
     });
-    vm.add_native("path_is_dir".into(), |_vm, args| {
+    vm.add_native("path_is_dir".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
+            if let Some(ref sb) = vm.fs_sandbox {
+                if let Err(e) = sb.check_read(path) {
+                    return Err(tenth::error::TenthError::RuntimeError { message: e });
+                }
+            }
             Ok(Value::Bool(std::path::Path::new(path).is_dir()))
         } else {
             Err(tenth::error::TenthError::RuntimeError { message: "path_is_dir(路径) 期望一个字符串路径".into() })
         }
     });
-    vm.add_native("mkdir".into(), |_vm, args| {
+    vm.add_native("mkdir".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
-            match std::fs::create_dir_all(path) {
+            // H-2: 沙箱校验
+            let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                match sb.check_write(path) {
+                    Ok(p) => p,
+                    Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                }
+            } else {
+                std::path::PathBuf::from(path)
+            };
+            match std::fs::create_dir_all(&resolved) {
                 Ok(()) => Ok(Value::Unit),
                 Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("创建目录失败: {}", e) }),
             }
@@ -957,9 +1109,18 @@ fn register_natives(vm: &mut Vm) {
             Err(tenth::error::TenthError::RuntimeError { message: "mkdir(路径) 期望一个字符串路径".into() })
         }
     });
-    vm.add_native("list_dir".into(), |_vm, args| {
+    vm.add_native("list_dir".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
-            match std::fs::read_dir(path) {
+            // H-2: 沙箱校验
+            let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                match sb.check_read(path) {
+                    Ok(p) => p,
+                    Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                }
+            } else {
+                std::path::PathBuf::from(path)
+            };
+            match std::fs::read_dir(&resolved) {
                 Ok(entries) => {
                     let items: Vec<Value> = entries
                         .filter_map(|e| e.ok())
@@ -973,9 +1134,18 @@ fn register_natives(vm: &mut Vm) {
             Err(tenth::error::TenthError::RuntimeError { message: "list_dir(路径) 期望一个字符串路径".into() })
         }
     });
-    vm.add_native("file_size".into(), |_vm, args| {
+    vm.add_native("file_size".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
-            match std::fs::metadata(path) {
+            // H-2: 沙箱校验
+            let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                match sb.check_read(path) {
+                    Ok(p) => p,
+                    Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                }
+            } else {
+                std::path::PathBuf::from(path)
+            };
+            match std::fs::metadata(&resolved) {
                 Ok(meta) => Ok(Value::Int(meta.len() as i64)),
                 Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("获取文件大小失败: {}", e) }),
             }
@@ -983,9 +1153,18 @@ fn register_natives(vm: &mut Vm) {
             Err(tenth::error::TenthError::RuntimeError { message: "file_size(路径) 期望一个字符串路径".into() })
         }
     });
-    vm.add_native("remove_file".into(), |_vm, args| {
+    vm.add_native("remove_file".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
-            match std::fs::remove_file(path) {
+            // H-2: 沙箱校验
+            let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                match sb.check_write(path) {
+                    Ok(p) => p,
+                    Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                }
+            } else {
+                std::path::PathBuf::from(path)
+            };
+            match std::fs::remove_file(&resolved) {
                 Ok(()) => Ok(Value::Unit),
                 Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("删除文件失败: {}", e) }),
             }
@@ -993,10 +1172,27 @@ fn register_natives(vm: &mut Vm) {
             Err(tenth::error::TenthError::RuntimeError { message: "remove_file(路径) 期望一个字符串路径".into() })
         }
     });
-    vm.add_native("copy_file".into(), |_vm, args| {
+    vm.add_native("copy_file".into(), |vm, args| {
         if args.len() >= 2 {
             if let (Value::String(src), Value::String(dst)) = (&args[0], &args[1]) {
-                match std::fs::copy(src, dst) {
+                // H-2: 沙箱校验
+                let src_resolved = if let Some(ref sb) = vm.fs_sandbox {
+                    match sb.check_read(src) {
+                        Ok(p) => p,
+                        Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                    }
+                } else {
+                    std::path::PathBuf::from(src)
+                };
+                let dst_resolved = if let Some(ref sb) = vm.fs_sandbox {
+                    match sb.check_write(dst) {
+                        Ok(p) => p,
+                        Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                    }
+                } else {
+                    std::path::PathBuf::from(dst)
+                };
+                match std::fs::copy(&src_resolved, &dst_resolved) {
                     Ok(_) => Ok(Value::Unit),
                     Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("复制文件失败: {}", e) }),
                 }
@@ -1007,10 +1203,27 @@ fn register_natives(vm: &mut Vm) {
             Err(tenth::error::TenthError::RuntimeError { message: "copy_file(源路径, 目标路径) 期望两个字符串参数".into() })
         }
     });
-    vm.add_native("rename_file".into(), |_vm, args| {
+    vm.add_native("rename_file".into(), |vm, args| {
         if args.len() >= 2 {
             if let (Value::String(src), Value::String(dst)) = (&args[0], &args[1]) {
-                match std::fs::rename(src, dst) {
+                // H-2: 沙箱校验
+                let src_resolved = if let Some(ref sb) = vm.fs_sandbox {
+                    match sb.check_read(src) {
+                        Ok(p) => p,
+                        Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                    }
+                } else {
+                    std::path::PathBuf::from(src)
+                };
+                let dst_resolved = if let Some(ref sb) = vm.fs_sandbox {
+                    match sb.check_write(dst) {
+                        Ok(p) => p,
+                        Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                    }
+                } else {
+                    std::path::PathBuf::from(dst)
+                };
+                match std::fs::rename(&src_resolved, &dst_resolved) {
                     Ok(()) => Ok(Value::Unit),
                     Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("重命名文件失败: {}", e) }),
                 }
@@ -1161,9 +1374,18 @@ fn vm_run(path: &str) -> TenthResult<()> {
         println!();
         Ok(Value::Unit)
     });
-    vm.add_native("read_file".into(), |_vm, args| {
+    vm.add_native("read_file".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
-            match std::fs::read_to_string(path) {
+            // H-2: 沙箱校验
+            let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                match sb.check_read(path) {
+                    Ok(p) => p,
+                    Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                }
+            } else {
+                std::path::PathBuf::from(path)
+            };
+            match std::fs::read_to_string(&resolved) {
                 Ok(s) => Ok(Value::String(s)),
                 Err(e) => Err(tenth::error::TenthError::RuntimeError { message: format!("读取文件: {e}") }),
             }

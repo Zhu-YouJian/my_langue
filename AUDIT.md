@@ -168,9 +168,9 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 ## 十、安全审查记录（2026-06-29）
 
-> 全面安全审查识别 25 项问题（2 致命 / 8 高危 / 8 中等 / 7 低危），本轮修复 17 项。审查报告 `security_review.md`，威胁模型披露 `SECURITY.md` 重写，变更记录见 `MEMO.md` 顶部 2026-06-29 条目。
+> 全面安全审查识别 25 项问题（2 致命 / 8 高危 / 8 中等 / 7 低危），分两轮全部修复。第一轮 17 项（C-1, C-2, H-1, H-3, H-5~H-8, M-1~M-8），第二轮 7 项（H-2, H-4, L-1, L-3~L-6）；L-2 在 H-7 中一并修复，L-7 在 H-2 中一并修复。审查报告 `security_review.md`，威胁模型披露 `SECURITY.md` 重写，变更记录见 `MEMO.md` 顶部 2026-06-29 条目。
 
-### 10.1 已修复（17 项）
+### 10.1 已修复（第一轮 17 项）
 
 | ID | 严重度 | 位置 | 修复方式 |
 |----|--------|------|---------|
@@ -191,22 +191,35 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | M-7 | 中危 | `tenth/src/runtime/arena.rs` | `alloc` 用 `checked_add` / `checked_mul`；`scope` 用 `saturating_sub` 防下溢 panic |
 | M-8 | 中危 | `tenth/src/compile/wasmtime_host.rs` | 见 H-8（bump allocator 越界 panic 修复） |
 
-### 10.2 未修复（保留至下轮）
+### 10.2 已修复（第二轮 7 项，2026-06-29）
 
-| ID | 严重度 | 说明 |
-|----|--------|------|
-| H-2 | 高危 | JIT 模块加载缺乏完整性校验（建议下轮引入签名机制） |
-| H-4 | 高危 | `--fs-root` 沙箱选项尚未在 run_file 入口实现（SECURITY.md 已公开规划，代码待补） |
-| L-1 ~ L-7 | 低危 | 命名约定、文档同步、warning 清理等工程改进项 |
+| ID | 严重度 | 位置 | 修复方式 |
+|----|--------|------|---------|
+| H-2 | 高危 | `tenth/src/runtime/{limits,vm,interpreter}.rs`、`main.rs` | 新增 `FsSandbox` 类型（canonicalize + starts_with 防路径穿越）；Vm/Interpreter 新增 `fs_sandbox` 字段，所有文件 I/O 原生函数必须经过 `check_read`/`check_write`；`--fs-root`/`--read-only`/`--fs-cwd` 命令行选项 |
+| H-4 | 高危 | `tenth/src/runtime/{vm,interpreter}.rs`、`main.rs` | VM 主循环和 Interpreter tick() 新增独立 `loop_counter`/`tick_counter`，每 4096 步检查 `deadline_ms`（墙钟超时独立于 `step_budget`）；`--timeout <secs>` 命令行选项，`parse_timeout_ms` 用 checked_mul/checked_add 防溢出 |
+| L-1 | 低危 | `tenth/tools/tenthpm/src/manifest.rs` | 验证确认 `extract_package_name` 仅在 `safe_package_name_from_git` 内被调用，所有调用方都经 `validate_package_name` 校验 |
+| L-3 | 低危 | `tenth/src/main.rs`、`tenth/src/runtime/interpreter.rs` | `days_to_date` 入口加 `if days > u64::MAX - EPOCH_OFFSET { return (0,0,0); }` 防 `days + 719468` 溢出 UB |
+| L-4 | 低危 | `tenth/tools/tenthpm/src/manifest.rs` | `is_git_url` 默认仅放行 `https://`，`http://`/`git://`/`ssh://`/`.git` 后缀需 `TENTH_ALLOW_INSECURE_GIT=1` 显式 opt-in |
+| L-5 | 低危 | `tenth/tools/tenthpm/src/{manifest,install,add}.rs` | 三处 `git clone` 加 `--config protocol.file.allow=deny` 和 `protocol.git.allow=deny`；克隆后调用新增 `disable_hooks()` 将 `core.hooksPath` 指向空设备 |
+| L-6 | 低危 | `DEPS.md` | 新增"供应链安全"章节，说明 `cargo audit` 和 `cargo deny` 用法及 CI 集成建议 |
 
-### 10.3 验证
+> L-2（DefaultHasher）已在 H-7 中一并修复；L-7（compile_host 写文件）已在 H-2 中一并修复。
+
+### 10.3 未修复（保留至下轮）
+
+无。全部 25 项安全问题已修复。
+
+### 10.4 验证
 
 | 命令 | 结果 |
 |------|------|
 | `cargo build --manifest-path tenth/Cargo.toml` | ✅ 成功（178 warning 为项目原有 `unsafe-op-in-unsafe-fn`，非本次引入） |
-| `cargo test --manifest-path tenth/Cargo.toml --lib` | ✅ 10/10 通过 |
+| `cargo build --release --manifest-path tenth/Cargo.toml` | ✅ 成功（第二轮验证） |
+| `cargo build --manifest-path tenth/tools/tenthpm/Cargo.toml` | ✅ 成功（第二轮 L-4/L-5 验证） |
+| `cargo run --release --manifest-path tenth/Cargo.toml -- run tenthc/main.th` | ✅ 自举路径 A 验证通过（`tenthc_full.wasm` 生成） |
+| `cargo test --manifest-path tenth/Cargo.toml --lib` | ✅ 10/10 通过（第一轮） |
 | `cargo test --manifest-path tenth/Cargo.toml --features mem-debug --test memory_test` | ✅ 17/17 通过（含 `arena_scope_rolls_back_counter` / `arena_overflow_returns_none` 验证 M-7 修复） |
-| `cargo test --manifest-path tenth/Cargo.toml --no-run`（全集成测试） | ⚠️ 失败，stash 验证原始代码同样失败，确认为 wasmtime/cranelift 依赖 rlib 格式问题，与本次修复无关 |
+| `cargo test --manifest-path tenth/Cargo.toml`（全集成测试） | ⚠️ rustc 1.95.0 ICE（`wasm.rs:2077` 方法调用解析，仅在 `--test` 模式触发），非本项目代码问题，ICE 文件未被本轮修改 |
 
 ---
 

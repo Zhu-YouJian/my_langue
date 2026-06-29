@@ -257,15 +257,29 @@ fn fnv1a_64(data: &[u8]) -> String {
 // 这一组函数集中校验包名合法性，所有调用方必须经过 `validate_package_name`
 // 才能将包名用于文件系统操作。
 
-/// 判断字符串是否为合法的 git URL。默认仅放行 `https://`，因为 ssh/git 协议
-/// 在启用 agent forwarding 的环境中存在被恶意服务器利用的风险。
-/// 如需 ssh/git 协议，调用方可显式放宽。
+/// 判断字符串是否为合法的 git URL。
+///
+/// L-4: 默认仅放行 `https://`。`http://`/`git://`/`ssh://` 与裸 `.git` 后缀的 URL
+/// 在启用 ssh agent forwarding 的环境中存在被恶意服务器利用的风险
+/// （参见 CVE-2017-1000117 等）。如需使用这些协议，调用方/用户必须显式设置
+/// 环境变量 `TENTH_ALLOW_INSECURE_GIT=1` 表示自担风险。
+///
+/// 注意：即使放行 `.git` 后缀，[`safe_package_name_from_git`] 仍会调用
+/// [`validate_package_name`] 拒绝 `..`、含路径分隔符等危险包名。
 pub fn is_git_url(package: &str) -> bool {
-    package.starts_with("https://")
-        || package.starts_with("http://")
-        || package.starts_with("git://")
-        || package.starts_with("ssh://")
-        || package.ends_with(".git")
+    let allow_insecure = std::env::var("TENTH_ALLOW_INSECURE_GIT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if allow_insecure {
+        package.starts_with("https://")
+            || package.starts_with("http://")
+            || package.starts_with("git://")
+            || package.starts_with("ssh://")
+            || package.ends_with(".git")
+    } else {
+        // 安全默认：仅 https://。其余协议需用户显式 opt-in。
+        package.starts_with("https://")
+    }
 }
 
 /// 从 git URL 提取末段作为候选包名（不去除前导分隔符后的空段）。
@@ -343,6 +357,23 @@ pub fn safe_package_name_from_git(url: &str) -> Result<String, String> {
     let name = extract_package_name(url).ok_or("无法从 git URL 提取包名")?;
     validate_package_name(&name)?;
     Ok(name)
+}
+
+/// L-5: 禁用指定 git 仓库的 hooks 路径。clone 后立即调用，作为纵深防御。
+///
+/// 将 `core.hooksPath` 指向一个不会包含任何 hook 的"空"路径：
+/// - Unix: `/dev/null`（设备文件，git 无法在其中查找 hook → 跳过）
+/// - Windows: `nul`（同上，Windows 的空设备）
+///
+/// 失败时静默忽略（best-effort），因为：
+/// 1. 现代 git（≥2.20）默认不克隆 origin 的 hooks；
+/// 2. 调用方已通过 `--config protocol.file.allow=deny` 阻止 submodule 钩子注入；
+/// 3. 此处仅作为最后一道防线，不构成安全边界。
+pub fn disable_hooks(repo_dir: &str) {
+    let dev_null = if cfg!(windows) { "nul" } else { "/dev/null" };
+    let _ = std::process::Command::new("git")
+        .args(["-C", repo_dir, "config", "--local", "core.hooksPath", dev_null])
+        .status();
 }
 
 /// 校验 `target` 目录确实位于 `root` 目录之内，且二者都存在或可创建。

@@ -166,6 +166,9 @@ pub struct Vm {
     pub step_budget: Option<u64>,
     /// Optional wall-clock deadline (Unix ms). Checked periodically.
     pub deadline_ms: Option<u128>,
+    /// 文件系统沙箱。`Some` 时所有文件 I/O 原生函数必须经过校验。
+    /// `None` 表示无沙箱（默认，向后兼容）。
+    pub fs_sandbox: Option<crate::runtime::limits::FsSandbox>,
     /// Lazily-initialised Cranelift JIT context. `None` until first JIT use.
     pub jit_ctx: Option<crate::compile::jit::context::JitContext>,
     /// Last error message set by a JIT hostcall trampoline.
@@ -176,7 +179,7 @@ pub struct Vm {
 
 impl Vm {
     pub fn new() -> Self {
-        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new(), tape: None, recording: false, step_budget: None, deadline_ms: None, jit_ctx: None, last_error: None, current_chunk_idx: 0 }
+        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new(), tape: None, recording: false, step_budget: None, deadline_ms: None, fs_sandbox: None, jit_ctx: None, last_error: None, current_chunk_idx: 0 }
     }
 
     // ── JIT accessors ──────────────────────────────────────────────────────
@@ -343,8 +346,14 @@ impl Vm {
         let mut code = self.chunks[chunk_idx].code.clone();
         let mut strings = self.chunks[chunk_idx].strings.clone();
 
+        // H-4: 独立的循环计数器，用于触发周期性 deadline 检查。
+        // 不依赖 step_budget（用户可能只设 --timeout 而不设步数预算）。
+        let mut loop_counter: u64 = 0;
+
         loop {
-            // Step budget check (no-op when unset).
+            // 安全 H-4：step_budget 和 deadline_ms 独立检查。
+            // 历史实现把 deadline 检查嵌套在 step_budget 内，导致只设
+            // `--timeout` 而不设 step_budget 时 deadline 永远不触发。
             if let Some(ref mut budget) = self.step_budget {
                 if *budget == 0 {
                     return Err(TenthError::Timeout {
@@ -352,17 +361,20 @@ impl Vm {
                     });
                 }
                 *budget -= 1;
-                if (*budget & 0xFFF) == 0 {
-                    if let Some(deadline) = self.deadline_ms {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis())
-                            .unwrap_or(0);
-                        if now >= deadline {
-                            return Err(TenthError::Timeout {
-                                message: "VM 时间预算耗尽".into(),
-                            });
-                        }
+            }
+            // 每隔 4096 次循环检查一次墙钟 deadline，开销可忽略。
+            // 用独立计数器避免依赖 step_budget（step_budget 可能未设）。
+            loop_counter = loop_counter.wrapping_add(1);
+            if (loop_counter & 0xFFF) == 0 {
+                if let Some(deadline) = self.deadline_ms {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0);
+                    if now >= deadline {
+                        return Err(TenthError::Timeout {
+                            message: "VM 时间预算耗尽".into(),
+                        });
                     }
                 }
             }

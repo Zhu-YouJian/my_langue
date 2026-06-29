@@ -78,8 +78,16 @@ fn add_git_dependency(
         }
     } else {
         println!("Cloning `{}` into deps/{}...", url, package_name);
+        // L-5: 克隆时禁用 file:// 和 git:// 协议，克隆后禁用 hooks 路径。
+        let target = format!("deps/{}", package_name);
         let status = std::process::Command::new("git")
-            .args(["clone", url, &format!("deps/{}", package_name)])
+            .args([
+                "clone",
+                "--config", "protocol.file.allow=deny",
+                "--config", "protocol.git.allow=deny",
+                url,
+                &target,
+            ])
             .status()
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
@@ -96,6 +104,8 @@ fn add_git_dependency(
             )
             .into());
         }
+        // 纵深防御：禁用 cloned 仓库的 hooks 路径
+        crate::manifest::disable_hooks(&target);
     }
 
     let dependency = Dependency {

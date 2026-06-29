@@ -39,11 +39,23 @@ pub struct Interpreter {
     /// periodically checks `now >= deadline` and raises `Timeout`.
     /// Set via `with_timeout_ms`.
     pub deadline_ms: Option<u128>,
+    /// H-4: 独立的 tick 计数器，用于触发周期性 deadline 检查。
+    /// 不依赖 step_budget（用户可能只设 --timeout 而不设步数预算）。
+    tick_counter: u64,
+    /// H-2: 文件系统沙箱。`Some` 时所有文件 I/O 原生函数必须经过校验。
+    /// `None` 表示无沙箱（默认，向后兼容）。
+    pub fs_sandbox: Option<crate::runtime::limits::FsSandbox>,
 }
 
 fn days_to_date(days: u64) -> (u64, u64, u64) {
     // Algorithm from http://howardhinnant.github.io/date_algorithms.html
-    let z = days + 719468;
+    // L-3: 防 `days + 719468` 溢出。days 来自 SystemTime（自 1970-01-01 起的秒数 / 86400），
+    // 物理上不可能接近 u64::MAX，但显式校验以杜绝 UB（debug build 会 panic，release 会回绕）。
+    const EPOCH_OFFSET: u64 = 719468;
+    if days > u64::MAX - EPOCH_OFFSET {
+        return (0, 0, 0);
+    }
+    let z = days + EPOCH_OFFSET;
     let era = z / 146097;
     let doe = z - era * 146097;
     let yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;
@@ -193,6 +205,8 @@ impl Interpreter {
             recording: false,
             step_budget: None,
             deadline_ms: None,
+            tick_counter: 0,
+            fs_sandbox: None,
         }
     }
 
@@ -438,6 +452,9 @@ impl Interpreter {
     /// deadline passes. No-op when neither limit is set (default).
     #[inline]
     fn tick(&mut self) -> TenthResult<()> {
+        // 安全 H-4：step_budget 和 deadline_ms 独立检查。
+        // 历史实现把 deadline 检查嵌套在 step_budget 内，导致只设
+        // `--timeout` 而不设 step_budget 时 deadline 永远不触发。
         if let Some(ref mut budget) = self.step_budget {
             if *budget == 0 {
                 return Err(TenthError::Timeout {
@@ -445,19 +462,20 @@ impl Interpreter {
                 });
             }
             *budget -= 1;
-            // Only check the wall-clock deadline every 4096 steps to keep
-            // the overhead negligible.
-            if (*budget & 0xFFF) == 0 {
-                if let Some(deadline) = self.deadline_ms {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis())
-                        .unwrap_or(0);
-                    if now >= deadline {
-                        return Err(TenthError::Timeout {
-                            message: "时间预算耗尽".into(),
-                        });
-                    }
+        }
+        // 用独立的 tick 计数器触发周期性 deadline 检查，
+        // 避免依赖 step_budget（用户可能只设 --timeout）。
+        self.tick_counter = self.tick_counter.wrapping_add(1);
+        if (self.tick_counter & 0xFFF) == 0 {
+            if let Some(deadline) = self.deadline_ms {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                if now >= deadline {
+                    return Err(TenthError::Timeout {
+                        message: "时间预算耗尽".into(),
+                    });
                 }
             }
         }
@@ -3650,6 +3668,15 @@ impl Interpreter {
             "save_weights" => {
                 if args.len() >= 2 {
                     if let Value::String(path) = &args[0] {
+                        // H-2: 沙箱校验
+                        let resolved = if let Some(ref sb) = self.fs_sandbox {
+                            match sb.check_write(path) {
+                                Ok(p) => p,
+                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            }
+                        } else {
+                            std::path::PathBuf::from(path)
+                        };
                         // args[1] can be Array or Vec of tensors
                         let tensors: &Rc<RefCell<Vec<Value>>> = match &args[1] {
                             Value::Vec(v) => v,
@@ -3691,7 +3718,7 @@ impl Interpreter {
                                     }
                                 }
                             }
-                            let _ = std::fs::write(path, &bytes);
+                            let _ = std::fs::write(&resolved, &bytes);
                             return Ok(Some(Value::Unit));
                     }
                 }
@@ -3701,7 +3728,16 @@ impl Interpreter {
             }
             "load_weights" => {
                 if let Some(Value::String(path)) = args.first() {
-                    match std::fs::read(path) {
+                    // H-2: 沙箱校验
+                    let resolved = if let Some(ref sb) = self.fs_sandbox {
+                        match sb.check_read(path) {
+                            Ok(p) => p,
+                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        }
+                    } else {
+                        std::path::PathBuf::from(path)
+                    };
+                    match std::fs::read(&resolved) {
                         Ok(bytes) => {
                             if bytes.len() < 4 {
                                 return Err(TenthError::RuntimeError {
@@ -3756,7 +3792,16 @@ impl Interpreter {
             }
             "read_file" => {
                 if let Some(Value::String(path)) = args.first() {
-                    match std::fs::read_to_string(path) {
+                    // H-2: 沙箱校验
+                    let resolved = if let Some(ref sb) = self.fs_sandbox {
+                        match sb.check_read(path) {
+                            Ok(p) => p,
+                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        }
+                    } else {
+                        std::path::PathBuf::from(path)
+                    };
+                    match std::fs::read_to_string(&resolved) {
                         Ok(content) => return Ok(Some(Value::String(content))),
                         Err(e) => return Err(TenthError::RuntimeError {
                             message: format!("读取文件失败: {}", e),
@@ -3770,7 +3815,16 @@ impl Interpreter {
             "write_file" => {
                 if args.len() >= 2 {
                     if let (Value::String(path), Value::String(content)) = (&args[0], &args[1]) {
-                        match std::fs::write(path, content) {
+                        // H-2: 沙箱校验
+                        let resolved = if let Some(ref sb) = self.fs_sandbox {
+                            match sb.check_write(path) {
+                                Ok(p) => p,
+                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            }
+                        } else {
+                            std::path::PathBuf::from(path)
+                        };
+                        match std::fs::write(&resolved, content) {
                             Ok(()) => return Ok(Some(Value::Unit)),
                             Err(e) => return Err(TenthError::RuntimeError {
                                 message: format!("写入文件失败: {}", e),
@@ -3785,10 +3839,19 @@ impl Interpreter {
             "write_bytes" => {
                 if args.len() >= 2 {
                     if let (Value::String(path), Value::Vec(bytes)) = (&args[0], &args[1]) {
+                        // H-2: 沙箱校验
+                        let resolved = if let Some(ref sb) = self.fs_sandbox {
+                            match sb.check_write(path) {
+                                Ok(p) => p,
+                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            }
+                        } else {
+                            std::path::PathBuf::from(path)
+                        };
                         let data: Vec<u8> = bytes.borrow().iter().filter_map(|v| {
                             if let Value::Int(n) = v { Some(*n as u8) } else { None }
                         }).collect();
-                        match std::fs::write(path, &data) {
+                        match std::fs::write(&resolved, &data) {
                             Ok(()) => return Ok(Some(Value::Unit)),
                             Err(e) => return Err(TenthError::RuntimeError {
                                 message: format!("写入字节失败: {}", e),
@@ -3802,7 +3865,16 @@ impl Interpreter {
             }
             "read_bytes" => {
                 if let Some(Value::String(path)) = args.first() {
-                    match std::fs::read(path) {
+                    // H-2: 沙箱校验
+                    let resolved = if let Some(ref sb) = self.fs_sandbox {
+                        match sb.check_read(path) {
+                            Ok(p) => p,
+                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        }
+                    } else {
+                        std::path::PathBuf::from(path)
+                    };
+                    match std::fs::read(&resolved) {
                         Ok(data) => {
                             let bytes: Vec<Value> = data.iter()
                                 .map(|b| Value::Int(*b as i64))
@@ -3831,6 +3903,12 @@ impl Interpreter {
             }
             "path_exists" => {
                 if let Some(Value::String(path)) = args.first() {
+                    // H-2: 沙箱校验（只读检查）
+                    if let Some(ref sb) = self.fs_sandbox {
+                        if let Err(e) = sb.check_read(path) {
+                            return Err(TenthError::RuntimeError { message: e });
+                        }
+                    }
                     return Ok(Some(Value::Bool(std::path::Path::new(path).exists())));
                 }
                 return Err(TenthError::RuntimeError {
@@ -3839,6 +3917,11 @@ impl Interpreter {
             }
             "path_is_file" => {
                 if let Some(Value::String(path)) = args.first() {
+                    if let Some(ref sb) = self.fs_sandbox {
+                        if let Err(e) = sb.check_read(path) {
+                            return Err(TenthError::RuntimeError { message: e });
+                        }
+                    }
                     return Ok(Some(Value::Bool(std::path::Path::new(path).is_file())));
                 }
                 return Err(TenthError::RuntimeError {
@@ -3847,6 +3930,11 @@ impl Interpreter {
             }
             "path_is_dir" => {
                 if let Some(Value::String(path)) = args.first() {
+                    if let Some(ref sb) = self.fs_sandbox {
+                        if let Err(e) = sb.check_read(path) {
+                            return Err(TenthError::RuntimeError { message: e });
+                        }
+                    }
                     return Ok(Some(Value::Bool(std::path::Path::new(path).is_dir())));
                 }
                 return Err(TenthError::RuntimeError {
@@ -3855,7 +3943,16 @@ impl Interpreter {
             }
             "mkdir" => {
                 if let Some(Value::String(path)) = args.first() {
-                    match std::fs::create_dir_all(path) {
+                    // H-2: 沙箱校验（写操作）
+                    let resolved = if let Some(ref sb) = self.fs_sandbox {
+                        match sb.check_write(path) {
+                            Ok(p) => p,
+                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        }
+                    } else {
+                        std::path::PathBuf::from(path)
+                    };
+                    match std::fs::create_dir_all(&resolved) {
                         Ok(()) => return Ok(Some(Value::Unit)),
                         Err(e) => return Err(TenthError::RuntimeError {
                             message: format!("创建目录失败: {}", e),
@@ -3868,7 +3965,16 @@ impl Interpreter {
             }
             "list_dir" => {
                 if let Some(Value::String(path)) = args.first() {
-                    match std::fs::read_dir(path) {
+                    // H-2: 沙箱校验
+                    let resolved = if let Some(ref sb) = self.fs_sandbox {
+                        match sb.check_read(path) {
+                            Ok(p) => p,
+                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        }
+                    } else {
+                        std::path::PathBuf::from(path)
+                    };
+                    match std::fs::read_dir(&resolved) {
                         Ok(entries) => {
                             let names: Vec<Value> = entries.filter_map(|e| {
                                 e.ok().map(|entry| Value::String(entry.file_name().to_string_lossy().to_string()))
@@ -3886,7 +3992,16 @@ impl Interpreter {
             }
             "file_size" => {
                 if let Some(Value::String(path)) = args.first() {
-                    match std::fs::metadata(path) {
+                    // H-2: 沙箱校验
+                    let resolved = if let Some(ref sb) = self.fs_sandbox {
+                        match sb.check_read(path) {
+                            Ok(p) => p,
+                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        }
+                    } else {
+                        std::path::PathBuf::from(path)
+                    };
+                    match std::fs::metadata(&resolved) {
                         Ok(meta) => return Ok(Some(Value::Int(meta.len() as i64))),
                         Err(e) => return Err(TenthError::RuntimeError {
                             message: format!("获取文件大小失败: {}", e),
@@ -3899,7 +4014,16 @@ impl Interpreter {
             }
             "remove_file" => {
                 if let Some(Value::String(path)) = args.first() {
-                    match std::fs::remove_file(path) {
+                    // H-2: 沙箱校验（写操作）
+                    let resolved = if let Some(ref sb) = self.fs_sandbox {
+                        match sb.check_write(path) {
+                            Ok(p) => p,
+                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        }
+                    } else {
+                        std::path::PathBuf::from(path)
+                    };
+                    match std::fs::remove_file(&resolved) {
                         Ok(()) => return Ok(Some(Value::Unit)),
                         Err(e) => return Err(TenthError::RuntimeError {
                             message: format!("删除文件失败: {}", e),
@@ -3913,7 +4037,24 @@ impl Interpreter {
             "copy_file" => {
                 if args.len() >= 2 {
                     if let (Value::String(src), Value::String(dst)) = (&args[0], &args[1]) {
-                        match std::fs::copy(src, dst) {
+                        // H-2: 沙箱校验（读源 + 写目标）
+                        let src_resolved = if let Some(ref sb) = self.fs_sandbox {
+                            match sb.check_read(src) {
+                                Ok(p) => p,
+                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            }
+                        } else {
+                            std::path::PathBuf::from(src)
+                        };
+                        let dst_resolved = if let Some(ref sb) = self.fs_sandbox {
+                            match sb.check_write(dst) {
+                                Ok(p) => p,
+                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            }
+                        } else {
+                            std::path::PathBuf::from(dst)
+                        };
+                        match std::fs::copy(&src_resolved, &dst_resolved) {
                             Ok(_) => return Ok(Some(Value::Unit)),
                             Err(e) => return Err(TenthError::RuntimeError {
                                 message: format!("复制文件失败: {}", e),
@@ -3928,7 +4069,24 @@ impl Interpreter {
             "rename_file" => {
                 if args.len() >= 2 {
                     if let (Value::String(src), Value::String(dst)) = (&args[0], &args[1]) {
-                        match std::fs::rename(src, dst) {
+                        // H-2: 沙箱校验（读源 + 写目标）
+                        let src_resolved = if let Some(ref sb) = self.fs_sandbox {
+                            match sb.check_read(src) {
+                                Ok(p) => p,
+                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            }
+                        } else {
+                            std::path::PathBuf::from(src)
+                        };
+                        let dst_resolved = if let Some(ref sb) = self.fs_sandbox {
+                            match sb.check_write(dst) {
+                                Ok(p) => p,
+                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            }
+                        } else {
+                            std::path::PathBuf::from(dst)
+                        };
+                        match std::fs::rename(&src_resolved, &dst_resolved) {
                             Ok(()) => return Ok(Some(Value::Unit)),
                             Err(e) => return Err(TenthError::RuntimeError {
                                 message: format!("重命名文件失败: {}", e),
@@ -3945,13 +4103,22 @@ impl Interpreter {
             "compile_host" => {
                 if args.len() >= 2 {
                     if let (Value::String(src), Value::String(out)) = (&args[0], &args[1]) {
+                        // H-2/L-7: 沙箱校验写路径
+                        let out_resolved = if let Some(ref sb) = self.fs_sandbox {
+                            match sb.check_write(out) {
+                                Ok(p) => p,
+                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            }
+                        } else {
+                            std::path::PathBuf::from(out)
+                        };
                         match crate::lexer::lexer::Lexer::new(src).tokenize()
                             .and_then(|tokens| crate::parser::parser::Parser::new(tokens).parse_program())
                             .and_then(|prog| crate::hir::lower::Lowerer::new().lower_program(&prog))
                             .and_then(|hir| crate::compile::compile_to_wasm(&hir))
                         {
                             Ok(wasm_bytes) => {
-                                let _ = std::fs::write(out, &wasm_bytes);
+                                let _ = std::fs::write(&out_resolved, &wasm_bytes);
                                 return Ok(Some(Value::Int(0)));
                             }
                             Err(_) => return Ok(Some(Value::Int(1))),
@@ -3967,9 +4134,18 @@ impl Interpreter {
                 // Program is the struct produced by the self-hosting parser.
                 if args.len() >= 2 {
                     if let Value::String(out) = &args[1] {
+                        // H-2/L-7: 沙箱校验写路径
+                        let out_resolved = if let Some(ref sb) = self.fs_sandbox {
+                            match sb.check_write(out) {
+                                Ok(p) => p,
+                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            }
+                        } else {
+                            std::path::PathBuf::from(out)
+                        };
                         match crate::compile::compile_program_to_wasm(&args[0]) {
                             Ok(wasm_bytes) => {
-                                let _ = std::fs::write(out, &wasm_bytes);
+                                let _ = std::fs::write(&out_resolved, &wasm_bytes);
                                 return Ok(Some(Value::Int(0)));
                             }
                             Err(e) => {

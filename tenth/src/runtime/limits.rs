@@ -8,7 +8,100 @@
 //! In `mem-debug` mode, every allocation is tracked with a counter.
 //! In default (release) mode, limits are soft warnings only.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+// ── 文件系统沙箱 ────────────────────────────────────────────────────────────
+//
+// 安全：所有文件 I/O 原生函数（read_file/write_file/remove_file/mkdir 等）
+// 必须经过 FsSandbox 校验，防止 `.th` 程序读写沙箱外的文件
+// （如 ~/.ssh/id_rsa、/etc/passwd、~/.bashrc）。
+//
+// 设计要点：
+// 1. 根目录 canonicalize 后保存，符号链接被解析
+// 2. 所有路径校验时也 canonicalize（或父目录 canonicalize + 拼接），
+//    防止 `../` 或符号链接逃逸
+// 3. read_only 模式拒绝所有写操作（适用于示例代码运行）
+// 4. 父目录不存在时直接拒绝（不递归创建，避免 `mkdir -p` 式逃逸）
+
+/// 文件系统沙箱。所有文件 I/O 原生函数必须经过 `check_read` / `check_write` 校验。
+#[derive(Debug, Clone)]
+pub struct FsSandbox {
+    /// 沙箱根目录的规范路径（canonicalize 后）。
+    root: PathBuf,
+    /// 是否只读。true 时拒绝所有写操作。
+    read_only: bool,
+}
+
+impl FsSandbox {
+    /// 创建沙箱，根目录会被 canonicalize。
+    /// 如果根目录不存在则返回错误。
+    pub fn new(root: &Path, read_only: bool) -> Result<Self, String> {
+        let root = std::fs::canonicalize(root)
+            .map_err(|e| format!("沙箱根目录无法规范化: {}", e))?;
+        Ok(FsSandbox { root, read_only })
+    }
+
+    /// 当前工作目录作为沙箱根（常用默认）。
+    pub fn cwd(read_only: bool) -> Result<Self, String> {
+        let root = std::env::current_dir()
+            .map_err(|e| format!("无法获取当前目录: {}", e))?;
+        Self::new(&root, read_only)
+    }
+
+    /// 校验读路径是否在沙箱内。
+    /// - 相对路径相对于当前工作目录解析
+    /// - canonicalize 后必须 starts_with 沙箱根
+    /// - 符号链接会被解析（canonicalize），防止逃逸
+    pub fn check_read(&self, path: &str) -> Result<PathBuf, String> {
+        self.check(path, false)
+    }
+
+    /// 校验写路径是否在沙箱内。read_only 模式下直接拒绝。
+    pub fn check_write(&self, path: &str) -> Result<PathBuf, String> {
+        self.check(path, true)
+    }
+
+    fn check(&self, path: &str, is_write: bool) -> Result<PathBuf, String> {
+        if is_write && self.read_only {
+            return Err("沙箱为只读模式，禁止写操作".into());
+        }
+        let p = Path::new(path);
+        // 对于不存在的路径（如将要创建的文件），canonicalize 会失败，
+        // 所以先 canonicalize 父目录，再拼接文件名。这防止
+        // `mkdir("sandbox/../evil")` 式逃逸——父目录会被 canonicalize
+        // 解析出真实路径，`..` 无法逃出沙箱。
+        let resolved = if p.exists() {
+            std::fs::canonicalize(p)
+                .map_err(|e| format!("路径规范化失败 '{}': {}", path, e))?
+        } else {
+            let parent = p.parent().unwrap_or(Path::new("."));
+            let file_name = p.file_name()
+                .ok_or_else(|| format!("路径无文件名: {}", path))?;
+            let parent_canon = if parent.as_os_str().is_empty() {
+                std::env::current_dir().map_err(|e| format!("{}", e))?
+            } else if parent.exists() {
+                std::fs::canonicalize(parent)
+                    .map_err(|e| format!("父目录规范化失败 '{}': {}", parent.display(), e))?
+            } else {
+                return Err(format!("父目录不存在: {}", parent.display()));
+            };
+            parent_canon.join(file_name)
+        };
+        if !resolved.starts_with(&self.root) {
+            return Err(format!(
+                "路径 '{}' 不在沙箱内（沙箱根: {}）",
+                resolved.display(),
+                self.root.display()
+            ));
+        }
+        Ok(resolved)
+    }
+
+    /// 沙箱根目录。
+    pub fn root(&self) -> &Path { &self.root }
+    pub fn is_read_only(&self) -> bool { self.read_only }
+}
 
 // ── Configuration ──────────────────────────────────────────────────────────
 

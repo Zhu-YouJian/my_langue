@@ -150,6 +150,62 @@ git config --unset https.proxy
 
 ---
 
+## 供应链安全（L-6 建议）
+
+项目存在三个独立 `Cargo.lock`：`tenth/Cargo.lock`、`tenth/tools/tenthpm/Cargo.lock`、`tenth/tools/lsp/Cargo.lock`。版本漂移可能引入已知漏洞（CVE）。建议在 CI 中加入以下两步扫描：
+
+### `cargo audit`（RustSec 漏洞数据库）
+
+```bash
+# 安装（一次性）
+cargo install cargo-audit
+
+# 扫描主 crate
+cargo audit --manifest-path tenth/Cargo.toml
+
+# 扫描工具 crate
+cargo audit --manifest-path tenth/tools/tenthpm/Cargo.toml
+cargo audit --manifest-path tenth/tools/lsp/Cargo.toml
+```
+
+`cargo audit` 比对 `Cargo.lock` 与 [RustSec Advisory Database](https://rustsec.org/advisories/)，发现已知漏洞时非零退出。
+
+### `cargo deny`（许可证/重复依赖/漏洞三合一）
+
+```bash
+# 安装（一次性）
+cargo install cargo-deny
+
+# 初始化配置（一次性，生成 deny.toml）
+cargo deny init --manifest-path tenth/Cargo.toml
+
+# 检查
+cargo deny check --manifest-path tenth/Cargo.toml
+```
+
+`cargo deny` 同时检查：
+- 漏洞（与 cargo-audit 同源）
+- 许可证白名单（默认拒绝 GPL/AGPL 等 copyleft 许可证进入商业项目）
+- 重复依赖（`duplicate` 版本漂移检测）
+- banned 依赖（可在 `deny.toml` 中显式禁止某些 crate）
+
+### CI 集成建议
+
+在 GitHub Actions / GitLab CI 中添加 step：
+
+```yaml
+- name: cargo audit
+  run: |
+    cargo install cargo-audit
+    cargo audit --manifest-path tenth/Cargo.toml
+    cargo audit --manifest-path tenth/tools/tenthpm/Cargo.toml
+    cargo audit --manifest-path tenth/tools/lsp/Cargo.toml
+```
+
+建议每周定时跑一次（依赖漏洞会随时间累积），并在每次 PR 中跑一次。
+
+---
+
 ## Cargo Feature Flags
 
 | flag | 含义 | 效果 |
