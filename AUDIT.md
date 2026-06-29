@@ -115,7 +115,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | # | 问题 |
 |---|------|
 | 14 | ~~borrow checker 双向放宽~~ — 已恢复，`check_borrow_shared` 和 `check_borrow_mut` 现执行 ExclusiveRef/SharedRef 检查 |
-| 16 | **Test 覆盖盲区** — `tenthc_test.rs` 只测解析，未测执行；tenthc 子编译器的正确性无自动化验证 |
+| 16 | ~~Test 覆盖盲区~~ — 已修复。前端契约测试 `selfhost_frontend.rs` 改为严格 assert（原 println 不 fail 的问题已修）；执行覆盖由 `fixpoint_runtime.rs`（Wasmtime 端到端编译+执行）和 `parity_test.rs`（112 项 Rust/tenthc 一致性）提供 |
 
 ---
 
@@ -125,7 +125,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 - **~~修复致命缺陷 #1-#4~~** → ✅ 已修复，自举闭环可达
 - **添加 `tenthc_combined.th` 自动生成** — build script 或 Makefile，而非手动拼接
-- **`tenthc_test.rs` 加执行测试** — 改为 VM/WASM 路径验证
+- **~~`tenthc_test.rs` 加执行测试~~** → ✅ 已由 `fixpoint_runtime.rs` 和 `parity_test.rs` 提供
 
 ### 8.2 中期 (质量加固)
 

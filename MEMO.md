@@ -246,6 +246,67 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 
 ---
 
+### v0.3.3 技术债清理第一类（2026-06-29）
+
+#### selfhost_frontend.rs 测试 assert 化
+- 原状：`tenthc_parses_own_source`/`tenthc_lowers_own_source` 在 Err 分支只 `println!` 不 `assert!`（注释"Phase B is about identifying gaps"），测试永远不会失败，等于没有护栏
+- 修复：Err 分支改为 `.expect("...self-hosting frontend contract")`，让 parse/lower 失败真正触发测试红
+- 头注释更新：移除过时的"Phase B"措辞，指明执行覆盖由 `fixpoint_runtime.rs`/`parity_test.rs` 提供
+- 验证：4/4 通过（parse 182 items、lower 145 functions，真实 assert 通过而非 println 假绿）
+
+#### AUDIT §7.4 #16 测试盲区条目已过时 → 标记修复
+- AUDIT 原写"tenthc_test.rs 只测解析未测执行"——名字对不上（实为 selfhost_frontend.rs），且执行覆盖已由 `fixpoint_runtime.rs`（Wasmtime 端到端）+ `parity_test.rs`（112 项 Rust/tenthc 一致性）提供
+- §7.4 #16 和 §8.1 "tenthc_test.rs 加执行测试" 均标记为已修复
+
+#### lower.rs（2017 行）上帝文件拆分
+- 拆为 `tenth/src/hir/lower/` 目录模块 7 文件：mod.rs(144) / scope.rs(120) / import.rs(56) / lower_expr.rs(691) / types.rs(240) / lower_stmt.rs(475) / closures.rs(187)
+- 纯重构不改行为；Lowerer 公开 API（new/with_search_paths/lower_program）签名不变
+- 修复 3 个编译错误：Ownership 导入路径、Type 私有枚举改用 types 模块、Scope.parent 字段改 pub(super)
+
+#### wasm.rs（2089 行）上帝文件拆分
+- 拆为 `tenth/src/compile/wasm/` 目录模块 6 文件：mod.rs(128) / types.rs(69) / sections.rs(181) / compile.rs(942) / closures.rs(340) / host.rs(355)
+- 纯重构不改行为；`register_host_functions`/`run_wasm_module` 通过 `pub use` 重导出，外部引用零改动
+- IMPORT_COUNT=18 注释完整保留；自举路径 C（全 WASM 闭环）未受影响
+
+#### 文档漂移批量修复
+- `能力全梳理.md` §2.2：JIT 状态从"未实际使用"改为"默认启用，保守策略（autodiff/复杂操作回退 VM）"——与 main.rs:292 默认调用 `jit::run_jit` 的事实对齐
+- `CODE_WIKI.md`：删除不存在的 `boot.th` 引用（项目根目录 Glob 确认无此文件），main.th 描述改为"拼接 6 个模块源码后调用 compile_host"
+- `README.md`：shape 检查卖点标注"规划中，当前未实现"（与能力全梳理 ❌ 状态对齐，消除内部矛盾）；transformer 改为 transformer_encoder_block（与实际文件内容对齐）；LSP 从 ✅ 降为 ⚠️ 并注明"AST 符号+关键字，非语义补全"
+- `AUDIT.md` §7.4 #16 和 §8.1 tenthc_test.rs 条目标记已修复
+
+**验证**：cargo build（debug）通过，177 pre-existing warnings（hostcalls.rs 函数指针转换，非本轮引入）；selfhost_frontend 4/4 真实 assert 通过；自举路径 A `[OK] Full compiler compiled to tenthc_full.wasm`。未运行全量 cargo test（rustc 1.95.0 ICE bug，非本项目问题）。
+
+**未触及**：f32 双胞胎（14 个文件）属"伪装成技术债的设计决策"，清理等于做 A 类类型系统改造，本轮冻结不处理。
+
+---
+
+### v0.3.3 重构（2026-06-29）
+
+#### interpreter.rs 上帝文件拆分
+
+| 组件 | 状态 |
+|------|------|
+| `runtime/interpreter.rs`（4655 行）→ `runtime/interpreter/` 目录模块（8 个文件） | ✅ 纯重构 |
+| `mod.rs`（1202 行）— Interpreter 结构体、eval_expr/eval_call/eval_stmt | ✅ |
+| `binary.rs`（426 行）— eval_binary/eval_unary/values_eq/value_to_string | ✅ |
+| `pattern.rs`（180 行）— eval_field/pattern_matches/bind_pattern/unbind_pattern | ✅ |
+| `methods.rs`（1312 行）— 方法分派（String/Vec/Map/Range/Iterator/Tensor/Scalar） | ✅ |
+| `index.rs`（121 行）— eval_index（String/Tensor/Vec 索引与切片） | ✅ |
+| `natives.rs`（1253 行）— call_named_fn（原生函数分派） | ✅ |
+| `json.rs`（205 行）— JSON 编解码（H-6 安全版本，带深度闸门+转义状态机修复） | ✅ |
+| `datetime.rs`（28 行）— days_to_date（Unix 天数→年月日） | ✅ |
+| main.rs 删除 days_to_date/json_encode_value/json_decode_string 等函数定义（226 行） | ✅ |
+| main.rs 调用点改为 `datetime::days_to_date` / `json::json_encode_value` 等模块前缀 | ✅ |
+| H-6 漏洞修复 — interpreter 内部 JSON 解析改用 main.rs 安全版本 | ✅ |
+| cargo build（debug + release）无新增 warning | ✅ |
+| 自举路径 A 验证 — `[OK] Full compiler compiled to tenthc_full.wasm` | ✅ |
+
+**重构原因**：interpreter.rs 是 4655 行的上帝文件，难以维护和导航。拆分为目录模块后，每个文件聚焦单一职责，便于定位和修改。
+
+**范围**：纯重构，不改任何行为（唯一例外：JSON 解析改用安全版本，顺带修复 H-6 漏洞）。方法签名保持不变，只改可见性（`fn` → `pub(super) fn`）。Interpreter 结构体字段可见性保持不变。
+
+---
+
 ### v0.3.0 后期新增（2026-06-14）
 
 #### 自动微分

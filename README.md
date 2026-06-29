@@ -13,7 +13,7 @@ Tenth 的定位是**通用编程语言的超集**——用户可以把它当作�
 
 - **作为通用语言**：Tenth 提供完整的控制流、数据结构、模块系统、错误处理、包管理，足以胜任日常编程任务
 - **作为 AI 语言**：张量是内置类型，自动微分是一等公民，训练循环无需外部框架
-- **不可替代性**：编译期 shape 检查——`Tensor[f64, 3, 4] @ Tensor[f64, 5, 6]` 在编译期报错，而非运行时崩溃
+- **不可替代性（规划中）**：编译期 shape 检查——`Tensor[f64, 3, 4] @ Tensor[f64, 5, 6]` 在编译期报错，而非运行时崩溃。**注：此项为路线图阶段 3 目标，当前未实现**
 
 这意味着 Tenth 不是 Python + PyTorch 的替代品，而是**一种新的可能性**：一门语言同时覆盖通用编程和 AI 研究，且在类型安全上超越两者。
 
@@ -61,7 +61,7 @@ Tenth 的定位是**通用编程语言的超集**——用户可以把它当作�
 | **块注释 /* */** | ✅ 支持嵌套 |
 | **GPU 后端脚手架** | ✅ CudaKernel 模板 + Device 抽象 + 算子融合/并行分解 |
 | **tenthpm 包管理器** | ✅ init/build/test/run/add/remove/list/clean/publish/install |
-| **LSP 服务器** | ✅ 文档同步/diagnostics/hover/completion/definition/documentSymbol/references/rename/signatureHelp/foldingRange/semanticTokens/formatting |
+| **LSP 服务器** | ⚠️ 文档同步/diagnostics/hover/completion（AST 符号+关键字，非语义补全）/definition/documentSymbol/references/rename/signatureHelp/foldingRange/semanticTokens/formatting |
 | **结构体字段默认值 (..)** | ✅ 全管线支持 |
 | **泛型返回类型** | ✅ Vec<Token> / HashMap<str, Vec<i64>> |
 | **枚举元组变体** | ✅ Some(T) 构造 + match 绑定 |
@@ -159,7 +159,7 @@ Tenth 内置张量级自动微分，通过 7 个内置函数控制：
 
 ```
 tenth/std/
-├── nn/          ← linear, loss (MSE/L1/BCE), activations, dropout, batchnorm, conv2d, embedding, attention, multihead_attention, layer_norm, positional_encoding, feedforward, transformer
+├── nn/          ← linear, loss (MSE/L1/BCE), activations, dropout, batchnorm, conv2d, embedding, attention, multihead_attention, layer_norm, positional_encoding, feedforward, transformer_encoder_block
 ├── optim/       ← SGD (vanilla/momentum/decay), Adam, AdaGrad, RMSProp (全部可运行)
 ├── data/        ← DataLoader, MNIST 加载器
 ├── init/        ← xavier_uniform/xavier_normal/he_normal/he_uniform/zeros_init/constant_init

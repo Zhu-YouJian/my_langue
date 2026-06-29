@@ -85,8 +85,7 @@ Tenth 是一门面向 AI/ML 研究的编程语言，核心特性包括：
 │           ├── io.rs       # stdio 通信
 │           └── handlers/   # 请求处理器
 ├── tenthc/                 # 自举编译器（Tenth 编写）
-│   ├── main.th             # 入口
-│   ├── boot.th             # 自举主程序
+│   ├── main.th             # 入口（拼接各模块源码后调用 compile_host）
 │   ├── lexer/              # Tenth 实现的词法分析
 │   ├── parser/             # Tenth 实现的语法分析
 │   ├── hir/                # Tenth 实现的 HIR
@@ -648,8 +647,7 @@ REPL 命令：
 
 | 文件 | 职责 |
 |------|------|
-| `main.th` | 入口，调用编译管线 |
-| `boot.th` | 自举主程序（~810 行），包含完整编译管线 |
+| `main.th` | 入口，拼接 6 个模块源码后调用 compile_host |
 | `lexer/lexer.th` | Tenth 实现的词法分析器 |
 | `lexer/token.th` | Tenth 实现的 Token 定义 |
 | `parser/parser.th` | Tenth 实现的语法分析器 |
