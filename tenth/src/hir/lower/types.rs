@@ -66,6 +66,26 @@ fn fmt_dims(dims: &[Dim]) -> String {
     format!("[{}]", parts.join(", "))
 }
 
+/// 格式化单个维度。
+fn fmt_dim(d: &Dim) -> String {
+    match d {
+        Dim::Known(n) => n.to_string(),
+        Dim::Symbol(s) => s.clone(),
+        Dim::Any => "..".to_string(),
+    }
+}
+
+/// 从归约算子的参数中提取字面量 axis（如 `x.sum(0)` 中的 0）。
+/// 返回 None 表示无字面量 axis 参数。
+fn literal_axis_arg(args: &[HirExpr]) -> Option<i64> {
+    for a in args {
+        if let HirExprKind::Literal(Literal::Int(n)) = &a.kind {
+            return Some(*n);
+        }
+    }
+    None
+}
+
 impl Lowerer {
     pub(super) fn index_type(&self, base: &Type, indices: &[Index]) -> Type {
         match base {
@@ -211,15 +231,34 @@ impl Lowerer {
                         // 非 2D：运行时只支持 2D，返回 Unknown
                         Type::Unknown
                     }
-                    "sum" => {
-                        if _args.iter().any(|a| matches!(&a.kind, HirExprKind::Var(_))) {
+                    // 归约算子（sum/mean/max/min）：
+                    // - 无参数：全部降维到标量（dtype）
+                    // - 字面量 axis 参数（如 x.sum(0)）：移除指定维度
+                    // - 变量参数（如 keepdim 标志）：保守保持原 shape（运行时处理）
+                    "sum" | "mean" | "max" | "min" => {
+                        if let Some(axis) = literal_axis_arg(_args) {
+                            if axis >= 0 && (axis as usize) < dims.len() {
+                                let mut new_dims: Vec<Dim> = dims.iter().cloned().collect();
+                                new_dims.remove(axis as usize);
+                                if new_dims.is_empty() {
+                                    dtype.as_ref().clone()
+                                } else {
+                                    Type::Tensor { dtype: dtype.clone(), dims: new_dims }
+                                }
+                            } else {
+                                // axis 越界：保守返回标量
+                                dtype.as_ref().clone()
+                            }
+                        } else if _args.iter().any(|a| matches!(&a.kind, HirExprKind::Var(_))) {
                             Type::Tensor { dtype: dtype.clone(), dims: dims.clone() }
                         } else {
                             dtype.as_ref().clone()
                         }
                     }
-                    "mean" | "max" | "min" => dtype.as_ref().clone(),
-                    "reshape" | "view" => Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] },
+                    // reshape/view：从字面量参数推断新 shape（如 x.reshape(3, 4) → [3, 4]）
+                    "reshape" | "view" => {
+                        Type::Tensor { dtype: dtype.clone(), dims: Self::shape_from_int_args(_args) }
+                    }
                     "flatten" => Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] },
                     "abs" | "sqrt" | "exp" | "log" | "relu" |
                     "sigmoid" | "tanh" | "softmax" |
@@ -403,6 +442,9 @@ impl Lowerer {
     ///
     /// 当前覆盖：
     /// - `matmul`：2D (M, K) @ (K, N)，内侧 K 必须相等
+    ///   - Known vs Known：数值不等则报错
+    ///   - Symbol vs Symbol：名字不等则报错（同名视为同一维度）
+    ///   - Symbol vs Known：保守通过（unify 留待 Phase 3）
     pub(super) fn check_method_shape(
         receiver: &Type,
         method: &str,
@@ -416,18 +458,23 @@ impl Lowerer {
                         if let Some(arg) = args.first() {
                             if let Type::Tensor { dims: rdims, .. } = &arg.ty {
                                 if rdims.len() == 2 {
-                                    // 仅当两侧 K 都是 Known 时才严格检查（Symbol 留待 Phase 2 unify）
-                                    if let (Dim::Known(lk), Dim::Known(rk)) = (&ldims[1], &rdims[0]) {
-                                        if lk != rk {
-                                            return Err(TenthError::TypeError {
-                                                line: span.line,
-                                                col: span.col,
-                                                message: format!(
-                                                    "编译期 matmul shape 不兼容：{} @ {}（内侧维度 {} ≠ {} 必须相等）",
-                                                    fmt_dims(ldims), fmt_dims(rdims), lk, rk
-                                                ),
-                                            });
-                                        }
+                                    let lk = &ldims[1];
+                                    let rk = &rdims[0];
+                                    let mismatch = match (lk, rk) {
+                                        (Dim::Known(a), Dim::Known(b)) => a != b,
+                                        (Dim::Symbol(a), Dim::Symbol(b)) => a != b,
+                                        // Symbol vs Known 或任一 Any：保守通过
+                                        _ => false,
+                                    };
+                                    if mismatch {
+                                        return Err(TenthError::TypeError {
+                                            line: span.line,
+                                            col: span.col,
+                                            message: format!(
+                                                "编译期 matmul shape 不兼容：{} @ {}（内侧维度 {} ≠ {} 必须相等）",
+                                                fmt_dims(ldims), fmt_dims(rdims), fmt_dim(lk), fmt_dim(rk)
+                                            ),
+                                        });
                                     }
                                 } else if rdims.len() != 0 {
                                     // 非 2D 参数：运行时只支持 2D，但这里不报错（让运行时报）

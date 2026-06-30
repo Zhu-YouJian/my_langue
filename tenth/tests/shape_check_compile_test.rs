@@ -242,3 +242,241 @@ fn xpose() -> Tensor[f64, ..] {
         "transpose 应反转 shape 为 [8, 3]，body: {}", body_str
     );
 }
+
+// ── Phase 2: let 传播 ──────────────────────────────────────────────────────
+
+#[test]
+fn let_propagates_shape_to_next_expr() {
+    // let a = zeros(3, 4); a 的 shape [3,4] 应传播到后续使用
+    let src = r#"
+fn good() -> Tensor[f64, ..] {
+    let a = zeros(3, 4);
+    let b = zeros(4, 5);
+    a.matmul(b)
+}
+"#;
+    lower(src).expect("let 传播的 shape 应让 matmul 编译通过");
+}
+
+#[test]
+fn let_propagates_shape_mismatch_reports_error() {
+    // let a = zeros(3, 4); let b = zeros(5, 6); a.matmul(b) 应报错
+    let src = r#"
+fn bad() -> Tensor[f64, ..] {
+    let a = zeros(3, 4);
+    let b = zeros(5, 6);
+    a.matmul(b)
+}
+"#;
+    assert_compile_error(src, "matmul shape 不兼容");
+}
+
+#[test]
+fn let_alias_preserves_shape() {
+    // let a = zeros(3, 4); let c = a; c 应继承 [3, 4]
+    let src = r#"
+fn good() -> Tensor[f64, ..] {
+    let a = zeros(3, 4);
+    let c = a;
+    let b = zeros(4, 5);
+    c.matmul(b)
+}
+"#;
+    lower(src).expect("let c = a 应继承 shape [3,4]，matmul 应编译通过");
+}
+
+// ── Phase 2: 函数参数 shape 约束 ───────────────────────────────────────────
+
+#[test]
+fn fn_param_shape_constraint_checked() {
+    // 函数签名声明 x: Tensor[f64, 3, 4]，函数体内 x.matmul(zeros(5,6)) 应报错
+    let src = r#"
+fn bad(x: Tensor[f64, 3, 4]) -> Tensor[f64, ..] {
+    let b = zeros(5, 6);
+    x.matmul(b)
+}
+"#;
+    assert_compile_error(src, "matmul shape 不兼容");
+}
+
+#[test]
+fn fn_param_shape_constraint_passes() {
+    // 函数签名声明 x: Tensor[f64, 3, 4]，函数体内 x.matmul(zeros(4,5)) 应通过
+    let src = r#"
+fn good(x: Tensor[f64, 3, 4]) -> Tensor[f64, ..] {
+    let b = zeros(4, 5);
+    x.matmul(b)
+}
+"#;
+    lower(src).expect("函数参数 shape 约束应让 matmul 编译通过");
+}
+
+// ── Phase 2: 符号维度（同名 Symbol 等价） ──────────────────────────────────
+
+#[test]
+fn matmul_symbol_dims_same_name_compiles() {
+    // M, K, N 为符号维度；a: [M, K] @ b: [K, N] → [M, N]，K 同名应通过
+    let src = r#"
+fn matmul_fn(a: Tensor[f64, M, K], b: Tensor[f64, K, N]) -> Tensor[f64, ..] {
+    a.matmul(b)
+}
+"#;
+    lower(src).expect("符号维度同名 K 应编译通过");
+}
+
+#[test]
+fn matmul_symbol_dims_different_names_reports_error() {
+    // a: [M, K] @ b: [P, N]，K ≠ P 应报错（符号维度不同名视为不匹配）
+    let src = r#"
+fn bad(a: Tensor[f64, M, K], b: Tensor[f64, P, N]) -> Tensor[f64, ..] {
+    a.matmul(b)
+}
+"#;
+    assert_compile_error(src, "matmul shape 不兼容");
+}
+
+// ── Phase 2: 归约算子 axis 降维 ────────────────────────────────────────────
+
+#[test]
+fn sum_with_literal_axis_removes_dim() {
+    // (3, 4).sum(0) → [4]
+    let src = r#"
+fn reduce() -> Tensor[f64, ..] {
+    let a = zeros(3, 4);
+    a.sum(0)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let reduce = hir.functions.iter().find(|f| f.name == "reduce").unwrap();
+    let ty_str = format!("{:?}", reduce.body.ty);
+    assert!(
+        ty_str.contains("Known(4)") && !ty_str.contains("Known(3)"),
+        "sum(0) 应移除第 0 维，结果 shape 应含 Known(4) 且不含 Known(3)，ty: {}",
+        ty_str
+    );
+}
+
+#[test]
+fn sum_with_literal_axis_1_removes_second_dim() {
+    // (3, 4).sum(1) → [3]
+    let src = r#"
+fn reduce() -> Tensor[f64, ..] {
+    let a = zeros(3, 4);
+    a.sum(1)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let reduce = hir.functions.iter().find(|f| f.name == "reduce").unwrap();
+    let ty_str = format!("{:?}", reduce.body.ty);
+    assert!(
+        ty_str.contains("Known(3)") && !ty_str.contains("Known(4)"),
+        "sum(1) 应移除第 1 维，结果 shape 应含 Known(3) 且不含 Known(4)，ty: {}",
+        ty_str
+    );
+}
+
+#[test]
+fn sum_no_args_returns_scalar() {
+    // 无参数 sum() 全部降维到标量
+    let src = r#"
+fn reduce() -> f64 {
+    let a = zeros(3, 4);
+    a.sum()
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let reduce = hir.functions.iter().find(|f| f.name == "reduce").unwrap();
+    let ty_str = format!("{:?}", reduce.body.ty);
+    // 应返回 Base(F64)，不应含 Known
+    assert!(
+        !ty_str.contains("Known(3)") && !ty_str.contains("Known(4)"),
+        "sum() 无参数应返回标量，不应含 Known(3)/Known(4)，ty: {}", ty_str
+    );
+}
+
+#[test]
+fn mean_with_literal_axis_removes_dim() {
+    // (3, 4).mean(0) → [4]，验证 mean 同 sum 的 axis 逻辑
+    let src = r#"
+fn reduce() -> Tensor[f64, ..] {
+    let a = zeros(3, 4);
+    a.mean(0)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let reduce = hir.functions.iter().find(|f| f.name == "reduce").unwrap();
+    let ty_str = format!("{:?}", reduce.body.ty);
+    assert!(
+        ty_str.contains("Known(4)"),
+        "mean(0) 应移除第 0 维，结果 shape 应含 Known(4)，ty: {}", ty_str
+    );
+}
+
+// ── Phase 2: reshape 字面量参数推断 ────────────────────────────────────────
+
+#[test]
+fn reshape_literal_args_inferred() {
+    // x.reshape(3, 4) 应推断为新 shape [3, 4]
+    let src = r#"
+fn reshape_fn() -> Tensor[f64, ..] {
+    let a = zeros(2, 6);
+    a.reshape(3, 4)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let reshape_fn = hir.functions.iter().find(|f| f.name == "reshape_fn").unwrap();
+    let ty_str = format!("{:?}", reshape_fn.body.ty);
+    assert!(
+        ty_str.contains("Known(3)") && ty_str.contains("Known(4)"),
+        "reshape(3, 4) 应推断为新 shape [3, 4]，ty: {}", ty_str
+    );
+}
+
+#[test]
+fn reshape_dynamic_arg_returns_any() {
+    // x.reshape(n, m) — 参数非字面量，shape 应为 [Any]
+    let src = r#"
+fn reshape_fn(n: i64, m: i64) -> Tensor[f64, ..] {
+    let a = zeros(2, 6);
+    a.reshape(n, m)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let reshape_fn = hir.functions.iter().find(|f| f.name == "reshape_fn").unwrap();
+    let ty_str = format!("{:?}", reshape_fn.body.ty);
+    assert!(
+        ty_str.contains("Any"),
+        "reshape(n, m) 应返回 [Any]（动态 shape），ty: {}", ty_str
+    );
+}
+
