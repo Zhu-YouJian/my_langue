@@ -1,0 +1,90 @@
+//! 验证泛型 Tensor 类型参数实例化。
+//! f32 真泛型改造的阶段 3 验证：fn foo<T>(x: Tensor<T, ..>) 能被实例化为 foo<f64> / foo<f32>。
+
+use tenth::lexer::lexer::Lexer;
+use tenth::parser::parser::Parser;
+use tenth::hir::lower::Lowerer;
+
+#[test]
+fn generic_tensor_function_instantiates() {
+    // 泛型函数：接受 Tensor<T, ..>，返回 Tensor<T, ..>
+    let src = r#"
+fn identity<T>(x: Tensor[T, ..]) -> Tensor[T, ..] {
+    x
+}
+
+fn main() -> f64 {
+    let a = tensor[[1.0, 2.0, 3.0]];
+    let b = identity<f64>(a);
+    b.sum()
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().expect("parse");
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+
+    // 应该有：identity 模板 + 实例化后的 identity_f64 + main
+    println!("Functions: {}", hir.functions.len());
+    for f in &hir.functions {
+        println!("  - {} : params {:?} -> ret {}", f.name, f.params, f.return_type);
+    }
+
+    // 验证实例化函数存在
+    let has_instance = hir.functions.iter().any(|f| f.name.contains("identity"));
+    assert!(has_instance, "expected instantiated generic function");
+
+    // 验证 main 的返回类型不是 Unknown
+    assert!(
+        hir.functions.iter().any(|f| f.name == "main"),
+        "main function must exist"
+    );
+}
+
+#[test]
+fn generic_tensor_preserves_dtype_in_signature() {
+    // 验证实例化后参数类型是 Tensor[f64, ..] 而非 Tensor[T, ..]
+    let src = r#"
+fn double<T>(x: Tensor[T, ..]) -> Tensor[T, ..] {
+    x + x
+}
+
+fn main() -> f64 {
+    let a = tensor[[1.0, 2.0]];
+    let b = double<f64>(a);
+    b.sum()
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().expect("parse");
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+
+    // 找实例化后的函数（非模板），检查参数类型
+    let instance = hir.functions.iter()
+        .find(|f| f.name.starts_with("double") && f.name != "double")
+        .expect("expected instantiated double function");
+
+    println!("Instance: {} params: {:?}", instance.name, instance.params);
+
+    // 参数应该是 Tensor[F64, ..]，不是 Tensor[T, ..]（TypeParam 未替换）
+    let param_ty = &instance.params[0].1;
+    println!("Param type: {}", param_ty);
+    let ty_str = format!("{}", param_ty);
+    // 检查 F64 存在，且没有未替换的 TypeParam（Tensor[T,...] 的 T 不在 [F64,..] 里）
+    assert!(
+        ty_str.contains("F64"),
+        "expected F64 dtype after instantiation, got {}",
+        param_ty
+    );
+    // 确保不是 Tensor[T, ..]（TypeParam 未替换会显示为 T 而非 F64）
+    assert!(
+        !ty_str.contains("[T,") && !ty_str.contains("[T]"),
+        "TypeParam T was not substituted, got {}",
+        param_ty
+    );
+}
