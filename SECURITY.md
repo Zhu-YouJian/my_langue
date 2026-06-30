@@ -18,9 +18,9 @@
 | `unsafe` 代码块 | **41+ 处** | 集中在 `compile/jit/hostcalls.rs`、`compile/jit/context.rs`、`compile/jit/mod.rs`。JIT 是 `tenth run` 的默认执行路径，非可选项 |
 | 执行路径 | **JIT / VM / 解释器 / WASM 四路径** | `main.rs::vm_execute` 默认调用 `jit::run_jit`，失败时 fallback 到 VM/解释器。"仅解释器路径"声明失实 |
 | 内存护栏覆盖 | **仅 REPL 默认启用** | `run_file` 默认不应用 `MemoryConfig`；`mem-strict` feature（默认未启用）才硬阻断，否则仅 soft warning |
-| 文件 I/O 原生函数 | **零沙箱、零白名单** | `read_file`/`write_file`/`remove_file`/`mkdir`/`copy_file`/`rename_file`/`list_dir` 等 14 个原生函数接受任意路径 |
-| CPU/时间限制 | **无** | `while true {}` 即可永久挂起宿主 |
-| 子进程调用 | **仅 `git clone/pull`**（tenthpm） | 路径参数已加包名校验，但 git 协议未限制 |
+| 文件 I/O 原生函数 | **已加沙箱**（H-2 修复） | `read_file`/`write_file`/`remove_file`/`mkdir`/`copy_file`/`rename_file`/`list_dir` 等 14 个原生函数经 `FsSandbox` 校验（canonicalize + starts_with 防路径穿越）；`--fs-root <dir>`/`--read-only`/`--fs-cwd` 选项启用沙箱 |
+| CPU/时间限制 | **已支持**（H-4 修复） | VM/Interpreter 每 4096 步检查 `deadline_ms`；`--timeout <secs>` 选项设置墙钟超时 |
+| 子进程调用 | **仅 `git clone/pull`**（tenthpm） | 路径参数已加包名校验；git 协议默认仅放行 `https://`，`http://`/`git://`/`ssh://`/`.git` 后缀需 `TENTH_ALLOW_INSECURE_GIT=1` 显式 opt-in（L-4 修复）；git clone 加 `--config protocol.file.allow=deny` 禁用 hooks（L-5 修复） |
 | 网络原生函数 | **无** | 项目本身不直接调用网络；运行时产生的张量运算等不联网 |
 
 ---
@@ -40,6 +40,13 @@
 | H-7 | 🟠 高危 | `random_int`/`random_float` 使用可预测种子 | `main.rs`、`runtime/interpreter.rs` |
 | H-8 | 🟠 高危 | WASM 宿主 `ptr as usize` 越界 panic | `compile/wasmtime_host.rs`、`compile/wasm.rs` |
 | M-1 ~ M-8 | 🟡 中等 | transmute、mem-strict panic、release profile、checked 算术等 | 各文件 |
+| H-2 | 🟠 高危 | 文件 I/O 沙箱 | `runtime/limits.rs`（`FsSandbox` 类型）、`main.rs`/`runtime/vm.rs`/`runtime/interpreter.rs`（`fs_sandbox` 字段）、`main.rs`（`--fs-root`/`--read-only`/`--fs-cwd` 选项） |
+| H-4 | 🟠 高危 | CPU/时间限制 | `runtime/vm.rs`/`runtime/interpreter.rs`（每 4096 步检查 deadline_ms）、`main.rs`（`--timeout <secs>` 选项） |
+| L-1 | 🟢 低危 | extract_package_name 清理 | 验证确认仅在被 `validate_package_name` 校验的路径调用 |
+| L-3 | 🟢 低危 | days_to_date 溢出 | `main.rs`/`runtime/interpreter.rs` 入口加 `if days > u64::MAX - EPOCH_OFFSET` 防溢出 UB |
+| L-4 | 🟢 低危 | git URL 协议限制 | `tenth/tools/tenthpm/src/manifest.rs`（`is_git_url` 默认仅 https://，其他需 `TENTH_ALLOW_INSECURE_GIT=1`） |
+| L-5 | 🟢 低危 | git clone hooks 禁用 | 三处 git clone 加 `--config protocol.file.allow=deny` + `manifest::disable_hooks()` |
+| L-6 | 🟢 低危 | cargo-audit 建议 | `DEPS.md` 新增"供应链安全"章节 |
 
 ---
 
@@ -61,7 +68,7 @@
 | 内存（分配字节） | `run_file` 默认应用 `MemoryConfig::default()`，超限硬错误返回 | 同默认；`--no-limits` 显式关闭 |
 | 张量元素数 | 受 `max_tensor_elements` 限制 | 同上 |
 | 调用栈深度 | 受 `max_call_depth` 限制 | 同上 |
-| CPU 时间 | 仍**无限制**（计划中） | 计划加 `--timeout <secs>` |
+| CPU 时间 | **已支持** `--timeout <secs>`（H-4 修复） | VM/Interpreter 每 4096 步检查 deadline_ms |
 | 整数溢出 | release profile 启用 `overflow-checks = true` | 强制 |
 
 > 历史 `mem-strict` feature 的 `panic!` 行为已改为返回 `TenthError`，避免长会话 REPL 因触发限制而被杀进程。
@@ -98,7 +105,7 @@ WASM 后端的 `read_file`/`write_file` 宿主导入同样受沙箱约束。
 - **包名校验**：所有从 git URL / 本地路径 / 注册中心名称派生的目录名必须通过 `manifest::validate_package_name`，拒绝 `.`、`..`、含分隔符、Windows 保留名、控制字符等。
 - **路径穿越防御**：`install_global`/`install_local`/`add_git_dependency` 在计算 `target_dir` 后调用 `ensure_within(deps_root, target_dir)` 二次校验。
 - **删除闸门**：所有 `fs::remove_dir_all` 调用前调用 `safe_to_remove_dir`，拒绝删除根、用户主目录、`.ssh`/`.aws`/`.config` 等敏感目录。
-- **git 协议**：默认放行 `https://`/`http://`/`git://`/`ssh://`；建议生产环境用 `--allow-ssh` 显式开关。
+- **git 协议**：默认仅放行 `https://`；`http://`/`git://`/`ssh://`/`.git` 后缀需环境变量 `TENTH_ALLOW_INSECURE_GIT=1` 显式 opt-in（L-4 修复）。
 
 ---
 

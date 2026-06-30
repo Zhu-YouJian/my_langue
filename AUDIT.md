@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-06-29 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 + 安全加固 | 499 项测试（498 passed + 1 ignored）
+> 日期：2026-07-01 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 + 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 | 700+ 项测试
 
 ---
 
@@ -30,16 +30,26 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `parser_test.rs` | 5 | 字面量/二元表达式/函数定义/if/tensor |
 | `integration_test.rs` | 14 | 全管线: 算术/布尔/比较/函数/闭包/while/tensor |
 | `enum_test.rs` | 9 | 枚举定义/字段/match/通配/元组变体/match 绑定 |
+| `f32_autodiff_test.rs` | 12 | f32 自动微分（Phase 4） |
+| `f32_frontend_test.rs` | 13 | f32 前端贯通（Phase 2） |
+| `f32_runtime_test.rs` | 7 | f32 运行时（Phase 3） |
+| `f32_stdlib_test.rs` | 10 | f32 标准库（Phase 5.4） |
+| `f32_tensor_test.rs` | 23 | f32 张量基础（Phase 1） |
+| `f32_wasm_test.rs` | 14 | f32 WASM 后端（Phase 5.1） |
+| `generic_tensor_test.rs` | 4 | 泛型张量构造函数 |
 | `generic_test.rs` | 11 | 泛型函数/泛型结构体/trait bound/泛型返回/Vec<Token>/>>拆分 |
 | `struct_test.rs` | 8 | 结构体/嵌套/impl/默认字段/..语法 |
 | `trait_test.rs` | 9 | trait 定义/builtin bound/inherent impl/默认方法/多 trait |
 | `module_test.rs` | 6 | mod/use/嵌套模块/重导出 |
 | `ownership_test.rs` | 11 | 移动/借用/引用/解引用 |
 | `stdlib_test.rs` | 114 | Vec/HashMap/String/Option/文件 I/O/json/toml/runtime 限制 |
+| `memory_estimate_test.rs` | 35 | 编译期内存/算力预估（护城河 D，32 passed + 3 ignored） |
 | `memory_test.rs` | 17 | 内存护栏: arena/limits/计数器 |
 | `selfhost_frontend.rs` | 4 | 自举前端验证（lex/parse/lower） |
-| `parity_test.rs` | 112 | VM vs Interpreter 行为一致（全指令覆盖） |
+| `parity_test.rs` | 129 | VM vs Interpreter 行为一致（全指令覆盖） |
+| `shape_check_compile_test.rs` | 73 | 编译期 shape 检查（66 passed + 7 ignored） |
 | `shape_check_test.rs` | 16 | 张量 shape 检查/广播/层归一化验证 |
+| `autodiff_shape_test.rs` | 10 | Autograd 反向 shape 校验（护城河 A） |
 | `autodiff_test.rs` | 52 | 自动微分/闭包/张量/错误位置（21 算子） |
 | `vm_autodiff_test.rs` | 15 | 字节码 VM 上的自动微分回归 |
 | `type_inference_test.rs` | 29 | 类型推断/统一/泛型实例化 |
@@ -48,7 +58,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `error_recovery_test.rs` | 7 | 解析错误恢复/续接 |
 | `mnist_loader_test.rs` | 4 | MNIST 数据加载 |
 | `three_stage.rs` | 1 | 三段式自举（忽略 — wasmi 慢） |
-| **总计** | **499** | 498 通过 + 1 忽略 |
+| **总计** | **700+** | 全部通过（部分 ignored 占位） |
 
 ---
 

@@ -85,6 +85,11 @@ git config --unset https.proxy
 | `rand_distr` | 0.4 | 分布采样（正态分布等，用于 `randn`） |
 | `wasm-encoder` | 0.215 | WASM 二进制编码（`.th` → `.wasm`） |
 | `wasmi` | 0.39 | WASM 内嵌解释器（wasm run） |
+| `wasmtime` | 46.0.1 | WASM JIT 执行引擎（路径 C 闭环） |
+| `cranelift` | 0.115 | Cranelift JIT 后端（热点编译） |
+| `cranelift-module` | 0.115 | Cranelift 模块抽象 |
+| `cranelift-jit` | 0.115 | Cranelift JIT 运行时 |
+| `cranelift-native` | 0.115 | Cranelift 本机平台检测 |
 
 ### tenthpm 包管理器依赖
 

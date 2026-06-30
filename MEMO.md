@@ -88,9 +88,9 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 | Token | `tenthc/lexer/token.th` | ✅ enum TokenKind (50+ 变体) |
 | Lexer | `tenthc/lexer/lexer.th` | ✅ O(1) 源切片，**VM 全速** |
 | Parser | `tenthc/parser/parser.th` | ✅ 递归下降 + method_call，**VM 全速** |
-| HIR 类型 | `tenthc/hir/hir.th` | ✅ 紧凑表示 (104 行) |
-| Lowerer | `tenthc/hir/lower.th` | ✅ AST→HIR 降级 (306 行) |
-| WASM 编译器 | `tenthc/compile/wasm.th` | ✅ HIR→WASM + import 段 (703 行) |
+| HIR 类型 | `tenthc/hir/hir.th` | ✅ 紧凑表示 (177 行) |
+| Lowerer | `tenthc/hir/lower.th` | ✅ AST→HIR 降级 (1252 行) |
+| WASM 编译器 | `tenthc/compile/wasm.th` | ✅ HIR→WASM + import 段 (1885 行) |
 | ~~C Codegen~~ | ~~`tenthc/codegen/cgen.th`~~ | ❌ 已移除 |
 | **字节码 VM** | `tenth/src/runtime/vm.rs` | ✅ **45 指令** (33→41→43→45) |
 | VM 编译器 | `tenth/src/compile/bytecode.rs` | ✅ HIR→bytecode (含 Enum/Match) |

@@ -90,7 +90,7 @@ Tenth 是一门面向 AI/ML 研究的编程语言，核心特性包括：
 │   ├── parser/             # Tenth 实现的语法分析
 │   ├── hir/                # Tenth 实现的 HIR
 │   └── compile/            # Tenth 实现的 WASM 编译
-├── Tenth实例/              # 33 个语言示例
+├── Tenth实例/              # 49 个语言示例
 ├── docs/                   # 文档
 │   ├── 语言参考手册.md
 │   └── superpowers/plans/  # 开发计划
@@ -682,7 +682,7 @@ tenthpm 是 Tenth 语言的包管理器，负责项目初始化、依赖管理�
 | `Cargo.toml` | 依赖声明：serde, serde_json, toml |
 | `src/main.rs` | CLI 入口，子命令分发 |
 | `src/manifest.rs` | Tenth.toml 清单文件解析（项目名、版本、依赖） |
-| `src/commands/` | 子命令实现（init / build / run / publish） |
+| `src/commands/` | 子命令实现（init / build / test / run / add / remove / list / clean / publish / install） |
 
 #### CLI 子命令
 
@@ -690,8 +690,14 @@ tenthpm 是 Tenth 语言的包管理器，负责项目初始化、依赖管理�
 |------|------|
 | `tenthpm init <name>` | 创建新项目（生成 Tenth.toml + src/） |
 | `tenthpm build` | 编译当前项目 |
+| `tenthpm test` | 运行测试 |
 | `tenthpm run` | 编译并运行当前项目 |
+| `tenthpm add` | 添加依赖 |
+| `tenthpm remove` | 移除依赖 |
+| `tenthpm list` | 列出依赖 |
+| `tenthpm clean` | 清理构建产物 |
 | `tenthpm publish` | 发布到包注册表 |
+| `tenthpm install` | 安装包 |
 
 #### Tenth.toml 格式
 
@@ -720,13 +726,20 @@ LSP 服务器为编辑器（VS Code 等）提供语言智能功能，基于 LSP 
 
 #### 支持的 LSP 功能
 
-| 功能 | 说明 |
-|------|------|
-| textDocument/didOpen | 文件打开通知 |
-| textDocument/didChange | 文件变更通知 |
-| textDocument/completion | 自动补全 |
-| textDocument/hover | 悬停信息 |
-| textDocument/diagnostics | 语法/类型错误诊断 |
+| 能力 | 方法 | 状态 |
+|------|------|------|
+| 文档同步 | didOpen/didChange/didClose/didSave | ✅ |
+| 诊断 | publishDiagnostics | ✅ |
+| 悬停 | hover | ✅ |
+| 补全 | completion（AST 符号+关键字，非语义补全） | ✅ |
+| 定义跳转 | definition | ✅ |
+| 文档符号 | documentSymbol | ✅ |
+| 引用查找 | references | ✅ |
+| 重命名 | rename | ✅ |
+| 签名帮助 | signatureHelp | ✅ |
+| 折叠区域 | foldingRange | ✅ |
+| 语义高亮 | semanticTokens | ✅ |
+| 格式化 | formatting | ✅ |
 
 ---
 
@@ -736,40 +749,23 @@ LSP 服务器为编辑器（VS Code 等）提供语言智能功能，基于 LSP 
 
 ```
 tenth/std/
-├── nn/                  # ✅ 全部可运行（13 文件）
-│   ├── linear.th        # 线性层：fn linear(x, w, b) = x.matmul(w.transpose()) + b
-│   ├── loss.th          # 损失函数：MSE, L1, BCE, cross_entropy
-│   ├── activations.th   # 激活函数：relu, sigmoid, tanh
-│   ├── dropout.th       # Dropout 层
-│   ├── batchnorm.th     # BatchNorm 层
-│   ├── conv.th          # 卷积层
-│   ├── embedding.th     # 嵌入层
-│   ├── attention.th     # 注意力机制
-│   ├── multihead_attention.th # 多头注意力
-│   ├── layer_norm.th    # LayerNorm 层
-│   ├── positional_encoding.th # 位置编码
-│   ├── feedforward.th   # 前馈网络
-│   └── transformer.th   # Transformer 模型
-├── optim/               # ✅ 全部可运行
-│   ├── sgd.th           # SGD 优化器（vanilla / momentum / decay）
-│   ├── adam.th          # Adam 优化器
-│   ├── adagrad.th       # AdaGrad 优化器
-│   └── rmsprop.th       # RMSProp 优化器
-├── data/
-│   └── dataloader.th    # DataLoader（new/has_next/next_batch/reset/num_batches）
-├── init/                # ✅ 全部可运行
-│   └── initializers.th  # 初始化器（xavier_uniform / xavier_normal / kaiming_uniform / kaiming_normal）
-├── math/
-│   └── functions.th     # 数学函数参考
-├── collections/         # 集合工具
-│   ├── iter.th          # 迭代器工具
-│   └── collections.th   # 集合操作
-├── string/              # 字符串工具
-│   └── string.th        # 字符串操作
-├── utils/
-│   ├── serialization.th # 模型保存/加载（save_model/load_model/save_checkpoint）
-│   └── math.th          # 数学工具函数
-└── prelude.th           # 可用项总目录
+├── nn/          ← 神经网络（linear, loss, activations, dropout, batchnorm, conv2d, embedding, attention, multihead_attention, layer_norm, positional_encoding, feedforward, transformer_encoder_block）
+├── optim/       ← 优化器（SGD, Adam, AdaGrad, RMSProp）
+├── data/        ← 数据加载（DataLoader, MNIST 加载器）
+├── init/        ← 初始化（xavier_uniform/xavier_normal/he_normal/he_uniform/zeros_init/constant_init）
+├── collections/ ← 迭代器与集合（iter map/filter/reduce, flat_map/partition）
+├── string/      ← 字符串工具（join_lines/join_comma/repeat_sep/indent/word_wrap/capitalize）
+├── utils/       ← 工具（序列化 save_model/load_model, math min/max/clamp）
+├── fs/          ← 文件系统（exists/is_file/is_dir/mkdir/list_dir/remove/copy）
+├── json/        ← JSON 编解码（encode/decode/encode_pretty/load/save）
+├── toml/        ← TOML 解析
+├── cli/         ← 命令行参数处理
+├── logging/     ← 日志（debug/info/warn/error + set_level）
+├── time/        ← 时间（now/now_ms/date/datetime/sleep_ms/timer）
+├── random/      ← 随机数（rand_int/rand_float/choice/shuffle）
+├── math/        ← 数学函数与常量
+├── runtime.th   ← 资源限制（with_step_limit/with_timeout_ms）
+└── prelude.th   ← 可用项总目录
 ```
 
 ### prelude.th 内容
@@ -780,7 +776,7 @@ tenth/std/
 
 ## 7. 示例集 (Tenth实例)
 
-**位置**：`Tenth实例/`，共 33 个示例，涵盖算法、数据结构和 AI/ML：
+**位置**：`Tenth实例/`，共 49 个示例，涵盖算法、数据结构和 AI/ML：
 
 ### 经典算法
 
@@ -918,4 +914,4 @@ Tenth 提供四种运行模式：
 
 ---
 
-> 本文档基于项目 v0.3.3 版本源码自动生成，最后更新：2026-06-24
+> 本文档基于项目 v0.3.3 版本源码自动生成，最后更新：2026-07-01
