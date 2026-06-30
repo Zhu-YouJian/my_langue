@@ -86,6 +86,20 @@ fn literal_axis_arg(args: &[HirExpr]) -> Option<i64> {
     None
 }
 
+/// 从参数中提取所有字面量整数（如 `x.permute(2, 0, 1)` → [2, 0, 1]）。
+/// 用于 permute/broadcast_to 等需要整数列表的算子。
+/// 任一参数非字面量返回 None。
+fn literal_int_args(args: &[HirExpr]) -> Option<Vec<i64>> {
+    let mut out: Vec<i64> = Vec::with_capacity(args.len());
+    for a in args {
+        match &a.kind {
+            HirExprKind::Literal(Literal::Int(n)) => out.push(*n),
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
 impl Lowerer {
     pub(super) fn index_type(&self, base: &Type, indices: &[Index]) -> Type {
         match base {
@@ -259,12 +273,68 @@ impl Lowerer {
                     "reshape" | "view" => {
                         Type::Tensor { dtype: dtype.clone(), dims: Self::shape_from_int_args(_args) }
                     }
+                    // flatten：展平为 1D（元素总数未知，因可能含动态维度）
                     "flatten" => Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] },
+                    // 逐元素激活/数学函数：保持原 shape
                     "abs" | "sqrt" | "exp" | "log" | "relu" |
-                    "sigmoid" | "tanh" | "softmax" |
-                    "permute" => {
+                    "sigmoid" | "tanh" | "softmax" | "gelu" => {
                         Type::Tensor { dtype: dtype.clone(), dims: dims.clone() }
                     }
+                    // masked_fill(mask, value)：保持原 shape
+                    "masked_fill" => Type::Tensor { dtype: dtype.clone(), dims: dims.clone() },
+                    // permute(dims...)：按字面量索引重排原 dims（如 [3,8,5].permute(2,0,1) → [5,3,8]）
+                    // 字面量参数：按索引重排；非字面量：保守返回原秩的 Any
+                    "permute" => {
+                        match literal_int_args(_args) {
+                            Some(idxs) if !idxs.is_empty() => {
+                                let mut new_dims: Vec<Dim> = Vec::with_capacity(idxs.len());
+                                let mut ok = true;
+                                for i in &idxs {
+                                    if *i >= 0 && (*i as usize) < dims.len() {
+                                        new_dims.push(dims[*i as usize].clone());
+                                    } else {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                                if ok {
+                                    Type::Tensor { dtype: dtype.clone(), dims: new_dims }
+                                } else {
+                                    Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any; idxs.len()] }
+                                }
+                            }
+                            _ => Type::Tensor { dtype: dtype.clone(), dims: dims.clone() },
+                        }
+                    }
+                    // broadcast_to(shape...)：字面量参数即目标 shape
+                    "broadcast_to" => {
+                        Type::Tensor { dtype: dtype.clone(), dims: Self::shape_from_int_args(_args) }
+                    }
+                    // cat(other, dim=0)：沿 dim 拼接，dim 维相加，其余维度必须匹配
+                    // 字面量 dim + 两侧 shape 已知 → 精确推断；否则保守返回原秩的 Any
+                    "cat" => {
+                        let dim = _args.get(1)
+                            .and_then(|a| match &a.kind {
+                                HirExprKind::Literal(Literal::Int(n)) => Some(*n),
+                                _ => None,
+                            })
+                            .unwrap_or(0);
+                        if let Some(arg) = _args.first() {
+                            if let Type::Tensor { dims: adims, .. } = &arg.ty {
+                                if adims.len() == dims.len() && dim >= 0 && (dim as usize) < dims.len() {
+                                    let mut new_dims: Vec<Dim> = dims.iter().cloned().collect();
+                                    new_dims[dim as usize] = match (&dims[dim as usize], &adims[dim as usize]) {
+                                        (Dim::Known(a), Dim::Known(b)) => Dim::Known(a + b),
+                                        _ => Dim::Any,
+                                    };
+                                    return Type::Tensor { dtype: dtype.clone(), dims: new_dims };
+                                }
+                            }
+                        }
+                        Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any; dims.len().max(1)] }
+                    }
+                    // argmax/argmin：返回 i64 标量（当前运行时仅支持全张量归约，无 axis 参数）
+                    "argmax" | "argmin" => Type::Base(BaseType::I64),
                     // transpose：2D 时反转两维；其他情况保持原 shape（运行时按行列互换）
                     "transpose" => {
                         if dims.len() == 2 {

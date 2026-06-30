@@ -480,3 +480,196 @@ fn reshape_fn(n: i64, m: i64) -> Tensor[f64, ..] {
     );
 }
 
+// ── Phase 3: 算子覆盖扩展 ──────────────────────────────────────────────────
+
+#[test]
+fn permute_literal_dims_reorders_shape() {
+    // (3, 8, 5).permute(2, 0, 1) → [5, 3, 8]
+    let src = r#"
+fn permute_fn() -> Tensor[f64, ..] {
+    let a = zeros(3, 8, 5);
+    a.permute(2, 0, 1)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let f = hir.functions.iter().find(|f| f.name == "permute_fn").unwrap();
+    let ty_str = format!("{:?}", f.body.ty);
+    // 应按 [2, 0, 1] 索引重排 [3, 8, 5] → [5, 3, 8]
+    assert!(
+        ty_str.contains("Known(5)") && ty_str.contains("Known(3)") && ty_str.contains("Known(8)"),
+        "permute(2,0,1) 应重排 [3,8,5]→[5,3,8]，ty: {}", ty_str
+    );
+}
+
+#[test]
+fn broadcast_to_literal_args_inferred() {
+    // (1, 3).broadcast_to(4, 3) → [4, 3]
+    let src = r#"
+fn bcast_fn() -> Tensor[f64, ..] {
+    let a = zeros(1, 3);
+    a.broadcast_to(4, 3)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let f = hir.functions.iter().find(|f| f.name == "bcast_fn").unwrap();
+    let ty_str = format!("{:?}", f.body.ty);
+    assert!(
+        ty_str.contains("Known(4)") && ty_str.contains("Known(3)"),
+        "broadcast_to(4, 3) 应推断为 [4, 3]，ty: {}", ty_str
+    );
+}
+
+#[test]
+fn cat_with_literal_dim_sums_dim() {
+    // (2, 3).cat((3, 3), dim=0) → [5, 3]
+    let src = r#"
+fn cat_fn() -> Tensor[f64, ..] {
+    let a = zeros(2, 3);
+    let b = zeros(3, 3);
+    a.cat(b, 0)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let f = hir.functions.iter().find(|f| f.name == "cat_fn").unwrap();
+    let ty_str = format!("{:?}", f.body.ty);
+    // dim 0 应相加 2+3=5，dim 1 保持 3
+    assert!(
+        ty_str.contains("Known(5)") && ty_str.contains("Known(3)") && !ty_str.contains("Known(2)"),
+        "cat(dim=0) 应相加 dim 0：[2,3]+[3,3]→[5,3]，ty: {}", ty_str
+    );
+}
+
+#[test]
+fn cat_dim_1_sums_second_dim() {
+    // (2, 3).cat((2, 4), dim=1) → [2, 7]
+    let src = r#"
+fn cat_fn() -> Tensor[f64, ..] {
+    let a = zeros(2, 3);
+    let b = zeros(2, 4);
+    a.cat(b, 1)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let f = hir.functions.iter().find(|f| f.name == "cat_fn").unwrap();
+    let ty_str = format!("{:?}", f.body.ty);
+    // dim 1 应相加 3+4=7，dim 0 保持 2
+    assert!(
+        ty_str.contains("Known(2)") && ty_str.contains("Known(7)"),
+        "cat(dim=1) 应相加 dim 1：[2,3]+[2,4]→[2,7]，ty: {}", ty_str
+    );
+}
+
+#[test]
+fn argmax_returns_i64_scalar() {
+    // argmax() 返回 i64 标量
+    let src = r#"
+fn argmax_fn() -> i64 {
+    let a = zeros(3, 4);
+    a.argmax()
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let f = hir.functions.iter().find(|f| f.name == "argmax_fn").unwrap();
+    let ty_str = format!("{:?}", f.body.ty);
+    assert!(
+        ty_str.contains("I64") && !ty_str.contains("Tensor"),
+        "argmax() 应返回 i64 标量，ty: {}", ty_str
+    );
+}
+
+#[test]
+fn gelu_preserves_shape() {
+    // gelu() 保持原 shape
+    let src = r#"
+fn gelu_fn() -> Tensor[f64, ..] {
+    let a = zeros(3, 4);
+    a.gelu()
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let f = hir.functions.iter().find(|f| f.name == "gelu_fn").unwrap();
+    let ty_str = format!("{:?}", f.body.ty);
+    assert!(
+        ty_str.contains("Known(3)") && ty_str.contains("Known(4)"),
+        "gelu() 应保持原 shape [3, 4]，ty: {}", ty_str
+    );
+}
+
+#[test]
+fn masked_fill_preserves_shape() {
+    // masked_fill(mask, value) 保持原 shape
+    let src = r#"
+fn mfill_fn() -> Tensor[f64, ..] {
+    let a = zeros(3, 4);
+    let mask = zeros(3, 4);
+    a.masked_fill(mask, 0.0)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let f = hir.functions.iter().find(|f| f.name == "mfill_fn").unwrap();
+    let ty_str = format!("{:?}", f.body.ty);
+    assert!(
+        ty_str.contains("Known(3)") && ty_str.contains("Known(4)"),
+        "masked_fill() 应保持原 shape [3, 4]，ty: {}", ty_str
+    );
+}
+
+#[test]
+fn flatten_returns_1d() {
+    // flatten() 返回 1D
+    let src = r#"
+fn flat_fn() -> Tensor[f64, ..] {
+    let a = zeros(3, 4, 5);
+    a.flatten()
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let f = hir.functions.iter().find(|f| f.name == "flat_fn").unwrap();
+    let ty_str = format!("{:?}", f.body.ty);
+    // 应为 1D（dims 长度为 1，含 Any）
+    assert!(
+        ty_str.contains("Any") && !ty_str.contains("Known(3)"),
+        "flatten() 应返回 1D [Any]，不含 Known(3)，ty: {}", ty_str
+    );
+}
+
