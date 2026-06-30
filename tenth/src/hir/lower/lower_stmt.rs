@@ -16,10 +16,16 @@ impl Lowerer {
         let kind = match &stmt.kind {
             StmtKind::Let { names, type_ann, mutable, init } => {
                 let lowered_init = init.as_ref().map(|i| self.lower_expr(i)).transpose()?;
-                let ty = type_ann.as_ref()
-                    .map(|a| Type::from_annotation(a))
-                    .or_else(|| lowered_init.as_ref().map(|e| e.ty.clone()))
-                    .unwrap_or(Type::Unknown);
+                // 类型注解强制化：若 type_ann 和 init 都存在，检查 shape 兼容性并合并
+                let ty = match (type_ann.as_ref(), lowered_init.as_ref()) {
+                    (Some(ann), Some(init_expr)) => {
+                        let ann_ty = Type::from_annotation(ann);
+                        Self::check_and_merge_tensor_shape(&ann_ty, &init_expr.ty, &span, "let 注解")?
+                    }
+                    (Some(ann), None) => Type::from_annotation(ann),
+                    (None, Some(init_expr)) => init_expr.ty.clone(),
+                    (None, None) => Type::Unknown,
+                };
 
                 for name in names {
                     self.scope.define_var(name.name.clone(), ty.clone(), *mutable);
@@ -457,12 +463,19 @@ impl Lowerer {
                     let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
                     self.scope = outer_scope;
 
+                    // 跨函数 shape 求解：合并 body 推断的 shape 到 return_type
+                    // 让调用方能拿到更精确的返回 shape（如 `fn make() -> Tensor[f64, ..] { zeros(3,4) }` → [3,4]）
+                    // 若 body 推断 shape 与注解 shape 静态冲突（如注解 [3,4] 但 body 推断 [2,3]），报错。
+                    let merged_ret_ty = Self::check_and_merge_tensor_shape(
+                        &ret_ty, &lowered_body.ty, &item.span, "函数返回值"
+                    )?;
+
                     let fn_def = HirFnDef {
                         name: name.name.clone(),
                         generics: gen_names,
                         generics_bounds: build_generics_bounds(generics),
                         params: param_types,
-                        return_type: ret_ty,
+                        return_type: merged_ret_ty,
                         body: lowered_body,
                         span: item.span.clone(),
                     };
@@ -507,6 +520,7 @@ impl Lowerer {
             enums: self.enums.clone(),
             trait_defs: self.trait_defs.clone(),
             trait_impls: self.trait_impls.clone(),
+            warnings: std::mem::take(&mut self.warnings),
         })
     }
 }

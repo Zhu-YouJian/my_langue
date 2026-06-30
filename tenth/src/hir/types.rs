@@ -116,6 +116,41 @@ impl Type {
         }
     }
 
+    /// 编译期静态元素总数（所有维均为 Known 时返回 Some(product)）。
+    /// 任一维为 Symbol/Any、或非 Tensor 类型、或乘法溢出时返回 None。
+    /// 用于内存/算力预估。
+    pub fn static_numel(&self) -> Option<u64> {
+        if let Type::Tensor { dims, .. } = self {
+            let mut product: u64 = 1;
+            for d in dims {
+                match d {
+                    Dim::Known(n) => {
+                        if *n < 0 { return None; }
+                        product = product.checked_mul(*n as u64)?;
+                    }
+                    _ => return None,
+                }
+            }
+            Some(product)
+        } else {
+            None
+        }
+    }
+
+    /// 编译期静态字节大小（dtype 字节数 × numel）。
+    /// 用于内存预估（如 zeros(1024,1024,1024) → 8GB）。
+    pub fn static_bytes(&self) -> Option<u64> {
+        let numel = self.static_numel()?;
+        let dtype_size = match self.tensor_dtype()? {
+            BaseType::F64 | BaseType::I64 | BaseType::U64 => 8u64,
+            BaseType::F32 | BaseType::I32 | BaseType::U32 => 4u64,
+            BaseType::F16 | BaseType::I16 | BaseType::U16 | BaseType::BF16 => 2u64,
+            BaseType::I8 | BaseType::U8 | BaseType::Bool | BaseType::Char => 1u64,
+            _ => 8u64, // 默认按 f64 估算
+        };
+        numel.checked_mul(dtype_size)
+    }
+
     pub fn from_annotation(ann: &super::super::parser::ast::TypeAnnotation) -> Self {
         use super::super::parser::ast::TypeAnnotation as TA;
         match ann {

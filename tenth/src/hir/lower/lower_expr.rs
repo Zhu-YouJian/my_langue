@@ -146,6 +146,8 @@ impl Lowerer {
                 }
 
                 let ret_ty = self.resolve_call_type(&f, &lowered_args, &span)?;
+                // 编译期内存预估：构造函数返回大 tensor 时发 warning
+                self.emit_memory_estimate(&ret_ty, &span, "函数调用");
 
                 (HirExprKind::Call {
                     func: Box::new(f),
@@ -213,6 +215,8 @@ impl Lowerer {
                         ("rand", BaseType::F32) => "rand_f32".to_string(),
                         _ => func_name.clone(),
                     };
+                    // 编译期内存预估：泛型构造函数返回大 tensor 时发 warning
+                    self.emit_memory_estimate(&ret_ty, &span, &format!("泛型构造函数 {}", func_name));
                     return Ok(HirExpr {
                         kind: HirExprKind::Call {
                             func: Box::new(HirExpr {
@@ -277,6 +281,8 @@ impl Lowerer {
                     ty: Type::Unknown,
                     span: span.clone(),
                 };
+                // 编译期内存预估：泛型函数实例化返回大 tensor 时发 warning
+                self.emit_memory_estimate(&inst_ret_ty, &span, &format!("泛型函数 {}", func_name));
                 (HirExprKind::Call {
                     func: Box::new(call_func),
                     args: lowered_args,
@@ -326,6 +332,13 @@ impl Lowerer {
                 let ret_ty = self.resolve_method_type(&recv.ty, &method.name, &lowered_args);
                 // 编译期 shape 检查（如 matmul 的内侧维度）
                 Self::check_method_shape(&recv.ty, &method.name, &lowered_args, &span)?;
+                // 编译期算力/内存预估：matmul FLOPs + 结果 tensor bytes
+                if method.name == "matmul" {
+                    if let Some(arg) = lowered_args.first() {
+                        self.emit_matmul_flop_estimate(&recv.ty, &arg.ty, &span);
+                    }
+                }
+                self.emit_memory_estimate(&ret_ty, &span, &format!("方法 {}", method.name));
 
                 (HirExprKind::MethodCall {
                     receiver: Box::new(recv),
@@ -409,6 +422,10 @@ impl Lowerer {
                 self.scope.release_borrows();
                 let e = else_branch.as_ref().map(|eb| self.lower_expr(eb)).transpose()?;
                 self.scope.release_borrows();
+                // 跨分支 shape 检查：then/else 都有静态 shape 时，必须可广播
+                if let Some(ref eb) = e {
+                    Self::check_branch_shape_compat(&t.ty, &eb.ty, &span, "if/else")?;
+                }
                 let ty = if let Some(ref eb) = e {
                     eb.ty.clone()
                 } else {
@@ -643,6 +660,13 @@ impl Lowerer {
                         Ok(HirMatchArm { pattern: hir_pattern, guard, body })
                     })
                     .collect::<TenthResult<_>>()?;
+                // 跨 arm shape 检查：所有 arm 的 body shape 必须兼容
+                // 取第一个 arm 作为基准，与其他 arm 两两检查
+                if let Some(first_arm) = lowered_arms.first() {
+                    for arm in lowered_arms.iter().skip(1) {
+                        Self::check_branch_shape_compat(&first_arm.body.ty, &arm.body.ty, &span, "match arm")?;
+                    }
+                }
                 // Infer match type from first non-Unknown arm, falling back to first arm
                 let match_ty = lowered_arms.iter()
                     .map(|arm| arm.body.ty.clone())

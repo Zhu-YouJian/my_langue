@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use crate::parser::ast as ast;
 use crate::parser::ast::{ExprKind, StmtKind};
+use crate::error::TenthWarning;
 use super::hir::*;
 use super::types::*;
 
@@ -31,6 +32,8 @@ pub struct Lowerer {
     search_paths: Vec<String>,
     /// Set of files already imported (to prevent circular imports)
     imported_files: HashSet<String>,
+    /// 编译期收集的警告（内存/算力预估等，非致命）
+    pub(super) warnings: Vec<TenthWarning>,
 }
 
 impl Lowerer {
@@ -67,6 +70,7 @@ impl Lowerer {
             trait_impls: HashMap::new(),
             search_paths: Vec::new(),
             imported_files: HashSet::new(),
+            warnings: Vec::new(),
         };
 
         lowerer.trait_defs.insert("Display".to_string(), HirTraitDef {

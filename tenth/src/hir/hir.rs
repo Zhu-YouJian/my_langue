@@ -250,6 +250,8 @@ pub struct HirProgram {
     pub enums: HashMap<String, Vec<(String, Vec<(String, Type)>)>>,
     pub trait_defs: HashMap<String, HirTraitDef>,
     pub trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
+    /// 编译期警告（内存/算力预估等，非致命）
+    pub warnings: Vec<crate::error::TenthWarning>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

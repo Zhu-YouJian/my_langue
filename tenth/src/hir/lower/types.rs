@@ -1,4 +1,4 @@
-use crate::error::{TenthError, TenthResult};
+use crate::error::{TenthError, TenthResult, TenthWarning};
 use crate::lexer::token::Span;
 use crate::parser::ast as ast;
 use crate::hir::hir::*;
@@ -201,6 +201,13 @@ impl Lowerer {
                             ),
                         });
                     }
+                    // 跨函数 shape 求解：若 self.functions 中有更精确的 return_type（body lower 后合并的），用它
+                    let ret = if let Some(fn_def) = self.functions.iter().find(|f| f.name == name.as_str()) {
+                        // 合并 scope ret 和 fn_def.return_type 的 shape（fn_def 可能更精确）
+                        Self::merge_return_shape(&ret, &fn_def.return_type)
+                    } else {
+                        ret
+                    };
                     return Ok(self.resolve_struct_type(ret));
                 }
                 self.resolve_builtin(name, args, span)
@@ -481,6 +488,157 @@ impl Lowerer {
         }
     }
 
+    /// 跨函数 shape 求解：合并 scope 中的 return_type 和 fn_def 中的 return_type。
+    ///
+    /// fn_def.return_type 可能在函数体 lower 后被更新（含更精确的 shape）。
+    /// 此函数取两者中更精确的 shape（Known/Symbol 优先于 Any）。
+    /// 若两者都是 Tensor，逐维取更精确的；否则取 fn_def 的（可能更精确）。
+    fn merge_return_shape(scope_ret: &Type, fn_def_ret: &Type) -> Type {
+        match (scope_ret, fn_def_ret) {
+            (Type::Tensor { dtype: sd, dims: sdims }, Type::Tensor { dtype: fd, dims: fdims }) => {
+                // dtype 取 fn_def 的（可能更精确，如从 body 推断的 F32 vs scope 的 Unknown）
+                let dtype = if matches!(sd.as_ref(), Type::Unknown) { fd.clone() } else { sd.clone() };
+                // 若维度数不同，取 fn_def 的（可能是 body 推断的精确维度数）
+                if sdims.len() != fdims.len() {
+                    return Type::Tensor { dtype, dims: fdims.clone() };
+                }
+                // 逐维取更精确的
+                let dims: Vec<Dim> = sdims.iter().zip(fdims.iter()).map(|(s, f)| {
+                    match (s, f) {
+                        // fn_def 有精确信息，优先用
+                        (Dim::Any, f_precise) => (*f_precise).clone(),
+                        // scope 有精确信息，fn_def 是 Any，用 scope 的
+                        (s_precise, Dim::Any) => (*s_precise).clone(),
+                        // 两者都精确，取 fn_def 的（body 推断更新过）
+                        (_, f_precise) => (*f_precise).clone(),
+                    }
+                }).collect();
+                Type::Tensor { dtype, dims }
+            }
+            // 非 Tensor 或不匹配：取 fn_def 的
+            _ => fn_def_ret.clone(),
+        }
+    }
+
+    /// 检查类型注解与实际推断类型是否兼容，并返回合并后的类型。
+    ///
+    /// 用于：
+    /// - `let x: Tensor[f64, 3, 4] = zeros(2, 3)` 报错（注解与实际 shape 不匹配）
+    /// - `let x: Tensor[f64, ..] = zeros(3, 4)` 合并为 `Tensor[f64, 3, 4]`（注解 wildcard，用实际 shape）
+    /// - 函数返回值：`fn make() -> Tensor[f64, ..] { zeros(3, 4) }` 合并为精确 shape
+    ///
+    /// 合并规则：
+    /// - annotation `Any`（`..`） + actual 精确 → 用 actual（合并）
+    /// - annotation 精确 + actual `Any` → 保留 annotation（actual 无法验证）
+    /// - annotation 精确 + actual 精确 → 必须相等，否则报错
+    /// - annotation `[Any]`（单 Any，视为 wildcard）→ 直接用 actual dims
+    /// - actual `[Any]`（单 Any，视为维度未知）→ 保留 annotation，不检查维度数
+    ///
+    /// `context` 用于错误信息（如 "let 注解" 或 "函数返回值"）。
+    pub(super) fn check_and_merge_tensor_shape(
+        annot: &Type,
+        actual: &Type,
+        span: &Span,
+        context: &str,
+    ) -> TenthResult<Type> {
+        // 非 Tensor 类型：不检查，保留 annotation
+        let (annot_dtype, annot_dims) = match annot {
+            Type::Tensor { dtype, dims } => (dtype.clone(), dims.clone()),
+            _ => return Ok(annot.clone()),
+        };
+        let actual_dims: Vec<Dim> = match actual {
+            Type::Tensor { dims, .. } => dims.clone(),
+            _ => return Ok(annot.clone()),
+        };
+
+        // annotation 是单 Any（`[..]` wildcard）：直接用 actual dims
+        if annot_dims.len() == 1 && matches!(annot_dims[0], Dim::Any) {
+            return Ok(Type::Tensor { dtype: annot_dtype, dims: actual_dims });
+        }
+
+        // actual 是单 Any（维度未知）：保留 annotation，不检查维度数
+        if actual_dims.len() == 1 && matches!(actual_dims[0], Dim::Any) {
+            return Ok(annot.clone());
+        }
+
+        // 维度数必须相同
+        if annot_dims.len() != actual_dims.len() {
+            return Err(TenthError::TypeError {
+                line: span.line,
+                col: span.col,
+                message: format!(
+                    "{} shape 维度数不匹配：注解 Tensor{} 与实际 Tensor{}（维度数 {} ≠ {}）",
+                    context, fmt_dims(&annot_dims), fmt_dims(&actual_dims),
+                    annot_dims.len(), actual_dims.len()
+                ),
+            });
+        }
+
+        // 逐维检查与合并
+        let mut merged_dims: Vec<Dim> = Vec::with_capacity(annot_dims.len());
+        for (i, (a, b)) in annot_dims.iter().zip(actual_dims.iter()).enumerate() {
+            let merged = match (a, b) {
+                (Dim::Any, other) | (other, Dim::Any) => (*other).clone(),
+                (Dim::Known(x), Dim::Known(y)) if x == y => Dim::Known(*x),
+                (Dim::Symbol(s), Dim::Symbol(t)) if s == t => Dim::Symbol(s.clone()),
+                // annotation 精确 + actual 精确但不等 → 报错
+                (Dim::Known(x), Dim::Known(y)) => {
+                    return Err(TenthError::TypeError {
+                        line: span.line,
+                        col: span.col,
+                        message: format!(
+                            "{} shape 不匹配：注解 Tensor{} 与实际 Tensor{}（第 {} 维 {} ≠ {}）",
+                            context, fmt_dims(&annot_dims), fmt_dims(&actual_dims),
+                            i, x, y
+                        ),
+                    });
+                }
+                (Dim::Symbol(s), Dim::Symbol(t)) => {
+                    return Err(TenthError::TypeError {
+                        line: span.line,
+                        col: span.col,
+                        message: format!(
+                            "{} shape 不匹配：注解 Tensor{} 与实际 Tensor{}（第 {} 维符号 {} ≠ {}）",
+                            context, fmt_dims(&annot_dims), fmt_dims(&actual_dims),
+                            i, s, t
+                        ),
+                    });
+                }
+                // annotation Known/Symbol + actual Symbol/Known：保留 annotation（假设兼容）
+                (annot_precise, _) => (*annot_precise).clone(),
+            };
+            merged_dims.push(merged);
+        }
+        Ok(Type::Tensor { dtype: annot_dtype, dims: merged_dims })
+    }
+
+    /// 编译期 shape 检查：跨分支（if/else、match arms）返回 shape 是否兼容。
+    ///
+    /// 仅在两侧 shape 都含静态信息（Known 或 Symbol，非全 Any）时才检查；
+    /// 不兼容时返回 TypeError。任一侧全 Any 则跳过。
+    pub(super) fn check_branch_shape_compat(
+        then_ty: &Type,
+        else_ty: &Type,
+        span: &Span,
+        context: &str,
+    ) -> TenthResult<()> {
+        if let (Type::Tensor { dims: ldims, .. }, Type::Tensor { dims: rdims, .. }) = (then_ty, else_ty) {
+            if has_static_info(ldims) && has_static_info(rdims) {
+                if broadcast_shapes(ldims, rdims).is_none() {
+                    return Err(TenthError::TypeError {
+                        line: span.line,
+                        col: span.col,
+                        message: format!(
+                            "{} 分支 shape 不兼容：then Tensor{} 与 else Tensor{}（无法广播）",
+                            context, fmt_dims(ldims), fmt_dims(rdims)
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// 编译期 shape 检查：二元运算（+、-、*、/、%）两侧 Tensor shape 是否兼容。
     ///
     /// 仅在两侧 shape 都含静态信息（Known 或 Symbol，非全 Any）时才检查；
@@ -557,5 +715,57 @@ impl Lowerer {
             }
         }
         Ok(())
+    }
+
+    // ── 编译期内存/算力预估（护城河 D）──────────────────────────────────────
+
+    /// 内存预估：对大 tensor 发 warning。
+    /// 阈值：1GB（可调整）。仅在 shape 全 Known 时预估。
+    pub(super) fn emit_memory_estimate(&mut self, ty: &Type, span: &Span, context: &str) {
+        if let Some(bytes) = ty.static_bytes() {
+            const GB: u64 = 1024 * 1024 * 1024;
+            if bytes >= GB {
+                let msg = format!(
+                    "{} 创建约 {:.2} GB 的 tensor（编译期预估，可能触发 OOM）",
+                    context,
+                    bytes as f64 / GB as f64
+                );
+                self.warnings.push(TenthWarning::new(span.line, span.col, msg));
+            }
+        }
+    }
+
+    /// matmul FLOPs 预估：(M,K)@(K,N) → M*K*N 乘加。
+    /// 阈值：1 GFLOP（10^9 乘加）。仅在两侧 shape 都 2D Known 时预估。
+    pub(super) fn emit_matmul_flop_estimate(
+        &mut self,
+        recv_ty: &Type,
+        arg_ty: &Type,
+        span: &Span,
+    ) {
+        if let (Type::Tensor { dims: rdims, .. }, Type::Tensor { dims: adims, .. }) = (recv_ty, arg_ty) {
+            if rdims.len() == 2 && adims.len() == 2 {
+                if let (Dim::Known(m), Dim::Known(k1), Dim::Known(k2), Dim::Known(n)) =
+                    (&rdims[0], &rdims[1], &adims[0], &adims[1])
+                {
+                    if k1 == k2 {
+                        if let Some(flops) = (*m as u64)
+                            .checked_mul(*k1 as u64)
+                            .and_then(|x| x.checked_mul(*n as u64))
+                        {
+                            const GFLOP: u64 = 1_000_000_000;
+                            if flops >= GFLOP {
+                                let msg = format!(
+                                    "matmul 约 {:.2} GFLOPs（{}×{} @ {}×{}，编译期预估）",
+                                    flops as f64 / GFLOP as f64,
+                                    m, k1, k2, n
+                                );
+                                self.warnings.push(TenthWarning::new(span.line, span.col, msg));
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

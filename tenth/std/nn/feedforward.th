@@ -1,14 +1,28 @@
 // Position-wise Feed-Forward Network
 // FFN(x) = GELU(xW1 + b1)W2 + b2
 // Uses GELU activation (common in Transformer models like BERT/GPT).
+//
+// 符号维度标注（Phase 2 短期规划）：
+//   x: [S, D]       输入（seq_len, d_model）
+//   w1: [D, D_ff]   第一层权重（d_model, d_ff）
+//   b1: [D_ff]      第一层偏置
+//   w2: [D_ff, D]   第二层权重（d_ff, d_model）
+//   b2: [D]         第二层偏置
+//   返回: [S, D]
+//
+// x @ w1 → [S, D] @ [D, D_ff] = [S, D_ff]
+// + b1 → [S, D_ff] + [D_ff] → 广播 → [S, D_ff]
+// gelu → [S, D_ff]
+// @ w2 → [S, D_ff] @ [D_ff, D] = [S, D]
+// + b2 → [S, D] + [D] → 广播 → [S, D]
 
 fn feedforward<T>(
-    x: Tensor[T, ..],      // (seq_len, d_model)
-    w1: Tensor[T, ..],     // (d_model, d_ff)
-    b1: Tensor[T, ..],     // (d_ff,)
-    w2: Tensor[T, ..],     // (d_ff, d_model)
-    b2: Tensor[T, ..],     // (d_model,)
-) -> Tensor[T, ..] {
+    x: Tensor[T, S, D],
+    w1: Tensor[T, D, D_ff],
+    b1: Tensor[T, D_ff],
+    w2: Tensor[T, D_ff, D],
+    b2: Tensor[T, D],
+) -> Tensor[T, S, D] {
     let hidden = x.matmul(w1) + b1;
     // TODO: requires interpreter support for x.gelu()
     // Fallback: use .relu() if .gelu() is not yet available
@@ -18,7 +32,8 @@ fn feedforward<T>(
 
 // Convenience: initialize FFN parameters with He initialization.
 // 泛型版：make_feedforward_params<f32>(...) 返回 f32 张量。
-fn make_feedforward_params<T>(d_model: i64, d_ff: i64) -> (Tensor[T, ..], Tensor[T, ..], Tensor[T, ..], Tensor[T, ..]) {
+// 返回 shape 与 feedforward 签名对应：w1:[D, D_ff], b1:[D_ff], w2:[D_ff, D], b2:[D]
+fn make_feedforward_params<T>(d_model: i64, d_ff: i64) -> (Tensor[T, D, D_ff], Tensor[T, D_ff], Tensor[T, D_ff, D], Tensor[T, D]) {
     let w1 = randn<T>(d_model, d_ff) * sqrt(2.0 / d_model);
     let b1 = zeros<T>(d_ff);
     let w2 = randn<T>(d_ff, d_model) * sqrt(2.0 / d_ff);

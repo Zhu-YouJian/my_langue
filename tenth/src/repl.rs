@@ -34,6 +34,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
         enums: HashMap::new(),
         trait_defs: HashMap::new(),
         trait_impls: HashMap::new(),
+        warnings: Vec::new(),
     };
     let mut variables: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
     let mut def_count: usize = 0;
@@ -152,6 +153,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                         enums: HashMap::new(),
                         trait_defs: HashMap::new(),
                         trait_impls: HashMap::new(),
+                        warnings: Vec::new(),
                     };
                     variables.clear();
                     def_count = 0;

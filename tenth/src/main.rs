@@ -228,6 +228,11 @@ fn run_file(path: &str, config: MemoryConfig, sandbox: Option<FsSandbox>, timeou
         }
     };
 
+    // 输出编译期警告（内存/算力预估等，非致命）
+    for w in &hir.warnings {
+        eprintln!("{}", w.display_with_source(Some(&source)));
+    }
+
     // Skip VM if TENTH_NO_VM env var is set (for debugging interpreter)
     let skip_vm = std::env::var("TENTH_NO_VM").is_ok();
     if !skip_vm {

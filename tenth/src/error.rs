@@ -60,6 +60,34 @@ pub enum TenthError {
 
 pub type TenthResult<T> = Result<T, TenthError>;
 
+/// 编译期警告（非致命）。用于内存/算力预估等不阻断编译的提示。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TenthWarning {
+    pub line: usize,
+    pub col: usize,
+    pub message: String,
+}
+
+impl TenthWarning {
+    pub fn new(line: usize, col: usize, message: String) -> Self {
+        Self { line, col, message }
+    }
+
+    /// Pretty-print the warning with source context (复用 TenthError 的源码定位逻辑)。
+    pub fn display_with_source(&self, source: Option<&str>) -> String {
+        if let Some(src) = source {
+            let source_line = src.lines().nth(self.line.saturating_sub(1)).unwrap_or("");
+            let caret = build_caret(self.col, source_line);
+            format!(
+                "警告：第 {} 行第 {} 列：{}\n  |\n{:>3} | {}\n  | {}",
+                self.line, self.col, self.message, self.line, source_line, caret
+            )
+        } else {
+            format!("警告：第 {} 行第 {} 列：{}", self.line, self.col, self.message)
+        }
+    }
+}
+
 impl TenthError {
     /// Pretty-print the error with source context (if source is provided).
     /// Shows the error line with a caret pointing to the column position.

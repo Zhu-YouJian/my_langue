@@ -1,5 +1,14 @@
 // NN: Linear layer
 // y = x @ W^T + b
-fn linear(x: Tensor[f64, ..], w: Tensor[f64, ..], b: Tensor[f64, ..]) -> Tensor[f64, ..] {
+//
+// 符号维度标注（Phase 2 短期规划）：
+//   x: [M, K]   输入（batch/seq=M, in_features=K）
+//   w: [N, K]   权重（out_features=N, in_features=K，PyTorch 风格）
+//   b: [N]      偏置（out_features=N）
+//   返回: [M, N]
+//
+// w.transpose() → [K, N]，x @ w^T → [M, K] @ [K, N] = [M, N]
+// [M, N] + [N] → 广播 → [M, N]
+fn linear(x: Tensor[f64, M, K], w: Tensor[f64, N, K], b: Tensor[f64, N]) -> Tensor[f64, M, N] {
     x.matmul(w.transpose()) + b
 }
