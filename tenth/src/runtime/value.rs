@@ -116,7 +116,7 @@ impl Value {
             Value::Tensor(t) => {
                 let t = t.borrow();
                 let dims: Vec<Dim> = t.shape().iter().map(|&d| Dim::Known(d as i64)).collect();
-                Type::Tensor { dtype: t.dtype(), dims }
+                Type::tensor(t.dtype(), dims)
             }
             Value::Unit => Type::unit(),
             Value::Array(_) => Type::Unknown,

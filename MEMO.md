@@ -246,6 +246,53 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 
 ---
 
+### v0.3.3 f32 真泛型改造（2026-06-29）
+
+#### 问题根因
+`Type::Tensor { dtype: BaseType, .. }` 的 dtype 字段是 `BaseType` 枚举值，无法表达 TypeParam。导致 std/nn/ 下 13 个文件出现 `_f32` 双胞胎副本（且副本的 Tensor 参数仍是 f64——f32 支持是假的）。这是类型系统表达力不足的系统性 DRY 违反。
+
+#### 阶段 1：Rust 侧 Type 枚举改造
+- `types.rs`：`Type::Tensor.dtype` 从 `BaseType` 改为 `Box<Type>`，dtype 现在可以是 TypeParam
+- 新增 `Type::tensor_dtype() -> Option<BaseType>` helper（运行时取回 BaseType，TypeParam 场景返回 None）
+- `from_annotation`：删除非 Base dtype 强制 fallback 到 F32 的逻辑，TypeParam 保留
+- `substitute_type`：递归处理 Tensor 的 dtype 字段（+ Array/Generic）
+- 适配 ~20 处 match 模式：lower/types.rs(15)、lower_expr.rs、mod.rs、bytecode.rs、value.rs、interpreter/mod.rs
+- 采用 `dtype.as_ref().clone()` 保留 TypeParam 信息，比硬 fallback 到 F64 更准确
+
+#### 阶段 2：tenthc 侧（无需改造）
+- 验证发现 tenthc parser 不解析 `Tensor[T, ..]` 泛型类型注解（只处理具体 dtype）
+- tenthc 自身的 .th 源码不用泛型 Tensor
+- parity_test 129/129 + selfhost_frontend 4/4 全通过 → 路径 B/C 未断
+- 结论：tenthc 侧 HirType.sub 整数编码足以处理当前所有 tenthc 能编译的代码
+
+#### 阶段 3：std/nn 重写
+- 删除 11 个 `_f32` 副本函数，7 个数据计算函数改泛型：
+  - `transformer_encoder_block<T>`、`multihead_attention<T>`、`scaled_dot_product_attention<T>`
+  - `layer_norm<T>`、`feedforward<T>`、`dropout<T>`、`batchnorm<T>`
+- `make_*` 构造函数保留 f64（内部依赖 `randn`/`zeros` native，不支持泛型实例化）
+- `positional_encoding` 保留 f64（同理）
+- `binary_cross_entropy` 保留 f64（标量函数，Tenth 不支持 `<T: Float>` trait bound 强制检查）
+- mask 参数保留 `Tensor[f64, ..]`（元数据语义，非数据）
+- 顺带修正：transformer.th 第 57 行注释"lexer 不支持科学计数法"已过时（lexer.rs 第 127-147 行实际支持 `1e-5`），删除该注释
+- prelude.th 索引同步：删除已删除的 _f32 引用，标注泛型函数
+
+#### 验证（全绿）
+- cargo build：0 error（177 pre-existing warnings，非本轮引入）
+- 自举路径 A：`[OK] Full compiler compiled to tenthc_full.wasm`
+- parity_test：129/129（路径 B/C 未断）
+- selfhost_frontend：4/4（真实 assert 通过）
+- stdlib_test：114/114（nn 模块解析全通过）
+- generic_tensor_test：2/2（新增，验证泛型 Tensor 实例化）
+
+#### 新增测试
+- `tenth/tests/generic_tensor_test.rs`：验证 `fn foo<T>(x: Tensor[T, ..])` 调用 `foo<f64>(a)` 被正确实例化为 `foo_F64(x: Tensor[f64, ..])`，TypeParam T 被正确替换到 Tensor.dtype 字段
+
+#### 已知限制（非本轮引入）
+- native 构造函数（`randn`/`zeros`/`ones`）不支持泛型实例化（`GenericCall` 查 `generic_funcs` 表，native 不在表中）
+- trait bound（`<T: Float>`）语法支持但语义不强制检查（`generics_bounds: HashMap::new()` 空表）
+
+---
+
 ### v0.3.3 技术债清理第一类（2026-06-29）
 
 #### selfhost_frontend.rs 测试 assert 化

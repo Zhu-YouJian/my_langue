@@ -598,10 +598,7 @@ impl Interpreter {
 
             HirExprKind::TensorLiteral { data, ty, .. } => {
                 // 按 HIR 类型注解的 dtype 选择构造路径
-                let is_f32 = matches!(
-                    ty,
-                    crate::hir::types::Type::Tensor { dtype: crate::hir::types::BaseType::F32, .. }
-                );
+                let is_f32 = ty.tensor_dtype() == Some(crate::hir::types::BaseType::F32);
                 let mut rows_f32: Vec<Vec<f32>> = Vec::new();
                 let mut rows_f64: Vec<Vec<f64>> = Vec::new();
                 for row in data {

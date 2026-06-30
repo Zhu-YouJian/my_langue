@@ -518,11 +518,8 @@ impl BytecodeCompiler {
                 let rows = data.len();
                 let cols = if rows > 0 { data[0].len() } else { 0 };
                 // 根据类型注解选择 dtype（F32 → 1，其他 → 0）
-                let dtype_code: u8 = match ty {
-                    crate::hir::types::Type::Tensor { dtype, .. } => match dtype {
-                        crate::hir::types::BaseType::F32 => 1,
-                        _ => 0,
-                    },
+                let dtype_code: u8 = match ty.tensor_dtype() {
+                    Some(crate::hir::types::BaseType::F32) => 1,
                     _ => 0,
                 };
                 // Push all elements in row-major order

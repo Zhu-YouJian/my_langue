@@ -12,7 +12,7 @@ impl Lowerer {
                 let num_removed = indices.len();
                 let remaining: Vec<Dim> = dims.iter().skip(num_removed).cloned().collect();
                 if remaining.is_empty() {
-                    Type::Base(dtype.clone())
+                    dtype.as_ref().clone()
                 } else {
                     Type::Tensor { dtype: dtype.clone(), dims: remaining }
                 }
@@ -47,8 +47,10 @@ impl Lowerer {
                 match (l, r) {
                     // Tensor 运算：保留 dtype（若两侧 dtype 不同，按 G4 提升规则取较高精度）
                     (Type::Tensor { dtype: ld, .. }, Type::Tensor { dtype: rd, .. }) => {
-                        let promoted = Self::promote_float_dtype(*ld, *rd);
-                        Type::Tensor { dtype: promoted, dims: vec![Dim::Any] }
+                        let lb = match ld.as_ref() { Type::Base(b) => *b, _ => BaseType::F64 };
+                        let rb = match rd.as_ref() { Type::Base(b) => *b, _ => BaseType::F64 };
+                        let promoted = Self::promote_float_dtype(lb, rb);
+                        Type::tensor(promoted, vec![Dim::Any])
                     }
                     (Type::Tensor { dtype, .. }, _) | (_, Type::Tensor { dtype, .. }) => {
                         Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] }
@@ -115,10 +117,10 @@ impl Lowerer {
                         if _args.iter().any(|a| matches!(&a.kind, HirExprKind::Var(_))) {
                             Type::Tensor { dtype: dtype.clone(), dims: dims.clone() }
                         } else {
-                            Type::Base(dtype.clone())
+                            dtype.as_ref().clone()
                         }
                     }
-                    "mean" | "max" | "min" => Type::Base(dtype.clone()),
+                    "mean" | "max" | "min" => dtype.as_ref().clone(),
                     "reshape" | "view" => Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] },
                     "flatten" => Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any] },
                     "abs" | "sqrt" | "exp" | "log" | "relu" |
@@ -126,7 +128,7 @@ impl Lowerer {
                     "transpose" | "permute" => {
                         Type::Tensor { dtype: dtype.clone(), dims: dims.clone() }
                     }
-                    "to_vec" => Type::Array(Box::new(Type::Base(dtype.clone()))),
+                    "to_vec" => Type::Array(Box::new(dtype.as_ref().clone())),
                     "len" | "size" | "dim" => Type::Base(BaseType::I64),
                     "shape" => Type::Array(Box::new(Type::Base(BaseType::I64))),
                     _ => Type::Unknown,
@@ -165,11 +167,11 @@ impl Lowerer {
         match name {
             "println" | "eprintln" => Ok(Type::unit()),
             // Tensor 构造函数：dtype 从参数推断（若无 f32 线索则默认 F64）
-            "tensor" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
-            "rand" | "randn" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
-            "randn_f32" => Ok(Type::Tensor { dtype: BaseType::F32, dims: vec![Dim::Any] }),
+            "tensor" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
+            "rand" | "randn" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
+            "randn_f32" => Ok(Type::tensor(BaseType::F32, vec![Dim::Any])),
             // Phase 5.5：补全 f32 构造函数 native 注册
-            "rand_f32" | "zeros_f32" | "ones_f32" => Ok(Type::Tensor { dtype: BaseType::F32, dims: vec![Dim::Any] }),
+            "rand_f32" | "zeros_f32" | "ones_f32" => Ok(Type::tensor(BaseType::F32, vec![Dim::Any])),
             "read_file" => Ok(Type::str_()),
             "str_at" => Ok(Type::str_()),
             "write_file" | "write_bytes" => Ok(Type::unit()),
@@ -189,11 +191,11 @@ impl Lowerer {
             "to_f32" => Ok(Type::f32()),
             "f64_bits" => Ok(Type::Base(BaseType::I64)),
             "f64_from_bits" => Ok(Type::f64()),
-            "tensor_from_vec" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
-            "zeros" | "ones" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
+            "tensor_from_vec" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
+            "zeros" | "ones" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
             "save_weights" | "load_weights" => Ok(Type::unit()),
-            "cross_entropy" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
-            "start_grad" | "new_grad" | "stop_grad" | "param" => Ok(Type::Tensor { dtype: Self::infer_tensor_dtype(args), dims: vec![Dim::Any] }),
+            "cross_entropy" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
+            "start_grad" | "new_grad" | "stop_grad" | "param" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
             "backward" => Ok(Type::unit()),
             "grad" | "zero_grad" => Ok(Type::Unknown),
             "path_join" => Ok(Type::str_()),
@@ -213,7 +215,7 @@ impl Lowerer {
         for a in args {
             match &a.ty {
                 Type::Base(BaseType::F32) => return BaseType::F32,
-                Type::Tensor { dtype, .. } if *dtype == BaseType::F32 => return BaseType::F32,
+                Type::Tensor { dtype, .. } if matches!(dtype.as_ref(), Type::Base(BaseType::F32)) => return BaseType::F32,
                 _ => {}
             }
         }

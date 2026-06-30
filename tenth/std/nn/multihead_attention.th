@@ -10,16 +10,16 @@
 // Both are currently unavailable, so we project Q/K/V with the full weight
 // matrices and apply attention once.
 
-fn multihead_attention(
-    x: Tensor[f64, ..],       // (seq_len, d_model)
-    w_q: Tensor[f64, ..],     // (d_model, d_model)
-    w_k: Tensor[f64, ..],     // (d_model, d_model)
-    w_v: Tensor[f64, ..],     // (d_model, d_model)
-    w_o: Tensor[f64, ..],     // (d_model, d_model)
-    mask: Tensor[f64, ..],
+fn multihead_attention<T>(
+    x: Tensor[T, ..],       // (seq_len, d_model)
+    w_q: Tensor[T, ..],     // (d_model, d_model)
+    w_k: Tensor[T, ..],     // (d_model, d_model)
+    w_v: Tensor[T, ..],     // (d_model, d_model)
+    w_o: Tensor[T, ..],     // (d_model, d_model)
+    mask: Tensor[f64, ..],  // mask is metadata (indices/boolean), kept as f64
     n_heads: i64,
-    dropout_p: f64,
-) -> Tensor[f64, ..] {
+    dropout_p: T,
+) -> Tensor[T, ..] {
     let seq_len = shape(x)[0];
     let d_model = shape(x)[1];
     let d_k = d_model / n_heads;
@@ -32,32 +32,8 @@ fn multihead_attention(
     // TODO: True multi-head: reshape q/k/v to (n_heads, seq_len, d_k),
     //       compute scaled_dot_product_attention per head, then concat.
     //       Currently falls back to single-head-equivalent computation.
-    let attn_out = scaled_dot_product_attention(q, k, v, mask, dropout_p);
+    let attn_out = scaled_dot_product_attention<T>(q, k, v, mask, dropout_p);
 
     // Output projection
-    attn_out.matmul(w_o)
-}
-
-// ── Phase 5.4：f32 副本（标量参数改 f32，内部调用 scaled_dot_product_attention_f32）──
-fn multihead_attention_f32(
-    x: Tensor[f64, ..],
-    w_q: Tensor[f64, ..],
-    w_k: Tensor[f64, ..],
-    w_v: Tensor[f64, ..],
-    w_o: Tensor[f64, ..],
-    mask: Tensor[f64, ..],
-    n_heads: i64,
-    dropout_p: f32,
-) -> Tensor[f64, ..] {
-    let seq_len = shape(x)[0];
-    let d_model = shape(x)[1];
-    let d_k = d_model / n_heads;
-
-    let q = x.matmul(w_q);
-    let k = x.matmul(w_k);
-    let v = x.matmul(w_v);
-
-    let attn_out = scaled_dot_product_attention_f32(q, k, v, mask, dropout_p);
-
     attn_out.matmul(w_o)
 }

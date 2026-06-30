@@ -20,7 +20,7 @@ pub enum Dim {
 pub enum Type {
     Base(BaseType),
     Tensor {
-        dtype: BaseType,
+        dtype: Box<Type>,
         dims: Vec<Dim>,
     },
     Array(Box<Type>),
@@ -46,7 +46,7 @@ impl fmt::Display for Type {
         match self {
             Type::Base(b) => write!(f, "{:?}", b),
             Type::Tensor { dtype, dims } => {
-                write!(f, "Tensor[{:?}", dtype)?;
+                write!(f, "Tensor[{}", dtype)?;
                 for dim in dims {
                     match dim {
                         Dim::Known(n) => write!(f, ", {}", n)?,
@@ -100,7 +100,20 @@ impl Type {
     pub fn unit() -> Self { Type::Base(BaseType::Unit) }
 
     pub fn tensor(dtype: BaseType, dims: Vec<Dim>) -> Self {
-        Type::Tensor { dtype, dims }
+        Type::Tensor { dtype: Box::new(Type::Base(dtype)), dims }
+    }
+
+    /// 对于 Tensor 类型，返回其 dtype 作为 BaseType。
+    /// 若 dtype 是 TypeParam（泛型未实例化场景），返回 None。
+    /// 运行时值已实例化，dtype 必为 Base，可安全 unwrap。
+    pub fn tensor_dtype(&self) -> Option<BaseType> {
+        match self {
+            Type::Tensor { dtype, .. } => match dtype.as_ref() {
+                Type::Base(b) => Some(*b),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     pub fn from_annotation(ann: &super::super::parser::ast::TypeAnnotation) -> Self {
@@ -136,16 +149,12 @@ impl Type {
             }
             TA::Tensor { dtype, dims } => {
                 let dt = Self::from_annotation(dtype);
-                let base = match dt {
-                    Type::Base(b) => b,
-                    _ => BaseType::F32,
-                };
                 let resolved_dims: Vec<Dim> = dims.iter().map(|d| match d {
                     super::super::parser::ast::DimSpec::Literal(n) => Dim::Known(*n),
                     super::super::parser::ast::DimSpec::Symbol(s) => Dim::Symbol(s.clone()),
                     super::super::parser::ast::DimSpec::Wildcard => Dim::Any,
                 }).collect();
-                Type::Tensor { dtype: base, dims: resolved_dims }
+                Type::Tensor { dtype: Box::new(dt), dims: resolved_dims }
             }
             TA::Generic { base, args } => {
                 let base_ty = Self::from_annotation(&TA::Named(base.clone()));

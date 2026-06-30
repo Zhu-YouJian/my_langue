@@ -51,10 +51,7 @@ impl Lowerer {
         scope.define_fn(
             "tensor".to_string(),
             vec![("data".to_string(), Type::Unknown)],
-            Type::Tensor {
-                dtype: BaseType::F64,
-                dims: vec![Dim::Any],
-            },
+            Type::tensor(BaseType::F64, vec![Dim::Any]),
         );
         let mut lowerer = Lowerer {
             scope,
@@ -129,6 +126,15 @@ pub(super) fn substitute_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
         }
         Type::Ref(inner) => Type::Ref(Box::new(substitute_type(inner, map))),
         Type::MutRef(inner) => Type::MutRef(Box::new(substitute_type(inner, map))),
+        Type::Tensor { dtype, dims } => Type::Tensor {
+            dtype: Box::new(substitute_type(dtype, map)),
+            dims: dims.clone(),
+        },
+        Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, map))),
+        Type::Generic { base, args } => Type::Generic {
+            base: Box::new(substitute_type(base, map)),
+            args: args.iter().map(|t| substitute_type(t, map)).collect(),
+        },
         _ => ty.clone(),
     }
 }

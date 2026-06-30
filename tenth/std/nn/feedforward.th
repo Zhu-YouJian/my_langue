@@ -2,13 +2,13 @@
 // FFN(x) = GELU(xW1 + b1)W2 + b2
 // Uses GELU activation (common in Transformer models like BERT/GPT).
 
-fn feedforward(
-    x: Tensor[f64, ..],      // (seq_len, d_model)
-    w1: Tensor[f64, ..],     // (d_model, d_ff)
-    b1: Tensor[f64, ..],     // (d_ff,)
-    w2: Tensor[f64, ..],     // (d_ff, d_model)
-    b2: Tensor[f64, ..],     // (d_model,)
-) -> Tensor[f64, ..] {
+fn feedforward<T>(
+    x: Tensor[T, ..],      // (seq_len, d_model)
+    w1: Tensor[T, ..],     // (d_model, d_ff)
+    b1: Tensor[T, ..],     // (d_ff,)
+    w2: Tensor[T, ..],     // (d_ff, d_model)
+    b2: Tensor[T, ..],     // (d_model,)
+) -> Tensor[T, ..] {
     let hidden = x.matmul(w1) + b1;
     // TODO: requires interpreter support for x.gelu()
     // Fallback: use .relu() if .gelu() is not yet available
@@ -16,20 +16,12 @@ fn feedforward(
     activated.matmul(w2) + b2
 }
 
-// Convenience: initialize FFN parameters with He initialization
+// Convenience: initialize FFN parameters with He initialization.
+// Note: returns f64 tensors because randn/zeros natives are f64-only.
 fn make_feedforward_params(d_model: i64, d_ff: i64) -> (Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..]) {
     let w1 = randn(d_model, d_ff) * sqrt(2.0 / d_model);
     let b1 = zeros(d_ff);
     let w2 = randn(d_ff, d_model) * sqrt(2.0 / d_ff);
     let b2 = zeros(d_model);
-    (w1, b1, w2, b2)
-}
-
-// ── Phase 5.4：f32 副本（调用 randn_f32/zeros_f32，字面量加 f32 后缀）──
-fn make_feedforward_params_f32(d_model: i64, d_ff: i64) -> (Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..]) {
-    let w1 = randn_f32(d_model, d_ff) * sqrt(2.0f32 / d_model);
-    let b1 = zeros_f32(d_ff);
-    let w2 = randn_f32(d_ff, d_model) * sqrt(2.0f32 / d_ff);
-    let b2 = zeros_f32(d_model);
     (w1, b1, w2, b2)
 }

@@ -54,18 +54,18 @@
 
 // ── Std lib (use path::to::function) ──
 //   std::nn::linear::linear
-//   std::nn::loss::mse, mse_loss, binary_cross_entropy, binary_cross_entropy_f32, l1_loss
+//   std::nn::loss::mse, mse_loss, binary_cross_entropy, l1_loss
 //   std::nn::activations::relu, sigmoid, tanh, softmax, exp, log
-//   std::nn::dropout::dropout, dropout_f32
-//   std::nn::batchnorm::batchnorm, batchnorm_f32
+//   std::nn::dropout::dropout<T>                      // 泛型（f64/f32 通吃）
+//   std::nn::batchnorm::batchnorm<T>
 //   std::nn::conv::conv2d
 //   std::nn::embedding::embedding
-//   std::nn::attention::scaled_dot_product_attention, scaled_dot_product_attention_f32
-//   std::nn::multihead_attention::multihead_attention, multihead_attention_f32
-//   std::nn::layer_norm::layer_norm, layer_norm_f32, make_layer_norm, make_layer_norm_f32
-//   std::nn::positional_encoding::positional_encoding, positional_encoding_f32
-//   std::nn::feedforward::feedforward, make_feedforward_params, make_feedforward_params_f32
-//   std::nn::transformer::transformer_encoder_block, transformer_encoder_block_f32, make_transformer_block_params, make_transformer_block_params_f32
+//   std::nn::attention::scaled_dot_product_attention<T>
+//   std::nn::multihead_attention::multihead_attention<T>
+//   std::nn::layer_norm::layer_norm<T>, make_layer_norm       // make_* 仍 f64（依赖 randn native）
+//   std::nn::positional_encoding::positional_encoding         // 仍 f64（依赖 randn native）
+//   std::nn::feedforward::feedforward<T>, make_feedforward_params
+//   std::nn::transformer::transformer_encoder_block<T>, make_transformer_block_params
 //   std::optim::sgd::sgd_step, sgd_step_f32, sgd_momentum, sgd_momentum_f32, sgd_weight_decay, sgd_weight_decay_f32
 //   std::optim::adam::adam_step, adam_step_f32
 //   std::optim::adagrad::adagrad_step, adagrad_step_f32

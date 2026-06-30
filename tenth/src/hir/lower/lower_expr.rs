@@ -306,7 +306,7 @@ impl Lowerer {
                 let dtype = lowered.iter().flatten().find_map(|e| {
                     if matches!(e.ty, Type::Base(BaseType::F32)) { Some(BaseType::F32) } else { None }
                 }).unwrap_or(BaseType::F64);
-                let ty = Type::Tensor { dtype, dims: vec![Dim::Known(rows), Dim::Known(cols)] };
+                let ty = Type::tensor(dtype, vec![Dim::Known(rows), Dim::Known(cols)]);
                 (HirExprKind::TensorLiteral { data: lowered, ty: ty.clone() }, ty)
             }
 
