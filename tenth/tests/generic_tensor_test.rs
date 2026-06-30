@@ -88,3 +88,70 @@ fn main() -> f64 {
         param_ty
     );
 }
+
+#[test]
+fn native_generic_ctor_f32_lowering() {
+    // 验证 randn<f32>(d) 被 lower 成 randn_f32 的 Call，返回 Tensor[f32, ..]
+    let src = r#"
+fn make_param() -> Tensor[f32, ..] {
+    randn<f32>(3)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().expect("parse");
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+
+    let make_param = hir.functions.iter()
+        .find(|f| f.name == "make_param")
+        .expect("expected make_param function");
+    assert_eq!(
+        format!("{}", make_param.return_type),
+        "Tensor[F32, ..]",
+        "return type should be Tensor[f32, ..]"
+    );
+
+    // body 应该是 Call(Var("randn_f32"), ...) — 运行时分发到 f32 版本
+    let body_str = format!("{:?}", make_param.body.kind);
+    println!("Body: {}", body_str);
+    assert!(
+        body_str.contains("randn_f32"),
+        "expected randn_f32 runtime dispatch, got {}",
+        body_str
+    );
+}
+
+#[test]
+fn native_generic_ctor_f64_lowering() {
+    // 验证 randn<f64>(d) 保持 randn 名字（默认 f64 不需要后缀）
+    let src = r#"
+fn make_param() -> Tensor[f64, ..] {
+    randn<f64>(3)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().expect("parse");
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+
+    let make_param = hir.functions.iter()
+        .find(|f| f.name == "make_param")
+        .expect("expected make_param function");
+    assert_eq!(
+        format!("{}", make_param.return_type),
+        "Tensor[F64, ..]",
+        "return type should be Tensor[f64, ..]"
+    );
+
+    let body_str = format!("{:?}", make_param.body.kind);
+    println!("Body: {}", body_str);
+    assert!(
+        body_str.contains("\"randn\"") && !body_str.contains("randn_f32"),
+        "expected randn (f64) runtime dispatch, got {}",
+        body_str
+    );
+}

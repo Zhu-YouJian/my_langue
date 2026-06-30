@@ -35,20 +35,20 @@ fn transformer_encoder_block<T>(
 }
 
 // Convenience: initialize all parameters for a Transformer encoder block
-// Note: returns f64 tensors because randn/zeros/ones natives are f64-only.
-fn make_transformer_block_params(d_model: i64, n_heads: i64, d_ff: i64) -> (
-    Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..],  // w_q, w_k, w_v, w_o
-    Tensor[f64, ..], Tensor[f64, ..],  // ln1_gamma, ln1_beta
-    Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..],  // w1, b1, w2, b2
-    Tensor[f64, ..], Tensor[f64, ..],  // ln2_gamma, ln2_beta
+// 泛型版：make_transformer_block_params<f32>(...) 返回 f32 张量。
+fn make_transformer_block_params<T>(d_model: i64, n_heads: i64, d_ff: i64) -> (
+    Tensor[T, ..], Tensor[T, ..], Tensor[T, ..], Tensor[T, ..],  // w_q, w_k, w_v, w_o
+    Tensor[T, ..], Tensor[T, ..],  // ln1_gamma, ln1_beta
+    Tensor[T, ..], Tensor[T, ..], Tensor[T, ..], Tensor[T, ..],  // w1, b1, w2, b2
+    Tensor[T, ..], Tensor[T, ..],  // ln2_gamma, ln2_beta
 ) {
     let scale = sqrt(2.0 / d_model);
-    let w_q = randn(d_model, d_model) * scale;
-    let w_k = randn(d_model, d_model) * scale;
-    let w_v = randn(d_model, d_model) * scale;
-    let w_o = randn(d_model, d_model) * scale;
-    let (ln1_gamma, ln1_beta) = make_layer_norm(d_model);
-    let (w1, b1, w2, b2) = make_feedforward_params(d_model, d_ff);
-    let (ln2_gamma, ln2_beta) = make_layer_norm(d_model);
+    let w_q = randn<T>(d_model, d_model) * scale;
+    let w_k = randn<T>(d_model, d_model) * scale;
+    let w_v = randn<T>(d_model, d_model) * scale;
+    let w_o = randn<T>(d_model, d_model) * scale;
+    let (ln1_gamma, ln1_beta) = make_layer_norm<T>(d_model);
+    let (w1, b1, w2, b2) = make_feedforward_params<T>(d_model, d_ff);
+    let (ln2_gamma, ln2_beta) = make_layer_norm<T>(d_model);
     (w_q, w_k, w_v, w_o, ln1_gamma, ln1_beta, w1, b1, w2, b2, ln2_gamma, ln2_beta)
 }

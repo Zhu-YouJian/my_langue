@@ -17,10 +17,10 @@
 // Until per-element tensor indexing/assignment is available, this returns
 // a small random initialization as a placeholder.
 //
-// Note: kept as f64 because randn native is f64-only (no Tensor input to infer T from).
-
-fn positional_encoding(seq_len: i64, d_model: i64) -> Tensor[f64, ..] {
+// 泛型版：positional_encoding<f32>(...) 返回 f32 张量，<f64>(...) 返回 f64。
+// 必须显式指定类型参数（函数仅接受 i64 参数，无法从入参推断 T）。
+fn positional_encoding<T>(seq_len: i64, d_model: i64) -> Tensor[T, ..] {
     // Placeholder: random init with small variance
     // Replace with sinusoidal encoding once element-wise ops are supported
-    randn(seq_len, d_model) * 0.01
+    randn<T>(seq_len, d_model) * 0.01
 }

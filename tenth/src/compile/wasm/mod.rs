@@ -61,7 +61,32 @@ pub(super) fn field_size_and_type(ty: &Type) -> (u32, ValType) {
 // ── Compiler state ─────────────────────────────────────────────────────────
 
 /// First user-function index (after all host imports).
-pub(super) const IMPORT_COUNT: u32 = 18; // 0-11 original + str_len(12) + str_at(13) + str_cmp(14) + f64_bits(15) + str_slice(16) + tensor_from_vec(17)
+///
+/// Host import indices are named constants so that `Call(N)` sites in
+/// `compile.rs` reference symbolic names instead of magic numbers. Adding a
+/// new host import only requires appending a `HOST_*` constant below and
+/// registering the matching type+import in `sections.rs` (and the
+/// implementation in `host.rs`). `IMPORT_COUNT` is derived from the last
+/// index, so it stays in sync automatically.
+pub(super) const HOST_PRINTLN: u32 = 0;
+pub(super) const HOST_WRITE_FILE: u32 = 1;
+pub(super) const HOST_READ_FILE: u32 = 2;
+pub(super) const HOST_STR_ADD: u32 = 3;
+pub(super) const HOST_STR_EQ: u32 = 4;
+pub(super) const HOST_STR_INT: u32 = 5;
+pub(super) const HOST_TENTH_ALLOC: u32 = 6;
+pub(super) const HOST_VEC_NEW: u32 = 7;
+pub(super) const HOST_VEC_PUSH: u32 = 8;
+pub(super) const HOST_VEC_LEN: u32 = 9;
+pub(super) const HOST_VEC_GET: u32 = 10;
+pub(super) const HOST_COMPILE_HOST: u32 = 11;
+pub(super) const HOST_STR_LEN: u32 = 12;
+pub(super) const HOST_STR_AT: u32 = 13;
+pub(super) const HOST_STR_CMP: u32 = 14;
+pub(super) const HOST_F64_BITS: u32 = 15;
+pub(super) const HOST_STR_SLICE: u32 = 16;
+pub(super) const HOST_TENSOR_FROM_VEC: u32 = 17;
+pub(super) const IMPORT_COUNT: u32 = HOST_TENSOR_FROM_VEC + 1;
 
 pub struct WasmCompiler {
     type_cache: HashMap<(Vec<ValType>, Vec<ValType>), u32>,

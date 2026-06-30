@@ -4,7 +4,14 @@ use wasm_encoder::{BlockType, Function, Instruction, ValType};
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
 use crate::hir::types::{BaseType, Type};
-use super::{WasmCompiler, to_val_type_required};
+use super::{
+    WasmCompiler, to_val_type_required,
+    HOST_PRINTLN, HOST_WRITE_FILE, HOST_READ_FILE,
+    HOST_STR_ADD, HOST_STR_EQ, HOST_STR_INT, HOST_TENTH_ALLOC,
+    HOST_VEC_NEW, HOST_VEC_PUSH, HOST_VEC_LEN, HOST_VEC_GET,
+    HOST_COMPILE_HOST, HOST_STR_LEN, HOST_STR_AT, HOST_STR_CMP,
+    HOST_F64_BITS, HOST_STR_SLICE, HOST_TENSOR_FROM_VEC,
+};
 
 impl WasmCompiler {
     // ── Function compilation ─────────────────────────────────────────────
@@ -83,18 +90,18 @@ impl WasmCompiler {
             return Ok(idx);
         }
         match name {
-            "println" | "eprintln" => Ok(0),
-            "write_file" => Ok(1),
-            "read_file" => Ok(2),
-            "str_add" => Ok(3),
-            "str_eq" => Ok(4),
-            "str_int" => Ok(5),
-            "tenth_alloc" => Ok(6),
-            "Vec::new" | "Vec_new" => Ok(7),
-            "Vec::push" | "Vec_push" => Ok(8),
-            "Vec::len" | "Vec_len" => Ok(9),
-            "Vec::get" | "Vec_get" => Ok(10),
-            "compile_host" => Ok(11),
+            "println" | "eprintln" => Ok(HOST_PRINTLN),
+            "write_file" => Ok(HOST_WRITE_FILE),
+            "read_file" => Ok(HOST_READ_FILE),
+            "str_add" => Ok(HOST_STR_ADD),
+            "str_eq" => Ok(HOST_STR_EQ),
+            "str_int" => Ok(HOST_STR_INT),
+            "tenth_alloc" => Ok(HOST_TENTH_ALLOC),
+            "Vec::new" | "Vec_new" => Ok(HOST_VEC_NEW),
+            "Vec::push" | "Vec_push" => Ok(HOST_VEC_PUSH),
+            "Vec::len" | "Vec_len" => Ok(HOST_VEC_LEN),
+            "Vec::get" | "Vec_get" => Ok(HOST_VEC_GET),
+            "compile_host" => Ok(HOST_COMPILE_HOST),
             _ => Err(TenthError::RuntimeError {
                     message: format!("WASM: 未定义函数 '{}'", name),
                 }),
@@ -157,12 +164,12 @@ impl WasmCompiler {
                 if is_str_add {
                     self.compile_string_arg(body, left)?;
                     self.compile_string_arg(body, right)?;
-                    body.instruction(&Instruction::Call(3)); // str_add(a, b) -> i32
+                    body.instruction(&Instruction::Call(HOST_STR_ADD)); // str_add(a, b) -> i32
                     body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64 for local storage
                 } else if is_str_eq {
                     self.compile_string_arg(body, left)?;
                     self.compile_string_arg(body, right)?;
-                    body.instruction(&Instruction::Call(4)); // str_eq(a, b) -> i32
+                    body.instruction(&Instruction::Call(HOST_STR_EQ)); // str_eq(a, b) -> i32
                     if matches!(op, BinOp::NotEq) {
                         body.instruction(&Instruction::I32Eqz); // negate
                     }
@@ -177,7 +184,7 @@ impl WasmCompiler {
                     body.instruction(&Instruction::I32Const(op_code));
                     self.compile_string_arg(body, left)?;
                     self.compile_string_arg(body, right)?;
-                    body.instruction(&Instruction::Call(14)); // str_cmp(op, a, b) -> i32
+                    body.instruction(&Instruction::Call(HOST_STR_CMP)); // str_cmp(op, a, b) -> i32
                 } else {
                     self.compile_expr(body, left)?;
                     // Convert i64 to f64 if the operation involves float
@@ -212,20 +219,20 @@ impl WasmCompiler {
                     "println" | "eprintln" => {
                         if let Some(a) = args.first() {
                             self.compile_string_arg(body, a)?;
-                            body.instruction(&Instruction::Call(0));
+                            body.instruction(&Instruction::Call(HOST_PRINTLN));
                         }
                     }
                     "write_file" => {
                         if args.len() >= 2 {
                             self.compile_string_arg(body, &args[0])?;
                             self.compile_string_arg(body, &args[1])?;
-                            body.instruction(&Instruction::Call(1));
+                            body.instruction(&Instruction::Call(HOST_WRITE_FILE));
                         }
                     }
                     "read_file" => {
                         if let Some(a) = args.first() {
                             self.compile_string_arg(body, a)?;
-                            body.instruction(&Instruction::Call(2));
+                            body.instruction(&Instruction::Call(HOST_READ_FILE));
                             body.instruction(&Instruction::I64ExtendI32U); // i32 ptr -> i64
                         }
                     }
@@ -233,19 +240,19 @@ impl WasmCompiler {
                         if args.len() >= 2 {
                             self.compile_string_arg(body, &args[0])?;
                             self.compile_string_arg(body, &args[1])?;
-                            body.instruction(&Instruction::Call(11));
+                            body.instruction(&Instruction::Call(HOST_COMPILE_HOST));
                             body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                         }
                     }
                     "Vec::new" | "Vec_new" => {
-                        body.instruction(&Instruction::Call(7)); // Vec_new() -> i64
+                        body.instruction(&Instruction::Call(HOST_VEC_NEW)); // Vec_new() -> i64
                     }
                     "f64_bits" => {
                         // f64_bits(f64) -> i64: reinterpret f64 bit pattern as i64
                         if let Some(a) = args.first() {
                             self.compile_expr(body, a)?;
                         }
-                        body.instruction(&Instruction::Call(15));
+                        body.instruction(&Instruction::Call(HOST_F64_BITS));
                     }
                     "str_len" => {
                         // str_len(i32 ptr) -> i32: string length
@@ -253,7 +260,7 @@ impl WasmCompiler {
                             self.compile_expr(body, a)?;
                             body.instruction(&Instruction::I32WrapI64); // i64 ptr -> i32
                         }
-                        body.instruction(&Instruction::Call(12));
+                        body.instruction(&Instruction::Call(HOST_STR_LEN));
                         body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                     }
                     "str_at" => {
@@ -263,7 +270,7 @@ impl WasmCompiler {
                             body.instruction(&Instruction::I32WrapI64); // i64 ptr -> i32
                             self.compile_expr(body, &args[1])?;
                         }
-                        body.instruction(&Instruction::Call(13));
+                        body.instruction(&Instruction::Call(HOST_STR_AT));
                         body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                     }
                     "str_cmp" => {
@@ -276,7 +283,7 @@ impl WasmCompiler {
                             self.compile_expr(body, &args[2])?;
                             body.instruction(&Instruction::I32WrapI64);
                         }
-                        body.instruction(&Instruction::Call(14));
+                        body.instruction(&Instruction::Call(HOST_STR_CMP));
                         body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                     }
                     "str_slice" => {
@@ -287,7 +294,7 @@ impl WasmCompiler {
                             self.compile_expr(body, &args[1])?;
                             self.compile_expr(body, &args[2])?;
                         }
-                        body.instruction(&Instruction::Call(16));
+                        body.instruction(&Instruction::Call(HOST_STR_SLICE));
                         body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                     }
                     _ => {
@@ -412,7 +419,7 @@ impl WasmCompiler {
                 let layout_key = format!("{}::{}", enum_name, variant);
                 let sz = self.struct_size(&layout_key);
                 body.instruction(&Instruction::I32Const(sz as i32));
-                body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32
+                body.instruction(&Instruction::Call(HOST_TENTH_ALLOC)); // tenth_alloc -> i32
                 body.instruction(&Instruction::I64ExtendI32U);
                 // Save in a freshly-allocated temp local so nested exprs don't clobber it
                 let tmp = self.local_count;
@@ -442,7 +449,7 @@ impl WasmCompiler {
             HirExprKind::StructLiteral { name, fields, has_default: _ } => {
                 let sz = self.struct_size(name);
                 body.instruction(&Instruction::I32Const(sz as i32));
-                body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32
+                body.instruction(&Instruction::Call(HOST_TENTH_ALLOC)); // tenth_alloc -> i32
                 body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                 // Save in a freshly-allocated temp local so nested exprs don't clobber it
                 let tmp = self.local_count;
@@ -512,10 +519,10 @@ impl WasmCompiler {
                         let is_string = matches!(&receiver.ty, Type::Base(BaseType::Str));
                         if is_string {
                             body.instruction(&Instruction::I32WrapI64); // i64 -> i32 pointer
-                            body.instruction(&Instruction::Call(12));    // str_len(i32) -> i32
+                            body.instruction(&Instruction::Call(HOST_STR_LEN));    // str_len(i32) -> i32
                             body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                         } else {
-                            body.instruction(&Instruction::Call(9)); // Vec_len(i64) -> i64
+                            body.instruction(&Instruction::Call(HOST_VEC_LEN)); // Vec_len(i64) -> i64
                         }
                     }
                     "push" => {
@@ -524,7 +531,7 @@ impl WasmCompiler {
                         } else {
                             body.instruction(&Instruction::I64Const(0));
                         }
-                        body.instruction(&Instruction::Call(8)); // Vec_push -> i64
+                        body.instruction(&Instruction::Call(HOST_VEC_PUSH)); // Vec_push -> i64
                         body.instruction(&Instruction::Drop);     // push returns Unit
                     }
                     "get" => {
@@ -533,7 +540,7 @@ impl WasmCompiler {
                         } else {
                             body.instruction(&Instruction::I64Const(0));
                         }
-                        body.instruction(&Instruction::Call(10)); // Vec_get(i64, i64) -> i64
+                        body.instruction(&Instruction::Call(HOST_VEC_GET)); // Vec_get(i64, i64) -> i64
                     }
                     _ => return Err(TenthError::RuntimeError {
                         message: format!("WASM: 不支持的方法 '{}'", method),
@@ -562,7 +569,7 @@ impl WasmCompiler {
                             if let Some(&idx) = self.local_map.get(name) {
                                 body.instruction(&Instruction::LocalGet(idx));
                                 // Convert to i32 string pointer via str_int
-                                body.instruction(&Instruction::Call(5)); // str_int(i64) -> i32
+                                body.instruction(&Instruction::Call(HOST_STR_INT)); // str_int(i64) -> i32
                             }
                         }
                     }
@@ -570,7 +577,7 @@ impl WasmCompiler {
                         first = false;
                     } else {
                         // str_add: pop two i32 string ptrs, push concatenated i32 ptr
-                        body.instruction(&Instruction::Call(3)); // str_add
+                        body.instruction(&Instruction::Call(HOST_STR_ADD)); // str_add
                     }
                 }
                 // Result is i32 string pointer; extend to i64 for local storage
@@ -596,10 +603,10 @@ impl WasmCompiler {
                     Some(Index::Single(idx)) => {
                         self.compile_expr(body, idx)?; // compile index expression (i64)
                         if is_string {
-                            body.instruction(&Instruction::Call(13)); // str_at(i32, i64) -> i32
+                            body.instruction(&Instruction::Call(HOST_STR_AT)); // str_at(i32, i64) -> i32
                             body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                         } else {
-                            body.instruction(&Instruction::Call(10)); // vec_get(i64, i64) -> i64
+                            body.instruction(&Instruction::Call(HOST_VEC_GET)); // vec_get(i64, i64) -> i64
                         }
                     }
                     Some(Index::Range { start, end }) => {
@@ -621,16 +628,16 @@ impl WasmCompiler {
                             // For now, push a large value; the host will clamp to strlen
                             body.instruction(&Instruction::I64Const(i64::MAX));
                         }
-                        body.instruction(&Instruction::Call(16)); // str_slice(i32, i64, i64) -> i32
+                        body.instruction(&Instruction::Call(HOST_STR_SLICE)); // str_slice(i32, i64, i64) -> i32
                         body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                     }
                     _ => {
                         body.instruction(&Instruction::I64Const(0));
                         if is_string {
-                            body.instruction(&Instruction::Call(13)); // str_at fallback
+                            body.instruction(&Instruction::Call(HOST_STR_AT)); // str_at fallback
                             body.instruction(&Instruction::I64ExtendI32U);
                         } else {
-                            body.instruction(&Instruction::Call(10)); // vec_get fallback
+                            body.instruction(&Instruction::Call(HOST_VEC_GET)); // vec_get fallback
                         }
                     }
                 }
@@ -645,7 +652,7 @@ impl WasmCompiler {
 
                 // Allocate memory: tenth_alloc(size) -> i32 ptr -> i64
                 body.instruction(&Instruction::I32Const(size));
-                body.instruction(&Instruction::Call(6)); // tenth_alloc
+                body.instruction(&Instruction::Call(HOST_TENTH_ALLOC)); // tenth_alloc
                 body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                 let tmp = self.local_count;
                 self.local_count += 1;
@@ -673,7 +680,7 @@ impl WasmCompiler {
                 body.instruction(&Instruction::I32WrapI64); // data_ptr
                 body.instruction(&Instruction::I32Const(total)); // len
                 body.instruction(&Instruction::I32Const(rows)); // rank (rows)
-                body.instruction(&Instruction::Call(17)); // tensor_from_vec -> i64
+                body.instruction(&Instruction::Call(HOST_TENSOR_FROM_VEC)); // tensor_from_vec -> i64
             }
 
             // D5.3/D5.6: Closure — compile as packed i64 (table_idx << 32 | env_ptr)
@@ -693,7 +700,7 @@ impl WasmCompiler {
                     // size = captures_count * 8
                     let env_size = captures.len() as i32 * 8;
                     body.instruction(&Instruction::I32Const(env_size));
-                    body.instruction(&Instruction::Call(6)); // tenth_alloc -> i32
+                    body.instruction(&Instruction::Call(HOST_TENTH_ALLOC)); // tenth_alloc -> i32
                     body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64 env_ptr
                     // Store env_ptr in temp local
                     let tmp = self.local_count;
@@ -951,17 +958,17 @@ impl WasmCompiler {
             }
             HirExprKind::Literal(Literal::Int(n)) => {
                 body.instruction(&Instruction::I64Const(*n));
-                body.instruction(&Instruction::Call(5));
+                body.instruction(&Instruction::Call(HOST_STR_INT));
             }
             HirExprKind::Literal(Literal::Float(n, _)) => {
                 body.instruction(&Instruction::F64Const(*n));
                 body.instruction(&Instruction::I64TruncF64S);
-                body.instruction(&Instruction::Call(5));
+                body.instruction(&Instruction::Call(HOST_STR_INT));
             }
             HirExprKind::Binary { op: BinOp::Add, left, right, .. } => {
                 self.compile_string_arg(body, left)?;
                 self.compile_string_arg(body, right)?;
-                body.instruction(&Instruction::Call(3));
+                body.instruction(&Instruction::Call(HOST_STR_ADD));
             }
             _ => {
                 self.compile_expr(body, expr)?;
@@ -969,7 +976,7 @@ impl WasmCompiler {
                 if matches!(&expr.ty, Type::Base(BaseType::Str)) {
                     body.instruction(&Instruction::I32WrapI64);
                 } else if matches!(&expr.ty, Type::Base(BaseType::I64)) {
-                    body.instruction(&Instruction::Call(5)); // str_int
+                    body.instruction(&Instruction::Call(HOST_STR_INT)); // str_int
                 }
             }
         }

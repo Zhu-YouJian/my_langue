@@ -17,11 +17,11 @@ fn feedforward<T>(
 }
 
 // Convenience: initialize FFN parameters with He initialization.
-// Note: returns f64 tensors because randn/zeros natives are f64-only.
-fn make_feedforward_params(d_model: i64, d_ff: i64) -> (Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..]) {
-    let w1 = randn(d_model, d_ff) * sqrt(2.0 / d_model);
-    let b1 = zeros(d_ff);
-    let w2 = randn(d_ff, d_model) * sqrt(2.0 / d_ff);
-    let b2 = zeros(d_model);
+// 泛型版：make_feedforward_params<f32>(...) 返回 f32 张量。
+fn make_feedforward_params<T>(d_model: i64, d_ff: i64) -> (Tensor[T, ..], Tensor[T, ..], Tensor[T, ..], Tensor[T, ..]) {
+    let w1 = randn<T>(d_model, d_ff) * sqrt(2.0 / d_model);
+    let b1 = zeros<T>(d_ff);
+    let w2 = randn<T>(d_ff, d_model) * sqrt(2.0 / d_ff);
+    let b2 = zeros<T>(d_model);
     (w1, b1, w2, b2)
 }

@@ -164,6 +164,67 @@ impl Lowerer {
                     }
                 };
 
+                // 支持泛型实例化的 native 构造函数（无 HIR 函数体，仅做类型推断）
+                // randn<T>(d) / zeros<T>(d) / ones<T>(d) / rand<T>(d) / tensor<T>(...) / tensor_from_vec<T>(...)
+                const NATIVE_GENERIC_CTORS: &[&str] = &[
+                    "randn", "zeros", "ones", "rand", "tensor", "tensor_from_vec",
+                ];
+                if NATIVE_GENERIC_CTORS.contains(&func_name.as_str()) {
+                    // 类型参数必须是具体 BaseType（native 不支持 TypeParam 嵌套）
+                    let type_args: Vec<Type> = generics.iter()
+                        .map(|ta| Type::from_annotation(ta))
+                        .collect();
+                    if type_args.len() != 1 {
+                        return Err(TenthError::TypeError {
+                            line: span.line,
+                            col: span.col,
+                            message: format!(
+                                "native 构造函数 '{}' 期望 1 个类型参数，得到 {}",
+                                func_name, type_args.len()
+                            ),
+                        });
+                    }
+                    let dtype = match &type_args[0] {
+                        Type::Base(b) => *b,
+                        _ => {
+                            return Err(TenthError::TypeError {
+                                line: span.line,
+                                col: span.col,
+                                message: format!(
+                                    "native 构造函数 '{}' 的类型参数必须是具体 BaseType，得到 {:?}",
+                                    func_name, type_args[0]
+                                ),
+                            });
+                        }
+                    };
+                    let lowered_args: Vec<HirExpr> = args.iter()
+                        .map(|a| self.lower_expr(a))
+                        .collect::<TenthResult<_>>()?;
+                    let ret_ty = Type::tensor(dtype, vec![Dim::Any]);
+                    // 运行时按名字分发：f32 dtype 映射到 randn_f32/zeros_f32/ones_f32/rand_f32
+                    // （tensor/tensor_from_vec 不需要后缀，运行时按参数 dtype 构造）
+                    let runtime_name = match (func_name.as_str(), dtype) {
+                        ("randn", BaseType::F32) => "randn_f32".to_string(),
+                        ("zeros", BaseType::F32) => "zeros_f32".to_string(),
+                        ("ones", BaseType::F32) => "ones_f32".to_string(),
+                        ("rand", BaseType::F32) => "rand_f32".to_string(),
+                        _ => func_name.clone(),
+                    };
+                    return Ok(HirExpr {
+                        kind: HirExprKind::Call {
+                            func: Box::new(HirExpr {
+                                kind: HirExprKind::Var(runtime_name),
+                                ty: Type::Unknown,
+                                span: span.clone(),
+                            }),
+                            args: lowered_args,
+                            ret_ty: ret_ty.clone(),
+                        },
+                        ty: ret_ty,
+                        span: span.clone(),
+                    });
+                }
+
                 let template = self.generic_funcs.get(&func_name)
                     .ok_or_else(|| TenthError::TypeError {
                         line: span.line,

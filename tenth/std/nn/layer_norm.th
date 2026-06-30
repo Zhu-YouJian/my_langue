@@ -14,9 +14,9 @@ fn layer_norm<T>(
 
 // Convenience: create learnable layer norm parameters
 // gamma initialized to ones, beta initialized to zeros.
-// Note: returns f64 tensors because ones/zeros natives are f64-only.
-fn make_layer_norm(dim: i64) -> (Tensor[f64, ..], Tensor[f64, ..]) {
-    let gamma = ones(dim);
-    let beta = zeros(dim);
+// 泛型版：make_layer_norm<f32>(dim) 返回 f32 张量，make_layer_norm<f64>(dim) 返回 f64。
+fn make_layer_norm<T>(dim: i64) -> (Tensor[T, ..], Tensor[T, ..]) {
+    let gamma = ones<T>(dim);
+    let beta = zeros<T>(dim);
     (gamma, beta)
 }
