@@ -89,10 +89,11 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | # | 位置 | 问题 |
 |---|------|------|
-| 1 | `tenthc/lexer/lexer.th:98,105` | **字面量值不解析** — 整数和浮点数 token 的 value 硬编码为 0 |
-| 2 | `tenthc/parser/parser.th:269` | **字段名不存储** — `parse_postfix` 的 `.field` 访问把字段名丢了 |
+| ~~1~~ | ~~`tenthc/lexer/lexer.th:98,105`~~ | ~~**字面量值不解析** — 整数和浮点数 token 的 value 硬编码为 0~~ **已修复**：lexer.th:90 正确解析 `fval: fv + (ff / div)`，lexer.th:105-106 正确存储 `let fv: f64 = ival; ... fval: fv`（f32 后缀路径） |
+| ~~2~~ | ~~`tenthc/parser/parser.th:269`~~ | ~~**字段名不存储** — `parse_postfix` 的 `.field` 访问把字段名丢了~~ **已修复**：parser.th:269 实为 `&` ref 处理（`if d == 40`），字段访问在 parser.th:628 `let field_name = field_tok.sval;` 正确存储 |
 
 > ~~原 #1 (cgen 函数调用参数丢弃) 随 codegen 移除而消除。~~
+> 2026-06-30 复核：#1/#2 均已修复，条目保留以记录历史。
 
 ### 7.2 语言功能缺口
 
@@ -136,8 +137,8 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 ### 8.3 长期 (生态)
 
 - **激活死模块** — shape.rs (张量形状优化)、docgen.rs (API 文档生成)；~~autodiff.rs (自动微分训练)~~ ✅ 已完整集成（21 算子，张量级，已集成解释器）
-- **tenthpm 包管理器** — `tools/tenthpm/` **完整实现**，支持 init/build/test/run/add/remove/list/clean/publish/install + Tenth.toml + Tenth.lock + .tenthpkg 打包 + path/git/registry 三种依赖类型
-- **LSP 服务器** — `tools/lsp/` **完整实现**（文档同步/diagnostics/hover/completion/definition/documentSymbol/references/rename/signatureHelp/foldingRange/semanticTokens/formatting）
+- **tenthpm 包管理器** — `tenth/tools/tenthpm/` **完整实现**，支持 init/build/test/run/add/remove/list/clean/publish/install + Tenth.toml + Tenth.lock + .tenthpkg 打包 + path/git/registry 三种依赖类型
+- **LSP 服务器** — `tenth/tools/lsp/` **完整实现**（文档同步/diagnostics/hover/completion/definition/documentSymbol/references/rename/signatureHelp/foldingRange/semanticTokens/formatting）
 - **CUDA 后端** — `compile/gpu/` + `compile/optimizations/` 脚手架已就绪，待安装 CUDA Toolkit
 
 ### 8.4 过程改进

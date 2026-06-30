@@ -88,7 +88,7 @@ git config --unset https.proxy
 
 ### tenthpm 包管理器依赖
 
-定义于 `tools/tenthpm/Cargo.toml` 的 `[dependencies]` 段。
+定义于 `tenth/tools/tenthpm/Cargo.toml` 的 `[dependencies]` 段。
 
 | crate | 版本 | 用途 |
 |-------|------|------|
@@ -98,7 +98,7 @@ git config --unset https.proxy
 
 ### LSP 服务器依赖
 
-定义于 `tools/lsp/Cargo.toml` 的 `[dependencies]` 段。
+定义于 `tenth/tools/lsp/Cargo.toml` 的 `[dependencies]` 段。
 
 | crate | 版本 | 用途 |
 |-------|------|------|

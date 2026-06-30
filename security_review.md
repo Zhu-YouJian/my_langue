@@ -1,7 +1,7 @@
 # Tenth 语言项目安全审查报告
 
 > **审查日期**：2026-06-29
-> **审查范围**：`tenth/`（Rust 主编译器 + 运行时）、`tenthc/`（自举源码）、`tools/tenthpm`、`tools/lsp`、构建配置、`SECURITY.md` / `AUDIT.md` 现有安全声明
+> **审查范围**：`tenth/`（Rust 主编译器 + 运行时）、`tenthc/`（自举源码）、`tenth/tools/tenthpm`、`tenth/tools/lsp`、构建配置、`SECURITY.md` / `AUDIT.md` 现有安全声明
 > **审查员立场**：最严谨的安全员视角
 > **审查方法**：静态代码审计 + 配置审计 + 文档一致性核查
 > **审查依据**：Rust 通用安全最佳实践、通用软件安全原则（`security-best-practices` skill 的 Rust 专用参考文档不存在，已在审查前明示）

@@ -31,7 +31,7 @@
 
 | ID | 严重度 | 摘要 | 修复位置 |
 |----|--------|------|---------|
-| C-1 | 🔴 致命 | tenthpm 包名注入导致路径穿越 / 任意目录删除 | `tools/tenthpm/src/manifest.rs`（新增 `validate_package_name`、`safe_package_name_from_git`、`ensure_within`、`safe_to_remove_dir`）、`commands/install.rs`、`commands/add.rs` |
+| C-1 | 🔴 致命 | tenthpm 包名注入导致路径穿越 / 任意目录删除 | `tenth/tools/tenthpm/src/manifest.rs`（新增 `validate_package_name`、`safe_package_name_from_git`、`ensure_within`、`safe_to_remove_dir`）、`commands/install.rs`、`commands/add.rs` |
 | C-2 | 🔴 致命 | SECURITY.md 失实声明掩盖真实攻击面 | 本文件 |
 | H-1 | 🟠 高危 | JIT hostcall `from_raw_parts` 缺乏溢出校验 | `compile/jit/hostcalls.rs` |
 | H-3 | 🟠 高危 | `run_file` 默认无内存限制 | `main.rs`、`runtime/limits.rs` |

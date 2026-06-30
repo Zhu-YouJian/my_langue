@@ -673,7 +673,7 @@ REPL 命令：
 
 ### tenthpm 包管理器
 
-**位置**：`tools/tenthpm/`
+**位置**：`tenth/tools/tenthpm/`
 
 tenthpm 是 Tenth 语言的包管理器，负责项目初始化、依赖管理、构建和发布。
 
@@ -706,7 +706,7 @@ tensor-utils = "0.2"
 
 ### LSP 服务器
 
-**位置**：`tools/lsp/`
+**位置**：`tenth/tools/lsp/`
 
 LSP 服务器为编辑器（VS Code 等）提供语言智能功能，基于 LSP 协议通过 stdio 通信。
 
@@ -870,8 +870,8 @@ main.rs
   │   └── limits.rs
   ├── repl.rs ←── lexer, parser, hir, runtime
   └── error.rs
-tools/tenthpm/ ←── serde, serde_json, toml
-tools/lsp/ ←── serde, serde_json, tenth (path)
+tenth/tools/tenthpm/ ←── serde, serde_json, toml
+tenth/tools/lsp/ ←── serde, serde_json, tenth (path)
 ```
 
 ---

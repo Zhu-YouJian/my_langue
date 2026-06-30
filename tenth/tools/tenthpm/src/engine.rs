@@ -51,7 +51,7 @@ pub fn build_search_paths(source_path: &Path) -> Vec<String> {
             if std_near_exe.exists() {
                 paths.push(std_near_exe.to_string_lossy().to_string());
             }
-            // Also check one level up (tenthpm lives in tools/tenthpm/)
+            // Also check one level up (tenthpm lives in tenth/tools/tenthpm/)
             if let Some(grandparent) = dir.parent() {
                 let std_up = grandparent.join("std");
                 if std_up.exists() {
