@@ -103,6 +103,8 @@ impl Lowerer {
             ExprKind::Binary { op, left, right } => {
                 let l = self.lower_expr(left)?;
                 let r = self.lower_expr(right)?;
+                // 编译期 shape 检查：两侧 Tensor shape 不兼容时报错
+                Self::check_binary_shape_compat(op, &l.ty, &r.ty, &span)?;
                 let ty = self.infer_binary_type(op, &l.ty, &r.ty);
                 let hir_op = lower_binop(op);
                 (HirExprKind::Binary { op: hir_op, left: Box::new(l), right: Box::new(r), ty: ty.clone() }, ty)
@@ -200,7 +202,8 @@ impl Lowerer {
                     let lowered_args: Vec<HirExpr> = args.iter()
                         .map(|a| self.lower_expr(a))
                         .collect::<TenthResult<_>>()?;
-                    let ret_ty = Type::tensor(dtype, vec![Dim::Any]);
+                    // shape 推断：字面量参数（如 randn<f32>(3, 4)）→ [Known(3), Known(4)]
+                    let ret_ty = Type::tensor(dtype, Self::shape_from_int_args(&lowered_args));
                     // 运行时按名字分发：f32 dtype 映射到 randn_f32/zeros_f32/ones_f32/rand_f32
                     // （tensor/tensor_from_vec 不需要后缀，运行时按参数 dtype 构造）
                     let runtime_name = match (func_name.as_str(), dtype) {
@@ -301,6 +304,8 @@ impl Lowerer {
                         let mut all_args = vec![recv.clone()];
                         all_args.extend(lowered_args.clone());
                         let ret_ty = self.resolve_method_type(&recv.ty, &method.name, &all_args);
+                        // 编译期 shape 检查（如 matmul 的内侧维度）
+                        Self::check_method_shape(&recv.ty, &method.name, &all_args, &span)?;
                         let func = HirExpr {
                             kind: HirExprKind::Var(mangled),
                             ty: Type::Unknown,
@@ -319,6 +324,8 @@ impl Lowerer {
                 }
 
                 let ret_ty = self.resolve_method_type(&recv.ty, &method.name, &lowered_args);
+                // 编译期 shape 检查（如 matmul 的内侧维度）
+                Self::check_method_shape(&recv.ty, &method.name, &lowered_args, &span)?;
 
                 (HirExprKind::MethodCall {
                     receiver: Box::new(recv),
