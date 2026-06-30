@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::error::{TenthError, TenthResult};
+use crate::error::{TenthError, TenthResult, TenthWarning};
 use crate::parser::ast as ast;
 use crate::hir::hir::*;
 use crate::hir::types::*;
@@ -148,6 +148,23 @@ impl Lowerer {
                 let ret_ty = self.resolve_call_type(&f, &lowered_args, &span)?;
                 // 编译期内存预估：构造函数返回大 tensor 时发 warning
                 self.emit_memory_estimate(&ret_ty, &span, "函数调用");
+                // 方向 A：对 param(t) 调用，提示梯度 shape 应与 t 一致（让用户意识到梯度 shape 约束）
+                if let HirExprKind::Var(name) = &f.kind {
+                    if name == "param" {
+                        if let Some(arg) = lowered_args.first() {
+                            if let Some(bytes) = arg.ty.static_bytes() {
+                                const GB: u64 = 1024 * 1024 * 1024;
+                                if bytes >= GB {
+                                    let msg = format!(
+                                        "param() 注册约 {:.2} GB 的可训练参数（反向传播将分配同等大小的梯度，可能触发 OOM）",
+                                        bytes as f64 / GB as f64
+                                    );
+                                    self.warnings.push(TenthWarning::new(span.line, span.col, msg));
+                                }
+                            }
+                        }
+                    }
+                }
 
                 (HirExprKind::Call {
                     func: Box::new(f),

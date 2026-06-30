@@ -217,9 +217,19 @@ impl Tensor {
         self.grad = None;
     }
 
-    /// Accumulate `g` into `self.grad` (broadcasting if needed).
+    /// Accumulate `g` into `self.grad`.
     /// g 的 dtype 必须与 self.dtype 一致；若 self.grad 为 None 则按 dtype 初始化。
-    pub fn acc_grad(&mut self, g: &ArrayD<f64>) {
+    /// 返回 Err 当 g.shape() 与 self.data.shape() 不一致（防止 silent broadcast 掩盖梯度 shape 错误）。
+    pub fn acc_grad(&mut self, g: &ArrayD<f64>) -> Result<(), String> {
+        // shape 校验：梯度 shape 必须与参数 shape 一致（方向 A：消除 silent squeeze）
+        let self_shape = self.data.shape();
+        let g_shape = g.shape();
+        if self_shape != g_shape {
+            return Err(format!(
+                "acc_grad shape 不匹配：参数 shape {:?}，梯度 shape {:?}（可能反向传播 silent squeeze 掩盖了 shape 错误）",
+                self_shape, g_shape
+            ));
+        }
         // 保持现有签名兼容：g 视为 f64，按 self.dtype 转换存储
         let g_converted = match self.dtype {
             BaseType::F32 => TensorData::F32(g.mapv(|v| v as f32)),
@@ -249,6 +259,7 @@ impl Tensor {
             }
             _ => {}
         }
+        Ok(())
     }
 
     // ── constructors (f64, 保持向后兼容) ──────────────────────────────

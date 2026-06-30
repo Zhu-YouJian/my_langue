@@ -268,7 +268,8 @@ impl Tape {
 
     /// Run backward pass starting from `loss_node_id`.
     /// Writes gradients into the `.grad` field of every `TapeOp::Input` tensor.
-    pub fn backward(&self, loss_node_id: usize) {
+    /// 返回 Err 当反向传播发现 shape 不匹配（方向 A：消除 silent squeeze）。
+    pub fn backward(&self, loss_node_id: usize) -> Result<(), crate::error::TenthError> {
         let n = self.nodes.len();
         // Per-node upstream gradient (Option so we can .take() it).
         let mut node_grads: Vec<Option<ArrayD<f64>>> = vec![None; n];
@@ -290,7 +291,12 @@ impl Tape {
             match &node.op {
                 TapeOp::Input => {
                     // Leaf: accumulate gradient into the parameter tensor.
-                    node.input_tensors[0].borrow_mut().acc_grad(&grad);
+                    // 方向 A：此处校验梯度 shape 与参数 shape 一致（消除 silent squeeze）
+                    node.input_tensors[0].borrow_mut().acc_grad(&grad).map_err(|e| {
+                        crate::error::TenthError::RuntimeError {
+                            message: format!("反向传播 shape 错误（节点 #{} Input）：{}", node.id, e),
+                        }
+                    })?;
                 }
                 TapeOp::Add | TapeOp::Sub => {
                     let sign: f64 = if node.op == TapeOp::Add { 1.0 } else { -1.0 };
@@ -299,11 +305,11 @@ impl Tape {
                         .collect();
                     for (i, input_shape) in shapes.iter().enumerate() {
                         let g_i = if i == 0 {
-                            unbroadcast(&grad, input_shape)
+                            unbroadcast(&grad, input_shape)?
                         } else {
-                            unbroadcast(&grad, input_shape).mapv(|v| v * sign)
+                            unbroadcast(&grad, input_shape)?.mapv(|v| v * sign)
                         };
-                        propagate_grad(node, i, &g_i, &mut node_grads);
+                        propagate_grad(node, i, &g_i, &mut node_grads)?;
                     }
                 }
                 TapeOp::Mul => {
@@ -313,10 +319,10 @@ impl Tape {
                         let b = node.input_tensors[1].borrow();
                         (a.data.clone(), a.shape(), b.data.clone(), b.shape())
                     };
-                    let ga = unbroadcast(&(&grad * &b_data), &a_shape);
-                    let gb = unbroadcast(&(&grad * &a_data), &b_shape);
-                    propagate_grad(node, 0, &ga, &mut node_grads);
-                    propagate_grad(node, 1, &gb, &mut node_grads);
+                    let ga = unbroadcast(&(&grad * &b_data), &a_shape)?;
+                    let gb = unbroadcast(&(&grad * &a_data), &b_shape)?;
+                    propagate_grad(node, 0, &ga, &mut node_grads)?;
+                    propagate_grad(node, 1, &gb, &mut node_grads)?;
                 }
                 TapeOp::Div => {
                     let (a_data, a_shape, b_data, b_shape) = {
@@ -324,14 +330,14 @@ impl Tape {
                         let b = node.input_tensors[1].borrow();
                         (a.data.clone(), a.shape(), b.data.clone(), b.shape())
                     };
-                    let ga = unbroadcast(&(&grad / &b_data), &a_shape);
-                    let gb = unbroadcast(&(-&grad * &a_data / (&b_data * &b_data)), &b_shape);
-                    propagate_grad(node, 0, &ga, &mut node_grads);
-                    propagate_grad(node, 1, &gb, &mut node_grads);
+                    let ga = unbroadcast(&(&grad / &b_data), &a_shape)?;
+                    let gb = unbroadcast(&(-&grad * &a_data / (&b_data * &b_data)), &b_shape)?;
+                    propagate_grad(node, 0, &ga, &mut node_grads)?;
+                    propagate_grad(node, 1, &gb, &mut node_grads)?;
                 }
                 TapeOp::Neg => {
                     let g = -&grad;
-                    propagate_grad(node, 0, &g, &mut node_grads);
+                    propagate_grad(node, 0, &g, &mut node_grads)?;
                 }
                 TapeOp::ReLU => {
                     let mask = {
@@ -339,7 +345,7 @@ impl Tape {
                         a.data.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 })
                     };
                     let g_a = &grad * &mask;
-                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
                 TapeOp::MatMul => {
                     // Backward for a @ b:
@@ -352,6 +358,18 @@ impl Tape {
                             let b_ref = node.input_tensors[1].borrow();
                             let a_ndim = a_ref.ndim();
                             let b_ndim = b_ref.ndim();
+
+                            // 方向 A：校验输入维度（仅支持 1D/2D，更高维报错而非静默）
+                            if a_ndim > 2 {
+                                return Err(crate::error::TenthError::RuntimeError {
+                                    message: format!("MatMul 反向传播：a ndim={} > 2 不支持（方向 A：不再静默处理）", a_ndim),
+                                });
+                            }
+                            if b_ndim > 2 {
+                                return Err(crate::error::TenthError::RuntimeError {
+                                    message: format!("MatMul 反向传播：b ndim={} > 2 不支持（方向 A：不再静默处理）", b_ndim),
+                                });
+                            }
 
                             // Promote 1D inputs to 2D for uniform handling.
                             let a_2d: ArrayD<f64> = if a_ndim == 1 {
@@ -372,24 +390,46 @@ impl Tape {
                                     // result of (m,k)@(k,1) squeezed to (m,) → promote to (m,1)
                                     grad.view().insert_axis(ndarray::Axis(1)).into_owned().into_dyn()
                                 }
-                            } else {
+                            } else if grad.ndim() == 2 {
                                 grad.clone()
+                            } else {
+                                // 方向 A：grad.ndim() > 2 不再静默 clone（原代码会走进 matmul_2d 兜底成零数组）
+                                return Err(crate::error::TenthError::RuntimeError {
+                                    message: format!("MatMul 反向传播：grad ndim={} > 2 不支持（方向 A：不再静默兜底）", grad.ndim()),
+                                });
                             };
 
                             // b_2d^T and a_2d^T
                             let b_t = b_2d.view().reversed_axes().to_owned();
                             let a_t = a_2d.view().reversed_axes().to_owned();
 
-                            let d_a_2d = matmul_2d(&grad_2d, &b_t);
-                            let d_b_2d = matmul_2d(&a_t, &grad_2d);
+                            let d_a_2d = matmul_2d(&grad_2d, &b_t)?;
+                            let d_b_2d = matmul_2d(&a_t, &grad_2d)?;
 
                             // Squeeze gradients back to match original input shapes.
+                            // 方向 A：1D squeeze 前校验 shape 符合预期（避免静默 squeeze 错误 shape）
                             let d_a: ArrayD<f64> = if a_ndim == 1 {
+                                if d_a_2d.shape().get(0).copied() != Some(1) {
+                                    return Err(crate::error::TenthError::RuntimeError {
+                                        message: format!(
+                                            "MatMul 反向 1D squeeze 失败：d_a_2d shape = {:?}，期望第 0 维为 1（方向 A：不再静默 squeeze）",
+                                            d_a_2d.shape()
+                                        ),
+                                    });
+                                }
                                 d_a_2d.view().index_axis_move(ndarray::Axis(0), 0).into_owned().into_dyn()
                             } else {
                                 d_a_2d
                             };
                             let d_b: ArrayD<f64> = if b_ndim == 1 {
+                                if d_b_2d.shape().get(1).copied() != Some(1) {
+                                    return Err(crate::error::TenthError::RuntimeError {
+                                        message: format!(
+                                            "MatMul 反向 1D squeeze 失败：d_b_2d shape = {:?}，期望第 1 维为 1（方向 A：不再静默 squeeze）",
+                                            d_b_2d.shape()
+                                        ),
+                                    });
+                                }
                                 d_b_2d.view().index_axis_move(ndarray::Axis(1), 0).into_owned().into_dyn()
                             } else {
                                 d_b_2d
@@ -397,8 +437,8 @@ impl Tape {
                             (d_a, d_b)
                         };
 
-                        propagate_grad(node, 0, &d_a, &mut node_grads);
-                        propagate_grad(node, 1, &d_b, &mut node_grads);
+                        propagate_grad(node, 0, &d_a, &mut node_grads)?;
+                        propagate_grad(node, 1, &d_b, &mut node_grads)?;
                     }
                 }
                 TapeOp::Transpose => {
@@ -410,7 +450,7 @@ impl Tape {
                         }
                         grad.view().permuted_axes(perm).to_owned()
                     };
-                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
                 TapeOp::Sum => {
                     let g_a = {
@@ -419,7 +459,7 @@ impl Tape {
                         let s: f64 = grad.iter().sum::<f64>();
                         ArrayD::from_elem(IxDyn(&a_shape), s)
                     };
-                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
                 TapeOp::Mean => {
                     let g_a = {
@@ -429,21 +469,21 @@ impl Tape {
                         let s: f64 = grad.iter().sum::<f64>() / n;
                         ArrayD::from_elem(IxDyn(&a_shape), s)
                     };
-                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
                 TapeOp::Exp => {
                     let g_a = {
                         let result_ref = node.input_tensors[1].borrow();
                         &grad * &result_ref.data
                     };
-                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
                 TapeOp::Log => {
                     let g_a = {
                         let a_ref = node.input_tensors[0].borrow();
                         &grad / &a_ref.data
                     };
-                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
                 TapeOp::Sigmoid => {
                     let g_a = {
@@ -451,7 +491,7 @@ impl Tape {
                         let y = &result_ref.data;
                         &grad * y * &y.mapv(|v| 1.0 - v)
                     };
-                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
                 TapeOp::BatchNorm => {
                     // Simplified BN backward:
@@ -475,9 +515,9 @@ impl Tape {
                         let d_x = &std_inv_ref.data * &gamma_ref.data *
                             &(&grad - mean_dy - &(&x_hat_ref.data * mean_dy_xhat));
 
-                        propagate_grad(node, 0, &d_x, &mut node_grads);
-                        propagate_grad(node, 1, &d_gamma, &mut node_grads);
-                        propagate_grad(node, 2, &d_beta, &mut node_grads);
+                        propagate_grad(node, 0, &d_x, &mut node_grads)?;
+                        propagate_grad(node, 1, &d_gamma, &mut node_grads)?;
+                        propagate_grad(node, 2, &d_beta, &mut node_grads)?;
                     }
                 }
                 TapeOp::LayerNorm => {
@@ -549,9 +589,9 @@ impl Tape {
                         }
                         let d_x = ArrayD::from_shape_vec(IxDyn(&x_hat_shape), d_x_data).unwrap();
 
-                        propagate_grad(node, 0, &d_x, &mut node_grads);
-                        propagate_grad(node, 1, &d_gamma, &mut node_grads);
-                        propagate_grad(node, 2, &d_beta, &mut node_grads);
+                        propagate_grad(node, 0, &d_x, &mut node_grads)?;
+                        propagate_grad(node, 1, &d_gamma, &mut node_grads)?;
+                        propagate_grad(node, 2, &d_beta, &mut node_grads)?;
                     }
                 }
                 TapeOp::Gelu => {
@@ -570,7 +610,7 @@ impl Tape {
                         });
                         &grad * &deriv
                     };
-                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
                 TapeOp::Conv2D => {
                     // input_tensors = [input(4D), weight(4D), im2col(2D), output(4D)]
@@ -593,61 +633,80 @@ impl Tape {
                             let hw_out = out_shape[2] * out_shape[3];
 
                             // Reshape grad to 2D (N*H_out*W_out, C_out)
+                            // 方向 A：reshape 失败不再静默 fallback，直接报错
                             let grad_2d: ArrayD<f64> = {
                                 let v: Vec<f64> = grad.iter().cloned().collect();
-                                ArrayD::from_shape_vec(IxDyn(&[hw_out * n, c_out]), v)
-                                    .unwrap_or_else(|_| grad.clone())
+                                ArrayD::from_shape_vec(IxDyn(&[hw_out * n, c_out]), v).map_err(|_| {
+                                    crate::error::TenthError::RuntimeError {
+                                        message: format!("Conv2D 反向 reshape grad 失败（方向 A：不再静默 fallback）"),
+                                    }
+                                })?
                             };
 
                             // im2col is (N*H_out*W_out, C_in*kH*kW)
                             let col_data = &col_ref.data;
                             // dW_flat = im2col^T @ dY  → (C_in*kH*kW, C_out)
                             let col_t = col_data.view().reversed_axes().to_owned();
-                            let d_w_flat = matmul_2d(&col_t, &grad_2d);
+                            let d_w_flat = matmul_2d(&col_t, &grad_2d)?;
 
                             // Reshape d_w_flat back to weight shape (C_out, C_in, kH, kW)
                             // Note: d_w_flat is (C_in*kH*kW, C_out), so transpose first
                             let d_w_flat_t = d_w_flat.view().reversed_axes().to_owned();
                             let w_shape = w_ref.shape();
+                            // 方向 A：dW reshape 失败不再静默保留错误 shape，直接报错
                             let d_w: ArrayD<f64> = {
                                 let total: usize = w_shape.iter().product();
-                                if d_w_flat_t.len() == total {
-                                    ArrayD::from_shape_vec(IxDyn(&w_shape), d_w_flat_t.iter().cloned().collect())
-                                        .unwrap_or_else(|_| d_w_flat_t.clone())
-                                } else {
-                                    d_w_flat_t.clone()
+                                if d_w_flat_t.len() != total {
+                                    return Err(crate::error::TenthError::RuntimeError {
+                                        message: format!(
+                                            "Conv2D 反向 dW 元素数不匹配：{} != {}（方向 A：不再静默保留错误 shape）",
+                                            d_w_flat_t.len(), total
+                                        ),
+                                    });
                                 }
+                                ArrayD::from_shape_vec(IxDyn(&w_shape), d_w_flat_t.iter().cloned().collect()).map_err(|_| {
+                                    crate::error::TenthError::RuntimeError {
+                                        message: format!("Conv2D 反向 dW reshape 失败（方向 A）"),
+                                    }
+                                })?
                             };
 
                             // d(im2col) = dY @ w_flat  → (N*H_out*W_out, C_in*kH*kW)
                             // w_flat = weight.reshape(C_out, C_in*kH*kW)
-                            let w_flat_total = c_out * w_shape[1] * w_shape[2] * w_shape[3];
                             let w_flat: ArrayD<f64> = {
                                 let v: Vec<f64> = w_ref.data.iter().collect();
-                                ArrayD::from_shape_vec(IxDyn(&[c_out, w_shape[1] * w_shape[2] * w_shape[3]]), v)
-                                    .unwrap_or_else(|_| ArrayD::zeros(IxDyn(&[c_out, w_flat_total / c_out])))
+                                ArrayD::from_shape_vec(IxDyn(&[c_out, w_shape[1] * w_shape[2] * w_shape[3]]), v).map_err(|_| {
+                                    crate::error::TenthError::RuntimeError {
+                                        message: format!("Conv2D 反向 w_flat reshape 失败（方向 A）"),
+                                    }
+                                })?
                             };
-                            let d_col = matmul_2d(&grad_2d, &w_flat);
+                            let d_col = matmul_2d(&grad_2d, &w_flat)?;
 
                             // col2im: accumulate d_col back into input shape (N, C_in, H, W)
-                            // For simplicity, reshape d_col to input shape if sizes match.
-                            // (Full col2im with accumulation is complex; here we reshape directly
-                            //  which works when stride=1 and pad matches, matching forward im2col.)
+                            // 方向 A：d_col 元素数不匹配时不再静默返回零数组，直接报错
                             let x_shape = x_ref.shape();
                             let d_x: ArrayD<f64> = {
                                 let x_total: usize = x_shape.iter().product();
-                                if d_col.len() == x_total {
-                                    ArrayD::from_shape_vec(IxDyn(&x_shape), d_col.iter().cloned().collect())
-                                        .unwrap_or_else(|_| ArrayD::zeros(IxDyn(&x_shape)))
-                                } else {
-                                    ArrayD::zeros(IxDyn(&x_shape))
+                                if d_col.len() != x_total {
+                                    return Err(crate::error::TenthError::RuntimeError {
+                                        message: format!(
+                                            "Conv2D 反向 dX 元素数不匹配：d_col {} != x_total {}（方向 A：不再静默返回零数组）",
+                                            d_col.len(), x_total
+                                        ),
+                                    });
                                 }
+                                ArrayD::from_shape_vec(IxDyn(&x_shape), d_col.iter().cloned().collect()).map_err(|_| {
+                                    crate::error::TenthError::RuntimeError {
+                                        message: format!("Conv2D 反向 dX reshape 失败（方向 A）"),
+                                    }
+                                })?
                             };
                             (d_x, d_w)
                         };
 
-                        propagate_grad(node, 0, &d_x, &mut node_grads);
-                        propagate_grad(node, 1, &d_w, &mut node_grads);
+                        propagate_grad(node, 0, &d_x, &mut node_grads)?;
+                        propagate_grad(node, 1, &d_w, &mut node_grads)?;
                     }
                 }
                 TapeOp::Dropout => {
@@ -658,7 +717,7 @@ impl Tape {
                             let mask_ref = node.input_tensors[1].borrow();
                             &grad * &mask_ref.data
                         };
-                        propagate_grad(node, 0, &g_a, &mut node_grads);
+                        propagate_grad(node, 0, &g_a, &mut node_grads)?;
                     }
                 }
                 TapeOp::CrossEntropy => {
@@ -670,7 +729,7 @@ impl Tape {
                             let tgt_ref = node.input_tensors[2].borrow();
                             &sm_ref.data - &tgt_ref.data
                         };
-                        propagate_grad(node, 0, &g_a, &mut node_grads);
+                        propagate_grad(node, 0, &g_a, &mut node_grads)?;
                     }
                 }
                 TapeOp::Softmax => {
@@ -682,10 +741,11 @@ impl Tape {
                         let sum_term = (&grad * y).sum();
                         &grad * y - &(y.mapv(|v| v * sum_term))
                     };
-                    propagate_grad(node, 0, &g_a, &mut node_grads);
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
             }
         }
+        Ok(())
     }
 
     /// Clear all nodes and reset the counter.
@@ -722,27 +782,61 @@ fn acc_node_grad(node_grads: &mut [Option<ArrayD<f64>>], id: usize, g: &ArrayD<f
 /// If the node has upstream node ids, write to `node_grads` so DAG traversal
 /// continues.  Otherwise, write directly to the tensor's `.grad` field
 /// (used by `_direct` variants that bypass the node-graph).
+/// 返回 Err 当 direct 路径的 acc_grad 报告 shape 不匹配（方向 A）。
 fn propagate_grad(
     node: &TapeNode,
     input_idx: usize,
     g: &ArrayD<f64>,
     node_grads: &mut [Option<ArrayD<f64>>],
-) {
+) -> Result<(), crate::error::TenthError> {
     if input_idx < node.inputs.len() {
         acc_node_grad(node_grads, node.inputs[input_idx], g);
     } else {
         if let Some(t) = node.input_tensors.get(input_idx) {
-            t.borrow_mut().acc_grad(g);
+            t.borrow_mut().acc_grad(g).map_err(|e| {
+                crate::error::TenthError::RuntimeError {
+                    message: format!("反向传播 shape 错误（节点 #{} {} direct input {}）：{}", node.id, op_name(&node.op), input_idx, e),
+                }
+            })?;
         }
+    }
+    Ok(())
+}
+
+/// 人类可读的 TapeOp 名称（用于错误信息）。
+fn op_name(op: &TapeOp) -> &'static str {
+    match op {
+        TapeOp::Input => "Input",
+        TapeOp::Add => "Add",
+        TapeOp::Sub => "Sub",
+        TapeOp::Mul => "Mul",
+        TapeOp::Div => "Div",
+        TapeOp::Neg => "Neg",
+        TapeOp::ReLU => "ReLU",
+        TapeOp::MatMul => "MatMul",
+        TapeOp::Transpose => "Transpose",
+        TapeOp::Sum => "Sum",
+        TapeOp::Mean => "Mean",
+        TapeOp::Exp => "Exp",
+        TapeOp::Log => "Log",
+        TapeOp::Sigmoid => "Sigmoid",
+        TapeOp::Softmax => "Softmax",
+        TapeOp::CrossEntropy => "CrossEntropy",
+        TapeOp::Dropout => "Dropout",
+        TapeOp::Conv2D => "Conv2D",
+        TapeOp::BatchNorm => "BatchNorm",
+        TapeOp::LayerNorm => "LayerNorm",
+        TapeOp::Gelu => "Gelu",
     }
 }
 
 /// Reduce `grad` from the output shape down to `target_shape` by summing
 /// over broadcast dimensions.  Follows numpy-style broadcasting rules.
-fn unbroadcast(grad: &ArrayD<f64>, target_shape: &[usize]) -> ArrayD<f64> {
+/// 返回 Err 当 reshape 失败（方向 A：不再静默保留错误 shape）。
+fn unbroadcast(grad: &ArrayD<f64>, target_shape: &[usize]) -> Result<ArrayD<f64>, crate::error::TenthError> {
     let grad_shape = grad.shape();
     if grad_shape == target_shape {
-        return grad.clone();
+        return Ok(grad.clone());
     }
 
     let mut result = grad.clone();
@@ -767,34 +861,41 @@ fn unbroadcast(grad: &ArrayD<f64>, target_shape: &[usize]) -> ArrayD<f64> {
     if current_shape != target_shape {
         let total: usize = target_shape.iter().product();
         if total == result.len() {
-            result = result.clone().into_shape_with_order(IxDyn(target_shape)).unwrap_or(result);
+            result = result.clone().into_shape_with_order(IxDyn(target_shape)).map_err(|_| {
+                crate::error::TenthError::RuntimeError {
+                    message: format!(
+                        "unbroadcast reshape 失败：梯度 shape {:?} 无法 reshape 到目标 shape {:?}（方向 A：不再静默保留错误 shape）",
+                        current_shape, target_shape
+                    ),
+                }
+            })?;
+        } else {
+            return Err(crate::error::TenthError::RuntimeError {
+                message: format!(
+                    "unbroadcast 元素数不匹配：梯度 {} 元素，目标 {} 元素（shape {:?} → {:?}）",
+                    result.len(), total, current_shape, target_shape
+                ),
+            });
         }
     }
 
-    result
+    Ok(result)
 }
 
 /// Pure 2-D matrix multiplication returning an owned ArrayD.
-/// Returns a zero-filled array of the expected output shape if inputs
-/// are not 2-D (defensive — callers should ensure 2-D inputs).
-fn matmul_2d(a: &ArrayD<f64>, b: &ArrayD<f64>) -> ArrayD<f64> {
-    let a2 = match a.view().into_dimensionality::<ndarray::Ix2>() {
-        Ok(v) => v,
-        Err(_) => {
-            let m = a.shape().get(0).copied().unwrap_or(0);
-            let k = a.shape().get(1).copied().unwrap_or(0);
-            return ArrayD::zeros(IxDyn(&[m, k]));
+/// 返回 Err 当输入非 2D（方向 A：不再静默返回零数组掩盖错误）。
+fn matmul_2d(a: &ArrayD<f64>, b: &ArrayD<f64>) -> Result<ArrayD<f64>, crate::error::TenthError> {
+    let a2 = a.view().into_dimensionality::<ndarray::Ix2>().map_err(|_| {
+        crate::error::TenthError::RuntimeError {
+            message: format!("matmul_2d 期望 2D 输入，实际 a shape = {:?}（方向 A：不再静默返回零数组）", a.shape()),
         }
-    };
-    let b2 = match b.view().into_dimensionality::<ndarray::Ix2>() {
-        Ok(v) => v,
-        Err(_) => {
-            let k = b.shape().get(0).copied().unwrap_or(0);
-            let n = b.shape().get(1).copied().unwrap_or(0);
-            return ArrayD::zeros(IxDyn(&[k, n]));
+    })?;
+    let b2 = b.view().into_dimensionality::<ndarray::Ix2>().map_err(|_| {
+        crate::error::TenthError::RuntimeError {
+            message: format!("matmul_2d 期望 2D 输入，实际 b shape = {:?}（方向 A：不再静默返回零数组）", b.shape()),
         }
-    };
-    a2.dot(&b2).into_dyn()
+    })?;
+    Ok(a2.dot(&b2).into_dyn())
 }
 
 #[cfg(test)]
@@ -822,7 +923,7 @@ mod tests {
         let result = Rc::new(RefCell::new(Tensor::from_data(result_data)));
         let r_id = tape.binary_direct(TapeOp::Mul, a.clone(), b.clone(), result.clone());
 
-        tape.backward(r_id);
+        tape.backward(r_id).unwrap();
 
         // d(a*b)/da = b = [4, 5]
         let a_grad = a.borrow().grad.clone().unwrap();
@@ -852,7 +953,7 @@ mod tests {
         let result = Rc::new(RefCell::new(Tensor::from_data(result_data)));
         let r_id = tape.binary_direct(TapeOp::Add, w.clone(), b.clone(), result.clone());
 
-        tape.backward(r_id);
+        tape.backward(r_id).unwrap();
 
         let w_grad = w.borrow().grad.clone().unwrap();
         assert!((w_grad[[0]] - 1.0).abs() < 1e-10);
@@ -875,7 +976,7 @@ mod tests {
         let result = Rc::new(RefCell::new(Tensor::from_data(relu_data)));
         let r_id = tape.unary_direct(TapeOp::ReLU, x.clone(), result.clone());
 
-        tape.backward(r_id);
+        tape.backward(r_id).unwrap();
 
         let grad = x.borrow().grad.clone().unwrap();
         assert!((grad[[0]] - 0.0).abs() < 1e-10);
@@ -902,7 +1003,7 @@ mod tests {
         let result = Rc::new(RefCell::new(Tensor::from_data(result_data)));
         let r_id = tape.binary_direct(TapeOp::MatMul, a.clone(), b.clone(), result.clone());
 
-        tape.backward(r_id);
+        tape.backward(r_id).unwrap();
 
         // d(a @ b)/da = 1 @ b^T (since upstream grad is ones)
         // b^T is (2x3), so da/dy (2x2) @ b^T (2x3) → should give (2x3)
@@ -936,7 +1037,7 @@ mod tests {
         let result = Rc::new(RefCell::new(Tensor::from_data(r_data)));
         let r_id = tape.binary(TapeOp::Mul, relu_id, two_id, relu.clone(), two.clone(), result);
 
-        tape.backward(r_id);
+        tape.backward(r_id).unwrap();
 
         let grad = x.borrow().grad.clone().unwrap();
         // d(relu(x)*2)/dx = 2 if x > 0 else 0

@@ -165,7 +165,7 @@ impl super::Interpreter {
             "backward" => {
                 if let Some(Value::Tensor(loss)) = args.first() {
                     if let (Some(tape), Some(loss_id)) = (&self.tape, loss.borrow().tape_id) {
-                        tape.backward(loss_id);
+                        tape.backward(loss_id)?;
                     }
                     return Ok(Some(Value::Unit));
                 }

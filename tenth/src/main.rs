@@ -701,7 +701,7 @@ fn register_natives(vm: &mut Vm) {
             if let Some(ref tape) = vm.tape {
                 let loss_id = t.borrow().tape_id
                     .ok_or_else(|| tenth::error::TenthError::RuntimeError { message: "backward(): 张量没有 tape_id".into() })?;
-                tape.backward(loss_id);
+                tape.backward(loss_id)?;
                 Ok(Value::Unit)
             } else {
                 Err(tenth::error::TenthError::RuntimeError { message: "未调用 new_grad()".into() })
