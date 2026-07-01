@@ -1872,6 +1872,32 @@ impl Parser {
                             field_bind,
                             tuple_fields,
                         })
+                    } else if matches!(self.peek_kind(), TokenKind::LBrace) {
+                        // Struct destructuring pattern: `Point { x, y }` or `Point { x: a, y: b }`
+                        self.advance();
+                        let mut fields: Vec<(String, String)> = Vec::new();
+                        if !matches!(self.peek_kind(), TokenKind::RBrace) {
+                            loop {
+                                let field = self.expect_ident()?;
+                                let bind_name = if matches!(self.peek_kind(), TokenKind::Colon) {
+                                    self.advance();
+                                    let b = self.expect_ident()?;
+                                    b.name
+                                } else {
+                                    // Shorthand: `x` binds to `x`
+                                    field.name.clone()
+                                };
+                                fields.push((field.name, bind_name));
+                                if matches!(self.peek_kind(), TokenKind::Comma) {
+                                    self.advance();
+                                    if matches!(self.peek_kind(), TokenKind::RBrace) { break; }
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        self.expect(TokenKind::RBrace)?;
+                        Ok(Pattern::Struct { name, fields })
                     } else {
                         // Variable binding pattern
                         Ok(Pattern::Binding(name))

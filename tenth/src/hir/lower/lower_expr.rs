@@ -819,6 +819,12 @@ impl Lowerer {
             ast::Pattern::Binding(name) => {
                 Ok(HirPattern::Binding(name.clone()))
             }
+            ast::Pattern::Struct { name, fields } => {
+                Ok(HirPattern::Struct {
+                    name: name.clone(),
+                    fields: fields.clone(),
+                })
+            }
         }
     }
 
@@ -860,6 +866,17 @@ impl Lowerer {
             }
             HirPattern::Binding(name) => {
                 self.scope.define_var(name.clone(), scrutinee_ty.clone(), false);
+            }
+            HirPattern::Struct { name, fields } => {
+                // Look up struct field types for proper type inference on binds.
+                let field_types = self.structs.get(name).cloned();
+                for (field_name, bind_name) in fields {
+                    let bind_ty = field_types.as_ref()
+                        .and_then(|fts| fts.iter().find(|(n, _)| n == field_name))
+                        .map(|(_, t)| t.clone())
+                        .unwrap_or(Type::Unknown);
+                    self.scope.define_var(bind_name.clone(), bind_ty, false);
+                }
             }
             HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Range { .. } => {}
         }

@@ -420,6 +420,40 @@ impl BytecodeCompiler {
                             self.patch_jump(end_label);
                             self.label(next_label);
                         }
+                        HirPattern::Struct { name, fields } => {
+                            // Struct destructuring: check struct name, then bind fields.
+                            self.chunk.emit(Op::Dup); // dup for IsStruct check
+                            let name_i = self.chunk.add_string(name);
+                            self.chunk.emit(Op::IsStruct(name_i));
+                            self.chunk.emit(Op::JmpFalse(0));
+                            self.patch_jump(next_label);
+                            // IsStruct consumed the dup; scrutinee remains.
+                            // If there's a guard, keep an extra copy for the next arm retry.
+                            if has_guard {
+                                self.chunk.emit(Op::Dup);
+                            }
+                            // Bind each field via LoadField.
+                            for (field_name, bind_name) in fields {
+                                self.chunk.emit(Op::Dup); // dup scrutinee for each field
+                                let fi = self.chunk.add_string(field_name);
+                                self.chunk.emit(Op::LoadField(fi));
+                                let pos = self.locals.len();
+                                self.locals.push(bind_name.clone());
+                                self.chunk.emit(Op::Store(pos));
+                            }
+                            self.chunk.emit(Op::Pop); // drop scrutinee
+                            // Guard
+                            if let Some(guard) = &arm.guard {
+                                self.compile_expr(guard)?;
+                                self.chunk.emit(Op::JmpFalse(0));
+                                self.patch_jump(next_label);
+                                self.chunk.emit(Op::Pop); // drop the extra scrutinee copy
+                            }
+                            self.compile_expr(&arm.body)?;
+                            self.chunk.emit(Op::Jump(0));
+                            self.patch_jump(end_label);
+                            self.label(next_label);
+                        }
                         _ => {
                             // Other patterns (Tuple, Range): not yet supported in VM.
                             // Fall through to next arm.

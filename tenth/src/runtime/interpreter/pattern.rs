@@ -117,6 +117,12 @@ impl super::Interpreter {
                     _ => false,
                 }
             }
+            HirPattern::Struct { name, .. } => {
+                match val {
+                    Value::Struct { name: struct_name, .. } => struct_name == name,
+                    _ => false,
+                }
+            }
         }
     }
 
@@ -157,6 +163,16 @@ impl super::Interpreter {
                     _ => {}
                 }
             }
+            HirPattern::Struct { fields, .. } => {
+                if let Value::Struct { fields: val_fields, .. } = val {
+                    let val_fields_ref = val_fields.borrow();
+                    for (field_name, bind_name) in fields {
+                        if let Some((_, v)) = val_fields_ref.iter().find(|(n, _)| n == field_name) {
+                            self.current_scope().insert(bind_name.clone(), v.clone());
+                        }
+                    }
+                }
+            }
             HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Range { .. } => {}
         }
     }
@@ -178,6 +194,11 @@ impl super::Interpreter {
             HirPattern::Tuple(patterns) => {
                 for p in patterns {
                     self.unbind_pattern(p);
+                }
+            }
+            HirPattern::Struct { fields, .. } => {
+                for (_, bind_name) in fields {
+                    self.current_scope().remove(bind_name);
                 }
             }
             HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Range { .. } => {}

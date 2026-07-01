@@ -170,6 +170,9 @@ pub enum Pattern {
     Range { start: i64, end: i64, inclusive: bool },
     /// Variable binding: `x` (catch-all that binds the value)
     Binding(String),
+    /// Struct destructuring: `Point { x, y }` or `Point { x: a, y: b }`.
+    /// Each entry is (field_name, bind_name).
+    Struct { name: String, fields: Vec<(String, String)> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

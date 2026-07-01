@@ -2,6 +2,8 @@ use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::hir::lower::Lowerer;
 use tenth::runtime::interpreter::Interpreter;
+use tenth::runtime::vm::Vm;
+use tenth::compile::bytecode::BytecodeCompiler;
 use tenth::runtime::value::Value;
 
 fn run(src: &str) -> Result<Option<Value>, String> {
@@ -13,6 +15,47 @@ fn run(src: &str) -> Result<Option<Value>, String> {
     let hir = lowerer.lower_program(&program).map_err(|e| e.to_string())?;
     let mut interpreter = Interpreter::new(&hir);
     interpreter.execute_program(&hir).map_err(|e| e.to_string())
+}
+
+/// Run source through the bytecode VM (path A default backend).
+fn run_vm(src: &str) -> Result<Value, String> {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().map_err(|e| e.to_string())?;
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).map_err(|e| e.to_string())?;
+
+    let mut vm = Vm::new();
+    for func in &hir.functions {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile(func) {
+            Ok((chunk, closures)) => {
+                vm.add_fn(func.name.clone(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+    }
+    if let Some(ref expr) = hir.main_expr {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile_main(expr) {
+            Ok((chunk, closures)) => {
+                vm.add_fn("main".into(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+        vm.call("main").map_err(|e| e.to_string())
+    } else if vm.has_fn("main") {
+        vm.call("main").map_err(|e| e.to_string())
+    } else {
+        Ok(Value::Unit)
+    }
 }
 
 #[test]
@@ -215,5 +258,121 @@ fn test_match_binding_with_range_fallback() {
     match result {
         Some(Value::Int(100)) => {}
         v => panic!("expected Int(100), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_match_struct_destructuring_shorthand() {
+    let src = r#"
+        struct Point { x: f64, y: f64 };
+        fn main() -> f64 {
+            let p = Point { x: 3.0, y: 4.0 };
+            match p {
+                Point { x, y } => x + y,
+            }
+        }
+    "#;
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Float(v)) if (v - 7.0).abs() < 1e-9 => {}
+        v => panic!("expected Float(7.0), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_match_struct_destructuring_named_bind() {
+    let src = r#"
+        struct Point { x: f64, y: f64 };
+        fn main() -> f64 {
+            let p = Point { x: 3.0, y: 4.0 };
+            match p {
+                Point { x: a, y: b } => a * a + b * b,
+            }
+        }
+    "#;
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Float(v)) if (v - 25.0).abs() < 1e-9 => {}
+        v => panic!("expected Float(25.0), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_match_struct_with_wildcard_fallback() {
+    let src = r#"
+        struct Point { x: i32, y: i32 };
+        struct Rect { w: i32, h: i32 };
+        fn main() -> i32 {
+            let r = Rect { w: 10, h: 20 };
+            match r {
+                Point { x, y } => x + y,
+                Rect { w, h } => w * h,
+                _ => 0,
+            }
+        }
+    "#;
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Int(200)) => {}
+        v => panic!("expected Int(200), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_match_struct_partial_bind() {
+    let src = r#"
+        struct Point { x: i32, y: i32 };
+        fn main() -> i32 {
+            let p = Point { x: 7, y: 99 };
+            match p {
+                Point { x, y: _ } => x,
+            }
+        }
+    "#;
+    let result = run(src).unwrap();
+    match result {
+        Some(Value::Int(7)) => {}
+        v => panic!("expected Int(7), got {:?}", v),
+    }
+}
+
+// ── VM path (path A default backend) ──────────────────────────────────────
+
+#[test]
+fn test_vm_match_struct_destructuring_shorthand() {
+    let src = r#"
+        struct Point { x: i32, y: i32 };
+        fn main() -> i32 {
+            let p = Point { x: 3, y: 4 };
+            match p {
+                Point { x, y } => x + y,
+            }
+        }
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(7) => {}
+        v => panic!("expected Int(7), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_vm_match_struct_with_fallback() {
+    let src = r#"
+        struct Point { x: i32, y: i32 };
+        struct Rect { w: i32, h: i32 };
+        fn main() -> i32 {
+            let r = Rect { w: 10, h: 20 };
+            match r {
+                Point { x, y } => x + y,
+                Rect { w, h } => w * h,
+                _ => 0,
+            }
+        }
+    "#;
+    let result = run_vm(src).unwrap();
+    match result {
+        Value::Int(200) => {}
+        v => panic!("expected Int(200), got {:?}", v),
     }
 }

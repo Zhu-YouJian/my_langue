@@ -109,7 +109,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | # | 位置 | 问题 |
 |---|------|------|
-| 3 | `tenth/src/compile/lower.rs` | **Match pattern binding 未生成** |
+| ~~3~~ | ~~`tenth/src/compile/lower.rs`~~ | ~~**Match pattern binding 未生成**~~ **已修复**：实现 match 表达式 struct 解构 pattern（如 `match p { Point { x, y } => ... }` 中的 x/y 绑定）。跨模块全链路：(1) `parser/ast.rs` + `hir/hir.rs` 新增 `Pattern::Struct { name, fields }` 变体；(2) `parser/parser.rs::parse_match_pattern` 加 `LBrace` 处理，支持 `Name { x, y }` 简写与 `Name { x: a, y: b }` 命名绑定；(3) `hir/lower/lower_expr.rs` `lower_pattern`/`bind_pattern_vars` 加 Struct 分支；(4) `runtime/interpreter/pattern.rs` 三处加 Struct 分支；(5) `runtime/vm.rs` 新增 `IsStruct(usize)` Op（opcode 46，与 `IsEnumVariant` 对称）；(6) `compile/bytecode.rs` 加 Struct 分支（IsStruct + LoadField）；(7) `compile/jit/translator.rs` 遇 IsStruct 返回 Err 触发 JIT→VM fallback。tenthc 不用 struct pattern，无需同步。测试：`tests/pattern_match_test.rs` 新增 6 项（4 解释器 + 2 VM），17/17 全绿，0 回归。 |
 | 8 | `tenthc/main.th:11` | **依赖 tenthc_combined.th** — 需在编译前手动拼接 |
 
 > ~~#5-#7/#10/#12 引用已删除的 C 代码生成文件 (`tenthc/codegen/`, `tenthc/runtime.c`)，随 C 后端移除而消除，不再罗列。~~

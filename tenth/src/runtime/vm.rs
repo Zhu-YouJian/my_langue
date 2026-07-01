@@ -32,6 +32,7 @@ pub enum Op {
     MakeEnum(usize, usize, usize),
     IsEnumVariant(usize),
     EnumGetField(usize),
+    IsStruct(usize),
     PushRange(i64, i64, bool),  // start, end, inclusive
     MoveOp,                     // no-op marker for move semantics
     MakeTensor(usize, usize, u8), // rows, cols, dtype (0=F64, 1=F32) — pops rows*cols values
@@ -74,6 +75,7 @@ impl Chunk {
             PushRange(..) => 41, MoveOp => 42,
             MakeTensor(..) => 43, MakeClosure(..) => 44,
             PushFloat32(_) => 45,
+            IsStruct(_) => 46,
         });
 
         // Emit operands
@@ -92,6 +94,7 @@ impl Chunk {
             MakeEnum(n, v, f) => { w!(*n, u64); w!(*v, u64); w!(*f, u64); }
             IsEnumVariant(v) => w!(*v, u64),
             EnumGetField(f) => w!(*f, u64),
+            IsStruct(n) => w!(*n, u64),
             PushRange(s, e, inc) => { w!(*s, i64); w!(*e, i64); self.code.push(if *inc {1} else {0}); }
             MakeTensor(r, c, d) => { w!(*r, u64); w!(*c, u64); self.code.push(*d); }
             MakeClosure(p, c) => { w!(*p, u64); w!(*c, u64); }
@@ -134,6 +137,7 @@ impl Chunk {
             43 => MakeTensor(r!(u64) as usize, r!(u64) as usize, { let d = self.code[*ip]; *ip += 1; d }),
             44 => MakeClosure(r!(u64) as usize, r!(u64) as usize),
             45 => PushFloat32(r!(f32)),
+            46 => IsStruct(r!(u64) as usize),
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -411,6 +415,7 @@ impl Vm {
                     43 => MakeTensor(r!(u64) as usize, r!(u64) as usize, { let d = code[ip]; ip += 1; d }),
                     44 => MakeClosure(r!(u64) as usize, r!(u64) as usize),
                     45 => PushFloat32(r!(f32)),
+                    46 => IsStruct(r!(u64) as usize),
                     _ => Ret,
                 }
             };
@@ -696,6 +701,16 @@ impl Vm {
                     let val = self.stack.pop().unwrap_or(Value::Unit);
                     let matches = match &val {
                         Value::Enum { variant, .. } => variant == &variant_name,
+                        _ => false,
+                    };
+                    self.stack.push(Value::Bool(matches));
+                }
+
+                Op::IsStruct(name_i) => {
+                    let struct_name = strings.get(name_i).cloned().unwrap_or_default();
+                    let val = self.stack.pop().unwrap_or(Value::Unit);
+                    let matches = match &val {
+                        Value::Struct { name, .. } => name == &struct_name,
                         _ => false,
                     };
                     self.stack.push(Value::Bool(matches));

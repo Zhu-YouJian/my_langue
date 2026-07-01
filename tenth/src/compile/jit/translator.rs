@@ -480,6 +480,10 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.call_hostcall_2_u64("host_make_closure", params as u64, chunk_idx as u64, out);
                 self.sp += VALUE_SIZE as i32;
             }
+            IsStruct(_) => {
+                // Struct pattern matching not JIT-compiled; fallback to VM.
+                return Err(format!("JIT: IsStruct not supported, fallback to VM"));
+            }
         }
         Ok(())
     }
