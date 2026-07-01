@@ -1,0 +1,56 @@
+// Gradient clipping utilities
+// 防止训练时梯度爆炸（gradient explosion），将梯度约束到合理范围。
+//
+// 两种模式：
+//   - clip_grad_by_value：逐元素裁剪到 [-max_val, max_val]
+//   - clip_grad_by_norm  ：按 L2 范数缩放，使整体范数不超过 max_norm
+//
+// 注意：Tenth 的 grad(w) 返回梯度副本，无 set_grad 原地修改接口。
+// 本模块函数返回裁剪后的梯度 tensor，用户需用返回值手动更新参数：
+//
+//   backward(loss);
+//   let gw = grad(w);
+//   let gw_clipped = clip_grad_by_norm(gw, 1.0);  // 裁剪梯度
+//   w = w - lr * gw_clipped;                       // 手动应用
+//
+// 与 std::optim::sgd_step / adam_step 联用时，需改用返回裁剪后梯度的手动更新方式，
+// 而非让 step 函数内部调 grad(w)。
+
+// ── f64 版本 ──
+
+// 逐元素裁剪梯度到 [-max_val, max_val]。
+// 输入：梯度 tensor gw；返回：裁剪后的梯度 tensor。
+fn clip_grad_by_value(gw: Tensor[f64, ..], max_val: f64) -> Tensor[f64, ..] {
+    gw.clip_scalar(-max_val, max_val)
+}
+
+// 按 L2 范数裁剪梯度。
+// 若 ||gw||_2 > max_norm，则 gw = gw * (max_norm / ||gw||_2)。
+// 输入：梯度 tensor gw；返回：裁剪后的梯度 tensor。
+fn clip_grad_by_norm(gw: Tensor[f64, ..], max_norm: f64) -> Tensor[f64, ..] {
+    let sq_sum = (gw * gw).sum();
+    let norm = sq_sum.sqrt();
+    if norm > max_norm {
+        let scale = max_norm / norm;
+        gw * scale
+    } else {
+        gw
+    }
+}
+
+// ── f32 版本（标量参数改 f32，保持 f32 路径不提升为 f64）──
+
+fn clip_grad_by_value_f32(gw: Tensor[f64, ..], max_val: f32) -> Tensor[f64, ..] {
+    gw.clip_scalar(-max_val, max_val)
+}
+
+fn clip_grad_by_norm_f32(gw: Tensor[f64, ..], max_norm: f32) -> Tensor[f64, ..] {
+    let sq_sum = (gw * gw).sum();
+    let norm = sq_sum.sqrt();
+    if norm > max_norm {
+        let scale = max_norm / norm;
+        gw * scale
+    } else {
+        gw
+    }
+}

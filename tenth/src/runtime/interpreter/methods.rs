@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use ndarray::{IxDyn, ArrayD};
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
 use crate::runtime::value::{Value, LazyIterator, IteratorTransform};
@@ -1313,6 +1314,38 @@ impl super::Interpreter {
                         Ok(Value::Tensor(result))
                     }
                     "argmax" => Ok(Value::Int(tensor.argmax())),
+                    // 梯度裁剪辅助：元素级裁剪到 [min_val, max_val]
+                    // 用于 std::optim::clip 模块，避免依赖 tensor mask
+                    "clip_scalar" => {
+                        if args.len() < 2 {
+                            return Err(TenthError::RuntimeError {
+                                message: "clip_scalar() 需要 min_val 和 max_val".into(),
+                            });
+                        }
+                        let min_val = args[0].as_float().unwrap_or(f64::NEG_INFINITY);
+                        let max_val = args[1].as_float().unwrap_or(f64::INFINITY);
+                        let clipped = tensor.clip_scalar(min_val, max_val);
+                        Ok(Value::Tensor(Rc::new(RefCell::new(clipped))))
+                    }
+                    // 张量属性查询（配合护城河 D 内存预估）
+                    "numel" => Ok(Value::Int(tensor.data.len() as i64)),
+                    "nbytes" | "bytes" => {
+                        // 字节数 = 元素数 * dtype 字节数
+                        let n = tensor.data.len() as i64;
+                        let bytes_per_elem: i64 = match &tensor.data {
+                            crate::runtime::tensor::TensorData::F64(_) => 8,
+                            crate::runtime::tensor::TensorData::F32(_) => 4,
+                        };
+                        Ok(Value::Int(n * bytes_per_elem))
+                    }
+                    "ndim" | "rank" => Ok(Value::Int(tensor.data.ndim() as i64)),
+                    "shape_tensor" => {
+                        // 返回 shape 作为 f64 tensor（便于运行时查询）
+                        let shape: Vec<f64> = tensor.data.shape().iter().map(|&d| d as f64).collect();
+                        Ok(Value::Tensor(Rc::new(RefCell::new(
+                            Tensor::from_data(ArrayD::from_shape_vec(IxDyn(&[shape.len()]), shape).unwrap())
+                        ))))
+                    }
                     _ => Err(TenthError::RuntimeError {
                         message: format!("未知的张量方法: {}", method),
                     }),

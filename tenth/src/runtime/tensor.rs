@@ -257,7 +257,6 @@ impl Tensor {
             None => {
                 self.grad = Some(g_converted);
             }
-            _ => {}
         }
         Ok(())
     }
@@ -837,6 +836,14 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x.abs())),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| x.abs())),
+        }
+    }
+
+    /// 元素级裁剪到 [min_val, max_val]（用于梯度裁剪）。
+    pub fn clip_scalar(&self, min_val: f64, max_val: f64) -> Tensor {
+        match &self.data {
+            TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x.clamp(min_val, max_val))),
+            TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| (x as f64).clamp(min_val, max_val) as f32)),
         }
     }
 

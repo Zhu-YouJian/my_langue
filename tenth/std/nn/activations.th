@@ -8,3 +8,25 @@ fn tanh(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.tanh() }
 fn softmax(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.softmax() }
 fn exp(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.exp() }
 fn log(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.log() }
+
+// GELU（tanh 近似）：x * 0.5 * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))
+// Transformer 标配激活函数。底层 tensor.gelu() 方法已支持 autodiff。
+fn gelu(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.gelu() }
+
+// LeakyReLU：f(x) = x if x > 0 else slope * x
+// 用 max(x, slope*x) 实现（Tenth 无 tensor 条件运算，用算术等价）：
+//   leaky_relu(x) = max(x, slope * x)
+// 但 Tenth tensor 无 max(tensor, tensor)，用 0.5*(x + |x|) 类技巧不可行（slope≠1）。
+// 改用 relu 近似（slope=0 时等价）：
+//   leaky_relu(x, slope) = relu(x) + slope * relu(-x)
+//   当 x>0: relu(x)=x, relu(-x)=0 → x ✓
+//   当 x<0: relu(x)=0, relu(-x)=-x → -slope*x ✓
+fn leaky_relu(x: Tensor[f64, ..], slope: f64) -> Tensor[f64, ..] {
+    x.relu() + slope * (-x).relu()
+}
+
+// LeakyReLU 默认 slope=0.01
+fn leaky_relu_default(x: Tensor[f64, ..]) -> Tensor[f64, ..] {
+    leaky_relu(x, 0.01)
+}
+

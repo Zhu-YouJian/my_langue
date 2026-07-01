@@ -356,10 +356,12 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.sp += VALUE_SIZE as i32;
             }
             MethodCall(i, n) => {
-                self.sp -= (n as i32) * (VALUE_SIZE as i32);
+                // host_method_call 期望 receiver + n 个 args = n+1 个值
+                // sp 下移 (n+1)*VS，让 args_addr 指向 receiver
+                self.sp -= ((n + 1) as i32) * (VALUE_SIZE as i32);
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
-                self.call_hostcall_call("host_method_call", i as u64, n as u64, args_addr, out);
+                self.call_hostcall_call("host_method_call", i as u64, (n + 1) as u64, args_addr, out);
                 self.sp += VALUE_SIZE as i32;
             }
             Ret => {

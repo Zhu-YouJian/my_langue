@@ -1,0 +1,76 @@
+// 标准库使用示例 — 展示 nn / init / optim 新增功能
+// 运行：tenth run "Tenth实例/标准库使用示例/stdlib_demo.th"
+//
+// 覆盖：
+//   - nn::activations: gelu / leaky_relu_default
+//   - init::initializers: xavier_normal / he_normal
+//   - optim::adamw: adamw_step（解耦权重衰减）
+
+use std::nn::activations::gelu
+use std::nn::activations::leaky_relu_default
+use std::init::initializers::xavier_normal
+use std::init::initializers::he_normal
+
+fn main() {
+    println("=== 标准库使用示例 ===");
+    println("");
+
+    // ── 1. 激活函数：GELU vs LeakyReLU ──
+    println("── 1. 激活函数 ──");
+    let x = tensor[[-2.0, -1.0, 0.0, 1.0, 2.0]];
+    let y_gelu = gelu(x);
+    let y_leaky = leaky_relu_default(x);
+    println("  输入 x         = ", x);
+    println("  GELU(x)        = ", y_gelu);
+    println("  LeakyReLU(x)   = ", y_leaky);
+    println("");
+
+    // ── 2. 权重初始化器 ──
+    println("── 2. 权重初始化器 ──");
+    let w_xavier = xavier_normal(3, 4);
+    let w_he = he_normal(3, 4);
+    let sq_x = w_xavier * w_xavier;
+    let sq_h = w_he * w_he;
+    let mean_sq_x = sq_x.mean();
+    let mean_sq_h = sq_h.mean();
+    println("  Xavier normal [3,4]  均方值 = ", mean_sq_x, "（理论 2/7 ≈ 0.286）");
+    println("  He    normal [3,4]  均方值 = ", mean_sq_h, "（理论 2/3 ≈ 0.667）");
+    println("");
+
+    // ── 3. AdamW 优化器单步（解耦权重衰减，内联展示公式）──
+    // AdamW 与 Adam 的区别：权重衰减直接作用于参数，不污染梯度
+    println("── 3. AdamW 优化器单步（内联展示公式）──");
+    new_grad();
+    let w = param(he_normal(2, 3));
+    let target = tensor[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let diff = w - target;
+    let loss = (diff * diff).mean();
+    backward(loss);
+    stop_grad();
+
+    let gw = grad(w);
+    let lr = 0.01;
+    let beta1 = 0.9;
+    let beta2 = 0.999;
+    let eps = 1e-8;
+    let decay = 0.01;
+    // 一阶矩 / 二阶矩（首步从零起步）
+    let m = beta1 * zeros(2, 3) + (1.0 - beta1) * gw;
+    let vv = beta2 * zeros(2, 3) + (1.0 - beta2) * gw * gw;
+    // 偏差修正（t=1）
+    let m_hat = m / (1.0 - beta1);
+    let v_hat = vv / (1.0 - beta2);
+    // 解耦权重衰减：参数先衰减，再用动量更新
+    let decayed_w = w * (1.0 - lr * decay);
+    let new_w = decayed_w - lr * m_hat / (v_hat.sqrt() + eps);
+    println("  更新前 w 均值 = ", w.mean());
+    println("  更新后 w 均值 = ", new_w.mean());
+    println("  梯度 gw 均值 = ", gw.mean());
+    println("  （AdamW：参数先乘 (1 - lr*decay) 解耦衰减，再用动量更新）");
+    println("");
+
+    println("=== 要点 ===");
+    println("- GELU：Transformer 标配激活，比 ReLU 更平滑，处处可导");
+    println("- He 初始化：配合 ReLU/GELU，保持激活方差不消失");
+    println("- AdamW：解耦权重衰减，大学习率时比原 Adam 的 L2 正则更稳定");
+}

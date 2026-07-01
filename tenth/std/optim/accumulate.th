@@ -1,0 +1,35 @@
+// Gradient accumulation
+// 当 batch 太大无法一次装入显存时，将大 batch 拆成多个小 micro-batch，
+// 分别前向+反向累积梯度，最后统一更新参数。
+//
+// 用法（手动累积模式）：
+//   let accum_steps = 4;
+//   for step in 0..accum_steps {
+//       new_grad();
+//       let x_micro = ...;  // 取第 step 个 micro-batch
+//       let loss = forward(x_micro);
+//       backward(loss / accum_steps);  // 除以累积步数使梯度等价于大 batch 平均
+//       // 这里不调 zero_grad，让梯度累积
+//   };
+//   // 累积完成后，调 optimizer step 更新参数
+//   w = sgd_step(w, lr);
+//   zero_grad();
+//
+// 本模块提供便捷封装，减少样板代码。
+
+// ── f64 版本 ──
+
+// 累积辅助：将当前梯度按累积步数缩放后返回。
+// 用于 backward(loss) 后、optimizer step 前的梯度归一化。
+// 输入：参数 w（用于读 grad）、累积步数 accum_steps；返回：归一化后的梯度。
+fn accumulate_grad(w: Tensor[f64, ..], accum_steps: i64) -> Tensor[f64, ..] {
+    let gw = grad(w);
+    gw / accum_steps
+}
+
+// ── f32 版本 ──
+
+fn accumulate_grad_f32(w: Tensor[f64, ..], accum_steps: i64) -> Tensor[f64, ..] {
+    let gw = grad(w);
+    gw / accum_steps
+}

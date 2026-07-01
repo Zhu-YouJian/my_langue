@@ -1,0 +1,68 @@
+// AdamW optimizer
+// Adam with decoupled weight decay (Loshchilov & Hutter, 2019).
+//
+// 与 std::optim::adam::adam_step 的区别：
+//   - 原 Adam：weight decay 加在梯度上（gw = grad + decay * w），与 momentum 耦合
+//   - AdamW  ：weight decay 直接作用于参数（w = w * (1 - lr * decay)），与 momentum 解耦
+//
+// 解耦权重衰减对 Transformer 训练尤其重要（学习率大时原 Adam 的 L2 正则会被扭曲）。
+//
+// Usage:
+//   stop_grad();
+//   let gw = grad(w);
+//   let new_m = beta1 * m + (1.0 - beta1) * gw;
+//   let new_v = beta2 * v + (1.0 - beta2) * gw * gw;
+//   let m_hat = new_m / (1.0 - beta1_t);
+//   let v_hat = new_v / (1.0 - beta2_t);
+//   let new_w = w * (1.0 - lr * decay) - lr * m_hat / (v_hat.sqrt() + eps);  // 解耦
+//
+// Hyperparams: lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8, decay=0.01
+
+// Single AdamW step for one parameter tensor.
+// Returns (updated_w, updated_m, updated_v).
+fn adamw_step(
+    w: Tensor[f64, ..],
+    m: Tensor[f64, ..],
+    v: Tensor[f64, ..],
+    lr: f64,
+    beta1: f64,
+    beta2: f64,
+    eps: f64,
+    decay: f64,
+    beta1_t: f64,
+    beta2_t: f64,
+) -> (Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..]) {
+    let gw = grad(w);
+    let new_m = beta1 * m + (1.0 - beta1) * gw;
+    let new_v = beta2 * v + (1.0 - beta2) * gw * gw;
+    let m_hat = new_m / (1.0 - beta1_t);
+    let v_hat = new_v / (1.0 - beta2_t);
+    // 解耦权重衰减：直接衰减参数，不污染梯度
+    let decayed_w = w * (1.0 - lr * decay);
+    let new_w = decayed_w - lr * m_hat / (v_hat.sqrt() + eps);
+    (new_w, new_m, new_v)
+}
+
+// ── f32 版本 ──
+
+fn adamw_step_f32(
+    w: Tensor[f64, ..],
+    m: Tensor[f64, ..],
+    v: Tensor[f64, ..],
+    lr: f32,
+    beta1: f32,
+    beta2: f32,
+    eps: f32,
+    decay: f32,
+    beta1_t: f32,
+    beta2_t: f32,
+) -> (Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..]) {
+    let gw = grad(w);
+    let new_m = beta1 * m + (1.0f32 - beta1) * gw;
+    let new_v = beta2 * v + (1.0f32 - beta2) * gw * gw;
+    let m_hat = new_m / (1.0f32 - beta1_t);
+    let v_hat = new_v / (1.0f32 - beta2_t);
+    let decayed_w = w * (1.0f32 - lr * decay);
+    let new_w = decayed_w - lr * m_hat / (v_hat.sqrt() + eps);
+    (new_w, new_m, new_v)
+}

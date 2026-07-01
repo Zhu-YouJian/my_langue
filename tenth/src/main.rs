@@ -1039,6 +1039,45 @@ fn register_natives(vm: &mut Vm) {
         }).collect();
         Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec_f32(data, vec![rows, cols])))))
     });
+    // ── Tensor 构造函数（与 interpreter::natives 对齐，支持任意 shape）──
+    // 历史：这些函数仅在 interpreter 实现，JIT/VM 路径下返回 Unit。
+    // 补齐后 zeros(256,256,256).numel() 等才能在默认 tenth run 路径下正常工作。
+    vm.add_native("zeros".into(), |_vm, args| {
+        let shape: Vec<usize> = args.iter()
+            .map(|a| a.as_int().unwrap_or(1) as usize)
+            .collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::zeros(&shape)))))
+    });
+    vm.add_native("ones".into(), |_vm, args| {
+        let shape: Vec<usize> = args.iter()
+            .map(|a| a.as_int().unwrap_or(1) as usize)
+            .collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::ones(&shape)))))
+    });
+    vm.add_native("rand".into(), |_vm, args| {
+        let shape: Vec<usize> = args.iter()
+            .map(|a| a.as_int().unwrap_or(1) as usize)
+            .collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::rand(&shape)))))
+    });
+    vm.add_native("zeros_f32".into(), |_vm, args| {
+        let shape: Vec<usize> = args.iter()
+            .map(|a| a.as_int().unwrap_or(1) as usize)
+            .collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::zeros_f32(&shape)))))
+    });
+    vm.add_native("ones_f32".into(), |_vm, args| {
+        let shape: Vec<usize> = args.iter()
+            .map(|a| a.as_int().unwrap_or(1) as usize)
+            .collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::ones_f32(&shape)))))
+    });
+    vm.add_native("rand_f32".into(), |_vm, args| {
+        let shape: Vec<usize> = args.iter()
+            .map(|a| a.as_int().unwrap_or(1) as usize)
+            .collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::rand_f32(&shape)))))
+    });
     vm.add_native("HashMap::new".into(), |_vm, _args| {
         Ok(Value::Map(Rc::new(RefCell::new(std::collections::HashMap::new()))))
     });

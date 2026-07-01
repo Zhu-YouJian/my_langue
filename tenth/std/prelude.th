@@ -55,7 +55,7 @@
 // ── Std lib (use path::to::function) ──
 //   std::nn::linear::linear
 //   std::nn::loss::mse, mse_loss, binary_cross_entropy, l1_loss
-//   std::nn::activations::relu, sigmoid, tanh, softmax, exp, log
+//   std::nn::activations::relu, sigmoid, tanh, softmax, exp, log, gelu, leaky_relu, leaky_relu_default
 //   std::nn::dropout::dropout<T>                      // 泛型（f64/f32 通吃）
 //   std::nn::batchnorm::batchnorm<T>
 //   std::nn::conv::conv2d
@@ -68,8 +68,11 @@
 //   std::nn::transformer::transformer_encoder_block<T>, make_transformer_block_params
 //   std::optim::sgd::sgd_step, sgd_step_f32, sgd_momentum, sgd_momentum_f32, sgd_weight_decay, sgd_weight_decay_f32
 //   std::optim::adam::adam_step, adam_step_f32
+//   std::optim::adamw::adamw_step, adamw_step_f32       // 解耦权重衰减（Transformer 训练推荐）
 //   std::optim::adagrad::adagrad_step, adagrad_step_f32
 //   std::optim::rmsprop::rmsprop_step, rmsprop_step_f32
+//   std::optim::clip::clip_grad_by_value, clip_grad_by_norm, clip_grad_by_value_f32, clip_grad_by_norm_f32  // 梯度裁剪
+//   std::optim::accumulate::accumulate_grad, accumulate_grad_f32  // 梯度累积辅助
 //   std::data::dataloader::new, has_next, next_batch, reset, num_batches
 //   std::data::mnist::parse_images, parse_labels, one_hot, normalize_pixel, read_i32_be
 //   std::utils::serialization::save_model, load_model, save_checkpoint

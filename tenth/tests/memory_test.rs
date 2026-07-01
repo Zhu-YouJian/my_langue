@@ -174,6 +174,7 @@ mod interpreter_limits_tests {
             enums: HashMap::new(),
             trait_defs: HashMap::new(),
             trait_impls: HashMap::new(),
+            warnings: vec![],
         }
     }
 

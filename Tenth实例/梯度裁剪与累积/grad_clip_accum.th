@@ -1,0 +1,58 @@
+// 梯度裁剪示例
+// 运行：tenth run "Tenth实例/梯度裁剪与累积/grad_clip_accum.th"
+//
+// 覆盖：
+//   - std::optim::clip::clip_grad_by_value   逐元素裁剪到 [-max_val, max_val]
+//   - 梯度累积概念（注释说明）
+
+use std::optim::clip::clip_grad_by_value
+
+fn main() {
+    println("=== 梯度裁剪示例 ===");
+    println("");
+
+    // ── 1. 按值裁剪：逐元素截断到 [-max_val, max_val] ──
+    println("── 1. 按值裁剪（clip_grad_by_value）──");
+    // 模拟训练爆炸时的梯度：含异常大值
+    let gw = tensor[[0.5, -0.3, 5.0, -8.0, 0.2]];
+    println("  原始梯度         = ", gw);
+    println("  按值裁剪 [-1, 1] = ", clip_grad_by_value(gw, 1.0));
+    println("  按值裁剪 [-3, 3] = ", clip_grad_by_value(gw, 3.0));
+    println("  按值裁剪 [-0.5, 0.5] = ", clip_grad_by_value(gw, 0.5));
+    println("");
+
+    // ── 2. 梯度裁剪在训练中的用法（伪代码）──
+    println("── 2. 训练中的用法 ──");
+    println("  // 标准训练循环");
+    println("  new_grad();");
+    println("  w = param(w);");
+    println("  let loss = forward(x, w);");
+    println("  backward(loss);");
+    println("  let gw = grad(w);");
+    println("  // 裁剪梯度，防止爆炸");
+    println("  let gw_clip = clip_grad_by_value(gw, 5.0);");
+    println("  w = w - lr * gw_clip;");
+    println("");
+
+    // ── 3. 梯度累积概念 ──
+    println("── 3. 梯度累积概念（显存不足时）──");
+    println("  当 batch 太大装不下显存，拆成 accum_steps 个 micro-batch：");
+    println("    new_grad();");
+    println("    for step in 0..accum_steps {");
+    println("        w = param(w);");
+    println("        let x_micro = ...;  // 第 step 个 micro-batch");
+    println("        let loss = forward(x_micro, w);");
+    println("        backward(loss / accum_steps);  // 除以累积步数");
+    println("    };");
+    println("    // 累积完成，统一更新");
+    println("    let gw = grad(w);");
+    println("    w = w - lr * clip_grad_by_value(gw, 5.0);");
+    println("    zero_grad();");
+    println("");
+
+    println("=== 要点 ===");
+    println("- 按值裁剪：粗暴截断到 [-max, max]，简单但可能改变梯度方向");
+    println("- 按范数裁剪：保留方向仅缩放幅度（gw *= max_norm / ||gw||_2）");
+    println("- 梯度累积：使 4 个 micro-batch=1 等价于 1 个 batch=4，");
+    println("  关键是 backward(loss / accum_steps) 让累积梯度等于大 batch 平均");
+}

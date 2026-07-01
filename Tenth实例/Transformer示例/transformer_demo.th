@@ -1,0 +1,104 @@
+// Transformer 前向传播示例（合成数据）
+// 运行：tenth run "Tenth实例/Transformer示例/transformer_demo.th"
+//
+// 展示 Transformer Encoder 的核心数学操作：
+//   1. QKV 投影：Q = X @ W_q, K = X @ W_k, V = X @ W_v
+//   2. Scaled Dot-Product Attention：scores = Q @ K^T / sqrt(d_k), weights = softmax(scores), attn = weights @ V
+//   3. 输出投影：out = attn @ W_o
+//   4. 残差连接：out = X + out
+//   5. Feed-Forward：FFN(x) = GELU(x @ W1 + b1) @ W2 + b2
+//   6. 残差连接：out = out + FFN(out)
+//
+// 用合成数据（seq_len=4, d_model=8），演示前向传播 + 单步 MSE loss。
+// 不做完整训练循环（JIT 路径下参数更新后有已知限制）。
+
+use std::nn::activations::gelu
+
+fn main() {
+    println("=== Transformer 前向传播示例 ===");
+    println("");
+
+    // ── 超参数 ──
+    let seq_len = 4;
+    let d_model = 8;
+    let d_ff = 16;
+
+    // ── 1. 合成输入序列 ──
+    println("── 1. 合成输入序列 ──");
+    let x = randn(seq_len, d_model);
+    println("  输入 x shape = [", seq_len, ", ", d_model, "]");
+    println("  x 均值 = ", x.mean());
+    println("");
+
+    // ── 2. Self-Attention ──
+    println("── 2. Self-Attention ──");
+    // QKV 投影权重（d_model × d_model）
+    let w_q = randn(d_model, d_model) * 0.3;
+    let w_k = randn(d_model, d_model) * 0.3;
+    let w_v = randn(d_model, d_model) * 0.3;
+    let w_o = randn(d_model, d_model) * 0.3;
+
+    // Q = X @ W_q, K = X @ W_k, V = X @ W_v
+    let q = x.matmul(w_q);
+    let k = x.matmul(w_k);
+    let v = x.matmul(w_v);
+    println("  Q = X @ W_q  shape = [", seq_len, ", ", d_model, "]");
+
+    // scores = Q @ K^T / sqrt(d_model)
+    let kT = k.transpose();
+    let scores = q.matmul(kT);
+    let scale = 1.0 / sqrt(d_model);
+    let scaled_scores = scores * scale;
+    println("  scores = Q @ K^T / sqrt(d_model)  shape = [", seq_len, ", ", seq_len, "]");
+
+    // weights = softmax(scores)
+    let weights = scaled_scores.softmax();
+    println("  weights = softmax(scores)  行和应接近 1.0");
+    let row0_sum = weights[0].sum();
+    println("  weights[0] 行和 = ", row0_sum);
+    println("");
+
+    // attn = weights @ V
+    let attn = weights.matmul(v);
+    // 输出投影 + 残差
+    let attn_out = attn.matmul(w_o);
+    let x_after_attn = x + attn_out;
+    println("  attn_out = weights @ V @ W_o");
+    println("  x_after_attn = x + attn_out  (残差连接)");
+    println("");
+
+    // ── 3. Feed-Forward Network ──
+    println("── 3. Feed-Forward Network ──");
+    let w1 = randn(d_model, d_ff) * 0.3;
+    let b1 = zeros(d_ff);
+    let w2 = randn(d_ff, d_model) * 0.3;
+    let b2 = zeros(d_model);
+
+    // FFN(x) = GELU(x @ W1 + b1) @ W2 + b2
+    let hidden = x_after_attn.matmul(w1) + b1;
+    let activated = gelu(hidden);
+    let ffn_out = activated.matmul(w2) + b2;
+    let x_final = x_after_attn + ffn_out;
+    println("  hidden = x @ W1 + b1  shape = [", seq_len, ", ", d_ff, "]");
+    println("  activated = GELU(hidden)");
+    println("  ffn_out = activated @ W2 + b2  shape = [", seq_len, ", ", d_model, "]");
+    println("  x_final = x_after_attn + ffn_out  (残差连接)");
+    println("");
+
+    // ── 4. 单步 MSE Loss（演示用，不做训练循环）──
+    println("── 4. 单步 MSE Loss ──");
+    // 目标：与零张量的 MSE（演示用）
+    let target = zeros(seq_len, d_model);
+    let diff = x_final - target;
+    let loss = (diff * diff).mean();
+    println("  x_final 均值 = ", x_final.mean());
+    println("  MSE loss = ", loss);
+    println("");
+
+    println("=== 要点 ===");
+    println("- Self-Attention：Q@K^T/sqrt(d_k) → softmax → @V，捕获序列内 token 间关系");
+    println("- 残差连接：x + sublayer(x)，缓解深层网络梯度消失");
+    println("- FFN：GELU(x@W1+b1)@W2+b2，逐位置非线性变换");
+    println("- 完整 Transformer = 多层 [Attention + FFN + LayerNorm + Residual]");
+    println("- 本示例展示单层前向传播，训练需循环调用 + backward + optimizer step");
+}
