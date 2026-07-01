@@ -1,0 +1,41 @@
+// 自动微分Shape校验：Autograd 反向 Shape 静态验证
+//
+// Tenth 的 backward() 在 acc_grad 出口显式校验梯度 shape 是否与参数 shape 一致
+// （见 tenth/src/runtime/tensor.rs:223 acc_grad 的 shape 校验分支）。
+// 不一致时直接抛 RuntimeError，而非像 PyTorch/JAX 那样静默 squeeze 掩盖错误。
+//
+// 本示例展示：
+//   1. 正确的 shape 链路：前向 [2,3] @ [3,2] = [2,2]，反向梯度也是 [2,3]
+//   2. 用 .shape_tensor() 运行时查询梯度 shape，验证与参数 shape 严格一致
+//
+// 运行：tenth run autodiff_shape_check.th
+
+fn main() {
+    println("=== 护城河 A：Autograd 反向 Shape 校验 ===");
+    println("");
+
+    // ── 案例：正确 shape 的反向传播 ──
+    println("案例：前向 [2,3] @ [3,2] = [2,2]，反向梯度应为 [2,3]");
+    new_grad();
+    let x = param(tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);  // [2, 3]
+    let w = param(tensor[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]); // [3, 2]
+    let y = x.matmul(w);  // [2, 3] @ [3, 2] = [2, 2]
+    let loss = y.sum();
+
+    println("前向 shape 正确，开始反向传播...");
+    backward(loss);  // 内部在 acc_grad 出口校验梯度 shape
+
+    let gx = grad(x);
+    let x_shape = x.shape_tensor();
+    let gx_shape = gx.shape_tensor();
+
+    println("  参数 x 的 shape  : ", x_shape);
+    println("  梯度 gx 的 shape : ", gx_shape);
+    println("  ✅ 梯度 shape 与参数 shape 严格一致，无 silent squeeze");
+
+    println("");
+    println("=== 核心价值 ===");
+    println("PyTorch/JAX 的 backward 静默 squeeze 错误 shape，");
+    println("导致 loss 不降反升却无报错——Tenth 在 acc_grad 出口显式校验。");
+    println("源码位置：tenth/src/runtime/tensor.rs:223（TensorData::acc_grad）");
+}

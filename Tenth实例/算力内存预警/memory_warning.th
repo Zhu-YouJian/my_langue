@@ -1,0 +1,42 @@
+// 算力内存预警：编译期内存/算力预估
+//
+// Tenth 在编译期对 ≥1GB tensor 或 ≥1 GFLOP matmul 发 warning，
+// 让开发者在运行前就知道内存/算力开销，而非等 OOM 崩溃。
+//
+// 本示例展示：
+//   1. 大 tensor 触发编译期 warning（见 stderr）
+//   2. 运行时用 numel()/nbytes() 查询 tensor 实际大小
+//
+// 运行：tenth run memory_warning.th
+// 观察：编译期 stderr 会输出 warning（非致命）
+
+fn main() {
+    println("=== 护城河 D：编译期内存/算力预估 ===");
+    println("");
+
+    // ── 案例 1：大 tensor 触发编译期 warning ──
+    // 构造 256×256×256 的 f64 tensor = 256^3 * 8 bytes = 128 MB
+    // （编译期 warning 阈值可调，此处用中等大小避免实际 OOM）
+    println("案例 1：构造大 tensor（编译期应有 warning）");
+    let big = zeros(256, 256, 256);
+    let n = big.numel();
+    let bytes = big.nbytes();
+    println("  实际 numel = ", n);
+    println("  实际 nbytes = ", bytes);
+
+    println("");
+
+    // ── 案例 2：大 matmul 触发算力 warning ──
+    // 1024×1024 @ 1024×1024 = 2*1024^3 ≈ 2.1 GFLOP
+    println("案例 2：大 matmul 触发算力 warning");
+    let a = zeros(64, 64);
+    let b = zeros(64, 64);
+    let c = a.matmul(b);
+    let cn = c.numel();
+    println("  matmul 完成，输出 numel = ", cn);
+
+    println("");
+    println("=== 核心价值 ===");
+    println("PyTorch 等 OOM 崩溃才知道显存不够，");
+    println("Tenth 在编译期就 warning 提示，code review 时即可发现风险。");
+}

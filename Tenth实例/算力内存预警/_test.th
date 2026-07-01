@@ -1,0 +1,20 @@
+fn main() {
+    // 测试 1: tensor literal + numel + 单参数 println
+    let t = tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+    let n1 = t.numel();
+    println(n1);
+
+    // 测试 2: zeros + numel + 单参数 println
+    let z = zeros(3, 4);
+    let n2 = z.numel();
+    println(n2);
+
+    // 测试 3: zeros + numel + 双参数 println
+    let z2 = zeros(2, 3);
+    let n3 = z2.numel();
+    println("n3 = ", n3);
+
+    // 测试 4: tensor literal + numel + 双参数 println
+    let n4 = t.numel();
+    println("n4 = ", n4);
+}
