@@ -66,6 +66,9 @@ pub struct Interpreter {
     /// H-2: 文件系统沙箱。`Some` 时所有文件 I/O 原生函数必须经过校验。
     /// `None` 表示无沙箱（默认，向后兼容）。
     pub fs_sandbox: Option<crate::runtime::limits::FsSandbox>,
+    /// 护城河 F：上一次 backward 失败时的根因说明列表（由 formal_explain 生成）。
+    /// 由 `explain_error()` native 读取并清空。
+    pub last_explanation: Vec<String>,
 }
 
 impl Interpreter {
@@ -85,6 +88,7 @@ impl Interpreter {
             deadline_ms: None,
             tick_counter: 0,
             fs_sandbox: None,
+            last_explanation: Vec::new(),
         }
     }
 
@@ -230,6 +234,15 @@ impl Interpreter {
             Value::FnRef {
                 name: "grad".to_string(),
                 params: vec![("param".to_string(), Type::Unknown)],
+                return_type: Type::Unknown,
+            },
+        );
+        // 护城河 F：explain_error() — 返回上一次 backward 失败的根因说明列表
+        self.current_scope().insert(
+            "explain_error".to_string(),
+            Value::FnRef {
+                name: "explain_error".to_string(),
+                params: vec![],
                 return_type: Type::Unknown,
             },
         );

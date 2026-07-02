@@ -701,14 +701,53 @@ fn register_natives(vm: &mut Vm) {
             if let Some(ref tape) = vm.tape {
                 let loss_id = t.borrow().tape_id
                     .ok_or_else(|| tenth::error::TenthError::RuntimeError { message: "backward(): 张量没有 tape_id".into() })?;
-                tape.backward(loss_id)?;
-                Ok(Value::Unit)
+                // 护城河 F：包裹 backward 错误，附加 formal_explain 根因分析
+                match tape.backward(loss_id) {
+                    Ok(()) => Ok(Value::Unit),
+                    Err(e) => {
+                        // 计算 formal_explain 根因候选
+                        let causes = tape.formal_explain(loss_id, &[], &[]);
+                        let explanations: Vec<String> = causes.iter().map(|c| c.explanation.clone()).collect();
+                        // 存到 vm.last_explanation，供 explain_error() native 读取
+                        vm.last_explanation = explanations.clone();
+                        // 构造 ShapeMismatch 错误（携带 tape 上下文 + 根因消息）
+                        let context = tenth::error::TapeErrorContext {
+                            tape_node_id: loss_id,
+                            op: "backward".to_string(),
+                            expected_shape: Vec::new(),
+                            actual_shape: Vec::new(),
+                        };
+                        let root_cause_msg = if explanations.is_empty() {
+                            format!("{}", e)
+                        } else {
+                            format!(
+                                "{}\n根因分析（formal_explain）：\n{}",
+                                e,
+                                explanations.iter()
+                                    .map(|s| format!("  - {}", s))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            )
+                        };
+                        Err(tenth::error::TenthError::ShapeMismatch {
+                            context,
+                            message: root_cause_msg,
+                        })
+                    }
+                }
             } else {
                 Err(tenth::error::TenthError::RuntimeError { message: "未调用 new_grad()".into() })
             }
         } else {
             Err(tenth::error::TenthError::RuntimeError { message: "backward() 需要一个张量参数".into() })
         }
+    });
+    // 护城河 F：explain_error() — 返回上一次 backward 失败的根因说明列表
+    // 用户在 try-catch backward 错误后调用此 native 获取详细分析。
+    vm.add_native("explain_error".into(), |vm, _args| {
+        let explanations = std::mem::take(&mut vm.last_explanation);
+        let values: Vec<Value> = explanations.into_iter().map(Value::String).collect();
+        Ok(Value::Vec(Rc::new(RefCell::new(values))))
     });
     vm.add_native("grad".into(), |_vm, args| {
         if let Some(Value::Tensor(t)) = args.first() {

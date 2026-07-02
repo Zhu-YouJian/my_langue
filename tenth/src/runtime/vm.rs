@@ -179,11 +179,14 @@ pub struct Vm {
     last_error: Option<String>,
     /// Index of the chunk currently being executed by JIT (for string lookup).
     pub current_chunk_idx: usize,
+    /// 护城河 F：上一次 backward 失败时的根因说明列表（由 formal_explain 生成）。
+    /// 由 `explain_error()` native 读取并清空。
+    pub last_explanation: Vec<String>,
 }
 
 impl Vm {
     pub fn new() -> Self {
-        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new(), tape: None, recording: false, step_budget: None, deadline_ms: None, fs_sandbox: None, jit_ctx: None, last_error: None, current_chunk_idx: 0 }
+        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new(), tape: None, recording: false, step_budget: None, deadline_ms: None, fs_sandbox: None, jit_ctx: None, last_error: None, current_chunk_idx: 0, last_explanation: Vec::new() }
     }
 
     // ── JIT accessors ──────────────────────────────────────────────────────

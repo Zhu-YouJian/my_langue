@@ -1,6 +1,31 @@
 use thiserror::Error;
 use crate::runtime::value::Value;
 
+/// 形状错误上下文（护城河 F：T2 FormalExplain 动态层）。
+/// 由 autodiff backward 在抛出 ShapeMismatch 时填充，
+/// 携带报错节点的 id、算子名与期望/实际 shape。
+#[derive(Debug, Clone)]
+pub struct TapeErrorContext {
+    /// 报错节点 v_err 的 tape node id。
+    pub tape_node_id: usize,
+    /// 算子名（如 "MatMul" / "Add" / "Conv2D"）。
+    pub op: String,
+    /// 期望的 shape（若未知则为空）。
+    pub expected_shape: Vec<usize>,
+    /// 实际的 shape（若未知则为空）。
+    pub actual_shape: Vec<usize>,
+}
+
+impl std::fmt::Display for TapeErrorContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "节点 #{} {}", self.tape_node_id, self.op)?;
+        if !self.expected_shape.is_empty() || !self.actual_shape.is_empty() {
+            write!(f, "（期望 {:?} / 实际 {:?}）", self.expected_shape, self.actual_shape)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Error, Debug, Clone)]
 pub enum TenthError {
     #[error("第 {line} 行第 {col} 列：词法错误 — {message}")]
@@ -26,6 +51,14 @@ pub enum TenthError {
 
     #[error("运行时错误 — {message}")]
     RuntimeError { message: String },
+
+    /// 形状错误（护城河 F：T2 FormalExplain 动态层）。
+    /// 携带 tape 上下文与根因分析说明，由 autodiff backward 抛出。
+    #[error("形状错误（{context}）— {message}")]
+    ShapeMismatch {
+        context: TapeErrorContext,
+        message: String,
+    },
 
     #[error("输入意外结束")]
     UnexpectedEof,

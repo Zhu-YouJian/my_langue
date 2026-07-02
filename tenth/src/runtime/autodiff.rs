@@ -101,6 +101,17 @@ impl Tape {
     /// Number of recorded nodes.
     pub fn len(&self) -> usize { self.nodes.len() }
 
+    /// 按节点 id 取得 TapeNode 引用（护城河 F：relation_debugger 使用）。
+    /// 节点 id 与 self.nodes 索引对齐（不变量：node.id == self.nodes 索引）。
+    pub fn node(&self, id: usize) -> Option<&TapeNode> {
+        self.nodes.get(id)
+    }
+
+    /// 取得所有节点（只读视图，护城河 F：relation_debugger 使用）。
+    pub fn nodes(&self) -> &[TapeNode] {
+        &self.nodes
+    }
+
     /// Register a leaf (parameter) tensor.  Returns the node id.
     pub fn input(&mut self, tensor: Rc<RefCell<Tensor>>) -> usize {
         let id = self.next_id();

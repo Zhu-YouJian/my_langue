@@ -172,13 +172,49 @@ impl super::Interpreter {
             "backward" => {
                 if let Some(Value::Tensor(loss)) = args.first() {
                     if let (Some(tape), Some(loss_id)) = (&self.tape, loss.borrow().tape_id) {
-                        tape.backward(loss_id)?;
+                        // 护城河 F：包裹 backward 错误，附加 formal_explain 根因分析
+                        match tape.backward(loss_id) {
+                            Ok(()) => return Ok(Some(Value::Unit)),
+                            Err(e) => {
+                                let causes = tape.formal_explain(loss_id, &[], &[]);
+                                let explanations: Vec<String> = causes.iter().map(|c| c.explanation.clone()).collect();
+                                self.last_explanation = explanations.clone();
+                                let context = crate::error::TapeErrorContext {
+                                    tape_node_id: loss_id,
+                                    op: "backward".to_string(),
+                                    expected_shape: Vec::new(),
+                                    actual_shape: Vec::new(),
+                                };
+                                let root_cause_msg = if explanations.is_empty() {
+                                    format!("{}", e)
+                                } else {
+                                    format!(
+                                        "{}\n根因分析（formal_explain）：\n{}",
+                                        e,
+                                        explanations.iter()
+                                            .map(|s| format!("  - {}", s))
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    )
+                                };
+                                return Err(TenthError::ShapeMismatch {
+                                    context,
+                                    message: root_cause_msg,
+                                });
+                            }
+                        }
                     }
                     return Ok(Some(Value::Unit));
                 }
                 return Err(TenthError::RuntimeError {
                     message: "backward() 期望一个张量参数".into(),
                 });
+            }
+            // 护城河 F：explain_error() — 返回上一次 backward 失败的根因说明列表
+            "explain_error" => {
+                let explanations = std::mem::take(&mut self.last_explanation);
+                let values: Vec<Value> = explanations.into_iter().map(Value::String).collect();
+                return Ok(Some(Value::Vec(Rc::new(RefCell::new(values)))));
             }
             "stop_grad" => {
                 self.recording = false;

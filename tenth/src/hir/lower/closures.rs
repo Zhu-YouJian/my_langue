@@ -25,6 +25,7 @@ impl Lowerer {
                     | "compile_host" | "compile_program" | "write_bytes"
                     | "start_grad" | "new_grad" | "stop_grad"
                     | "param" | "backward" | "grad" | "zero_grad"
+                    | "explain_error"
                     | "cross_entropy"
                     | "select"
                     | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
