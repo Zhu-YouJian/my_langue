@@ -746,6 +746,33 @@ fn register_natives(vm: &mut Vm) {
         }
         Ok(Value::Unit)
     });
+    vm.add_native("select".into(), |vm, args| {
+        // select(cond, then, else) — 逐元素条件选择原语（论文 T47/T48/T50）
+        // 支持广播；cond 非 0 视为 true。可微：d_then = grad*mask, d_else = grad*(1-mask)
+        if args.len() < 3 {
+            return Err(tenth::error::TenthError::RuntimeError {
+                message: "select(cond, then, else) 期望三个参数".into(),
+            });
+        }
+        let (cond, then, else_) = match (&args[0], &args[1], &args[2]) {
+            (Value::Tensor(c), Value::Tensor(t), Value::Tensor(e)) => (c.clone(), t.clone(), e.clone()),
+            _ => return Err(tenth::error::TenthError::RuntimeError {
+                message: "select(cond, then, else) 期望三个张量参数".into(),
+            }),
+        };
+        let result_tensor = Tensor::select(&cond.borrow(), &then.borrow(), &else_.borrow())
+            .map_err(|msg| tenth::error::TenthError::RuntimeError { message: msg })?;
+        let result = Rc::new(RefCell::new(result_tensor));
+        if vm.recording {
+            if let Some(ref mut tape) = vm.tape {
+                let then_id = then.borrow().tape_id;
+                let else_id = else_.borrow().tape_id;
+                let node_id = tape.select(then_id, else_id, cond.clone(), then.clone(), else_.clone(), result.clone());
+                result.borrow_mut().tape_id = Some(node_id);
+            }
+        }
+        Ok(Value::Tensor(result))
+    });
     vm.add_native("cross_entropy".into(), |vm, args| {
         if args.len() < 2 {
             return Err(tenth::error::TenthError::RuntimeError { message: "cross_entropy(logits, target) 期望两个张量".into() });
@@ -1144,6 +1171,389 @@ fn register_natives(vm: &mut Vm) {
             }
         } else {
             Err(tenth::error::TenthError::RuntimeError { message: "tensor_from_vec(vec, rows, cols) 期望 3 个参数".into() })
+        }
+    });
+
+    // ── 论文 T37 修复第二批：补齐 VM 缺失的 17 项 native（与 interpreter::natives 对齐）──
+    // 历史：这些 native 仅在解释器实现，VM 路径下返回 Unit（DX/ML 训练关键路径断裂）。
+
+    // 1. to_string — 值转字符串（与解释器 value_to_string 对齐到 Display 实现）
+    vm.add_native("to_string".into(), |_vm, args| {
+        if let Some(arg) = args.first() {
+            Ok(Value::String(format!("{}", arg)))
+        } else {
+            Ok(Value::String(String::new()))
+        }
+    });
+    // 2. type_name — 值类型名
+    vm.add_native("type_name".into(), |_vm, args| {
+        if let Some(arg) = args.first() {
+            let tn = match arg {
+                Value::Int(_) => "int",
+                Value::Float(_) => "float",
+                Value::Float32(_) => "float",
+                Value::Bool(_) => "bool",
+                Value::String(_) => "string",
+                Value::Unit => "unit",
+                Value::Vec(_) => "vec",
+                Value::Array(_) => "array",
+                Value::Map(_) => "map",
+                Value::Tuple(_) => "tuple",
+                Value::Closure { .. } => "closure",
+                Value::FnRef { .. } => "fn",
+                _ => "unknown",
+            };
+            Ok(Value::String(tn.to_string()))
+        } else {
+            Ok(Value::String("unknown".to_string()))
+        }
+    });
+    // 3. with_step_limit(limit, fn) — 步数预算内执行闭包
+    //    VM 中闭包以 Value::FnRef 表示（Op::MakeClosure 创建），可通过 call_with_args 调用。
+    vm.add_native("with_step_limit".into(), |vm, args| {
+        if args.len() < 2 {
+            return Err(tenth::error::TenthError::RuntimeError {
+                message: "with_step_limit(limit, fn) 需要 2 个参数".into(),
+            });
+        }
+        let limit = args[0].as_int().ok_or_else(|| tenth::error::TenthError::RuntimeError {
+            message: "with_step_limit 的第一个参数必须是整数步数".into(),
+        })?;
+        let saved_budget = vm.step_budget;
+        let saved_deadline = vm.deadline_ms;
+        vm.step_budget = Some(limit.max(0) as u64);
+        vm.deadline_ms = None;
+        let result = match &args[1] {
+            Value::FnRef { name, .. } => vm.call_with_args(name, &[]),
+            // VM 无法在 native 内执行 tree-walk 闭包；与解释器 Timeout 语义一致返回 Unit。
+            _ => {
+                vm.step_budget = saved_budget;
+                vm.deadline_ms = saved_deadline;
+                return Ok(Value::Unit);
+            }
+        };
+        vm.step_budget = saved_budget;
+        vm.deadline_ms = saved_deadline;
+        match result {
+            Ok(v) => Ok(v),
+            Err(tenth::error::TenthError::Timeout { .. }) => Ok(Value::Unit),
+            Err(e) => Err(e),
+        }
+    });
+    // 4. with_timeout_ms(ms, fn) — 毫秒截止期内执行闭包
+    vm.add_native("with_timeout_ms".into(), |vm, args| {
+        if args.len() < 2 {
+            return Err(tenth::error::TenthError::RuntimeError {
+                message: "with_timeout_ms(ms, fn) 需要 2 个参数".into(),
+            });
+        }
+        let ms = args[0].as_int().ok_or_else(|| tenth::error::TenthError::RuntimeError {
+            message: "with_timeout_ms 的第一个参数必须是整数毫秒".into(),
+        })?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let saved_budget = vm.step_budget;
+        let saved_deadline = vm.deadline_ms;
+        // 与解释器一致：用大步数预算作为 tick 载体，deadline 做实际时间比较。
+        vm.step_budget = Some(u64::MAX);
+        vm.deadline_ms = Some(now + (ms.max(0) as u128));
+        let result = match &args[1] {
+            Value::FnRef { name, .. } => vm.call_with_args(name, &[]),
+            _ => {
+                vm.step_budget = saved_budget;
+                vm.deadline_ms = saved_deadline;
+                return Ok(Value::Unit);
+            }
+        };
+        vm.step_budget = saved_budget;
+        vm.deadline_ms = saved_deadline;
+        match result {
+            Ok(v) => Ok(v),
+            Err(tenth::error::TenthError::Timeout { .. }) => Ok(Value::Unit),
+            Err(e) => Err(e),
+        }
+    });
+    // 5. is_timeout(result) — 判断是否超时哨兵（Unit）
+    vm.add_native("is_timeout".into(), |_vm, args| {
+        if let Some(arg) = args.first() {
+            Ok(Value::Bool(matches!(arg, Value::Unit)))
+        } else {
+            Ok(Value::Bool(false))
+        }
+    });
+    // 6. start_grad — 新建 Tape（与 new_grad 同义）
+    vm.add_native("start_grad".into(), |vm, _args| {
+        vm.tape = Some(Tape::new());
+        vm.recording = true;
+        Ok(Value::Unit)
+    });
+    // 7. f64_bits — f64 → i64 位表示
+    vm.add_native("f64_bits".into(), |_vm, args| {
+        if let Some(arg) = args.first() {
+            let f = arg.as_float().ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                message: "f64_bits() 期望一个 f64 参数".into(),
+            })?;
+            Ok(Value::Int(f.to_bits() as i64))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "f64_bits() 期望 1 个参数".into() })
+        }
+    });
+    // 8. f64_from_bits — i64 → f64
+    vm.add_native("f64_from_bits".into(), |_vm, args| {
+        if let Some(arg) = args.first() {
+            let n = arg.as_int().ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                message: "f64_from_bits() 期望一个 i64 参数".into(),
+            })?;
+            Ok(Value::Float(f64::from_bits(n as u64)))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "f64_from_bits() 期望 1 个参数".into() })
+        }
+    });
+    // 9-12. 标量数学（sin/cos/ln/pow）— 与解释器一致，仅操作 Float（as_float 自动提升 Int/Float32）
+    vm.add_native("sin".into(), |_vm, args| {
+        if let Some(arg) = args.first() {
+            let n = arg.as_float().ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                message: "sin() 期望一个数值参数".into(),
+            })?;
+            Ok(Value::Float(n.sin()))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "sin() 期望 1 个参数".into() })
+        }
+    });
+    vm.add_native("cos".into(), |_vm, args| {
+        if let Some(arg) = args.first() {
+            let n = arg.as_float().ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                message: "cos() 期望一个数值参数".into(),
+            })?;
+            Ok(Value::Float(n.cos()))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "cos() 期望 1 个参数".into() })
+        }
+    });
+    vm.add_native("ln".into(), |_vm, args| {
+        if let Some(arg) = args.first() {
+            let n = arg.as_float().ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                message: "ln() 期望一个数值参数".into(),
+            })?;
+            if n <= 0.0 {
+                return Err(tenth::error::TenthError::RuntimeError {
+                    message: "ln() 参数必须 > 0".into(),
+                });
+            }
+            Ok(Value::Float(n.ln()))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "ln() 期望 1 个参数".into() })
+        }
+    });
+    vm.add_native("pow".into(), |_vm, args| {
+        if args.len() >= 2 {
+            let base = args[0].as_float().ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                message: "pow() 期望数值参数".into(),
+            })?;
+            let exp = args[1].as_float().ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                message: "pow() 期望数值参数".into(),
+            })?;
+            Ok(Value::Float(base.powf(exp)))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError { message: "pow() 期望 2 个参数".into() })
+        }
+    });
+    // 13. save_weights(path, tensors) — 张量列表序列化到二进制文件（ML 训练关键路径）
+    //     二进制格式与解释器完全一致：i32 num_tensors, [i32 ndim, i32×ndim shape, f64×nel data]（LE）
+    vm.add_native("save_weights".into(), |vm, args| {
+        if args.len() >= 2 {
+            if let Value::String(path) = &args[0] {
+                // H-2: 沙箱校验
+                let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                    match sb.check_write(path) {
+                        Ok(p) => p,
+                        Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                    }
+                } else {
+                    std::path::PathBuf::from(path)
+                };
+                let tensors: &Rc<RefCell<Vec<Value>>> = match &args[1] {
+                    Value::Vec(v) => v,
+                    Value::Array(a) => a,
+                    _ => return Err(tenth::error::TenthError::RuntimeError {
+                        message: "save_weights 期望一个张量列表".into(),
+                    }),
+                };
+                let tensors_ref = tensors.borrow();
+                let mut bytes: Vec<u8> = Vec::new();
+                bytes.extend(&(tensors_ref.len() as i32).to_le_bytes());
+                for val in tensors_ref.iter() {
+                    // 解包 Shared 包装（Vec::push 会将元素包装在 Shared 中）
+                    let tensor_rc = match val {
+                        Value::Tensor(t) => Some(t.clone()),
+                        Value::Shared(rc) => {
+                            if let Value::Tensor(t) = &*rc.borrow() {
+                                Some(t.clone())
+                            } else { None }
+                        }
+                        _ => None,
+                    };
+                    if let Some(t) = tensor_rc {
+                        let t_ref = t.borrow();
+                        let shape = t_ref.shape();
+                        let ndim = shape.len() as i32;
+                        bytes.extend(&ndim.to_le_bytes());
+                        for &d in &shape {
+                            bytes.extend(&(d as i32).to_le_bytes());
+                        }
+                        let flat = t_ref.data.as_standard_layout().to_owned();
+                        if let Some(slice) = flat.as_slice() {
+                            for &x in slice {
+                                bytes.extend(&x.to_le_bytes());
+                            }
+                        }
+                    }
+                }
+                let _ = std::fs::write(&resolved, &bytes);
+                return Ok(Value::Unit);
+            }
+        }
+        Err(tenth::error::TenthError::RuntimeError {
+            message: "save_weights(路径, 张量列表)".into(),
+        })
+    });
+    // 14. load_weights(path) — 从二进制文件反序列化张量列表（ML 训练关键路径）
+    vm.add_native("load_weights".into(), |vm, args| {
+        if let Some(Value::String(path)) = args.first() {
+            // H-2: 沙箱校验
+            let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                match sb.check_read(path) {
+                    Ok(p) => p,
+                    Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                }
+            } else {
+                std::path::PathBuf::from(path)
+            };
+            match std::fs::read(&resolved) {
+                Ok(bytes) => {
+                    if bytes.len() < 4 {
+                        return Err(tenth::error::TenthError::RuntimeError {
+                            message: "load_weights: 文件过短".into(),
+                        });
+                    }
+                    let num = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+                    let mut offset: usize = 4;
+                    let mut result: Vec<Value> = Vec::new();
+                    for _ in 0..num {
+                        if offset + 4 > bytes.len() { break; }
+                        let ndim = i32::from_le_bytes([
+                            bytes[offset], bytes[offset+1], bytes[offset+2], bytes[offset+3]
+                        ]) as usize;
+                        offset += 4;
+                        let mut shape = Vec::new();
+                        for _ in 0..ndim {
+                            if offset + 4 > bytes.len() { break; }
+                            let d = i32::from_le_bytes([
+                                bytes[offset], bytes[offset+1], bytes[offset+2], bytes[offset+3]
+                            ]) as usize;
+                            shape.push(d);
+                            offset += 4;
+                        }
+                        let nel: usize = shape.iter().product();
+                        let data_len = nel * 8; // f64 = 8 bytes
+                        if offset + data_len > bytes.len() { break; }
+                        let mut data = Vec::with_capacity(nel);
+                        for i in 0..nel {
+                            let start = offset + i * 8;
+                            let val = f64::from_le_bytes([
+                                bytes[start], bytes[start+1], bytes[start+2], bytes[start+3],
+                                bytes[start+4], bytes[start+5], bytes[start+6], bytes[start+7],
+                            ]);
+                            data.push(val);
+                        }
+                        offset += data_len;
+                        result.push(Value::Tensor(Rc::new(RefCell::new(
+                            Tensor::from_vec(data, shape)
+                        ))));
+                    }
+                    Ok(Value::Vec(Rc::new(RefCell::new(result))))
+                }
+                Err(e) => Err(tenth::error::TenthError::RuntimeError {
+                    message: format!("load_weights: {}", e),
+                }),
+            }
+        } else {
+            Err(tenth::error::TenthError::RuntimeError {
+                message: "load_weights(路径)".into(),
+            })
+        }
+    });
+    // 15. format(template, args...) — 模板字符串格式化（{}/{{/}}）
+    vm.add_native("format".into(), |_vm, args| {
+        if args.is_empty() {
+            return Err(tenth::error::TenthError::RuntimeError {
+                message: "format() 至少需要一个模板字符串".into(),
+            });
+        }
+        if let Value::String(template) = &args[0] {
+            let mut result = String::new();
+            let mut arg_idx = 1;
+            let mut chars = template.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '{' {
+                    if chars.peek() == Some(&'{') {
+                        chars.next();
+                        result.push('{');
+                    } else {
+                        let mut placeholder = String::new();
+                        while let Some(pc) = chars.next() {
+                            if pc == '}' {
+                                break;
+                            }
+                            placeholder.push(pc);
+                        }
+                        if arg_idx < args.len() {
+                            result.push_str(&format!("{}", args[arg_idx]));
+                            arg_idx += 1;
+                        } else {
+                            result.push('{');
+                            result.push_str(&placeholder);
+                            result.push('}');
+                        }
+                    }
+                } else if c == '}' {
+                    if chars.peek() == Some(&'}') {
+                        chars.next();
+                        result.push('}');
+                    } else {
+                        result.push('}');
+                    }
+                } else {
+                    result.push(c);
+                }
+            }
+            Ok(Value::String(result))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError {
+                message: "format() 第一个参数必须是字符串模板".into(),
+            })
+        }
+    });
+    // 16. parse_int(s) — 字符串→整数（解析失败返回 0，与解释器一致）
+    vm.add_native("parse_int".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            Ok(Value::Int(s.trim().parse::<i64>().unwrap_or(0)))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError {
+                message: "parse_int() 期望一个字符串参数".into(),
+            })
+        }
+    });
+    // 17. parse_float(s) — 字符串→浮点（解析失败返回 0.0，与解释器一致）
+    vm.add_native("parse_float".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            Ok(Value::Float(s.trim().parse::<f64>().unwrap_or(0.0)))
+        } else {
+            Err(tenth::error::TenthError::RuntimeError {
+                message: "parse_float() 期望一个字符串参数".into(),
+            })
         }
     });
 }

@@ -26,6 +26,7 @@ impl Lowerer {
                     | "start_grad" | "new_grad" | "stop_grad"
                     | "param" | "backward" | "grad" | "zero_grad"
                     | "cross_entropy"
+                    | "select"
                     | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
                     | "zeros" | "ones"
                     | "save_weights" | "load_weights"

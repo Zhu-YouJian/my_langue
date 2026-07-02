@@ -3,9 +3,109 @@
 // Avoids post-push field mutation (incompatible with VM value semantics)
 
 fn add_type(p: &mut HirProgram, disc: i64, sub: i64, name: str, params_start: i64, params_count: i64, ret_ty: i64) -> i64 {
-    let t = HirType { disc: disc, sub: sub, name: name, params_start: params_start, params_count: params_count, ret_ty: ret_ty };
+    let t = HirType { disc: disc, sub: sub, name: name, params_start: params_start, params_count: params_count, ret_ty: ret_ty, .. };
     p.type_nodes.push(t);
     p.type_nodes.len()
+}
+
+// ── Phase 4: tenthc shape check helpers ──
+// Minimal shape tracking for 1D/2D Known-dim tensors.
+// dim_count=0 → unknown (skip check); 1 → 1D; 2 → 2D
+// NOTE: avoid tuple returns — WASM backend has limited tuple support.
+
+// Construct a Tensor HirType (disc=1) with shape info.
+fn add_tensor_type(p: &mut HirProgram, dtype_sub: i64, dim_count: i64, dim0: i64, dim1: i64) -> i64 {
+    let t = HirType { disc: 1, sub: dtype_sub, name: "", params_start: 0, params_count: 0, ret_ty: 0, dim_count: dim_count, dim0: dim0, dim1: dim1 };
+    p.type_nodes.push(t);
+    p.type_nodes.len()
+}
+
+// Read tensor dim_count from a type index. Non-Tensor/invalid → 0.
+fn get_tensor_dim_count(p: &mut HirProgram, ty_idx: i64) -> i64 {
+    if ty_idx <= 0 || ty_idx > p.type_nodes.len() { return 0; };
+    let t = p.type_nodes[ty_idx - 1];
+    if t.disc != 1 { return 0; };
+    t.dim_count
+}
+
+// Read tensor dim0 from a type index. Non-Tensor/invalid → 0.
+fn get_tensor_dim0(p: &mut HirProgram, ty_idx: i64) -> i64 {
+    if ty_idx <= 0 || ty_idx > p.type_nodes.len() { return 0; };
+    let t = p.type_nodes[ty_idx - 1];
+    if t.disc != 1 { return 0; };
+    t.dim0
+}
+
+// Read tensor dim1 from a type index. Non-Tensor/invalid → 0.
+fn get_tensor_dim1(p: &mut HirProgram, ty_idx: i64) -> i64 {
+    if ty_idx <= 0 || ty_idx > p.type_nodes.len() { return 0; };
+    let t = p.type_nodes[ty_idx - 1];
+    if t.disc != 1 { return 0; };
+    t.dim1
+}
+
+// Check matmul 2D inner dim: (M,K) @ (K2,N) — K must equal K2.
+// Returns error message string ("" = ok).
+fn check_matmul_shape(recv_dc: i64, recv_d0: i64, recv_d1: i64, arg_dc: i64, arg_d0: i64, arg_d1: i64) -> str {
+    if recv_dc != 2 || arg_dc != 2 { return ""; };
+    if recv_d1 != arg_d0 {
+        return "matmul shape 不兼容：内侧维度不匹配";
+    };
+    ""
+}
+
+// Check binary broadcast for 1D/2D tensors (NumPy from-right alignment).
+// Returns error message ("" = ok). Only checks when both sides have known dims.
+fn check_binary_broadcast(l_dc: i64, l_d0: i64, l_d1: i64, r_dc: i64, r_d0: i64, r_d1: i64) -> str {
+    if l_dc == 0 || r_dc == 0 { return ""; };
+    // Align from right: check last dim
+    let l_last = if l_dc >= 2 { l_d1 } else { l_d0 };
+    let r_last = if r_dc >= 2 { r_d1 } else { r_d0 };
+    if l_last != r_last && l_last != 1 && r_last != 1 {
+        return "编译期 shape 不兼容：无法广播";
+    };
+    // For 2D vs 2D, also check first dim
+    if l_dc == 2 && r_dc == 2 {
+        if l_d0 != r_d0 && l_d0 != 1 && r_d0 != 1 {
+            return "编译期 shape 不兼容：无法广播";
+        };
+    };
+    ""
+}
+
+// Extract dim_count from lowered call args (all must be int literals).
+// Returns 0 if any arg is non-literal, 0 args, or >2 args.
+fn dims_count_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
+    let n = lowered_args.len();
+    if n == 0 { return 0; };
+    if n > 2 { return 0; };
+    let mut ok = true;
+    for i in 0..n {
+        let ai = lowered_args[i];
+        if ai <= 0 || ai > p.expr_nodes.len() { ok = false; break; };
+        let ae = p.expr_nodes[ai - 1];
+        if ae.disc != 0 { ok = false; break; };
+    };
+    if !ok { return 0; };
+    n
+}
+
+// Extract dim0 (first arg literal value) from lowered call args.
+fn dims_d0_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
+    let n = lowered_args.len();
+    if n == 0 { return 0; };
+    let ai = lowered_args[0];
+    if ai <= 0 || ai > p.expr_nodes.len() { return 0; };
+    p.expr_nodes[ai - 1].lit_ival
+}
+
+// Extract dim1 (second arg literal value) from lowered call args.
+fn dims_d1_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
+    let n = lowered_args.len();
+    if n < 2 { return 0; };
+    let ai = lowered_args[1];
+    if ai <= 0 || ai > p.expr_nodes.len() { return 0; };
+    p.expr_nodes[ai - 1].lit_ival
 }
 
 fn parse_type(p: &mut HirProgram, s: str) -> i64 {
@@ -252,6 +352,7 @@ fn is_builtin_name(name: str) -> bool {
     if name == "grad" { return true; };
     if name == "zero_grad" { return true; };
     if name == "cross_entropy" { return true; };
+    if name == "select" { return true; };
     if name == "Vec::new" { return true; };
     if name == "HashMap::new" { return true; };
     false
@@ -499,6 +600,28 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             // String concatenation: str + str → str
             bty = add_type(p, 0, 5, "", 0, 0, 0);
         } else {
+            // Phase 4: Tensor binary shape check (broadcast)
+            let l_lty = get_expr_ty(p, l);
+            let r_lty = get_expr_ty(p, r);
+            let l_dc = get_tensor_dim_count(p, l_lty);
+            let r_dc = get_tensor_dim_count(p, r_lty);
+            if l_dc > 0 && r_dc > 0 {
+                if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" {
+                    let l_d0 = get_tensor_dim0(p, l_lty);
+                    let l_d1 = get_tensor_dim1(p, l_lty);
+                    let r_d0 = get_tensor_dim0(p, r_lty);
+                    let r_d1 = get_tensor_dim1(p, r_lty);
+                    let err = check_binary_broadcast(l_dc, l_d0, l_d1, r_dc, r_d0, r_d1);
+                    if err != "" { push_error(p, err); };
+                    // Result: tensor with broadcast shape (conservative: same shape if equal, else unknown)
+                    let rty = if l_dc == r_dc && l_d0 == r_d0 && l_d1 == r_d1 {
+                        add_tensor_type(p, 2, l_dc, l_d0, l_d1)
+                    } else {
+                        add_tensor_type(p, 2, 0, 0, 0)
+                    };
+                    return push_expr(p, 5, 0, 0.0, "", false, l, r, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", rty);
+                };
+            };
             // Arithmetic: 优先级 F64 > F32 > I64（与 Rust lower.rs:1286-1290 infer_binary_type 对齐）
             // Phase 5.2 step 1：补齐 F32 分支
             if is_type_f64(p, get_expr_ty(p, l)) || is_type_f64(p, get_expr_ty(p, r)) {
@@ -629,7 +752,19 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             p.arg_list.push(lowered_args[j]);
             count = count + 1;
         };
-        let cty = lookup_fn_return_type(p, e.sval);
+        let cty = if e.sval == "zeros" || e.sval == "ones" || e.sval == "rand" || e.sval == "randn" {
+            // Phase 4: infer Tensor shape from literal int args
+            let dc = dims_count_from_args(p, lowered_args);
+            if dc > 0 {
+                let d0 = dims_d0_from_args(p, lowered_args);
+                let d1 = dims_d1_from_args(p, lowered_args);
+                add_tensor_type(p, 2, dc, d0, d1)
+            } else {
+                lookup_fn_return_type(p, e.sval)
+            }
+        } else {
+            lookup_fn_return_type(p, e.sval)
+        };
         return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, arg_start, count, 0, 0, "", "", "", cty);
     };
 
@@ -670,6 +805,40 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         for j in 0..lowered_args.len() {
             p.arg_list.push(lowered_args[j]);
             count = count + 1;
+        };
+        // Phase 4: built-in tensor method shape check & result type inference
+        if e.sval == "matmul" {
+            let arg_idx = if lowered_args.len() > 0 { lowered_args[0] } else { 0 };
+            let recv_lty = get_expr_ty(p, recv);
+            let arg_lty = get_expr_ty(p, arg_idx);
+            let r_dc = get_tensor_dim_count(p, recv_lty);
+            let a_dc = get_tensor_dim_count(p, arg_lty);
+            let r_d0 = get_tensor_dim0(p, recv_lty);
+            let r_d1 = get_tensor_dim1(p, recv_lty);
+            let a_d0 = get_tensor_dim0(p, arg_lty);
+            let a_d1 = get_tensor_dim1(p, arg_lty);
+            let err = check_matmul_shape(r_dc, r_d0, r_d1, a_dc, a_d0, a_d1);
+            if err != "" { push_error(p, err); };
+            // Result shape: (M, N) if both 2D and inner K matches
+            let rty = if r_dc == 2 && a_dc == 2 && r_d1 == a_d0 {
+                add_tensor_type(p, 2, 2, r_d0, a_d1)
+            } else {
+                add_tensor_type(p, 2, 0, 0, 0)
+            };
+            return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
+        };
+        if e.sval == "transpose" {
+            let recv_lty = get_expr_ty(p, recv);
+            let r_dc = get_tensor_dim_count(p, recv_lty);
+            let r_d0 = get_tensor_dim0(p, recv_lty);
+            let r_d1 = get_tensor_dim1(p, recv_lty);
+            // 2D transpose: swap dims
+            let rty = if r_dc == 2 {
+                add_tensor_type(p, 2, 2, r_d1, r_d0)
+            } else {
+                add_tensor_type(p, 2, 0, 0, 0)
+            };
+            return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
         };
         return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", 0);
     };

@@ -52,7 +52,7 @@ impl Lowerer {
                     let fn_info = self.scope.lookup_fn(&ident.name);
                     if var_info.is_none() && fn_info.is_none() {
                         match ident.name.as_str() {
-                            "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
+                            "println" | "print" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
                             | "read_file" | "write_file" | "write_bytes" | "read_bytes"
                             | "str_at" | "str_len" | "str_cmp" | "str_slice" | "str_add" | "str_eq" | "str_int"
                             | "Vec::new" | "HashMap::new"
@@ -60,6 +60,7 @@ impl Lowerer {
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
                             | "cross_entropy"
+                            | "select"
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "to_f32" | "to_f64" | "tensor_from_vec"
                             | "f64_bits" | "f64_from_bits"
                             | "zeros" | "ones"

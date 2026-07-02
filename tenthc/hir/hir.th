@@ -15,6 +15,13 @@ struct HirType {
     params_start: i64, // start in type_args / type_params flat arrays
     params_count: i64,
     ret_ty: i64,      // return type index (for FnType)
+    // ── Shape info (Phase 4: tenthc shape check) ──
+    // For Tensor (disc=1): tracks Known dims for compile-time shape checking.
+    // dim_count=0 → unknown/Any/Symbol (skip check); 1 → 1D (dim0); 2 → 2D (dim0=M, dim1=K/N)
+    // Non-Tensor types: always 0. Uses `..` default for zero-init.
+    dim_count: i64,
+    dim0: i64,
+    dim1: i64,
 }
 
 // ── HirExpr node (flat, all fields) ──

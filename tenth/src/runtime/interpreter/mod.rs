@@ -163,6 +163,19 @@ impl Interpreter {
                 return_type: Type::Unknown,
             },
         );
+        // select 原语（论文 T47/T48/T50）：逐元素条件选择，支持广播与可微
+        self.current_scope().insert(
+            "select".to_string(),
+            Value::FnRef {
+                name: "select".to_string(),
+                params: vec![
+                    ("cond".to_string(), Type::Unknown),
+                    ("then".to_string(), Type::Unknown),
+                    ("else".to_string(), Type::Unknown),
+                ],
+                return_type: Type::Unknown,
+            },
+        );
         // Scalar math
         for name in &["abs", "sqrt", "sin", "cos", "ln", "pow"] {
             self.current_scope().insert(
@@ -418,14 +431,16 @@ impl Interpreter {
                 self.resolve_var(name)
                     .or_else(|| {
                         match name.as_str() {
-                            "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
+                            "println" | "print" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
                             | "read_file" | "write_file" | "write_bytes" | "read_bytes" | "compile_host"
                             | "compile_program"
                             | "Vec::new" | "HashMap::new"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
                             | "cross_entropy"
+                            | "select"
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "to_f32" | "to_f64" | "tensor_from_vec"
+                            | "f64_bits" | "f64_from_bits"
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
                             | "format" | "parse_int" | "parse_float"

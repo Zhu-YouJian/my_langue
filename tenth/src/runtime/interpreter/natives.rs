@@ -45,6 +45,13 @@ impl super::Interpreter {
                 println!();
                 return Ok(Some(Value::Unit));
             }
+            // 论文 T37 修复第二批：补齐解释器缺失的 print/to_f64/to_f32（与 VM main.rs 对齐）
+            "print" => {
+                for arg in args {
+                    print!("{}", arg);
+                }
+                return Ok(Some(Value::Unit));
+            }
             "to_string" => {
                 if let Some(arg) = args.first() {
                     return Ok(Some(Value::String(self.value_to_string(arg))));
@@ -227,6 +234,38 @@ impl super::Interpreter {
                     message: "to_float() 期望 1 个参数".into(),
                 });
             }
+            // to_f64 — 与 to_float 同语义（VM 侧 main.rs:1112 已注册，这里补齐解释器对齐）
+            "to_f64" => {
+                if let Some(arg) = args.first() {
+                    return Ok(Some(match arg {
+                        Value::Int(n) => Value::Float(*n as f64),
+                        Value::Float(f) => Value::Float(*f),
+                        Value::Float32(f) => Value::Float(*f as f64),
+                        _ => return Err(TenthError::RuntimeError {
+                            message: "to_f64() 期望一个数值参数".into(),
+                        }),
+                    }));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "to_f64() 期望 1 个参数".into(),
+                });
+            }
+            // to_f32 — 转 f32（VM 侧 main.rs:1120 已注册）
+            "to_f32" => {
+                if let Some(arg) = args.first() {
+                    return Ok(Some(match arg {
+                        Value::Int(n) => Value::Float32(*n as f32),
+                        Value::Float(f) => Value::Float32(*f as f32),
+                        Value::Float32(f) => Value::Float32(*f),
+                        _ => return Err(TenthError::RuntimeError {
+                            message: "to_f32() 期望一个数值参数".into(),
+                        }),
+                    }));
+                }
+                return Err(TenthError::RuntimeError {
+                    message: "to_f32() 期望 1 个参数".into(),
+                });
+            }
             "f64_bits" => {
                 if let Some(arg) = args.first() {
                     let f = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
@@ -373,6 +412,33 @@ impl super::Interpreter {
                 return Err(TenthError::RuntimeError {
                     message: "cross_entropy(logits, target) 期望两个张量".into(),
                 });
+            }
+            "select" => {
+                // select(cond, then, else) — 逐元素条件选择原语（论文 T47/T48/T50）
+                // 支持广播；cond 非 0 视为 true。可微：d_then = grad*mask, d_else = grad*(1-mask)
+                if args.len() < 3 {
+                    return Err(TenthError::RuntimeError {
+                        message: "select(cond, then, else) 期望三个参数".into(),
+                    });
+                }
+                let (cond, then, else_) = match (&args[0], &args[1], &args[2]) {
+                    (Value::Tensor(c), Value::Tensor(t), Value::Tensor(e)) => (c.clone(), t.clone(), e.clone()),
+                    _ => return Err(TenthError::RuntimeError {
+                        message: "select(cond, then, else) 期望三个张量参数".into(),
+                    }),
+                };
+                let result_tensor = Tensor::select(&cond.borrow(), &then.borrow(), &else_.borrow())
+                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                let result = Rc::new(RefCell::new(result_tensor));
+                if self.recording {
+                    if let Some(ref mut tape) = self.tape {
+                        let then_id = then.borrow().tape_id;
+                        let else_id = else_.borrow().tape_id;
+                        let node_id = tape.select(then_id, else_id, cond.clone(), then.clone(), else_.clone(), result.clone());
+                        result.borrow_mut().tape_id = Some(node_id);
+                    }
+                }
+                return Ok(Some(Value::Tensor(result)));
             }
             "grad" => {
                 if let Some(Value::Tensor(param)) = args.first() {

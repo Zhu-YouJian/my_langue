@@ -15,7 +15,7 @@ struct ImplBlock { trait_name: str, type_name: str, fns: Vec<FnDef> }
 struct MatchArm { pat_kind: str, pat_name: str, pat_bind: str, body_expr: i64 }
 struct Program { structs: Vec<StructDef>, enums: Vec<EnumDef>, fns: Vec<FnDef>, trait_defs: Vec<TraitDef>, impls: Vec<ImplBlock>, main_stmts_start: i64, main_stmts_count: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, block_idxs: Vec<i64>, loop_idxs: Vec<i64> }
 
-struct Parser { tokens: Vec<Token>, pos: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, no_struct_literal: bool, block_idxs: Vec<i64>, loop_idxs: Vec<i64> }
+struct Parser { tokens: Vec<Token>, pos: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, no_struct_literal: bool, block_idxs: Vec<i64>, loop_idxs: Vec<i64>, errors: Vec<str> }
 
 fn parser_new(tokens: Vec<Token>) -> Parser {
     Parser {
@@ -27,6 +27,7 @@ fn parser_new(tokens: Vec<Token>) -> Parser {
         no_struct_literal: false,
         block_idxs: Vec::new(),
         loop_idxs: Vec::new(),
+        errors: Vec::new(),
     }
 }
 
@@ -44,6 +45,88 @@ fn parser_at_eof(p: &Parser) -> bool {
 fn parser_advance(p: &mut Parser) -> Token {
     if p.pos < p.tokens.len() { let t = p.tokens[p.pos]; p.pos = p.pos + 1; t }
     else { Token { kind: TokenKind::Eof, span: Span { line: 0, col: 0 }, disc: 61, .. } }
+}
+
+// Expect `>` to close a generic type parameter list.
+// Handles `>>` (Shr, disc=63) by splitting: consume the `>>` and insert a
+// synthetic Gt token at current position so the outer generic context sees
+// its closing `>`. Mirrors Rust-side parser.rs:54-86 expect_gt.
+// Returns true if consumed, false if next token is neither Gt nor Shr.
+fn expect_gt(p: &mut Parser) -> bool {
+    let t = parser_peek(p);
+    if t.disc == 34 {
+        // Gt — consume directly
+        parser_advance(p);
+        return true;
+    };
+    if t.disc == 63 {
+        // Shr (>>) — consume and insert synthetic Gt at current pos
+        let line = t.span.line;
+        let col = t.span.col;
+        parser_advance(p); // consume >>
+        // Rebuild tokens array with synthetic Gt inserted at current pos
+        // (Tenth Vec has no insert method, so we rebuild via push)
+        let mut new_tokens: Vec<Token> = Vec::new();
+        let insert_at = p.pos;
+        let mut i: i64 = 0;
+        let old_len = p.tokens.len();
+        while i < old_len {
+            if i == insert_at {
+                let synth = Token { kind: TokenKind::Gt, span: Span { line: line, col: col + 1 }, disc: 34, .. };
+                new_tokens.push(synth);
+            };
+            new_tokens.push(p.tokens[i]);
+            i = i + 1;
+        };
+        if insert_at >= old_len {
+            let synth = Token { kind: TokenKind::Gt, span: Span { line: line, col: col + 1 }, disc: 34, .. };
+            new_tokens.push(synth);
+        };
+        p.tokens = new_tokens;
+        return true;
+    };
+    false
+}
+
+// ── Panic-mode error recovery (mirrors Rust-side parser.rs:15-137) ──
+// SYNC_TOKENS: Fn(4), Struct(16), Enum(17), Trait(19), Impl(18), Mod(21), Use(20), RBrace(50), Eof(61)
+// We skip to these after a parse error to resume parsing.
+
+fn is_sync_token(disc: i64) -> bool {
+    disc == 4 || disc == 16 || disc == 17 || disc == 19 || disc == 18 || disc == 21 || disc == 20 || disc == 50 || disc == 61
+}
+
+// Loop consume until we reach a SYNC_TOKEN or Eof.
+fn synchronize(p: &mut Parser) {
+    loop {
+        let t = parser_peek(p);
+        if is_sync_token(t.disc) { break; };
+        if parser_at_eof(p) { break; };
+        parser_advance(p);
+    };
+}
+
+// Record a parse error message and attempt to recover by synchronizing.
+fn record_error_and_recover(p: &mut Parser, msg: str) {
+    p.errors.push(msg);
+    synchronize(p);
+}
+
+// Check if token disc is a legal expression-start token (handled by parse_primary).
+// Used by parse_program to distinguish expression statements from error tokens.
+fn is_expr_start_token(disc: i64) -> bool {
+    // IntLiteral(0), FloatLiteral(1), StringLiteral(2), Identifier(3)
+    disc == 0 || disc == 1 || disc == 2 || disc == 3 ||
+    // If(7), Match(9)
+    disc == 7 || disc == 9 ||
+    // True(22), False(23), Move(24), Self_(25)
+    disc == 22 || disc == 23 || disc == 24 || disc == 25 ||
+    // Minus(27), Star(28), Not(39), Ampersand(40), Pipe(41)
+    disc == 27 || disc == 28 || disc == 39 || disc == 40 || disc == 41 ||
+    // LParen(47), LBrace(49), LBracket(51)
+    disc == 47 || disc == 49 || disc == 51 ||
+    // DotDot(57), DotDotEq(62)
+    disc == 57 || disc == 62
 }
 
 // ── Helper: add expr node, return index (1-based, 0 = nil) ──
@@ -516,11 +599,8 @@ fn parse_postfix(p: &mut Parser) -> i64 {
                     if t2.disc == 53 { parser_advance(p); } // skip ,
                     else { break; };
                 };
-                // Consume > (or >> treated as >)
-                let gt_tok = parser_peek(p);
-                if gt_tok.disc == 34 || gt_tok.disc == 63 {
-                    parser_advance(p); // skip > (or >>)
-                };
+                // Consume > (or split >> into two > via expect_gt)
+                expect_gt(p);
                 // Now expect ( for call args
                 let next = parser_peek(p);
                 if next.disc == 47 {
@@ -1113,15 +1193,8 @@ fn parse_generic_params(p: &mut Parser) -> Vec<str> {
         if t3.disc == 53 { parser_advance(p); } // skip `,`
         else { break; };
     };
-    let t4 = parser_peek(p);
-    if t4.disc == 34 {
-        parser_advance(p); // skip `>`
-    } else if t4.disc == 63 {
-        // `>>` — consume as `>` (caller context handles the other `>`)
-        // For simplicity, treat `>>` as closing one `>`; replace with `>` token
-        // Actually tenthc lexer produces Shr (disc=63) for `>>`. We consume it as `>`.
-        parser_advance(p);
-    };
+    // Consume `>` (or split `>>` into two `>` via expect_gt, mirroring Rust side)
+    expect_gt(p);
     generics
 }
 
@@ -1492,11 +1565,15 @@ fn parse_program(tokens: Vec<Token>) -> Program {
         } else if d == 61 {
             // Eof (61)
             break;
-        } else {
-            // Top-level expression statement
+        } else if is_expr_start_token(d) {
+            // Top-level expression statement (legal expression-start token)
             let sidx = parse_stmt(&mut p);
             main_local_idxs.push(sidx);
             if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
+        } else {
+            // Unrecognized top-level token — record error and recover via synchronize
+            // (panic-mode recovery: skip to next SYNC_TOKEN or Eof)
+            record_error_and_recover(&mut p, "unrecognized top-level token disc=" + int_to_str(d));
         };
     };
     // NOW push all collected main statements contiguously to the shared array
