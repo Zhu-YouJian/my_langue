@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-07-01 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 + 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 | 700+ 项测试
+> 日期：2026-07-02 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 + 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 | 700+ 项测试
 
 ---
 
@@ -235,3 +235,56 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 ---
 
 *文档由 2026-05-27 全项目审计生成，作为后续正式开工的参考基准。*
+
+---
+
+## 十一、论文披露的中等价值问题登记（2026-07-02）
+
+> 本章节登记形式化分析论文与相关评审中披露的、尚未在历史章节登记的中等价值已知缺陷与健全性破口。每条含编号、标题、论文来源、影响、当前状态。**本批次为纯文档登记，未修改任何代码**——属于"诚实披露 → 缺陷登记"环节，修复方案分批推进。
+
+### 11.1 形式化健全性缺陷（护城河相关）
+
+| 编号 | 标题 | 论文来源 | 影响 | 当前状态 |
+|------|------|---------|------|---------|
+| AUDIT-11.1.1 | T19 定理 B6 跨语句借用 unsoundness | T19（形式化分析定理 B6） | `hir/lower/lower_stmt.rs:50/57/73` 与 `lower_expr.rs:437/439/441/464/656` 调用 `scope.release_borrows` 在语句边界过早释放借用；`lower_expr.rs:701/717` Deref 路径不检查别名。`scope.rs:67/81/113` 实现仅做单点 SharedRef/ExclusiveRef 检查，未跟踪跨语句别名。**存在 Tenth 接受但违反别名规则的程序**（如 `let r = &x; let m = &mut x; println(r);` 类构造）。 | ⚠️ 已登记未修复。借用检查基础设施可用但健全性有破口，需在 release_borrows 时机与 Deref 别名检查两个方向加固 |
+| AUDIT-11.1.2 | T20 PB2 四类反例未覆盖 | T20（property-based testing 反例集） | Call/If/Block/Match 初始化表达式中的 Ref/MutRef 未跳过 `release_borrows`，四类 AST 节点的借用释放语义与 Let 不一致。属 PB2 反例集披露的 4 类漏洞，可能让通过 borrow checker 的程序在运行时仍违反别名。 | ⚠️ 已登记未修复。需在 lower_stmt/lower_expr 的 4 类节点补 release_borrows 跳过逻辑 |
+| AUDIT-11.1.3 | T42 LayerNorm per-feature γ + BatchNorm 多 channel dX 闭式 backward 缺陷 | T42（normalization 算子梯度推导） | LayerNorm 在 per-feature γ（每个特征独立缩放参数）场景下闭式 backward 不正确；BatchNorm 在多 channel dX 场景下闭式 backward 不正确。两者均属"已实现但有数值错误"——前向 ✅，反向在常见配置下 ✅，在论文 T42 披露的特定配置下产生错误梯度。 | ⚠️ 已登记未修复。`runtime/autodiff.rs` 中 LayerNorm/BatchNorm backward 路径需按 T42 修正公式重写 |
+| AUDIT-11.1.4 | T50 multihead_attention 实为 single-head 等价 | T50（标准库 API 与论文承诺一致性审计） | `tenth/std/nn/multihead_attention.th` 文件头部注释自承："Simplified...single-head-equivalent attention...True multi-head attention requires either: 1. 3D/batched matmul support, or 2. A loop over heads with per-head slices"。`n_heads` 参数被读取但仅用于计算 `d_k = d_model / n_heads` 后做单次 attention，未真正分头。**与对外 API 名 MultiheadAttention 不符**。根因：受仅 2D matmul 限制（见 AUDIT-11.1.5）。 | ⚠️ 已登记未修复。需先实现 batched matmul（见能力全梳理 §5.1）后重写 |
+| AUDIT-11.1.5 | T18 body 直接 clone 健全性破口（泛型实例化） | T18（泛型实例化健全性） | 泛型函数实例化时 body 直接 clone 但未做替换健全性检查，可能让类型变量在 body 内未被一致替换，导致实例化后语义偏移。与 T12 双侧破口（tenthc 缺 shape 检查）联合暴露。 | ⚠️ 已登记未修复。`hir/lower` 中 GenericCall 实例化路径需补 body 替换健全性校验 |
+
+### 11.2 自举编译器双侧破口（T12）
+
+| 编号 | 标题 | 论文来源 | 影响 | 当前状态 |
+|------|------|---------|------|---------|
+| AUDIT-11.2.1 | tenthc 缺 shape 检查 | T12（自举双侧对齐审计） | tenthc 完全无 shape 检查，Rust 母编译器已有 Phase 1+2+3 实现。两侧语义不对齐：在 tenthc 自举路径下无法享受 shape 检查带来的早期错误发现，且对 shape 不匹配的程序两侧行为可能不一致。 | ✅ 已修复（2026-07-02，`tenthc/hir/hir.th` HirType 新增 dim_count/dim0/dim1 三字段，`tenthc/hir/lower.th` 新增 8 个 shape 辅助函数与 3 处调用点检查（binary/call/method_call）；最小子集：matmul 2D 内侧 K 检查、二元广播检查、zeros/ones/rand/randn 字面量 shape 推断、transpose 2D 维度互换；跳过 let 注解/分支兼容/返回值合并（需 Tensor 注解解析，tenthc 不支持）；错误处理非致命（push 到 p.errors）；首轮 parity 全挂后重构 tuple 返回为 3 个单值 getter（WASM 后端 tuple 支持有限）；详见 MEMO.md 2026-07-02 fix 条目） |
+| AUDIT-11.2.2 | tenthc 缺错误恢复 (panic mode) | T12 | tenthc 完全无 panic-mode，遇首个解析错误即终止。Rust 母编译器有 `error_recovery_test.rs` 7 项测试覆盖续接能力。两侧错误恢复语义不对齐。 | ✅ 已修复（2026-07-02，`tenthc/parser/parser.th` 新增 is_sync_token/synchronize/record_error_and_recover/is_expr_start_token，Parser 结构加 errors 字段，parse_program 主循环对无法识别的顶层 token 应用 panic-mode 恢复；error_recovery_test 7/7 通过，详见 MEMO.md 2026-07-02 fix 条目） |
+| AUDIT-11.2.3 | tenthc 缺 expect_gt，嵌套泛型 `>>` 被整个吞掉 | T12 | tenthc lexer/parser 缺 `expect_gt`，把 `>>` 整个吞掉，无法解析 `Vec<HashMap<K, V>>`、`Pair<Pair<T, U>, V>` 等嵌套泛型。Rust 母编译器有 `generic_test.rs` 11 项含 `>>` 拆分测试。 | ✅ 已修复（2026-07-02，`tenthc/parser/parser.th` 新增 expect_gt 函数（遇 Gt consume / 遇 Shr consume 后插入合成 Gt，通过重建 tokens 数组实现 Vec::insert 语义），替换 parse_postfix 与 parse_generic_params 2 处闭合调用点，详见 MEMO.md 2026-07-02 fix 条目） |
+| AUDIT-11.2.4 | tenthc 缺 i64 溢出检测 | T12 | tenthc 字面量与算术路径缺 i64 溢出检测，Rust 母编译器有 `overflow-checks = true`（M-3 安全修复）。两侧数值健壮性不对齐。 | ✅ 已修复（2026-07-02，`tenthc/lexer/lexer.th` parse_int 与 lexer_next 数字解析加入溢出检测，用数学等价条件 `ival > (i64_max - d) / 10` 检测，溢出时返回 i64_max 饱和值并打印错误，详见 MEMO.md 2026-07-02 fix 条目） |
+
+### 11.3 双重 native 注册反模式（T37）
+
+| 编号 | 标题 | 论文来源 | 影响 | 当前状态 |
+|------|------|---------|------|---------|
+| AUDIT-11.3.1 | VM 缺 17 项 native 函数 | T37（VM/解释器 native 注册对齐审计） | `main.rs::register_natives()` 注册到 VM 的 native 函数集合缺 17 项：`to_string`、`type_name`、`with_step_limit`、`with_timeout_ms`、`is_timeout`、`start_grad`、`f64_bits`、`f64_from_bits`、`sin`、`cos`、`ln`、`pow`、`save_weights`、`load_weights`、`format`、`parse_int`、`parse_float`。**`save_weights`/`load_weights` 为致命项**——VM 路径下模型保存/加载失效，与 2026-07-01 "护城河 D 演示补齐" 修复的 6 个构造函数（zeros/ones/rand 等）属同类问题的延续。 | ✅ 已修复（2026-07-02，`main.rs::register_natives()` 补全 17 项，save_weights/load_weights 复用 FsSandbox 校验，详见 MEMO.md 2026-07-02 fix 条目） |
+| AUDIT-11.3.2 | 解释器缺 3 项 native 函数 | T37 | `interpreter/natives.rs` 注册集合缺 3 项：`print`、`to_f64`、`to_f32`。与 VM 路径不对称。 | ✅ 已修复（2026-07-02，`interpreter/natives.rs` 补全 print/to_f64/to_f32，并同步 HIR lower 白名单与解释器 Var fallback 白名单，详见 MEMO.md 2026-07-02 fix 条目） |
+
+### 11.4 工程债务与潜在 UB
+
+| 编号 | 标题 | 论文来源 | 影响 | 当前状态 |
+|------|------|---------|------|---------|
+| AUDIT-11.4.1 | T22 FV5 O(n²) 工程债务 | T22（闭包自由变量收集复杂度） | `hir/lower/closures.rs:9-15` 的 `free_vars_in` 用 `Vec<String>` + `sort` + `dedup` 实现，复杂度 O(n²)（每次 push 后 sort）。HashSet 实现可降到 O(n)。在深层嵌套闭包场景下编译期开销显著。 | ⚠️ 已登记未修复。重构为 HashSet 即可，纯优化无语义影响 |
+| AUDIT-11.4.2 | T31 MAX_STACK_DEPTH=256 静默溢出潜在 UB | T31（VM/JIT 栈深度限制审计） | `compile/jit/translator.rs:32` `const MAX_STACK_DEPTH: u32 = 256;`，超过时静默截断而非报错，可能让 JIT 编译出的代码访问越界栈区域。属潜在未定义行为。VM 路径（`runtime/vm.rs`）的 `locals: Vec<Value>` 用 `resize` 安全增长，但 JIT 路径的固定 256 槽是硬上限。 | ⚠️ 已登记未修复。需在 JIT translator 超限时返回 Err 触发 fallback，或在编译期发 warning |
+| AUDIT-11.4.3 | T36 双重存储同步开销 | T36（解释器 scope 数据结构审计） | `runtime/interpreter/mod.rs:40` `pub scopes: Vec<HashMap<String, Value>>` 用 Vec+HashMap 双重存储，变量查找从最后一个 scope 向前遍历，在重嵌套场景下有平方风险。VM 路径用索引 `locals: Vec<Value>` 无此问题。 | ⚠️ 已登记未修复。可考虑改用扁平化 name→(scope_depth, Value) 索引 |
+
+### 11.5 登记元数据
+
+| 字段 | 值 |
+|------|----|
+| 登记日期 | 2026-07-02 |
+| 登记批次 | 第 1 批（纯文档登记，无代码修改） |
+| 论文来源范围 | T12 / T18 / T19 / T20 / T22 / T31 / T36 / T37 / T42 / T50（共 10 个论文条目） |
+| 总登记条目数 | 14（11.1 ×5、11.2 ×4、11.3 ×2、11.4 ×3） |
+| 拆分说明 | T12 双侧破口在 11.2 拆 4 条（shape/panic-mode/expect_gt/i64 溢出）；T37 双重 native 在 11.3 拆 2 条（VM 缺 17 项/解释器缺 3 项）；其余 8 个论文条目各 1 条 |
+| 真理源同步 | `能力梳理/能力全梳理.md` 同步新增 5 项能力条目；`MEMO.md` 顶部新增 2026-07-02 变更记录 |
+| 修复方案 | 后续分批推进，本批不修代码 |
+
