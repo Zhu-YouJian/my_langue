@@ -417,6 +417,36 @@ impl Lowerer {
             "zeros" | "ones" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),
             "save_weights" | "load_weights" => Ok(Type::unit()),
             "cross_entropy" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
+            // select 原语（论文 T47/T48/T50）：broadcast 三输入 shape；dtype 由 then/else 决定
+            "select" => {
+                // 提取三个输入的 dims（若任一非 Tensor，保守返回 Any）
+                let mut input_dims: Vec<&[Dim]> = Vec::new();
+                for a in args.iter().take(3) {
+                    if let Type::Tensor { dims, .. } = &a.ty {
+                        input_dims.push(dims.as_slice());
+                    } else {
+                        return Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any]));
+                    }
+                }
+                if input_dims.len() < 3 {
+                    return Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any]));
+                }
+                // 链式 broadcast：cond ⊗ then ⊗ else
+                let mut acc: Vec<Dim> = input_dims[0].to_vec();
+                for dims in &input_dims[1..] {
+                    match broadcast_shapes(&acc, dims) {
+                        Some(b) => acc = b,
+                        None => return Ok(Type::Unknown),
+                    }
+                }
+                // dtype：若 then/else 任一为 F32 则 F32，否则 F64
+                let dtype = match (&args[1].ty, &args[2].ty) {
+                    (Type::Tensor { dtype: dt, .. }, _) if matches!(dt.as_ref(), Type::Base(BaseType::F32)) => BaseType::F32,
+                    (_, Type::Tensor { dtype: dt, .. }) if matches!(dt.as_ref(), Type::Base(BaseType::F32)) => BaseType::F32,
+                    _ => BaseType::F64,
+                };
+                Ok(Type::tensor(dtype, acc))
+            },
             "start_grad" | "new_grad" | "stop_grad" | "param" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
             "backward" => Ok(Type::unit()),
             "grad" | "zero_grad" => Ok(Type::Unknown),

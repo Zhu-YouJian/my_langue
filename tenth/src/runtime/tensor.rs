@@ -1120,6 +1120,61 @@ impl Tensor {
         }
     }
 
+    /// Element-wise select: result = cond ? then : else.
+    /// cond truthy (>0.5) selects then, else selects else.
+    /// 三输入按 NumPy 广播规则对齐。then/else dtype 决定结果 dtype
+    /// （f32 与 f64 混合提升为 f64；与 cond dtype 无关）。
+    pub fn select(cond: &Tensor, then: &Tensor, else_: &Tensor) -> Result<Tensor, String> {
+        // 计算广播后的目标 shape
+        let cond_shape = cond.shape();
+        let then_shape = then.shape();
+        let else_shape = else_.shape();
+        let target_shape = broadcast_shape(&[
+            cond_shape.as_slice(), then_shape.as_slice(), else_shape.as_slice(),
+        ]).ok_or_else(|| format!(
+            "select: shapes cond={:?}, then={:?}, else={:?} 不兼容广播",
+            cond_shape, then_shape, else_shape
+        ))?;
+        // dtype 提升：then/else 决定（f32 + f64 → f64）
+        let result_dtype = match (then.dtype, else_.dtype) {
+            (BaseType::F32, BaseType::F32) => BaseType::F32,
+            (BaseType::F64, BaseType::F64) => BaseType::F64,
+            // f32 与 f64 混合或与其它 → f64
+            _ => BaseType::F64,
+        };
+        // 广播三个输入到 target_shape 并逐元素选择
+        let cond_b = broadcast_to_owned(&cond.data, &target_shape);
+        let then_b = broadcast_to_owned(&then.data, &target_shape);
+        let else_b = broadcast_to_owned(&else_.data, &target_shape);
+        let cond_slice = cond_b.as_slice().unwrap_or(&[]);
+        let then_slice = then_b.as_slice().unwrap_or(&[]);
+        let else_slice = else_b.as_slice().unwrap_or(&[]);
+        let n = target_shape.iter().product::<usize>();
+        match result_dtype {
+            BaseType::F32 => {
+                // cond/then/else 都 cast 到 f64 视图后再转 f32
+                let mut result = Vec::with_capacity(n);
+                for i in 0..n {
+                    let c = cond_slice.get(i).copied().unwrap_or(0.0);
+                    let t = then_slice.get(i).copied().unwrap_or(0.0);
+                    let e = else_slice.get(i).copied().unwrap_or(0.0);
+                    result.push((if c > 0.5 { t } else { e }) as f32);
+                }
+                Ok(Tensor::from_vec_f32(result, target_shape))
+            }
+            _ => {
+                let mut result = Vec::with_capacity(n);
+                for i in 0..n {
+                    let c = cond_slice.get(i).copied().unwrap_or(0.0);
+                    let t = then_slice.get(i).copied().unwrap_or(0.0);
+                    let e = else_slice.get(i).copied().unwrap_or(0.0);
+                    result.push(if c > 0.5 { t } else { e });
+                }
+                Ok(Tensor::from_vec(result, target_shape))
+            }
+        }
+    }
+
     /// Permute dimensions. Only supports 2D/3D/4D tensors.
     pub fn permute(&self, dims: &[usize]) -> Result<Tensor, String> {
         let ndim = self.ndim();
@@ -1334,6 +1389,43 @@ impl Tensor {
 /// layer_norm 中 gamma/beta cast 用，避免命名冲突。
 fn g_contip_iter_as_f32(arr: &ArrayD<f64>) -> Vec<f32> {
     arr.iter().map(|v| *v as f32).collect()
+}
+
+/// 计算 NumPy 风格广播后的目标 shape（从右向左对齐）。
+/// 任一维度不兼容（非 1 且不相等）返回 None。
+fn broadcast_shape(shapes: &[&[usize]]) -> Option<Vec<usize>> {
+    if shapes.is_empty() { return Some(vec![]); }
+    let max_ndim = shapes.iter().map(|s| s.len()).max()?;
+    let mut result = vec![1usize; max_ndim];
+    for s in shapes {
+        let offset = max_ndim - s.len();
+        for (i, &dim) in s.iter().enumerate() {
+            let target_idx = offset + i;
+            let cur = result[target_idx];
+            if cur == 1 {
+                result[target_idx] = dim;
+            } else if dim != 1 && dim != cur {
+                return None;
+            }
+        }
+    }
+    Some(result)
+}
+
+/// 将 TensorData 广播到 target_shape（返回 f64 owned ArrayD）。
+/// 用于 select 等需要三输入广播的算子。失败时返回 1 元素标量广播。
+fn broadcast_to_owned(data: &TensorData, target_shape: &[usize]) -> ArrayD<f64> {
+    let view = data.as_f64_view();
+    if view.shape() == target_shape {
+        return view.clone();
+    }
+    // 用 ndarray broadcast 视图，再 to_owned 实际化
+    if let Some(bcast) = view.broadcast(IxDyn(target_shape)) {
+        bcast.to_owned()
+    } else {
+        // 广播失败：保守返回 target_shape 的零张量（前向校验应已拦截）
+        ArrayD::zeros(IxDyn(target_shape))
+    }
 }
 
 impl fmt::Display for Tensor {

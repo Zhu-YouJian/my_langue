@@ -23,5 +23,36 @@ fn l1_loss(pred: Tensor[f64, ..], target: Tensor[f64, ..]) -> Tensor[f64, ..] {
     diff.abs()
 }
 
-// Huber Loss (smooth L1, placeholder — needs abs and conditional)
-// fn huber_loss(pred, target, delta=1.0) { ... }
+// Huber Loss (smooth L1) — 使用 select 原语实现（论文 T48 LF3 解锁）
+// L_δ(a) = 0.5 * a²              if |a| ≤ δ
+// L_δ(a) = δ * (|a| - 0.5 * δ)   otherwise
+// cond = (|a| > δ) 的数值近似：sign(|a|-δ) = (|a|-δ) / (||a|-δ| + eps)
+//   cond ≈ 1 → select linear (δ*(|a|-0.5δ))
+//   cond ≈ 0 → select quadratic (0.5*a²)
+// 返回标量（mean），用于评估（不可微路径）
+fn huber_loss(pred: Tensor[f64, ..], target: Tensor[f64, ..], delta: f64) -> f64 {
+    let a = pred - target;
+    let abs_a = a.abs();
+    let eps = 1e-12;
+    let diff = abs_a - delta;
+    let sign = diff / (diff.abs() + eps);
+    let cond = (sign + 1.0) * 0.5;
+    let quad = 0.5 * a * a;
+    let linear = delta * (abs_a - 0.5 * delta);
+    let loss = select(cond, linear, quad);
+    loss.mean()
+}
+
+// huber_loss_train：返回 tensor（不 mean），用于 autodiff 训练
+// 与 mse / mse_loss 的双形式 API 设计模式一致
+fn huber_loss_train(pred: Tensor[f64, ..], target: Tensor[f64, ..], delta: f64) -> Tensor[f64, ..] {
+    let a = pred - target;
+    let abs_a = a.abs();
+    let eps = 1e-12;
+    let diff = abs_a - delta;
+    let sign = diff / (diff.abs() + eps);
+    let cond = (sign + 1.0) * 0.5;
+    let quad = 0.5 * a * a;
+    let linear = delta * (abs_a - 0.5 * delta);
+    select(cond, linear, quad)
+}

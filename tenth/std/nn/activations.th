@@ -30,3 +30,22 @@ fn leaky_relu_default(x: Tensor[f64, ..]) -> Tensor[f64, ..] {
     leaky_relu(x, 0.01)
 }
 
+// leaky_relu_select：用 select 原语实现的可微 leaky relu（论文 T47 AE1 替代方案）
+// 标准 leaky_relu：f(x) = x if x > 0 else slope * x
+// cond = (x > 0) 的数值近似：sign(x) = x / (|x| + eps)，cond = (sign+1)/2
+//   x>0 → cond≈1 → select then (x)
+//   x<0 → cond≈0 → select else (slope*x)
+//   x=0 → cond=0.5 → select else (slope*0=0)（与标准 leaky_relu(0)=0 一致）
+// 与算术编码版本 leaky_relu 在 x≠0 处数值一致；x=0 处行为略有差异（算术版=0，select版=0）
+fn leaky_relu_select(x: Tensor[f64, ..], slope: f64) -> Tensor[f64, ..] {
+    let eps = 1e-12;
+    let sign = x / (x.abs() + eps);
+    let cond = (sign + 1.0) * 0.5;
+    select(cond, x, slope * x)
+}
+
+// leaky_relu_select 默认 slope=0.01
+fn leaky_relu_select_default(x: Tensor[f64, ..]) -> Tensor[f64, ..] {
+    leaky_relu_select(x, 0.01)
+}
+

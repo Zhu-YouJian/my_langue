@@ -16,6 +16,7 @@
 //   param, grad, backward    — autodiff ops
 //   stop_grad, zero_grad     — autodiff control
 //   cross_entropy            — loss function
+//   select                   — conditional select primitive (cond ? then : else)
 //   Vec::new, HashMap::new   — collections
 //   read_file, write_bytes, read_bytes — file I/O
 //   save_weights, load_weights — model serialization
@@ -54,8 +55,8 @@
 
 // ── Std lib (use path::to::function) ──
 //   std::nn::linear::linear
-//   std::nn::loss::mse, mse_loss, binary_cross_entropy, l1_loss
-//   std::nn::activations::relu, sigmoid, tanh, softmax, exp, log, gelu, leaky_relu, leaky_relu_default
+//   std::nn::loss::mse, mse_loss, binary_cross_entropy, l1_loss, huber_loss, huber_loss_train
+//   std::nn::activations::relu, sigmoid, tanh, softmax, exp, log, gelu, leaky_relu, leaky_relu_default, leaky_relu_select, leaky_relu_select_default
 //   std::nn::dropout::dropout<T>                      // 泛型（f64/f32 通吃）
 //   std::nn::batchnorm::batchnorm<T>
 //   std::nn::conv::conv2d

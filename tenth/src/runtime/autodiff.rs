@@ -76,6 +76,11 @@ pub enum TapeOp {
     /// GELU activation (tanh approximation).
     /// input_tensors = [input, result]
     Gelu,
+    /// Element-wise select: result = cond ? then : else.
+    /// cond is non-differentiable (bool semantics, encoded as f64 0.0/1.0).
+    /// inputs = [then_id?, else_id?] (cond 阻断链式传播，不写入 inputs)
+    /// input_tensors = [cond, then, else, result]
+    Select,
 }
 
 // ── Tape ──────────────────────────────────────────────────────────────
@@ -254,6 +259,32 @@ impl Tape {
             op,
             inputs: vec![],
             input_tensors: vec![a, b, result],
+        });
+        id
+    }
+
+    /// Record a select node: result = cond ? then : else.
+    /// `then_id` / `else_id` — upstream node ids（cond 阻断链式传播，不写入 inputs）。
+    /// `cond` / `then` / `else` — 实际输入张量（cond 用于反向 mask 计算）。
+    /// `result` — 输出张量。
+    /// inputs 固定为 [then_id, else_id]（若为 None 则用 dummy input 占位），
+    /// 保证 backward 时 propagate_grad(node, 0, d_then) / propagate_grad(node, 1, d_else) 索引对齐。
+    pub fn select(
+        &mut self,
+        then_id: Option<usize>, else_id: Option<usize>,
+        cond: Rc<RefCell<Tensor>>, then: Rc<RefCell<Tensor>>, else_: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+    ) -> usize {
+        // 先创建 dummy input（若需要），再分配本节点 id，
+        // 保证 id == self.nodes 索引（backward 依赖此不变量：self.nodes[loss_node_id] 与 node_grads[node.id]）
+        let tid = then_id.unwrap_or_else(|| self.input(then.clone()));
+        let eid = else_id.unwrap_or_else(|| self.input(else_.clone()));
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::Select,
+            inputs: vec![tid, eid],
+            input_tensors: vec![cond, then, else_, result],
         });
         id
     }
@@ -612,6 +643,40 @@ impl Tape {
                     };
                     propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
+                TapeOp::Select => {
+                    // Select backward: result = cond ? then : else
+                    // d_then = unbroadcast(grad * cond_mask, then.shape)
+                    // d_else = unbroadcast(grad * (1 - cond_mask), else.shape)
+                    // cond 不可微（bool 语义），不传播梯度
+                    // input_tensors = [cond, then, else_, result]
+                    // inputs = [then_id, else_id]（dummy 占位保证对齐）
+                    if node.input_tensors.len() >= 4 {
+                        let (cond_mask, then_shape, else_shape) = {
+                            let cond_ref = node.input_tensors[0].borrow();
+                            let then_ref = node.input_tensors[1].borrow();
+                            let else_ref = node.input_tensors[2].borrow();
+                            // cond 广播到 result（grad）shape，再转为 0/1 mask
+                            let cond_view = cond_ref.data.as_f64_view();
+                            let cond_broadcast: ArrayD<f64> = if cond_view.shape() == grad.shape() {
+                                cond_view.mapv(|v| if v > 0.5 { 1.0 } else { 0.0 })
+                            } else {
+                                // 用 ndarray broadcast 将 cond 视图广播到 grad shape
+                                let bcast_view = cond_view.broadcast(IxDyn(grad.shape()))
+                                    .unwrap_or_else(|| cond_view.view());
+                                bcast_view.mapv(|v| if v > 0.5 { 1.0 } else { 0.0 })
+                            };
+                            (cond_broadcast, then_ref.shape(), else_ref.shape())
+                        };
+                        // d_then = unbroadcast(grad * cond_mask, then.shape)
+                        let d_then = unbroadcast(&(&grad * &cond_mask), &then_shape)?;
+                        // d_else = unbroadcast(grad * (1 - cond_mask), else.shape)
+                        let inv_mask = cond_mask.mapv(|v| 1.0 - v);
+                        let d_else = unbroadcast(&(&grad * &inv_mask), &else_shape)?;
+
+                        propagate_grad(node, 0, &d_then, &mut node_grads)?;
+                        propagate_grad(node, 1, &d_else, &mut node_grads)?;
+                    }
+                }
                 TapeOp::Conv2D => {
                     // input_tensors = [input(4D), weight(4D), im2col(2D), output(4D)]
                     // Forward: output = im2col @ w_flat^T  where w_flat = weight.reshape(C_out, C_in*kH*kW)
@@ -827,6 +892,7 @@ fn op_name(op: &TapeOp) -> &'static str {
         TapeOp::BatchNorm => "BatchNorm",
         TapeOp::LayerNorm => "LayerNorm",
         TapeOp::Gelu => "Gelu",
+        TapeOp::Select => "Select",
     }
 }
 
