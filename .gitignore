@@ -7,6 +7,7 @@ test_out.txt
 test_output.txt
 stdout.txt
 stderr.txt
+selfhost_out.txt
 tenthc.c
 test_mini.c
 /test_*.th
