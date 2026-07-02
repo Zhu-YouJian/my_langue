@@ -1316,6 +1316,7 @@ impl Vm {
                     // ── Elementwise unary ──
                     "abs" => {
                         let result = Rc::new(RefCell::new(tensor.abs()));
+                        if self.recording { self.record_unary(TapeOp::Abs, &t, &result); }
                         Ok(Value::Tensor(result))
                     }
                     "sqrt" => {

@@ -81,6 +81,9 @@ pub enum TapeOp {
     /// inputs = [then_id?, else_id?] (cond 阻断链式传播，不写入 inputs)
     /// input_tensors = [cond, then, else, result]
     Select,
+    /// Element-wise absolute value: |a|.
+    /// Backward: d|x|/dx = sign(x)，x=0 处取 0（次梯度中点）。
+    Abs,
 }
 
 // ── Tape ──────────────────────────────────────────────────────────────
@@ -677,6 +680,16 @@ impl Tape {
                         propagate_grad(node, 1, &d_else, &mut node_grads)?;
                     }
                 }
+                TapeOp::Abs => {
+                    // |x| backward: d|x|/dx = sign(x)，x=0 处取 0（次梯度中点，工程惯例）
+                    // input_tensors = [input, result]
+                    let g_a = {
+                        let a_ref = node.input_tensors[0].borrow();
+                        let sign = a_ref.data.mapv(|x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 });
+                        &grad * &sign
+                    };
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
+                }
                 TapeOp::Conv2D => {
                     // input_tensors = [input(4D), weight(4D), im2col(2D), output(4D)]
                     // Forward: output = im2col @ w_flat^T  where w_flat = weight.reshape(C_out, C_in*kH*kW)
@@ -893,6 +906,7 @@ fn op_name(op: &TapeOp) -> &'static str {
         TapeOp::LayerNorm => "LayerNorm",
         TapeOp::Gelu => "Gelu",
         TapeOp::Select => "Select",
+        TapeOp::Abs => "Abs",
     }
 }
 

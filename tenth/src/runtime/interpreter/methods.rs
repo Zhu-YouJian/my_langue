@@ -840,6 +840,9 @@ impl super::Interpreter {
                     "abs" => {
                         let result_tensor = tensor.abs();
                         let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording {
+                            self.record_unary(TapeOp::Abs, t, &result);
+                        }
                         Ok(Value::Tensor(result))
                     }
                     "sqrt" => {
