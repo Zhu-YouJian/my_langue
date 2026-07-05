@@ -118,7 +118,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | # | 位置 | 问题 |
 |---|------|------|
-| 9 | `tenthc/parser/parser.th:631` | **无 for 循环解析** — lexer 识别 `for` 但 parser 未处理 |
+| ~~9~~ | ~~`tenthc/parser/parser.th:631`~~ | ~~**无 for 循环解析** — lexer 识别 `for` 但 parser 未处理~~ **登记陈旧失效**（2026-07-06 复核）：for-in 解析已在 tenthc 全链路实现 — `parser.th:1100-1132`（`parse_stmt` 中 `disc==12` 分支）+ `lower.th:1258-1279`（`kind=="for"` 分支，lower 为 `disc=4`）+ `wasm.th:1404+`（`disc==4` 分支）。原引用行号 `parser.th:631` 实为 generic_call 创建 ident 节点逻辑，与 for 循环无关。tenthc 自举源码本身大量使用 for 循环（parser.th 中 13+ 处），自举路径 B/C 必须能编译 for 循环——这是功能可用的铁证。 |
 | 11 | `tenthc/parser/parser.th:180` | **parse_unary 纯透传** — 一元运算在 parse_primary 内处理，此函数冗余 |
 
 ### 7.4 架构债务
@@ -275,6 +275,8 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | AUDIT-11.4.1 | T22 FV5 O(n²) 工程债务 | T22（闭包自由变量收集复杂度） | `hir/lower/closures.rs:9-15` 的 `free_vars_in` 用 `Vec<String>` + `sort` + `dedup` 实现，复杂度 O(n²)（每次 push 后 sort）。HashSet 实现可降到 O(n)。在深层嵌套闭包场景下编译期开销显著。 | ⚠️ 已登记未修复。重构为 HashSet 即可，纯优化无语义影响 |
 | AUDIT-11.4.2 | T31 MAX_STACK_DEPTH=256 静默溢出潜在 UB | T31（VM/JIT 栈深度限制审计） | `compile/jit/translator.rs:32` `const MAX_STACK_DEPTH: u32 = 256;`，超过时静默截断而非报错，可能让 JIT 编译出的代码访问越界栈区域。属潜在未定义行为。VM 路径（`runtime/vm.rs`）的 `locals: Vec<Value>` 用 `resize` 安全增长，但 JIT 路径的固定 256 槽是硬上限。 | ⚠️ 已登记未修复。需在 JIT translator 超限时返回 Err 触发 fallback，或在编译期发 warning |
 | AUDIT-11.4.3 | T36 双重存储同步开销 | T36（解释器 scope 数据结构审计） | `runtime/interpreter/mod.rs:40` `pub scopes: Vec<HashMap<String, Value>>` 用 Vec+HashMap 双重存储，变量查找从最后一个 scope 向前遍历，在重嵌套场景下有平方风险。VM 路径用索引 `locals: Vec<Value>` 无此问题。 | ⚠️ 已登记未修复。可考虑改用扁平化 name→(scope_depth, Value) 索引 |
+| AUDIT-11.4.4 | tenthc `..=` lexer 解析 bug | 回归测试发现（2026-07-06） | `tenthc/lexer/lexer.th:180-184` 解析 `.` 时 `if next == "."` 分支直接返回 `DotDot`，未检查第三个字符是否为 `=`。导致 `2..=4` 被错误分词为 `2` `..` `=` `4`。tenthc 路径下 inclusive range 实际不可用。 | ⚠️ 已登记未修复。修复方案：匹配 `..` 后再 peek 一次检查 `=`，若匹配则 advance 并返回 `DotDotEq`（约 2 行修改） |
+| AUDIT-11.4.5 | tenthc Vec 迭代未实现 | 回归测试发现（2026-07-06） | `tenthc/compile/wasm.th:1472` 明确注释 `// Non-range iterable: no-op for now`。tenthc WASM 后端不支持 `for x in [Vec]` 形式的迭代，仅支持 Range 迭代。 | ⚠️ 已登记未修复。需在 wasm.th 的 For codegen 中实现 Vec/Tensor 迭代 |
 
 ### 11.5 登记元数据
 
