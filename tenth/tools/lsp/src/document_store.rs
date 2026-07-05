@@ -212,3 +212,126 @@ pub fn uri_to_path(uri: &str) -> String {
         path.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lsp_types::{Position, Range};
+
+    #[test]
+    fn test_document_store_open_and_get_content() {
+        // open + get_content 应返回正确内容
+        let store = DocumentStore::new();
+        let uri = "file:///tmp/test_open.th";
+        let content = "fn main() -> i32 { 0 }";
+        store.open(uri, 1, content);
+        let retrieved = store.get_content(uri);
+        assert_eq!(
+            retrieved.as_deref(),
+            Some(content),
+            "open+get_content should return the original content"
+        );
+        // is_open 应为 true
+        assert!(store.is_open(uri), "is_open should return true after open");
+    }
+
+    #[test]
+    fn test_document_store_update_full_replaces_content() {
+        // update_full 应整体替换内容
+        let store = DocumentStore::new();
+        let uri = "file:///tmp/test_full.th";
+        store.open(uri, 1, "fn old() -> i32 { 1 }");
+        store.update_full(uri, 2, "fn new() -> i32 { 2 }");
+        let retrieved = store.get_content(uri);
+        assert_eq!(
+            retrieved.as_deref(),
+            Some("fn new() -> i32 { 2 }"),
+            "update_full should replace content entirely"
+        );
+        // 版本号应更新
+        let doc = store.get_document(uri).unwrap();
+        assert_eq!(doc.version, 2, "version should be updated to 2");
+    }
+
+    #[test]
+    fn test_document_store_update_incremental_replaces_range() {
+        // update_incremental 应在指定 range 内替换文本
+        let store = DocumentStore::new();
+        let uri = "file:///tmp/test_inc.th";
+        // 初始：第一行 "fn add(a, b) -> i32 { a + b }"
+        let initial = "fn add(a, b) -> i32 { a + b }";
+        store.open(uri, 1, initial);
+        // 把第 0 行 character 7-8 (即 'a') 替换为 'x'
+        // "fn add(a, b)" → "fn add(x, b)"
+        store.update_incremental(
+            uri,
+            2,
+            &Range {
+                start: Position { line: 0, character: 7 },
+                end: Position { line: 0, character: 8 },
+            },
+            "x",
+        );
+        let retrieved = store.get_content(uri);
+        assert_eq!(
+            retrieved.as_deref(),
+            Some("fn add(x, b) -> i32 { a + b }"),
+            "incremental update should replace only the range, got: {:?}",
+            retrieved
+        );
+    }
+
+    #[test]
+    fn test_document_store_close_removes_document() {
+        // close 应移除文档
+        let store = DocumentStore::new();
+        let uri = "file:///tmp/test_close.th";
+        store.open(uri, 1, "fn x() -> i32 { 0 }");
+        assert!(store.is_open(uri));
+        store.close(uri);
+        assert!(
+            !store.is_open(uri),
+            "is_open should be false after close"
+        );
+        assert!(
+            store.get_content(uri).is_none(),
+            "get_content should return None after close"
+        );
+    }
+
+    #[test]
+    fn test_document_store_update_incremental_insert_at_end() {
+        // update_incremental 在文件末尾追加文本（start_line 超出范围）
+        let store = DocumentStore::new();
+        let uri = "file:///tmp/test_append.th";
+        store.open(uri, 1, "fn x() -> i32 { 0 }");
+        store.update_incremental(
+            uri,
+            2,
+            &Range {
+                start: Position { line: 100, character: 0 },
+                end: Position { line: 100, character: 0 },
+            },
+            "\n// appended",
+        );
+        let retrieved = store.get_content(uri);
+        assert!(
+            retrieved.as_deref().unwrap_or("").ends_with("// appended"),
+            "incremental update at end should append text, got: {:?}",
+            retrieved
+        );
+    }
+
+    #[test]
+    fn test_uri_to_path_strips_file_prefix() {
+        // file:// URI 应被转换为路径
+        let uri = "file:///tmp/test.th";
+        let path = uri_to_path(uri);
+        // 不应再包含 "file://" 前缀
+        assert!(
+            !path.starts_with("file:"),
+            "uri_to_path should strip file:// prefix, got: {}",
+            path
+        );
+    }
+}

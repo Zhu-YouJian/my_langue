@@ -254,3 +254,87 @@ fn type_ann_str(t: &tenth::parser::ast::TypeAnnotation) -> String {
         TypeAnnotation::Unit => "()".to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_symbols_function_definition() {
+        // 含 fn 定义的代码应提取出 Function 类型的符号
+        let src = "fn add(a: i32, b: i32) -> i32 { a + b }";
+        let symbols = extract_symbols(src);
+        assert_eq!(symbols.len(), 1, "expected 1 symbol, got {}", symbols.len());
+        let s = &symbols[0];
+        assert_eq!(s.name, "add", "expected name 'add', got {}", s.name);
+        assert!(
+            matches!(s.kind, SymbolKind::Function),
+            "expected Function kind, got {:?}",
+            s.kind
+        );
+        // detail 应包含参数与返回类型信息
+        let detail = s.detail.as_deref().unwrap_or("");
+        assert!(
+            detail.contains("a") && detail.contains("b"),
+            "expected detail to contain param names, got: {}",
+            detail
+        );
+        assert!(
+            detail.contains("i32"),
+            "expected detail to contain return type i32, got: {}",
+            detail
+        );
+    }
+
+    #[test]
+    fn test_extract_symbols_struct_definition() {
+        // 含 struct 定义的代码应提取出 Struct 类型的符号，且子字段为 children
+        let src = "struct Point { x: f64, y: f64 }";
+        let symbols = extract_symbols(src);
+        assert_eq!(symbols.len(), 1, "expected 1 symbol, got {}", symbols.len());
+        let s = &symbols[0];
+        assert_eq!(s.name, "Point");
+        assert!(
+            matches!(s.kind, SymbolKind::Struct),
+            "expected Struct kind, got {:?}",
+            s.kind
+        );
+        // 应有 2 个字段作为 children
+        assert_eq!(
+            s.children.len(),
+            2,
+            "expected 2 child fields, got {}",
+            s.children.len()
+        );
+        // 子字段名应为 x 和 y
+        let child_names: Vec<&str> = s.children.iter().map(|c| c.name.as_str()).collect();
+        assert!(child_names.contains(&"x"), "expected field 'x', got {:?}", child_names);
+        assert!(child_names.contains(&"y"), "expected field 'y', got {:?}", child_names);
+    }
+
+    #[test]
+    fn test_extract_symbols_empty_input() {
+        // 空输入不应产生任何符号
+        let symbols = extract_symbols("");
+        assert!(symbols.is_empty(), "expected no symbols for empty input");
+    }
+
+    #[test]
+    fn test_extract_symbols_multiple_items() {
+        // 多个顶层 item 应都被提取
+        let src = "fn a() -> i32 { 1 }\nfn b() -> i32 { 2 }";
+        let symbols = extract_symbols(src);
+        assert_eq!(symbols.len(), 2, "expected 2 symbols, got {}", symbols.len());
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"a"), "expected function 'a', got {:?}", names);
+        assert!(names.contains(&"b"), "expected function 'b', got {:?}", names);
+    }
+
+    #[test]
+    fn test_extract_symbols_lex_error_returns_empty() {
+        // lexer 错误时应返回空 Vec，不 panic
+        let src = "fn bad() -> i32 { \"unclosed }";
+        let symbols = extract_symbols(src);
+        assert!(symbols.is_empty(), "expected empty symbols on lex error");
+    }
+}

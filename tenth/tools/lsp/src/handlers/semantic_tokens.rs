@@ -88,7 +88,7 @@ fn classify_token(token: &Token) -> Option<(u32, u32)> {
     let text_len = match &token.kind {
         TokenKind::Identifier(s) => s.len() as u32,
         TokenKind::IntLiteral(n) => n.to_string().len() as u32,
-        TokenKind::FloatLiteral(n) => n.to_string().len() as u32,
+        TokenKind::FloatLiteral(n, _) => n.to_string().len() as u32,
         TokenKind::StringLiteral(s) => (s.len() + 2) as u32, // +2 for quotes
         TokenKind::CharLiteral(c) => (c.len_utf8() + 3) as u32, // 'c'
         TokenKind::Fn => 2,
@@ -168,7 +168,7 @@ fn classify_token(token: &Token) -> Option<(u32, u32)> {
         }
 
         // Literals
-        TokenKind::IntLiteral(_) | TokenKind::FloatLiteral(_) => TYPE_NUMBER,
+        TokenKind::IntLiteral(_) | TokenKind::FloatLiteral(_, _) => TYPE_NUMBER,
         TokenKind::StringLiteral(_) => TYPE_STRING,
         TokenKind::CharLiteral(_) => TYPE_STRING,
 
@@ -183,4 +183,72 @@ fn classify_token(token: &Token) -> Option<(u32, u32)> {
     };
 
     Some((token_type, text_len))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_semantic_tokens_empty_file() {
+        // 空文件不应产生任何 token
+        let data = compute_semantic_tokens("");
+        assert!(data.is_empty(), "expected empty token data, got {:?}", data);
+    }
+
+    #[test]
+    fn test_semantic_tokens_simple_program_has_tokens() {
+        // 简单程序：至少应识别出 fn 关键字、标识符、字面量等
+        // 每个识别出的 token 输出 5 个 u32 (delta_line, delta_start, length, type, modifiers)
+        let src = "fn add() -> i32 { 42 }";
+        let data = compute_semantic_tokens(src);
+        assert!(
+            !data.is_empty(),
+            "expected non-empty token data for simple program"
+        );
+        // 数据长度应为 5 的倍数（每个 token 5 个 u32）
+        assert_eq!(
+            data.len() % 5,
+            0,
+            "token data length must be multiple of 5, got {}",
+            data.len()
+        );
+        // 至少应有几个 token：fn、add、i32、42、{、} 中的若干
+        // 保守断言至少 3 个 token（fn + add + 42）
+        let token_count = data.len() / 5;
+        assert!(
+            token_count >= 3,
+            "expected at least 3 tokens, got {} (data: {:?})",
+            token_count,
+            data
+        );
+        // 第一个 token 应在第一行（delta_line == 0）
+        assert_eq!(data[0], 0, "first token delta_line should be 0, got {}", data[0]);
+    }
+
+    #[test]
+    fn test_semantic_tokens_lex_error_returns_empty() {
+        // lexer 错误（如未闭合字符串）应返回空 Vec，不 panic
+        let src = "fn bad() -> i32 { \"unclosed }";
+        let data = compute_semantic_tokens(src);
+        // 出错时返回空 Vec
+        assert!(data.is_empty(), "expected empty Vec on lex error, got {:?}", data);
+    }
+
+    #[test]
+    fn test_semantic_tokens_keyword_type_index() {
+        // fn 关键字应映射到 TYPE_KEYWORD (0)
+        let src = "fn x() -> i32 { 0 }";
+        let data = compute_semantic_tokens(src);
+        assert!(!data.is_empty());
+        // 第一个 token 是 fn：type 索引在第 4 个 u32（index 3）
+        // data = [delta_line, delta_start, length, token_type, modifiers, ...]
+        assert_eq!(
+            data[3], TYPE_KEYWORD,
+            "first token 'fn' should be keyword type ({}), got {}",
+            TYPE_KEYWORD, data[3]
+        );
+        // fn 长度应为 2
+        assert_eq!(data[2], 2, "fn length should be 2, got {}", data[2]);
+    }
 }

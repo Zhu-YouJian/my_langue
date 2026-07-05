@@ -137,7 +137,7 @@ fn token_to_text(token: &Token) -> String {
     match &token.kind {
         TokenKind::Identifier(s) => s.clone(),
         TokenKind::IntLiteral(n) => n.to_string(),
-        TokenKind::FloatLiteral(n) => n.to_string(),
+        TokenKind::FloatLiteral(n, _) => n.to_string(),
         TokenKind::StringLiteral(s) => s.clone(),
         TokenKind::CharLiteral(c) => c.to_string(),
         TokenKind::InterpolatedString(parts) => {
@@ -412,4 +412,64 @@ fn lookup_hover(name: &str) -> Option<Hover> {
             },
             range: None,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lookup_hover_known_keyword_fn() {
+        // 查 "fn" 关键字应返回 Some(Hover)，且内容包含描述
+        let hover = lookup_hover("fn");
+        assert!(hover.is_some(), "expected Some(hover) for 'fn' keyword");
+        let h = hover.unwrap();
+        assert_eq!(h.contents.kind, "plaintext");
+        assert!(
+            !h.contents.value.is_empty(),
+            "hover doc for 'fn' should not be empty"
+        );
+        // 描述应包含 "function" 或 "函数" 字样
+        assert!(
+            h.contents.value.to_lowercase().contains("function")
+                || h.contents.value.contains("函数"),
+            "hover for 'fn' should mention function, got: {}",
+            h.contents.value
+        );
+    }
+
+    #[test]
+    fn test_lookup_hover_unknown_keyword_returns_none() {
+        // 查不存在的符号应返回 None
+        let hover = lookup_hover("definitely_not_a_keyword_xyz123");
+        assert!(hover.is_none(), "expected None for unknown keyword");
+    }
+
+    #[test]
+    fn test_lookup_hover_struct_keyword() {
+        // "struct" 关键字应返回 Some
+        let hover = lookup_hover("struct");
+        assert!(hover.is_some(), "expected Some(hover) for 'struct' keyword");
+        let h = hover.unwrap();
+        assert!(
+            h.contents.value.to_lowercase().contains("struct")
+                || h.contents.value.contains("结构"),
+            "hover for 'struct' should mention struct, got: {}",
+            h.contents.value
+        );
+    }
+
+    #[test]
+    fn test_lookup_hover_builtin_print() {
+        // 内建函数 "print" 应返回 Some
+        let hover = lookup_hover("print");
+        assert!(hover.is_some(), "expected Some(hover) for 'print' builtin");
+    }
+
+    #[test]
+    fn test_lookup_hover_type_i32() {
+        // 类型 "i32" 应返回 Some
+        let hover = lookup_hover("i32");
+        assert!(hover.is_some(), "expected Some(hover) for 'i32' type");
+    }
 }

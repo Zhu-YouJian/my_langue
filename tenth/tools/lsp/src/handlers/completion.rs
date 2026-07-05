@@ -294,3 +294,82 @@ fn add_types(items: &mut Vec<CompletionItem>) {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_after_dot_true() {
+        // 光标在 "x." 之后（character=2，正好在 '.' 之后的位置）
+        let src = "x.";
+        let pos = Position { line: 0, character: 2 };
+        assert!(
+            is_after_dot(src, pos),
+            "expected is_after_dot=true for cursor right after '.'"
+        );
+    }
+
+    #[test]
+    fn test_is_after_dot_false_in_identifier() {
+        // 光标在标识符中间，前面没有 '.'
+        let src = "let variable = 0;";
+        // 光标在 character 5（"varia|ble" 中）
+        let pos = Position { line: 0, character: 5 };
+        assert!(
+            !is_after_dot(src, pos),
+            "expected is_after_dot=false when cursor is mid-identifier"
+        );
+    }
+
+    #[test]
+    fn test_is_after_dot_false_at_line_start() {
+        // 光标在行首（character=0），前面没有 '.'
+        let src = "fn main() -> i32 { 0 }";
+        let pos = Position { line: 0, character: 0 };
+        assert!(
+            !is_after_dot(src, pos),
+            "expected is_after_dot=false at line start"
+        );
+    }
+
+    #[test]
+    fn test_is_after_dot_false_for_line_out_of_range() {
+        // 行号超出范围应返回 false
+        let src = "let x = 0;";
+        let pos = Position { line: 100, character: 0 };
+        assert!(
+            !is_after_dot(src, pos),
+            "expected is_after_dot=false when line out of range"
+        );
+    }
+
+    #[test]
+    fn test_is_after_dot_true_with_more_text() {
+        // "obj.method" 中光标正好在 '.' 之后（character=4，即 "obj.|method"）
+        let src = "obj.method";
+        let pos = Position { line: 0, character: 4 };
+        assert!(
+            is_after_dot(src, pos),
+            "expected is_after_dot=true when cursor is right after '.'"
+        );
+    }
+
+    #[test]
+    fn test_full_completion_items_contains_keywords() {
+        // 完整补全列表应包含关键字
+        let items = full_completion_items("");
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // 至少应包含 "fn" 这个关键字
+        assert!(
+            labels.contains(&"fn"),
+            "expected completions to contain 'fn' keyword, got: {:?}",
+            labels.iter().take(10).collect::<Vec<_>>()
+        );
+        // 应包含 "let" 关键字
+        assert!(
+            labels.contains(&"let"),
+            "expected completions to contain 'let' keyword"
+        );
+    }
+}

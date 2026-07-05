@@ -203,3 +203,75 @@ fn format_line_content(line: &str) -> String {
     // Remove trailing whitespace
     result.trim_end().to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_already_formatted_unchanged() {
+        // 已正确格式化的代码（顶层 fn + 4 空格缩进 + 末尾换行）应保持不变
+        let src = "fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n";
+        let out = format_source(src);
+        // 关键属性：末尾换行 + 4 空格缩进 + 内容保留
+        assert!(out.ends_with('\n'), "formatted output must end with newline");
+        assert!(
+            out.lines().nth(1).map(|l| l.starts_with("    ")).unwrap_or(false),
+            "second line should be indented with 4 spaces, got: {:?}",
+            out.lines().nth(1)
+        );
+        assert!(out.contains("fn add"), "fn add should be present: {}", out);
+        assert!(out.contains("a + b"), "function body should be preserved: {}", out);
+    }
+
+    #[test]
+    fn test_format_fixes_indentation() {
+        // 错误缩进（用 tab，应改为 4 空格）
+        let src = "fn f() -> i32 {\n\ta + b\n}\n";
+        let out = format_source(src);
+        // 输出第二行应使用 4 空格而非 tab
+        let second = out.lines().nth(1).unwrap_or("");
+        assert!(
+            second.starts_with("    ") && !second.starts_with('\t'),
+            "expected 4-space indent, got: {:?}",
+            second
+        );
+    }
+
+    #[test]
+    fn test_format_collapses_blank_lines() {
+        // 多个连续空行应压缩为单个空行（在两个顶层 item 之间）
+        let src = "fn a() -> i32 { 1 }\n\n\n\nfn b() -> i32 { 2 }\n";
+        let out = format_source(src);
+        // 两个 fn 之间应只有 1 个空行
+        let blank_count = out.lines()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .filter(|w| w[0].is_empty() && w[1].is_empty())
+            .count();
+        assert_eq!(
+            blank_count, 0,
+            "expected no consecutive blank lines, got: {:?}",
+            out
+        );
+        // 两个 fn 定义应都存在
+        assert!(out.contains("fn a()"), "fn a should be present: {}", out);
+        assert!(out.contains("fn b()"), "fn b should be present: {}", out);
+    }
+
+    #[test]
+    fn test_format_ends_with_newline() {
+        // 格式化输出必须以换行符结尾（POSIX 文件规范）
+        let src = "fn f() -> i32 { 0 }";
+        let out = format_source(src);
+        assert!(out.ends_with('\n'), "output must end with newline: {:?}", out);
+    }
+
+    #[test]
+    fn test_format_empty_input() {
+        // 空输入应返回单个换行或空字符串（不 panic）
+        let out = format_source("");
+        // 不应包含错误内容，且不 panic
+        assert!(out.is_empty() || out == "\n", "empty input maps to empty/newline: {:?}", out);
+    }
+}

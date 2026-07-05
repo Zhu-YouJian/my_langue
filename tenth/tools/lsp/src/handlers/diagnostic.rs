@@ -78,3 +78,107 @@ fn error_to_diagnostic(err: &TenthError) -> Diagnostic {
         source: Some("tenth".to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_diagnose_valid_program_no_diagnostics() {
+        // 合法的 Tenth 程序：函数定义 + 简单返回值
+        let src = "fn add(a: i32, b: i32) -> i32 { a + b }";
+        let diags = diagnose_source(src);
+        assert!(
+            diags.is_empty(),
+            "expected no diagnostics for valid program, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_diagnose_empty_file_no_diagnostics() {
+        // 空文件不应产生诊断（lexer 不会报错，parser 也接受空程序）
+        let diags = diagnose_source("");
+        assert!(diags.is_empty(), "expected no diagnostics for empty file");
+    }
+
+    #[test]
+    fn test_diagnose_undefined_variable() {
+        // 引用未声明的变量应触发 TypeError
+        let src = "fn buggy() -> i32 { undefined_name }";
+        let diags = diagnose_source(src);
+        assert!(
+            !diags.is_empty(),
+            "expected at least one diagnostic for undefined variable"
+        );
+        // 至少有一条诊断包含 "undefined variable"
+        let has_undef = diags.iter().any(|d| d.message.contains("undefined variable"));
+        assert!(
+            has_undef,
+            "expected 'undefined variable' in diagnostics, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_diagnose_type_mismatch() {
+        // 类型不匹配：let 注解 shape 与实际 shape 不符
+        // 参考 tenth/tests/shape_check_compile_test.rs 中的同类用例
+        let src = r#"
+fn bad() -> Tensor[f64, ..] {
+    let x: Tensor[f64, 3, 4] = zeros(2, 3);
+    x
+}
+"#;
+        let diags = diagnose_source(src);
+        assert!(
+            !diags.is_empty(),
+            "expected at least one diagnostic for type/shape mismatch"
+        );
+    }
+
+    #[test]
+    fn test_diagnose_unclosed_string_literal() {
+        // 未闭合的字符串字面量：lexer 会返回 LexerError
+        let src = "fn bad() -> i32 { \"unclosed }";
+        let diags = diagnose_source(src);
+        assert!(
+            !diags.is_empty(),
+            "expected at least one diagnostic for unclosed string"
+        );
+        // 第一条诊断应由 lexer 错误触发（字符串未闭合）
+        let msg = &diags[0].message;
+        assert!(
+            msg.contains("未闭合") || msg.contains("unclosed") || msg.contains("string"),
+            "expected unclosed-string error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_diagnose_severity_is_error() {
+        // 所有诊断的严重级别都应该是 Error
+        let src = "fn bad() -> i32 { undefined_name }";
+        let diags = diagnose_source(src);
+        assert!(!diags.is_empty());
+        for d in &diags {
+            assert!(
+                matches!(d.severity, DiagnosticSeverity::Error),
+                "expected Error severity, got {:?} for: {}",
+                d.severity,
+                d.message
+            );
+        }
+    }
+
+    #[test]
+    fn test_diagnose_source_field_set() {
+        // source 字段应该被设置为 "tenth"
+        let src = "fn bad() -> i32 { undefined_name }";
+        let diags = diagnose_source(src);
+        assert!(!diags.is_empty());
+        for d in &diags {
+            assert_eq!(d.source.as_deref(), Some("tenth"));
+        }
+    }
+}
