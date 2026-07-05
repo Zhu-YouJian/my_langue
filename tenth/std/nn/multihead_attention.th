@@ -15,12 +15,11 @@
 //   out_3d = weights.bmm(v_3d)                     // (n_heads, seq_len, d_k)
 //   out = out_3d.reshape(seq_len, d_model) @ w_o
 //
-// Autodiff 说明：
-//   - matmul / bmm / transpose / softmax / dropout 均在 Tape 上记录，梯度正常传播
-//   - reshape / masked_fill 当前未在 Tape 上记录，梯度不会穿过这两个 op
-//     → 实际可微路径：w_o（输出投影）梯度完整；w_q/w_k/w_v 与 x 的梯度被
-//       reshape 阻断。前向 shape 与语义完全正确；如需完整可微，等运行时部
-//       把 Reshape 纳入 TapeOp 后即可一键打开
+// Autodiff 说明（完整可微）：
+//   - matmul / bmm / transpose / softmax / dropout / reshape / masked_fill 均在 Tape 上记录
+//   - 梯度可从输出完整回传到 w_q/w_k/w_v/w_o 与输入 x，无阻断
+//   - reshape 的 backward = grad.reshape(input.shape())
+//   - masked_fill 的 backward = grad * (1 - mask)，mask 不可微
 
 fn multihead_attention<T>(
     x: Tensor[T, ..],       // (seq_len, d_model)
@@ -42,7 +41,7 @@ fn multihead_attention<T>(
     let v = x.matmul(w_v);
 
     // Reshape to per-head form: (n_heads, seq_len, d_k)
-    // NOTE: reshape 当前未在 Tape 上记录，梯度不通过此 op 回传（见文件头说明）
+    // 可微：reshape 已通过 TapeOp::Reshape 记录到 Tape
     let q_3d = q.reshape(n_heads, seq_len, d_k);
     let k_3d = k.reshape(n_heads, seq_len, d_k);
     let v_3d = v.reshape(n_heads, seq_len, d_k);

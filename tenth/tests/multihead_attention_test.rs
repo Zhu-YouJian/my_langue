@@ -373,3 +373,209 @@ fn test_true_mha_data_flow_rust_api() {
         assert!(v.is_finite(), "output should be finite, got {}", v);
     }
 }
+
+// ── 8. w_q 梯度非零（完整可微路径验证） ──
+//
+// 验证 Reshape/MaskedFill 接入 autodiff 后，w_q 的梯度可以从输出完整传播回来。
+// 数据流：x → matmul(w_q) → reshape → bmm → masked_fill → softmax → bmm → reshape → matmul(w_o) → out
+// 全程在 Tape 上记录，w_q 梯度不应被 reshape 阻断。
+//
+// 历史背景：在 TapeOp::Reshape 接入前，reshape 不记录到 Tape，导致 w_q/w_k/w_v 的
+// 梯度被 reshape 阻断（grad 全零）。本测试是"梯度阻断解除"的回归守护。
+
+#[test]
+fn test_true_mha_wq_grad_nonzero() {
+    let src = format!(r#"
+        {MHA_INLINE}
+        new_grad();
+        let x = randn(4, 8);
+        let w_q = param(randn(8, 8) * 0.1);
+        let w_k = randn(8, 8) * 0.1;
+        let w_v = randn(8, 8) * 0.1;
+        let w_o = randn(8, 8) * 0.1;
+        let mask = zeros(2, 4, 4);
+        let out = true_mha(x, w_q, w_k, w_v, w_o, mask, 4, 8, 2, 0.0);
+        backward(out.sum());
+        stop_grad();
+        grad(w_q)
+    "#);
+    let result = run_code(&src);
+    assert!(result.is_ok(), "MHA backward for w_q should not error, got: {:?}", result.err());
+    let v = as_f64_vec(result.unwrap().as_ref().unwrap()).expect("expected tensor grad");
+    // w_q shape (8, 8) → 64 个梯度
+    assert_eq!(v.len(), 64, "w_q grad should have 64 elements, got {}", v.len());
+    // 梯度全为有限值
+    for (i, g) in v.iter().enumerate() {
+        assert!(g.is_finite(), "w_q grad[{}] should be finite, got {}", i, g);
+    }
+    // 至少有一个非零梯度（w_q 不应被 reshape 阻断）
+    let nonzero_count = v.iter().filter(|g| g.abs() > 1e-10).count();
+    assert!(nonzero_count > 0, "w_q grad should have at least one nonzero element, got all zeros (reshape autodiff regression?)");
+}
+
+// ── 9. w_k 和 w_v 梯度非零 ──
+//
+// 同上配置，分别验证 w_k 和 w_v 的梯度非全零。
+// 这两个权重的梯度路径都经过 reshape（k_3d / v_3d），是 reshape autodiff 的关键验证点。
+
+#[test]
+fn test_true_mha_wk_wv_grad_nonzero() {
+    // w_k 梯度
+    let src_k = format!(r#"
+        {MHA_INLINE}
+        new_grad();
+        let x = randn(4, 8);
+        let w_q = randn(8, 8) * 0.1;
+        let w_k = param(randn(8, 8) * 0.1);
+        let w_v = randn(8, 8) * 0.1;
+        let w_o = randn(8, 8) * 0.1;
+        let mask = zeros(2, 4, 4);
+        let out = true_mha(x, w_q, w_k, w_v, w_o, mask, 4, 8, 2, 0.0);
+        backward(out.sum());
+        stop_grad();
+        grad(w_k)
+    "#);
+    let result_k = run_code(&src_k);
+    assert!(result_k.is_ok(), "MHA backward for w_k should not error, got: {:?}", result_k.err());
+    let v_k = as_f64_vec(result_k.unwrap().as_ref().unwrap()).expect("expected tensor grad for w_k");
+    assert_eq!(v_k.len(), 64, "w_k grad should have 64 elements, got {}", v_k.len());
+    for (i, g) in v_k.iter().enumerate() {
+        assert!(g.is_finite(), "w_k grad[{}] should be finite, got {}", i, g);
+    }
+    let nonzero_k = v_k.iter().filter(|g| g.abs() > 1e-10).count();
+    assert!(nonzero_k > 0, "w_k grad should have at least one nonzero element, got all zeros");
+
+    // w_v 梯度
+    let src_v = format!(r#"
+        {MHA_INLINE}
+        new_grad();
+        let x = randn(4, 8);
+        let w_q = randn(8, 8) * 0.1;
+        let w_k = randn(8, 8) * 0.1;
+        let w_v = param(randn(8, 8) * 0.1);
+        let w_o = randn(8, 8) * 0.1;
+        let mask = zeros(2, 4, 4);
+        let out = true_mha(x, w_q, w_k, w_v, w_o, mask, 4, 8, 2, 0.0);
+        backward(out.sum());
+        stop_grad();
+        grad(w_v)
+    "#);
+    let result_v = run_code(&src_v);
+    assert!(result_v.is_ok(), "MHA backward for w_v should not error, got: {:?}", result_v.err());
+    let v_v = as_f64_vec(result_v.unwrap().as_ref().unwrap()).expect("expected tensor grad for w_v");
+    assert_eq!(v_v.len(), 64, "w_v grad should have 64 elements, got {}", v_v.len());
+    for (i, g) in v_v.iter().enumerate() {
+        assert!(g.is_finite(), "w_v grad[{}] should be finite, got {}", i, g);
+    }
+    let nonzero_v = v_v.iter().filter(|g| g.abs() > 1e-10).count();
+    assert!(nonzero_v > 0, "w_v grad should have at least one nonzero element, got all zeros");
+}
+
+// ── 10. 输入 x 梯度正确传播 ──
+//
+// 验证输入 x 的梯度可以从输出完整传播回来。
+// x 的梯度路径经过 w_q/w_k/w_v 三条 matmul 链 + reshape + bmm + masked_fill + softmax，
+// 是最长路径，能验证整条 autodiff 链的完整性。
+
+#[test]
+fn test_true_mha_input_grad_correct() {
+    let src = format!(r#"
+        {MHA_INLINE}
+        new_grad();
+        let x = param(randn(4, 8));
+        let w_q = randn(8, 8) * 0.1;
+        let w_k = randn(8, 8) * 0.1;
+        let w_v = randn(8, 8) * 0.1;
+        let w_o = randn(8, 8) * 0.1;
+        let mask = zeros(2, 4, 4);
+        let out = true_mha(x, w_q, w_k, w_v, w_o, mask, 4, 8, 2, 0.0);
+        backward(out.sum());
+        stop_grad();
+        grad(x)
+    "#);
+    let result = run_code(&src);
+    assert!(result.is_ok(), "MHA backward for x should not error, got: {:?}", result.err());
+    let v = as_f64_vec(result.unwrap().as_ref().unwrap()).expect("expected tensor grad");
+    // x shape (4, 8) → 32 个梯度
+    assert_eq!(v.len(), 32, "x grad should have 32 elements, got {}", v.len());
+    // 梯度全为有限值（防止 NaN/Inf）
+    for (i, g) in v.iter().enumerate() {
+        assert!(g.is_finite(), "x grad[{}] should be finite, got {}", i, g);
+    }
+    // 至少有一个非零梯度（输入梯度应通过整个 MHA 链正确传播）
+    let nonzero_count = v.iter().filter(|g| g.abs() > 1e-10).count();
+    assert!(nonzero_count > 0, "x grad should have at least one nonzero element, got all zeros (full backward chain broken?)");
+}
+
+// ── 11. 完整反向链测试：所有可训练参数梯度同时存在 ──
+//
+// 构造完整 MHA 前向：x → matmul → reshape → bmm → masked_fill → softmax → bmm → reshape → matmul → output
+// 所有 w_q/w_k/w_v/w_o/x 都作为 param，backward(out.sum()) 后检查每个参数的梯度都存在且非全零。
+// 用 loss = output.sum() 简化（d_out = ones）。
+//
+// 实现说明：由于 run_code 一次执行只能返回一个 Value，本测试通过辅助闭包模板化
+// 生成 5 个独立 src（每个返回不同 param 的梯度），分别验证。每次都是完整的
+// 前向 + backward 链，确保每条路径都被独立检查。
+
+#[test]
+fn test_true_mha_full_backward_chain() {
+    // 辅助闭包：构造一个完整 MHA 前向 + backward 的 src，返回指定 param 的梯度
+    let make_src = |param_name: &str| -> String {
+        format!(r#"
+            {MHA_INLINE}
+            new_grad();
+            let x = param(randn(4, 8));
+            let w_q = param(randn(8, 8) * 0.1);
+            let w_k = param(randn(8, 8) * 0.1);
+            let w_v = param(randn(8, 8) * 0.1);
+            let w_o = param(randn(8, 8) * 0.1);
+            let mask = zeros(2, 4, 4);
+            let out = true_mha(x, w_q, w_k, w_v, w_o, mask, 4, 8, 2, 0.0);
+            backward(out.sum());
+            stop_grad();
+            grad({param_name})
+        "#)
+    };
+
+    // 期望每个 param 的梯度元素数
+    let cases: &[(&str, usize)] = &[
+        ("w_q", 64),  // (8, 8)
+        ("w_k", 64),  // (8, 8)
+        ("w_v", 64),  // (8, 8)
+        ("w_o", 64),  // (8, 8)
+        ("x",   32),  // (4, 8)
+    ];
+
+    for (param_name, expected_len) in cases {
+        let src = make_src(param_name);
+        let result = run_code(&src);
+        assert!(
+            result.is_ok(),
+            "full backward chain: grad({}) should not error, got: {:?}",
+            param_name,
+            result.err()
+        );
+        let v = as_f64_vec(result.unwrap().as_ref().unwrap())
+            .expect(&format!("expected tensor grad for {}", param_name));
+        assert_eq!(
+            v.len(), *expected_len,
+            "grad({}) should have {} elements, got {}",
+            param_name, expected_len, v.len()
+        );
+        // 所有元素有限
+        for (i, g) in v.iter().enumerate() {
+            assert!(
+                g.is_finite(),
+                "grad({})[{}] should be finite, got {}",
+                param_name, i, g
+            );
+        }
+        // 至少一个非零
+        let nonzero_count = v.iter().filter(|g| g.abs() > 1e-10).count();
+        assert!(
+            nonzero_count > 0,
+            "grad({}) should have at least one nonzero element in full chain, got all zeros",
+            param_name
+        );
+    }
+}

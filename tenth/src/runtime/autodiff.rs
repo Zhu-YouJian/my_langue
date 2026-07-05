@@ -92,6 +92,15 @@ pub enum TapeOp {
     /// input_tensors = [base, src, index, result]
     /// inputs = [base_id, src_id]（index 阻断链式传播，不写入 inputs）
     Scatter,
+    /// Reshape: result = input.reshape(target_shape)（元素数不变，仅重排）。
+    /// input_tensors = [input, result]（原始 shape 从 input.shape() 读取）
+    /// backward: d_input = grad.reshape(input.shape())
+    Reshape,
+    /// MaskedFill: result = input.masked_fill(mask, value)（mask=true 位置覆盖为 value）。
+    /// mask 不可微（bool 语义，0/1 张量），inputs = [input_id]
+    /// input_tensors = [input, mask, result]
+    /// backward: d_input = grad * (1 - mask)（被覆盖位置不传梯度）
+    MaskedFill,
 }
 
 // ── Tape ──────────────────────────────────────────────────────────────
@@ -332,6 +341,30 @@ impl Tape {
             op: TapeOp::Scatter,
             inputs: vec![bid, sid],
             input_tensors: vec![base, src, index, result],
+        });
+        id
+    }
+
+    /// Record a masked_fill node: result = input.masked_fill(mask, value).
+    /// `input_id` — 上游节点 id（mask 阻断链式传播，不写入 inputs）。
+    /// `input` / `mask` — 实际输入张量（mask 用于反向 0/1 屏蔽）。
+    /// `result` — 输出张量。
+    /// inputs 固定为 [input_id]（若为 None 则用 dummy input 占位），
+    /// 保证 backward 时 propagate_grad(node, 0, d_input) 索引对齐。
+    pub fn masked_fill(
+        &mut self,
+        input_id: Option<usize>,
+        input: Rc<RefCell<Tensor>>,
+        mask: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+    ) -> usize {
+        let iid = input_id.unwrap_or_else(|| self.input(input.clone()));
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::MaskedFill,
+            inputs: vec![iid],
+            input_tensors: vec![input, mask, result],
         });
         id
     }
@@ -827,6 +860,38 @@ impl Tape {
                         propagate_grad(node, 1, &d_src, &mut node_grads)?;
                     }
                 }
+                TapeOp::Reshape => {
+                    // Reshape backward: d_input = grad.reshape(input.shape())
+                    // input_tensors = [input, result]（原始 shape 从 input.shape() 读取）
+                    // 元素数必须一致（reshape 不改变元素数）
+                    let orig_shape = node.input_tensors[0].borrow().shape();
+                    let total: usize = orig_shape.iter().product();
+                    if grad.len() != total {
+                        return Err(crate::error::TenthError::RuntimeError {
+                            message: format!(
+                                "Reshape 反向元素数不匹配：grad {} 元素，原始 shape {:?} 期望 {} 元素",
+                                grad.len(), orig_shape, total
+                            ),
+                        });
+                    }
+                    let g_a = ArrayD::from_shape_vec(IxDyn(&orig_shape), grad.iter().cloned().collect())
+                        .map_err(|_| crate::error::TenthError::RuntimeError {
+                            message: format!("Reshape 反向 reshape grad 到 {:?} 失败", orig_shape),
+                        })?;
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
+                }
+                TapeOp::MaskedFill => {
+                    // MaskedFill backward: d_input = grad * (1 - mask)
+                    // mask=true 位置被 value 覆盖，不传梯度回输入
+                    // input_tensors = [input, mask, result]
+                    let g_a = {
+                        let mask_ref = node.input_tensors[1].borrow();
+                        let mask_view = mask_ref.data.as_f64_view();
+                        let inv_mask = mask_view.mapv(|v| if v > 0.5 { 0.0 } else { 1.0 });
+                        &grad * &inv_mask
+                    };
+                    propagate_grad(node, 0, &g_a, &mut node_grads)?;
+                }
                 TapeOp::Conv2D => {
                     // input_tensors = [input(4D), weight(4D), im2col(2D), output(4D)]
                     // Forward: output = im2col @ w_flat^T  where w_flat = weight.reshape(C_out, C_in*kH*kW)
@@ -1046,6 +1111,8 @@ fn op_name(op: &TapeOp) -> &'static str {
         TapeOp::Select => "Select",
         TapeOp::Abs => "Abs",
         TapeOp::Scatter => "Scatter",
+        TapeOp::Reshape => "Reshape",
+        TapeOp::MaskedFill => "MaskedFill",
     }
 }
 

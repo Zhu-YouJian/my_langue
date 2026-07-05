@@ -1401,10 +1401,12 @@ impl Vm {
                         let shape: Vec<usize> = args.iter()
                             .map(|a| a.as_int().unwrap_or(1) as usize)
                             .collect();
-                        let result = tensor.reshape(&shape).ok_or_else(|| {
+                        let result_tensor = tensor.reshape(&shape).ok_or_else(|| {
                             TenthError::RuntimeError { message: format!("无法重塑形状为 {:?}", shape) }
                         })?;
-                        Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                        let result = Rc::new(RefCell::new(result_tensor));
+                        if self.recording { self.record_unary(TapeOp::Reshape, &t, &result); }
+                        Ok(Value::Tensor(result))
                     }
                     "flatten" => Ok(Value::Tensor(Rc::new(RefCell::new(tensor.flatten())))),
                     "transpose" => {
@@ -1451,9 +1453,17 @@ impl Vm {
                         }
                         let value = args[1].as_float().unwrap_or(0.0);
                         if let Value::Tensor(mask_rc) = &args[0] {
-                            let result = tensor.masked_fill(&mask_rc.borrow(), value)
+                            let result_tensor = tensor.masked_fill(&mask_rc.borrow(), value)
                                 .map_err(|msg| TenthError::RuntimeError { message: msg })?;
-                            Ok(Value::Tensor(Rc::new(RefCell::new(result))))
+                            let result = Rc::new(RefCell::new(result_tensor));
+                            if self.recording {
+                                if let Some(ref mut tape) = self.tape {
+                                    let input_id = t.borrow().tape_id;
+                                    let node_id = tape.masked_fill(input_id, t.clone(), mask_rc.clone(), result.clone());
+                                    result.borrow_mut().tape_id = Some(node_id);
+                                }
+                            }
+                            Ok(Value::Tensor(result))
                         } else {
                             err("masked_fill() 的 mask 必须是张量")
                         }
