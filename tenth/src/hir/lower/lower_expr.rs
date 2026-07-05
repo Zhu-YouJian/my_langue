@@ -62,6 +62,7 @@ impl Lowerer {
                             | "explain_error"
                             | "cross_entropy"
                             | "select"
+                            | "scatter"
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "to_f32" | "to_f64" | "tensor_from_vec"
                             | "f64_bits" | "f64_from_bits"
                             | "zeros" | "ones"
@@ -351,10 +352,15 @@ impl Lowerer {
                 let ret_ty = self.resolve_method_type(&recv.ty, &method.name, &lowered_args);
                 // 编译期 shape 检查（如 matmul 的内侧维度）
                 Self::check_method_shape(&recv.ty, &method.name, &lowered_args, &span)?;
-                // 编译期算力/内存预估：matmul FLOPs + 结果 tensor bytes
+                // 编译期算力/内存预估：matmul/bmm FLOPs + 结果 tensor bytes
                 if method.name == "matmul" {
                     if let Some(arg) = lowered_args.first() {
                         self.emit_matmul_flop_estimate(&recv.ty, &arg.ty, &span);
+                    }
+                }
+                if method.name == "bmm" {
+                    if let Some(arg) = lowered_args.first() {
+                        self.emit_bmm_flop_estimate(&recv.ty, &arg.ty, &span);
                     }
                 }
                 self.emit_memory_estimate(&ret_ty, &span, &format!("方法 {}", method.name));

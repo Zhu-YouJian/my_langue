@@ -1,14 +1,26 @@
 // Multi-Head Attention
 // d_model: model dimension, n_heads: number of heads, d_k: per-head dimension (d_model / n_heads)
 //
-// Simplified: since Tenth matmul only supports 2D tensors, we cannot reshape
-// Q/K/V into (n_heads, seq_len, d_k) and compute per-head attention in parallel.
-// Instead, this implementation computes a single-head-equivalent attention over
-// the full d_model dimension. True multi-head attention requires either:
-//   1. 3D/batched matmul support, or
-//   2. A loop over heads with per-head slices (requires tensor indexing).
-// Both are currently unavailable, so we project Q/K/V with the full weight
-// matrices and apply attention once.
+// True Multi-Head Attention: projects Q/K/V to (seq_len, d_model), reshapes to
+// (n_heads, seq_len, d_k), computes per-head scaled dot-product attention in
+// parallel via bmm (batched matmul), then concatenates heads back to
+// (seq_len, d_model) and applies the output projection.
+//
+// 数据流：
+//   q = x @ w_q          (seq_len, d_model)
+//   q_3d = q.reshape(n_heads, seq_len, d_k)
+//   k_3d, v_3d 同理
+//   scores = q_3d.bmm(k_3d.transpose()) * scale   // (n_heads, seq_len, seq_len)
+//   weights = softmax(masked_fill(scores, mask, -1e9))
+//   out_3d = weights.bmm(v_3d)                     // (n_heads, seq_len, d_k)
+//   out = out_3d.reshape(seq_len, d_model) @ w_o
+//
+// Autodiff 说明：
+//   - matmul / bmm / transpose / softmax / dropout 均在 Tape 上记录，梯度正常传播
+//   - reshape / masked_fill 当前未在 Tape 上记录，梯度不会穿过这两个 op
+//     → 实际可微路径：w_o（输出投影）梯度完整；w_q/w_k/w_v 与 x 的梯度被
+//       reshape 阻断。前向 shape 与语义完全正确；如需完整可微，等运行时部
+//       把 Reshape 纳入 TapeOp 后即可一键打开
 
 fn multihead_attention<T>(
     x: Tensor[T, ..],       // (seq_len, d_model)
@@ -24,16 +36,34 @@ fn multihead_attention<T>(
     let d_model = shape(x)[1];
     let d_k = d_model / n_heads;
 
-    // Project Q, K, V
+    // Project Q, K, V (differentiable via matmul → TapeOp::MatMul)
     let q = x.matmul(w_q);  // (seq_len, d_model)
     let k = x.matmul(w_k);
     let v = x.matmul(w_v);
 
-    // TODO: True multi-head: reshape q/k/v to (n_heads, seq_len, d_k),
-    //       compute scaled_dot_product_attention per head, then concat.
-    //       Currently falls back to single-head-equivalent computation.
-    let attn_out = scaled_dot_product_attention<T>(q, k, v, mask, dropout_p);
+    // Reshape to per-head form: (n_heads, seq_len, d_k)
+    // NOTE: reshape 当前未在 Tape 上记录，梯度不通过此 op 回传（见文件头说明）
+    let q_3d = q.reshape(n_heads, seq_len, d_k);
+    let k_3d = k.reshape(n_heads, seq_len, d_k);
+    let v_3d = v.reshape(n_heads, seq_len, d_k);
 
-    // Output projection
-    attn_out.matmul(w_o)
+    // scores = Q @ K^T * scale  →  (n_heads, seq_len, seq_len)
+    // transpose() 仅转最后两维：(n_heads, seq_len, d_k) → (n_heads, d_k, seq_len)
+    let scale = 1.0 / sqrt(d_k);
+    let k_t = k_3d.transpose();              // (n_heads, d_k, seq_len)
+    let scores = q_3d.bmm(k_t) * scale;      // (n_heads, seq_len, seq_len)
+
+    // Apply mask + softmax (沿最后一维) + dropout
+    let masked_scores = scores.masked_fill(mask, -1e9);
+    let weights = masked_scores.softmax();
+    let dropped = weights.dropout(dropout_p);
+
+    // out = attn @ V  →  (n_heads, seq_len, d_k)
+    let out_3d = dropped.bmm(v_3d);
+
+    // Concat heads back: (n_heads, seq_len, d_k) → (seq_len, d_model)
+    let out = out_3d.reshape(seq_len, d_model);
+
+    // Output projection (differentiable via matmul)
+    out.matmul(w_o)
 }

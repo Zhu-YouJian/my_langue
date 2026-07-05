@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-07-02 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 + 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 | 700+ 项测试
+> 日期：2026-07-06 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 + 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 | 700+ 项测试
 
 ---
 
@@ -249,7 +249,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | AUDIT-11.1.1 | T19 定理 B6 跨语句借用 unsoundness | T19（形式化分析定理 B6） | `hir/lower/lower_stmt.rs:50/57/73` 与 `lower_expr.rs:437/439/441/464/656` 调用 `scope.release_borrows` 在语句边界过早释放借用；`lower_expr.rs:701/717` Deref 路径不检查别名。`scope.rs:67/81/113` 实现仅做单点 SharedRef/ExclusiveRef 检查，未跟踪跨语句别名。**存在 Tenth 接受但违反别名规则的程序**（如 `let r = &x; let m = &mut x; println(r);` 类构造）。 | ⚠️ 已登记未修复。借用检查基础设施可用但健全性有破口，需在 release_borrows 时机与 Deref 别名检查两个方向加固 |
 | AUDIT-11.1.2 | T20 PB2 四类反例未覆盖 | T20（property-based testing 反例集） | Call/If/Block/Match 初始化表达式中的 Ref/MutRef 未跳过 `release_borrows`，四类 AST 节点的借用释放语义与 Let 不一致。属 PB2 反例集披露的 4 类漏洞，可能让通过 borrow checker 的程序在运行时仍违反别名。 | ⚠️ 已登记未修复。需在 lower_stmt/lower_expr 的 4 类节点补 release_borrows 跳过逻辑 |
 | AUDIT-11.1.3 | T42 LayerNorm per-feature γ + BatchNorm 多 channel dX 闭式 backward 缺陷 | T42（normalization 算子梯度推导） | LayerNorm 在 per-feature γ（每个特征独立缩放参数）场景下闭式 backward 不正确；BatchNorm 在多 channel dX 场景下闭式 backward 不正确。两者均属"已实现但有数值错误"——前向 ✅，反向在常见配置下 ✅，在论文 T42 披露的特定配置下产生错误梯度。 | ⚠️ 已登记未修复。`runtime/autodiff.rs` 中 LayerNorm/BatchNorm backward 路径需按 T42 修正公式重写 |
-| AUDIT-11.1.4 | T50 multihead_attention 实为 single-head 等价 | T50（标准库 API 与论文承诺一致性审计） | `tenth/std/nn/multihead_attention.th` 文件头部注释自承："Simplified...single-head-equivalent attention...True multi-head attention requires either: 1. 3D/batched matmul support, or 2. A loop over heads with per-head slices"。`n_heads` 参数被读取但仅用于计算 `d_k = d_model / n_heads` 后做单次 attention，未真正分头。**与对外 API 名 MultiheadAttention 不符**。根因：受仅 2D matmul 限制（见 AUDIT-11.1.5）。 | ⚠️ 已登记未修复。需先实现 batched matmul（见能力全梳理 §5.1）后重写 |
+| AUDIT-11.1.4 | T50 multihead_attention 实为 single-head 等价 | T50（标准库 API 与论文承诺一致性审计） | `tenth/std/nn/multihead_attention.th` 文件头部注释自承："Simplified...single-head-equivalent attention...True multi-head attention requires either: 1. 3D/batched matmul support, or 2. A loop over heads with per-head slices"。`n_heads` 参数被读取但仅用于计算 `d_k = d_model / n_heads` 后做单次 attention，未真正分头。**与对外 API 名 MultiheadAttention 不符**。根因：受仅 2D matmul 限制（见 AUDIT-11.1.5）。 | ⚠️ 阻塞条件已解除，待重写。2026-07-06 bmm 原语（`Tensor::bmm`，3D@3D→3D 可微）已实现，True MHA 的根因（仅 2D matmul）消除；待标准库部基于 bmm 重写 `multihead_attention.th` 为真正分头计算版本（用 bmm 一次算出所有 head 的 attention scores） |
 | AUDIT-11.1.5 | T18 body 直接 clone 健全性破口（泛型实例化） | T18（泛型实例化健全性） | 泛型函数实例化时 body 直接 clone 但未做替换健全性检查，可能让类型变量在 body 内未被一致替换，导致实例化后语义偏移。与 T12 双侧破口（tenthc 缺 shape 检查）联合暴露。 | ⚠️ 已登记未修复。`hir/lower` 中 GenericCall 实例化路径需补 body 替换健全性校验 |
 
 ### 11.2 自举编译器双侧破口（T12）

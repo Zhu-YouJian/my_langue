@@ -785,6 +785,77 @@ impl Tensor {
         }
     }
 
+    // ── batched matrix multiplication ─────────────────────────────────
+
+    /// Batched matrix multiplication: (B, M, K) @ (B, K, N) -> (B, M, N).
+    /// Both tensors must be 3D with matching batch dimension.
+    /// 保留输入 dtype：f32@f32 → f32；f64@f64 → f64；混合 → f64（提升）。
+    pub fn bmm(&self, other: &Tensor) -> Result<Tensor, String> {
+        if self.ndim() != 3 || other.ndim() != 3 {
+            return Err(format!(
+                "bmm requires 3D tensors, got {:?}D and {:?}D",
+                self.ndim(), other.ndim()
+            ));
+        }
+        if self.shape()[0] != other.shape()[0] {
+            return Err(format!(
+                "bmm batch mismatch: self batch={}, other batch={}",
+                self.shape()[0], other.shape()[0]
+            ));
+        }
+        if self.shape()[2] != other.shape()[1] {
+            return Err(format!(
+                "bmm inner dim mismatch: self K={}, other K={}",
+                self.shape()[2], other.shape()[1]
+            ));
+        }
+
+        let use_f32 = self.is_f32() && other.is_f32();
+        if use_f32 {
+            self.bmm_f32(other)
+        } else {
+            // f64 路径（含混合提升：将 f32 视图 cast 为 f64 后走原 f64 逻辑）
+            let a_view = self.data.as_f64_view();
+            let b_view = other.data.as_f64_view();
+            let a3 = a_view.view().into_dimensionality::<ndarray::Ix3>()
+                .map_err(|_| "bmm: self must be 3D")?;
+            let b3 = b_view.view().into_dimensionality::<ndarray::Ix3>()
+                .map_err(|_| "bmm: other must be 3D")?;
+            let batch = a3.shape()[0];
+            let m = a3.shape()[1];
+            let n = b3.shape()[2];
+            let mut result = ndarray::Array3::<f64>::zeros((batch, m, n));
+            for i in 0..batch {
+                let a_slice = a3.index_axis(ndarray::Axis(0), i);
+                let b_slice = b3.index_axis(ndarray::Axis(0), i);
+                let r = a_slice.dot(&b_slice);
+                result.index_axis_mut(ndarray::Axis(0), i).assign(&r);
+            }
+            Ok(Tensor::from_data(result.into_dyn()))
+        }
+    }
+
+    /// f32 专用 bmm 路径，保持 f32 dtype。
+    fn bmm_f32(&self, other: &Tensor) -> Result<Tensor, String> {
+        let a = self.data.as_f32().expect("bmm_f32: self must be F32");
+        let b = other.data.as_f32().expect("bmm_f32: other must be F32");
+        let a3 = a.view().into_dimensionality::<ndarray::Ix3>()
+            .map_err(|_| "bmm: self must be 3D")?;
+        let b3 = b.view().into_dimensionality::<ndarray::Ix3>()
+            .map_err(|_| "bmm: other must be 3D")?;
+        let batch = a3.shape()[0];
+        let m = a3.shape()[1];
+        let n = b3.shape()[2];
+        let mut result = ndarray::Array3::<f32>::zeros((batch, m, n));
+        for i in 0..batch {
+            let a_slice = a3.index_axis(ndarray::Axis(0), i);
+            let b_slice = b3.index_axis(ndarray::Axis(0), i);
+            let r = a_slice.dot(&b_slice);
+            result.index_axis_mut(ndarray::Axis(0), i).assign(&r);
+        }
+        Ok(Tensor::from_data_f32(result.into_dyn()))
+    }
+
     // ── transpose ─────────────────────────────────────────────────────
 
     /// Transpose last two dimensions.  For 2D tensors this is the usual matrix transpose.
@@ -1173,6 +1244,87 @@ impl Tensor {
                 Ok(Tensor::from_vec(result, target_shape))
             }
         }
+    }
+
+    /// Scatter values from `src` into a copy of `base` at positions given by
+    /// `index` along `dim`. Simplified semantics (PyTorch scatter_ but immutable):
+    ///   out = base.clone(); out[dim][index[i]] = src[i]
+    /// 当前简化：仅支持 dim=0，index 与 src 必须为 1D。
+    /// dtype 保留：与 base.dtype 一致（src 自动 cast）。
+    pub fn scatter(base: &Tensor, dim: usize, index: &Tensor, src: &Tensor) -> Result<Tensor, String> {
+        if dim != 0 {
+            return Err(format!("scatter: 当前仅支持 dim=0，得到 dim={}", dim));
+        }
+        if index.ndim() != 1 || src.ndim() != 1 {
+            return Err(format!(
+                "scatter: index 和 src 必须为 1D，得到 index ndim={}, src ndim={}",
+                index.ndim(), src.ndim()
+            ));
+        }
+        if index.shape() != src.shape() {
+            return Err(format!(
+                "scatter: index shape {:?} 与 src shape {:?} 不匹配",
+                index.shape(), src.shape()
+            ));
+        }
+        let base_shape = base.shape();
+        if base_shape.is_empty() {
+            return Err("scatter: base 必须为非标量张量".into());
+        }
+        let base_len = base_shape[0];
+        let n_idx = index.shape()[0];
+
+        // 检查 index 越界（index 取整数值）
+        let index_view = index.data.as_f64_view();
+        let index_slice = index_view.as_slice().unwrap_or(&[]);
+        let src_view = src.data.as_f64_view();
+        let src_slice = src_view.as_slice().unwrap_or(&[]);
+        for i in 0..n_idx {
+            let idx_val = index_slice.get(i).copied().unwrap_or(0.0);
+            if idx_val < 0.0 || idx_val >= base_len as f64 {
+                return Err(format!(
+                    "scatter: index[{}]={} 越界（base 第 0 维长度={}）",
+                    i, idx_val, base_len
+                ));
+            }
+        }
+
+        // out = base.clone()，按 index 散布 src
+        let mut out = base.clone();
+        match &mut out.data {
+            TensorData::F64(a) => {
+                // 优先用连续切片写入（快路径）；否则用直接索引（兼容退化布局）
+                let contiguous = a.as_slice_mut().is_some();
+                if contiguous {
+                    let a_slice = a.as_slice_mut().unwrap();
+                    for i in 0..n_idx {
+                        let idx = index_slice.get(i).copied().unwrap_or(0.0) as usize;
+                        a_slice[idx] = src_slice.get(i).copied().unwrap_or(0.0);
+                    }
+                } else {
+                    for i in 0..n_idx {
+                        let idx = index_slice.get(i).copied().unwrap_or(0.0) as usize;
+                        a[[idx]] = src_slice.get(i).copied().unwrap_or(0.0);
+                    }
+                }
+            }
+            TensorData::F32(a) => {
+                let contiguous = a.as_slice_mut().is_some();
+                if contiguous {
+                    let a_slice = a.as_slice_mut().unwrap();
+                    for i in 0..n_idx {
+                        let idx = index_slice.get(i).copied().unwrap_or(0.0) as usize;
+                        a_slice[idx] = src_slice.get(i).copied().unwrap_or(0.0) as f32;
+                    }
+                } else {
+                    for i in 0..n_idx {
+                        let idx = index_slice.get(i).copied().unwrap_or(0.0) as usize;
+                        a[[idx]] = src_slice.get(i).copied().unwrap_or(0.0) as f32;
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Permute dimensions. Only supports 2D/3D/4D tensors.

@@ -907,6 +907,27 @@ impl super::Interpreter {
                             })
                         }
                     }
+                    "bmm" => {
+                        // batched matmul: (B, M, K) @ (B, K, N) -> (B, M, N)
+                        if args.len() != 1 {
+                            return Err(TenthError::RuntimeError {
+                                message: "bmm() 需要 1 个参数".into(),
+                            });
+                        }
+                        if let Value::Tensor(other) = &args[0] {
+                            let result_tensor = tensor.bmm(&other.borrow())
+                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            let result = Rc::new(RefCell::new(result_tensor));
+                            if self.recording {
+                                self.record_binary(TapeOp::BatchedMatMul, t, other, &result);
+                            }
+                            Ok(Value::Tensor(result))
+                        } else {
+                            Err(TenthError::RuntimeError {
+                                message: "bmm() 参数必须是张量".into(),
+                            })
+                        }
+                    }
                     "transpose" => {
                         if !args.is_empty() {
                             return Err(TenthError::RuntimeError {

@@ -1474,6 +1474,21 @@ impl Vm {
                             err("matmul() 参数必须是张量")
                         }
                     }
+                    "bmm" => {
+                        // batched matmul: (B, M, K) @ (B, K, N) -> (B, M, N)
+                        if args.len() != 1 {
+                            return err("bmm() 需要 1 个参数");
+                        }
+                        if let Value::Tensor(other) = &args[0] {
+                            let result_tensor = tensor.bmm(&other.borrow())
+                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            let result = Rc::new(RefCell::new(result_tensor));
+                            if self.recording { self.record_binary(TapeOp::BatchedMatMul, &t, &other, &result); }
+                            Ok(Value::Tensor(result))
+                        } else {
+                            err("bmm() 参数必须是张量")
+                        }
+                    }
                     "conv2d" => {
                         // x.conv2d(w, kernel_h, kernel_w, stride, pad)
                         if args.len() < 5 {

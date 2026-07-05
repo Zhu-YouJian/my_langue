@@ -17,9 +17,9 @@
 // dropout → [S_q, S_k]
 // weights @ v → [S_q, S_k] @ [S_k, D_v] = [S_q, D_v]
 //
-// Note: Tenth matmul only supports 2D tensors (see src/runtime/tensor.rs),
-// so this implementation operates on 2D inputs without a batch dimension.
-// For batched inputs, loop over the batch dimension externally.
+// 2D 版本（本文件）：用于单头 attention 或 MHA 内部未拆头时的简化路径
+// Batched 版本：见下方 scaled_dot_product_attention_batched<T>，使用 bmm
+// 支持 3D 输入 [B, S, D]，与 multihead_attention.th 的 per-head 计算路径一致
 
 fn scaled_dot_product_attention<T>(
     q: Tensor[T, S_q, D_k],
@@ -34,9 +34,46 @@ fn scaled_dot_product_attention<T>(
     let kT = k.transpose();
     let scores = q.matmul(kT) * scale;
     // Apply mask: fill masked positions with -inf so softmax yields ~0
-    // TODO: requires interpreter support for x.masked_fill(mask, value)
     let masked_scores = scores.masked_fill(mask, -1e9);
     let weights = masked_scores.softmax();
     let dropped = weights.dropout(dropout_p);
     dropped.matmul(v)
+}
+
+// Scaled Dot-Product Attention (batched)
+// 3D 输入：Q/K/V shape [B, S, D]
+//   - B: batch 维（在 MHA 中即 n_heads）
+//   - S: 序列长度
+//   - D: 特征维度（per-head 时为 d_k）
+//
+// 数据流：
+//   k.transpose() → [B, D, S]  (transpose 仅转最后两维，对 3D 张量正好)
+//   scores = Q.bmm(K^T) * scale → [B, S_q, S_k]
+//   weights = softmax(masked_fill(scores, mask, -1e9))
+//   out = weights.bmm(V) → [B, S_q, D_v]
+//
+// Autodiff：bmm/transpose/softmax/dropout 均在 Tape 上记录，可微；
+//           masked_fill 当前未记录（与 2D 版本相同的限制）
+//
+// 使用场景：
+//   - True Multi-Head Attention（multihead_attention.th 内部计算 per-head attention）
+//   - batched 推理（多条序列并行）
+
+fn scaled_dot_product_attention_batched<T>(
+    q: Tensor[T, ..],       // (B, S_q, D_k)
+    k: Tensor[T, ..],       // (B, S_k, D_k)
+    v: Tensor[T, ..],       // (B, S_k, D_v)
+    mask: Tensor[f64, ..],  // mask 沿最后一维应用，shape 通常 (B, S_q, S_k) 或 (S_q, S_k)
+    dropout_p: T,
+) -> Tensor[T, ..] {
+    let d_k = shape(q)[2];
+    let scale = 1.0 / sqrt(d_k);
+    // scores = Q @ K^T * scale  →  (B, S_q, S_k)
+    let k_t = k.transpose();              // (B, D_k, S_k)
+    let scores = q.bmm(k_t) * scale;      // (B, S_q, S_k)
+    // Apply mask + softmax (沿最后一维) + dropout
+    let masked_scores = scores.masked_fill(mask, -1e9);
+    let weights = masked_scores.softmax();
+    let dropped = weights.dropout(dropout_p);
+    dropped.bmm(v)                        // (B, S_q, D_v)
 }

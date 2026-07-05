@@ -44,6 +44,9 @@ pub enum TapeOp {
     ReLU,
     /// Matrix multiplication: a @ b
     MatMul,
+    /// Batched matrix multiplication: (B, M, K) @ (B, K, N) -> (B, M, N).
+    /// Backward: d_a = bmm(grad, b^T), d_b = bmm(a^T, grad)（沿 batch 循环）。
+    BatchedMatMul,
     /// Transpose last two dims.
     Transpose,
     /// Sum over all elements → scalar.
@@ -84,6 +87,11 @@ pub enum TapeOp {
     /// Element-wise absolute value: |a|.
     /// Backward: d|x|/dx = sign(x)，x=0 处取 0（次梯度中点）。
     Abs,
+    /// Scatter: out = base.clone(); out[dim][index[i]] = src[i]（不可变语义）。
+    /// 简化：dim=0, index/src 1D。index 不可微。
+    /// input_tensors = [base, src, index, result]
+    /// inputs = [base_id, src_id]（index 阻断链式传播，不写入 inputs）
+    Scatter,
 }
 
 // ── Tape ──────────────────────────────────────────────────────────────
@@ -303,6 +311,31 @@ impl Tape {
         id
     }
 
+    /// Record a scatter node: out = base.clone(); out[dim][index[i]] = src[i].
+    /// `base_id` / `src_id` — 上游节点 id（index 阻断链式传播，不写入 inputs）。
+    /// `base` / `src` / `index` — 实际输入张量（index 用于反向 gather 语义）。
+    /// `result` — 输出张量。
+    /// inputs 固定为 [base_id, src_id]（若为 None 则用 dummy input 占位），
+    /// 保证 backward 时 propagate_grad(node, 0, d_base) / propagate_grad(node, 1, d_src) 索引对齐。
+    pub fn scatter(
+        &mut self,
+        base_id: Option<usize>, src_id: Option<usize>,
+        base: Rc<RefCell<Tensor>>, src: Rc<RefCell<Tensor>>,
+        index: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+    ) -> usize {
+        let bid = base_id.unwrap_or_else(|| self.input(base.clone()));
+        let sid = src_id.unwrap_or_else(|| self.input(src.clone()));
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::Scatter,
+            inputs: vec![bid, sid],
+            input_tensors: vec![base, src, index, result],
+        });
+        id
+    }
+
     fn next_id(&mut self) -> usize {
         let id = self.counter;
         self.counter += 1;
@@ -482,6 +515,55 @@ impl Tape {
                             (d_a, d_b)
                         };
 
+                        propagate_grad(node, 0, &d_a, &mut node_grads)?;
+                        propagate_grad(node, 1, &d_b, &mut node_grads)?;
+                    }
+                }
+                TapeOp::BatchedMatMul => {
+                    // Batched matmul backward:
+                    //   forward: (B, M, K) @ (B, K, N) -> (B, M, N)
+                    //   d_a = bmm(grad, b^T)  // (B,M,N) @ (B,N,K) -> (B,M,K)
+                    //   d_b = bmm(a^T, grad)  // (B,K,M) @ (B,M,N) -> (B,K,N)
+                    // 通过 tensor 的 transpose（仅转最后两维）+ bmm 组合实现。
+                    // input_tensors = [a, b, result]
+                    if node.input_tensors.len() >= 3 {
+                        let (d_a, d_b) = {
+                            let a_ref = node.input_tensors[0].borrow();
+                            let b_ref = node.input_tensors[1].borrow();
+                            let a_ndim = a_ref.ndim();
+                            let b_ndim = b_ref.ndim();
+                            if a_ndim != 3 || b_ndim != 3 {
+                                return Err(crate::error::TenthError::RuntimeError {
+                                    message: format!(
+                                        "BatchedMatMul 反向传播：a ndim={}, b ndim={}（期望均为 3）",
+                                        a_ndim, b_ndim
+                                    ),
+                                });
+                            }
+                            if grad.ndim() != 3 {
+                                return Err(crate::error::TenthError::RuntimeError {
+                                    message: format!(
+                                        "BatchedMatMul 反向传播：grad ndim={}（期望 3）",
+                                        grad.ndim()
+                                    ),
+                                });
+                            }
+                            let b_t = b_ref.transpose().ok_or_else(|| crate::error::TenthError::RuntimeError {
+                                message: "BatchedMatMul 反向：b.transpose() 失败".into(),
+                            })?;
+                            let a_t = a_ref.transpose().ok_or_else(|| crate::error::TenthError::RuntimeError {
+                                message: "BatchedMatMul 反向：a.transpose() 失败".into(),
+                            })?;
+                            // grad 是 ArrayD<f64>，需要转为 Tensor 才能调用 bmm
+                            let grad_t = Tensor::from_data(grad.clone());
+                            let d_a_t = grad_t.bmm(&b_t).map_err(|e| crate::error::TenthError::RuntimeError {
+                                message: format!("BatchedMatMul 反向 d_a：{}", e),
+                            })?;
+                            let d_b_t = a_t.bmm(&grad_t).map_err(|e| crate::error::TenthError::RuntimeError {
+                                message: format!("BatchedMatMul 反向 d_b：{}", e),
+                            })?;
+                            (d_a_t.data_as_f64_view(), d_b_t.data_as_f64_view())
+                        };
                         propagate_grad(node, 0, &d_a, &mut node_grads)?;
                         propagate_grad(node, 1, &d_b, &mut node_grads)?;
                     }
@@ -701,6 +783,50 @@ impl Tape {
                     };
                     propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
+                TapeOp::Scatter => {
+                    // Scatter backward (简化：dim=0, 1D index/src, base 也是 1D):
+                    //   forward: out = base.clone(); out[index[i]] = src[i]
+                    //   d_src[i] = grad[index[i]]   (gather 语义)
+                    //   d_base = grad.clone()，但 index 位置置 0（这些位置被 src 覆盖，梯度不传回 base）
+                    //   index 不可微（无梯度）
+                    // input_tensors = [base, src, index, result]
+                    // inputs = [base_id, src_id]
+                    if node.input_tensors.len() >= 4 {
+                        let (d_base, d_src) = {
+                            let base_ref = node.input_tensors[0].borrow();
+                            let index_ref = node.input_tensors[2].borrow();
+                            let base_shape = base_ref.shape();
+                            let index_view = index_ref.data.as_f64_view();
+                            let n_idx = index_view.len();
+                            // d_src[i] = grad[index[i]]
+                            let mut d_src_data = Vec::with_capacity(n_idx);
+                            for i in 0..n_idx {
+                                let idx = index_view[i] as usize;
+                                let v = grad.get(IxDyn(&[idx])).copied().unwrap_or(0.0);
+                                d_src_data.push(v);
+                            }
+                            let d_src = ArrayD::from_shape_vec(IxDyn(&[n_idx]), d_src_data)
+                                .map_err(|_| crate::error::TenthError::RuntimeError {
+                                    message: "Scatter 反向 d_src reshape 失败".into(),
+                                })?;
+                            // d_base = grad.clone()，但 index 位置置 0
+                            let mut d_base_data: Vec<f64> = grad.iter().cloned().collect();
+                            for i in 0..n_idx {
+                                let idx = index_view[i] as usize;
+                                if let Some(slot) = d_base_data.get_mut(idx) {
+                                    *slot = 0.0;
+                                }
+                            }
+                            let d_base = ArrayD::from_shape_vec(IxDyn(&base_shape), d_base_data)
+                                .map_err(|_| crate::error::TenthError::RuntimeError {
+                                    message: "Scatter 反向 d_base reshape 失败".into(),
+                                })?;
+                            (d_base, d_src)
+                        };
+                        propagate_grad(node, 0, &d_base, &mut node_grads)?;
+                        propagate_grad(node, 1, &d_src, &mut node_grads)?;
+                    }
+                }
                 TapeOp::Conv2D => {
                     // input_tensors = [input(4D), weight(4D), im2col(2D), output(4D)]
                     // Forward: output = im2col @ w_flat^T  where w_flat = weight.reshape(C_out, C_in*kH*kW)
@@ -903,6 +1029,7 @@ fn op_name(op: &TapeOp) -> &'static str {
         TapeOp::Neg => "Neg",
         TapeOp::ReLU => "ReLU",
         TapeOp::MatMul => "MatMul",
+        TapeOp::BatchedMatMul => "BatchedMatMul",
         TapeOp::Transpose => "Transpose",
         TapeOp::Sum => "Sum",
         TapeOp::Mean => "Mean",
@@ -918,6 +1045,7 @@ fn op_name(op: &TapeOp) -> &'static str {
         TapeOp::Gelu => "Gelu",
         TapeOp::Select => "Select",
         TapeOp::Abs => "Abs",
+        TapeOp::Scatter => "Scatter",
     }
 }
 

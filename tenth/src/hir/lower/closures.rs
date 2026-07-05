@@ -28,6 +28,7 @@ impl Lowerer {
                     | "explain_error"
                     | "cross_entropy"
                     | "select"
+                    | "scatter"
                     | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
                     | "zeros" | "ones"
                     | "save_weights" | "load_weights"

@@ -44,12 +44,37 @@ fn get_tensor_dim1(p: &mut HirProgram, ty_idx: i64) -> i64 {
     t.dim1
 }
 
+// Read tensor dim2 from a type index. Non-Tensor/invalid → 0.
+// NOTE: tenthc HirType currently has no dim2 field (only dim0/dim1).
+// Always returns 0 — bmm 3D shape check is therefore a no-op in tenthc
+// (errors defer to runtime). Kept for API parity with Rust side.
+fn get_tensor_dim2(p: &mut HirProgram, ty_idx: i64) -> i64 {
+    0
+}
+
 // Check matmul 2D inner dim: (M,K) @ (K2,N) — K must equal K2.
 // Returns error message string ("" = ok).
 fn check_matmul_shape(recv_dc: i64, recv_d0: i64, recv_d1: i64, arg_dc: i64, arg_d0: i64, arg_d1: i64) -> str {
     if recv_dc != 2 || arg_dc != 2 { return ""; };
     if recv_d1 != arg_d0 {
         return "matmul shape 不兼容：内侧维度不匹配";
+    };
+    ""
+}
+
+// Check bmm 3D shape: (B,M,K) @ (B2,K2,N) — B must equal B2, K must equal K2.
+// Returns error message string ("" = ok).
+// NOTE: tenthc HirType currently tracks only dim0/dim1 (no dim2 field).
+// get_tensor_dim2 always returns 0, so recv_dc/a_dc never reach 3 here —
+// this function exists for API parity with the Rust side and is exercised
+// once tenthc HIR gains a dim2 field. Until then it returns "" (no error).
+fn check_bmm_shape(recv_dc: i64, recv_d0: i64, recv_d1: i64, recv_d2: i64, arg_dc: i64, arg_d0: i64, arg_d1: i64, arg_d2: i64) -> str {
+    if recv_dc != 3 || arg_dc != 3 { return ""; };
+    if recv_d0 != arg_d0 {
+        return "bmm shape 不兼容：batch 维度不匹配";
+    };
+    if recv_d2 != arg_d1 {
+        return "bmm shape 不兼容：内侧维度不匹配";
     };
     ""
 }
@@ -353,6 +378,7 @@ fn is_builtin_name(name: str) -> bool {
     if name == "zero_grad" { return true; };
     if name == "cross_entropy" { return true; };
     if name == "select" { return true; };
+    if name == "scatter" { return true; };
     if name == "Vec::new" { return true; };
     if name == "HashMap::new" { return true; };
     false
@@ -825,6 +851,18 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             } else {
                 add_tensor_type(p, 2, 0, 0, 0)
             };
+            return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
+        };
+        if e.sval == "bmm" {
+            // Phase 4: bmm 3D shape check & result type inference.
+            // tenthc HirType tracks only dim0/dim1 (no dim2 field), so 3D
+            // Known shape is unavailable — check_bmm_shape is a no-op here
+            // (recv_dc/a_dc never reach 3). Errors defer to runtime.
+            // Branch exists so bmm method calls are recognized as built-in
+            // tensor ops rather than user-defined method lookup misses.
+            // NOTE: keep this branch minimal (few let bindings) to avoid
+            // inflating lower_expr's local count past WASM limits.
+            let rty = add_tensor_type(p, 2, 0, 0, 0);
             return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
         };
         if e.sval == "transpose" {

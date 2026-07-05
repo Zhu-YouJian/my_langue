@@ -97,7 +97,10 @@ pub fn classify_tape_op(op: &TapeOp) -> TapeOpClass {
 
         // Expand：维度增加或重排（MatMul 改变 shape 维度，Transpose 重排）
         TapeOp::MatMul
+        | TapeOp::BatchedMatMul
         | TapeOp::Transpose => TapeOpClass::Expand,
+        // Scatter：保留 base shape（覆盖部分位置，shape 不变）
+        | TapeOp::Scatter => TapeOpClass::Preserve,
     }
 }
 
@@ -284,6 +287,8 @@ impl Tape {
             TapeOp::LayerNorm => "LayerNorm 的 normalized_shape 可能与输入最后一维不一致",
             TapeOp::Dropout => "Dropout 不应改变 shape，若失败检查输入 shape 是否合法",
             TapeOp::Select => "Select 的 then/else 分支 shape 可能不一致",
+            TapeOp::BatchedMatMul => "可能是 batched matmul 维度不匹配（B/K/N 不一致），检查两侧 batch 维与内侧 K 维",
+            TapeOp::Scatter => "Scatter 的 index 越界或与 src/base shape 不匹配",
             _ => "检查该节点的输入 shape 与算子语义是否匹配",
         }
     }
@@ -302,6 +307,7 @@ fn op_name(op: &TapeOp) -> &'static str {
         TapeOp::Neg => "Neg",
         TapeOp::ReLU => "ReLU",
         TapeOp::MatMul => "MatMul",
+        TapeOp::BatchedMatMul => "BatchedMatMul",
         TapeOp::Transpose => "Transpose",
         TapeOp::Sum => "Sum",
         TapeOp::Mean => "Mean",
@@ -317,6 +323,7 @@ fn op_name(op: &TapeOp) -> &'static str {
         TapeOp::Gelu => "Gelu",
         TapeOp::Select => "Select",
         TapeOp::Abs => "Abs",
+        TapeOp::Scatter => "Scatter",
     }
 }
 

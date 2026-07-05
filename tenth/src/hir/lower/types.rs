@@ -252,6 +252,44 @@ impl Lowerer {
                         // 非 2D：运行时只支持 2D，返回 Unknown
                         Type::Unknown
                     }
+                    "bmm" => {
+                        // 3D batched matmul: (B, M, K) @ (B, K, N) → (B, M, N)
+                        // 静态 shape 推断：若两侧 dims 都是 3D Known 且 B/K 匹配，返回精确 shape；
+                        // 否则保守返回 3D Any（不匹配的报错由 check_method_shape 负责）
+                        if dims.len() == 3 {
+                            if let Some(arg) = _args.first() {
+                                if let Type::Tensor { dims: adims, .. } = &arg.ty {
+                                    if adims.len() == 3 {
+                                        // batch (B) 和内侧 K 都必须兼容
+                                        let b_match = match (&dims[0], &adims[0]) {
+                                            (Dim::Known(a), Dim::Known(b)) => a == b,
+                                            (Dim::Symbol(a), Dim::Symbol(b)) => a == b,
+                                            (Dim::Any, _) | (_, Dim::Any) => true,
+                                            _ => false,
+                                        };
+                                        let k_match = match (&dims[2], &adims[1]) {
+                                            (Dim::Known(a), Dim::Known(b)) => a == b,
+                                            (Dim::Symbol(a), Dim::Symbol(b)) => a == b,
+                                            (Dim::Any, _) | (_, Dim::Any) => true,
+                                            _ => false,
+                                        };
+                                        if b_match && k_match {
+                                            return Type::Tensor {
+                                                dtype: dtype.clone(),
+                                                dims: vec![dims[0].clone(), dims[1].clone(), adims[2].clone()],
+                                            };
+                                        }
+                                        // B 或 K 不匹配：返回 Unknown，由 check 报错
+                                        return Type::Unknown;
+                                    }
+                                }
+                            }
+                            // 参数 shape 未知：保守返回 3D Any
+                            return Type::Tensor { dtype: dtype.clone(), dims: vec![Dim::Any, Dim::Any, Dim::Any] };
+                        }
+                        // 非 3D：运行时只支持 3D，返回 Unknown
+                        Type::Unknown
+                    }
                     // 归约算子（sum/mean/max/min）：
                     // - 无参数：全部降维到标量（dtype）
                     // - 字面量 axis 参数（如 x.sum(0)）：移除指定维度
@@ -741,6 +779,55 @@ impl Lowerer {
                         }
                     }
                 }
+                "bmm" => {
+                    // 3D bmm: (B, M, K) @ (B, K, N) — batch B 和内侧 K 必须相等
+                    // 非 3D 不报错（让运行时处理 "requires 3D tensors"）
+                    if ldims.len() == 3 {
+                        if let Some(arg) = args.first() {
+                            if let Type::Tensor { dims: rdims, .. } = &arg.ty {
+                                if rdims.len() == 3 {
+                                    // batch 维度：ldims[0] vs rdims[0]
+                                    let lb = &ldims[0];
+                                    let rb = &rdims[0];
+                                    let batch_mismatch = match (lb, rb) {
+                                        (Dim::Known(a), Dim::Known(b)) => a != b,
+                                        (Dim::Symbol(a), Dim::Symbol(b)) => a != b,
+                                        _ => false,
+                                    };
+                                    if batch_mismatch {
+                                        return Err(TenthError::TypeError {
+                                            line: span.line,
+                                            col: span.col,
+                                            message: format!(
+                                                "编译期 bmm shape 不兼容：{} @ {}（batch 维度 {} ≠ {} 必须相等）",
+                                                fmt_dims(ldims), fmt_dims(rdims), fmt_dim(lb), fmt_dim(rb)
+                                            ),
+                                        });
+                                    }
+                                    // 内侧 K：ldims[2] vs rdims[1]
+                                    let lk = &ldims[2];
+                                    let rk = &rdims[1];
+                                    let inner_mismatch = match (lk, rk) {
+                                        (Dim::Known(a), Dim::Known(b)) => a != b,
+                                        (Dim::Symbol(a), Dim::Symbol(b)) => a != b,
+                                        _ => false,
+                                    };
+                                    if inner_mismatch {
+                                        return Err(TenthError::TypeError {
+                                            line: span.line,
+                                            col: span.col,
+                                            message: format!(
+                                                "编译期 bmm shape 不兼容：{} @ {}（inner 维度 {} ≠ {} 必须相等）",
+                                                fmt_dims(ldims), fmt_dims(rdims), fmt_dim(lk), fmt_dim(rk)
+                                            ),
+                                        });
+                                    }
+                                }
+                                // 非 3D 参数：运行时只支持 3D，但这里不报错（让运行时报 "requires 3D"）
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -789,6 +876,45 @@ impl Lowerer {
                                     "matmul 约 {:.2} GFLOPs（{}×{} @ {}×{}，编译期预估）",
                                     flops as f64 / GFLOP as f64,
                                     m, k1, k2, n
+                                );
+                                self.warnings.push(TenthWarning::new(span.line, span.col, msg));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// bmm FLOPs 预估：(B,M,K)@(B,K,N) → B*M*K*N 乘加（每乘加算 2 FLOP）。
+    /// 阈值：1 GFLOP（10^9）。仅在两侧 shape 都 3D Known 且 B/K 匹配时预估。
+    pub(super) fn emit_bmm_flop_estimate(
+        &mut self,
+        recv_ty: &Type,
+        arg_ty: &Type,
+        span: &Span,
+    ) {
+        if let (Type::Tensor { dims: rdims, .. }, Type::Tensor { dims: adims, .. }) = (recv_ty, arg_ty) {
+            if rdims.len() == 3 && adims.len() == 3 {
+                // batch 必须匹配：rdims[0] == adims[0]
+                // 内侧 K 必须匹配：rdims[2] == adims[1]
+                if let (Dim::Known(b1), Dim::Known(m), Dim::Known(k1), Dim::Known(b2), Dim::Known(k2), Dim::Known(n)) =
+                    (&rdims[0], &rdims[1], &rdims[2], &adims[0], &adims[1], &adims[2])
+                {
+                    if b1 == b2 && k1 == k2 {
+                        // FLOPs = B * M * K * N * 2（乘加各算一次）
+                        if let Some(mul_add) = (*b1 as u64)
+                            .checked_mul(*m as u64)
+                            .and_then(|x| x.checked_mul(*k1 as u64))
+                            .and_then(|x| x.checked_mul(*n as u64))
+                        {
+                            let flops = mul_add.saturating_mul(2);
+                            const GFLOP: u64 = 1_000_000_000;
+                            if flops >= GFLOP {
+                                let msg = format!(
+                                    "bmm 约 {:.2} GFLOPs（{}×{}×{} @ {}×{}×{}，编译期预估）",
+                                    flops as f64 / GFLOP as f64,
+                                    b1, m, k1, b2, k2, n
                                 );
                                 self.warnings.push(TenthWarning::new(span.line, span.col, msg));
                             }

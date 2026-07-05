@@ -476,6 +476,34 @@ impl super::Interpreter {
                 }
                 return Ok(Some(Value::Tensor(result)));
             }
+            "scatter" => {
+                // scatter(base, dim, index, src) — 不可变散布原语
+                // 简化：dim=0, index/src 1D。可微：d_src=gather(grad,index), d_base=grad 但 index 位置置 0
+                if args.len() < 4 {
+                    return Err(TenthError::RuntimeError {
+                        message: "scatter(base, dim, index, src) 期望四个参数".into(),
+                    });
+                }
+                let dim = args[1].as_int().unwrap_or(0) as usize;
+                let (base, index, src) = match (&args[0], &args[2], &args[3]) {
+                    (Value::Tensor(b), Value::Tensor(i), Value::Tensor(s)) => (b.clone(), i.clone(), s.clone()),
+                    _ => return Err(TenthError::RuntimeError {
+                        message: "scatter(base, dim, index, src) 期望 base/index/src 为张量".into(),
+                    }),
+                };
+                let result_tensor = Tensor::scatter(&base.borrow(), dim, &index.borrow(), &src.borrow())
+                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                let result = Rc::new(RefCell::new(result_tensor));
+                if self.recording {
+                    if let Some(ref mut tape) = self.tape {
+                        let base_id = base.borrow().tape_id;
+                        let src_id = src.borrow().tape_id;
+                        let node_id = tape.scatter(base_id, src_id, base.clone(), src.clone(), index.clone(), result.clone());
+                        result.borrow_mut().tape_id = Some(node_id);
+                    }
+                }
+                return Ok(Some(Value::Tensor(result)));
+            }
             "grad" => {
                 if let Some(Value::Tensor(param)) = args.first() {
                     let p = param.borrow();

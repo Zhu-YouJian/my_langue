@@ -180,6 +180,20 @@ impl Interpreter {
                 return_type: Type::Unknown,
             },
         );
+        // scatter 原语：不可变散布，按 index 沿 dim 覆盖 base 的对应位置
+        self.current_scope().insert(
+            "scatter".to_string(),
+            Value::FnRef {
+                name: "scatter".to_string(),
+                params: vec![
+                    ("base".to_string(), Type::Unknown),
+                    ("dim".to_string(), Type::Unknown),
+                    ("index".to_string(), Type::Unknown),
+                    ("src".to_string(), Type::Unknown),
+                ],
+                return_type: Type::Unknown,
+            },
+        );
         // Scalar math
         for name in &["abs", "sqrt", "sin", "cos", "ln", "pow"] {
             self.current_scope().insert(
@@ -452,6 +466,7 @@ impl Interpreter {
                             | "param" | "backward" | "grad" | "zero_grad"
                             | "cross_entropy"
                             | "select"
+                            | "scatter"
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "to_f32" | "to_f64" | "tensor_from_vec"
                             | "f64_bits" | "f64_from_bits"
                             | "zeros" | "ones"

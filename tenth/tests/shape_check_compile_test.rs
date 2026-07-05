@@ -1320,6 +1320,121 @@ fn caller() -> Tensor[f64, ..] {
     lower(src).expect("linear + 跨函数参数应编译通过");
 }
 
+// ── Phase 4: bmm (3D batched matmul) shape 检查 ──────────────────────────────
+//
+// bmm: (B, M, K) @ (B, K, N) → (B, M, N)
+// 编译期检查：batch 维 B 必须相等 + 内侧 K 必须相等；非 3D 不报错（让运行时处理）。
+// 3D shape 通过 zeros(3,4,5) 或 tensor[[...]].reshape(3,4,5) 构造。
+
+#[test]
+fn bmm_correct_shape_compiles() {
+    // (2,3,4) @ (2,4,5) → (2,3,5)，应编译通过
+    let src = r#"
+fn good() -> Tensor[f64, ..] {
+    let a = zeros(2, 3, 4);
+    let b = zeros(2, 4, 5);
+    a.bmm(b)
+}
+"#;
+    lower(src).expect("正确的 bmm shape 应编译通过");
+}
+
+#[test]
+fn bmm_batch_mismatch_reports_error() {
+    // (1,3,4) @ (2,4,5) — batch 1≠2，应编译期报错
+    let src = r#"
+fn bad() -> Tensor[f64, ..] {
+    let a = zeros(1, 3, 4);
+    let b = zeros(2, 4, 5);
+    a.bmm(b)
+}
+"#;
+    assert_compile_error(src, "bmm shape 不兼容");
+}
+
+#[test]
+fn bmm_batch_mismatch_message_contains_batch() {
+    // 错误信息应明确提及 batch 维度
+    let src = r#"
+fn bad() -> Tensor[f64, ..] {
+    let a = zeros(1, 3, 4);
+    let b = zeros(2, 4, 5);
+    a.bmm(b)
+}
+"#;
+    assert_compile_error(src, "batch");
+}
+
+#[test]
+fn bmm_inner_dim_mismatch_reports_error() {
+    // (2,2,3) @ (2,4,5) — 内侧 K=3≠4，应编译期报错
+    let src = r#"
+fn bad() -> Tensor[f64, ..] {
+    let a = zeros(2, 2, 3);
+    let b = zeros(2, 4, 5);
+    a.bmm(b)
+}
+"#;
+    assert_compile_error(src, "bmm shape 不兼容");
+}
+
+#[test]
+fn bmm_inner_dim_mismatch_message_contains_inner() {
+    // 错误信息应明确提及 inner 维度
+    let src = r#"
+fn bad() -> Tensor[f64, ..] {
+    let a = zeros(2, 2, 3);
+    let b = zeros(2, 4, 5);
+    a.bmm(b)
+}
+"#;
+    assert_compile_error(src, "inner");
+}
+
+#[test]
+fn bmm_result_shape_inferred() {
+    // (2,3,4) @ (2,4,5) → (2,3,5)，结果 shape 应含 Known(2)/Known(3)/Known(5)
+    let src = r#"
+fn bmm_fn() -> Tensor[f64, ..] {
+    let a = zeros(2, 3, 4);
+    let b = zeros(2, 4, 5);
+    a.bmm(b)
+}
+"#;
+    let f = lower_fn(src, "bmm_fn");
+    let ty_str = format!("{:?}", f.body.ty);
+    assert!(
+        ty_str.contains("Known(2)") && ty_str.contains("Known(3)") && ty_str.contains("Known(5)"),
+        "bmm(2,3,4)@(2,4,5) 应推断结果 shape [2,3,5]，ty: {}", ty_str
+    );
+}
+
+#[test]
+fn bmm_non_3d_skips_compile_check() {
+    // (2,3) @ (3,4) — 非 3D，编译期不报错（让运行时处理 "requires 3D"）
+    let src = r#"
+fn non_3d() -> Tensor[f64, ..] {
+    let a = zeros(2, 3);
+    let b = zeros(3, 4);
+    a.bmm(b)
+}
+"#;
+    lower(src).expect("非 3D 的 bmm 编译期应跳过检查（让运行时处理）");
+}
+
+#[test]
+fn bmm_with_reshape_args_compiles() {
+    // 通过 reshape 构造 3D shape：tensor[[...]].reshape(2,3,4) @ reshape(2,4,5) → (2,3,5)
+    let src = r#"
+fn good() -> Tensor[f64, ..] {
+    let a = zeros(2, 12).reshape(2, 3, 4);
+    let b = zeros(2, 20).reshape(2, 4, 5);
+    a.bmm(b)
+}
+"#;
+    lower(src).expect("reshape 构造的 3D shape bmm 应编译通过");
+}
+
 // ── 高开销测试（占位保留，等待安全环境） ─────────────────────────────────────
 //
 // 以下测试可能危害系统内存或产生过高开销，标记 #[ignore] 占位保留。

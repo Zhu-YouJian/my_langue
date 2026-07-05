@@ -61,7 +61,7 @@
 //   std::nn::batchnorm::batchnorm<T>
 //   std::nn::conv::conv2d
 //   std::nn::embedding::embedding
-//   std::nn::attention::scaled_dot_product_attention<T>
+//   std::nn::attention::scaled_dot_product_attention<T>, scaled_dot_product_attention_batched<T>  // 2D / 3D(bmm) 版本
 //   std::nn::multihead_attention::multihead_attention<T>
 //   std::nn::layer_norm::layer_norm<T>, make_layer_norm       // make_* 仍 f64（依赖 randn native）
 //   std::nn::positional_encoding::positional_encoding         // 仍 f64（依赖 randn native）
