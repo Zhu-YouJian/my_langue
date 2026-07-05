@@ -102,6 +102,8 @@ pub fn classify_tape_op(op: &TapeOp) -> TapeOpClass {
         | TapeOp::Reshape => TapeOpClass::Expand,
         // Scatter：保留 base shape（覆盖部分位置，shape 不变）
         | TapeOp::Scatter
+        // Gather：输出 shape == index.shape（从输入张量继承 shape，非新构造）
+        | TapeOp::Gather
         // MaskedFill：保留 input shape（仅覆盖部分位置，shape 不变）
         | TapeOp::MaskedFill => TapeOpClass::Preserve,
     }
@@ -292,6 +294,7 @@ impl Tape {
             TapeOp::Select => "Select 的 then/else 分支 shape 可能不一致",
             TapeOp::BatchedMatMul => "可能是 batched matmul 维度不匹配（B/K/N 不一致），检查两侧 batch 维与内侧 K 维",
             TapeOp::Scatter => "Scatter 的 index 越界或与 src/base shape 不匹配",
+            TapeOp::Gather => "Gather 的 index 越界或与 base shape 不匹配（除 dim 维外必须一致）",
             TapeOp::Reshape => "Reshape 的目标 shape 元素数与输入不一致",
             TapeOp::MaskedFill => "MaskedFill 的 mask shape 与输入不一致",
             _ => "检查该节点的输入 shape 与算子语义是否匹配",
@@ -329,6 +332,7 @@ fn op_name(op: &TapeOp) -> &'static str {
         TapeOp::Select => "Select",
         TapeOp::Abs => "Abs",
         TapeOp::Scatter => "Scatter",
+        TapeOp::Gather => "Gather",
         TapeOp::Reshape => "Reshape",
         TapeOp::MaskedFill => "MaskedFill",
     }
@@ -355,7 +359,7 @@ mod tests {
             TapeOp::Sum, TapeOp::Mean, TapeOp::Exp, TapeOp::Log, TapeOp::Sigmoid,
             TapeOp::Softmax, TapeOp::CrossEntropy, TapeOp::Dropout, TapeOp::Conv2D,
             TapeOp::BatchNorm, TapeOp::LayerNorm, TapeOp::Gelu, TapeOp::Select,
-            TapeOp::Abs, TapeOp::Scatter, TapeOp::Reshape, TapeOp::MaskedFill,
+            TapeOp::Abs, TapeOp::Scatter, TapeOp::Gather, TapeOp::Reshape, TapeOp::MaskedFill,
         ];
         for op in &all_ops {
             let _cls = classify_tape_op(op); // 不 panic 即可
@@ -368,7 +372,7 @@ mod tests {
         assert_eq!(classify_tape_op(&TapeOp::LayerNorm), TapeOpClass::Construct);
         assert_eq!(classify_tape_op(&TapeOp::Dropout), TapeOpClass::Construct);
         assert_eq!(classify_tape_op(&TapeOp::Select), TapeOpClass::Construct);
-        // Preserve: 14 个（含 Scatter / MaskedFill）
+        // Preserve: 15 个（含 Scatter / Gather / MaskedFill）
         assert_eq!(classify_tape_op(&TapeOp::Add), TapeOpClass::Preserve);
         assert_eq!(classify_tape_op(&TapeOp::Sub), TapeOpClass::Preserve);
         assert_eq!(classify_tape_op(&TapeOp::Mul), TapeOpClass::Preserve);
@@ -382,6 +386,7 @@ mod tests {
         assert_eq!(classify_tape_op(&TapeOp::Gelu), TapeOpClass::Preserve);
         assert_eq!(classify_tape_op(&TapeOp::Abs), TapeOpClass::Preserve);
         assert_eq!(classify_tape_op(&TapeOp::Scatter), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Gather), TapeOpClass::Preserve);
         assert_eq!(classify_tape_op(&TapeOp::MaskedFill), TapeOpClass::Preserve);
         // Reduce: 2 个
         assert_eq!(classify_tape_op(&TapeOp::Sum), TapeOpClass::Reduce);

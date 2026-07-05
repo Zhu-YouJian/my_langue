@@ -348,3 +348,14 @@ fn test_shape_mismatch_error_structure() {
     assert!(displayed.contains("MatMul"), "Display 应包含算子名，实际: {}", displayed);
     assert!(displayed.contains("K ≠ K'"), "Display 应包含消息，实际: {}", displayed);
 }
+
+// ── 10. Gather / Scatter 分类为 Preserve ──────────────────────────────
+
+#[test]
+fn classify_tape_op_gather_is_preserve() {
+    // Gather：输出 shape == index.shape（从输入张量继承 shape，非新构造）。
+    // 按 T7 定理分类为 Preserve（与 Scatter 一致）。
+    assert_eq!(classify_tape_op(&TapeOp::Gather), TapeOpClass::Preserve);
+    // 顺带验证 Scatter 也为 Preserve（多维扩展后分类不变）
+    assert_eq!(classify_tape_op(&TapeOp::Scatter), TapeOpClass::Preserve);
+}

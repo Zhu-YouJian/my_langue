@@ -63,6 +63,7 @@ impl Lowerer {
                             | "cross_entropy"
                             | "select"
                             | "scatter"
+                            | "gather"
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "to_f32" | "to_f64" | "tensor_from_vec"
                             | "f64_bits" | "f64_from_bits"
                             | "zeros" | "ones"

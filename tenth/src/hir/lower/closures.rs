@@ -35,6 +35,7 @@ impl Lowerer {
                     | "cross_entropy"
                     | "select"
                     | "scatter"
+                    | "gather"
                     | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow"
                     | "zeros" | "ones"
                     | "save_weights" | "load_weights"

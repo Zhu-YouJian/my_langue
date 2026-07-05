@@ -194,6 +194,19 @@ impl Interpreter {
                 return_type: Type::Unknown,
             },
         );
+        // gather 原语：沿 dim 维按 index 取值（与 PyTorch gather 对齐）
+        self.current_scope().insert(
+            "gather".to_string(),
+            Value::FnRef {
+                name: "gather".to_string(),
+                params: vec![
+                    ("base".to_string(), Type::Unknown),
+                    ("dim".to_string(), Type::Unknown),
+                    ("index".to_string(), Type::Unknown),
+                ],
+                return_type: Type::Unknown,
+            },
+        );
         // Scalar math
         for name in &["abs", "sqrt", "sin", "cos", "ln", "pow"] {
             self.current_scope().insert(
@@ -467,6 +480,7 @@ impl Interpreter {
                             | "cross_entropy"
                             | "select"
                             | "scatter"
+                            | "gather"
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "to_f32" | "to_f64" | "tensor_from_vec"
                             | "f64_bits" | "f64_from_bits"
                             | "zeros" | "ones"

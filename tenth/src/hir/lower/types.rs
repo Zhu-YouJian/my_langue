@@ -485,6 +485,19 @@ impl Lowerer {
                 };
                 Ok(Type::tensor(dtype, acc))
             },
+            // gather 原语：out.shape == index.shape；dtype 跟随 base（args[0]）
+            "gather" => {
+                // args = [base, dim, index]
+                let base_dtype = match args.first() {
+                    Some(HirExpr { ty: Type::Tensor { dtype, .. }, .. }) if matches!(dtype.as_ref(), Type::Base(BaseType::F32)) => BaseType::F32,
+                    _ => BaseType::F64,
+                };
+                let index_dims = match args.get(2) {
+                    Some(HirExpr { ty: Type::Tensor { dims, .. }, .. }) => dims.clone(),
+                    _ => vec![Dim::Any],
+                };
+                Ok(Type::tensor(base_dtype, index_dims))
+            },
             "start_grad" | "new_grad" | "stop_grad" | "param" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
             "backward" => Ok(Type::unit()),
             "grad" | "zero_grad" => Ok(Type::Unknown),

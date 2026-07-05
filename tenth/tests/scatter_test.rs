@@ -214,3 +214,182 @@ fn test_scatter_then_matmul_composite_grad_base() {
         assert!((x - expected[i]).abs() < 1e-6, "grad_base[{}] expected {}, got {}", i, expected[i], x);
     }
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// 7. 多维扩展测试（dim>0 + 多维 index/src，PyTorch 对齐）
+// ══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn scatter_dim1_basic() {
+    // base = [[1,2,3],[4,5,6]]  shape (2,3)
+    // dim = 1, index = [[0,2],[1,0]]  shape (2,2), src = [[10,20],[30,40]]  shape (2,2)
+    // out = base.clone(); out[i, index[i,j]] = src[i,j]
+    //   out[0,0]=10, out[0,2]=20, out[1,1]=30, out[1,0]=40
+    // out = [[10,2,20],[40,30,6]]  row-major [10,2,20,40,30,6]
+    let src = r#"
+        let base = tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let index = tensor[[0.0, 2.0], [1.0, 0.0]];
+        let src = tensor[[10.0, 20.0], [30.0, 40.0]];
+        scatter(base, 1, index, src)
+    "#;
+    let result = run_code(src).unwrap();
+    let v = as_f64_vec(result.as_ref().unwrap()).expect("expected tensor");
+    assert_eq!(v, vec![10.0, 2.0, 20.0, 40.0, 30.0, 6.0]);
+}
+
+#[test]
+fn scatter_dim0_2d() {
+    // base = [[0,0],[0,0],[0,0]]  shape (3,2)
+    // dim = 0, index = [[0,1],[2,0]]  shape (2,2), src = [[10,20],[30,40]]  shape (2,2)
+    // out = base.clone(); out[index[i,j], j] = src[i,j]
+    //   out[0,0]=10, out[1,1]=20, out[2,0]=30, out[0,1]=40
+    // out = [[10,40],[0,20],[30,0]]  row-major [10,40,0,20,30,0]
+    let src = r#"
+        let base = tensor[[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]];
+        let index = tensor[[0.0, 1.0], [2.0, 0.0]];
+        let src = tensor[[10.0, 20.0], [30.0, 40.0]];
+        scatter(base, 0, index, src)
+    "#;
+    let result = run_code(src).unwrap();
+    let v = as_f64_vec(result.as_ref().unwrap()).expect("expected tensor");
+    assert_eq!(v, vec![10.0, 40.0, 0.0, 20.0, 30.0, 0.0]);
+}
+
+#[test]
+fn scatter_multidim_index_src() {
+    // 多维 index/src（非 1D）：验证 2D index/src 在 dim=1 下正确散布。
+    // base = [[0,0,0],[0,0,0]]  shape (2,3)
+    // dim = 1, index = [[0,1],[2,0]]  shape (2,2), src = [[7,8],[9,10]]  shape (2,2)
+    // out[0,0]=7, out[0,1]=8, out[1,2]=9, out[1,0]=10
+    // out = [[7,8,0],[10,0,9]]  row-major [7,8,0,10,0,9]
+    let src = r#"
+        let base = tensor[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]];
+        let index = tensor[[0.0, 1.0], [2.0, 0.0]];
+        let src = tensor[[7.0, 8.0], [9.0, 10.0]];
+        scatter(base, 1, index, src)
+    "#;
+    let result = run_code(src).unwrap();
+    let v = as_f64_vec(result.as_ref().unwrap()).expect("expected tensor");
+    assert_eq!(v, vec![7.0, 8.0, 0.0, 10.0, 0.0, 9.0]);
+}
+
+#[test]
+fn scatter_backward_dim1() {
+    // 验证 scatter 在 dim=1 时 backward 正确（d_src = gather 语义，d_base = grad 但 actual 位置置 0）。
+    // base = param([[1,1,1],[1,1,1]])  shape (2,3)
+    // index = [[0,2],[1,0]]  shape (2,2), src = param([[10,20],[30,40]])  shape (2,2)
+    // out = scatter(base, 1, index, src) = [[10,1,20],[40,30,1]]
+    // loss = out.sum() = 10+1+20+40+30+1 = 102
+    // grad(out) = ones (2,3)
+    // d_src[idx] = grad[actual], actual[1]=index[idx]
+    //   d_src[0,0]=grad[0,0]=1, d_src[0,1]=grad[0,2]=1
+    //   d_src[1,0]=grad[1,1]=1, d_src[1,1]=grad[1,0]=1
+    // d_src = [[1,1],[1,1]]  row-major [1,1,1,1]
+    let src = r#"
+        new_grad();
+        let b = param(tensor[[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]]);
+        let index = tensor[[0.0, 2.0], [1.0, 0.0]];
+        let s = param(tensor[[10.0, 20.0], [30.0, 40.0]]);
+        let out = scatter(b, 1, index, s);
+        backward(out.sum());
+        stop_grad();
+        grad(s)
+    "#;
+    let result = run_code(src).unwrap();
+    let v = as_f64_vec(result.as_ref().unwrap()).expect("expected tensor");
+    assert_eq!(v.len(), 4, "d_src should have 4 elements, got {}", v.len());
+    for (i, x) in v.iter().enumerate() {
+        assert!((x - 1.0).abs() < 1e-6, "d_src[{}] expected 1.0, got {}", i, x);
+    }
+}
+
+#[test]
+fn scatter_backward_dim1_grad_base() {
+    // 同上例，但取 grad(base)。d_base = grad 但 actual 位置置 0。
+    // actual = [0,0],[0,2],[1,1],[1,0] → 这些位置在 d_base 中置 0
+    // d_base = [[0,1,0],[0,0,1]]  row-major [0,1,0,0,0,1]
+    let src = r#"
+        new_grad();
+        let b = param(tensor[[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]]);
+        let index = tensor[[0.0, 2.0], [1.0, 0.0]];
+        let s = param(tensor[[10.0, 20.0], [30.0, 40.0]]);
+        let out = scatter(b, 1, index, s);
+        backward(out.sum());
+        stop_grad();
+        grad(b)
+    "#;
+    let result = run_code(src).unwrap();
+    let v = as_f64_vec(result.as_ref().unwrap()).expect("expected tensor");
+    assert_eq!(v.len(), 6, "d_base should have 6 elements, got {}", v.len());
+    let expected = [0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+    for (i, x) in v.iter().enumerate() {
+        assert!((x - expected[i]).abs() < 1e-6, "d_base[{}] expected {}, got {}", i, expected[i], x);
+    }
+}
+
+#[test]
+fn scatter_backward_multidim() {
+    // 多维场景 backward（dim=0）：
+    // base = param([[1,1],[1,1],[1,1]])  shape (3,2)
+    // index = [[0,1],[2,0]]  shape (2,2), src = param([[10,20],[30,40]])  shape (2,2)
+    // out = scatter(base, 0, index, src)
+    //   out[0,0]=10, out[1,1]=20, out[2,0]=30, out[0,1]=40
+    //   out = [[10,40],[1,20],[30,1]]
+    // loss = out.sum() = 10+40+1+20+30+1 = 102
+    // grad(out) = ones (3,2)
+    // d_src[idx] = grad[actual], actual[0]=index[idx]
+    //   d_src[0,0]=grad[0,0]=1, d_src[0,1]=grad[1,1]=1
+    //   d_src[1,0]=grad[2,0]=1, d_src[1,1]=grad[0,1]=1
+    // d_src = [[1,1],[1,1]]  row-major [1,1,1,1]
+    let src = r#"
+        new_grad();
+        let b = param(tensor[[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]]);
+        let index = tensor[[0.0, 1.0], [2.0, 0.0]];
+        let s = param(tensor[[10.0, 20.0], [30.0, 40.0]]);
+        let out = scatter(b, 0, index, s);
+        backward(out.sum());
+        stop_grad();
+        grad(s)
+    "#;
+    let result = run_code(src).unwrap();
+    let v = as_f64_vec(result.as_ref().unwrap()).expect("expected tensor");
+    assert_eq!(v.len(), 4, "d_src should have 4 elements, got {}", v.len());
+    for (i, x) in v.iter().enumerate() {
+        assert!((x - 1.0).abs() < 1e-6, "d_src[{}] expected 1.0, got {}", i, x);
+    }
+}
+
+#[test]
+fn scatter_dim_out_of_range_errors() {
+    // base 2D（ndim=2），dim=2 >= 2 → 报错
+    let src = r#"
+        let base = tensor[[0.0, 0.0], [0.0, 0.0]];
+        let index = tensor[[0.0, 1.0]];
+        let s = tensor[[10.0, 20.0]];
+        scatter(base, 2, index, s)
+    "#;
+    let result = run_code(src);
+    assert!(result.is_err(), "expected error for dim out of range, got {:?}", result);
+    let err = result.unwrap_err();
+    assert!(err.contains("越界") || err.contains("dim"), "error should mention dim 越界: {}", err);
+}
+
+#[test]
+fn scatter_shape_mismatch_errors() {
+    // index shape (2,2) vs src shape (2,3) → 不匹配报错
+    // 注：除 dim 维外 index.shape 必须与 base.shape 一致，所以构造合法 base (2,3)，
+    // index (2,2) 在 dim=1 上 index.shape[1]=2 != base.shape[1]=3 会先报"维度不一致"。
+    // 为精确测试 index.shape != src.shape，构造 base (2,2)，index (2,2)，src (2,3)：
+    //   - dim=1 时 index.shape[1]=2 == base.shape[1]=2 ✓
+    //   - 但 src.shape (2,3) != index.shape (2,2) → 报"不匹配"
+    let src = r#"
+        let base = tensor[[0.0, 0.0], [0.0, 0.0]];
+        let index = tensor[[0.0, 1.0], [1.0, 0.0]];
+        let s = tensor[[10.0, 20.0, 99.0], [30.0, 40.0, 88.0]];
+        scatter(base, 1, index, s)
+    "#;
+    let result = run_code(src);
+    assert!(result.is_err(), "expected error for shape mismatch, got {:?}", result);
+    let err = result.unwrap_err();
+    assert!(err.contains("不匹配") || err.contains("shape"), "error should mention shape mismatch: {}", err);
+}

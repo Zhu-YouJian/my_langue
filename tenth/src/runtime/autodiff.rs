@@ -22,6 +22,8 @@ pub struct TapeNode {
     /// `Rc` references to the input *tensors* — kept alive so backward
     /// can read their data and write gradients.
     pub input_tensors: Vec<Rc<RefCell<Tensor>>>,
+    /// 辅助整数参数（如 Scatter/Gather 的 dim；其他算子默认 0）。
+    pub aux: usize,
 }
 
 // ── Operations ────────────────────────────────────────────────────────
@@ -87,11 +89,17 @@ pub enum TapeOp {
     /// Element-wise absolute value: |a|.
     /// Backward: d|x|/dx = sign(x)，x=0 处取 0（次梯度中点）。
     Abs,
-    /// Scatter: out = base.clone(); out[dim][index[i]] = src[i]（不可变语义）。
-    /// 简化：dim=0, index/src 1D。index 不可微。
+    /// Scatter: out = base.clone(); out[dim][index[idx]] = src[idx]（不可变语义，PyTorch 对齐）。
+    /// 支持任意 dim + 多维 index/src。index 不可微。
     /// input_tensors = [base, src, index, result]
     /// inputs = [base_id, src_id]（index 阻断链式传播，不写入 inputs）
+    /// dim 存于 TapeNode.aux
     Scatter,
+    /// Gather: out[i,j,...] = base[index[i,j,...], j, ...]（沿 dim 维按 index 取值，与 PyTorch 对齐）。
+    /// index 不可微；out.shape == index.shape。
+    /// input_tensors = [base, index, result]
+    /// inputs = [base_id]（index 阻断链式传播，不写入 inputs）
+    Gather,
     /// Reshape: result = input.reshape(target_shape)（元素数不变，仅重排）。
     /// input_tensors = [input, result]（原始 shape 从 input.shape() 读取）
     /// backward: d_input = grad.reshape(input.shape())
@@ -137,6 +145,7 @@ impl Tape {
             op: TapeOp::Input,
             inputs: vec![],
             input_tensors: vec![tensor],
+            aux: 0,
         });
         id
     }
@@ -153,6 +162,7 @@ impl Tape {
             op,
             inputs: vec![input_id],
             input_tensors: vec![input_tensor, result],
+            aux: 0,
         });
         id
     }
@@ -168,6 +178,7 @@ impl Tape {
             op,
             inputs: vec![a_id, b_id],
             input_tensors: vec![a, b, result],
+            aux: 0,
         });
         id
     }
@@ -181,6 +192,7 @@ impl Tape {
             op,
             inputs: vec![],
             input_tensors: vec![input_tensor, result],
+            aux: 0,
         });
         id
     }
@@ -204,6 +216,7 @@ impl Tape {
             op: TapeOp::CrossEntropy,
             inputs: vec![logits_id],
             input_tensors: vec![logits, softmax, target, result],
+            aux: 0,
         });
         id
     }
@@ -221,6 +234,7 @@ impl Tape {
             op: TapeOp::BatchNorm,
             inputs: vec![x_id],
             input_tensors: vec![x, gamma, beta, x_hat, std_inv, result],
+            aux: 0,
         });
         id
     }
@@ -239,6 +253,7 @@ impl Tape {
             op: TapeOp::LayerNorm,
             inputs: vec![x_id],
             input_tensors: vec![x, gamma, beta, x_hat, std_inv, result],
+            aux: 0,
         });
         id
     }
@@ -256,6 +271,7 @@ impl Tape {
             op: TapeOp::Conv2D,
             inputs: vec![x_id, w_id],
             input_tensors: vec![x, w, im2col, result],
+            aux: 0,
         });
         id
     }
@@ -278,6 +294,7 @@ impl Tape {
             op: TapeOp::Dropout,
             inputs: vec![input_id],
             input_tensors: vec![input, mask, result],
+            aux: 0,
         });
         id
     }
@@ -290,6 +307,7 @@ impl Tape {
             op,
             inputs: vec![],
             input_tensors: vec![a, b, result],
+            aux: 0,
         });
         id
     }
@@ -316,6 +334,7 @@ impl Tape {
             op: TapeOp::Select,
             inputs: vec![tid, eid],
             input_tensors: vec![cond, then, else_, result],
+            aux: 0,
         });
         id
     }
@@ -332,6 +351,7 @@ impl Tape {
         base: Rc<RefCell<Tensor>>, src: Rc<RefCell<Tensor>>,
         index: Rc<RefCell<Tensor>>,
         result: Rc<RefCell<Tensor>>,
+        dim: usize,
     ) -> usize {
         let bid = base_id.unwrap_or_else(|| self.input(base.clone()));
         let sid = src_id.unwrap_or_else(|| self.input(src.clone()));
@@ -341,6 +361,33 @@ impl Tape {
             op: TapeOp::Scatter,
             inputs: vec![bid, sid],
             input_tensors: vec![base, src, index, result],
+            aux: dim,
+        });
+        id
+    }
+
+    /// Record a gather node: out = base.gather(dim, index)（沿 dim 维按 index 取值）。
+    /// `base_id` — 上游节点 id（index 阻断链式传播，不写入 inputs）。
+    /// `base` / `index` — 实际输入张量。
+    /// `result` — 输出张量（shape == index.shape）。
+    /// inputs 固定为 [base_id]（若为 None 则用 dummy input 占位），
+    /// 保证 backward 时 propagate_grad(node, 0, d_base) 索引对齐。
+    pub fn gather(
+        &mut self,
+        base_id: Option<usize>,
+        base: Rc<RefCell<Tensor>>,
+        index: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+        dim: usize,
+    ) -> usize {
+        let bid = base_id.unwrap_or_else(|| self.input(base.clone()));
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::Gather,
+            inputs: vec![bid],
+            input_tensors: vec![base, index, result],
+            aux: dim,
         });
         id
     }
@@ -365,6 +412,7 @@ impl Tape {
             op: TapeOp::MaskedFill,
             inputs: vec![iid],
             input_tensors: vec![input, mask, result],
+            aux: 0,
         });
         id
     }
@@ -817,36 +865,61 @@ impl Tape {
                     propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
                 TapeOp::Scatter => {
-                    // Scatter backward (简化：dim=0, 1D index/src, base 也是 1D):
-                    //   forward: out = base.clone(); out[index[i]] = src[i]
-                    //   d_src[i] = grad[index[i]]   (gather 语义)
-                    //   d_base = grad.clone()，但 index 位置置 0（这些位置被 src 覆盖，梯度不传回 base）
+                    // Scatter backward（支持任意 dim + 多维 index/src，PyTorch 对齐）:
+                    //   forward: out = base.clone();
+                    //            对每个 multi-index idx（遍历 index）:
+                    //              actual = idx; actual[dim] = index[idx] as usize
+                    //              out[actual] = src[idx]
+                    //   d_src[idx] = grad[actual]              (gather 语义)
+                    //   d_base = grad.clone()，但所有 actual 位置置 0（被 src 覆盖，梯度不传回 base）
                     //   index 不可微（无梯度）
                     // input_tensors = [base, src, index, result]
                     // inputs = [base_id, src_id]
+                    // dim 存于 node.aux
                     if node.input_tensors.len() >= 4 {
+                        let dim = node.aux;
                         let (d_base, d_src) = {
                             let base_ref = node.input_tensors[0].borrow();
                             let index_ref = node.input_tensors[2].borrow();
                             let base_shape = base_ref.shape();
+                            let index_shape: Vec<usize> = index_ref.shape().to_vec();
                             let index_view = index_ref.data.as_f64_view();
-                            let n_idx = index_view.len();
-                            // d_src[i] = grad[index[i]]
-                            let mut d_src_data = Vec::with_capacity(n_idx);
-                            for i in 0..n_idx {
-                                let idx = index_view[i] as usize;
-                                let v = grad.get(IxDyn(&[idx])).copied().unwrap_or(0.0);
-                                d_src_data.push(v);
+                            let total: usize = index_shape.iter().product();
+                            // 把 flat（row-major / C order）反推为多维索引
+                            // 与 flatten_index 对偶：从最后一维开始，stride 递增
+                            let unflatten = |flat: usize| -> Vec<usize> {
+                                let mut multi = vec![0usize; index_shape.len()];
+                                let mut rem = flat;
+                                for i in (0..index_shape.len()).rev() {
+                                    multi[i] = rem % index_shape[i];
+                                    rem /= index_shape[i];
+                                }
+                                multi
+                            };
+                            // d_src[idx] = grad[actual]，actual[dim]=index[idx]
+                            let mut d_src_data = Vec::with_capacity(total);
+                            for flat in 0..total {
+                                let multi = unflatten(flat);
+                                let mut actual = multi.clone();
+                                let v = index_view[IxDyn(&multi)];
+                                actual[dim] = v as usize;
+                                let g = grad.get(IxDyn(&actual)).copied().unwrap_or(0.0);
+                                d_src_data.push(g);
                             }
-                            let d_src = ArrayD::from_shape_vec(IxDyn(&[n_idx]), d_src_data)
+                            let d_src = ArrayD::from_shape_vec(IxDyn(&index_shape), d_src_data)
                                 .map_err(|_| crate::error::TenthError::RuntimeError {
                                     message: "Scatter 反向 d_src reshape 失败".into(),
                                 })?;
-                            // d_base = grad.clone()，但 index 位置置 0
+                            // d_base = grad.clone()，但所有 actual 位置置 0
                             let mut d_base_data: Vec<f64> = grad.iter().cloned().collect();
-                            for i in 0..n_idx {
-                                let idx = index_view[i] as usize;
-                                if let Some(slot) = d_base_data.get_mut(idx) {
+                            for flat in 0..total {
+                                let multi = unflatten(flat);
+                                let mut actual = multi.clone();
+                                let v = index_view[IxDyn(&multi)];
+                                actual[dim] = v as usize;
+                                // 把 actual 转为 flat 索引（row-major）
+                                let actual_flat = flatten_index(&actual, &base_shape);
+                                if let Some(slot) = d_base_data.get_mut(actual_flat) {
                                     *slot = 0.0;
                                 }
                             }
@@ -858,6 +931,57 @@ impl Tape {
                         };
                         propagate_grad(node, 0, &d_base, &mut node_grads)?;
                         propagate_grad(node, 1, &d_src, &mut node_grads)?;
+                    }
+                }
+                TapeOp::Gather => {
+                    // Gather backward（支持任意 dim + 多维 index，PyTorch 对齐）:
+                    //   forward: out[idx] = base[actual]，actual[dim]=index[idx]，其他维同 idx
+                    //   d_base = zeros_like(base)
+                    //   对每个 idx: d_base[actual] += grad[idx]   (scatter-add 语义，重复 index 累加)
+                    //   index 不可微（无梯度）
+                    // input_tensors = [base, index, result]
+                    // inputs = [base_id]
+                    // dim 存于 node.aux
+                    if node.input_tensors.len() >= 3 {
+                        let dim = node.aux;
+                        let d_base = {
+                            let base_ref = node.input_tensors[0].borrow();
+                            let index_ref = node.input_tensors[1].borrow();
+                            let base_shape = base_ref.shape();
+                            let index_shape: Vec<usize> = index_ref.shape().to_vec();
+                            let index_view = index_ref.data.as_f64_view();
+                            let total: usize = index_shape.iter().product();
+                            // 把 flat（row-major / C order）反推为多维索引
+                            // 与 flatten_index 对偶：从最后一维开始，stride 递增
+                            let unflatten = |flat: usize| -> Vec<usize> {
+                                let mut multi = vec![0usize; index_shape.len()];
+                                let mut rem = flat;
+                                for i in (0..index_shape.len()).rev() {
+                                    multi[i] = rem % index_shape[i];
+                                    rem /= index_shape[i];
+                                }
+                                multi
+                            };
+                            // d_base = zeros_like(base)，累加 grad[idx] 到 d_base[actual]
+                            let base_total: usize = base_shape.iter().product();
+                            let mut d_base_data: Vec<f64> = vec![0.0; base_total];
+                            for flat in 0..total {
+                                let multi = unflatten(flat);
+                                let mut actual = multi.clone();
+                                let v = index_view[IxDyn(&multi)];
+                                actual[dim] = v as usize;
+                                let actual_flat = flatten_index(&actual, &base_shape);
+                                let g = grad.get(IxDyn(&multi)).copied().unwrap_or(0.0);
+                                if let Some(slot) = d_base_data.get_mut(actual_flat) {
+                                    *slot += g;
+                                }
+                            }
+                            ArrayD::from_shape_vec(IxDyn(&base_shape), d_base_data)
+                                .map_err(|_| crate::error::TenthError::RuntimeError {
+                                    message: "Gather 反向 d_base reshape 失败".into(),
+                                })?
+                        };
+                        propagate_grad(node, 0, &d_base, &mut node_grads)?;
                     }
                 }
                 TapeOp::Reshape => {
@@ -1083,6 +1207,18 @@ fn propagate_grad(
     Ok(())
 }
 
+/// 把多维索引（row-major / C order）展平为线性索引。
+/// `multi` 长度必须与 `shape` 一致；每个维度值 < shape[d]。
+fn flatten_index(multi: &[usize], shape: &[usize]) -> usize {
+    let mut flat = 0usize;
+    let mut stride = 1usize;
+    for d in (0..multi.len()).rev() {
+        flat += multi[d] * stride;
+        stride *= shape[d];
+    }
+    flat
+}
+
 /// 人类可读的 TapeOp 名称（用于错误信息）。
 fn op_name(op: &TapeOp) -> &'static str {
     match op {
@@ -1111,6 +1247,7 @@ fn op_name(op: &TapeOp) -> &'static str {
         TapeOp::Select => "Select",
         TapeOp::Abs => "Abs",
         TapeOp::Scatter => "Scatter",
+        TapeOp::Gather => "Gather",
         TapeOp::Reshape => "Reshape",
         TapeOp::MaskedFill => "MaskedFill",
     }

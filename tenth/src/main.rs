@@ -814,7 +814,8 @@ fn register_natives(vm: &mut Vm) {
     });
     vm.add_native("scatter".into(), |vm, args| {
         // scatter(base, dim, index, src) — 不可变散布原语
-        // 简化：dim=0, index/src 1D。可微：d_src=gather(grad,index), d_base=grad 但 index 位置置 0
+        // 支持任意 dim + 多维 index/src（PyTorch 对齐）。
+        // 可微：d_src=gather(grad,index,dim), d_base=grad 但 index 指向位置置 0
         if args.len() < 4 {
             return Err(tenth::error::TenthError::RuntimeError {
                 message: "scatter(base, dim, index, src) 期望四个参数".into(),
@@ -834,7 +835,36 @@ fn register_natives(vm: &mut Vm) {
             if let Some(ref mut tape) = vm.tape {
                 let base_id = base.borrow().tape_id;
                 let src_id = src.borrow().tape_id;
-                let node_id = tape.scatter(base_id, src_id, base.clone(), src.clone(), index.clone(), result.clone());
+                let node_id = tape.scatter(base_id, src_id, base.clone(), src.clone(), index.clone(), result.clone(), dim);
+                result.borrow_mut().tape_id = Some(node_id);
+            }
+        }
+        Ok(Value::Tensor(result))
+    });
+    vm.add_native("gather".into(), |vm, args| {
+        // gather(base, dim, index) — 沿 dim 维按 index 取值，与 PyTorch gather 对齐
+        // out[i,j,...] = base[index[i,j,...], j, ...]  (dim=0)
+        // 可微：d_base = zeros_like(base); d_base[actual] += grad[idx] (scatter-add 语义)
+        // index 不可微
+        if args.len() < 3 {
+            return Err(tenth::error::TenthError::RuntimeError {
+                message: "gather(base, dim, index) 期望三个参数".into(),
+            });
+        }
+        let dim = args[1].as_int().unwrap_or(0) as usize;
+        let (base, index) = match (&args[0], &args[2]) {
+            (Value::Tensor(b), Value::Tensor(i)) => (b.clone(), i.clone()),
+            _ => return Err(tenth::error::TenthError::RuntimeError {
+                message: "gather(base, dim, index) 期望 base/index 为张量".into(),
+            }),
+        };
+        let result_tensor = Tensor::gather(&base.borrow(), dim, &index.borrow())
+            .map_err(|msg| tenth::error::TenthError::RuntimeError { message: msg })?;
+        let result = Rc::new(RefCell::new(result_tensor));
+        if vm.recording {
+            if let Some(ref mut tape) = vm.tape {
+                let base_id = base.borrow().tape_id;
+                let node_id = tape.gather(base_id, base.clone(), index.clone(), result.clone(), dim);
                 result.borrow_mut().tape_id = Some(node_id);
             }
         }

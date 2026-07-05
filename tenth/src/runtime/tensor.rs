@@ -1247,84 +1247,202 @@ impl Tensor {
     }
 
     /// Scatter values from `src` into a copy of `base` at positions given by
-    /// `index` along `dim`. Simplified semantics (PyTorch scatter_ but immutable):
-    ///   out = base.clone(); out[dim][index[i]] = src[i]
-    /// 当前简化：仅支持 dim=0，index 与 src 必须为 1D。
+    /// `index` along `dim`（PyTorch scatter_ but immutable，支持任意 dim + 多维 index/src）.
+    ///   out = base.clone();
+    ///   对每个 multi-index idx（遍历 index）:
+    ///     actual = idx; actual[dim] = index[idx] as usize
+    ///     out[actual] = src[idx]
+    /// - index.ndim() == base.ndim()；除 dim 维外，index.shape == base.shape
+    /// - index.shape == src.shape
+    /// - index 值范围 [0, base.shape()[dim])
     /// dtype 保留：与 base.dtype 一致（src 自动 cast）。
     pub fn scatter(base: &Tensor, dim: usize, index: &Tensor, src: &Tensor) -> Result<Tensor, String> {
-        if dim != 0 {
-            return Err(format!("scatter: 当前仅支持 dim=0，得到 dim={}", dim));
-        }
-        if index.ndim() != 1 || src.ndim() != 1 {
-            return Err(format!(
-                "scatter: index 和 src 必须为 1D，得到 index ndim={}, src ndim={}",
-                index.ndim(), src.ndim()
-            ));
-        }
-        if index.shape() != src.shape() {
-            return Err(format!(
-                "scatter: index shape {:?} 与 src shape {:?} 不匹配",
-                index.shape(), src.shape()
-            ));
-        }
         let base_shape = base.shape();
         if base_shape.is_empty() {
             return Err("scatter: base 必须为非标量张量".into());
         }
-        let base_len = base_shape[0];
-        let n_idx = index.shape()[0];
-
-        // 检查 index 越界（index 取整数值）
-        let index_view = index.data.as_f64_view();
-        let index_slice = index_view.as_slice().unwrap_or(&[]);
-        let src_view = src.data.as_f64_view();
-        let src_slice = src_view.as_slice().unwrap_or(&[]);
-        for i in 0..n_idx {
-            let idx_val = index_slice.get(i).copied().unwrap_or(0.0);
-            if idx_val < 0.0 || idx_val >= base_len as f64 {
+        if dim >= base.ndim() {
+            return Err(format!(
+                "scatter: dim={} 越界（base ndim={}）",
+                dim,
+                base.ndim()
+            ));
+        }
+        if index.ndim() != base.ndim() {
+            return Err(format!(
+                "scatter: index.ndim()={} 必须等于 base.ndim()={}",
+                index.ndim(),
+                base.ndim()
+            ));
+        }
+        // 除 dim 维外，其他维度 shape 与 base 一致
+        for d in 0..base.ndim() {
+            if d == dim {
+                continue;
+            }
+            if index.shape()[d] != base_shape[d] {
                 return Err(format!(
-                    "scatter: index[{}]={} 越界（base 第 0 维长度={}）",
-                    i, idx_val, base_len
+                    "scatter: 维度 {} 上 index shape {} 与 base shape {} 不一致（除 dim 维外必须一致）",
+                    d, index.shape()[d], base_shape[d]
+                ));
+            }
+        }
+        // index.shape == src.shape
+        if index.shape() != src.shape() {
+            return Err(format!(
+                "scatter: index shape {:?} 与 src shape {:?} 不匹配（必须一致）",
+                index.shape(), src.shape()
+            ));
+        }
+        let dim_len = base_shape[dim];
+        let index_view = index.data.as_f64_view();
+        // 校验 index 值范围（取整数）
+        for v in index_view.iter() {
+            let idx = *v as i64;
+            if idx < 0 || (idx as usize) >= dim_len {
+                return Err(format!(
+                    "scatter: index 值 {} 越界（base 第 {} 维长度={}）",
+                    v, dim, dim_len
                 ));
             }
         }
 
         // out = base.clone()，按 index 散布 src
         let mut out = base.clone();
+        let index_shape: Vec<usize> = index.shape().to_vec();
+        let total: usize = index_shape.iter().product();
+        // 把 flat（row-major / C order）反推为多维索引
+        // 与 flatten_index 对偶：从最后一维开始，stride 递增
+        let unflatten = |flat: usize| -> Vec<usize> {
+            let mut multi = vec![0usize; index_shape.len()];
+            let mut rem = flat;
+            for i in (0..index_shape.len()).rev() {
+                multi[i] = rem % index_shape[i];
+                rem /= index_shape[i];
+            }
+            multi
+        };
+        let src_view = src.data.as_f64_view();
         match &mut out.data {
             TensorData::F64(a) => {
-                // 优先用连续切片写入（快路径）；否则用直接索引（兼容退化布局）
-                let contiguous = a.as_slice_mut().is_some();
-                if contiguous {
-                    let a_slice = a.as_slice_mut().unwrap();
-                    for i in 0..n_idx {
-                        let idx = index_slice.get(i).copied().unwrap_or(0.0) as usize;
-                        a_slice[idx] = src_slice.get(i).copied().unwrap_or(0.0);
-                    }
-                } else {
-                    for i in 0..n_idx {
-                        let idx = index_slice.get(i).copied().unwrap_or(0.0) as usize;
-                        a[[idx]] = src_slice.get(i).copied().unwrap_or(0.0);
-                    }
+                for flat in 0..total {
+                    let multi = unflatten(flat);
+                    let mut actual = multi.clone();
+                    let v = index_view[IxDyn(&multi)];
+                    actual[dim] = v as usize;
+                    let s = src_view[IxDyn(&multi)];
+                    a[IxDyn(&actual)] = s;
                 }
             }
             TensorData::F32(a) => {
-                let contiguous = a.as_slice_mut().is_some();
-                if contiguous {
-                    let a_slice = a.as_slice_mut().unwrap();
-                    for i in 0..n_idx {
-                        let idx = index_slice.get(i).copied().unwrap_or(0.0) as usize;
-                        a_slice[idx] = src_slice.get(i).copied().unwrap_or(0.0) as f32;
-                    }
-                } else {
-                    for i in 0..n_idx {
-                        let idx = index_slice.get(i).copied().unwrap_or(0.0) as usize;
-                        a[[idx]] = src_slice.get(i).copied().unwrap_or(0.0) as f32;
-                    }
+                for flat in 0..total {
+                    let multi = unflatten(flat);
+                    let mut actual = multi.clone();
+                    let v = index_view[IxDyn(&multi)];
+                    actual[dim] = v as usize;
+                    let s = src_view[IxDyn(&multi)] as f32;
+                    a[IxDyn(&actual)] = s;
                 }
             }
         }
         Ok(out)
+    }
+
+    /// Gather values from `base` along `dim` at positions given by `index`.
+    /// 与 PyTorch gather 对齐：
+    ///   out[i,j,...] = base[index[i,j,...], j, ...]  (dim=0)
+    ///   out[i,j,...] = base[i, index[i,j,...], ...]  (dim=1)
+    /// - out.shape == index.shape
+    /// - index.ndim() == base.ndim()；除 dim 维外，其他维度 shape 与 base 一致
+    /// - index 必须为整数张量（f64/f32 存储，取整）；值范围 [0, base.shape()[dim])
+    /// - dtype 保留：与 base.dtype 一致
+    pub fn gather(base: &Tensor, dim: usize, index: &Tensor) -> Result<Tensor, String> {
+        let base_shape = base.shape();
+        if base_shape.is_empty() {
+            return Err("gather: base 必须为非标量张量".into());
+        }
+        if dim >= base.ndim() {
+            return Err(format!(
+                "gather: dim={} 越界（base ndim={}）",
+                dim,
+                base.ndim()
+            ));
+        }
+        if index.ndim() != base.ndim() {
+            return Err(format!(
+                "gather: index.ndim()={} 必须等于 base.ndim()={}",
+                index.ndim(),
+                base.ndim()
+            ));
+        }
+        // 除 dim 维外，其他维度 shape 一致
+        for d in 0..base.ndim() {
+            if d == dim {
+                continue;
+            }
+            if index.shape()[d] != base_shape[d] {
+                return Err(format!(
+                    "gather: 维度 {} 上 index shape {} 与 base shape {} 不一致（除 dim 维外必须一致）",
+                    d, index.shape()[d], base_shape[d]
+                ));
+            }
+        }
+        // 校验 index 值范围（取整数）
+        let index_view = index.data.as_f64_view();
+        let dim_len = base_shape[dim];
+        for v in index_view.iter() {
+            let idx = *v as i64;
+            if idx < 0 || (idx as usize) >= dim_len {
+                return Err(format!(
+                    "gather: index 值 {} 越界（base 第 {} 维长度={}）",
+                    v, dim, dim_len
+                ));
+            }
+        }
+
+        // 构造 out：遍历 index 每个元素，从 base 对应位置取值
+        let index_shape: Vec<usize> = index.shape().to_vec();
+        let total: usize = index_shape.iter().product();
+        // 把 flat（row-major / C order）反推为多维索引
+        // 与 flatten_index 对偶：从最后一维开始，stride 递增
+        let unflatten = |flat: usize| -> Vec<usize> {
+            let mut multi = vec![0usize; index_shape.len()];
+            let mut rem = flat;
+            for i in (0..index_shape.len()).rev() {
+                multi[i] = rem % index_shape[i];
+                rem /= index_shape[i];
+            }
+            multi
+        };
+        match base.data {
+            TensorData::F64(_) => {
+                let base_view = base.data.as_f64_view();
+                let mut out_data = Vec::with_capacity(total);
+                for flat in 0..total {
+                    let multi = unflatten(flat);
+                    let mut actual = multi.clone();
+                    let v = index_view[IxDyn(&multi)];
+                    actual[dim] = v as usize;
+                    out_data.push(base_view[IxDyn(&actual)]);
+                }
+                Ok(Tensor::from_vec(out_data, index_shape))
+            }
+            TensorData::F32(_) => {
+                // 保留 f32 dtype：直接从 f32 数组取值
+                let base_f32 = base.data.as_f32().ok_or_else(|| {
+                    "gather: base dtype 不一致（期望 f32）".to_string()
+                })?;
+                let mut out_data: Vec<f32> = Vec::with_capacity(total);
+                for flat in 0..total {
+                    let multi = unflatten(flat);
+                    let mut actual = multi.clone();
+                    let v = index_view[IxDyn(&multi)];
+                    actual[dim] = v as usize;
+                    out_data.push(base_f32[IxDyn(&actual)]);
+                }
+                Ok(Tensor::from_vec_f32(out_data, index_shape))
+            }
+        }
     }
 
     /// Permute dimensions. Only supports 2D/3D/4D tensors.
