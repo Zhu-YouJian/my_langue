@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::hir::hir::*;
 use super::Lowerer;
 
@@ -6,15 +8,19 @@ impl Lowerer {
     /// A variable is "free" if it is referenced via `Var(name)` but not
     /// bound by an enclosing `Let`, `For`, `Closure`, or `Assign` in the
     /// given expression subtree.  We also exclude built-in names.
+    ///
+    /// Internally uses a `HashSet` for O(1) insert/dedup; the final Vec is
+    /// sorted to keep a stable order for callers (e.g. capture struct field
+    /// layout). This drops the historical O(n²) Vec + sort + dedup cost.
     pub(super) fn free_vars_in(expr: &HirExpr) -> Vec<String> {
-        let mut vars = Vec::new();
+        let mut vars: HashSet<String> = HashSet::new();
         Self::collect_free_vars(expr, &mut vars);
-        vars.sort();
-        vars.dedup();
-        vars
+        let mut result: Vec<String> = vars.into_iter().collect();
+        result.sort();
+        result
     }
 
-    pub(super) fn collect_free_vars(expr: &HirExpr, vars: &mut Vec<String>) {
+    pub(super) fn collect_free_vars(expr: &HirExpr, vars: &mut HashSet<String>) {
         match &expr.kind {
             HirExprKind::Var(name) => {
                 // Skip built-in names and qualified paths (e.g. "mod::fn")
@@ -34,7 +40,7 @@ impl Lowerer {
                     | "save_weights" | "load_weights"
                     | "lexer_new" | "lexer_tokenize" | "parse_program"
                     | "lower_program" | "compile_to_wasm" | "self" => {}
-                    _ => { vars.push(name.clone()); }
+                    _ => { vars.insert(name.clone()); }
                 }
             }
             HirExprKind::Literal(_) => {}
@@ -94,11 +100,11 @@ impl Lowerer {
             }
             HirExprKind::Block { stmts, final_expr } => {
                 // Track variables bound within the block
-                let mut bound = Vec::new();
+                let mut bound: HashSet<String> = HashSet::new();
                 for s in stmts {
                     if let HirStmtKind::Let { names, .. } = &s.kind {
                         for name in names {
-                            bound.push(name.clone());
+                            bound.insert(name.clone());
                         }
                     }
                     Self::collect_free_vars_stmt(s, vars);
@@ -109,20 +115,20 @@ impl Lowerer {
             }
             HirExprKind::Closure { params, body, .. } => {
                 // Collect all free vars in the body, then remove params
-                let mut inner_vars = Vec::new();
+                let mut inner_vars: HashSet<String> = HashSet::new();
                 Self::collect_free_vars(body, &mut inner_vars);
-                let param_names: Vec<String> = params.iter().map(|(n, _)| n.clone()).collect();
+                let param_names: HashSet<String> = params.iter().map(|(n, _)| n.clone()).collect();
                 inner_vars.retain(|v| !param_names.contains(v));
                 vars.extend(inner_vars);
             }
             HirExprKind::Assign { target, value } => {
                 // target is a variable name that is being written to — it may be
                 // a free variable if it comes from an outer scope
-                vars.push(target.clone());
+                vars.insert(target.clone());
                 Self::collect_free_vars(value, vars);
             }
             HirExprKind::AssignOp { target, op: _, value } => {
-                vars.push(target.clone());
+                vars.insert(target.clone());
                 Self::collect_free_vars(value, vars);
             }
             HirExprKind::StructLiteral { fields, .. } => {
@@ -144,7 +150,7 @@ impl Lowerer {
             HirExprKind::InterpolatedString { parts } => {
                 for p in parts {
                     if let crate::hir::hir::InterpPart::Expr(name) = p {
-                        vars.push(name.clone());
+                        vars.insert(name.clone());
                     }
                 }
             }
@@ -164,7 +170,7 @@ impl Lowerer {
         }
     }
 
-    pub(super) fn collect_free_vars_stmt(stmt: &HirStmt, vars: &mut Vec<String>) {
+    pub(super) fn collect_free_vars_stmt(stmt: &HirStmt, vars: &mut HashSet<String>) {
         match &stmt.kind {
             HirStmtKind::Let { init, .. } => {
                 if let Some(e) = init { Self::collect_free_vars(e, vars); }
@@ -179,7 +185,7 @@ impl Lowerer {
             }
             HirStmtKind::For { var, iter, body } => {
                 Self::collect_free_vars(iter, vars);
-                let mut inner = Vec::new();
+                let mut inner: HashSet<String> = HashSet::new();
                 Self::collect_free_vars_stmt(body, &mut inner);
                 inner.retain(|v| v != var);
                 vars.extend(inner);

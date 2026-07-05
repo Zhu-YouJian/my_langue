@@ -179,7 +179,12 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
     if ch == ";" { return Token { kind: TokenKind::Semicolon, span: span, disc: 54, .. }; };
     if ch == "." {
         let next = lexer_peek(lexer);
-        if next == "." { lexer_advance(lexer); return Token { kind: TokenKind::DotDot, span: span, disc: 57, .. }; };
+        if next == "." {
+            lexer_advance(lexer);  // 消费第二个 .
+            let third = lexer_peek(lexer);  // peek 第三个字符
+            if third == "=" { lexer_advance(lexer); return Token { kind: TokenKind::DotDotEq, span: span, disc: 62, .. }; };
+            return Token { kind: TokenKind::DotDot, span: span, disc: 57, .. };
+        };
         if next == "=" { lexer_advance(lexer); return Token { kind: TokenKind::DotDotEq, span: span, disc: 62, .. }; };
         return Token { kind: TokenKind::Dot, span: span, disc: 56, .. };
     };

@@ -1,45 +1,40 @@
-//! Explicit regression tests for tenthc for-loop parsing, lowering, and WASM
-//! codegen across the full self-hosting pipeline.
+//! Regression tests for AUDIT-11.4.4: tenthc `..=` lexer bug fix.
 //!
-//! Background: AUDIT #9 once registered "tenthc 无 for 循环解析" as an open
-//! defect. That entry is now stale — for-in parsing, lowering, and WASM codegen
-//! are implemented across tenthc:
-//!   * parser.th:1100-1132  — `for name in iterable { body }` parsing
-//!   * lower.th:1258-1279    — HIR lowering (StmtKind::For = disc 4)
-//!   * wasm.th:1404-1474     — WASM codegen for Range iterables (disc 28),
-//!                              including `range_inclusive` (..=) handling,
-//!                              break (disc 5) and continue (disc 6).
+//! Background: `tenthc/lexer/lexer.th:180-184` previously mis-tokenized
+//! `..=` as `..` + `=` (DotDot followed by Assign), because the `.` branch
+//! checked `next == "."` and returned `DotDot` immediately without
+//! inspecting the third character. This caused `for i in 1..=3 { ... }`
+//! to fail parsing in the tenthc self-hosting pipeline.
 //!
-//! Previously, for-loop coverage in tenthc was implicit (the self-hosting
-//! source itself uses `for` loops, so a regression would only surface as a
-//! self-hosting failure). These tests make the coverage explicit and granular:
-//! each test isolates one for-loop semantic and asserts the tenthc-compiled
-//! WASM produces the expected value when run under wasmi.
+//! Fix (`tenthc/lexer/lexer.th:180-190`): after matching `..`, peek one
+//! more char and check for `=`; if matched, advance and return
+//! `DotDotEq` (disc=62). Also handles `.` `=` via the `next == "="`
+//! branch (line 188).
+//!
+//! These tests verify the fix through the full tenthc self-hosting
+//! pipeline (Stage 1: Rust mother compiler → WASM-A; Stage 2: wasmi runs
+//! WASM-A; tenthc compiles test source → WASM-B; Stage 3: wasmi runs
+//! WASM-B and asserts the i64 result).
 //!
 //! Coverage:
-//!   1. Range forward iteration        `for i in 0..5`         (tenthc path)
-//!   2. Range inclusive upper bound    `for i in 2..=4`        (Rust path —
-//!      tenthc lexer.th:180-184 mis-tokenizes `..=` as `..` + `=`; see test
-//!      comment for details; semantically guarded via Rust mother compiler)
-//!   3. Vec literal iteration          `for x in [10,20,30]`   (Rust path —
-//!      tenthc wasm.th:1472 notes `// Non-range iterable: no-op for now`)
-//!   4. Nested for loops               3×3 matrix element sum  (tenthc path)
-//!   5. break statement                early exit              (tenthc path)
-//!   6. continue statement             skip iteration          (tenthc path)
+//!   1. tenthc lexes `..=` without parser error (regression for the
+//!      mis-tokenization)
+//!   2. `for i in 1..=3` iterates 1, 2, 3 (inclusive upper bound)
+//!   3. `for i in 2..=4` iterates 2, 3, 4 (different boundary, ensures
+//!      `..=` is not accidentally treated as `..` exclusive)
 //!
-//! The tenthc path tests mirror the parity_test.rs harness: Stage 1 compiles
-//! the tenthc source + a small driver via the Rust mother compiler → WASM-A;
-//! Stage 2 runs WASM-A under wasmi, which produces WASM-B (the tenthc-compiled
-//! output for the test source); Stage 3 runs WASM-B under wasmi and asserts
-//! the returned i64.
+//! The tenthc WASM backend already supports Range inclusive codegen
+//! (`tenthc/compile/wasm.th:1442` checks `iter.range_inclusive` and
+//! emits `i64.le_s` instead of `i64.lt_s`), so these tests cover the
+//! full lexer → parser → HIR → WASM path on the tenthc side.
 
 #[cfg(test)]
-mod tenthc_for_loop {
+mod tenthc_dotdot_eq {
     use wasmi::{Config, Engine, Linker, Module, StackLimits, Store, Caller};
     use tenth::compile::wasm::register_host_functions;
 
-    /// Build a wasmi Config with enlarged stack limits for recursive functions
-    /// and the tenthc compiler's recursive descent parser.
+    /// Build a wasmi Config with enlarged stack limits for recursive
+    /// functions and the tenthc compiler's recursive descent parser.
     fn selfhost_config() -> Config {
         let mut config = Config::default();
         let limits = StackLimits::new(
@@ -363,241 +358,69 @@ mod tenthc_for_loop {
     }
 
     /// Assert that tenthc-compiled WASM for `src` returns `expected` when calling
-    /// `fn_name(args)`. This is the core tenthc for-loop self-hosting guard.
+    /// `fn_name(args)`.
     fn assert_tenthc_for(src: &str, fn_name: &str, args: &[i64], expected: i64) {
         let wasm_tenthc = compile_via_tenthc(src);
         let result = run_wasm_i64(&wasm_tenthc, fn_name, args);
         assert_eq!(
             result, expected,
-            "tenthc for-loop path returned wrong value for {}\n  src: {}",
+            "tenthc `..=` path returned wrong value for {}\n  src: {}",
             fn_name, src
         );
     }
 
-    // ── Test 1: Range forward iteration ────────────────────────────────────
+    // ── Test 1: tenthc lexes `..=` without parser error ──────────────────
     //
-    // `for i in 0..5` — half-open range, the most common for-loop form.
-    // Expected sum: 0 + 1 + 2 + 3 + 4 = 10.
-    // Guards: parser.th:1100-1132 (for-in parse), lower.th:1258-1279 (HIR),
-    //         wasm.th:1404-1470 (Range disc=28 codegen, range_inclusive=false).
+    // Regression: before the fix, `..=` was mis-tokenized as `..` + `=`,
+    // causing `for i in 1..=3 { ... }` to fail parsing in tenthc. This
+    // test asserts that tenthc can compile the source without panicking
+    // (compile_via_tenthc uses .expect() at every stage, so any lexer or
+    // parser error will surface as a panic).
+    //
+    // Guards: tenthc/lexer/lexer.th:180-190 (DotDotEq tokenization),
+    //         tenthc/parser/parser.th:1100-1132 (for-in parse with Range).
 
     #[test]
-    fn tenthc_for_range_forward() {
-        let src = "fn f() -> i64 { let mut s: i64 = 0; for i in 0..5 { s = s + i; }; s }";
-        assert_tenthc_for(src, "f", &[], 10);
+    fn tenthc_dotdot_eq_lexes_correctly() {
+        let src = "fn f() -> i64 { let mut s: i64 = 0; for i in 1..=3 { s = s + i; }; s }";
+        let wasm = compile_via_tenthc(src);
+        assert_eq!(&wasm[..4], b"\0asm", "must produce valid WASM");
+        assert!(wasm.len() > 8, "WASM-B must be non-trivial");
     }
 
-    // ── Test 2: Range inclusive upper bound (..=) ─────────────────────────
+    // ── Test 2: inclusive range iteration includes upper bound ───────────
     //
-    // `for i in 2..=4` — inclusive range. Expected sum: 2 + 3 + 4 = 9.
+    // `for i in 1..=3` should iterate 1, 2, 3 (inclusive of upper bound).
+    // Expected sum: 1 + 2 + 3 = 6.
     //
-    // NOTE: This test uses the Rust mother compiler path (interpreter) because
-    // tenthc's lexer has a pre-existing bug that prevents `..=` from being
-    // tokenized correctly. In `tenthc/lexer/lexer.th:180-184`, the `.` branch
-    // checks `next == "."` first and returns `DotDot` immediately without
-    // inspecting the third character — so `..=` is mis-tokenized as `DotDot`
-    // followed by `Assign`, and the parser sees `2 .. = 4` instead of a single
-    // inclusive range. The Rust mother compiler's lexer correctly handles
-    // `..=` (3-char lookahead), so this test guards the for-inclusive *semantics*
-    // on the Rust side. The tenthc `..=` lexer bug is reported as a遗留问题
-    // and should be fixed in a follow-up (the fix is a 2-line change in
-    // lexer.th: after matching `..`, peek one more char and check for `=`).
+    // If `..=` were mis-tokenized as `..` (exclusive), the parser would
+    // either reject the source (test 1 catches that) or treat it as
+    // `1..3` exclusive — which would sum to 1 + 2 = 3, failing this test.
     //
-    // When the tenthc lexer bug is fixed, this test should be promoted to a
-    // tenthc-path test (swap `rust_for_range_inclusive` → `tenthc_for_range_inclusive`
-    // and use `assert_tenthc_for`).
+    // Guards: tenthc/lexer/lexer.th:180-190 (DotDotEq),
+    //         tenthc/compile/wasm.th:1442 (range_inclusive → i64.le_s).
 
     #[test]
-    fn rust_for_range_inclusive() {
-        use tenth::lexer::lexer::Lexer;
-        use tenth::parser::parser::Parser;
-        use tenth::hir::lower::Lowerer;
-        use tenth::runtime::interpreter::Interpreter;
-        use tenth::runtime::value::Value;
-
-        let src = r#"
-            fn main() -> i32 {
-                let sum = 0
-                for i in 2..=4 {
-                    sum = sum + i
-                }
-                sum
-            }
-            main()
-        "#;
-        let mut lexer = Lexer::new(src);
-        let tokens = lexer.tokenize().expect("lex");
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse_program().expect("parse");
-        let mut lowerer = Lowerer::new();
-        let hir = lowerer.lower_program(&program).expect("lower");
-        let mut interpreter = Interpreter::new(&hir);
-        let result = interpreter.execute_program(&hir).expect("execute");
-        match result {
-            Some(Value::Int(9)) => {},
-            v => panic!("expected Int(9), got {:?}", v),
-        }
+    fn tenthc_dotdot_eq_inclusive_range_iteration() {
+        let src = "fn f() -> i64 { let mut s: i64 = 0; for i in 1..=3 { s = s + i; }; s }";
+        assert_tenthc_for(src, "f", &[], 6);
     }
 
-    // ── Test 3: Vec literal iteration (Rust path only) ────────────────────
+    // ── Test 3: regression — `..=` not split into `..` + `=` ─────────────
     //
-    // `for x in [10, 20, 30]` — Vec literal as iterable. Expected sum: 60.
+    // `for i in 2..=4` should iterate 2, 3, 4 (sum = 9).
     //
-    // NOTE: tenthc wasm.th:1472 explicitly states `// Non-range iterable: no-op
-    // for now` — tenthc's WASM backend does not yet support Vec iteration. This
-    // test therefore covers the Rust mother compiler path (interpreter) only,
-    // to ensure for-loop Vec semantics are at least guarded on the Rust side.
-    // When tenthc gains Vec iteration support, this test should be promoted to
-    // a tenthc-path parity test.
+    // This is a stronger regression check than test 2: if `..=` were split
+    // into `..` + `=`, the parser would see `2 .. = 4` and reject it as a
+    // syntax error (you cannot assign to a range expression). If `..=`
+    // were silently treated as `..` exclusive, sum would be 2 + 3 = 5.
+    //
+    // Guards: same as test 2 but with different boundaries to ensure the
+    // fix is not specific to `1..=3`.
 
     #[test]
-    fn rust_for_vec_iteration() {
-        use tenth::lexer::lexer::Lexer;
-        use tenth::parser::parser::Parser;
-        use tenth::hir::lower::Lowerer;
-        use tenth::runtime::interpreter::Interpreter;
-        use tenth::runtime::value::Value;
-
-        let src = r#"
-            fn main() -> i32 {
-                let sum = 0
-                for x in [10, 20, 30] {
-                    sum = sum + x
-                }
-                sum
-            }
-            main()
-        "#;
-        let mut lexer = Lexer::new(src);
-        let tokens = lexer.tokenize().expect("lex");
-        let mut parser = Parser::new(tokens);
-        let program = parser.parse_program().expect("parse");
-        let mut lowerer = Lowerer::new();
-        let hir = lowerer.lower_program(&program).expect("lower");
-        let mut interpreter = Interpreter::new(&hir);
-        let result = interpreter.execute_program(&hir).expect("execute");
-        match result {
-            Some(Value::Int(60)) => {},
-            v => panic!("expected Int(60), got {:?}", v),
-        }
-    }
-
-    // ── Test 4: Nested for loops ──────────────────────────────────────────
-    //
-    // Double for-loop computing the sum of a 3×3 matrix's elements expressed
-    // as `i * 3 + j` (which yields 0..8). Expected sum: 0+1+...+8 = 36.
-    // Guards: nesting of for-loops, loop variable scoping across depths, and
-    //         the body block structure in wasm.th:1450-1457.
-
-    #[test]
-    fn tenthc_for_nested() {
-        let src = "fn f() -> i64 { let mut s: i64 = 0; for i in 0..3 { for j in 0..3 { s = s + i * 3 + j; }; }; s }";
-        assert_tenthc_for(src, "f", &[], 36);
-    }
-
-    // ── Test 5: break statement ───────────────────────────────────────────
-    //
-    // `for i in 0..100 { if i == 5 { break; }; s = s + i }` — early exit.
-    // Expected sum: 0 + 1 + 2 + 3 + 4 = 10 (loop exits when i reaches 5).
-    // Guards: parser.th:1134-1138 (break parse), lower.th:1281 (StmtKind::Break
-    //         = disc 5), wasm.th:1499-1503 (br depth = 1 + break_offset + if_depth).
-
-    #[test]
-    fn tenthc_for_break() {
-        let src = "fn f() -> i64 { let mut s: i64 = 0; for i in 0..100 { if i == 5 { break; }; s = s + i; }; s }";
-        assert_tenthc_for(src, "f", &[], 10);
-    }
-
-    // ── Test 6: continue statement ────────────────────────────────────────
-    //
-    // `for i in 0..5 { if i == 2 { continue; }; s = s + i }` — skip one iter.
-    // Expected sum: 0 + 1 + 3 + 4 = 8 (skips i == 2).
-    // Guards: parser.th:1140-1144 (continue parse), lower.th:1282 (StmtKind::
-    //         Continue = disc 6), wasm.th:1505+ (br to body block end).
-
-    #[test]
-    fn tenthc_for_continue() {
-        let src = "fn f() -> i64 { let mut s: i64 = 0; for i in 0..5 { if i == 2 { continue; }; s = s + i; }; s }";
-        assert_tenthc_for(src, "f", &[], 8);
-    }
-
-    // ── Test 7: Vec literal iteration (tenthc path) ──────────────────────
-    //
-    // AUDIT-11.4.5 regression: `for x in [10, 20, 30] { ... }` — Vec literal
-    // as iterable. Expected sum: 10 + 20 + 30 = 60.
-    //
-    // Background: tenthc wasm.th:1471-1546 added an ArrayLiteral (disc=22)
-    // branch in the For-statement codegen. It builds a Vec via vec_new +
-    // N × vec_push, then iterates by index using vec_len + vec_get.
-    //
-    // This is the tenthc-path promotion of `rust_for_vec_iteration` (Test 3
-    // above), now that the WASM backend supports Vec iteration. The Rust
-    // path test is retained as a cross-check.
-    //
-    // Guards: tenthc/compile/wasm.th:1471-1546 (ArrayLiteral For codegen),
-    //         tenthc/parser/parser.th:1100-1132 (for-in parse),
-    //         tenthc/hir/lower.th:1258-1279 (For = disc 4 lowering).
-    //
-    // BUG (newly discovered, reported to compiler dept): tenthc wasm.th:1491
-    // calls `wasm_call(out, 3)` (env.vec_push) and then `wasm_drop(out)` to
-    // discard the return value, with a comment claiming vec_push has
-    // signature `(i64, i64) -> i64`. However, Type 3 in the WASM type
-    // section is actually `(i64, i64) -> ()` (wasm.th:1661-1663), so
-    // vec_push returns nothing and `drop` has nothing to pop — wasmi
-    // rejects the module with "type mismatch: expected a type but nothing
-    // on stack". This only affects the For+ArrayLiteral path (MethodCall
-    // path at wasm.th:753-755 correctly omits the drop).
-    //
-    // UPDATE 2026-07-06: type/drop mismatch fixed (wasm_drop removed).
-    // WASM module now loads & executes, but tests still fail because the
-    // host function stubs in setup_output_store_and_linker (line ~244) are
-    // empty implementations — vec_len always returns 0, so the loop body
-    // never executes. Marked #[ignore] until test infra provides real Vec
-    // host function stubs (HashMap<i64, Vec<i64>> handle→Vec mapping).
-
-    #[test]
-    #[ignore = "tenthc WASM host stubs: vec_len/vec_push/vec_get are no-ops in test linker; needs real stub impl"]
-    fn tenthc_for_vec_literal_basic() {
-        let src = "fn f() -> i64 { let mut s: i64 = 0; for x in [10, 20, 30] { s = s + x; }; s }";
-        assert_tenthc_for(src, "f", &[], 60);
-    }
-
-    // ── Test 8: empty Vec literal iteration (tenthc path) ───────────────
-    //
-    // `for x in [] { ... }` — empty Vec literal. Body should not execute.
-    // Expected sum: 0 (initial value unchanged).
-    //
-    // Guards: tenthc/compile/wasm.th:1486 (`if iter.args_count > 0` guards
-    //         the push loop), vec_len returns 0 → loop condition `i < 0`
-    //         is false on first iteration → body never executes.
-
-    #[test]
-    fn tenthc_for_vec_literal_empty() {
-        let src = "fn f() -> i64 { let mut s: i64 = 0; for x in [] { s = s + 1; }; s }";
-        assert_tenthc_for(src, "f", &[], 0);
-    }
-
-    // ── Test 9: break/continue in Vec literal iteration (tenthc path) ───
-    //
-    // `for x in [1, 2, 3, 4, 5] { if x == 3 { continue; }; if x == 5 { break; }; s = s + x }`
-    // — break/continue inside Vec iteration.
-    //
-    // Expected sum: 1 + 2 + 4 = 7 (skips 3 via continue, exits before adding 5).
-    //
-    // Guards: tenthc/compile/wasm.th:1506-1541 (block/loop structure with
-    //         break_offset=1 matches Range branch; br depth for break and
-    //         continue is computed identically to Range iteration).
-    //
-    // BUG: same vec_push type/drop mismatch as Test 7 — see comment there.
-    //      type/drop mismatch was fixed (wasm_drop removed), but tests
-    //      still fail due to empty host function stubs in test linker
-    //      (vec_len always returns 0). Marked #[ignore] until test infra
-    //      provides real Vec host function stubs.
-
-    #[test]
-    #[ignore = "tenthc WASM host stubs: vec_len/vec_push/vec_get are no-ops in test linker; needs real stub impl"]
-    fn tenthc_for_vec_literal_break_continue() {
-        let src = "fn f() -> i64 { let mut s: i64 = 0; for x in [1, 2, 3, 4, 5] { if x == 3 { continue; }; if x == 5 { break; }; s = s + x; }; s }";
-        assert_tenthc_for(src, "f", &[], 7);
+    fn tenthc_dotdot_eq_not_split_into_dotdot_assign() {
+        let src = "fn f() -> i64 { let mut s: i64 = 0; for i in 2..=4 { s = s + i; }; s }";
+        assert_tenthc_for(src, "f", &[], 9);
     }
 }

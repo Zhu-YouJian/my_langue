@@ -1468,8 +1468,83 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 ctx.break_offset = saved_break_offset;
                 return;
             };
+            // AUDIT-11.4.5: ArrayLiteral (disc=22) iteration — for x in [a, b, c] { body }
+            // Builds a Vec via vec_new + N × vec_push, then iterates by index.
+            if iter.disc == 22 {
+                // Allocate locals: $vec, $len, $i, $elem
+                let slot_vec = ctx.temp_local + 1 + ctx.local_count;
+                let slot_len = ctx.temp_local + 1 + ctx.local_count + 1;
+                let slot_i = ctx.temp_local + 1 + ctx.local_count + 2;
+                let slot_elem = ctx.temp_local + 1 + ctx.local_count + 3;
+                ctx.local_count = ctx.local_count + 4;
+                ctx.local_names.push(s.name);
+                ctx.local_indices.push(slot_elem);
+
+                // Build Vec: vec_new() → $vec, then push each element
+                wasm_call(out, 1); // import 1: env.vec_new () -> i64
+                wasm_local_set(out, slot_vec);
+                if iter.args_count > 0 {
+                    let mut ai: i64 = 0;
+                    while ai < iter.args_count {
+                        wasm_local_get(out, slot_vec);
+                        compile_expr(ctx, out, hir, hir.arg_list[iter.args_start + ai - 1]);
+                        wasm_call(out, 3); // import 3: env.vec_push (i64, i64) -> ()
+                        ai = ai + 1;
+                    };
+                };
+                // $len = vec_len($vec)
+                wasm_local_get(out, slot_vec);
+                wasm_call(out, 2); // import 2: env.vec_len (i64) -> i64
+                wasm_local_set(out, slot_len);
+                // $i = 0
+                wasm_i64_const(out, 0);
+                wasm_local_set(out, slot_i);
+
+                // block $break { loop $cont { i < len? br_if $break; block $body { $elem = vec_get($vec, $i); body }; i++; br $cont; } }
+                // Structure depths match Range branch (break_offset=1, break=br(2+if_depth), continue=br(if_depth))
+                wasm_block(out, 64);
+                wasm_loop(out, 64);
+                let saved_if_depth = ctx.if_depth;
+                let saved_in_loop = ctx.in_loop;
+                let saved_break_offset = ctx.break_offset;
+                ctx.if_depth = 0;
+                ctx.in_loop = 1;
+                ctx.break_offset = 1; // for has inner body block
+                // cond: i < len
+                wasm_local_get(out, slot_i);
+                wasm_local_get(out, slot_len);
+                wasm_i64_lt_s(out);
+                wasm_i32_eqz(out);
+                wasm_br_if(out, 1); // break if !(cond) — br 1 = $break end
+                // Wrap body in inner block so continue (br 0) breaks it → falls to i++
+                wasm_block(out, 64);
+                // $elem = vec_get($vec, $i)
+                wasm_local_get(out, slot_vec);
+                wasm_local_get(out, slot_i);
+                wasm_call(out, 4); // import 4: env.vec_get (i64, i64) -> i64
+                wasm_local_set(out, slot_elem);
+                // body (if_depth stays 0; if blocks inside will increment it)
+                if s.body_count > 0 {
+                    for bi in s.body_start..(s.body_start + s.body_count) {
+                        compile_stmt(ctx, out, hir, hir.body_list[bi - 1]);
+                    };
+                };
+                wasm_end(out); // end inner body block
+                // i += 1
+                wasm_local_get(out, slot_i);
+                wasm_i64_const(out, 1);
+                wasm_i64_add(out);
+                wasm_local_set(out, slot_i);
+                wasm_br(out, 0); // continue loop — br 0 = $cont start
+                wasm_end(out);   // end loop
+                wasm_end(out);   // end block
+                ctx.if_depth = saved_if_depth;
+                ctx.in_loop = saved_in_loop;
+                ctx.break_offset = saved_break_offset;
+                return;
+            };
         };
-        // Non-range iterable: no-op for now
+        // Non-Range, non-ArrayLiteral iterable: no-op for now
         return;
     };
     if d == 0 {

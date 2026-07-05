@@ -278,6 +278,63 @@ fn test_closure_does_not_capture_params() {
     }
 }
 
+// ── AUDIT-11.4.1 regression: HashSet free-var collection ──
+//
+// Background: `hir/lower/closures.rs` was refactored to use
+// `HashSet<String>` for free-var collection (O(n²) → O(n)). The public
+// API still returns `Vec<String>` sorted, so capture struct field
+// layout is stable. These tests guard two boundary cases that the
+// HashSet refactor could subtly break:
+//   1. Dedup: same variable referenced many times in a closure body
+//      must be captured exactly once (HashSet semantics).
+//   2. Builtins: println/abs/sqrt/etc. must NOT be treated as captures
+//      (they appear in the `match name.as_str()` skip list in
+//      closures.rs:28-42).
+//
+// Note: `free_vars_in` is `pub(super)`, so we cannot call it directly
+// from integration tests. These tests assert *behaviour*: if dedup
+// breaks (e.g. duplicate capture slots), the closure call returns the
+// wrong value; if builtins are wrongly captured, lookup fails.
+
+#[test]
+fn test_closure_capture_dedup_same_var_many_uses() {
+    // `x` is referenced 5 times in the closure body. Before the HashSet
+    // refactor, the old Vec-based collector could (in pathological cases)
+    // produce duplicate entries that would skew capture struct layout.
+    // After the refactor, HashSet guarantees dedup. Behaviour check:
+    // f(1) = 10*5 + 1 = 51.
+    let src = r#"
+        let x = 10;
+        let f = |y| x + x + x + x + x + y;
+        f(1)
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(51)) => {}
+        v => panic!("expected Int(51), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_closure_capture_does_not_capture_builtins() {
+    // `abs` is a builtin (closures.rs:38 lists `abs` in the skip list).
+    // The closure body references `abs` (builtin) and `x` (captured).
+    // Only `x` should appear in the capture set. If `abs` were wrongly
+    // captured, the closure would either fail to compile or look up a
+    // non-existent variable at runtime.
+    // Behaviour check: f(-5) = abs(-5) + 10 = 5 + 10 = 15.
+    let src = r#"
+        let x = 10;
+        let f = |y| abs(y) + x;
+        f(-5)
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(15)) => {}
+        v => panic!("expected Int(15), got {:?}", v),
+    }
+}
+
 // ── Tensor operation tests ──
 
 #[test]

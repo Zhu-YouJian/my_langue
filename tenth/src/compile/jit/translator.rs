@@ -222,46 +222,46 @@ impl<'a, M: Module> Translator<'a, M> {
             PushInt(n) => {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_i64("host_make_int", n, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             PushFloat(f) => {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_f64("host_make_float", f, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             PushFloat32(f) => {
                 // JIT 路径暂降级为 f64（Phase 5 补齐真正的 f32 JIT）
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_f64("host_make_float", f as f64, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             PushBool(b) => {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_u8("host_make_bool", if b { 1 } else { 0 }, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             PushStr(i) => {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_u64("host_make_str", i as u64, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             PushUnit => {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_unit("host_make_unit", out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             Pop => { self.sp -= VALUE_SIZE as i32; }
             Dup => {
                 let src_off = self.sp - VALUE_SIZE as i32;
                 let dst_off = self.sp;
                 self.copy_within_stack(src_off, dst_off);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             Load(i) => {
                 let src = self.locals.get(&i).copied().ok_or("Load: bad local")?;
                 let dst_off = self.sp;
                 self.copy_slot_to_stack(src, 0, dst_off);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             Store(i) => {
                 self.sp -= VALUE_SIZE as i32;
@@ -280,7 +280,7 @@ impl<'a, M: Module> Translator<'a, M> {
             LoadGlobal(i) => {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_u64("host_load_global", i as u64, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             StoreGlobal(i) => {
                 self.sp -= VALUE_SIZE as i32;
@@ -288,7 +288,7 @@ impl<'a, M: Module> Translator<'a, M> {
                 let val_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, val_off);
                 let out_addr = val_addr; // result = stored value, same slot
                 self.call_hostcall_u64_val("host_store_global", i as u64, val_addr, out_addr);
-                self.sp += VALUE_SIZE as i32; // push result back
+                self.bump_sp()?; // push result back
             }
             Add => self.emit_binop("host_add")?,
             Sub => self.emit_binop("host_sub")?,
@@ -345,7 +345,7 @@ impl<'a, M: Module> Translator<'a, M> {
                 let out = self.stack_addr_at_sp();
                 let null_ptr = self.builder.ins().iconst(self.ptr, 0);
                 self.call_hostcall_call("host_call", i as u64, 0, null_ptr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             CallN(i, n) => {
                 // Args are at [sp - n*VS, sp). Pop them, then out is at sp.
@@ -353,7 +353,7 @@ impl<'a, M: Module> Translator<'a, M> {
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_call("host_call", i as u64, n as u64, args_addr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             MethodCall(i, n) => {
                 // host_method_call 期望 receiver + n 个 args = n+1 个值
@@ -362,7 +362,7 @@ impl<'a, M: Module> Translator<'a, M> {
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_call("host_method_call", i as u64, (n + 1) as u64, args_addr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             Ret => {
                 self.sp -= VALUE_SIZE as i32;
@@ -376,7 +376,7 @@ impl<'a, M: Module> Translator<'a, M> {
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_make_n("host_make_vec", n as u64, args_addr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             MakeMap(n) => {
                 let total = n * 2;
@@ -384,7 +384,7 @@ impl<'a, M: Module> Translator<'a, M> {
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_make_n("host_make_map", n as u64, args_addr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             NewStruct(name_i, field_count) => {
                 let total = field_count * 2;
@@ -392,14 +392,14 @@ impl<'a, M: Module> Translator<'a, M> {
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_new_struct("host_new_struct", name_i as u64, field_count as u64, args_addr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             LoadField(i) => {
                 self.sp -= VALUE_SIZE as i32;
                 let recv_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_u64_val("host_load_field", i as u64, recv_addr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             StoreField(i) => {
                 // Stack: [..., recv, val]. Pop val, then recv. Out = modified recv.
@@ -411,7 +411,7 @@ impl<'a, M: Module> Translator<'a, M> {
                 let val_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, val_off);
                 let out_addr = recv_addr; // result overwrites recv slot
                 self.call_hostcall_store_field("host_store_field", i as u64, recv_addr, val_addr, out_addr);
-                self.sp += VALUE_SIZE as i32; // push result back
+                self.bump_sp()?; // push result back
             }
             IndexGet => {
                 self.sp -= VALUE_SIZE as i32;
@@ -422,7 +422,7 @@ impl<'a, M: Module> Translator<'a, M> {
                 let idx_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, idx_off);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_2_val("host_index_get", target_addr, idx_addr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             SliceStr => {
                 self.sp -= VALUE_SIZE as i32;
@@ -436,33 +436,33 @@ impl<'a, M: Module> Translator<'a, M> {
                 let end_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, end_off);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_3_val("host_slice_str", target_addr, start_addr, end_addr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             MakeEnum(name_i, variant_i, field_count) => {
                 self.sp -= (field_count as i32) * (VALUE_SIZE as i32);
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_make_enum("host_make_enum", name_i as u64, variant_i as u64, field_count as u64, args_addr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             IsEnumVariant(variant_i) => {
                 self.sp -= VALUE_SIZE as i32;
                 let recv_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_u64_val("host_is_enum_variant", variant_i as u64, recv_addr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             EnumGetField(field_i) => {
                 self.sp -= VALUE_SIZE as i32;
                 let recv_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_u64_val("host_enum_get_field", field_i as u64, recv_addr, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             PushRange(s, e, inc) => {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_push_range("host_push_range", s, e, if inc { 1 } else { 0 }, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             MoveOp => { /* no-op */ }
             MakeTensor(rows, cols, dtype) => {
@@ -473,12 +473,12 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.call_hostcall_make_tensor("host_make_tensor", rows as u64, cols as u64, args_addr, out);
                 // 注：dtype 当前在 JIT 路径降级为 F64；后续 phase 5 中补齐 f32 路径。
                 let _ = dtype;
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             MakeClosure(params, chunk_idx) => {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_2_u64("host_make_closure", params as u64, chunk_idx as u64, out);
-                self.sp += VALUE_SIZE as i32;
+                self.bump_sp()?;
             }
             IsStruct(_) => {
                 // Struct pattern matching not JIT-compiled; fallback to VM.
@@ -507,6 +507,29 @@ impl<'a, M: Module> Translator<'a, M> {
         let ok = self.builder.ins().iconst(types::I8, 1);
         self.builder.ins().return_(&[ok]);
         self.terminated = true;
+    }
+
+    // ── Stack management ───────────────────────────────────────────────────
+
+    /// Increment `sp` by `VALUE_SIZE`, returning an error if this would
+    /// exceed `MAX_STACK_DEPTH * VALUE_SIZE` bytes. Translators must call
+    /// this *after* writing the pushed value into the stack slot.
+    ///
+    /// Returning `Err` here causes `translate_body` → `translate` to fail,
+    /// which `JitContext::get_or_compile` propagates up; `run_jit` then
+    /// catches it and falls back to `Vm::call` (interpreter) — see
+    /// `compile/jit/mod.rs:62-65`. So a stack-overflow at translate time
+    /// is a graceful degradation, not an abort.
+    fn bump_sp(&mut self) -> Result<(), String> {
+        let max_bytes = (VALUE_SIZE * MAX_STACK_DEPTH) as i32;
+        if self.sp + VALUE_SIZE as i32 > max_bytes {
+            return Err(format!(
+                "JIT stack overflow: sp={} (slot {}) would exceed MAX_STACK_DEPTH={} ({} bytes)",
+                self.sp, self.sp / VALUE_SIZE as i32, MAX_STACK_DEPTH, max_bytes
+            ));
+        }
+        self.sp += VALUE_SIZE as i32;
+        Ok(())
     }
 
     // ── Stack address helpers ──────────────────────────────────────────────
@@ -744,7 +767,7 @@ impl<'a, M: Module> Translator<'a, M> {
         let b_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, b_off);
         let out = a_addr; // result overwrites a's slot
         self.call_hostcall_2_val(name, a_addr, b_addr, out);
-        self.sp += VALUE_SIZE as i32;
+        self.bump_sp()?;
         Ok(())
     }
 
@@ -755,7 +778,7 @@ impl<'a, M: Module> Translator<'a, M> {
         let callee = self.hostcall_addr(name)?;
         let sig = self.import_sig(&[self.ptr, self.ptr], None);
         self.builder.ins().call_indirect(sig, callee, &[self.vm, a_addr, out]);
-        self.sp += VALUE_SIZE as i32;
+        self.bump_sp()?;
         Ok(())
     }
 }

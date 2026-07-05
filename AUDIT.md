@@ -272,21 +272,21 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 编号 | 标题 | 论文来源 | 影响 | 当前状态 |
 |------|------|---------|------|---------|
-| AUDIT-11.4.1 | T22 FV5 O(n²) 工程债务 | T22（闭包自由变量收集复杂度） | `hir/lower/closures.rs:9-15` 的 `free_vars_in` 用 `Vec<String>` + `sort` + `dedup` 实现，复杂度 O(n²)（每次 push 后 sort）。HashSet 实现可降到 O(n)。在深层嵌套闭包场景下编译期开销显著。 | ⚠️ 已登记未修复。重构为 HashSet 即可，纯优化无语义影响 |
-| AUDIT-11.4.2 | T31 MAX_STACK_DEPTH=256 静默溢出潜在 UB | T31（VM/JIT 栈深度限制审计） | `compile/jit/translator.rs:32` `const MAX_STACK_DEPTH: u32 = 256;`，超过时静默截断而非报错，可能让 JIT 编译出的代码访问越界栈区域。属潜在未定义行为。VM 路径（`runtime/vm.rs`）的 `locals: Vec<Value>` 用 `resize` 安全增长，但 JIT 路径的固定 256 槽是硬上限。 | ⚠️ 已登记未修复。需在 JIT translator 超限时返回 Err 触发 fallback，或在编译期发 warning |
+| AUDIT-11.4.1 | T22 FV5 O(n²) 工程债务 | T22（闭包自由变量收集复杂度） | `hir/lower/closures.rs:9-15` 的 `free_vars_in` 用 `Vec<String>` + `sort` + `dedup` 实现，复杂度 O(n²)（每次 push 后 sort）。HashSet 实现可降到 O(n)。在深层嵌套闭包场景下编译期开销显著。 | ✅ 已修复（2026-07-06，`hir/lower/closures.rs` `free_vars_in`/`collect_free_vars`/`collect_free_vars_stmt` 改用 `HashSet<String>`，4 处 `push` 改 `insert`；API 兼容（仍返回 `Vec<String>` + `sort`），复杂度 O(n²)→O(n)，纯优化无语义影响。验证：autodiff 52/52 + 全量 0 回归。详见 MEMO.md 2026-07-06 fix 条目） |
+| AUDIT-11.4.2 | T31 MAX_STACK_DEPTH=256 静默溢出潜在 UB | T31（VM/JIT 栈深度限制审计） | `compile/jit/translator.rs:32` `const MAX_STACK_DEPTH: u32 = 256;`，超过时静默截断而非报错，可能让 JIT 编译出的代码访问越界栈区域。属潜在未定义行为。VM 路径（`runtime/vm.rs`）的 `locals: Vec<Value>` 用 `resize` 安全增长，但 JIT 路径的固定 256 槽是硬上限。 | ✅ 已修复（2026-07-06，`compile/jit/translator.rs` 新增 `bump_sp()` 方法在 push 前检查 sp 上限，28 处 push 操作改为 `bump_sp()?`；超限返回 `Err` 触发既有的 JIT→VM fallback（`mod.rs:62-65`），不再静默截断。验证：jit_test 10/10 + 全量 0 回归。详见 MEMO.md 2026-07-06 fix 条目） |
 | AUDIT-11.4.3 | T36 双重存储同步开销 | T36（解释器 scope 数据结构审计） | `runtime/interpreter/mod.rs:40` `pub scopes: Vec<HashMap<String, Value>>` 用 Vec+HashMap 双重存储，变量查找从最后一个 scope 向前遍历，在重嵌套场景下有平方风险。VM 路径用索引 `locals: Vec<Value>` 无此问题。 | ⚠️ 已登记未修复。可考虑改用扁平化 name→(scope_depth, Value) 索引 |
-| AUDIT-11.4.4 | tenthc `..=` lexer 解析 bug | 回归测试发现（2026-07-06） | `tenthc/lexer/lexer.th:180-184` 解析 `.` 时 `if next == "."` 分支直接返回 `DotDot`，未检查第三个字符是否为 `=`。导致 `2..=4` 被错误分词为 `2` `..` `=` `4`。tenthc 路径下 inclusive range 实际不可用。 | ⚠️ 已登记未修复。修复方案：匹配 `..` 后再 peek 一次检查 `=`，若匹配则 advance 并返回 `DotDotEq`（约 2 行修改） |
-| AUDIT-11.4.5 | tenthc Vec 迭代未实现 | 回归测试发现（2026-07-06） | `tenthc/compile/wasm.th:1472` 明确注释 `// Non-range iterable: no-op for now`。tenthc WASM 后端不支持 `for x in [Vec]` 形式的迭代，仅支持 Range 迭代。 | ⚠️ 已登记未修复。需在 wasm.th 的 For codegen 中实现 Vec/Tensor 迭代 |
+| AUDIT-11.4.4 | tenthc `..=` lexer 解析 bug | 回归测试发现（2026-07-06） | `tenthc/lexer/lexer.th:180-184` 解析 `.` 时 `if next == "."` 分支直接返回 `DotDot`，未检查第三个字符是否为 `=`。导致 `2..=4` 被错误分词为 `2` `..` `=` `4`。tenthc 路径下 inclusive range 实际不可用。 | ✅ 已修复（2026-07-06，`tenthc/lexer/lexer.th:180-190` 在 `if next == "."` 分支内 advance 后再 peek 一次检查 `=`，匹配则 advance 并返回 `DotDotEq`，与 Rust 侧 `lexer.rs` 对齐。验证：自举 + parity 129/129 + selfhost_frontend 4/4 + error_recovery 7/7；新增 `tenthc_dotdot_eq_test.rs` 3 项测试。详见 MEMO.md 2026-07-06 fix 条目） |
+| AUDIT-11.4.5 | tenthc Vec 迭代未实现 | 回归测试发现（2026-07-06） | `tenthc/compile/wasm.th:1472` 明确注释 `// Non-range iterable: no-op for now`。tenthc WASM 后端不支持 `for x in [Vec]` 形式的迭代，仅支持 Range 迭代。 | ⚠️ 部分修复（2026-07-06，`tenthc/compile/wasm.th:1471-1546` For 语句新增 ArrayLiteral (disc=22) 分支，复用现有 `vec_new`/`vec_len`/`vec_push`/`vec_get` host imports 实现 Vec 迭代 codegen；后续修复：删除 `wasm.th:1492` 误加的 `wasm_drop`（type/drop 不匹配导致 wasmi 验证失败）。验证：自举 + parity 129/129 + selfhost_frontend 4/4。**遗留**：测试 host function stub 是空实现（`vec_len` 永远返回 0），2 项非空 Vec 迭代测试 `#[ignore]`——tenthc 编译器层面 codegen 正确，仅测试基础设施局限；ArrayLiteral 表达式本身 codegen 未改。详见 MEMO.md 2026-07-06 fix 条目） |
 
 ### 11.5 登记元数据
 
 | 字段 | 值 |
 |------|----|
-| 登记日期 | 2026-07-02 |
-| 登记批次 | 第 1 批（纯文档登记，无代码修改） |
-| 论文来源范围 | T12 / T18 / T19 / T20 / T22 / T31 / T36 / T37 / T42 / T50（共 10 个论文条目） |
-| 总登记条目数 | 14（11.1 ×5、11.2 ×4、11.3 ×2、11.4 ×3） |
-| 拆分说明 | T12 双侧破口在 11.2 拆 4 条（shape/panic-mode/expect_gt/i64 溢出）；T37 双重 native 在 11.3 拆 2 条（VM 缺 17 项/解释器缺 3 项）；其余 8 个论文条目各 1 条 |
-| 真理源同步 | `能力梳理/能力全梳理.md` 同步新增 5 项能力条目；`MEMO.md` 顶部新增 2026-07-02 变更记录 |
-| 修复方案 | 后续分批推进，本批不修代码 |
+| 登记日期 | 2026-07-02（第 1 批）/ 2026-07-06（11.4.4/11.4.5 新增） |
+| 登记批次 | 第 1 批（纯文档登记，无代码修改）+ 2026-07-06 回归测试发现新增 2 条 |
+| 论文来源范围 | T12 / T18 / T19 / T20 / T22 / T31 / T36 / T37 / T42 / T50（共 10 个论文条目）+ 回归测试发现 2 条 |
+| 总登记条目数 | 16（11.1 ×5、11.2 ×4、11.3 ×2、11.4 ×5） |
+| 拆分说明 | T12 双侧破口在 11.2 拆 4 条（shape/panic-mode/expect_gt/i64 溢出）；T37 双重 native 在 11.3 拆 2 条（VM 缺 17 项/解释器缺 3 项）；其余 8 个论文条目各 1 条；2026-07-06 新增 11.4.4（tenthc `..=` lexer bug）和 11.4.5（tenthc Vec 迭代未实现）属回归测试发现 |
+| 真理源同步 | `能力梳理/能力全梳理.md` 同步新增能力条目；`MEMO.md` 顶部新增 2026-07-02 与 2026-07-06 变更记录 |
+| 修复方案 | 分批推进：第 1 批纯登记；2026-07-06 修复 11.4.1/11.4.2/11.4.4（✅）+ 11.4.5 部分修复（⚠️）；11.4.3 保持未修复 |
 
