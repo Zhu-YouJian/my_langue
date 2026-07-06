@@ -236,10 +236,52 @@ fn convert_enum_def(val: &Value, span: &Span) -> TenthResult<ast::Item> {
 
 fn parse_type_annotation(s: &str, span: &Span) -> ast::TypeAnnotation {
     if s.is_empty() {
-        ast::TypeAnnotation::Unit
-    } else {
-        ast::TypeAnnotation::Named(ast::Ident { name: s.to_string(), span: span.clone() })
+        return ast::TypeAnnotation::Unit;
     }
+    // Stage 7: recognize composite `Tensor[<dtype>, <dims>]` form produced
+    // by tenthc parser.th's parse_type_annotation (no spaces inside brackets).
+    // Examples: "Tensor[T,..]", "Tensor[f32,..]", "Tensor[T,2,3]".
+    if s.starts_with("Tensor[") && s.ends_with(']') && s.len() > "Tensor[]".len() {
+        let inner = &s["Tensor[".len()..s.len() - 1];
+        // Split at first comma — separates dtype from dims
+        if let Some(comma_pos) = inner.find(',') {
+            let dtype_str = inner[..comma_pos].trim();
+            let dims_str = inner[comma_pos + 1..].trim();
+            let dtype = Box::new(parse_type_annotation(dtype_str, span));
+            let dims = parse_dim_specs(dims_str);
+            return ast::TypeAnnotation::Tensor { dtype, dims };
+        }
+        // Form like "Tensor[T]" with no comma — treat whole inner as dtype, no dims
+        let dtype_str = inner.trim();
+        if !dtype_str.is_empty() {
+            let dtype = Box::new(parse_type_annotation(dtype_str, span));
+            return ast::TypeAnnotation::Tensor { dtype, dims: Vec::new() };
+        }
+    }
+    ast::TypeAnnotation::Named(ast::Ident { name: s.to_string(), span: span.clone() })
+}
+
+/// Stage 7: parse dim spec list (e.g., "..", "2,3", "M,N") into Vec<DimSpec>.
+/// Each comma-separated token is one of:
+///   ".." → Wildcard
+///   integer literal → Literal(n)
+///   identifier → Symbol(s)
+fn parse_dim_specs(s: &str) -> Vec<ast::DimSpec> {
+    if s.is_empty() {
+        return Vec::new();
+    }
+    s.split(',')
+        .map(|tok| {
+            let tok = tok.trim();
+            if tok == ".." {
+                ast::DimSpec::Wildcard
+            } else if let Ok(n) = tok.parse::<i64>() {
+                ast::DimSpec::Literal(n)
+            } else {
+                ast::DimSpec::Symbol(tok.to_string())
+            }
+        })
+        .collect()
 }
 
 // ── Function definition conversion ─────────────────────────────────────────

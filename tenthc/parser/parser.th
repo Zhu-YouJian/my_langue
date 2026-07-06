@@ -1024,16 +1024,17 @@ fn parse_stmt(p: &mut Parser) -> i64 {
         // Phase 5.2 step 4：检测类型注解是否为 f32（单 token 类型）
         // 用于在 `let x: f32 = <float_literal>` 时把字面量 dtype 提升为 F32，
         // 复用 step 2 已建立的 ival 通道（1=F32），下游 lower.th step 1 据此降级为 F32 类型。
-        // 复合类型注解（如 Tensor[f32]）现有 parser 不支持，不在本 step 范围。
+        // Stage 7：用 parse_type_annotation 收集完整类型注解（支持复合类型如
+        // Tensor[T, ..]），但 f32 字面量提升仅在类型注解恰好为 "f32" 时触发。
         let mut type_ann_is_f32 = false;
         let t3 = parser_peek(p);
         if t3.disc == 55 {
             parser_advance(p); // skip :
-            let ty_tok = parser_peek(p);
-            if ty_tok.disc == 3 && ty_tok.sval == "f32" {
+            // Collect full type annotation. Terminators: Assign(42), Semicolon(54).
+            let ty_str = parse_type_annotation(p, 42, 54, -1);
+            if ty_str == "f32" {
                 type_ann_is_f32 = true;
             };
-            parser_advance(p); // skip type token
         };
         // =
         let t4 = parser_peek(p);
@@ -1177,6 +1178,79 @@ fn parse_stmt(p: &mut Parser) -> i64 {
 
 // ── Top-level parsing ──
 
+// Stage 7: Map a token to its string representation for composite type
+// annotations. Operator/punctuation tokens (LBracket, Comma, DotDot, etc.)
+// have empty `sval` in the lexer, so we map by `disc` to recover the source
+// spelling. Identifier/keyword/literal tokens keep their `sval`.
+fn token_type_str(t: Token) -> str {
+    if t.sval != "" { return t.sval; };
+    if t.disc == 51 { return "["; };
+    if t.disc == 52 { return "]"; };
+    if t.disc == 53 { return ","; };
+    if t.disc == 57 { return ".."; };
+    if t.disc == 56 { return "."; };
+    if t.disc == 55 { return ":"; };
+    if t.disc == 60 { return "::"; };
+    if t.disc == 33 { return "<"; };
+    if t.disc == 34 { return ">"; };
+    if t.disc == 38 { return "&"; };
+    if t.disc == 47 { return "("; };
+    if t.disc == 48 { return ")"; };
+    if t.disc == 49 { return "{"; };
+    if t.disc == 50 { return "}"; };
+    if t.disc == 63 { return ">>"; };
+    ""
+}
+
+// Stage 7: Collect a type annotation that may include composite types like
+// `Tensor[T, ..]` or `Tensor[f32, 2, 3]`. Returns the type as a string
+// (e.g., "Tensor [T , ..]"). The composite type is stored verbatim so
+// lower.th's parse_type can recognize the `Tensor[<dtype>, <dims>]` pattern.
+//
+// term1/term2/term3 are up to 3 terminator token discs that END the
+// surrounding context at top level (pass -1 for unused slots).
+// Inside `[...]`, only Eof terminates — terminators are part of the type.
+//
+// At top level (bracket_depth == 0), tokens are joined with single spaces
+// using their `sval` (preserves existing behavior for simple types like
+// `i64`, `f32`, `T`, even `&Vec<Expr>`). Inside brackets, `token_type_str`
+// is used so operator tokens render correctly.
+fn parse_type_annotation(p: &mut Parser, term1: i64, term2: i64, term3: i64) -> str {
+    let mut result = "";
+    let mut bracket_depth: i64 = 0;
+    loop {
+        let t = parser_peek(p);
+        if t.disc == 61 { break; };  // Eof always terminates
+        if bracket_depth == 0 {
+            if term1 >= 0 && t.disc == term1 { break; };
+            if term2 >= 0 && t.disc == term2 { break; };
+            if term3 >= 0 && t.disc == term3 { break; };
+        };
+        // Track bracket depth BEFORE consuming. `[` and `]` themselves are
+        // rendered via token_type_str (composite mode), so we use the
+        // pre-update depth plus a disc check for `[` to decide rendering.
+        let in_bracket = bracket_depth > 0 || t.disc == 51;
+        if t.disc == 51 {
+            bracket_depth = bracket_depth + 1;
+        } else if t.disc == 52 {
+            bracket_depth = bracket_depth - 1;
+            if bracket_depth < 0 { bracket_depth = 0; };
+        };
+        let tok = parser_advance(p);
+        let s = if in_bracket { token_type_str(tok) } else { tok.sval };
+        // Composite mode (inside brackets): join without spaces so lower.th's
+        // parse_type can match exact patterns like "Tensor[T,..]". Top-level
+        // tokens keep space-separated format for backward compat.
+        if in_bracket {
+            result = result + s;
+        } else {
+            if result != "" { result = result + " "; };
+            result = result + s;
+        };
+    };
+    result
+}
+
 // Parse optional generic params `<T, U>` after a name. Returns Vec<str>.
 // If next token is not `<` (disc=33), returns empty Vec.
 fn parse_generic_params(p: &mut Parser) -> Vec<str> {
@@ -1239,15 +1313,11 @@ fn parse_fn(p: &mut Parser) -> FnDef {
                 let pname_tok = parser_advance(p);
                 let pname = pname_tok.sval;
                 parser_advance(p); // skip :
-                ptype = ptype + " ";
-                loop {
-                    let tt = parser_peek(p);
-                    if tt.disc == 53 || tt.disc == 48 || tt.disc == 61 { break; };
-                    let type_tok = parser_advance(p);
-                    if ptype != "" { ptype = ptype + " "; };
-                    ptype = ptype + type_tok.sval;
-                };
-                params.push(Param { name: pname, type_ann: ptype });
+                // Stage 7: collect type annotation via parse_type_annotation
+                // to support composite types. Terminators: Comma(53), RParen(48).
+                let rest = parse_type_annotation(p, 53, 48, -1);
+                let ptype2 = ptype + " " + rest;
+                params.push(Param { name: pname, type_ann: ptype2 });
                 let t6 = parser_peek(p);
                 if t6.disc == 53 { parser_advance(p); }
                 else { break; };
@@ -1256,15 +1326,10 @@ fn parse_fn(p: &mut Parser) -> FnDef {
             let pname_tok = parser_advance(p);
             let pname = pname_tok.sval;
             parser_advance(p); // skip :
-            // Skip type tokens until , or ) (handles &Vec<Expr>, &mut Lexer, etc.)
-            let mut ptype = "";
-            loop {
-                let tt = parser_peek(p);
-                if tt.disc == 53 || tt.disc == 48 || tt.disc == 61 { break; }; // Comma/RParen/Eof
-                let type_tok = parser_advance(p);
-                if ptype != "" { ptype = ptype + " "; };
-                ptype = ptype + type_tok.sval;
-            };
+            // Stage 7: collect type annotation via parse_type_annotation to
+            // support composite types like `Tensor[T, ..]`. Terminators at
+            // top level: Comma(53), RParen(48). Eof(61) handled internally.
+            let ptype = parse_type_annotation(p, 53, 48, -1);
             params.push(Param { name: pname, type_ann: ptype });
             let t2 = parser_peek(p);
             if t2.disc == 53 { parser_advance(p); }
@@ -1277,14 +1342,9 @@ fn parse_fn(p: &mut Parser) -> FnDef {
     let t3 = parser_peek(p);
     if t3.disc == 58 {
         parser_advance(p);
-        // Skip return type tokens until { (handles &Vec<Expr>, etc.)
-        loop {
-            let tt = parser_peek(p);
-            if tt.disc == 49 || tt.disc == 61 { break; }; // LBrace or Eof
-            let ret_tok = parser_advance(p);
-            if return_type != "" { return_type = return_type + " "; };
-            return_type = return_type + ret_tok.sval;
-        };
+        // Stage 7: collect return type via parse_type_annotation.
+        // Terminators: LBrace(49). Eof(61) handled internally.
+        return_type = parse_type_annotation(p, 49, -1, -1);
     };
 
     parser_advance(p); // skip {
@@ -1326,15 +1386,9 @@ fn parse_struct_def(p: &mut Parser) -> StructDef {
         let fname_tok = parser_advance(p);
         let fname = fname_tok.sval;
         parser_advance(p); // skip :
-        // Skip type tokens until , or } (handles &Vec<Expr>, etc.)
-        let mut ftype = "";
-        loop {
-            let tt = parser_peek(p);
-            if tt.disc == 53 || tt.disc == 50 || tt.disc == 61 { break; }; // Comma/RBrace/Eof
-            let type_tok = parser_advance(p);
-            if ftype != "" { ftype = ftype + " "; };
-            ftype = ftype + type_tok.sval;
-        };
+        // Stage 7: collect type annotation via parse_type_annotation.
+        // Terminators: Comma(53), RBrace(50). Eof(61) handled internally.
+        let ftype = parse_type_annotation(p, 53, 50, -1);
         fields.push(StructField { name: fname, type_ann: ftype });
         let t2 = parser_peek(p);
         if t2.disc == 53 { parser_advance(p); }
@@ -1370,8 +1424,9 @@ fn parse_enum_def(p: &mut Parser) -> EnumDef {
                     if t_after.disc == 55 {
                         // Named field: name: type
                         parser_advance(p); // skip :
-                        let ftype_tok = parser_advance(p);
-                        let ftype = ftype_tok.sval;
+                        // Stage 7: collect type annotation via parse_type_annotation.
+                        // Terminators: Comma(53), RParen(48). Eof(61) handled internally.
+                        let ftype = parse_type_annotation(p, 53, 48, -1);
                         vfields.push(StructField { name: fname, type_ann: ftype });
                     } else {
                         // Tuple field: type only (fname is actually the type)
@@ -1442,14 +1497,9 @@ fn parse_trait_def(p: &mut Parser) -> TraitDef {
                 let pname_tok = parser_advance(p);
                 let pname = pname_tok.sval;
                 parser_advance(p); // skip :
-                let mut ptype = "";
-                loop {
-                    let tt = parser_peek(p);
-                    if tt.disc == 53 || tt.disc == 48 || tt.disc == 61 { break; };
-                    let type_tok = parser_advance(p);
-                    if ptype != "" { ptype = ptype + " "; };
-                    ptype = ptype + type_tok.sval;
-                };
+                // Stage 7: collect type annotation via parse_type_annotation.
+                // Terminators: Comma(53), RParen(48). Eof(61) handled internally.
+                let ptype = parse_type_annotation(p, 53, 48, -1);
                 params.push(Param { name: pname, type_ann: ptype });
                 let t2 = parser_peek(p);
                 if t2.disc == 53 { parser_advance(p); }
@@ -1462,13 +1512,9 @@ fn parse_trait_def(p: &mut Parser) -> TraitDef {
         let t3 = parser_peek(p);
         if t3.disc == 58 {
             parser_advance(p); // skip :
-            loop {
-                let tt = parser_peek(p);
-                if tt.disc == 54 || tt.disc == 50 || tt.disc == 61 { break; }; // Semicolon/RBrace/Eof
-                let ret_tok = parser_advance(p);
-                if return_type != "" { return_type = return_type + " "; };
-                return_type = return_type + ret_tok.sval;
-            };
+            // Stage 7: collect return type via parse_type_annotation.
+            // Terminators: Semicolon(54), RBrace(50). Eof(61) handled internally.
+            return_type = parse_type_annotation(p, 54, 50, -1);
         };
         // Skip semicolon (method signature, no body)
         let t4 = parser_peek(p);

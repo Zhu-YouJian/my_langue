@@ -13,11 +13,49 @@ fn add_type(p: &mut HirProgram, disc: i64, sub: i64, name: str, params_start: i6
 // dim_count=0 → unknown (skip check); 1 → 1D; 2 → 2D
 // NOTE: avoid tuple returns — WASM backend has limited tuple support.
 
-// Construct a Tensor HirType (disc=1) with shape info.
+// Construct a Tensor HirType (disc=1) with shape info, dtype is a BaseType.
+// `dtype_sub` is the BaseType discriminant (e.g., 2=F64). dtype_ty defaults to 0.
 fn add_tensor_type(p: &mut HirProgram, dtype_sub: i64, dim_count: i64, dim0: i64, dim1: i64) -> i64 {
-    let t = HirType { disc: 1, sub: dtype_sub, name: "", params_start: 0, params_count: 0, ret_ty: 0, dim_count: dim_count, dim0: dim0, dim1: dim1 };
+    let t = HirType { disc: 1, sub: dtype_sub, dim_count: dim_count, dim0: dim0, dim1: dim1, .. };
     p.type_nodes.push(t);
     p.type_nodes.len()
+}
+
+// Stage 7: Construct a Tensor HirType (disc=1) whose dtype is a complex type
+// (e.g., TypeParam for `Tensor[T, ..]`). `dtype_ty` is a 1-based index into
+// type_nodes pointing at the dtype type node. sub is set to 0 (unused).
+fn add_tensor_type_param(p: &mut HirProgram, dtype_ty: i64, dim_count: i64, dim0: i64, dim1: i64) -> i64 {
+    let t = HirType { disc: 1, sub: 0, dtype_ty: dtype_ty, dim_count: dim_count, dim0: dim0, dim1: dim1, .. };
+    p.type_nodes.push(t);
+    p.type_nodes.len()
+}
+
+// Stage 7: Read Tensor dtype as a type index (TypeParam case).
+// Returns 0 if dtype is a BaseType (use sub field instead) or non-Tensor.
+fn get_tensor_dtype_ty(p: &mut HirProgram, ty_idx: i64) -> i64 {
+    if ty_idx <= 0 || ty_idx > p.type_nodes.len() { return 0; };
+    let t = p.type_nodes[ty_idx - 1];
+    if t.disc != 1 { return 0; };
+    t.dtype_ty
+}
+
+// Stage 7: Construct a Tensor type by propagating dtype from a source
+// Tensor type. If src is a Tensor with TypeParam dtype (dtype_ty != 0),
+// returns add_tensor_type_param; if src is a Tensor with Base dtype,
+// returns add_tensor_type with that Base sub; otherwise falls back to
+// F64 (sub=2) — preserving prior behavior for non-tensor / unknown src.
+fn propagate_tensor_dtype(p: &mut HirProgram, src_ty: i64, dim_count: i64, dim0: i64, dim1: i64) -> i64 {
+    if src_ty <= 0 || src_ty > p.type_nodes.len() {
+        return add_tensor_type(p, 2, dim_count, dim0, dim1);
+    };
+    let st = p.type_nodes[src_ty - 1];
+    if st.disc != 1 {
+        return add_tensor_type(p, 2, dim_count, dim0, dim1);
+    };
+    if st.dtype_ty != 0 {
+        return add_tensor_type_param(p, st.dtype_ty, dim_count, dim0, dim1);
+    };
+    add_tensor_type(p, st.sub, dim_count, dim0, dim1)
 }
 
 // Read tensor dim_count from a type index. Non-Tensor/invalid → 0.
@@ -143,13 +181,71 @@ fn parse_type(p: &mut HirProgram, s: str) -> i64 {
     if s == "bool" { return add_type(p, 0, 4, "", 0, 0, 0); };
     if s == "str" { return add_type(p, 0, 5, "", 0, 0, 0); };
     if s == "char" { return add_type(p, 0, 7, "", 0, 0, 0); };
+    // Stage 7: composite type — Tensor[<dtype>, <dims>]
+    let ty = parse_tensor_type(p, s);
+    if ty != 0 { return ty; };
     add_type(p, 4, 0, s, 0, 0, 0)
+}
+
+// Stage 7: parse "Tensor[<dtype>, <dims>]" composite type annotation.
+// Format produced by parser.th's parse_type_annotation (no spaces inside brackets):
+//   "Tensor[T,..]"     — TypeParam dtype, wildcard dims
+//   "Tensor[f32,..]"   — Base dtype, wildcard dims
+//   "Tensor[T,2,3]"    — TypeParam dtype, literal dims (dims ignored — tracked via dim_count/dim0/dim1 elsewhere)
+// Returns 0 if s is not a Tensor[...] composite (caller falls back to TypeParam).
+//
+// Note: uses `==`/`!=` operators on strings (which compile to str_eq host call
+// via the BinOp path) rather than calling str_eq as a function — the Rust
+// mother compiler's wasm.rs handles str_eq via the `==` operator path but
+// does not have a function-call dispatch case for it.
+fn parse_tensor_type(p: &mut HirProgram, s: str) -> i64 {
+    let slen = str_len(s);
+    // Minimum valid form: "Tensor[T,..]" = 12 chars
+    if slen < 12 { return 0; };
+    // Check prefix "Tensor[" (7 chars)
+    let prefix = str_slice(s, 0, 7);
+    if prefix != "Tensor[" { return 0; };
+    // Check trailing ']'
+    let last = str_at(s, slen - 1);
+    if last != "]" { return 0; };
+    // inner = s[7..slen-1]
+    let inner = str_slice(s, 7, slen - 1);
+    let ilen = str_len(inner);
+    if ilen == 0 { return 0; };
+    // Find first comma in inner — separates dtype from dims
+    let mut comma_idx: i64 = -1;
+    let mut i: i64 = 0;
+    while i < ilen {
+        let ch = str_at(inner, i);
+        if ch == "," { comma_idx = i; break; };
+        i = i + 1;
+    };
+    if comma_idx < 0 { return 0; };
+    // dtype_str = inner[0..comma_idx]
+    let dtype_str = str_slice(inner, 0, comma_idx);
+    if str_len(dtype_str) == 0 { return 0; };
+    // Recursively parse dtype
+    let dtype_idx = parse_type(p, dtype_str);
+    if dtype_idx <= 0 || dtype_idx > p.type_nodes.len() { return 0; };
+    let dt = p.type_nodes[dtype_idx - 1];
+    // Construct Tensor type with appropriate dtype carrier.
+    // Dims are not parsed from the annotation — Stage 7 use cases (std/nn, std/optim)
+    // all use `..` wildcard. Concrete dim tracking happens via operand shape inference.
+    if dt.disc == 0 {
+        // Base type — use add_tensor_type with sub
+        return add_tensor_type(p, dt.sub, 0, 0, 0);
+    };
+    if dt.disc == 4 {
+        // TypeParam — use add_tensor_type_param with dtype_ty
+        return add_tensor_type_param(p, dtype_idx, 0, 0, 0);
+    };
+    0
 }
 
 // Substitute type parameters with concrete types.
 // type_map_names / type_map_tys are parallel arrays (name → ty index).
-// If ty_idx is a TypeParam (disc=4) whose name matches, return the mapped type.
-// Otherwise return ty_idx unchanged.
+// Stage 7: recurses into Tensor.dtype when dtype_ty != 0 (TypeParam dtype case),
+// mirroring Rust lower.rs substitute_type recursion.
 fn substitute_type(p: &mut HirProgram, ty_idx: i64, type_map_names: Vec<str>, type_map_tys: Vec<i64>) -> i64 {
     if ty_idx <= 0 || ty_idx > p.type_nodes.len() { return ty_idx; };
     let t = p.type_nodes[ty_idx - 1];
@@ -162,7 +258,21 @@ fn substitute_type(p: &mut HirProgram, ty_idx: i64, type_map_names: Vec<str>, ty
         };
         return ty_idx; // not found, return as-is
     };
-    // For other types, could recursively substitute inner types, but for simplicity return as-is
+    if t.disc == 1 {
+        // Tensor — recurse into dtype if it's a TypeParam
+        if t.dtype_ty != 0 {
+            let new_dtype = substitute_type(p, t.dtype_ty, type_map_names, type_map_tys);
+            if new_dtype != t.dtype_ty {
+                // dtype changed — build a new Tensor node with substituted dtype
+                let dt = p.type_nodes[new_dtype - 1];
+                if dt.disc == 0 {
+                    return add_tensor_type(p, dt.sub, t.dim_count, t.dim0, t.dim1);
+                };
+                return add_tensor_type_param(p, new_dtype, t.dim_count, t.dim0, t.dim1);
+            };
+        };
+        return ty_idx;
+    };
     ty_idx
 }
 
@@ -297,16 +407,21 @@ fn lookup_fn_return_type(p: &mut HirProgram, name: str) -> i64 {
     0
 }
 
-// Check if a type index is f64 (sub == 2)
+// Check if a type index is f64 (Base with sub == 2)
+// Stage 7: must check disc == 0 (Base) first — a Tensor<f64> has sub=2 too
+// (when dtype is Base F64), but it's NOT a scalar f64.
 fn is_type_f64(p: &mut HirProgram, ty: i64) -> bool {
     if ty <= 0 || ty > p.type_nodes.len() { return false; };
-    p.type_nodes[ty - 1].sub == 2
+    let t = p.type_nodes[ty - 1];
+    t.disc == 0 && t.sub == 2
 }
 
-// Check if a type index is f32 (sub == 3) — Phase 5.2 step 1
+// Check if a type index is f32 (Base with sub == 3) — Phase 5.2 step 1
+// Stage 7: must check disc == 0 (Base) first — same reason as is_type_f64.
 fn is_type_f32(p: &mut HirProgram, ty: i64) -> bool {
     if ty <= 0 || ty > p.type_nodes.len() { return false; };
-    p.type_nodes[ty - 1].sub == 3
+    let t = p.type_nodes[ty - 1];
+    t.disc == 0 && t.sub == 3
 }
 
 // Check if a type index is float (f32 or f64) — Phase 5.2 step 1
@@ -314,10 +429,13 @@ fn is_type_float(p: &mut HirProgram, ty: i64) -> bool {
     is_type_f64(p, ty) || is_type_f32(p, ty)
 }
 
-// Check if a type index is str (sub == 5)
+// Check if a type index is str (Base with sub == 5)
+// Stage 7: must check disc == 0 (Base) first — Tensor<str> (hypothetical)
+// would have sub=5 but is not a scalar str.
 fn is_type_str(p: &mut HirProgram, ty: i64) -> bool {
     if ty <= 0 || ty > p.type_nodes.len() { return false; };
-    p.type_nodes[ty - 1].sub == 5
+    let t = p.type_nodes[ty - 1];
+    t.disc == 0 && t.sub == 5
 }
 
 // Get the type index of an expression by its 1-based index
@@ -640,10 +758,12 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
                     let err = check_binary_broadcast(l_dc, l_d0, l_d1, r_dc, r_d0, r_d1);
                     if err != "" { push_error(p, err); };
                     // Result: tensor with broadcast shape (conservative: same shape if equal, else unknown)
+                    // Stage 7: propagate dtype from l_lty (preferred) or r_lty (fallback)
+                    let dtype_src = if l_dc > 0 { l_lty } else { r_lty };
                     let rty = if l_dc == r_dc && l_d0 == r_d0 && l_d1 == r_d1 {
-                        add_tensor_type(p, 2, l_dc, l_d0, l_d1)
+                        propagate_tensor_dtype(p, dtype_src, l_dc, l_d0, l_d1)
                     } else {
-                        add_tensor_type(p, 2, 0, 0, 0)
+                        propagate_tensor_dtype(p, dtype_src, 0, 0, 0)
                     };
                     return push_expr(p, 5, 0, 0.0, "", false, l, r, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", rty);
                 };
@@ -846,10 +966,11 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             let err = check_matmul_shape(r_dc, r_d0, r_d1, a_dc, a_d0, a_d1);
             if err != "" { push_error(p, err); };
             // Result shape: (M, N) if both 2D and inner K matches
+            // Stage 7: propagate dtype from receiver (matches Rust lower behavior)
             let rty = if r_dc == 2 && a_dc == 2 && r_d1 == a_d0 {
-                add_tensor_type(p, 2, 2, r_d0, a_d1)
+                propagate_tensor_dtype(p, recv_lty, 2, r_d0, a_d1)
             } else {
-                add_tensor_type(p, 2, 0, 0, 0)
+                propagate_tensor_dtype(p, recv_lty, 0, 0, 0)
             };
             return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
         };
@@ -862,7 +983,8 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             // tensor ops rather than user-defined method lookup misses.
             // NOTE: keep this branch minimal (few let bindings) to avoid
             // inflating lower_expr's local count past WASM limits.
-            let rty = add_tensor_type(p, 2, 0, 0, 0);
+            // Stage 7: propagate dtype from receiver.
+            let rty = propagate_tensor_dtype(p, get_expr_ty(p, recv), 0, 0, 0);
             return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
         };
         if e.sval == "transpose" {
@@ -871,10 +993,11 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             let r_d0 = get_tensor_dim0(p, recv_lty);
             let r_d1 = get_tensor_dim1(p, recv_lty);
             // 2D transpose: swap dims
+            // Stage 7: propagate dtype from receiver.
             let rty = if r_dc == 2 {
-                add_tensor_type(p, 2, 2, r_d1, r_d0)
+                propagate_tensor_dtype(p, recv_lty, 2, r_d1, r_d0)
             } else {
-                add_tensor_type(p, 2, 0, 0, 0)
+                propagate_tensor_dtype(p, recv_lty, 0, 0, 0)
             };
             return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
         };
