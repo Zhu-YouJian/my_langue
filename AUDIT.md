@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-07-06 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 + 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 | 700+ 项测试
+> 日期：2026-07-07 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 + 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 | 760+ 项测试通过（53 个测试目标，含 6 个栈溢出崩溃预存问题）
 
 ---
 
@@ -24,41 +24,142 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 ## 三、测试矩阵
 
+> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。统计日期：2026-07-07。
+
+### 基础管线
+
 | 测试文件 | 数量 | 覆盖 |
 |----------|------|------|
-| `lexer_test.rs` | 6 | 整数/标识符/关键字/字符串/运算符/注释 |
-| `parser_test.rs` | 5 | 字面量/二元表达式/函数定义/if/tensor |
-| `integration_test.rs` | 14 | 全管线: 算术/布尔/比较/函数/闭包/while/tensor |
-| `enum_test.rs` | 9 | 枚举定义/字段/match/通配/元组变体/match 绑定 |
-| `f32_autodiff_test.rs` | 12 | f32 自动微分（Phase 4） |
-| `f32_frontend_test.rs` | 13 | f32 前端贯通（Phase 2） |
-| `f32_runtime_test.rs` | 7 | f32 运行时（Phase 3） |
-| `f32_stdlib_test.rs` | 10 | f32 标准库（Phase 5.4） |
-| `f32_tensor_test.rs` | 23 | f32 张量基础（Phase 1） |
-| `f32_wasm_test.rs` | 14 | f32 WASM 后端（Phase 5.1） |
-| `generic_tensor_test.rs` | 4 | 泛型张量构造函数 |
-| `generic_test.rs` | 11 | 泛型函数/泛型结构体/trait bound/泛型返回/Vec<Token>/>>拆分 |
-| `struct_test.rs` | 8 | 结构体/嵌套/impl/默认字段/..语法 |
-| `trait_test.rs` | 9 | trait 定义/builtin bound/inherent impl/默认方法/多 trait |
-| `module_test.rs` | 6 | mod/use/嵌套模块/重导出 |
-| `ownership_test.rs` | 11 | 移动/借用/引用/解引用 |
-| `stdlib_test.rs` | 114 | Vec/HashMap/String/Option/文件 I/O/json/toml/runtime 限制 |
-| `memory_estimate_test.rs` | 35 | 编译期内存/算力预估（护城河 D，32 passed + 3 ignored） |
-| `memory_test.rs` | 17 | 内存护栏: arena/limits/计数器 |
-| `selfhost_frontend.rs` | 4 | 自举前端验证（lex/parse/lower） |
-| `parity_test.rs` | 129 | VM vs Interpreter 行为一致（全指令覆盖） |
-| `shape_check_compile_test.rs` | 73 | 编译期 shape 检查（66 passed + 7 ignored） |
-| `shape_check_test.rs` | 16 | 张量 shape 检查/广播/层归一化验证 |
-| `autodiff_shape_test.rs` | 10 | Autograd 反向 shape 校验（护城河 A） |
-| `autodiff_test.rs` | 52 | 自动微分/闭包/张量/错误位置（21 算子） |
-| `vm_autodiff_test.rs` | 15 | 字节码 VM 上的自动微分回归 |
-| `type_inference_test.rs` | 29 | 类型推断/统一/泛型实例化 |
-| `pattern_match_test.rs` | 11 | 模式匹配/解构/守卫 |
-| `iterator_test.rs` | 10 | 迭代器/for/生成器 |
-| `error_recovery_test.rs` | 7 | 解析错误恢复/续接 |
-| `mnist_loader_test.rs` | 4 | MNIST 数据加载 |
-| `three_stage.rs` | 1 | 三段式自举（忽略 — wasmi 慢） |
-| **总计** | **700+** | 全部通过（部分 ignored 占位） |
+| `lib`（单元测试） | 16/0/0 | HIR/VM/解释器/autodiff 等模块单元 |
+| `lexer_test.rs` | 6/0/0 | 整数/标识符/关键字/字符串/运算符/注释 |
+| `parser_test.rs` | 5/0/0 | 字面量/二元表达式/函数定义/if/tensor |
+| `integration_test.rs` | 14/0/0 | 全管线: 算术/布尔/比较/函数/闭包/while/tensor |
+| `error_recovery_test.rs` | 7/0/0 | 解析错误恢复/续接 |
+
+### 类型系统
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `enum_test.rs` | 9/0/0 | 枚举定义/字段/match/通配/元组变体/match 绑定 |
+| `struct_test.rs` | 8/0/0 | 结构体/嵌套/impl/默认字段/..语法 |
+| `trait_test.rs` | 9/0/0 | trait 定义/builtin bound/inherent impl/默认方法/多 trait |
+| `module_test.rs` | 6/0/0 | mod/use/嵌套模块/重导出 |
+| `ownership_test.rs` | 11/0/0 | 移动/借用/引用/解引用 |
+| `type_inference_test.rs` | 29/0/0 | 类型推断/统一/泛型实例化 |
+| `generic_test.rs` | 11/0/0 | 泛型函数/泛型结构体/trait bound/泛型返回/Vec<Token>/>>拆分 |
+| `pattern_match_test.rs` | 17/0/0 | 模式匹配/解构/守卫 |
+| `iterator_test.rs` | 10/0/0 | 迭代器/for/生成器 |
+
+### 张量与自动微分
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `autodiff_test.rs` | 54/0/0 | 自动微分/闭包/张量/错误位置（21 算子） |
+| `autodiff_shape_test.rs` | 10/0/0 | Autograd 反向 shape 校验（护城河 A） |
+| `vm_autodiff_test.rs` | 15/0/0 | 字节码 VM 上的自动微分回归 |
+| `abs_test.rs` | 8/0/0 | abs 算子 |
+| `select_test.rs` | 16/0/0 | select 算子 |
+| `scatter_test.rs` | 16/0/0 | scatter 算子 |
+| `gather_test.rs` | 13/0/0 | gather 算子 |
+| `bmm_test.rs` | 11/0/0 | batched matmul (bmm) 算子 |
+| `reshape_masked_fill_autodiff_test.rs` | 9/0/0 | reshape/masked_fill 自动微分 |
+| `multihead_attention_test.rs` | 11/0/0 | MHA 真正分头计算 + 完整梯度链 |
+
+### Shape 检查
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `shape_check_test.rs` | 16/0/0 | 张量 shape 检查/广播/层归一化验证 |
+| `shape_check_compile_test.rs` | 74/0/7 | 编译期 shape 检查（7 项 ignored 占位） |
+
+### f32 路线图
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `f32_tensor_test.rs` | 23/0/0 | f32 张量基础（Phase 1） |
+| `f32_frontend_test.rs` | 13/0/0 | f32 前端贯通（Phase 2） |
+| `f32_runtime_test.rs` | 7/0/0 | f32 运行时（Phase 3） |
+| `f32_autodiff_test.rs` | 12/0/0 | f32 自动微分（Phase 4） |
+| `f32_wasm_test.rs` | 14/0/0 | f32 WASM 后端（Phase 5.1） |
+| `f32_stdlib_test.rs` | 10/0/0 | f32 标准库（Phase 5.4） |
+| `f32_parity_test.rs` | 14/0/0 | f32/f64 一致性 |
+| `f32_stdlib_parity_test.rs` | 8/0/0 | f32 标准库一致性 |
+
+### 自举验证
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `three_stage.rs` | 1/0/2 | 三段式自举（2 项 ignored — wasmi 慢） |
+| `selfhost_frontend.rs` | 栈溢出 | 自举前端验证（lex/parse/lower） |
+| `parity_test.rs` | 栈溢出 | VM vs Interpreter 行为一致（全指令覆盖） |
+
+### 一致性
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `native_parity_test.rs` | 35/0/0 | Rust 母编译器 / tenthc 一致性 |
+
+### 标准库
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `stdlib_test.rs` | 114/0/0 | Vec/HashMap/String/Option/文件 I/O/json/toml/runtime 限制 |
+| `relation_debugger_test.rs` | 10/0/0 | 关系调试器 |
+
+### 安全与错误
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `memory_test.rs` | 17/0/0 | 内存护栏: arena/limits/计数器 |
+| `memory_estimate_test.rs` | 32/0/3 | 编译期内存/算力预估（护城河 D，3 项 ignored） |
+
+### 编译器后端
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `wasm_backend_minimal.rs` | 7/0/0 | WASM 后端最小用例 |
+| `jit_test.rs` | 10/0/0 | JIT 编译器回归 |
+| `jit_stack_overflow_test.rs` | 栈溢出 | JIT 栈溢出回归 |
+
+### 神经网络
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `mnist_loader_test.rs` | 4/0/0 | MNIST 数据加载 |
+
+### 异步
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `async_basic_test.rs` | 6/0/0 | 异步原语基础 |
+
+### I/O
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `io_test.rs` | 4/0/0 | 同步 I/O 原语 |
+| `net_test.rs` | 6/0/0 | 网络 I/O 原语 |
+
+### 预存失败（不回归）
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `generic_tensor_test.rs` | 2/2/0 | 泛型张量构造函数（2 项预存失败：native_generic_ctor_f32_lowering, native_generic_ctor_f64_lowering） |
+| `fixpoint_runtime.rs` | 0/1/0 | fixpoint 端到端编译+执行（1 项预存失败：fixpoint_runtime_benchmark） |
+
+### 栈溢出崩溃（编译通过运行时栈溢出）
+
+| 测试文件 | 数量 | 覆盖 |
+|----------|------|------|
+| `tenthc_generic_tensor_test.rs` | 栈溢出 | tenthc 泛型张量测试 |
+| `tenthc_for_loop_test.rs` | 栈溢出 | tenthc for 循环测试 |
+| `tenthc_dotdot_eq_test.rs` | 栈溢出 | tenthc `..=` lexer 测试 |
+
+### 总计
+
+| 测试目标 | 数量 | 说明 |
+|----------|------|------|
+| **总计** | **760 passed / 3 failed / 12 ignored** | 53 个测试目标（52 文件 + lib），6 个栈溢出崩溃预存问题 |
 
 ---
 
@@ -92,6 +193,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | 4 | 无 GPU 后端 | `compile/gpu/` 脚手架已就绪，待 CUDA 环境安装 |
 | 5 | three_stage wasmtime 路径 stub host 不完整 | `run_test_wasmtime` 中 `vec_new`/`vec_push`/`vec_len` 等 17 个 host import 均为返回 0 的占位实现，导致 WASM-B 为 0 字节。wasmi 路径已通过（WASM-B 460 bytes，add(3,4)=12）。已将 wasmtime 路径拆为 `#[ignore]` 的 `three_stage_selfhost_wasmtime` 独立测试（2026-07-06），默认 `cargo test` 仅跑 wasmi 路径。补全 stub 需参照 `register_host_functions` 实现 17 个 host import 的 wasmtime 版本，与 f32 路线图无关，登记为独立任务。 |
 | 6 | Rust 母编译器 wasm.rs Call 分派缺 str_eq/str_add/str_int 函数调用分支 | `tenth/src/compile/wasm/compile.rs:251-372` 的 `HirExprKind::Call` 分派仅对 `str_len`/`str_at`/`str_cmp`/`str_slice` 有函数调用分支，`str_eq`/`str_add`/`str_int` 缺失。tenthc 源码若以函数调用形式 `str_eq(a,b)` 调用会产出 i64 → i32 类型不匹配的非法 WASM。2026-07-06 f32/f64 parity 路线图阶段 7 发现并规避（tenthc 侧 `parse_tensor_type` 用 `==`/`!=` 操作符走 BinOp 路径）。修复方案：在 `compile.rs` Call 分派里补齐三个分支，与 `str_len`/`str_at`/`str_cmp`/`str_slice` 对齐。 |
+| 7 | 6 个测试文件栈溢出崩溃 | tenthc_generic_tensor_test / tenthc_for_loop_test / jit_stack_overflow_test / tenthc_dotdot_eq_test / selfhost_frontend / parity_test 编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，需增大栈空间或改用 release 模式 |
 
 ---
 
