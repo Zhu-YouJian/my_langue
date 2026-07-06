@@ -850,34 +850,93 @@ impl Tape {
                     });
                 }
                 TapeOp::BatchNorm => {
-                    // Simplified BN backward:
-                    // d(gamma) = sum(dY * x_hat), d(beta) = sum(dY)
-                    // dX = (gamma / std) * (dY - mean(dY) - x_hat * mean(dY * x_hat))
+                    // BN backward (T42 修正公式 — 多 channel dX 场景):
+                    // x: (N, C, H, W, ...)，gamma/beta/std_inv: (C,)
+                    // 每 channel c 独立计算（M = N * H * W * ... 为每 channel 元素数）：
+                    //   d_gamma[c] = sum_{n,h,w}(dY * x_hat)   （仅 channel c 的元素）
+                    //   d_beta[c]  = sum_{n,h,w}(dY)           （仅 channel c 的元素）
+                    //   mean_dY[c]      = d_beta[c]  / M
+                    //   mean_dY_xhat[c] = d_gamma[c] / M
+                    //   dX[..., c, ...] = gamma[c] * std_inv[c] * (dY - mean_dY[c] - x_hat * mean_dY_xhat[c])
+                    // 旧实现 3 处错误：
+                    //   1) d_gamma/d_beta 形状为 (N,C,H,W) 而 gamma/beta 形状为 (C,)，acc_grad 拒绝；
+                    //   2) mean_dY/mean_dY_xhat 算成全局标量，而非 per-channel；
+                    //   3) std_inv/gamma 形状 (C,) 与 (N,C,H,W) 相乘时 ndarray 从右对齐广播，
+                    //      仅当 W==C 时巧合正确，多 channel 普遍错误。
                     // input_tensors = [input, gamma, beta, x_hat, std_inv, result]
                     if node.input_tensors.len() >= 5 {
-                        let (gamma_data, x_hat_data, std_inv_data) = {
+                        let (x_shape, gamma_data, x_hat_data, std_inv_data) = {
+                            let x_ref = node.input_tensors[0].borrow();
                             let gamma_ref = node.input_tensors[1].borrow();
                             let x_hat_ref = node.input_tensors[3].borrow();
                             let std_inv_ref = node.input_tensors[4].borrow();
-                            (gamma_ref.data.clone(), x_hat_ref.data.clone(), std_inv_ref.data.clone())
+                            (x_ref.shape(), gamma_ref.data.clone(), x_hat_ref.data.clone(), std_inv_ref.data.clone())
                         };
+                        // x 至少 2D（forward 已校验）：(N, C, H, W, ...)
+                        let c = x_shape[1];
+                        let n = x_shape[0];
+                        let spatial: usize = x_shape[2..].iter().product();
+                        // 2D 输入时 spatial 为 empty product = 1，与 forward 一致
+                        let m_per_channel: usize = n * spatial;
+
                         dispatch_float!(node.dtype, E, {
                             let grad_arr = E::from_tensor_data(&grad);
                             let gamma = E::from_tensor_data(&gamma_data);
                             let x_hat = E::from_tensor_data(&x_hat_data);
                             let std_inv = E::from_tensor_data(&std_inv_data);
 
-                            // d(gamma)
-                            let d_gamma = &grad_arr * &x_hat;
-                            // d(beta)
-                            let d_beta = grad_arr.clone();
+                            let grad_flat = grad_arr.as_standard_layout().to_owned();
+                            let grad_slice = grad_flat.as_slice().unwrap_or(&[]);
+                            let xhat_flat = x_hat.as_standard_layout().to_owned();
+                            let xhat_slice = xhat_flat.as_slice().unwrap_or(&[]);
+                            let g_flat = gamma.as_standard_layout().to_owned();
+                            let g_slice = g_flat.as_slice().unwrap_or(&[]);
+                            let s_flat = std_inv.as_standard_layout().to_owned();
+                            let s_slice = s_flat.as_slice().unwrap_or(&[]);
 
-                            // dX = gamma * std_inv * (dY - mean(dY) - x_hat * mean(dY * x_hat))
-                            let n = E::from_f64(grad_arr.len() as f64);
-                            let mean_dy = grad_arr.iter().copied().sum::<E>() / n;
-                            let mean_dy_xhat = (&grad_arr * &x_hat).iter().copied().sum::<E>() / n;
-                            let d_x = &std_inv * &gamma *
-                                &(&grad_arr - mean_dy - &(&x_hat * mean_dy_xhat));
+                            // 第 1 遍：每 channel 累加
+                            //   d_beta[c]  = sum_{n,h,w}(dY)
+                            //   d_gamma[c] = sum_{n,h,w}(dY * x_hat)
+                            let mut d_beta_data = vec![E::from_f64(0.0); c];
+                            let mut d_gamma_data = vec![E::from_f64(0.0); c];
+                            for ci in 0..c {
+                                let mut sum_dy = E::from_f64(0.0);
+                                let mut sum_dy_xhat = E::from_f64(0.0);
+                                for ni in 0..n {
+                                    for si in 0..spatial {
+                                        let idx = (ni * c + ci) * spatial + si;
+                                        let dy = grad_slice.get(idx).copied().unwrap_or(E::from_f64(0.0));
+                                        let xh = xhat_slice.get(idx).copied().unwrap_or(E::from_f64(0.0));
+                                        sum_dy = sum_dy + dy;
+                                        sum_dy_xhat = sum_dy_xhat + dy * xh;
+                                    }
+                                }
+                                d_beta_data[ci] = sum_dy;
+                                d_gamma_data[ci] = sum_dy_xhat;
+                            }
+                            let d_gamma = ArrayD::from_shape_vec(IxDyn(&[c]), d_gamma_data.clone()).unwrap();
+                            let d_beta = ArrayD::from_shape_vec(IxDyn(&[c]), d_beta_data.clone()).unwrap();
+
+                            // 第 2 遍：按 row-major (n, c, spatial) 顺序填 d_x_data
+                            // 每 channel 用自己的 mean_dY[c]、mean_dY_xhat[c] 与 gamma[c] * std_inv[c]
+                            let m_inv = E::from_f64(m_per_channel as f64);
+                            let mut d_x_data = Vec::with_capacity(grad_slice.len());
+                            for ni in 0..n {
+                                for ci in 0..c {
+                                    let mean_dy = d_beta_data[ci] / m_inv;
+                                    let mean_dy_xhat = d_gamma_data[ci] / m_inv;
+                                    let g = g_slice.get(ci).copied().unwrap_or_else(|| E::from_f64(1.0));
+                                    let inv = s_slice.get(ci).copied().unwrap_or_else(|| E::from_f64(1.0));
+                                    let scale = g * inv;
+                                    for si in 0..spatial {
+                                        let idx = (ni * c + ci) * spatial + si;
+                                        let dy = grad_slice.get(idx).copied().unwrap_or(E::from_f64(0.0));
+                                        let xh = xhat_slice.get(idx).copied().unwrap_or(E::from_f64(0.0));
+                                        d_x_data.push(scale * (dy - mean_dy - xh * mean_dy_xhat));
+                                    }
+                                }
+                            }
+                            let d_x = ArrayD::from_shape_vec(IxDyn(&x_shape), d_x_data).unwrap();
 
                             propagate_grad(node, 0, &E::into_tensor_data(d_x), &mut node_grads)?;
                             propagate_grad(node, 1, &E::into_tensor_data(d_gamma), &mut node_grads)?;
@@ -886,9 +945,11 @@ impl Tape {
                     }
                 }
                 TapeOp::LayerNorm => {
-                    // LayerNorm backward (over last dim):
+                    // LayerNorm backward (over last dim, T42 修正 — per-feature γ 场景):
                     // d(gamma) = sum_over_outer(dY * x_hat), d(beta) = sum_over_outer(dY)
-                    // dX = gamma * std_inv * (dY - mean(dY) - x_hat * mean(dY * x_hat))  [per-row]
+                    // 令 gy_j = dY_j * gamma_j（per-feature γ 乘入上游梯度），则 per-row：
+                    //   dX_j = std_inv * (gy_j - mean(gy) - x_hat_j * mean(gy * x_hat))
+                    // 注意：gamma 不能提到括号外，因为 mean(gy) 与 mean(gy * x_hat) 依赖 per-feature gamma_j 求和。
                     // input_tensors = [input, gamma, beta, x_hat, std_inv, result]
                     if node.input_tensors.len() >= 5 {
                         let (x_hat_shape, x_hat_data, std_inv_data, gamma_data) = {
@@ -939,27 +1000,35 @@ impl Tape {
                             }
                             let d_beta = ArrayD::from_shape_vec(IxDyn(&[axis_len]), d_beta_data).unwrap();
 
-                            // dX per row: gamma * std_inv * (dY - mean(dY) - x_hat * mean(dY * x_hat))
+                            // dX per row (T42 修正公式 — per-feature γ 场景):
+                            // 令 gy_j = dY_j * gamma_j（per-feature γ 乘入上游梯度），
+                            // dX_j = std_inv * (gy_j - mean(gy) - x_hat_j * mean(gy * x_hat))
+                            // 注意：gamma 不能提到括号外——mean(gy) 与 mean(gy * x_hat) 都依赖 per-feature gamma_j 求和。
+                            // 旧实现写成 `gamma_j * std_inv * (dY_j - mean(dY) - x_hat_j * mean(dY * x_hat))`，
+                            // 仅在 gamma 为标量/全 1 时与正确公式等价；per-feature γ 下产生错误梯度。
                             let mut d_x_data = Vec::with_capacity(grad_slice.len());
                             for i in 0..outer_len {
                                 let start = i * axis_len;
                                 let inv = std_inv_slice.get(i).copied().unwrap_or_else(|| E::from_f64(1.0));
-                                let mut mean_dy = E::from_f64(0.0);
-                                let mut mean_dy_xhat = E::from_f64(0.0);
-                                for j in 0..axis_len {
-                                    let dy = grad_slice.get(start + j).copied().unwrap_or(E::from_f64(0.0));
-                                    let xh = x_hat_slice.get(start + j).copied().unwrap_or(E::from_f64(0.0));
-                                    mean_dy = mean_dy + dy;
-                                    mean_dy_xhat = mean_dy_xhat + dy * xh;
-                                }
-                                let n_inv = E::from_f64(axis_len as f64);
-                                mean_dy = mean_dy / n_inv;
-                                mean_dy_xhat = mean_dy_xhat / n_inv;
+                                let mut sum_gy = E::from_f64(0.0);
+                                let mut sum_gy_xhat = E::from_f64(0.0);
                                 for j in 0..axis_len {
                                     let dy = grad_slice.get(start + j).copied().unwrap_or(E::from_f64(0.0));
                                     let xh = x_hat_slice.get(start + j).copied().unwrap_or(E::from_f64(0.0));
                                     let g = g_slice.get(j).copied().unwrap_or_else(|| E::from_f64(1.0));
-                                    d_x_data.push(g * inv * (dy - mean_dy - xh * mean_dy_xhat));
+                                    let gy = dy * g;
+                                    sum_gy = sum_gy + gy;
+                                    sum_gy_xhat = sum_gy_xhat + gy * xh;
+                                }
+                                let n_inv = E::from_f64(axis_len as f64);
+                                let mean_gy = sum_gy / n_inv;
+                                let mean_gy_xhat = sum_gy_xhat / n_inv;
+                                for j in 0..axis_len {
+                                    let dy = grad_slice.get(start + j).copied().unwrap_or(E::from_f64(0.0));
+                                    let xh = x_hat_slice.get(start + j).copied().unwrap_or(E::from_f64(0.0));
+                                    let g = g_slice.get(j).copied().unwrap_or_else(|| E::from_f64(1.0));
+                                    let gy = dy * g;
+                                    d_x_data.push(inv * (gy - mean_gy - xh * mean_gy_xhat));
                                 }
                             }
                             let d_x = ArrayD::from_shape_vec(IxDyn(&x_hat_shape), d_x_data).unwrap();

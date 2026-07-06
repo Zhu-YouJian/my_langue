@@ -5,7 +5,7 @@ use crate::hir::hir::*;
 use crate::hir::types::*;
 use super::Scope;
 use super::Ownership;
-use super::{substitute_type, lower_binop};
+use super::{substitute_type, substitute_expr, check_generic_instantiation_soundness, lower_binop};
 use super::Lowerer;
 
 impl Lowerer {
@@ -274,6 +274,17 @@ impl Lowerer {
                     type_map.insert(gen_name.clone(), type_args.get(i).cloned().unwrap_or(Type::Unknown));
                 }
 
+                // AUDIT-11.1.5 / T18 修复：泛型实例化健全性检查。
+                // type_map 必须覆盖所有声明的泛型参数，且每个替换值必须是具体类型
+                // （不能是 Unknown 或 TypeParam），否则 body 内仍残留类型变量。
+                if let Err(msg) = check_generic_instantiation_soundness(&template.generics, &type_map) {
+                    return Err(TenthError::TypeError {
+                        line: span.line,
+                        col: span.col,
+                        message: format!("泛型函数 '{}' 实例化失败：{}", func_name, msg),
+                    });
+                }
+
                 let inst_ret_ty = substitute_type(&template.return_type, &type_map);
 
                 let lowered_args: Vec<HirExpr> = args.iter()
@@ -288,11 +299,14 @@ impl Lowerer {
                     let inst_params: Vec<(String, Type)> = template.params.iter()
                         .map(|(n, t)| (n.clone(), substitute_type(t, &type_map)))
                         .collect();
+                    // AUDIT-11.1.5 / T18 修复：body 不能直接 clone，
+                    // 必须递归替换 body 中所有 TypeParam，确保实例化后无残留类型变量。
+                    let inst_body = substitute_expr(&template.body, &type_map);
                     let inst_fn = HirFnDef {
                         name: mangled_name.clone(),
                         params: inst_params,
                         return_type: inst_ret_ty.clone(),
-                        body: template.body.clone(),
+                        body: inst_body,
                         generics: vec![],
                         generics_bounds: std::collections::HashMap::new(),
                         span: template.span.clone(),

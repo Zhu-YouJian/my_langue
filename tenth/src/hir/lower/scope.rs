@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::error::{TenthError, TenthResult};
 use crate::hir::types::Type;
 
@@ -14,6 +14,11 @@ pub(super) struct Scope {
     variables: HashMap<String, (Type, bool)>,
     functions: HashMap<String, (Vec<(String, Type)>, Type)>,
     ownership: HashMap<String, Ownership>,
+    /// 跨语句借用跟踪：holder_var -> Vec<borrowed_var>。
+    /// 当 `let r = &x;` 创建持久借用时，记录 r → [x]，使 release_borrows
+    /// 在 r 仍活跃时不释放 x 的借用状态（修复 AUDIT-11.1.1 T19 B6）。
+    /// 支持 `let r = if c { &x } else { &y };` 多变量场景（修复 AUDIT-11.1.2 T20 PB2）。
+    borrow_holders: HashMap<String, Vec<String>>,
     pub(super) parent: Option<Box<Scope>>,
 }
 
@@ -23,6 +28,7 @@ impl Scope {
             variables: HashMap::new(),
             functions: HashMap::new(),
             ownership: HashMap::new(),
+            borrow_holders: HashMap::new(),
             parent: None,
         }
     }
@@ -32,6 +38,7 @@ impl Scope {
             variables: HashMap::new(),
             functions: HashMap::new(),
             ownership: HashMap::new(),
+            borrow_holders: HashMap::new(),
             parent: Some(Box::new(parent)),
         }
     }
@@ -52,6 +59,17 @@ impl Scope {
 
     pub(super) fn set_ownership(&mut self, name: &str, state: Ownership) {
         self.ownership.insert(name.to_string(), state);
+    }
+
+    /// 记录持久借用关系：`holder` 持有 `borrowed` 的引用。
+    /// 由 `let r = &x;` / `let m = &mut x;` 触发，让 release_borrows
+    /// 在 holder 仍活跃时保留 borrowed 的借用状态。
+    /// 同一 holder 可多次调用以记录多变量借用（如 `if c { &x } else { &y }`）。
+    pub(super) fn record_borrow_holder(&mut self, holder: &str, borrowed: &str) {
+        self.borrow_holders
+            .entry(holder.to_string())
+            .or_insert_with(Vec::new)
+            .push(borrowed.to_string());
     }
 
     pub(super) fn check_use(&self, name: &str, span: &crate::lexer::token::Span) -> TenthResult<()> {
@@ -110,8 +128,31 @@ impl Scope {
     /// allows common patterns like `if peek(&p).disc == 54 { advance(&mut p); }`
     /// while still catching double-mut-borrow within a single expression.
     /// `Moved` state is preserved so use-after-move is still detected.
+    ///
+    /// 跨语句借用保护（AUDIT-11.1.1 / T19 B6 修复）：
+    /// 若 scope 中存在仍活跃的 borrow holder（如 `let r = &x;` 后 r 仍未离开 scope
+    /// 且未被 move），则 r 所引用的变量的借用状态必须保留——否则下一条语句就能
+    /// 通过 `&mut x` 偷走 r 持有的借用，造成别名违规。
     pub(super) fn release_borrows(&mut self) {
-        for (_, state) in self.ownership.iter_mut() {
+        // 收集仍活跃 holder 引用的 borrowed 变量名集合
+        let mut protected: HashSet<String> = HashSet::new();
+        for (holder, borroweds) in &self.borrow_holders {
+            // holder 必须仍在本 scope 的 variables 表中
+            if !self.variables.contains_key(holder) {
+                continue;
+            }
+            // holder 已被 move，借用关系随之失效
+            if matches!(self.ownership.get(holder), Some(Ownership::Moved)) {
+                continue;
+            }
+            for borrowed in borroweds {
+                protected.insert(borrowed.clone());
+            }
+        }
+        for (name, state) in self.ownership.iter_mut() {
+            if protected.contains(name) {
+                continue;
+            }
             match state {
                 Ownership::SharedRef(_) | Ownership::ExclusiveRef => {
                     *state = Ownership::Owned;

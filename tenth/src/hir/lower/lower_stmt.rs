@@ -31,6 +31,22 @@ impl Lowerer {
                     self.scope.define_var(name.name.clone(), ty.clone(), *mutable);
                 }
 
+                // 跨语句借用跟踪（AUDIT-11.1.1 / T19 B6 + AUDIT-11.1.2 / T20 PB2 修复）：
+                // 若 init 是 `&ident` / `&mut ident` 或包含 Ref/MutRef 的 If/Block/Match
+                // （如 `if c { &x } else { &y }`），则本 let 创建的 holder 变量持有
+                // 这些 ident 的持久借用。记录到 scope，使后续 release_borrows
+                // 在 holder 仍活跃时不释放被借变量的借用状态。
+                if let Some(init_expr) = init {
+                    let borrowed_idents = Self::collect_persistent_borrowed_idents(init_expr);
+                    if !borrowed_idents.is_empty() {
+                        for name in names {
+                            for borrowed in &borrowed_idents {
+                                self.scope.record_borrow_holder(&name.name, borrowed);
+                            }
+                        }
+                    }
+                }
+
                 HirStmtKind::Let {
                     names: names.iter().map(|n| n.name.clone()).collect(),
                     type_ann: type_ann.as_ref().map(|a| Type::from_annotation(a)),

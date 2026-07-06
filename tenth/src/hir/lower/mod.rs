@@ -37,15 +37,88 @@ pub struct Lowerer {
 }
 
 impl Lowerer {
-    /// Returns true if the statement is a `let` with a direct reference initializer
-    /// (e.g., `let r = &x;` or `let m = &mut x;`), which creates a persistent
-    /// borrow that should NOT be released after the statement.
+    /// Returns true if the statement is a `let` whose initializer may produce
+    /// a persistent borrow that should NOT be released after the statement.
+    ///
+    /// 覆盖直接 `let r = &x;` / `let m = &mut x;`，以及通过控制流产生的
+    /// Ref/MutRef 值（AUDIT-11.1.2 / T20 PB2 修复）：
+    /// - `let r = if c { &x } else { &y };`
+    /// - `let r = { &x };`（Block final stmt 为 Ref）
+    /// - `let r = match c { _ => &x };`
+    /// Call 节点不在此列——`some_call(&x)` 中的 &x 是临时参数，调用结束后
+    /// 借用关系即结束，不应阻止后续语句的 release_borrows。
     pub(super) fn creates_persistent_borrow(stmt: &ast::Stmt) -> bool {
         match &stmt.kind {
             StmtKind::Let { init: Some(init), .. } => {
-                matches!(init.kind, ExprKind::Ref(_) | ExprKind::MutRef(_))
+                Self::expr_may_produce_ref(init)
             }
             _ => false
+        }
+    }
+
+    /// 递归判断表达式是否可能产生 Ref/MutRef 类型的最终值。
+    /// 用于 creates_persistent_borrow 识别 If/Block/Match 中的 Ref 借用。
+    fn expr_may_produce_ref(expr: &ast::Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Ref(_) | ExprKind::MutRef(_) => true,
+            ExprKind::If { then_branch, else_branch, .. } => {
+                Self::expr_may_produce_ref(then_branch)
+                    || else_branch.as_ref().map(|e| Self::expr_may_produce_ref(e)).unwrap_or(false)
+            }
+            ExprKind::Block(stmts) => {
+                // Block 的最终值由最后一个 stmt 决定（若为 Expr stmt）
+                stmts.last().map(|s| match &s.kind {
+                    StmtKind::Expr(e) => Self::expr_may_produce_ref(e),
+                    _ => false,
+                }).unwrap_or(false)
+            }
+            ExprKind::Match { arms, .. } => {
+                arms.iter().any(|arm| Self::expr_may_produce_ref(&arm.body))
+            }
+            // 直接 Ref/MutRef 在外层包装（如 Move(&x)）也视为持久借用源
+            ExprKind::Move(inner) => Self::expr_may_produce_ref(inner),
+            _ => false,
+        }
+    }
+
+    /// 收集表达式中所有"作为最终值产出"的 Ref/MutRef 所引用的变量名。
+    /// 用于 `let r = if c { &x } else { &y };` 类构造，让 r 同时被记录为
+    /// x 和 y 的 borrow holder——任一分支选中都需保留对应借用状态。
+    pub(super) fn collect_persistent_borrowed_idents(expr: &ast::Expr) -> Vec<String> {
+        let mut out = Vec::new();
+        Self::collect_persistent_borrowed_idents_into(expr, &mut out);
+        out
+    }
+
+    fn collect_persistent_borrowed_idents_into(expr: &ast::Expr, out: &mut Vec<String>) {
+        match &expr.kind {
+            ExprKind::Ref(inner) | ExprKind::MutRef(inner) => {
+                if let ExprKind::Ident(ident) = &inner.kind {
+                    out.push(ident.name.clone());
+                }
+            }
+            ExprKind::If { then_branch, else_branch, .. } => {
+                Self::collect_persistent_borrowed_idents_into(then_branch, out);
+                if let Some(eb) = else_branch {
+                    Self::collect_persistent_borrowed_idents_into(eb, out);
+                }
+            }
+            ExprKind::Block(stmts) => {
+                if let Some(last) = stmts.last() {
+                    if let StmtKind::Expr(e) = &last.kind {
+                        Self::collect_persistent_borrowed_idents_into(e, out);
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    Self::collect_persistent_borrowed_idents_into(&arm.body, out);
+                }
+            }
+            ExprKind::Move(inner) => {
+                Self::collect_persistent_borrowed_idents_into(inner, out);
+            }
+            _ => {}
         }
     }
 
@@ -140,6 +213,216 @@ pub(super) fn substitute_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
             args: args.iter().map(|t| substitute_type(t, map)).collect(),
         },
         _ => ty.clone(),
+    }
+}
+
+/// 检查泛型实例化健全性：type_map 必须覆盖所有声明的泛型参数，且每个替换值
+/// 不能是 Type::Unknown（类型参数数量不足时 type_map 会用 Unknown 兜底）。
+/// AUDIT-11.1.5 / T18 修复。
+///
+/// 注：Tenth 中用户定义类型（如 `Point`、`Vec`）在 Type 系统中也表示为
+/// `Type::TypeParam { name }`（见 types.rs::from_annotation），因此不能
+/// 把 TypeParam 视为"未解析类型变量"——只有 Unknown 才是真正的未解析。
+pub(super) fn check_generic_instantiation_soundness(
+    template_generics: &[String],
+    type_map: &HashMap<String, Type>,
+) -> Result<(), String> {
+    for gen_name in template_generics {
+        match type_map.get(gen_name) {
+            None => {
+                return Err(format!(
+                    "泛型参数 '{}' 未被替换（type_map 缺失）",
+                    gen_name
+                ));
+            }
+            Some(Type::Unknown) => {
+                return Err(format!(
+                    "泛型参数 '{}' 被替换为 Unknown（类型参数数量不足）",
+                    gen_name
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// 递归替换 HirExpr 中所有 Type 字段（包括子表达式的 ty、ret_ty、params 等）。
+/// AUDIT-11.1.5 / T18 修复：泛型函数实例化时 body 不能直接 clone，
+/// 必须将 body 中所有 TypeParam 替换为 type_map 中的具体类型，
+/// 否则实例化后 body 内仍残留类型变量，导致后续类型推断/字节码生成语义偏移。
+pub(super) fn substitute_expr(expr: &HirExpr, map: &HashMap<String, Type>) -> HirExpr {
+    let mut new_expr = expr.clone();
+    substitute_expr_in_place(&mut new_expr, map);
+    new_expr
+}
+
+fn substitute_expr_in_place(expr: &mut HirExpr, map: &HashMap<String, Type>) {
+    expr.ty = substitute_type(&expr.ty, map);
+    substitute_kind_in_place(&mut expr.kind, map);
+}
+
+fn substitute_kind_in_place(kind: &mut HirExprKind, map: &HashMap<String, Type>) {
+    use crate::hir::hir::Index as HirIndex;
+    match kind {
+        HirExprKind::Literal(_) | HirExprKind::Var(_) | HirExprKind::InterpolatedString { .. } => {}
+        HirExprKind::Binary { left, right, ty, .. } => {
+            *ty = substitute_type(ty, map);
+            substitute_expr_in_place(left, map);
+            substitute_expr_in_place(right, map);
+        }
+        HirExprKind::Unary { expr, ty, .. } => {
+            *ty = substitute_type(ty, map);
+            substitute_expr_in_place(expr, map);
+        }
+        HirExprKind::Call { func, args, ret_ty } => {
+            *ret_ty = substitute_type(ret_ty, map);
+            substitute_expr_in_place(func, map);
+            for a in args.iter_mut() {
+                substitute_expr_in_place(a, map);
+            }
+        }
+        HirExprKind::GenericCall { func, generics, args, ret_ty } => {
+            *ret_ty = substitute_type(ret_ty, map);
+            for g in generics.iter_mut() {
+                *g = substitute_type(g, map);
+            }
+            substitute_expr_in_place(func, map);
+            for a in args.iter_mut() {
+                substitute_expr_in_place(a, map);
+            }
+        }
+        HirExprKind::MethodCall { receiver, args, ret_ty, .. } => {
+            *ret_ty = substitute_type(ret_ty, map);
+            substitute_expr_in_place(receiver, map);
+            for a in args.iter_mut() {
+                substitute_expr_in_place(a, map);
+            }
+        }
+        HirExprKind::Index { target, indices } => {
+            substitute_expr_in_place(target, map);
+            for idx in indices.iter_mut() {
+                match idx {
+                    HirIndex::Single(e) => substitute_expr_in_place(e, map),
+                    HirIndex::Range { start, end } => {
+                        if let Some(s) = start { substitute_expr_in_place(s, map); }
+                        if let Some(e) = end { substitute_expr_in_place(e, map); }
+                    }
+                    HirIndex::Colon => {}
+                }
+            }
+        }
+        HirExprKind::Field { target, .. } => {
+            substitute_expr_in_place(target, map);
+        }
+        HirExprKind::TensorLiteral { data, ty } => {
+            *ty = substitute_type(ty, map);
+            for row in data.iter_mut() {
+                for e in row.iter_mut() {
+                    substitute_expr_in_place(e, map);
+                }
+            }
+        }
+        HirExprKind::ArrayLiteral { elements, ty } => {
+            *ty = substitute_type(ty, map);
+            for e in elements.iter_mut() {
+                substitute_expr_in_place(e, map);
+            }
+        }
+        HirExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { substitute_expr_in_place(s, map); }
+            if let Some(e) = end { substitute_expr_in_place(e, map); }
+        }
+        HirExprKind::If { cond, then_branch, else_branch, ty } => {
+            *ty = substitute_type(ty, map);
+            substitute_expr_in_place(cond, map);
+            substitute_expr_in_place(then_branch, map);
+            if let Some(eb) = else_branch { substitute_expr_in_place(eb, map); }
+        }
+        HirExprKind::Block { stmts, final_expr } => {
+            for s in stmts.iter_mut() {
+                substitute_stmt_in_place(s, map);
+            }
+            if let Some(fe) = final_expr { substitute_expr_in_place(fe, map); }
+        }
+        HirExprKind::Closure { params, body, .. } => {
+            for (_, t) in params.iter_mut() {
+                *t = substitute_type(t, map);
+            }
+            substitute_expr_in_place(body, map);
+        }
+        HirExprKind::Assign { value, .. } => {
+            substitute_expr_in_place(value, map);
+        }
+        HirExprKind::AssignOp { value, .. } => {
+            substitute_expr_in_place(value, map);
+        }
+        HirExprKind::StructLiteral { fields, .. } => {
+            for (_, e) in fields.iter_mut() {
+                substitute_expr_in_place(e, map);
+            }
+        }
+        HirExprKind::EnumLiteral { fields, .. } => {
+            for (_, e) in fields.iter_mut() {
+                substitute_expr_in_place(e, map);
+            }
+        }
+        HirExprKind::Match { scrutinee, arms } => {
+            substitute_expr_in_place(scrutinee, map);
+            for arm in arms.iter_mut() {
+                if let Some(g) = arm.guard.as_mut() { substitute_expr_in_place(g, map); }
+                substitute_expr_in_place(&mut arm.body, map);
+            }
+        }
+        HirExprKind::Ref(e) | HirExprKind::MutRef(e) | HirExprKind::Deref(e)
+        | HirExprKind::Move(e) | HirExprKind::TryBlock(e) | HirExprKind::Await(e)
+        | HirExprKind::Spawn(e) => {
+            substitute_expr_in_place(e, map);
+        }
+        HirExprKind::DerefAssign { target, value } => {
+            substitute_expr_in_place(target, map);
+            substitute_expr_in_place(value, map);
+        }
+        HirExprKind::DerefAssignOp { target, value, .. } => {
+            substitute_expr_in_place(target, map);
+            substitute_expr_in_place(value, map);
+        }
+        HirExprKind::Tuple(elements) => {
+            for e in elements.iter_mut() {
+                substitute_expr_in_place(e, map);
+            }
+        }
+        HirExprKind::FieldAssign { target, value, .. } => {
+            substitute_expr_in_place(target, map);
+            substitute_expr_in_place(value, map);
+        }
+    }
+}
+
+fn substitute_stmt_in_place(stmt: &mut HirStmt, map: &HashMap<String, Type>) {
+    match &mut stmt.kind {
+        HirStmtKind::Let { type_ann, init, .. } => {
+            if let Some(t) = type_ann { *t = substitute_type(t, map); }
+            if let Some(e) = init { substitute_expr_in_place(e, map); }
+        }
+        HirStmtKind::Expr(e) => substitute_expr_in_place(e, map),
+        HirStmtKind::Return(e) => {
+            if let Some(e) = e.as_mut() { substitute_expr_in_place(e, map); }
+        }
+        HirStmtKind::While { cond, body } => {
+            substitute_expr_in_place(cond, map);
+            substitute_stmt_in_place(body, map);
+        }
+        HirStmtKind::For { iter, body, .. } => {
+            substitute_expr_in_place(iter, map);
+            substitute_stmt_in_place(body, map);
+        }
+        HirStmtKind::Break | HirStmtKind::Continue => {}
+        HirStmtKind::Loop { body } => {
+            for s in body.iter_mut() {
+                substitute_stmt_in_place(s, map);
+            }
+        }
     }
 }
 
