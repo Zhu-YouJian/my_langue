@@ -153,6 +153,9 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         if ident == "false" { return Token { kind: TokenKind::False, span: span, disc: 23, .. }; };
         if ident == "move" { return Token { kind: TokenKind::Move, span: span, disc: 24, .. }; };
         if ident == "self" { return Token { kind: TokenKind::Self_, span: span, disc: 25, sval: "self", .. }; };
+        if ident == "async" { return Token { kind: TokenKind::Async, span: span, disc: 64, sval: "async", .. }; };
+        if ident == "await" { return Token { kind: TokenKind::Await, span: span, disc: 65, sval: "await", .. }; };
+        if ident == "spawn" { return Token { kind: TokenKind::Spawn, span: span, disc: 66, sval: "spawn", .. }; };
         return Token { kind: TokenKind::Identifier(ident), span: span, disc: 3, sval: ident, .. };
     };
 

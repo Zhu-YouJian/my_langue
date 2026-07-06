@@ -1563,7 +1563,16 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         compile_expr(ctx, out, hir, e.left);
         return;
     };
-    if d == 31 {
+    if d == 32 {
+        // Await 鈥?Phase 1 sync: pass through (unwrap Future -> inner value)
+        compile_expr(ctx, out, hir, e.left);
+        return;
+    };
+    if d == 33 {
+        // Spawn 鈥?Phase 1 sync: pass through (wrap inner -> Future, but WASM has no Future type)
+        compile_expr(ctx, out, hir, e.left);
+        return;
+    };    if d == 31 {
         // Slice s[a..b] — str_slice(target: i32, start: i64, end: i64) -> i32
         // target: str pointer — always i64 (unified stack), needs wrap to i32
         // start: i64 (e.right), end: i64 (e.alt — reused field)

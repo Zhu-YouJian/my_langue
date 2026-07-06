@@ -119,8 +119,9 @@ fn is_expr_start_token(disc: i64) -> bool {
     disc == 0 || disc == 1 || disc == 2 || disc == 3 ||
     // If(7), Match(9)
     disc == 7 || disc == 9 ||
-    // True(22), False(23), Move(24), Self_(25)
+    // True(22), False(23), Move(24), Self_(25), Await(65), Spawn(66)
     disc == 22 || disc == 23 || disc == 24 || disc == 25 ||
+    disc == 65 || disc == 66 ||
     // Minus(27), Star(28), Not(39), Ampersand(40), Pipe(41)
     disc == 27 || disc == 28 || disc == 39 || disc == 40 || disc == 41 ||
     // LParen(47), LBrace(49), LBracket(51)
@@ -1274,6 +1275,7 @@ fn parse_generic_params(p: &mut Parser) -> Vec<str> {
 
 fn parse_fn(p: &mut Parser) -> FnDef {
     parser_advance(p); // skip fn
+    // async already consumed by caller (parse_program / parse_impl_block)
     let name_tok = parser_advance(p);
     let name = name_tok.sval;
     // Parse optional generic params `<T, U>`
@@ -1546,7 +1548,8 @@ fn parse_impl_block(p: &mut Parser) -> ImplBlock {
     loop {
         let t2 = parser_peek(p);
         if is_end_of_block(t2) { break; };
-        if t2.disc != 4 { break; }; // expect fn
+        if t2.disc != 4 && t2.disc != 64 { break; }; // expect fn or async fn
+        if t2.disc == 64 { parser_advance(p); }; // skip async
         fns.push(parse_fn(p));
         let t3 = parser_peek(p);
         if t3.disc == 54 { parser_advance(p); };
@@ -1596,8 +1599,9 @@ fn parse_program(tokens: Vec<Token>) -> Program {
             // Enum (17)
             enums.push(parse_enum_def(&mut p));
             if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
-        } else if d == 4 {
-            // Fn (4)
+        } else if d == 4 || d == 64 {
+            // Fn (4) or async fn (Async=64, consume async then parse_fn)
+            if d == 64 { parser_advance(&mut p); };
             fns.push(parse_fn(&mut p));
             if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
         } else if d == 19 {

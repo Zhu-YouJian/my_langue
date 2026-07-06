@@ -41,6 +41,7 @@ struct HirType {
 //  20: Deref       21: Return       22: ArrayLiteral 23: Closure
 //  24: AssignOp    25: GenericCall  26: DerefAssign  27: DerefAssignOp
 //  28: Range       29: TensorLiteral 30: Move
+//  31: Slice       32: Await         33: Spawn
 struct HirExpr {
     disc: i64,
     // Literal values
@@ -110,6 +111,7 @@ struct HirFnDef {
     return_type: i64,  // type index
     body: i64,         // expr index
     generics: Vec<str>,
+    is_async: bool,    // async fn flag (Phase 1: stored, not yet affecting codegen)
 }
 
 // ── Struct field definition ──

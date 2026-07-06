@@ -646,6 +646,20 @@ fn convert_expr_depth(
                 span: span.clone(),
             })
         }
+        "await" => {
+            let inner = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            Ok(ast::Expr {
+                kind: ast::ExprKind::Await(Box::new(inner)),
+                span: span.clone(),
+            })
+        }
+        "spawn" => {
+            let inner = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            Ok(ast::Expr {
+                kind: ast::ExprKind::Spawn(Box::new(inner)),
+                span: span.clone(),
+            })
+        }
         "block" => {
             let mut stmts = Vec::new();
             if extra_count > 0 {

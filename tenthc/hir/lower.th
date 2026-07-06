@@ -852,7 +852,7 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
                 inst_params.push(HirParam { name: tp.name, ty: inst_ty });
             };
             let inst_ret = substitute_type(p, tmpl.return_type, type_map_names, type_map_tys);
-            let inst_hf = HirFnDef { name: mangled, params: inst_params, return_type: inst_ret, body: tmpl.body, generics: Vec::new() };
+            let inst_hf = HirFnDef { name: mangled, params: inst_params, return_type: inst_ret, body: tmpl.body, generics: Vec::new(), .. };
             p.fns.push(inst_hf);
         };
         // 生成普通 Call(disc 7) 指向 mangled name
@@ -1099,6 +1099,20 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             set_ownership(p, inner_name, 3);
         };
         return push_expr(p, 30, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+    };
+
+    if kind == "await" {
+        // Await: unwrap Future<T> 鈫?T. Phase 1 sync: pass inner type through.
+        let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        let inner_ty = if inner > 0 && inner <= p.expr_nodes.len() { p.expr_nodes[inner - 1].ty } else { 0 };
+        return push_expr(p, 32, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", inner_ty);
+    };
+
+    if kind == "spawn" {
+        // Spawn: wrap T 鈫?Future<T>. Phase 1 sync: pass inner type through.
+        let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        let inner_ty = if inner > 0 && inner <= p.expr_nodes.len() { p.expr_nodes[inner - 1].ty } else { 0 };
+        return push_expr(p, 33, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", inner_ty);
     };
 
     if kind == "if" {
@@ -1486,7 +1500,7 @@ fn lower_program(program: Program) -> HirProgram {
             };
             let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
             let ret_ty = parse_type(&mut p, f.return_type);
-            let hf = HirFnDef { name: mangled, params: params, return_type: ret_ty, body: body_expr, generics: Vec::new() };
+            let hf = HirFnDef { name: mangled, params: params, return_type: ret_ty, body: body_expr, generics: Vec::new(), .. };
             p.fns.push(hf);
             let fn_idx = p.fns.len(); // 1-based
             p.impl_fn_indices.push(fn_idx);
@@ -1513,7 +1527,7 @@ fn lower_program(program: Program) -> HirProgram {
         // Lower body (var_types now has params for type lookup)
         let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
         let ret_ty = parse_type(&mut p, f.return_type);
-        let hf = HirFnDef { name: f.name, params: params, return_type: ret_ty, body: body_expr, generics: f.generics };
+        let hf = HirFnDef { name: f.name, params: params, return_type: ret_ty, body: body_expr, generics: f.generics, .. };
         // 泛型函数（generics 非空）收集到 generic_funcs 模板，不直接输出到 WASM
         if f.generics.len() > 0 {
             p.generic_funcs.push(hf);
