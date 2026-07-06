@@ -485,6 +485,16 @@ impl BytecodeCompiler {
             HirExprKind::TryBlock { .. } => {
                 // TryBlock not yet supported in bytecode; emit as no-op
             }
+            HirExprKind::Await(inner) => {
+                // await expr: lower inner, emit Await bytecode
+                self.compile_expr(inner)?;
+                self.chunk.emit(Op::Await);
+            }
+            HirExprKind::Spawn(inner) => {
+                // spawn expr: lower inner, emit Spawn bytecode
+                self.compile_expr(inner)?;
+                self.chunk.emit(Op::Spawn);
+            }
             HirExprKind::InterpolatedString { parts } => {
                 // Evaluate by concatenating all parts as strings
                 // First, push all parts as strings, then concatenate

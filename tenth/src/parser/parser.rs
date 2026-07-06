@@ -178,6 +178,7 @@ impl Parser {
                     return_type: None,
                     body: Expr { kind: ExprKind::Block(main_expr_stmts), span: span.clone() },
                     is_pub: false,
+                    is_async: false,
                 },
                 span,
             });
@@ -839,6 +840,22 @@ impl Parser {
                     })
                 }
             }
+            TokenKind::Await => {
+                self.advance();
+                let expr = self.parse_unary()?;
+                Ok(Expr {
+                    kind: ExprKind::Await(Box::new(expr)),
+                    span,
+                })
+            }
+            TokenKind::Spawn => {
+                self.advance();
+                let expr = self.parse_unary()?;
+                Ok(Expr {
+                    kind: ExprKind::Spawn(Box::new(expr)),
+                    span,
+                })
+            }
             TokenKind::Move => {
                 self.advance();
                 let expr = self.parse_unary()?;
@@ -1450,7 +1467,7 @@ impl Parser {
         let mut stmts = Vec::new();
         while !self.at_eof() {
             match self.peek_kind() {
-                TokenKind::Fn | TokenKind::Struct | TokenKind::Enum | TokenKind::Impl
+                TokenKind::Async | TokenKind::Fn | TokenKind::Struct | TokenKind::Enum | TokenKind::Impl
                 | TokenKind::Mod | TokenKind::Use | TokenKind::Trait => {
                     items.push(self.parse_item()?);
                 }
@@ -1491,6 +1508,7 @@ impl Parser {
                         span: span.clone(),
                     },
                     is_pub: false,
+                    is_async: false,
                 },
                 span,
             });
@@ -1502,6 +1520,12 @@ impl Parser {
         let span = self.span();
         // Handle `pub` prefix
         let is_pub = if matches!(self.peek_kind(), TokenKind::Pub) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+        let is_async = if matches!(self.peek_kind(), TokenKind::Async) {
             self.advance();
             true
         } else {
@@ -1560,6 +1584,7 @@ impl Parser {
                         return_type,
                         body,
                         is_pub,
+                        is_async,
                     },
                     span,
                 })
@@ -1738,6 +1763,7 @@ impl Parser {
                         return_type: None,
                         body: expr,
                         is_pub: false,
+                        is_async: false,
                     },
                     span,
                 })

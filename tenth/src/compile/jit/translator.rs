@@ -488,6 +488,10 @@ impl<'a, M: Module> Translator<'a, M> {
                 // Struct pattern matching not JIT-compiled; fallback to VM.
                 return Err(format!("JIT: IsStruct not supported, fallback to VM"));
             }
+            Await | Spawn => {
+                // Async opcodes not JIT-compiled; fallback to VM.
+                return Err(format!("JIT: async opcode not supported, fallback to VM"));
+            }
         }
         Ok(())
     }

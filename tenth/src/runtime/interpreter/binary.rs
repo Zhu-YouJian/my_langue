@@ -386,6 +386,7 @@ impl super::Interpreter {
                 let strs: Vec<String> = items.iter().map(|x| self.value_to_string(x)).collect();
                 format!("({})", strs.join(", "))
             }
+            Value::Future(inner) => self.value_to_string(inner),
         }
     }
 

@@ -760,6 +760,23 @@ impl Lowerer {
                 (HirExprKind::TryBlock(Box::new(e)), result_ty)
             }
 
+            ExprKind::Await(inner) => {
+                let e = self.lower_expr(inner)?;
+                // await 的类型：若 inner 是 Future<T>，取 T；否则 Unknown（运行时处理）
+                let await_ty = match &e.ty {
+                    Type::Future(inner_t) => (**inner_t).clone(),
+                    _ => Type::Unknown,
+                };
+                (HirExprKind::Await(Box::new(e)), await_ty)
+            }
+
+            ExprKind::Spawn(inner) => {
+                let e = self.lower_expr(inner)?;
+                // spawn 返回 Future<inner.ty>
+                let spawn_ty = Type::Future(Box::new(e.ty.clone()));
+                (HirExprKind::Spawn(Box::new(e)), spawn_ty)
+            }
+
             ExprKind::InterpolatedString(parts) => {
                 let hir_parts: Vec<crate::hir::hir::InterpPart> = parts.iter().map(|p| match p {
                     ast::InterpPart::Literal(s) => crate::hir::hir::InterpPart::Literal(s.clone()),

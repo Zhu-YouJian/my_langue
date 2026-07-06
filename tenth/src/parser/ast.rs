@@ -143,6 +143,8 @@ pub enum ExprKind {
     Deref(Box<Expr>),
     Move(Box<Expr>),
     TryBlock(Box<Expr>),
+    Await(Box<Expr>),
+    Spawn(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -244,6 +246,7 @@ pub enum ItemKind {
         return_type: Option<TypeAnnotation>,
         body: Expr,
         is_pub: bool,
+        is_async: bool,
     },
     Const {
         name: Ident,

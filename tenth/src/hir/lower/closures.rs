@@ -145,7 +145,8 @@ impl Lowerer {
             HirExprKind::Ref(inner) | HirExprKind::MutRef(inner) | HirExprKind::Deref(inner) => {
                 Self::collect_free_vars(inner, vars);
             }
-            HirExprKind::Move(inner) | HirExprKind::TryBlock(inner) => {
+            HirExprKind::Move(inner) | HirExprKind::TryBlock(inner)
+            | HirExprKind::Await(inner) | HirExprKind::Spawn(inner) => {
                 Self::collect_free_vars(inner, vars);
             }
             HirExprKind::InterpolatedString { parts } => {

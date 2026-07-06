@@ -103,6 +103,7 @@ pub enum Value {
     Range { start: i64, end: i64, inclusive: bool },
     Iterator(LazyIterator),
     Tuple(Vec<Value>),
+    Future(Box<Value>),
 }
 
 impl Value {
@@ -148,6 +149,7 @@ impl Value {
             Value::Range { .. } => Type::Unknown,
             Value::Iterator(_) => Type::Unknown,
             Value::Tuple(items) => Type::Tuple(items.iter().map(|v| v.type_of()).collect()),
+            Value::Future(inner) => inner.type_of(),
         }
     }
 
@@ -258,6 +260,9 @@ impl fmt::Display for Value {
                     write!(f, "{}", item)?;
                 }
                 write!(f, ")")
+            }
+            Value::Future(inner) => {
+                write!(f, "Future<{}>", inner)
             }
             Value::Map(entries) => {
                 let entries = entries.borrow();

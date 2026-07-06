@@ -113,6 +113,8 @@ pub enum HirExprKind {
     },
     Move(Box<HirExpr>),
     TryBlock(Box<HirExpr>),
+    Await(Box<HirExpr>),
+    Spawn(Box<HirExpr>),
     InterpolatedString { parts: Vec<InterpPart> },
     Tuple(Vec<HirExpr>),
     FieldAssign {

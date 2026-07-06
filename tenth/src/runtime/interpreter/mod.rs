@@ -974,6 +974,11 @@ impl Interpreter {
                 }
             }
 
+            HirExprKind::Await(_) | HirExprKind::Spawn(_) => {
+                return Err(TenthError::RuntimeError {
+                    message: "async/await/spawn 不支持解释器路径，请使用 VM".into(),
+                });
+            }
             HirExprKind::InterpolatedString { parts } => {
                 let mut result = String::new();
                 for p in parts {

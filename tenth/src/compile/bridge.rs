@@ -67,6 +67,7 @@ pub fn compact_program_to_ast(prog_val: &Value) -> TenthResult<ast::Program> {
                     return_type: Some(ast::TypeAnnotation::Named(ast::Ident { name: "i64".to_string(), span: dummy_span.clone() })),
                     body: main_body,
                     is_pub: false,
+                    is_async: false,
                 },
                 span: dummy_span.clone(),
             });
@@ -343,6 +344,7 @@ fn convert_fn_def(
                 span: span.clone(),
             },
             is_pub: false,
+            is_async: false,
         },
         span: span.clone(),
     })

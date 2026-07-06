@@ -239,6 +239,8 @@ impl Lexer {
             "struct" => TokenKind::Struct,
             "type" => TokenKind::Type,
             "self" => TokenKind::Self_,
+            "async" => TokenKind::Async,
+            "await" => TokenKind::Await,
             "spawn" => TokenKind::Spawn,
             "task" => TokenKind::Task,
             "shard" => TokenKind::Shard,

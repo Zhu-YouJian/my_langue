@@ -38,6 +38,7 @@ pub enum Type {
     Struct(String),
     Enum(String),
     Tuple(Vec<Type>),
+    Future(Box<Type>),
     Unknown,
 }
 
@@ -65,6 +66,11 @@ impl fmt::Display for Type {
                 }
                 write!(f, ") -> {}", ret)
             }
+            Type::Future(t) => {
+                write!(f, "Future<")?;
+                t.fmt(f)?;
+                write!(f, ">")
+            },
             Type::Unknown => write!(f, "<unknown>"),
             Type::TypeParam { name } => write!(f, "{}", name),
             Type::Generic { base, args } => {

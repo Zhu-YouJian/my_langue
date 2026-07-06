@@ -37,6 +37,8 @@ pub enum Op {
     MoveOp,                     // no-op marker for move semantics
     MakeTensor(usize, usize, u8), // rows, cols, dtype (0=F64, 1=F32) — pops rows*cols values
     MakeClosure(usize, usize),  // params_count, chunk_idx — creates a closure value
+    Await,
+    Spawn,
 }
 
 // ── Chunk ──────────────────────────────────────────────────────────────────
@@ -76,6 +78,8 @@ impl Chunk {
             MakeTensor(..) => 43, MakeClosure(..) => 44,
             PushFloat32(_) => 45,
             IsStruct(_) => 46,
+            Await => 47,
+            Spawn => 48,
         });
 
         // Emit operands
@@ -138,6 +142,8 @@ impl Chunk {
             44 => MakeClosure(r!(u64) as usize, r!(u64) as usize),
             45 => PushFloat32(r!(f32)),
             46 => IsStruct(r!(u64) as usize),
+            47 => Await,
+            48 => Spawn,
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -419,6 +425,8 @@ impl Vm {
                     44 => MakeClosure(r!(u64) as usize, r!(u64) as usize),
                     45 => PushFloat32(r!(f32)),
                     46 => IsStruct(r!(u64) as usize),
+                    47 => Await,
+                    48 => Spawn,
                     _ => Ret,
                 }
             };
@@ -799,6 +807,20 @@ impl Vm {
                         params: param_names,
                         return_type: crate::hir::types::Type::Unknown,
                     });
+                }
+
+                Op::Spawn => {
+                    let v = self.stack.pop().unwrap_or(Value::Unit);
+                    self.stack.push(Value::Future(Box::new(v)));
+                }
+
+                Op::Await => {
+                    let v = self.stack.pop().unwrap_or(Value::Unit);
+                    let inner = match v {
+                        Value::Future(inner) => *inner,
+                        other => other,
+                    };
+                    self.stack.push(inner);
                 }
             }
         }
