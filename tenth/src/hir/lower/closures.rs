@@ -26,9 +26,10 @@ impl Lowerer {
                 // Skip built-in names and qualified paths (e.g. "mod::fn")
                 if name.contains("::") { return; }
                 match name.as_str() {
-                    "println" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
+                    "println" | "eprintln" | "eprint" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
                     | "read_file" | "write_file" | "str_at" | "Vec::new" | "HashMap::new"
                     | "compile_host" | "compile_program" | "write_bytes"
+                    | "read_line" | "env_get" | "env_set" | "exit"
                     | "start_grad" | "new_grad" | "stop_grad"
                     | "param" | "backward" | "grad" | "zero_grad"
                     | "explain_error"
@@ -40,7 +41,10 @@ impl Lowerer {
                     | "zeros" | "ones"
                     | "save_weights" | "load_weights"
                     | "lexer_new" | "lexer_tokenize" | "parse_program"
-                    | "lower_program" | "compile_to_wasm" | "self" => {}
+                    | "lower_program" | "compile_to_wasm" | "self"
+                    // Stage 3+4 TCP/HTTP 原语
+                    | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_close" | "tcp_set_timeout"
+                    | "http_get" | "http_post" => {}
                     _ => { vars.insert(name.clone()); }
                 }
             }

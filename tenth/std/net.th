@@ -1,0 +1,24 @@
+// TCP networking primitives
+//
+// Usage:
+//   use std::net
+
+fn connect(host: String, port: i64) -> Result<i64> {
+    tcp_connect(host, port)
+}
+
+fn read(handle: i64, n: i64) -> Result<Vec<i64>> {
+    tcp_read(handle, n)
+}
+
+fn write(handle: i64, data: Vec<i64>) -> Result<i64> {
+    tcp_write(handle, data)
+}
+
+fn close(handle: i64) {
+    tcp_close(handle)
+}
+
+fn set_timeout(handle: i64, ms: i64) {
+    tcp_set_timeout(handle, ms)
+}

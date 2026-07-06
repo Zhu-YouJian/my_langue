@@ -53,6 +53,30 @@
 //   json_encode_pretty(value) — encode with indentation
 //   json_decode(string)      — decode JSON string to value
 
+// ── I/O (built-in native functions) ──
+//   eprint(value)            — write value to stderr (no trailing newline)
+//   eprintln(value)          — write value to stderr with trailing newline
+//   read_line()              — read a line from stdin -> Result<String>
+//                              (Err on EOF or read error)
+
+// ── Environment & Process (built-in native functions) ──
+//   env_get(name)            — get environment variable -> Result<String>
+//                              (Err if not found)
+//   env_set(name, value)     — set environment variable -> Unit
+//   exit(code)               — terminate process with exit code (never returns)
+
+// ── TCP (built-in native functions) ──
+//   tcp_connect(host, port)  — connect to host:port -> Result<i64> (handle)
+//   tcp_read(handle, n)      — read up to n bytes -> Result<Vec<i64>>
+//   tcp_write(handle, data)  — write byte vec -> Result<i64> (bytes written)
+//   tcp_close(handle)        — close connection -> Unit
+//   tcp_set_timeout(handle, ms) — set read/write timeout -> Unit
+
+// ── HTTP (built-in native functions) ──
+//   http_get(url)            — HTTP/1.1 GET request -> Result<String>
+//   http_post(url, body)     — HTTP/1.1 POST request -> Result<String>
+//                              (manual HTTP/1.1 implementation, no HTTPS)
+
 // ── Std lib (use path::to::function) ──
 //   std::nn::linear::linear<T>
 //   std::nn::loss::mse<T>, mse_loss<T>, binary_cross_entropy, l1_loss<T>, huber_loss<T>, huber_loss_train<T>  // binary_cross_entropy 仍 f64
@@ -89,6 +113,10 @@
 //   std::cli::cli::args_count, arg, args, args_tail, has_flag, flag_value
 //   std::logging::logging::debug, info, warn, error, set_level, LEVEL_DEBUG, LEVEL_INFO, LEVEL_WARN, LEVEL_ERROR
 //   std::fs::fs::exists, is_file, is_dir, join, mkdir_all, list_dir, size, remove, copy, rename, read_text, read_bytes, write_text, write_bytes, read_lines, extension, filename, parent
+//   std::io::io::eprint, eprintln, read_line, read_line_result   // stderr/stdin I/O（包装 eprint/eprintln/read_line native）
+//   std::env::env::get, get_result, get_or_empty, set, exit      // 环境变量与进程退出（包装 env_get/env_set/exit native）
+//   std::net::net::connect, read, write, close, set_timeout      // TCP 客户端（包装 tcp_* native，handle table 模式）
+//   std::http::http::get, post                                    // HTTP/1.1 客户端（手写协议，无 HTTPS）
 //   std::json::json::encode, decode, encode_pretty, load, save
 //   std::runtime::run_with_limit, limit_or_default, run_with_timeout, timeout_or_default
 //   (built-in, no import needed) with_step_limit, with_timeout_ms, is_timeout

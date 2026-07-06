@@ -52,8 +52,9 @@ impl Lowerer {
                     let fn_info = self.scope.lookup_fn(&ident.name);
                     if var_info.is_none() && fn_info.is_none() {
                         match ident.name.as_str() {
-                            "println" | "print" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
+                            "println" | "print" | "eprintln" | "eprint" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
                             | "read_file" | "write_file" | "write_bytes" | "read_bytes"
+                            | "read_line" | "env_get" | "env_set" | "exit"
                             | "str_at" | "str_len" | "str_cmp" | "str_slice" | "str_add" | "str_eq" | "str_int"
                             | "Vec::new" | "HashMap::new"
                             | "compile_host" | "compile_program"
@@ -81,7 +82,10 @@ impl Lowerer {
                             | "cli_args_count" | "cli_arg"
                             | "json_encode" | "json_encode_pretty" | "json_decode"
                             | "lexer_new" | "lexer_tokenize" | "parse_program"
-                            | "lower_program" | "compile_to_wasm" => {
+                            | "lower_program" | "compile_to_wasm"
+                            // Stage 3+4 TCP/HTTP 原语
+                            | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_close" | "tcp_set_timeout"
+                            | "http_get" | "http_post" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)
                             }
                             _ => {

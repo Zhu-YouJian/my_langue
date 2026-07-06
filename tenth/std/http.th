@@ -1,0 +1,12 @@
+// HTTP client primitives
+//
+// Usage:
+//   use std::http
+
+fn get(url: String) -> Result<String> {
+    http_get(url)
+}
+
+fn post(url: String, body: String) -> Result<String> {
+    http_post(url, body)
+}

@@ -33,6 +33,171 @@ use crate::runtime::autodiff::Tape;
 use super::json::{json_encode_value, json_encode_value_pretty, json_decode_string};
 use super::datetime::days_to_date;
 
+/// 构造 Result::Ok(value)
+fn ok_result(value: Value) -> Value {
+    Value::Enum {
+        enum_name: "Result".to_string(),
+        variant: "Ok".to_string(),
+        fields: Rc::new(RefCell::new(vec![("_0".to_string(), value)])),
+    }
+}
+
+/// 构造 Result::Err(message)
+fn err_result(msg: impl Into<String>) -> Value {
+    Value::Enum {
+        enum_name: "Result".to_string(),
+        variant: "Err".to_string(),
+        fields: Rc::new(RefCell::new(vec![("_0".to_string(), Value::String(msg.into()))])),
+    }
+}
+
+// —— HTTP 客户端辅助函数（手写 HTTP/1.1，与 main.rs 双侧对齐）——
+
+/// 解析 URL，返回 (host, port, path)
+///
+/// 支持 `http://host:port/path` 与 `http://host/path`（默认端口 80）。
+/// HTTPS 不支持：`https://` 开头返回 Err。
+fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
+    if url.starts_with("https://") {
+        return Err("不支持 HTTPS，请使用 http://".to_string());
+    }
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or_else(|| "URL 必须以 http:// 开头".to_string())?;
+    let (host_port, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, "/"),
+    };
+    let (host, port) = match host_port.find(':') {
+        Some(i) => {
+            let h = &host_port[..i];
+            let p: u16 = host_port[i + 1..]
+                .parse()
+                .map_err(|_| "端口号无效".to_string())?;
+            (h.to_string(), p)
+        }
+        None => (host_port.to_string(), 80),
+    };
+    Ok((host, port, path.to_string()))
+}
+
+/// 解码 HTTP chunked 传输编码
+///
+/// 格式：`<size_hex>\r\n<data>\r\n` 重复，以 `0\r\n\r\n` 结束。
+fn decode_chunked(data: &[u8]) -> Result<Vec<u8>, String> {
+    let mut result = Vec::new();
+    let mut pos = 0;
+    while pos < data.len() {
+        // 找 chunk size 行尾的 \r\n
+        let mut line_end = pos;
+        while line_end + 1 < data.len() && &data[line_end..line_end + 2] != b"\r\n" {
+            line_end += 1;
+        }
+        if line_end + 1 >= data.len() {
+            return Err("chunked 格式错误：未找到 size 行结束".to_string());
+        }
+        let size_str = std::str::from_utf8(&data[pos..line_end])
+            .map_err(|e| format!("chunk size 非 UTF-8: {e}"))?;
+        // size 可能带 ;extension，取分号前部分
+        let size_hex = size_str.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size_hex, 16)
+            .map_err(|_| format!("chunk size 非十六进制: {size_hex}"))?;
+        pos = line_end + 2; // 跳过 \r\n
+        if size == 0 {
+            break; // 末尾 chunk
+        }
+        if pos + size > data.len() {
+            return Err("chunked 格式错误：chunk 数据不足".to_string());
+        }
+        result.extend_from_slice(&data[pos..pos + size]);
+        pos += size;
+        // 跳过 chunk 后的 \r\n
+        if pos + 1 < data.len() && &data[pos..pos + 2] == b"\r\n" {
+            pos += 2;
+        }
+    }
+    Ok(result)
+}
+
+/// 读取并解析 HTTP 响应，返回 body 字符串
+///
+/// 一次性读到 EOF（依赖 Connection: close），分离响应头与 body。
+/// 如果响应头含 `Transfer-Encoding: chunked`，按 chunked 解码 body。
+fn http_read_response(stream: &mut std::net::TcpStream) -> Result<String, String> {
+    use std::io::Read;
+    let mut buf: Vec<u8> = Vec::new();
+    stream
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("读取响应失败: {e}"))?;
+    let sep = b"\r\n\r\n";
+    let mut header_end = None;
+    let mut i = 0;
+    while i + sep.len() <= buf.len() {
+        if &buf[i..i + sep.len()] == sep {
+            header_end = Some(i + sep.len());
+            break;
+        }
+        i += 1;
+    }
+    let header_end = header_end.ok_or_else(|| "响应头格式错误：未找到 \r\n\r\n".to_string())?;
+    let headers = std::str::from_utf8(&buf[..header_end - sep.len()])
+        .map_err(|e| format!("响应头非 UTF-8: {e}"))?;
+    let body = &buf[header_end..];
+    let chunked = headers.lines().any(|line| {
+        let lower = line.to_ascii_lowercase();
+        lower.starts_with("transfer-encoding:") && lower.contains("chunked")
+    });
+    if chunked {
+        let decoded = decode_chunked(body)?;
+        String::from_utf8(decoded).map_err(|e| format!("响应体非 UTF-8: {e}"))
+    } else {
+        String::from_utf8(body.to_vec()).map_err(|e| format!("响应体非 UTF-8: {e}"))
+    }
+}
+
+/// 发送 HTTP GET 请求，返回响应 body
+fn http_get_impl(url: &str) -> Result<String, String> {
+    let (host, port, path) = parse_http_url(url)?;
+    let addr = format!("{host}:{port}");
+    let mut stream = std::net::TcpStream::connect(&addr)
+        .map_err(|e| format!("连接失败: {e}"))?;
+    let timeout = std::time::Duration::from_secs(10);
+    stream.set_read_timeout(Some(timeout)).ok();
+    stream.set_write_timeout(Some(timeout)).ok();
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: Tenth/0.3.3\r\n\r\n"
+    );
+    use std::io::Write;
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("写入请求失败: {e}"))?;
+    http_read_response(&mut stream)
+}
+
+/// 发送 HTTP POST 请求（Content-Type: text/plain），返回响应 body
+fn http_post_impl(url: &str, body: &str) -> Result<String, String> {
+    let (host, port, path) = parse_http_url(url)?;
+    let addr = format!("{host}:{port}");
+    let mut stream = std::net::TcpStream::connect(&addr)
+        .map_err(|e| format!("连接失败: {e}"))?;
+    let timeout = std::time::Duration::from_secs(10);
+    stream.set_read_timeout(Some(timeout)).ok();
+    stream.set_write_timeout(Some(timeout)).ok();
+    let body_bytes = body.as_bytes();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: {len}\r\nUser-Agent: Tenth/0.3.3\r\n\r\n",
+        len = body_bytes.len()
+    );
+    use std::io::Write;
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("写入请求头失败: {e}"))?;
+    stream
+        .write_all(body_bytes)
+        .map_err(|e| format!("写入请求体失败: {e}"))?;
+    http_read_response(&mut stream)
+}
+
 impl super::Interpreter {
     pub(super) fn call_named_fn(
         &mut self, name: &str, args: &[Value], _span: &crate::lexer::token::Span,
@@ -44,6 +209,184 @@ impl super::Interpreter {
                 }
                 println!();
                 return Ok(Some(Value::Unit));
+            }
+            // —— I/O 原语：stderr + stdin ——
+            "eprint" => {
+                use std::io::Write;
+                let stderr = std::io::stderr();
+                let mut handle = stderr.lock();
+                for arg in args { write!(handle, "{}", arg).ok(); }
+                return Ok(Some(Value::Unit));
+            }
+            "eprintln" => {
+                use std::io::Write;
+                let stderr = std::io::stderr();
+                let mut handle = stderr.lock();
+                for arg in args { write!(handle, "{}", arg).ok(); }
+                writeln!(handle).ok();
+                return Ok(Some(Value::Unit));
+            }
+            "read_line" => {
+                use std::io::BufRead;
+                let stdin = std::io::stdin();
+                let mut line = String::new();
+                match stdin.lock().read_line(&mut line) {
+                    Ok(0) => return Ok(Some(err_result("EOF"))),
+                    Ok(_) => {
+                        if line.ends_with('\n') { line.pop(); if line.ends_with('\r') { line.pop(); } }
+                        return Ok(Some(ok_result(Value::String(line))));
+                    }
+                    Err(e) => return Ok(Some(err_result(format!("读取输入失败: {e}")))),
+                }
+            }
+            // —— 环境变量 + 进程控制 ——
+            "env_get" => {
+                if let Some(Value::String(name)) = args.first() {
+                    match std::env::var(name) {
+                        Ok(val) => return Ok(Some(ok_result(Value::String(val)))),
+                        Err(_) => return Ok(Some(err_result("环境变量不存在"))),
+                    }
+                }
+                return Ok(Some(err_result("env_get 需要 1 个 String 参数")));
+            }
+            "env_set" => {
+                if args.len() >= 2 {
+                    if let (Value::String(name), Value::String(val)) = (&args[0], &args[1]) {
+                        // Rust 2024 edition: set_var is unsafe
+                        unsafe { std::env::set_var(name, val); }
+                    }
+                }
+                return Ok(Some(Value::Unit));
+            }
+            "exit" => {
+                let code = if let Some(Value::Int(c)) = args.first() { *c } else { 0 };
+                std::process::exit(code as i32);
+            }
+            // —— TCP 网络原语（句柄表方案，handle 1-based，0 表示无效）——
+            "tcp_connect" => {
+                if args.len() < 2 {
+                    return Ok(Some(err_result("tcp_connect 需要 (String, i64) 参数")));
+                }
+                if let (Value::String(host), Value::Int(port)) = (&args[0], &args[1]) {
+                    let addr = format!("{}:{}", host, port);
+                    match std::net::TcpStream::connect(&addr) {
+                        Ok(stream) => {
+                            self.tcp_streams.push(Some(stream));
+                            let handle = self.tcp_streams.len() as i64; // 1-based
+                            return Ok(Some(ok_result(Value::Int(handle))));
+                        }
+                        Err(e) => return Ok(Some(err_result(format!("连接失败: {e}")))),
+                    }
+                }
+                return Ok(Some(err_result("tcp_connect 需要 (String, i64) 参数")));
+            }
+            "tcp_read" => {
+                if args.len() < 2 {
+                    return Ok(Some(err_result("tcp_read 需要 (i64, i64) 参数")));
+                }
+                if let (Value::Int(handle), Value::Int(n)) = (&args[0], &args[1]) {
+                    let idx = *handle as usize;
+                    if idx == 0 || idx > self.tcp_streams.len() {
+                        return Ok(Some(err_result("无效的句柄")));
+                    }
+                    let max = (*n).max(0).min(65536) as usize;
+                    if let Some(ref mut stream) = self.tcp_streams[idx - 1] {
+                        use std::io::Read;
+                        let mut buf = vec![0u8; max];
+                        match stream.read(&mut buf) {
+                            Ok(0) => {
+                                // EOF：返回空 Vec
+                                return Ok(Some(ok_result(Value::Vec(Rc::new(RefCell::new(Vec::new()))))));
+                            }
+                            Ok(read_n) => {
+                                let bytes: Vec<Value> = buf[..read_n]
+                                    .iter()
+                                    .map(|b| Value::Int(*b as i64))
+                                    .collect();
+                                return Ok(Some(ok_result(Value::Vec(Rc::new(RefCell::new(bytes))))));
+                            }
+                            Err(e) => return Ok(Some(err_result(format!("读取失败: {e}")))),
+                        }
+                    } else {
+                        return Ok(Some(err_result("连接已关闭")));
+                    }
+                }
+                return Ok(Some(err_result("tcp_read 需要 (i64, i64) 参数")));
+            }
+            "tcp_write" => {
+                if args.len() < 2 {
+                    return Ok(Some(err_result("tcp_write 需要 (i64, Vec<i64>) 参数")));
+                }
+                if let (Value::Int(handle), Value::Vec(data)) = (&args[0], &args[1]) {
+                    let idx = *handle as usize;
+                    if idx == 0 || idx > self.tcp_streams.len() {
+                        return Ok(Some(err_result("无效的句柄")));
+                    }
+                    let bytes: Vec<u8> = data
+                        .borrow()
+                        .iter()
+                        .map(|x| match x {
+                            Value::Int(b) => *b as u8,
+                            _ => 0,
+                        })
+                        .collect();
+                    if let Some(ref mut stream) = self.tcp_streams[idx - 1] {
+                        use std::io::Write;
+                        match stream.write_all(&bytes) {
+                            Ok(_) => return Ok(Some(ok_result(Value::Int(bytes.len() as i64)))),
+                            Err(e) => return Ok(Some(err_result(format!("写入失败: {e}")))),
+                        }
+                    } else {
+                        return Ok(Some(err_result("连接已关闭")));
+                    }
+                }
+                return Ok(Some(err_result("tcp_write 需要 (i64, Vec<i64>) 参数")));
+            }
+            "tcp_close" => {
+                if let Some(Value::Int(handle)) = args.first() {
+                    let idx = *handle as usize;
+                    if idx > 0 && idx <= self.tcp_streams.len() {
+                        self.tcp_streams[idx - 1] = None; // drop 自动关闭
+                    }
+                }
+                return Ok(Some(Value::Unit));
+            }
+            "tcp_set_timeout" => {
+                if args.len() >= 2 {
+                    if let (Value::Int(handle), Value::Int(ms)) = (&args[0], &args[1]) {
+                        let idx = *handle as usize;
+                        if idx > 0 && idx <= self.tcp_streams.len() {
+                            if let Some(ref mut stream) = self.tcp_streams[idx - 1] {
+                                let dur = std::time::Duration::from_millis(*ms as u64);
+                                stream.set_read_timeout(Some(dur)).ok();
+                                stream.set_write_timeout(Some(dur)).ok();
+                            }
+                        }
+                    }
+                }
+                return Ok(Some(Value::Unit));
+            }
+            // —— HTTP 客户端原语（手写 HTTP/1.1，10 秒默认超时）——
+            "http_get" => {
+                if let Some(Value::String(url)) = args.first() {
+                    match http_get_impl(url) {
+                        Ok(body) => return Ok(Some(ok_result(Value::String(body)))),
+                        Err(e) => return Ok(Some(err_result(e))),
+                    }
+                }
+                return Ok(Some(err_result("http_get 需要 1 个 String 参数")));
+            }
+            "http_post" => {
+                if args.len() >= 2 {
+                    if let (Value::String(url), Value::String(body)) = (&args[0], &args[1]) {
+                        match http_post_impl(url, body) {
+                            Ok(resp) => return Ok(Some(ok_result(Value::String(resp)))),
+                            Err(e) => return Ok(Some(err_result(e))),
+                        }
+                    }
+                    return Ok(Some(err_result("http_post 需要 (String, String) 参数")));
+                }
+                return Ok(Some(err_result("http_post 需要 (String, String) 参数")));
             }
             // 论文 T37 修复第二批：补齐解释器缺失的 print/to_f64/to_f32（与 VM main.rs 对齐）
             "print" => {

@@ -425,7 +425,15 @@ impl Lowerer {
 
     pub(super) fn resolve_builtin(&self, name: &str, args: &[HirExpr], _span: &Span) -> TenthResult<Type> {
         match name {
-            "println" | "eprintln" => Ok(Type::unit()),
+            "println" | "eprintln" | "eprint" => Ok(Type::unit()),
+            // Stage 1+2 I/O 原语
+            "env_set" | "exit" => Ok(Type::unit()),
+            "read_line" | "env_get" => Ok(Type::Enum("Result".to_string())),
+            // Stage 3+4 TCP/HTTP 原语：返回 Unit 的 close/set_timeout 与返回 Result 的其余
+            "tcp_close" | "tcp_set_timeout" => Ok(Type::unit()),
+            "tcp_connect" | "tcp_read" | "tcp_write" | "http_get" | "http_post" => {
+                Ok(Type::Enum("Result".to_string()))
+            }
             // Tensor 构造函数：dtype 从参数推断（若无 f32 线索则默认 F64）
             "tensor" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),
             "rand" | "randn" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),

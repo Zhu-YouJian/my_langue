@@ -1,0 +1,24 @@
+// Standard I/O utilities — stderr + stdin
+//
+// Usage:
+//   use std::io
+
+/// 输出到 stderr，无换行
+fn eprint(value: String) { eprint(value) }
+
+/// 输出到 stderr，带换行
+fn eprintln(value: String) { eprintln(value) }
+
+/// 从 stdin 读取一行，EOF 或错误时返回空串
+fn read_line() -> String {
+    let r = read_line();
+    match r {
+        Result::Ok(s) => s,
+        Result::Err(_) => "",
+    }
+}
+
+/// 从 stdin 读取一行，返回 Result<String>
+fn read_line_result() -> Result<String> {
+    read_line()
+}

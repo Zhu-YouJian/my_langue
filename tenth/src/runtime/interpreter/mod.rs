@@ -69,6 +69,9 @@ pub struct Interpreter {
     /// 护城河 F：上一次 backward 失败时的根因说明列表（由 formal_explain 生成）。
     /// 由 `explain_error()` native 读取并清空。
     pub last_explanation: Vec<String>,
+    /// TCP 流句柄表（与 vm.rs 的 Vm::tcp_streams 对齐）。
+    /// 索引+1 即句柄（1-based，0 表示无效）。`None` 表示已关闭的槽位。
+    pub tcp_streams: Vec<Option<std::net::TcpStream>>,
 }
 
 impl Interpreter {
@@ -89,6 +92,7 @@ impl Interpreter {
             tick_counter: 0,
             fs_sandbox: None,
             last_explanation: Vec::new(),
+            tcp_streams: Vec::new(),
         }
     }
 
@@ -471,9 +475,10 @@ impl Interpreter {
                 self.resolve_var(name)
                     .or_else(|| {
                         match name.as_str() {
-                            "println" | "print" | "eprintln" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
+                            "println" | "print" | "eprintln" | "eprint" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
                             | "read_file" | "write_file" | "write_bytes" | "read_bytes" | "compile_host"
                             | "compile_program"
+                            | "read_line" | "env_get" | "env_set" | "exit"
                             | "Vec::new" | "HashMap::new"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
@@ -496,7 +501,10 @@ impl Interpreter {
                             | "math_sinh" | "math_cosh" | "math_tanh" | "math_log10" | "math_log2" | "math_exp" | "math_pow"
                             | "math_floor" | "math_ceil" | "math_round"
                             | "cli_args_count" | "cli_arg"
-                            | "json_encode" | "json_encode_pretty" | "json_decode" => {
+                            | "json_encode" | "json_encode_pretty" | "json_decode"
+                            // Stage 3+4 TCP/HTTP 原语
+                            | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_close" | "tcp_set_timeout"
+                            | "http_get" | "http_post" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),
