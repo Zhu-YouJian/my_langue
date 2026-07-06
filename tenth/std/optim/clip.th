@@ -16,35 +16,20 @@
 // 与 std::optim::sgd_step / adam_step 联用时，需改用返回裁剪后梯度的手动更新方式，
 // 而非让 step 函数内部调 grad(w)。
 
-// ── f64 版本 ──
+// ── Phase 3 DRY 清理：泛型化 <T>（f32/f64 通吃）──
 
 // 逐元素裁剪梯度到 [-max_val, max_val]。
 // 输入：梯度 tensor gw；返回：裁剪后的梯度 tensor。
-fn clip_grad_by_value(gw: Tensor[f64, ..], max_val: f64) -> Tensor[f64, ..] {
+// 注：clip_scalar 内部按 tensor dtype 分发，max_val: T 会被隐式提升到 f64（method 签名要求）。
+fn clip_grad_by_value<T>(gw: Tensor[T, ..], max_val: T) -> Tensor[T, ..] {
     gw.clip_scalar(-max_val, max_val)
 }
 
 // 按 L2 范数裁剪梯度。
 // 若 ||gw||_2 > max_norm，则 gw = gw * (max_norm / ||gw||_2)。
 // 输入：梯度 tensor gw；返回：裁剪后的梯度 tensor。
-fn clip_grad_by_norm(gw: Tensor[f64, ..], max_norm: f64) -> Tensor[f64, ..] {
-    let sq_sum = (gw * gw).sum();
-    let norm = sq_sum.sqrt();
-    if norm > max_norm {
-        let scale = max_norm / norm;
-        gw * scale
-    } else {
-        gw
-    }
-}
-
-// ── f32 版本（标量参数改 f32，保持 f32 路径不提升为 f64）──
-
-fn clip_grad_by_value_f32(gw: Tensor[f64, ..], max_val: f32) -> Tensor[f64, ..] {
-    gw.clip_scalar(-max_val, max_val)
-}
-
-fn clip_grad_by_norm_f32(gw: Tensor[f64, ..], max_norm: f32) -> Tensor[f64, ..] {
+// 注：sum()/sqrt() 返回 f64（标量聚合始终为 f64），max_norm: T 与之比较时按 G4 规则提升。
+fn clip_grad_by_norm<T>(gw: Tensor[T, ..], max_norm: T) -> Tensor[T, ..] {
     let sq_sum = (gw * gw).sum();
     let norm = sq_sum.sqrt();
     if norm > max_norm {

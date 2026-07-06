@@ -1,24 +1,28 @@
 // Loss functions
+//
+// Phase 3 DRY 清理：mse/mse_loss/l1_loss/huber_loss/huber_loss_train 已泛型化 <T>。
+// binary_cross_entropy 保留 f64（标量函数，无 trait bound；按任务要求保留）。
 
 // Mean Squared Error (returns scalar)
-fn mse(pred: Tensor[f64, ..], target: Tensor[f64, ..]) -> f64 {
+fn mse<T>(pred: Tensor[T, ..], target: Tensor[T, ..]) -> T {
     let diff = pred - target;
     (diff * diff).mean()
 }
 
 // Mean Squared Error (returns scalar tensor for autodiff)
-fn mse_loss(pred: Tensor[f64, ..], target: Tensor[f64, ..]) -> Tensor[f64, ..] {
+fn mse_loss<T>(pred: Tensor[T, ..], target: Tensor[T, ..]) -> Tensor[T, ..] {
     let diff = pred - target;
     diff * diff
 }
 
 // Binary Cross Entropy (scalar inputs)
+// 注：保留 f64（标量函数，无 trait bound）。
 fn binary_cross_entropy(pred: f64, target: f64) -> f64 {
     -(target * pred.log() + (1.0 - target) * (1.0 - pred).log())
 }
 
 // L1 Loss (Mean Absolute Error)
-fn l1_loss(pred: Tensor[f64, ..], target: Tensor[f64, ..]) -> Tensor[f64, ..] {
+fn l1_loss<T>(pred: Tensor[T, ..], target: Tensor[T, ..]) -> Tensor[T, ..] {
     let diff = pred - target;
     diff.abs()
 }
@@ -30,7 +34,7 @@ fn l1_loss(pred: Tensor[f64, ..], target: Tensor[f64, ..]) -> Tensor[f64, ..] {
 //   cond ≈ 1 → select linear (δ*(|a|-0.5δ))
 //   cond ≈ 0 → select quadratic (0.5*a²)
 // 返回标量（mean），用于评估（不可微路径）
-fn huber_loss(pred: Tensor[f64, ..], target: Tensor[f64, ..], delta: f64) -> f64 {
+fn huber_loss<T>(pred: Tensor[T, ..], target: Tensor[T, ..], delta: T) -> T {
     let a = pred - target;
     let abs_a = a.abs();
     let eps = 1e-12;
@@ -45,7 +49,7 @@ fn huber_loss(pred: Tensor[f64, ..], target: Tensor[f64, ..], delta: f64) -> f64
 
 // huber_loss_train：返回 tensor（不 mean），用于 autodiff 训练
 // 与 mse / mse_loss 的双形式 API 设计模式一致
-fn huber_loss_train(pred: Tensor[f64, ..], target: Tensor[f64, ..], delta: f64) -> Tensor[f64, ..] {
+fn huber_loss_train<T>(pred: Tensor[T, ..], target: Tensor[T, ..], delta: T) -> Tensor[T, ..] {
     let a = pred - target;
     let abs_a = a.abs();
     let eps = 1e-12;

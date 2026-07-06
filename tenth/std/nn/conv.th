@@ -13,13 +13,15 @@
 
 // Conv2D forward: y = conv2d(x, w) + b
 // stride and pad default to 1 and 0 respectively.
-fn conv2d(
-    x: Tensor[f64, ..],
-    w: Tensor[f64, ..],
-    b: Tensor[f64, ..],
+//
+// Phase 3 DRY 清理：泛型化 <T> 支持 f32/f64。
+fn conv2d<T>(
+    x: Tensor[T, ..],
+    w: Tensor[T, ..],
+    b: Tensor[T, ..],
     stride: i64,
     pad: i64,
-) -> Tensor[f64, ..] {
+) -> Tensor[T, ..] {
     let kH = shape(w)[2];
     let kW = shape(w)[3];
     let out = x.conv2d(w, kH, kW, stride, pad);

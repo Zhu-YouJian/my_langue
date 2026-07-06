@@ -87,6 +87,12 @@ unsafe extern "C" fn host_make_float(_vm: *mut Vm, f: f64, out: *mut Value) {
     std::ptr::write(out, Value::Float(f));
 }
 
+/// 真正的 f32 hostcall：保留 dtype 信息到运行时（不再降级为 f64）。
+/// 阶段 6（f32/f64 parity roadmap）补齐。
+unsafe extern "C" fn host_make_float32(_vm: *mut Vm, f: f32, out: *mut Value) {
+    std::ptr::write(out, Value::Float32(f));
+}
+
 unsafe extern "C" fn host_make_bool(_vm: *mut Vm, b: u8, out: *mut Value) {
     std::ptr::write(out, Value::Bool(b != 0));
 }
@@ -420,12 +426,42 @@ unsafe extern "C" fn host_make_tensor(
     };
     let data: Vec<f64> = flat.iter().map(|v| match v {
         Value::Float(f) => *f,
+        Value::Float32(f) => *f as f64,
         Value::Int(i) => *i as f64,
         _ => 0.0,
     }).collect();
     use crate::runtime::tensor::Tensor;
     let shape = if cols == 0 { vec![rows as usize] } else { vec![rows as usize, cols as usize] };
     std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec(data, shape)))));
+}
+
+/// f32 Tensor 构造：保留 dtype=F32，元素提取保持 f32 精度。
+/// 阶段 6（f32/f64 parity roadmap）补齐。
+unsafe extern "C" fn host_make_tensor_f32(
+    _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *mut Value,
+) {
+    // 安全：rows * cols 用 checked_mul 防止溢出，并设上限防止 OOM
+    let count = match (rows as usize).checked_mul(cols as usize) {
+        Some(n) if n <= MAX_HOSTCALL_ARGS => n,
+        _ => {
+            std::ptr::write(out, Value::Unit);
+            return;
+        }
+    };
+    let flat = if args_ptr.is_null() || count == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(args_ptr, count)
+    };
+    let data: Vec<f32> = flat.iter().map(|v| match v {
+        Value::Float32(f) => *f,
+        Value::Float(f) => *f as f32,
+        Value::Int(i) => *i as f32,
+        _ => 0.0,
+    }).collect();
+    use crate::runtime::tensor::Tensor;
+    let shape = if cols == 0 { vec![rows as usize] } else { vec![rows as usize, cols as usize] };
+    std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec_f32(data, shape)))));
 }
 
 unsafe extern "C" fn host_make_closure(
@@ -456,6 +492,7 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
     let map: &[(&str, usize)] = &[
         ("host_make_int", host_make_int as usize),
         ("host_make_float", host_make_float as usize),
+        ("host_make_float32", host_make_float32 as usize),
         ("host_make_bool", host_make_bool as usize),
         ("host_make_str", host_make_str as usize),
         ("host_make_unit", host_make_unit as usize),
@@ -487,6 +524,7 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
         ("host_enum_get_field", host_enum_get_field as usize),
         ("host_push_range", host_push_range as usize),
         ("host_make_tensor", host_make_tensor as usize),
+        ("host_make_tensor_f32", host_make_tensor_f32 as usize),
         ("host_make_closure", host_make_closure as usize),
         ("host_load_global", host_load_global as usize),
         ("host_store_global", host_store_global as usize),

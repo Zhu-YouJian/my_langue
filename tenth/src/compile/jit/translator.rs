@@ -230,9 +230,9 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.bump_sp()?;
             }
             PushFloat32(f) => {
-                // JIT 路径暂降级为 f64（Phase 5 补齐真正的 f32 JIT）
+                // 阶段 6：真正的 f32 hostcall，保留 dtype 信息（不再降级为 f64）。
                 let out = self.stack_addr_at_sp();
-                self.call_hostcall_f64("host_make_float", f as f64, out);
+                self.call_hostcall_f32("host_make_float32", f, out);
                 self.bump_sp()?;
             }
             PushBool(b) => {
@@ -470,9 +470,13 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.sp -= (count as i32) * (VALUE_SIZE as i32);
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
-                self.call_hostcall_make_tensor("host_make_tensor", rows as u64, cols as u64, args_addr, out);
-                // 注：dtype 当前在 JIT 路径降级为 F64；后续 phase 5 中补齐 f32 路径。
-                let _ = dtype;
+                // 阶段 6：根据 dtype 分发到 f32/f64 hostcall，保留 dtype 信息。
+                // dtype 编码与 bytecode 一致：0 = F64，1 = F32。
+                if dtype == 1 {
+                    self.call_hostcall_make_tensor("host_make_tensor_f32", rows as u64, cols as u64, args_addr, out);
+                } else {
+                    self.call_hostcall_make_tensor("host_make_tensor", rows as u64, cols as u64, args_addr, out);
+                }
                 self.bump_sp()?;
             }
             MakeClosure(params, chunk_idx) => {
@@ -640,6 +644,15 @@ impl<'a, M: Module> Translator<'a, M> {
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::F64, self.ptr], None);
         let a = self.builder.ins().f64const(arg);
+        self.builder.ins().call_indirect(sig, callee, &[self.vm, a, out]);
+    }
+
+    /// f32 hostcall 调用：参数以 f32 ABI 传递（4 字节寄存器），与 f64 路径
+    /// 区分以保留 dtype 信息到运行时。栈布局不变——out 仍为 *mut Value。
+    fn call_hostcall_f32(&mut self, name: &str, arg: f32, out: Value_) {
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[types::F32, self.ptr], None);
+        let a = self.builder.ins().f32const(arg);
         self.builder.ins().call_indirect(sig, callee, &[self.vm, a, out]);
     }
 

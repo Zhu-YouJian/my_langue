@@ -218,9 +218,10 @@ impl Tensor {
     }
 
     /// Accumulate `g` into `self.grad`.
-    /// g 的 dtype 必须与 self.dtype 一致；若 self.grad 为 None 则按 dtype 初始化。
+    /// g 可为 F32 或 F64；按 self.dtype 转换存储（f32 参数→F32 grad，f64 参数→F64 grad）。
     /// 返回 Err 当 g.shape() 与 self.data.shape() 不一致（防止 silent broadcast 掩盖梯度 shape 错误）。
-    pub fn acc_grad(&mut self, g: &ArrayD<f64>) -> Result<(), String> {
+    /// 阶段 4：签名从 `&ArrayD<f64>` 改为 `&TensorData`，支持真正的 f32 反向传播。
+    pub fn acc_grad(&mut self, g: &TensorData) -> Result<(), String> {
         // shape 校验：梯度 shape 必须与参数 shape 一致（方向 A：消除 silent squeeze）
         let self_shape = self.data.shape();
         let g_shape = g.shape();
@@ -230,32 +231,46 @@ impl Tensor {
                 self_shape, g_shape
             ));
         }
-        // 保持现有签名兼容：g 视为 f64，按 self.dtype 转换存储
-        let g_converted = match self.dtype {
-            BaseType::F32 => TensorData::F32(g.mapv(|v| v as f32)),
-            BaseType::F64 => TensorData::F64(g.clone()),
-            _ => TensorData::F64(g.clone()),
-        };
-        match &mut self.grad {
-            Some(TensorData::F64(cur)) => {
-                if let TensorData::F64(g2) = &g_converted {
-                    *cur = &*cur + g2;
-                } else {
-                    // dtype 不一致，回退为 f64
-                    let merged = cur.clone() + g;
-                    self.grad = Some(TensorData::F64(merged));
+        // 阶段 4：按 self.dtype 转换 g，保持参数 grad dtype 一致。
+        // 策略 B 残留：若 self.grad 已有不同 dtype（混合场景），回退为 f64 累加。
+        match self.dtype {
+            BaseType::F32 => {
+                let g_f32 = match g {
+                    TensorData::F32(a) => a.clone(),
+                    TensorData::F64(a) => a.mapv(|v| v as f32),
+                };
+                match &mut self.grad {
+                    Some(TensorData::F32(cur)) => {
+                        *cur = &*cur + &g_f32;
+                    }
+                    // 已有 F64 grad（混合 dtype 场景），回退为 f64 累加（策略 B 残留）
+                    Some(TensorData::F64(cur)) => {
+                        let merged = &*cur + &g_f32.mapv(|v| v as f64);
+                        *cur = merged;
+                    }
+                    None => {
+                        self.grad = Some(TensorData::F32(g_f32));
+                    }
                 }
             }
-            Some(TensorData::F32(cur)) => {
-                if let TensorData::F32(g2) = &g_converted {
-                    *cur = &*cur + g2;
-                } else {
-                    let merged = cur.mapv(|v| v as f64) + g;
-                    self.grad = Some(TensorData::F64(merged));
+            _ => {
+                let g_f64 = match g {
+                    TensorData::F64(a) => a.clone(),
+                    TensorData::F32(a) => a.mapv(|v| v as f64),
+                };
+                match &mut self.grad {
+                    Some(TensorData::F64(cur)) => {
+                        *cur = &*cur + &g_f64;
+                    }
+                    // 已有 F32 grad（混合 dtype 场景），回退为 f64 累加（策略 B 残留）
+                    Some(TensorData::F32(cur)) => {
+                        let merged = cur.mapv(|v| v as f64) + &g_f64;
+                        self.grad = Some(TensorData::F64(merged));
+                    }
+                    None => {
+                        self.grad = Some(TensorData::F64(g_f64));
+                    }
                 }
-            }
-            None => {
-                self.grad = Some(g_converted);
             }
         }
         Ok(())

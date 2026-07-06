@@ -17,19 +17,12 @@
 //
 // 本模块提供便捷封装，减少样板代码。
 
-// ── f64 版本 ──
+// ── Phase 3 DRY 清理：泛型化 <T>（f32/f64 通吃）──
 
 // 累积辅助：将当前梯度按累积步数缩放后返回。
 // 用于 backward(loss) 后、optimizer step 前的梯度归一化。
 // 输入：参数 w（用于读 grad）、累积步数 accum_steps；返回：归一化后的梯度。
-fn accumulate_grad(w: Tensor[f64, ..], accum_steps: i64) -> Tensor[f64, ..] {
-    let gw = grad(w);
-    gw / accum_steps
-}
-
-// ── f32 版本 ──
-
-fn accumulate_grad_f32(w: Tensor[f64, ..], accum_steps: i64) -> Tensor[f64, ..] {
+fn accumulate_grad<T>(w: Tensor[T, ..], accum_steps: i64) -> Tensor[T, ..] {
     let gw = grad(w);
     gw / accum_steps
 }

@@ -69,7 +69,10 @@ impl WasmCompiler {
                 BaseType::Bool => {
                     // Already i32, no conversion needed
                 }
-                BaseType::F32 | BaseType::F64 => {
+                BaseType::F32 => {
+                    body.instruction(&Instruction::I32TruncF32S);
+                }
+                BaseType::F64 => {
                     body.instruction(&Instruction::I32TruncF64S);
                 }
                 _ => {
@@ -121,10 +124,18 @@ impl WasmCompiler {
                     // Extra locals (index >= param_count) are stored as i64.
                     // Convert back to the expression's actual type.
                     if idx >= self.param_count {
-                        if matches!(&expr.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
-                            body.instruction(&Instruction::F64ReinterpretI64);
-                        } else if matches!(&expr.ty, Type::Base(BaseType::Bool)) {
-                            body.instruction(&Instruction::I32WrapI64);
+                        match &expr.ty {
+                            Type::Base(BaseType::F32) => {
+                                body.instruction(&Instruction::F64ReinterpretI64);
+                                body.instruction(&Instruction::F32DemoteF64);
+                            }
+                            Type::Base(BaseType::F64) => {
+                                body.instruction(&Instruction::F64ReinterpretI64);
+                            }
+                            Type::Base(BaseType::Bool) => {
+                                body.instruction(&Instruction::I32WrapI64);
+                            }
+                            _ => {}
                         }
                     }
                 } else if self.compiling_closure {
@@ -138,10 +149,18 @@ impl WasmCompiler {
                         let arg = wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 };
                         body.instruction(&Instruction::I64Load(arg));
                         // Convert to actual type if needed
-                        if matches!(&expr.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
-                            body.instruction(&Instruction::F64ReinterpretI64);
-                        } else if matches!(&expr.ty, Type::Base(BaseType::Bool)) {
-                            body.instruction(&Instruction::I32WrapI64);
+                        match &expr.ty {
+                            Type::Base(BaseType::F32) => {
+                                body.instruction(&Instruction::F64ReinterpretI64);
+                                body.instruction(&Instruction::F32DemoteF64);
+                            }
+                            Type::Base(BaseType::F64) => {
+                                body.instruction(&Instruction::F64ReinterpretI64);
+                            }
+                            Type::Base(BaseType::Bool) => {
+                                body.instruction(&Instruction::I32WrapI64);
+                            }
+                            _ => {}
                         }
                     } else if !["println","eprintln","write_file","read_file"].contains(&name.as_str()) {
                         return Err(TenthError::RuntimeError {
@@ -186,20 +205,41 @@ impl WasmCompiler {
                     self.compile_string_arg(body, right)?;
                     body.instruction(&Instruction::Call(HOST_STR_CMP)); // str_cmp(op, a, b) -> i32
                 } else {
+                    // Phase 5：使用 expr.ty（lower.rs 推断的结果类型）来决定 F32/F64 路径
+                    let result_is_f32 = matches!(&expr.ty, Type::Base(BaseType::F32));
+                    let result_is_f64 = matches!(&expr.ty, Type::Base(BaseType::F64));
                     self.compile_expr(body, left)?;
-                    // Convert i64 to f64 if the operation involves float
+                    // 左操作数提升到结果类型
                     let left_is_int = matches!(&left.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64));
-                    let right_is_float = matches!(&right.ty, Type::Base(BaseType::F32 | BaseType::F64));
-                    if left_is_int && right_is_float {
+                    let left_is_f32 = matches!(&left.ty, Type::Base(BaseType::F32));
+                    let left_is_f64 = matches!(&left.ty, Type::Base(BaseType::F64));
+                    if left_is_int && result_is_f32 {
+                        body.instruction(&Instruction::F32ConvertI64S);
+                    } else if left_is_int && result_is_f64 {
                         body.instruction(&Instruction::F64ConvertI64S);
+                    } else if left_is_f32 && result_is_f64 {
+                        body.instruction(&Instruction::F64PromoteF32);
                     }
+                    // (left_is_f64 && result_is_f32 不会发生：F64 不会被降级到 F32)
                     self.compile_expr(body, right)?;
-                    let left_is_float = matches!(&left.ty, Type::Base(BaseType::F32 | BaseType::F64));
+                    // 右操作数提升到结果类型
                     let right_is_int = matches!(&right.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64));
-                    if right_is_int && left_is_float {
+                    let right_is_f32 = matches!(&right.ty, Type::Base(BaseType::F32));
+                    let right_is_f64 = matches!(&right.ty, Type::Base(BaseType::F64));
+                    if right_is_int && result_is_f32 {
+                        body.instruction(&Instruction::F32ConvertI64S);
+                    } else if right_is_int && result_is_f64 {
                         body.instruction(&Instruction::F64ConvertI64S);
+                    } else if right_is_f32 && result_is_f64 {
+                        body.instruction(&Instruction::F64PromoteF32);
+                    } else if right_is_f64 && result_is_f32 {
+                        // F64 → F32 降级（仅当显式声明 f32 结果时）
+                        body.instruction(&Instruction::F32DemoteF64);
                     }
-                    self.compile_binop(body, op, &left.ty, &right.ty)?;
+                    // 比较类操作（结果 Bool）需用操作数类型选择 F32/F64 指令；
+                    // 算术类操作用结果类型。两者经过上面提升后已统一。
+                    let dispatch_ty = if result_is_f32 || result_is_f64 { &expr.ty } else { &left.ty };
+                    self.compile_binop(body, op, dispatch_ty)?;
                 }
             }
 
@@ -370,19 +410,32 @@ impl WasmCompiler {
 
             HirExprKind::Assign { target, value } => {
                 self.compile_expr(body, value)?;
-                // f64/bool values must be stored as i64 (all locals are i64)
-                if matches!(&value.ty, Type::Base(BaseType::F64 | BaseType::F32)) {
-                    body.instruction(&Instruction::I64ReinterpretF64);
-                } else if matches!(&value.ty, Type::Base(BaseType::Bool)) {
-                    body.instruction(&Instruction::I64ExtendI32U);
-                }
-                if let Some(&idx) = self.local_map.get(target) {
-                    body.instruction(&Instruction::LocalSet(idx));
+                let target_idx = if let Some(&idx) = self.local_map.get(target) {
+                    idx
                 } else {
                     self.local_map.insert(target.clone(), self.local_count);
-                    body.instruction(&Instruction::LocalSet(self.local_count));
+                    let idx = self.local_count;
                     self.local_count += 1;
+                    idx
+                };
+                // Non-parameter locals are stored as i64; convert float/bool values.
+                // Parameters use their declared type (F32/F64) — no conversion needed.
+                if target_idx >= self.param_count {
+                    match &value.ty {
+                        Type::Base(BaseType::F32) => {
+                            body.instruction(&Instruction::F64PromoteF32);
+                            body.instruction(&Instruction::I64ReinterpretF64);
+                        }
+                        Type::Base(BaseType::F64) => {
+                            body.instruction(&Instruction::I64ReinterpretF64);
+                        }
+                        Type::Base(BaseType::Bool) => {
+                            body.instruction(&Instruction::I64ExtendI32U);
+                        }
+                        _ => {}
+                    }
                 }
+                body.instruction(&Instruction::LocalSet(target_idx));
             }
 
             HirExprKind::AssignOp { target, op, value } => {
@@ -394,21 +447,33 @@ impl WasmCompiler {
                     self.local_count += 1;
                     idx
                 };
-                let is_float = matches!(&value.ty, Type::Base(BaseType::F32 | BaseType::F64));
-                // Load current value, convert to f64 if needed
+                let is_f32 = matches!(&value.ty, Type::Base(BaseType::F32));
+                let is_f64 = matches!(&value.ty, Type::Base(BaseType::F64));
+                // Load current value, convert to float type if needed
                 body.instruction(&Instruction::LocalGet(idx));
-                if is_float {
-                    body.instruction(&Instruction::F64ConvertI64S);
+                if idx >= self.param_count {
+                    // Non-parameter local: stored as i64, need reinterpret
+                    if is_f32 {
+                        body.instruction(&Instruction::F64ReinterpretI64);
+                        body.instruction(&Instruction::F32DemoteF64);
+                    } else if is_f64 {
+                        body.instruction(&Instruction::F64ReinterpretI64);
+                    }
                 }
                 // Compile RHS
                 self.compile_expr(body, value)?;
                 // Apply binary op
-                self.compile_binop(body, op, &value.ty, &value.ty)?;
-                // Convert result back to i64 for local storage
-                if is_float {
-                    body.instruction(&Instruction::I64ReinterpretF64);
-                } else if matches!(&value.ty, Type::Base(BaseType::Bool)) {
-                    body.instruction(&Instruction::I64ExtendI32U);
+                self.compile_binop(body, op, &value.ty)?;
+                // Convert result back to i64 for local storage (non-parameter)
+                if idx >= self.param_count {
+                    if is_f32 {
+                        body.instruction(&Instruction::F64PromoteF32);
+                        body.instruction(&Instruction::I64ReinterpretF64);
+                    } else if is_f64 {
+                        body.instruction(&Instruction::I64ReinterpretF64);
+                    } else if matches!(&value.ty, Type::Base(BaseType::Bool)) {
+                        body.instruction(&Instruction::I64ExtendI32U);
+                    }
                 }
                 body.instruction(&Instruction::LocalSet(idx));
             }
@@ -434,11 +499,18 @@ impl WasmCompiler {
                         body.instruction(&Instruction::LocalGet(tmp));
                         body.instruction(&Instruction::I32WrapI64);
                         self.compile_expr(body, fexpr)?;
+                        // Phase 5：int→F32 转换（若字段为 F32 但值为整数）
+                        if matches!(vt, ValType::F32) && matches!(&fexpr.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
+                            body.instruction(&Instruction::F32ConvertI64S);
+                        } else if matches!(vt, ValType::F64) && matches!(&fexpr.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
+                            body.instruction(&Instruction::F64ConvertI64S);
+                        }
                         let arg = wasm_encoder::MemArg { offset: offset as u64, align: 0, memory_index: 0 };
                         match vt {
                             ValType::I64 => { body.instruction(&Instruction::I64Store(arg)); }
                             ValType::I32 => { body.instruction(&Instruction::I32Store(arg)); }
                             ValType::F64 => { body.instruction(&Instruction::F64Store(arg)); }
+                            ValType::F32 => { body.instruction(&Instruction::F32Store(arg)); }
                             _ => {}
                         }
                     }
@@ -464,11 +536,18 @@ impl WasmCompiler {
                         body.instruction(&Instruction::LocalGet(tmp));
                         body.instruction(&Instruction::I32WrapI64);
                         self.compile_expr(body, fexpr)?;
+                        // Phase 5：int→F32/F64 转换（若字段为 float 但值为整数）
+                        if matches!(vt, ValType::F32) && matches!(&fexpr.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
+                            body.instruction(&Instruction::F32ConvertI64S);
+                        } else if matches!(vt, ValType::F64) && matches!(&fexpr.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
+                            body.instruction(&Instruction::F64ConvertI64S);
+                        }
                         let arg = wasm_encoder::MemArg { offset: offset as u64, align: 0, memory_index: 0 };
                         match vt {
                             ValType::I64 => { body.instruction(&Instruction::I64Store(arg)); }
                             ValType::I32 => { body.instruction(&Instruction::I32Store(arg)); }
                             ValType::F64 => { body.instruction(&Instruction::F64Store(arg)); }
+                            ValType::F32 => { body.instruction(&Instruction::F32Store(arg)); }
                             _ => {}
                         }
                     }
@@ -487,6 +566,7 @@ impl WasmCompiler {
                     ValType::I64 => { body.instruction(&Instruction::I64Load(arg)); }
                     ValType::I32 => { body.instruction(&Instruction::I32Load(arg)); }
                     ValType::F64 => { body.instruction(&Instruction::F64Load(arg)); }
+                    ValType::F32 => { body.instruction(&Instruction::F32Load(arg)); }
                     _ => {}
                 }
             }
@@ -497,8 +577,10 @@ impl WasmCompiler {
                 let hint = self.infer_struct_name(&target.ty);
                 let (_, offset, _, vt) = self.resolve_field(&hint, field)?;
                 self.compile_expr(body, value)?;
-                // Convert i64→f64 if assigning to f64 field
-                if matches!(vt, ValType::F64) && matches!(&value.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
+                // Phase 5：int→float 转换（若字段为 float 但值为整数）
+                if matches!(vt, ValType::F32) && matches!(&value.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
+                    body.instruction(&Instruction::F32ConvertI64S);
+                } else if matches!(vt, ValType::F64) && matches!(&value.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
                     body.instruction(&Instruction::F64ConvertI64S);
                 }
                 let arg = wasm_encoder::MemArg { offset: offset as u64, align: 0, memory_index: 0 };
@@ -506,6 +588,7 @@ impl WasmCompiler {
                     ValType::I64 => { body.instruction(&Instruction::I64Store(arg)); }
                     ValType::I32 => { body.instruction(&Instruction::I32Store(arg)); }
                     ValType::F64 => { body.instruction(&Instruction::F64Store(arg)); }
+                    ValType::F32 => { body.instruction(&Instruction::F32Store(arg)); }
                     _ => {}
                 }
             }
@@ -643,12 +726,19 @@ impl WasmCompiler {
                 }
             }
 
-            HirExprKind::TensorLiteral { data, .. } => {
-                // Flatten 2D data into elements, allocate memory, write f64 values,
+            HirExprKind::TensorLiteral { data, ty } => {
+                // Phase 5：按 dtype 分支。F32 元素占 4 字节，F64 占 8 字节。
+                // Flatten 2D data into elements, allocate memory, write values,
                 // then call tensor_from_vec(data_ptr, len, rank) host import.
                 let rows = data.len() as i32;
                 let total: i32 = data.iter().map(|r| r.len() as i32).sum();
-                let size = total * 8; // each f64 is 8 bytes
+                // 从 Tensor 类型提取 dtype
+                let is_f32 = match ty {
+                    Type::Tensor { dtype, .. } => matches!(dtype.as_ref(), Type::Base(BaseType::F32)),
+                    _ => false,
+                };
+                let elem_size: i32 = if is_f32 { 4 } else { 8 };
+                let size = total * elem_size;
 
                 // Allocate memory: tenth_alloc(size) -> i32 ptr -> i64
                 body.instruction(&Instruction::I32Const(size));
@@ -658,19 +748,31 @@ impl WasmCompiler {
                 self.local_count += 1;
                 body.instruction(&Instruction::LocalSet(tmp));
 
-                // Write each element as f64 at offset idx*8
+                // Write each element at offset idx * elem_size
                 let mut idx: i32 = 0;
                 for row in data {
                     for elem in row {
                         body.instruction(&Instruction::LocalGet(tmp));
                         body.instruction(&Instruction::I32WrapI64); // ptr i64 -> i32
                         self.compile_expr(body, elem)?;
-                        // Convert i64 to f64 if element is integer-typed
-                        if matches!(&elem.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
-                            body.instruction(&Instruction::F64ConvertI64S);
+                        let arg = wasm_encoder::MemArg { offset: (idx as u64) * (elem_size as u64), align: 0, memory_index: 0 };
+                        if is_f32 {
+                            // F32 tensor: 元素转为 F32 后 F32Store
+                            if matches!(&elem.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
+                                body.instruction(&Instruction::F32ConvertI64S);
+                            } else if matches!(&elem.ty, Type::Base(BaseType::F64)) {
+                                body.instruction(&Instruction::F32DemoteF64);
+                            }
+                            body.instruction(&Instruction::F32Store(arg));
+                        } else {
+                            // F64 tensor: 元素转为 F64 后 F64Store
+                            if matches!(&elem.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
+                                body.instruction(&Instruction::F64ConvertI64S);
+                            } else if matches!(&elem.ty, Type::Base(BaseType::F32)) {
+                                body.instruction(&Instruction::F64PromoteF32);
+                            }
+                            body.instruction(&Instruction::F64Store(arg));
                         }
-                        let arg = wasm_encoder::MemArg { offset: (idx as u64) * 8, align: 0, memory_index: 0 };
-                        body.instruction(&Instruction::F64Store(arg));
                         idx += 1;
                     }
                 }
@@ -748,13 +850,28 @@ impl WasmCompiler {
             HirStmtKind::Let { names, type_ann, init, .. } => {
                 if let Some(e) = init {
                     self.compile_expr(body, e)?;
-                    let target_f = matches!(type_ann, Some(Type::Base(BaseType::F64 | BaseType::F32)));
-                    let expr_f = matches!(&e.ty, Type::Base(BaseType::F64 | BaseType::F32));
+                    // Phase 5：按 dtype 分支。Let 创建的新 local 是 i64 类型（非参数），
+                    // 需将 float 值 reinterpret 为 i64 存储。
+                    let target_f32 = matches!(type_ann, Some(Type::Base(BaseType::F32)));
+                    let target_f64 = matches!(type_ann, Some(Type::Base(BaseType::F64)));
+                    let expr_f32 = matches!(&e.ty, Type::Base(BaseType::F32));
+                    let expr_f64 = matches!(&e.ty, Type::Base(BaseType::F64));
                     let expr_bool = matches!(&e.ty, Type::Base(BaseType::Bool));
-                    if target_f && !expr_f {
+                    if target_f32 && !expr_f32 && !expr_f64 {
+                        // int → f32 target: i64 → F32ConvertI64S → F64PromoteF32 → I64ReinterpretF64
+                        body.instruction(&Instruction::F32ConvertI64S);
+                        body.instruction(&Instruction::F64PromoteF32);
+                        body.instruction(&Instruction::I64ReinterpretF64);
+                    } else if target_f64 && !expr_f32 && !expr_f64 {
+                        // int → f64 target: i64 → F64ConvertI64S → I64ReinterpretF64
                         body.instruction(&Instruction::F64ConvertI64S);
                         body.instruction(&Instruction::I64ReinterpretF64);
-                    } else if expr_f {
+                    } else if expr_f32 {
+                        // f32 value: F64PromoteF32 → I64ReinterpretF64
+                        body.instruction(&Instruction::F64PromoteF32);
+                        body.instruction(&Instruction::I64ReinterpretF64);
+                    } else if expr_f64 {
+                        // f64 value: I64ReinterpretF64
                         body.instruction(&Instruction::I64ReinterpretF64);
                     } else if expr_bool {
                         body.instruction(&Instruction::I64ExtendI32U);
@@ -892,11 +1009,13 @@ impl WasmCompiler {
     pub(super) fn compile_literal(&mut self, body: &mut Function, lit: &Literal) -> TenthResult<()> {
         match lit {
             Literal::Int(n) => { body.instruction(&Instruction::I64Const(*n)); }
-            // 策略 A：f32→f64 提升。F32 字面量在 WASM 后端统一当 f64 处理，
-            // 与下游所有 F64 处理（compile_binop/compile_unary/Var/Assign 等）保持一致，
-            // 避免 F32Const 压入 f32 栈后下游期望 f64 导致 WASM 验证失败。
-            // dtype 信息在 HIR 层已保留，仅 WASM 执行路径做精度提升。
-            Literal::Float(n, _dt) => { body.instruction(&Instruction::F64Const(*n)); }
+            // Phase 5：消除策略 A，按 dtype 分支发 F32Const/F64Const
+            Literal::Float(n, dt) => {
+                match dt {
+                    BaseType::F32 => { body.instruction(&Instruction::F32Const(*n as f32)); }
+                    _ => { body.instruction(&Instruction::F64Const(*n)); }
+                }
+            }
             Literal::Bool(b) => { body.instruction(&Instruction::I32Const(if *b { 1 } else { 0 })); }
             Literal::String(s) => {
                 let off = self.intern_string(s);
@@ -907,23 +1026,62 @@ impl WasmCompiler {
         Ok(())
     }
 
-    pub(super) fn compile_binop(&self, body: &mut Function, op: &BinOp, lty: &Type, rty: &Type) -> TenthResult<()> {
-        let is_f = matches!(lty, Type::Base(BaseType::F32 | BaseType::F64))
-            || matches!(rty, Type::Base(BaseType::F32 | BaseType::F64));
+    pub(super) fn compile_binop(&self, body: &mut Function, op: &BinOp, result_ty: &Type) -> TenthResult<()> {
+        // Phase 5：按结果类型（lower.rs 推断的提升后类型）选择 F32/F64/I64 指令。
+        let is_f32 = matches!(result_ty, Type::Base(BaseType::F32));
+        let is_f64 = matches!(result_ty, Type::Base(BaseType::F64));
         match op {
-            BinOp::Add => self.emit_if(body, is_f, Instruction::F64Add, Instruction::I64Add),
-            BinOp::Sub => self.emit_if(body, is_f, Instruction::F64Sub, Instruction::I64Sub),
-            BinOp::Mul => self.emit_if(body, is_f, Instruction::F64Mul, Instruction::I64Mul),
+            BinOp::Add => {
+                if is_f32 { body.instruction(&Instruction::F32Add); }
+                else if is_f64 { body.instruction(&Instruction::F64Add); }
+                else { body.instruction(&Instruction::I64Add); }
+            }
+            BinOp::Sub => {
+                if is_f32 { body.instruction(&Instruction::F32Sub); }
+                else if is_f64 { body.instruction(&Instruction::F64Sub); }
+                else { body.instruction(&Instruction::I64Sub); }
+            }
+            BinOp::Mul => {
+                if is_f32 { body.instruction(&Instruction::F32Mul); }
+                else if is_f64 { body.instruction(&Instruction::F64Mul); }
+                else { body.instruction(&Instruction::I64Mul); }
+            }
             BinOp::Div => {
-                self.emit_if(body, is_f, Instruction::F64Div, Instruction::I64DivS);
+                if is_f32 { body.instruction(&Instruction::F32Div); }
+                else if is_f64 { body.instruction(&Instruction::F64Div); }
+                else { body.instruction(&Instruction::I64DivS); }
             }
             BinOp::Mod => { body.instruction(&Instruction::I64RemS); }
-            BinOp::Eq => self.emit_if(body, is_f, Instruction::F64Eq, Instruction::I64Eq),
-            BinOp::NotEq => self.emit_if(body, is_f, Instruction::F64Ne, Instruction::I64Ne),
-            BinOp::Lt => self.emit_if(body, is_f, Instruction::F64Lt, Instruction::I64LtS),
-            BinOp::Gt => self.emit_if(body, is_f, Instruction::F64Gt, Instruction::I64GtS),
-            BinOp::LtEq => self.emit_if(body, is_f, Instruction::F64Le, Instruction::I64LeS),
-            BinOp::GtEq => self.emit_if(body, is_f, Instruction::F64Ge, Instruction::I64GeS),
+            BinOp::Eq => {
+                if is_f32 { body.instruction(&Instruction::F32Eq); }
+                else if is_f64 { body.instruction(&Instruction::F64Eq); }
+                else { body.instruction(&Instruction::I64Eq); }
+            }
+            BinOp::NotEq => {
+                if is_f32 { body.instruction(&Instruction::F32Ne); }
+                else if is_f64 { body.instruction(&Instruction::F64Ne); }
+                else { body.instruction(&Instruction::I64Ne); }
+            }
+            BinOp::Lt => {
+                if is_f32 { body.instruction(&Instruction::F32Lt); }
+                else if is_f64 { body.instruction(&Instruction::F64Lt); }
+                else { body.instruction(&Instruction::I64LtS); }
+            }
+            BinOp::Gt => {
+                if is_f32 { body.instruction(&Instruction::F32Gt); }
+                else if is_f64 { body.instruction(&Instruction::F64Gt); }
+                else { body.instruction(&Instruction::I64GtS); }
+            }
+            BinOp::LtEq => {
+                if is_f32 { body.instruction(&Instruction::F32Le); }
+                else if is_f64 { body.instruction(&Instruction::F64Le); }
+                else { body.instruction(&Instruction::I64LeS); }
+            }
+            BinOp::GtEq => {
+                if is_f32 { body.instruction(&Instruction::F32Ge); }
+                else if is_f64 { body.instruction(&Instruction::F64Ge); }
+                else { body.instruction(&Instruction::I64GeS); }
+            }
             BinOp::And => { body.instruction(&Instruction::I32And); }
             BinOp::Or => { body.instruction(&Instruction::I32Or); }
         }
@@ -935,9 +1093,12 @@ impl WasmCompiler {
     }
 
     pub(super) fn compile_unary(&self, body: &mut Function, op: &UnaryOp, ty: &Type) -> TenthResult<()> {
-        let is_f = matches!(ty, Type::Base(BaseType::F32 | BaseType::F64));
+        let is_f32 = matches!(ty, Type::Base(BaseType::F32));
+        let is_f64 = matches!(ty, Type::Base(BaseType::F64));
         match op {
-            UnaryOp::Neg => if is_f {
+            UnaryOp::Neg => if is_f32 {
+                body.instruction(&Instruction::F32Neg);
+            } else if is_f64 {
                 body.instruction(&Instruction::F64Neg);
             } else {
                 body.instruction(&Instruction::LocalSet(self.local_count));
@@ -960,9 +1121,19 @@ impl WasmCompiler {
                 body.instruction(&Instruction::I64Const(*n));
                 body.instruction(&Instruction::Call(HOST_STR_INT));
             }
-            HirExprKind::Literal(Literal::Float(n, _)) => {
-                body.instruction(&Instruction::F64Const(*n));
-                body.instruction(&Instruction::I64TruncF64S);
+            HirExprKind::Literal(Literal::Float(n, dt)) => {
+                // Phase 5：按 dtype 分支（仅为类型一致，字符串转换结果相同）
+                match dt {
+                    BaseType::F32 => {
+                        body.instruction(&Instruction::F32Const(*n as f32));
+                        body.instruction(&Instruction::I32TruncF32S);
+                        body.instruction(&Instruction::I64ExtendI32S);
+                    }
+                    _ => {
+                        body.instruction(&Instruction::F64Const(*n));
+                        body.instruction(&Instruction::I64TruncF64S);
+                    }
+                }
                 body.instruction(&Instruction::Call(HOST_STR_INT));
             }
             HirExprKind::Binary { op: BinOp::Add, left, right, .. } => {

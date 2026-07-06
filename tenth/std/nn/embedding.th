@@ -14,9 +14,12 @@
 
 // Embedding lookup: weight[indices]
 // Each index selects a row from the weight matrix.
-fn embedding(
-    weight: Tensor[f64, ..],
+//
+// Phase 3 DRY 清理：泛型化 <T> 支持 f32/f64。
+// 注：indices 类型保留 f64（元数据语义，非数据；embedding_lookup 内部按整数索引处理）。
+fn embedding<T>(
+    weight: Tensor[T, ..],
     indices: Tensor[f64, ..],
-) -> Tensor[f64, ..] {
+) -> Tensor[T, ..] {
     weight.embedding_lookup(indices)
 }

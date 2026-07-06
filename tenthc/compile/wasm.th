@@ -93,16 +93,10 @@ fn wasm_call_indirect(out: &mut Vec<i64>, type_idx: i64, table_idx: i64) {
 
 // ── f64 opcodes ──
 //
-// Phase 5.3 策略 A 偏差说明（与 Task 5.1 Rust wasm.rs:1416-1420 一致）：
-// F32 在 WASM 后端统一提升为 f64，不引入 wasm_f32_const / wasm_f32_add /
-// wasm_f32_sub / wasm_f32_mul / wasm_f32_div / wasm_f32_eq / wasm_f32_ne /
-// wasm_f32_lt / wasm_f32_gt / wasm_f32_le / wasm_f32_ge / wasm_f32_store /
-// wasm_f32_load 等 f32 指令族。理由：
-//   1. Rust 侧 wasm.rs:22/48 既有 F32|F64→ValType::F64 映射，全链路统一 f64；
-//   2. F32Const 会压入 f32 栈，下游 BinOp/Var/Assign 期望 f64 导致 WASM 验证失败；
-//   3. dtype 信息在 HIR 层已保留（HirType.sub==3 表 F32），仅 WASM 执行路径做精度提升；
-//   4. TensorLiteral 内存布局保持 8 字节 stride（不改 host import 签名，R7 未触发）。
-// F32 输入经 is_expr_float（行 430-444）识别后，统一走下方 wasm_f64_* 路径。
+// Phase 5.5：消除策略 A，F32 走真正的 f32 指令族（与 Rust wasm.rs 对齐）。
+// F32 字面量经 is_expr_f32 识别后走 wasm_f32_* 路径；F64 仍走 wasm_f64_*。
+// 非参数 local（i64 存储）通过 reinterpret 转换：F32↔I64 经 F64PromoteF32 +
+// I64ReinterpretF64（存）/ F64ReinterpretI64 + F32DemoteF64（读），与 Rust 侧一致。
 
 fn wasm_f64_const(out: &mut Vec<i64>, val: f64) {
     out.push(68); // f64.const
@@ -125,6 +119,48 @@ fn wasm_f64_lt(out: &mut Vec<i64>) { out.push(101); }
 fn wasm_f64_gt(out: &mut Vec<i64>) { out.push(102); }
 fn wasm_f64_le(out: &mut Vec<i64>) { out.push(103); }
 fn wasm_f64_ge(out: &mut Vec<i64>) { out.push(104); }
+fn wasm_f64_neg(out: &mut Vec<i64>) { out.push(154); }   // 0x9A: f64.neg
+
+// ── f32 opcodes（Phase 5.5：消除策略 A，新增 f32 指令族）──
+// F32 字面量通过 f64.const + f32.demote_f64 构造（避免新增 f32_bits hostcall）。
+// 算术/比较指令直接发 f32 opcode，与 Rust wasm.rs 完全对齐。
+
+fn wasm_f32_const_from_f64(out: &mut Vec<i64>, val: f64) {
+    // f64.const val; f32.demote_f64 —— 在栈上得到 f32
+    wasm_f64_const(out, val);
+    wasm_f32_demote_f64(out);
+}
+fn wasm_f32_add(out: &mut Vec<i64>) { out.push(146); }   // 0x92
+fn wasm_f32_sub(out: &mut Vec<i64>) { out.push(147); }   // 0x93
+fn wasm_f32_mul(out: &mut Vec<i64>) { out.push(148); }   // 0x94
+fn wasm_f32_div(out: &mut Vec<i64>) { out.push(149); }   // 0x95
+fn wasm_f32_eq(out: &mut Vec<i64>) { out.push(91); }     // 0x5B
+fn wasm_f32_ne(out: &mut Vec<i64>) { out.push(92); }     // 0x5C
+fn wasm_f32_lt(out: &mut Vec<i64>) { out.push(93); }     // 0x5D
+fn wasm_f32_gt(out: &mut Vec<i64>) { out.push(94); }     // 0x5E
+fn wasm_f32_le(out: &mut Vec<i64>) { out.push(95); }     // 0x5F
+fn wasm_f32_ge(out: &mut Vec<i64>) { out.push(96); }     // 0x60
+fn wasm_f32_neg(out: &mut Vec<i64>) { out.push(140); }   // 0x8C
+fn wasm_f32_store(out: &mut Vec<i64>, align: i64, offset: i64) {
+    out.push(56); // 0x38
+    leb128_u(align, out);
+    leb128_u(offset, out);
+}
+fn wasm_f32_load(out: &mut Vec<i64>, align: i64, offset: i64) {
+    out.push(42); // 0x2A
+    leb128_u(align, out);
+    leb128_u(offset, out);
+}
+// ── 类型转换 helpers（与 Rust wasm.rs 的 Instruction 对齐）──
+// Opcode 取自 WASM 规范 core/binary/instructions.html#numeric-instruction
+fn wasm_f32_demote_f64(out: &mut Vec<i64>) { out.push(182); }   // 0xB6: f64 → f32
+fn wasm_f64_promote_f32(out: &mut Vec<i64>) { out.push(187); }  // 0xBB: f32 → f64
+fn wasm_f32_convert_i64_s(out: &mut Vec<i64>) { out.push(180); } // 0xB4: i64 → f32
+fn wasm_f64_convert_i64_s(out: &mut Vec<i64>) { out.push(185); } // 0xB9: i64 → f64
+fn wasm_i64_reinterpret_f64(out: &mut Vec<i64>) { out.push(189); } // 0xBD: f64 bits → i64
+fn wasm_f64_reinterpret_i64(out: &mut Vec<i64>) { out.push(191); } // 0xBF: i64 bits → f64
+fn wasm_i32_trunc_f32_s(out: &mut Vec<i64>) { out.push(168); }   // 0xA8: f32 → i32
+fn wasm_i32_trunc_f64_s(out: &mut Vec<i64>) { out.push(170); }   // 0xAA: f64 → i32
 
 // ── Compiler state ──
 
@@ -433,26 +469,95 @@ fn push_str_bytes(out: &mut Vec<i64>, s: str) {
     };
 }
 
-// ── Type helper: 判断表达式是否为 float 类型（f32 或 f64，策略 A 统一走 f64 路径）──
-// Phase 5.2 step 3 + Phase 5.3：策略 A（f32→f64 提升），与 Rust wasm.rs:22 既有 F32|F64→F64 一致
-// FloatLiteral 默认仍是 F64；带 f32 后缀的字面量经 lower.th 降级为 sub=3，
-// is_expr_float 识别 sub==3 后让下游算术路径统一发 f64 指令（无需新增 wasm_f32_* 函数族）
-// Task 5.3 偏差：不引入单独 is_f32/is_f64 函数——策略 A 下无需区分，统一 is_expr_float 即可。
+// ── Type helper: 判断表达式是否为 float 类型（f32 或 f64）──
+// Phase 5.5：消除策略 A，现在区分 f32 与 f64 路径（与 Rust wasm.rs 对齐）。
+// FloatLiteral 默认是 F64；带 f32 后缀的字面量经 lower.th 降级为 sub=3。
+// is_expr_float 仍用于"是否浮点"判断；is_expr_f32/is_expr_f64 用于精度分支。
 
 fn is_expr_float(hir: HirProgram, idx: i64) -> bool {
     if idx <= 0 || idx > hir.expr_nodes.len() { return false; };
     let e = hir.expr_nodes[idx - 1];
-    // FloatLiteral 直接是 float（f32 或 f64，策略 A 都走 f64 路径）
+    // FloatLiteral 直接是 float（f32 或 f64）
     if e.disc == 1 { return true; };
-    // 检查 ty 字段：sub == 2 (f64) 或 sub == 3 (f32) 均为 float
+    // 检查 ty 字段：必须 disc==0（Base）且 sub==2(f64) 或 sub==3(f32) 才是 float 标量
+    // 注意：Tensor<f32/f64> 的 type_node disc==1，不是 float 标量
     if e.ty > 0 && e.ty <= hir.type_nodes.len() {
-        let sub = hir.type_nodes[e.ty - 1].sub;
-        if sub == 2 { return true; };
-        if sub == 3 { return true; };  // Phase 5.2 step 3：F32 也视为 float
+        let tn = hir.type_nodes[e.ty - 1];
+        if tn.disc == 0 {
+            if tn.sub == 2 { return true; };
+            if tn.sub == 3 { return true; };
+        };
     };
     // Binary 表达式：递归检查左操作数
     if e.disc == 5 { return is_expr_float(hir, e.left); };
     false
+}
+
+// Phase 5.5：判断表达式是否为 f32（仅 Base 类型 sub==3 算 f32 标量）
+// 注意：Tensor<f32> 的 type_node disc==1 sub==3，不是标量 f32，不应触发 reinterpret。
+fn is_expr_f32(hir: HirProgram, idx: i64) -> bool {
+    if idx <= 0 || idx > hir.expr_nodes.len() { return false; };
+    let e = hir.expr_nodes[idx - 1];
+    // 检查 ty 字段：必须 disc==0（Base）且 sub==3（F32）才算是 f32 标量
+    if e.ty > 0 && e.ty <= hir.type_nodes.len() {
+        let tn = hir.type_nodes[e.ty - 1];
+        if tn.disc == 0 && tn.sub == 3 { return true; };
+    };
+    // Binary 表达式：递归检查左操作数（结果类型由 lower.th 推断）
+    if e.disc == 5 { return is_expr_f32(hir, e.left); };
+    false
+}
+
+// Phase 5.5：判断表达式是否为 f64（仅 Base 类型 sub==2 算 f64 标量）
+// 注意：Tensor<f64> 的 type_node disc==1 sub==2，不是标量 f64，不应触发 reinterpret。
+fn is_expr_f64(hir: HirProgram, idx: i64) -> bool {
+    if idx <= 0 || idx > hir.expr_nodes.len() { return false; };
+    let e = hir.expr_nodes[idx - 1];
+    // FloatLiteral：默认 f64（无 ty 或 Base sub==2）
+    if e.disc == 1 {
+        if e.ty > 0 && e.ty <= hir.type_nodes.len() {
+            let tn = hir.type_nodes[e.ty - 1];
+            if tn.disc == 0 && tn.sub == 2 { return true; };
+            // 若 ty 存在且是 Base f32，返回 false
+            if tn.disc == 0 && tn.sub == 3 { return false; };
+        };
+        return true; // FloatLiteral 默认 f64
+    };
+    // 检查 ty 字段：必须 disc==0（Base）且 sub==2（F64）才算是 f64 标量
+    if e.ty > 0 && e.ty <= hir.type_nodes.len() {
+        let tn = hir.type_nodes[e.ty - 1];
+        if tn.disc == 0 && tn.sub == 2 { return true; };
+    };
+    // Binary 表达式：递归检查左操作数
+    if e.disc == 5 { return is_expr_f64(hir, e.left); };
+    false
+}
+
+// Phase 5.5：判断 local 是否为非参数 local（即 i64 存储，需 reinterpret）
+// 返回 true 表示该 local 是 let 绑定的（非参数），需要 reinterpret 转换
+fn is_non_param_local(ctx: WasmCtx, name: str) -> bool {
+    let mut li: i64 = ctx.local_names.len() - 1;
+    while li >= 0 {
+        if ctx.local_names[li] == name { return true; };
+        li = li - 1;
+    };
+    false
+}
+
+// Phase 5.5：将 HIR 类型索引映射到 WASM ValType 编码
+// F32 → 125 (0x7D), F64 → 124 (0x7C), Unit → 0 (无返回值), 其他 → 126 (i64)
+// 与 Rust wasm.rs to_val_type 对齐。
+fn valtype_for_type(hir: HirProgram, ty_idx: i64) -> i64 {
+    if ty_idx <= 0 || ty_idx > hir.type_nodes.len() { return 126; };
+    let tn = hir.type_nodes[ty_idx - 1];
+    if tn.disc == 0 {
+        // Base type
+        if tn.sub == 3 { return 125; }; // F32
+        if tn.sub == 2 { return 124; }; // F64
+        if tn.sub == 6 { return 0; };   // Unit — no result
+        return 126; // 其他 base types → i64
+    };
+    126 // 非 Base 类型（Tensor/Struct 等）→ i64 (指针)
 }
 
 // Check if an expression's inferred type is str (sub == 5)
@@ -479,8 +584,12 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 1 {
-        // FloatLiteral
-        wasm_f64_const(out, e.lit_fval);
+        // FloatLiteral — Phase 5.5：按 dtype 分支（f32 走 f32.const，f64 走 f64.const）
+        if is_expr_f32(hir, idx) {
+            wasm_f32_const_from_f64(out, e.lit_fval);
+        } else {
+            wasm_f64_const(out, e.lit_fval);
+        };
         return;
     };
     if d == 2 {
@@ -496,15 +605,18 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     };
     if d == 4 {
         // Var — 先查 let 绑定的 local（倒序，支持 shadowing），再查 current fn params
+        // Phase 5.5：非参数 local 是 i64 存储；若 Var 类型为 f32/f64，需 reinterpret 转换
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
+        let mut is_let_local: bool = false;
         // Search let bindings first (backward for shadowing)
         let mut li: i64 = ctx.local_names.len() - 1;
         while li >= 0 {
             if ctx.local_names[li] == name {
                 local_idx = ctx.local_indices[li];
                 found = true;
+                is_let_local = true;
                 break;
             };
             li = li - 1;
@@ -527,6 +639,13 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                                 wasm_i32_const(out, ci * 8);
                                 wasm_i32_add(out);
                                 wasm_i64_load(out, 3, 0);
+                                // Capture 也是 i64 存储，需 reinterpret
+                                if is_expr_f32(hir, idx) {
+                                    wasm_f64_reinterpret_i64(out);
+                                    wasm_f32_demote_f64(out);
+                                } else if is_expr_f64(hir, idx) {
+                                    wasm_f64_reinterpret_i64(out);
+                                };
                                 return;
                             };
                         };
@@ -547,10 +666,19 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             };
         };
         wasm_local_get(out, local_idx);
+        // Phase 5.5：非参数 local（let 绑定）以 i64 存储，需 reinterpret 回 float 类型
+        if is_let_local {
+            if is_expr_f32(hir, idx) {
+                wasm_f64_reinterpret_i64(out);
+                wasm_f32_demote_f64(out);
+            } else if is_expr_f64(hir, idx) {
+                wasm_f64_reinterpret_i64(out);
+            };
+        };
         return;
     };
     if d == 5 {
-        // Binary — 根据操作数类型选 i64 / f64 / str 操作码
+        // Binary — Phase 5.5：按结果类型（expr.ty）选 i64 / f32 / f64 / str 操作码
         let op = e.op;
         // 字符串拼接：str + str → 调用 str_add (import 7)
         if op == "+" && (is_expr_str(hir, e.left) || is_expr_str(hir, e.right)) {
@@ -562,11 +690,51 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
+        // Phase 5.5：使用 expr.ty 推断的结果类型决定 F32/F64 路径
+        let result_is_f32 = is_expr_f32(hir, idx);
+        let result_is_f64 = is_expr_f64(hir, idx);
+        let result_is_float = result_is_f32 || result_is_f64;
+        // 编译左操作数，并按结果类型提升
         compile_expr(ctx, out, hir, e.left);
+        let left_is_int = !is_expr_float(hir, e.left) && !is_expr_str(hir, e.left);
+        let left_is_f32 = is_expr_f32(hir, e.left);
+        let left_is_f64 = is_expr_f64(hir, e.left);
+        if left_is_int && result_is_f32 {
+            wasm_f32_convert_i64_s(out);
+        } else if left_is_int && result_is_f64 {
+            wasm_f64_convert_i64_s(out);
+        } else if left_is_f32 && result_is_f64 {
+            wasm_f64_promote_f32(out);
+        };
+        // 编译右操作数，并按结果类型提升
         compile_expr(ctx, out, hir, e.right);
-        // 启发式：检查左操作数类型（后续 A11 类型推断会改进）
-        let is_float = is_expr_float(hir, e.left);
-        if is_float {
+        let right_is_int = !is_expr_float(hir, e.right) && !is_expr_str(hir, e.right);
+        let right_is_f32 = is_expr_f32(hir, e.right);
+        let right_is_f64 = is_expr_f64(hir, e.right);
+        if right_is_int && result_is_f32 {
+            wasm_f32_convert_i64_s(out);
+        } else if right_is_int && result_is_f64 {
+            wasm_f64_convert_i64_s(out);
+        } else if right_is_f32 && result_is_f64 {
+            wasm_f64_promote_f32(out);
+        } else if right_is_f64 && result_is_f32 {
+            wasm_f32_demote_f64(out);
+        };
+        // 发射算术/比较指令
+        if result_is_f32 {
+            if op == "+" { wasm_f32_add(out); return; };
+            if op == "-" { wasm_f32_sub(out); return; };
+            if op == "*" { wasm_f32_mul(out); return; };
+            if op == "/" { wasm_f32_div(out); return; };
+            if op == "==" { wasm_f32_eq(out); return; };
+            if op == "!=" { wasm_f32_ne(out); return; };
+            if op == "<" { wasm_f32_lt(out); return; };
+            if op == ">" { wasm_f32_gt(out); return; };
+            if op == "<=" { wasm_f32_le(out); return; };
+            if op == ">=" { wasm_f32_ge(out); return; };
+            return;
+        };
+        if result_is_f64 {
             if op == "+" { wasm_f64_add(out); return; };
             if op == "-" { wasm_f64_sub(out); return; };
             if op == "*" { wasm_f64_mul(out); return; };
@@ -595,15 +763,21 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 6 {
-        // Unary
+        // Unary — Phase 5.5：按 dtype 分支（f32/f64 直接 neg，int 走 0-n）
         let op = e.op;
         if op == "-" {
-            // Negation: 0 - n. Push 0 FIRST, then inner, then sub.
-            // WASM i64.sub pops b then a, computes a - b.
-            // Stack: [0, n] → 0 - n = -n
-            wasm_i64_const(out, 0);
-            compile_expr(ctx, out, hir, e.left);
-            wasm_i64_sub(out);
+            if is_expr_f32(hir, idx) {
+                compile_expr(ctx, out, hir, e.left);
+                wasm_f32_neg(out);
+            } else if is_expr_f64(hir, idx) {
+                compile_expr(ctx, out, hir, e.left);
+                wasm_f64_neg(out);
+            } else {
+                // 整数取负：0 - n（i64.sub 弹 b 后 a，计算 a - b）
+                wasm_i64_const(out, 0);
+                compile_expr(ctx, out, hir, e.left);
+                wasm_i64_sub(out);
+            };
         } else {
             // ! or other: eqz
             compile_expr(ctx, out, hir, e.left);
@@ -612,17 +786,19 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 14 {
-        // Assign — target is a variable name, value is compiled
+        // Assign — Phase 5.5：非参数 local（i64 存储）需将 float reinterpret 为 i64
         compile_expr(ctx, out, hir, e.right);
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
+        let mut is_let_local: bool = false;
         // Search let bindings first (backward for shadowing)
         let mut li: i64 = ctx.local_names.len() - 1;
         while li >= 0 {
             if ctx.local_names[li] == name {
                 local_idx = ctx.local_indices[li];
                 found = true;
+                is_let_local = true;
                 break;
             };
             li = li - 1;
@@ -636,6 +812,15 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                     found = true;
                     break;
                 };
+            };
+        };
+        // Phase 5.5：非参数 local 以 i64 存储，float 值需 reinterpret
+        if is_let_local {
+            if is_expr_f32(hir, e.right) {
+                wasm_f64_promote_f32(out);
+                wasm_i64_reinterpret_f64(out);
+            } else if is_expr_f64(hir, e.right) {
+                wasm_i64_reinterpret_f64(out);
             };
         };
         wasm_local_set(out, local_idx);
@@ -1199,16 +1384,18 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 24 {
-        // AssignOp (x += y) — load current value, compile rhs, apply op, store
+        // AssignOp (x += y) — Phase 5.5：按 dtype 分支，非参数 local 需 reinterpret
         let name = e.name;
         let mut local_idx: i64 = 0;
         let mut found: bool = false;
+        let mut is_let_local: bool = false;
         // Search let bindings first (backward for shadowing)
         let mut li: i64 = ctx.local_names.len() - 1;
         while li >= 0 {
             if ctx.local_names[li] == name {
                 local_idx = ctx.local_indices[li];
                 found = true;
+                is_let_local = true;
                 break;
             };
             li = li - 1;
@@ -1224,14 +1411,44 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 };
             };
         };
-        // local.get → compile rhs → apply op → local.set
+        // local.get → (reinterpret if non-param float local) → compile rhs → apply op → (reinterpret) → local.set
         wasm_local_get(out, local_idx);
+        let rhs_is_f32 = is_expr_f32(hir, e.right);
+        let rhs_is_f64 = is_expr_f64(hir, e.right);
+        if is_let_local {
+            if rhs_is_f32 {
+                wasm_f64_reinterpret_i64(out);
+                wasm_f32_demote_f64(out);
+            } else if rhs_is_f64 {
+                wasm_f64_reinterpret_i64(out);
+            };
+        };
         compile_expr(ctx, out, hir, e.right);
         let op = e.op;
-        if op == "+" || op == "+=" { wasm_i64_add(out); }
-        else if op == "-" || op == "-=" { wasm_i64_sub(out); }
-        else if op == "*" || op == "*=" { wasm_i64_mul(out); }
-        else if op == "/" || op == "/=" { wasm_i64_div_s(out); };
+        if rhs_is_f32 {
+            if op == "+" || op == "+=" { wasm_f32_add(out); }
+            else if op == "-" || op == "-=" { wasm_f32_sub(out); }
+            else if op == "*" || op == "*=" { wasm_f32_mul(out); }
+            else if op == "/" || op == "/=" { wasm_f32_div(out); };
+        } else if rhs_is_f64 {
+            if op == "+" || op == "+=" { wasm_f64_add(out); }
+            else if op == "-" || op == "-=" { wasm_f64_sub(out); }
+            else if op == "*" || op == "*=" { wasm_f64_mul(out); }
+            else if op == "/" || op == "/=" { wasm_f64_div(out); };
+        } else {
+            if op == "+" || op == "+=" { wasm_i64_add(out); }
+            else if op == "-" || op == "-=" { wasm_i64_sub(out); }
+            else if op == "*" || op == "*=" { wasm_i64_mul(out); }
+            else if op == "/" || op == "/=" { wasm_i64_div_s(out); };
+        };
+        if is_let_local {
+            if rhs_is_f32 {
+                wasm_f64_promote_f32(out);
+                wasm_i64_reinterpret_f64(out);
+            } else if rhs_is_f64 {
+                wasm_i64_reinterpret_f64(out);
+            };
+        };
         wasm_local_set(out, local_idx);
         return;
     };
@@ -1264,10 +1481,17 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 29 {
-        // TensorLiteral — allocate memory, write f64 elements, call tensor_from_vec
+        // TensorLiteral — Phase 5.5：F32 元素 4 字节存储，F64 元素 8 字节存储
         let rows = e.lit_ival;
         let total_count = e.args_count;
-        let size = total_count * 8; // each f64 is 8 bytes
+        // 检查 Tensor 元素 dtype：ty 指向 Tensor 类型，sub 为元素 BaseType
+        let mut is_f32_tensor: bool = false;
+        if e.ty > 0 && e.ty <= hir.type_nodes.len() {
+            let tn = hir.type_nodes[e.ty - 1];
+            if tn.disc == 1 && tn.sub == 3 { is_f32_tensor = true; };
+        };
+        let elem_size: i64 = if is_f32_tensor { 4 } else { 8 };
+        let size = total_count * elem_size;
 
         // Allocate a fresh local for the data pointer (avoids clobbering temp_local
         // when element expressions contain nested struct/tensor literals)
@@ -1286,17 +1510,37 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_i32_wrap_i64(out);
         wasm_global_set(out, 0);
 
-        // Write each element (f64) at offset = index * 8
+        // Write each element at offset = index * elem_size
         if total_count > 0 {
             let mut i: i64 = 0;
             while i < total_count {
+                // 注意：e.args_start 是 arg_list 的 1-based 索引，需查表得到实际 expr 索引
+                let elem_idx = hir.arg_list[e.args_start + i - 1];
                 // address: local.get $ptr_local (i64) → i32.wrap_i64
                 wasm_local_get(out, ptr_local);
                 wasm_i32_wrap_i64(out);
-                // value: compile element expression (f64 for FloatLiteral)
-                compile_expr(ctx, out, hir, hir.arg_list[e.args_start + i - 1]);
-                // f64.store at offset i*8
-                wasm_f64_store(out, 3, i * 8);
+                // value: compile element expression
+                compile_expr(ctx, out, hir, elem_idx);
+                // Phase 5.5：F32 tensor 用 f32.store 4 字节；F64 tensor 用 f64.store 8 字节
+                if is_f32_tensor {
+                    // 若元素是 int 或 f64，需转换到 f32
+                    if !is_expr_float(hir, elem_idx) {
+                        // int → f32
+                        wasm_f32_convert_i64_s(out);
+                    } else if is_expr_f64(hir, elem_idx) {
+                        // f64 → f32
+                        wasm_f32_demote_f64(out);
+                    };
+                    wasm_f32_store(out, 2, i * 4);
+                } else {
+                    // F64 tensor：若元素是 int 需转 f64；若 f32 需 promote
+                    if !is_expr_float(hir, elem_idx) {
+                        wasm_f64_convert_i64_s(out);
+                    } else if is_expr_f32(hir, elem_idx) {
+                        wasm_f64_promote_f32(out);
+                    };
+                    wasm_f64_store(out, 3, i * 8);
+                };
                 i = i + 1;
             };
         };
@@ -1549,6 +1793,7 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     };
     if d == 0 {
         // Let — 分配新 local 并记录变量名
+        // Phase 5.5：let 创建的 local 是 i64 存储；float init 值需 reinterpret 为 i64
         if s.init > 0 {
             // Check if init is a Closure (disc=23) — register as closure var
             let init_expr_idx = s.init;
@@ -1562,6 +1807,14 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 };
             };
             compile_expr(ctx, out, hir, s.init);
+            // Phase 5.5：float init 值 reinterpret 为 i64 存储（与 Rust 侧一致）
+            // 类型注解由 lower.th 写入 s.init 表达式的 ty 字段
+            if is_expr_f32(hir, s.init) {
+                wasm_f64_promote_f32(out);
+                wasm_i64_reinterpret_f64(out);
+            } else if is_expr_f64(hir, s.init) {
+                wasm_i64_reinterpret_f64(out);
+            };
             // 分配新 local: params + temp(1) + local_count
             let slot = ctx.temp_local + 1 + ctx.local_count;
             wasm_local_set(out, slot);
@@ -1698,12 +1951,24 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     leb128_u(1, &mut types); types.push(126);
 
     // Function types (type index 13+)
+    // Phase 5.5：按参数/返回值的实际 dtype 发射 ValType（F32=125, F64=124, I64=126）
+    // 与 Rust wasm.rs to_val_type 对齐，消除策略 A 的类型签名偏差。
     for fi in 0..num_funcs {
         let f = hir.fns[fi];
         types.push(96);
         leb128_u(f.params.len(), &mut types);
-        for pi in 0..f.params.len() { types.push(126); };
-        leb128_u(1, &mut types); types.push(126); // 1 result: i64
+        for pi in 0..f.params.len() {
+            let pty = f.params[pi].ty;
+            let vt = valtype_for_type(hir, pty);
+            types.push(vt);
+        };
+        // 返回类型：Unit 无返回值；否则按 dtype
+        let rvt = valtype_for_type(hir, f.return_type);
+        if rvt == 0 {
+            leb128_u(0, &mut types); // Unit: no result
+        } else {
+            leb128_u(1, &mut types); types.push(rvt);
+        };
     };
     // Closure types: (i64 env_ptr, i64 param1, ..., i64 paramN) -> i64
     for ci in 0..num_closures {

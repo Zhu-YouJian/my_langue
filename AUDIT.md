@@ -90,6 +90,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | 2 | 树遍历解释器大文件慢 (debug build) | release build 即解决 |
 | 3 | WASM codegen 个别边界情况 | wasmi 执行偶有 type mismatch |
 | 4 | 无 GPU 后端 | `compile/gpu/` 脚手架已就绪，待 CUDA 环境安装 |
+| 5 | three_stage wasmtime 路径 stub host 不完整 | `run_test_wasmtime` 中 `vec_new`/`vec_push`/`vec_len` 等 17 个 host import 均为返回 0 的占位实现，导致 WASM-B 为 0 字节。wasmi 路径已通过（WASM-B 460 bytes，add(3,4)=12）。已将 wasmtime 路径拆为 `#[ignore]` 的 `three_stage_selfhost_wasmtime` 独立测试（2026-07-06），默认 `cargo test` 仅跑 wasmi 路径。补全 stub 需参照 `register_host_functions` 实现 17 个 host import 的 wasmtime 版本，与 f32 路线图无关，登记为独立任务。 |
 
 ---
 

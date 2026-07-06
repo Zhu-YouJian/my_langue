@@ -1,17 +1,20 @@
 // Activation functions
 // Thin wrappers around tensor methods for clarity.
 // All of these support autodiff (recorded via tensor methods).
+//
+// Phase 3 DRY 清理：所有激活函数已泛型化（f32/f64 通吃）。
+// _default 变体因硬编码 0.01 字面量保留 f64（调用方需 f32 默认斜率时直接传 0.01f32）。
 
-fn relu(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.relu() }
-fn sigmoid(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.sigmoid() }
-fn tanh(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.tanh() }
-fn softmax(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.softmax() }
-fn exp(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.exp() }
-fn log(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.log() }
+fn relu<T>(x: Tensor[T, ..]) -> Tensor[T, ..] { x.relu() }
+fn sigmoid<T>(x: Tensor[T, ..]) -> Tensor[T, ..] { x.sigmoid() }
+fn tanh<T>(x: Tensor[T, ..]) -> Tensor[T, ..] { x.tanh() }
+fn softmax<T>(x: Tensor[T, ..]) -> Tensor[T, ..] { x.softmax() }
+fn exp<T>(x: Tensor[T, ..]) -> Tensor[T, ..] { x.exp() }
+fn log<T>(x: Tensor[T, ..]) -> Tensor[T, ..] { x.log() }
 
 // GELU（tanh 近似）：x * 0.5 * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))
 // Transformer 标配激活函数。底层 tensor.gelu() 方法已支持 autodiff。
-fn gelu(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.gelu() }
+fn gelu<T>(x: Tensor[T, ..]) -> Tensor[T, ..] { x.gelu() }
 
 // LeakyReLU：f(x) = x if x > 0 else slope * x
 // 用 max(x, slope*x) 实现（Tenth 无 tensor 条件运算，用算术等价）：
@@ -21,13 +24,15 @@ fn gelu(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.gelu() }
 //   leaky_relu(x, slope) = relu(x) + slope * relu(-x)
 //   当 x>0: relu(x)=x, relu(-x)=0 → x ✓
 //   当 x<0: relu(x)=0, relu(-x)=-x → -slope*x ✓
-fn leaky_relu(x: Tensor[f64, ..], slope: f64) -> Tensor[f64, ..] {
+fn leaky_relu<T>(x: Tensor[T, ..], slope: T) -> Tensor[T, ..] {
     x.relu() + slope * (-x).relu()
 }
 
 // LeakyReLU 默认 slope=0.01
+// 注：硬编码 0.01 字面量为 f64，故此便利函数仅支持 f64。
+// f32 路径请直接调用 leaky_relu<f32>(x, 0.01f32)。
 fn leaky_relu_default(x: Tensor[f64, ..]) -> Tensor[f64, ..] {
-    leaky_relu(x, 0.01)
+    leaky_relu<f64>(x, 0.01)
 }
 
 // leaky_relu_select：用 select 原语实现的可微 leaky relu（论文 T47 AE1 替代方案）
@@ -37,7 +42,7 @@ fn leaky_relu_default(x: Tensor[f64, ..]) -> Tensor[f64, ..] {
 //   x<0 → cond≈0 → select else (slope*x)
 //   x=0 → cond=0.5 → select else (slope*0=0)（与标准 leaky_relu(0)=0 一致）
 // 与算术编码版本 leaky_relu 在 x≠0 处数值一致；x=0 处行为略有差异（算术版=0，select版=0）
-fn leaky_relu_select(x: Tensor[f64, ..], slope: f64) -> Tensor[f64, ..] {
+fn leaky_relu_select<T>(x: Tensor[T, ..], slope: T) -> Tensor[T, ..] {
     let eps = 1e-12;
     let sign = x / (x.abs() + eps);
     let cond = (sign + 1.0) * 0.5;
@@ -45,7 +50,8 @@ fn leaky_relu_select(x: Tensor[f64, ..], slope: f64) -> Tensor[f64, ..] {
 }
 
 // leaky_relu_select 默认 slope=0.01
+// 注：硬编码 0.01 字面量为 f64，故此便利函数仅支持 f64。
+// f32 路径请直接调用 leaky_relu_select<f32>(x, 0.01f32)。
 fn leaky_relu_select_default(x: Tensor[f64, ..]) -> Tensor[f64, ..] {
-    leaky_relu_select(x, 0.01)
+    leaky_relu_select<f64>(x, 0.01)
 }
-

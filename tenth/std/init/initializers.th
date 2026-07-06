@@ -3,81 +3,47 @@
 // Xavier/Glorot and He/Kaiming initializers for neural network weights.
 // These set the initial scale based on fan-in and fan-out to maintain
 // activation variance across layers.
+//
+// Phase 3 DRY 清理：所有初始化器已泛型化 <T>（f32/f64 通吃）。
+// 内部使用 randn<T>/zeros<T> native 泛型构造函数（运行时按 dtype 分发）。
+// 标量 limit/std 仍为 f64（sqrt 返回 f64），但 scalar × Tensor[T] 结果保持 Tensor[T] dtype。
 
 // Xavier/Glorot uniform initialization.
 // Draws from uniform[-limit, limit] where limit = sqrt(6 / (fan_in + fan_out))
 // Good for sigmoid/tanh activations.
-fn xavier_uniform(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+fn xavier_uniform<T>(fan_in: i64, fan_out: i64) -> Tensor[T, ..] {
     let limit = sqrt(6.0 / (fan_in + fan_out));
-    randn(fan_in, fan_out) * limit
+    randn<T>(fan_in, fan_out) * limit
 }
 
 // Xavier/Glorot normal initialization.
 // Draws from normal(0, std) where std = sqrt(2 / (fan_in + fan_out))
-fn xavier_normal(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+fn xavier_normal<T>(fan_in: i64, fan_out: i64) -> Tensor[T, ..] {
     let std = sqrt(2.0 / (fan_in + fan_out));
-    randn(fan_in, fan_out) * std
+    randn<T>(fan_in, fan_out) * std
 }
 
 // He/Kaiming normal initialization.
 // Draws from normal(0, std) where std = sqrt(2 / fan_in)
 // Good for ReLU and variants.
-fn he_normal(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+fn he_normal<T>(fan_in: i64, fan_out: i64) -> Tensor[T, ..] {
     let std = sqrt(2.0 / fan_in);
-    randn(fan_in, fan_out) * std
+    randn<T>(fan_in, fan_out) * std
 }
 
 // He/Kaiming uniform initialization.
 // Draws from uniform[-limit, limit] where limit = sqrt(6 / fan_in)
-fn he_uniform(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
+fn he_uniform<T>(fan_in: i64, fan_out: i64) -> Tensor[T, ..] {
     let limit = sqrt(6.0 / fan_in);
-    randn(fan_in, fan_out) * limit
+    randn<T>(fan_in, fan_out) * limit
 }
 
 // Zeros initialization (for biases).
-fn zeros_init(rows: i64, cols: i64) -> Tensor[f64, ..] {
-    zeros(rows, cols)
+fn zeros_init<T>(rows: i64, cols: i64) -> Tensor[T, ..] {
+    zeros<T>(rows, cols)
 }
 
 // Constant initialization (for biases).
-fn constant_init(rows: i64, cols: i64, val: f64) -> Tensor[f64, ..] {
-    zeros(rows, cols) + val
-}
-
-// ── Phase 5.4：f32 副本（调用 randn_f32/zeros_f32 构造 f32 tensor，标量改 f32）──
-// Tensor 参数仍标注 Tensor[f64, ..]（类型系统硬约束，Phase 5.0 调研结论），
-// 但内部构造 f32 tensor，运行时按 dtype 分支走 f32 路径。
-
-// Xavier/Glorot uniform initialization (f32).
-fn xavier_uniform_f32(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
-    let limit = sqrt(6.0f32 / (fan_in + fan_out));
-    randn_f32(fan_in, fan_out) * limit
-}
-
-// Xavier/Glorot normal initialization (f32).
-fn xavier_normal_f32(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
-    let std = sqrt(2.0f32 / (fan_in + fan_out));
-    randn_f32(fan_in, fan_out) * std
-}
-
-// He/Kaiming normal initialization (f32).
-fn he_normal_f32(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
-    let std = sqrt(2.0f32 / fan_in);
-    randn_f32(fan_in, fan_out) * std
-}
-
-// He/Kaiming uniform initialization (f32).
-fn he_uniform_f32(fan_in: i64, fan_out: i64) -> Tensor[f64, ..] {
-    let limit = sqrt(6.0f32 / fan_in);
-    randn_f32(fan_in, fan_out) * limit
-}
-
-// Zeros initialization (f32).
-fn zeros_init_f32(rows: i64, cols: i64) -> Tensor[f64, ..] {
-    zeros_f32(rows, cols)
-}
-
-// Constant initialization (f32).
-fn constant_init_f32(rows: i64, cols: i64, val: f32) -> Tensor[f64, ..] {
-    zeros_f32(rows, cols) + val
+fn constant_init<T>(rows: i64, cols: i64, val: T) -> Tensor[T, ..] {
+    zeros<T>(rows, cols) + val
 }

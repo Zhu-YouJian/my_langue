@@ -9,6 +9,8 @@
 //
 // w.transpose() → [K, N]，x @ w^T → [M, K] @ [K, N] = [M, N]
 // [M, N] + [N] → 广播 → [M, N]
-fn linear(x: Tensor[f64, M, K], w: Tensor[f64, N, K], b: Tensor[f64, N]) -> Tensor[f64, M, N] {
+//
+// Phase 3 DRY 清理：泛型化 <T> 支持 f32/f64。
+fn linear<T>(x: Tensor[T, M, K], w: Tensor[T, N, K], b: Tensor[T, N]) -> Tensor[T, M, N] {
     x.matmul(w.transpose()) + b
 }

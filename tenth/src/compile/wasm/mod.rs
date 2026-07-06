@@ -23,7 +23,9 @@ pub(super) fn to_val_type(ty: &Type) -> Option<ValType> {
     match ty {
         Type::Base(b) => match b {
             BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64 => Some(ValType::I64),
-            BaseType::F32 | BaseType::F64 => Some(ValType::F64),
+            // Phase 5：消除策略 A，F32 真正走 F32 路径（不再塌缩为 F64）
+            BaseType::F32 => Some(ValType::F32),
+            BaseType::F64 => Some(ValType::F64),
             BaseType::Bool => Some(ValType::I32),
             BaseType::Str => Some(ValType::I64), // stored as i64 internally, converted at host boundary
             BaseType::Unit => None,
@@ -44,12 +46,15 @@ pub(super) fn to_val_type_required(ty: &Type) -> TenthResult<ValType> {
     })
 }
 
-/// Compute byte size and WASM type for a struct field. All fields are 8 bytes.
+/// Compute byte size and WASM type for a struct field. All fields are 8 bytes
+/// except F32 (4 bytes, Phase 5 真正 f32 路径).
 pub(super) fn field_size_and_type(ty: &Type) -> (u32, ValType) {
     match ty {
         Type::Base(b) => match b {
             BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64 => (8, ValType::I64),
-            BaseType::F32 | BaseType::F64 => (8, ValType::F64),
+            // Phase 5：F32 字段占 4 字节，ValType::F32
+            BaseType::F32 => (4, ValType::F32),
+            BaseType::F64 => (8, ValType::F64),
             BaseType::Bool => (8, ValType::I32),
             BaseType::Str => (8, ValType::I64),
             _ => (8, ValType::I64),

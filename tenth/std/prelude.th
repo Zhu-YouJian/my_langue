@@ -54,30 +54,30 @@
 //   json_decode(string)      — decode JSON string to value
 
 // ── Std lib (use path::to::function) ──
-//   std::nn::linear::linear
-//   std::nn::loss::mse, mse_loss, binary_cross_entropy, l1_loss, huber_loss, huber_loss_train
-//   std::nn::activations::relu, sigmoid, tanh, softmax, exp, log, gelu, leaky_relu, leaky_relu_default, leaky_relu_select, leaky_relu_select_default
+//   std::nn::linear::linear<T>
+//   std::nn::loss::mse<T>, mse_loss<T>, binary_cross_entropy, l1_loss<T>, huber_loss<T>, huber_loss_train<T>  // binary_cross_entropy 仍 f64
+//   std::nn::activations::relu<T>, sigmoid<T>, tanh<T>, softmax<T>, exp<T>, log<T>, gelu<T>, leaky_relu<T>, leaky_relu_default, leaky_relu_select<T>, leaky_relu_select_default  // *_default 仍 f64
 //   std::nn::dropout::dropout<T>                      // 泛型（f64/f32 通吃）
 //   std::nn::batchnorm::batchnorm<T>
-//   std::nn::conv::conv2d
-//   std::nn::embedding::embedding
+//   std::nn::conv::conv2d<T>
+//   std::nn::embedding::embedding<T>
 //   std::nn::attention::scaled_dot_product_attention<T>, scaled_dot_product_attention_batched<T>  // 2D / 3D(bmm) 版本
 //   std::nn::multihead_attention::multihead_attention<T>
 //   std::nn::layer_norm::layer_norm<T>, make_layer_norm       // make_* 仍 f64（依赖 randn native）
 //   std::nn::positional_encoding::positional_encoding         // 仍 f64（依赖 randn native）
 //   std::nn::feedforward::feedforward<T>, make_feedforward_params
 //   std::nn::transformer::transformer_encoder_block<T>, make_transformer_block_params
-//   std::optim::sgd::sgd_step, sgd_step_f32, sgd_momentum, sgd_momentum_f32, sgd_weight_decay, sgd_weight_decay_f32
-//   std::optim::adam::adam_step, adam_step_f32
-//   std::optim::adamw::adamw_step, adamw_step_f32       // 解耦权重衰减（Transformer 训练推荐）
-//   std::optim::adagrad::adagrad_step, adagrad_step_f32
-//   std::optim::rmsprop::rmsprop_step, rmsprop_step_f32
-//   std::optim::clip::clip_grad_by_value, clip_grad_by_norm, clip_grad_by_value_f32, clip_grad_by_norm_f32  // 梯度裁剪
-//   std::optim::accumulate::accumulate_grad, accumulate_grad_f32  // 梯度累积辅助
+//   std::optim::sgd::sgd_step<T>, sgd_momentum<T>, sgd_weight_decay<T>
+//   std::optim::adam::adam_step<T>
+//   std::optim::adamw::adamw_step<T>       // 解耦权重衰减（Transformer 训练推荐）
+//   std::optim::adagrad::adagrad_step<T>
+//   std::optim::rmsprop::rmsprop_step<T>
+//   std::optim::clip::clip_grad_by_value<T>, clip_grad_by_norm<T>  // 梯度裁剪
+//   std::optim::accumulate::accumulate_grad<T>  // 梯度累积辅助
 //   std::data::dataloader::new, has_next, next_batch, reset, num_batches
 //   std::data::mnist::parse_images, parse_labels, one_hot, normalize_pixel, read_i32_be
 //   std::utils::serialization::save_model, load_model, save_checkpoint
-//   std::init::initializers::xavier_uniform, xavier_uniform_f32, xavier_normal, xavier_normal_f32, he_normal, he_normal_f32, he_uniform, he_uniform_f32, zeros_init, zeros_init_f32, constant_init, constant_init_f32
+//   std::init::initializers::xavier_uniform<T>, xavier_normal<T>, he_normal<T>, he_uniform<T>, zeros_init<T>, constant_init<T>
 //   std::math::functions::abs, sqrt, sin, cos, ln, pow, exp
 //   std::math::constants::PI, E, TAU, PHI, LN2, LN10, SQRT2, deg2rad, rad2deg, tan, asin, acos, atan, atan2, sinh, cosh, tanh_scalar, log10, log2, floor, ceil, round, lerp, clamp
 //   std::collections::iter::map, filter, reduce, range, concat, reverse, take, skip, zip, enumerate, any, all, sum, find, count_if

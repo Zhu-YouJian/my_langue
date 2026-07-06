@@ -20,18 +20,22 @@
 
 // Single AdamW step for one parameter tensor.
 // Returns (updated_w, updated_m, updated_v).
-fn adamw_step(
-    w: Tensor[f64, ..],
-    m: Tensor[f64, ..],
-    v: Tensor[f64, ..],
-    lr: f64,
-    beta1: f64,
-    beta2: f64,
-    eps: f64,
-    decay: f64,
-    beta1_t: f64,
-    beta2_t: f64,
-) -> (Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..]) {
+//
+// Phase 3 DRY 清理：泛型化 <T>（f32/f64 通吃）。
+// 注：1.0 - beta1 等标量运算在 T=f32 时会按 G4 规则提升到 f64（精度更高），
+// 但最终乘以 Tensor[T] 仍保持 Tensor[T] dtype。
+fn adamw_step<T>(
+    w: Tensor[T, ..],
+    m: Tensor[T, ..],
+    v: Tensor[T, ..],
+    lr: T,
+    beta1: T,
+    beta2: T,
+    eps: T,
+    decay: T,
+    beta1_t: T,
+    beta2_t: T,
+) -> (Tensor[T, ..], Tensor[T, ..], Tensor[T, ..]) {
     let gw = grad(w);
     let new_m = beta1 * m + (1.0 - beta1) * gw;
     let new_v = beta2 * v + (1.0 - beta2) * gw * gw;
@@ -39,30 +43,6 @@ fn adamw_step(
     let v_hat = new_v / (1.0 - beta2_t);
     // 解耦权重衰减：直接衰减参数，不污染梯度
     let decayed_w = w * (1.0 - lr * decay);
-    let new_w = decayed_w - lr * m_hat / (v_hat.sqrt() + eps);
-    (new_w, new_m, new_v)
-}
-
-// ── f32 版本 ──
-
-fn adamw_step_f32(
-    w: Tensor[f64, ..],
-    m: Tensor[f64, ..],
-    v: Tensor[f64, ..],
-    lr: f32,
-    beta1: f32,
-    beta2: f32,
-    eps: f32,
-    decay: f32,
-    beta1_t: f32,
-    beta2_t: f32,
-) -> (Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..]) {
-    let gw = grad(w);
-    let new_m = beta1 * m + (1.0f32 - beta1) * gw;
-    let new_v = beta2 * v + (1.0f32 - beta2) * gw * gw;
-    let m_hat = new_m / (1.0f32 - beta1_t);
-    let v_hat = new_v / (1.0f32 - beta2_t);
-    let decayed_w = w * (1.0f32 - lr * decay);
     let new_w = decayed_w - lr * m_hat / (v_hat.sqrt() + eps);
     (new_w, new_m, new_v)
 }
