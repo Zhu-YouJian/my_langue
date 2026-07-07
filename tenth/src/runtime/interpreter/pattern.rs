@@ -130,19 +130,19 @@ impl super::Interpreter {
     pub(super) fn bind_pattern(&mut self, pattern: &HirPattern, val: &Value) {
         match pattern {
             HirPattern::Binding(name) => {
-                self.current_scope().insert(name.clone(), val.clone());
+                self.insert_var(name.clone(), val.clone());
             }
             HirPattern::EnumVariant { field_bind, tuple_binds, .. } => {
                 if let Value::Enum { fields, .. } = val {
                     let fields_ref = fields.borrow();
                     if let Some((_fname, bname)) = field_bind {
                         if let Some((_, v)) = fields_ref.first() {
-                            self.current_scope().insert(bname.clone(), v.clone());
+                            self.insert_var(bname.clone(), v.clone());
                         }
                     }
                     for (field_name, bind_name) in tuple_binds {
                         if let Some((_, v)) = fields_ref.iter().find(|(n, _)| n == field_name) {
-                            self.current_scope().insert(bind_name.clone(), v.clone());
+                            self.insert_var(bind_name.clone(), v.clone());
                         }
                     }
                 }
@@ -168,7 +168,7 @@ impl super::Interpreter {
                     let val_fields_ref = val_fields.borrow();
                     for (field_name, bind_name) in fields {
                         if let Some((_, v)) = val_fields_ref.iter().find(|(n, _)| n == field_name) {
-                            self.current_scope().insert(bind_name.clone(), v.clone());
+                            self.insert_var(bind_name.clone(), v.clone());
                         }
                     }
                 }
@@ -181,14 +181,14 @@ impl super::Interpreter {
     pub(super) fn unbind_pattern(&mut self, pattern: &HirPattern) {
         match pattern {
             HirPattern::Binding(name) => {
-                self.current_scope().remove(name);
+                self.remove_var(name);
             }
             HirPattern::EnumVariant { field_bind, tuple_binds, .. } => {
                 if let Some((_, bname)) = field_bind {
-                    self.current_scope().remove(bname);
+                    self.remove_var(bname);
                 }
                 for (_, bind_name) in tuple_binds {
-                    self.current_scope().remove(bind_name);
+                    self.remove_var(bind_name);
                 }
             }
             HirPattern::Tuple(patterns) => {
@@ -198,7 +198,7 @@ impl super::Interpreter {
             }
             HirPattern::Struct { fields, .. } => {
                 for (_, bind_name) in fields {
-                    self.current_scope().remove(bind_name);
+                    self.remove_var(bind_name);
                 }
             }
             HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Range { .. } => {}

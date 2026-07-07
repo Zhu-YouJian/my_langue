@@ -169,6 +169,24 @@ impl Type {
                 if let Some(inner) = name.strip_prefix("&") {
                     return Type::Ref(Box::new(Type::TypeParam { name: inner.to_string() }));
                 }
+                // 元组类型注解：parser 把 `(A, B, C)` 折叠成 Named("(A, B, C)")。
+                // 这里反向解析为 Type::Tuple，使函数返回类型 `-> (i64, i64)` 等正确推断。
+                if name.starts_with('(') && name.ends_with(')') && name.len() >= 2 {
+                    let inner = &name[1..name.len() - 1];
+                    // 至少含一个逗号才视为元组；单个类型名括起来（如 `(i64)`）应解包为该类型
+                    if inner.contains(',') {
+                        let parts: Vec<Type> = inner.split(',')
+                            .map(|s| {
+                                let s = s.trim();
+                                Self::from_annotation(&TA::Named(super::super::parser::ast::Ident {
+                                    name: s.to_string(),
+                                    span: ident.span.clone(),
+                                }))
+                            })
+                            .collect();
+                        return Type::Tuple(parts);
+                    }
+                }
                 match name {
                     "i8" => Type::Base(BaseType::I8),
                     "i16" => Type::Base(BaseType::I16),

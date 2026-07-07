@@ -492,6 +492,10 @@ impl<'a, M: Module> Translator<'a, M> {
                 // Async opcodes not JIT-compiled; fallback to VM.
                 return Err(format!("JIT: async opcode not supported, fallback to VM"));
             }
+            MakeTuple(_) | IsTuple(_) | TupleGet(_) | Try => {
+                // Tuple / Try opcodes not JIT-compiled; fallback to VM.
+                return Err(format!("JIT: tuple/try opcode not supported, fallback to VM"));
+            }
         }
         Ok(())
     }

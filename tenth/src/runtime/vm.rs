@@ -39,6 +39,10 @@ pub enum Op {
     MakeClosure(usize, usize),  // params_count, chunk_idx — creates a closure value
     Await,
     Spawn,
+    MakeTuple(usize),           // n — pops n values, pushes Value::Tuple
+    IsTuple(usize),             // expected_len — pops value, pushes Bool(val is Tuple with len)
+    TupleGet(usize),            // index — pops Tuple, pushes element at index
+    Try,                        // pops Result; Ok(v) → push v; Err(e) → early return TryPropagate(e)
 }
 
 // ── Chunk ──────────────────────────────────────────────────────────────────
@@ -80,6 +84,10 @@ impl Chunk {
             IsStruct(_) => 46,
             Await => 47,
             Spawn => 48,
+            MakeTuple(_) => 49,
+            IsTuple(_) => 50,
+            TupleGet(_) => 51,
+            Try => 52,
         });
 
         // Emit operands
@@ -102,6 +110,7 @@ impl Chunk {
             PushRange(s, e, inc) => { w!(*s, i64); w!(*e, i64); self.code.push(if *inc {1} else {0}); }
             MakeTensor(r, c, d) => { w!(*r, u64); w!(*c, u64); self.code.push(*d); }
             MakeClosure(p, c) => { w!(*p, u64); w!(*c, u64); }
+            MakeTuple(n) | IsTuple(n) | TupleGet(n) => w!(*n, u64),
             MoveOp => {}
             _ => {}
         }
@@ -144,6 +153,10 @@ impl Chunk {
             46 => IsStruct(r!(u64) as usize),
             47 => Await,
             48 => Spawn,
+            49 => MakeTuple(r!(u64) as usize),
+            50 => IsTuple(r!(u64) as usize),
+            51 => TupleGet(r!(u64) as usize),
+            52 => Try,
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -430,6 +443,10 @@ impl Vm {
                     46 => IsStruct(r!(u64) as usize),
                     47 => Await,
                     48 => Spawn,
+                    49 => MakeTuple(r!(u64) as usize),
+                    50 => IsTuple(r!(u64) as usize),
+                    51 => TupleGet(r!(u64) as usize),
+                    52 => Try,
                     _ => Ret,
                 }
             };
@@ -824,6 +841,74 @@ impl Vm {
                         other => other,
                     };
                     self.stack.push(inner);
+                }
+
+                Op::MakeTuple(n) => {
+                    // Pop n values (last pushed = highest index) and assemble Tuple
+                    let mut items = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        items.push(self.stack.pop().unwrap_or(Value::Unit));
+                    }
+                    items.reverse();
+                    self.stack.push(Value::Tuple(items));
+                }
+
+                Op::IsTuple(expected_len) => {
+                    // Pop value, push Bool(val is Tuple with expected_len).
+                    // Mirrors IsEnumVariant: pop + push bool.
+                    let val = self.stack.pop().unwrap_or(Value::Unit);
+                    let matches = match &val {
+                        Value::Tuple(items) => items.len() == expected_len,
+                        _ => false,
+                    };
+                    self.stack.push(Value::Bool(matches));
+                }
+
+                Op::TupleGet(i) => {
+                    let val = self.stack.pop().unwrap_or(Value::Unit);
+                    let elem = match &val {
+                        Value::Tuple(items) => items.get(i).cloned().unwrap_or(Value::Unit),
+                        _ => Value::Unit,
+                    };
+                    self.stack.push(elem);
+                }
+
+                Op::Try => {
+                    // `expr?` — Result::Ok(v) → push v; Result::Err(e) → early return
+                    // 语义：若 Err，构造 Result::Err 并执行函数 early return（frame 恢复）。
+                    // 这与 interpreter 的 TryPropagate 信号等价，但 VM 直接在内部完成 frame 切换。
+                    let val = self.stack.pop().unwrap_or(Value::Unit);
+                    let is_err = matches!(
+                        &val,
+                        Value::Enum { enum_name, variant, .. } if enum_name == "Result" && variant == "Err"
+                    );
+                    if is_err {
+                        // 构造 Result::Err 作为函数返回值，执行 early return（复用 Ret 的 frame 恢复逻辑）
+                        let result = val.clone();
+                        if let Some(f) = self.frames.pop() {
+                            self.stack.truncate(f.stack_base);
+                            self.stack.push(result);
+                            ip = f.ip;
+                            chunk_idx = f.chunk_idx;
+                            code = self.chunks[chunk_idx].code.clone();
+                            strings = self.chunks[chunk_idx].strings.clone();
+                            locals = f.locals;
+                        } else {
+                            // 最外层函数：直接返回 Result::Err
+                            return Ok(result);
+                        }
+                    } else {
+                        // Ok(v) → 解包 push v；非 Result 类型直接传值
+                        let inner = match &val {
+                            Value::Enum { enum_name, variant, fields } if enum_name == "Result" && variant == "Ok" => {
+                                fields.borrow().first()
+                                    .map(|(_, v)| v.clone())
+                                    .unwrap_or(Value::Unit)
+                            }
+                            _ => val,
+                        };
+                        self.stack.push(inner);
+                    }
                 }
             }
         }

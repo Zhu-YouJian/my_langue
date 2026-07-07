@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-07-07 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强 + 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 | 760+ 项测试通过（53 个测试目标，含 6 个栈溢出崩溃预存问题）
+> 日期：2026-07-08 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 | 780+ 项测试通过（55 个测试目标，含 6 个栈溢出崩溃预存问题）
 
 ---
 
@@ -24,7 +24,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 ## 三、测试矩阵
 
-> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。统计日期：2026-07-07。
+> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。统计日期：2026-07-08。
 
 ### 基础管线
 
@@ -49,6 +49,8 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `generic_test.rs` | 11/0/0 | 泛型函数/泛型结构体/trait bound/泛型返回/Vec<Token>/>>拆分 |
 | `pattern_match_test.rs` | 17/0/0 | 模式匹配/解构/守卫 |
 | `iterator_test.rs` | 10/0/0 | 迭代器/for/生成器 |
+| `tuple_test.rs` | 12/0/0 | 元组创建/解构/嵌套/函数返回/空元组（2026-07-08 新增） |
+| `try_operator_test.rs` | 12/0/0 | `?` 操作符成功/错误传播/链式/I/O 模拟（2026-07-08 新增） |
 
 ### 张量与自动微分
 
@@ -159,7 +161,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试目标 | 数量 | 说明 |
 |----------|------|------|
-| **总计** | **760 passed / 3 failed / 12 ignored** | 53 个测试目标（52 文件 + lib），6 个栈溢出崩溃预存问题 |
+| **总计** | **784 passed / 3 failed / 12 ignored** | 55 个测试目标（54 文件 + lib），6 个栈溢出崩溃预存问题 |
 
 ---
 
@@ -193,7 +195,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | 4 | 无 GPU 后端 | `compile/gpu/` 脚手架已就绪，待 CUDA 环境安装 |
 | 5 | three_stage wasmtime 路径 stub host 不完整 | `run_test_wasmtime` 中 `vec_new`/`vec_push`/`vec_len` 等 17 个 host import 均为返回 0 的占位实现，导致 WASM-B 为 0 字节。wasmi 路径已通过（WASM-B 460 bytes，add(3,4)=12）。已将 wasmtime 路径拆为 `#[ignore]` 的 `three_stage_selfhost_wasmtime` 独立测试（2026-07-06），默认 `cargo test` 仅跑 wasmi 路径。补全 stub 需参照 `register_host_functions` 实现 17 个 host import 的 wasmtime 版本，与 f32 路线图无关，登记为独立任务。 |
 | 6 | Rust 母编译器 wasm.rs Call 分派缺 str_eq/str_add/str_int 函数调用分支 | `tenth/src/compile/wasm/compile.rs:251-372` 的 `HirExprKind::Call` 分派仅对 `str_len`/`str_at`/`str_cmp`/`str_slice` 有函数调用分支，`str_eq`/`str_add`/`str_int` 缺失。tenthc 源码若以函数调用形式 `str_eq(a,b)` 调用会产出 i64 → i32 类型不匹配的非法 WASM。2026-07-06 f32/f64 parity 路线图阶段 7 发现并规避（tenthc 侧 `parse_tensor_type` 用 `==`/`!=` 操作符走 BinOp 路径）。修复方案：在 `compile.rs` Call 分派里补齐三个分支，与 `str_len`/`str_at`/`str_cmp`/`str_slice` 对齐。 |
-| 7 | 6 个测试文件栈溢出崩溃 | tenthc_generic_tensor_test / tenthc_for_loop_test / jit_stack_overflow_test / tenthc_dotdot_eq_test / selfhost_frontend / parity_test 编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，需增大栈空间或改用 release 模式 |
+| 7 | 6 个测试文件栈溢出崩溃 | tenthc_generic_tensor_test / tenthc_for_loop_test / jit_stack_overflow_test / tenthc_dotdot_eq_test / selfhost_frontend / parity_test 编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，需增大栈空间或改用 release 模式。**2026-07-08 更新**：`tenthc_for_loop_test` 的 Vec 迭代测试在设置 `RUST_MIN_STACK=268435456`（256MB）后已通过 3/3（vec_literal_basic / vec_literal_break_continue / vec_literal_empty），但默认栈空间下仍栈溢出，根因是 Windows debug 模式栈空间不足（git stash 验证为预存问题）。 |
 
 ---
 
@@ -378,9 +380,9 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 |------|------|---------|------|---------|
 | AUDIT-11.4.1 | T22 FV5 O(n²) 工程债务 | T22（闭包自由变量收集复杂度） | `hir/lower/closures.rs:9-15` 的 `free_vars_in` 用 `Vec<String>` + `sort` + `dedup` 实现，复杂度 O(n²)（每次 push 后 sort）。HashSet 实现可降到 O(n)。在深层嵌套闭包场景下编译期开销显著。 | ✅ 已修复（2026-07-06，`hir/lower/closures.rs` `free_vars_in`/`collect_free_vars`/`collect_free_vars_stmt` 改用 `HashSet<String>`，4 处 `push` 改 `insert`；API 兼容（仍返回 `Vec<String>` + `sort`），复杂度 O(n²)→O(n)，纯优化无语义影响。验证：autodiff 52/52 + 全量 0 回归。详见 MEMO.md 2026-07-06 fix 条目） |
 | AUDIT-11.4.2 | T31 MAX_STACK_DEPTH=256 静默溢出潜在 UB | T31（VM/JIT 栈深度限制审计） | `compile/jit/translator.rs:32` `const MAX_STACK_DEPTH: u32 = 256;`，超过时静默截断而非报错，可能让 JIT 编译出的代码访问越界栈区域。属潜在未定义行为。VM 路径（`runtime/vm.rs`）的 `locals: Vec<Value>` 用 `resize` 安全增长，但 JIT 路径的固定 256 槽是硬上限。 | ✅ 已修复（2026-07-06，`compile/jit/translator.rs` 新增 `bump_sp()` 方法在 push 前检查 sp 上限，28 处 push 操作改为 `bump_sp()?`；超限返回 `Err` 触发既有的 JIT→VM fallback（`mod.rs:62-65`），不再静默截断。验证：jit_test 10/10 + 全量 0 回归。详见 MEMO.md 2026-07-06 fix 条目） |
-| AUDIT-11.4.3 | T36 双重存储同步开销 | T36（解释器 scope 数据结构审计） | `runtime/interpreter/mod.rs:40` `pub scopes: Vec<HashMap<String, Value>>` 用 Vec+HashMap 双重存储，变量查找从最后一个 scope 向前遍历，在重嵌套场景下有平方风险。VM 路径用索引 `locals: Vec<Value>` 无此问题。 | ⚠️ 已登记未修复。可考虑改用扁平化 name→(scope_depth, Value) 索引 |
+| AUDIT-11.4.3 | T36 双重存储同步开销 | T36（解释器 scope 数据结构审计） | `runtime/interpreter/mod.rs:40` `pub scopes: Vec<HashMap<String, Value>>` 用 Vec+HashMap 双重存储，变量查找从最后一个 scope 向前遍历，在重嵌套场景下有平方风险。VM 路径用索引 `locals: Vec<Value>` 无此问题。 | ✅ 已修复（2026-07-08）。改为扁平化 `vars: HashMap<String, Vec<(usize, Value)>>` + `scope_depth` + `scope_vars: Vec<Vec<String>>`，`resolve_var`/`set_var` O(1)，`pop_scope` O(m)（m 为本层变量数） |
 | AUDIT-11.4.4 | tenthc `..=` lexer 解析 bug | 回归测试发现（2026-07-06） | `tenthc/lexer/lexer.th:180-184` 解析 `.` 时 `if next == "."` 分支直接返回 `DotDot`，未检查第三个字符是否为 `=`。导致 `2..=4` 被错误分词为 `2` `..` `=` `4`。tenthc 路径下 inclusive range 实际不可用。 | ✅ 已修复（2026-07-06，`tenthc/lexer/lexer.th:180-190` 在 `if next == "."` 分支内 advance 后再 peek 一次检查 `=`，匹配则 advance 并返回 `DotDotEq`，与 Rust 侧 `lexer.rs` 对齐。验证：自举 + parity 129/129 + selfhost_frontend 4/4 + error_recovery 7/7；新增 `tenthc_dotdot_eq_test.rs` 3 项测试。详见 MEMO.md 2026-07-06 fix 条目） |
-| AUDIT-11.4.5 | tenthc Vec 迭代未实现 | 回归测试发现（2026-07-06） | `tenthc/compile/wasm.th:1472` 明确注释 `// Non-range iterable: no-op for now`。tenthc WASM 后端不支持 `for x in [Vec]` 形式的迭代，仅支持 Range 迭代。 | ⚠️ 部分修复（2026-07-06，`tenthc/compile/wasm.th:1471-1546` For 语句新增 ArrayLiteral (disc=22) 分支，复用现有 `vec_new`/`vec_len`/`vec_push`/`vec_get` host imports 实现 Vec 迭代 codegen；后续修复：删除 `wasm.th:1492` 误加的 `wasm_drop`（type/drop 不匹配导致 wasmi 验证失败）。验证：自举 + parity 129/129 + selfhost_frontend 4/4。**遗留**：测试 host function stub 是空实现（`vec_len` 永远返回 0），2 项非空 Vec 迭代测试 `#[ignore]`——tenthc 编译器层面 codegen 正确，仅测试基础设施局限；ArrayLiteral 表达式本身 codegen 未改。详见 MEMO.md 2026-07-06 fix 条目） |
+| AUDIT-11.4.5 | tenthc Vec 迭代未实现 | 回归测试发现（2026-07-06） | `tenthc/compile/wasm.th:1472` 明确注释 `// Non-range iterable: no-op for now`。tenthc WASM 后端不支持 `for x in [Vec]` 形式的迭代，仅支持 Range 迭代。 | ✅ 已修复（2026-07-06 codegen + 2026-07-08 测试 stub 补全。`tenthc/compile/wasm.th:1471-1546` For 语句新增 ArrayLiteral (disc=22) 分支，复用现有 `vec_new`/`vec_len`/`vec_push`/`vec_get` host imports 实现 Vec 迭代 codegen；后续修复：删除 `wasm.th:1492` 误加的 `wasm_drop`（type/drop 不匹配导致 wasmi 验证失败）。2026-07-08 补全 `tenth/tests/tenthc_for_loop_test.rs` 中 `env` 模块的 4 个 Vec host function stub（vec_new/vec_len/vec_push/vec_get），基于 WASM 内存 + bump allocator 实现真实 Vec 语义（24 字节 header = cap+len+dp，8 字节/元素，vec_push 含倍增扩容），与 `wasm/host.rs` 的 `Vec_new`/`Vec_push` 实现对齐。取消 2 项 `#[ignore]` 标记（tenthc_for_vec_literal_basic / tenthc_for_vec_literal_break_continue），3 项 Vec 迭代测试全部通过。验证：自举 + parity 129/129 + selfhost_frontend 4/4 + tenthc_for_loop_test Vec 迭代 3/3。ArrayLiteral 表达式本身 codegen 未改。详见 MEMO.md 2026-07-06/2026-07-08 fix 条目） |
 
 ### 11.5 登记元数据
 
@@ -392,5 +394,5 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | 总登记条目数 | 16（11.1 ×5、11.2 ×4、11.3 ×2、11.4 ×5） |
 | 拆分说明 | T12 双侧破口在 11.2 拆 4 条（shape/panic-mode/expect_gt/i64 溢出）；T37 双重 native 在 11.3 拆 2 条（VM 缺 17 项/解释器缺 3 项）；其余 8 个论文条目各 1 条；2026-07-06 新增 11.4.4（tenthc `..=` lexer bug）和 11.4.5（tenthc Vec 迭代未实现）属回归测试发现 |
 | 真理源同步 | `能力梳理/能力全梳理.md` 同步新增能力条目；`MEMO.md` 顶部新增 2026-07-02 与 2026-07-06 变更记录 |
-| 修复方案 | 分批推进：第 1 批纯登记；2026-07-06 修复 11.4.1/11.4.2/11.4.4（✅）+ 11.4.5 部分修复（⚠️）；11.4.3 保持未修复 |
+| 修复方案 | 分批推进：第 1 批纯登记；2026-07-06 修复 11.4.1/11.4.2/11.4.4（✅）+ 11.4.5 codegen 修复；2026-07-08 补全 11.4.5 测试 host function stub（✅）；2026-07-08 修复 11.4.3（✅ 解释器 scope 扁平化索引） |
 

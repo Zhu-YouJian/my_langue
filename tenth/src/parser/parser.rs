@@ -1318,10 +1318,12 @@ impl Parser {
                     self.expect(TokenKind::RParen)?;
                     idents
                 } else if let TokenKind::Identifier(name) = &self.peek().kind {
-                    vec![Ident {
+                    let idents = vec![Ident {
                         name: name.clone(),
                         span: self.peek().span.clone(),
-                    }]
+                    }];
+                    self.advance();
+                    idents
                 } else {
                     return Err(TenthError::ParseError {
                         line: self.peek().span.line,
@@ -1329,7 +1331,8 @@ impl Parser {
                         message: "expected variable name".into(),
                     });
                 };
-                self.advance();
+                // Note: advance() is now per-branch — LParen path already consumed `)`
+                // via expect(RParen), so it must NOT advance again (would eat `=`).
 
                 let type_ann = if matches!(self.peek_kind(), TokenKind::Colon) {
                     self.advance();

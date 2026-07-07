@@ -480,9 +480,9 @@ fn load_file(
 
     // Execute the file
     let mut interpreter = Interpreter::with_limits(accumulated_program, limits.clone());
-    interpreter.scopes[0].extend(variables.clone());
+    interpreter.extend_globals(variables.clone());
     let result = interpreter.execute_program(accumulated_program)?;
-    *variables = interpreter.scopes[0].clone();
+    *variables = interpreter.globals_clone();
 
     if let Some(val) = result {
         match val {
@@ -537,10 +537,10 @@ fn execute_line_with_limits(
     accumulated_program.main_expr = hir_program.main_expr;
 
     let mut interpreter = Interpreter::with_limits(accumulated_program, limits.clone());
-    interpreter.scopes[0].extend(variables.clone());
+    interpreter.extend_globals(variables.clone());
     let result = interpreter.execute_program(accumulated_program)?;
 
-    *variables = interpreter.scopes[0].clone();
+    *variables = interpreter.globals_clone();
 
     Ok(result)
 }

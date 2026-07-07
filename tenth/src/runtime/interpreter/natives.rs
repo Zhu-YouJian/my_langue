@@ -1732,15 +1732,15 @@ impl super::Interpreter {
                 if let Some(module) = self.modules.get(mod_name) {
                     if let Some(fn_def) = module.functions.iter().find(|f| f.name == fn_name) {
                         let fn_def = fn_def.clone();
-                        self.scopes.push(HashMap::new());
+                        self.push_scope();
 
                         for ((pname, _), arg) in fn_def.params.iter().zip(args.iter()) {
-                            self.current_scope().insert(pname.clone(), arg.clone());
+                            self.insert_var(pname.clone(), arg.clone());
                         }
 
                         let result = self.eval_expr(&fn_def.body);
 
-                        self.scopes.pop();
+                        self.pop_scope();
 
                         return Self::unwrap_return(result);
                     }
@@ -1755,15 +1755,15 @@ impl super::Interpreter {
         if let Some(fd) = func_def {
             // Push a new scope for function-local variables.
             // Parameters and locals are isolated; globals remain visible via scope chain.
-            self.scopes.push(HashMap::new());
+            self.push_scope();
 
             for ((pname, _), arg) in fd.params.iter().zip(args.iter()) {
-                self.current_scope().insert(pname.clone(), arg.clone());
+                self.insert_var(pname.clone(), arg.clone());
             }
 
             let result = self.eval_expr(&fd.body);
 
-            self.scopes.pop();
+            self.pop_scope();
 
             return Self::unwrap_return(result);
         }

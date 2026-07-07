@@ -120,11 +120,28 @@ impl Lowerer {
 
             ExprKind::Unary { op, expr: inner } => {
                 let e = self.lower_expr(inner)?;
-                let ty = e.ty.clone();
                 let hir_op = match op {
                     ast::UnaryOp::Neg => UnaryOp::Neg,
                     ast::UnaryOp::Not => UnaryOp::Not,
                     ast::UnaryOp::Try => UnaryOp::Try,
+                };
+                // Try 操作符类型推断：Result<T> → T；其他类型保持不变（运行时处理）
+                let ty = match (&hir_op, &e.ty) {
+                    (UnaryOp::Try, Type::Generic { base, args }) => {
+                        // Result<T, E> 的 Generic 形式：base = Enum("Result"), args = [T, E]
+                        // `?` 提取 Ok 变体的内部类型 T（args[0]）
+                        if let Type::Enum(name) = base.as_ref() {
+                            if name == "Result" {
+                                args.first().cloned().unwrap_or(Type::Unknown)
+                            } else {
+                                e.ty.clone()
+                            }
+                        } else {
+                            e.ty.clone()
+                        }
+                    }
+                    (UnaryOp::Try, _) => e.ty.clone(),
+                    _ => e.ty.clone(),
                 };
                 (HirExprKind::Unary { op: hir_op, expr: Box::new(e), ty: ty.clone() }, ty)
             }

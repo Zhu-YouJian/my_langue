@@ -125,7 +125,7 @@ impl BytecodeCompiler {
             Unary { op, expr: inner, .. } => {
                 self.compile_expr(inner)?;
                 use crate::hir::hir::UnaryOp::*;
-                self.chunk.emit(match op { Neg => Op::Neg, Not => Op::Not, Try => Op::Pop });
+                self.chunk.emit(match op { Neg => Op::Neg, Not => Op::Not, Try => Op::Try });
             }
 
             Call { func, args, .. } => {
@@ -454,8 +454,48 @@ impl BytecodeCompiler {
                             self.patch_jump(end_label);
                             self.label(next_label);
                         }
+                        HirPattern::Tuple(patterns) => {
+                            // Tuple pattern: (a, b, c) — only support Binding/Wildcard
+                            // sub-patterns in VM bytecode (most common case).
+                            // Nested patterns fall through to next arm.
+                            let all_simple = patterns.iter().all(|p| matches!(
+                                p,
+                                HirPattern::Binding(_) | HirPattern::Wildcard
+                            ));
+                            if !all_simple {
+                                // Nested tuple patterns not supported in VM bytecode;
+                                // fall through to next arm (interpreter handles them).
+                            } else {
+                                self.chunk.emit(Op::Dup); // [scrut, scrut]
+                                self.chunk.emit(Op::IsTuple(patterns.len())); // [scrut, bool]
+                                self.chunk.emit(Op::JmpFalse(0));
+                                self.patch_jump(next_label); // [scrut]
+                                // Bind each sub-pattern
+                                for (i, sub_pat) in patterns.iter().enumerate() {
+                                    if let HirPattern::Binding(name) = sub_pat {
+                                        self.chunk.emit(Op::Dup); // [scrut, scrut]
+                                        self.chunk.emit(Op::TupleGet(i)); // [scrut, elem]
+                                        let pos = self.locals.len();
+                                        self.locals.push(name.clone());
+                                        self.chunk.emit(Op::Store(pos)); // [scrut]
+                                    }
+                                    // Wildcard: no binding, skip
+                                }
+                                self.chunk.emit(Op::Pop); // drop scrutinee
+                                // Guard
+                                if let Some(guard) = &arm.guard {
+                                    self.compile_expr(guard)?;
+                                    self.chunk.emit(Op::JmpFalse(0));
+                                    self.patch_jump(next_label);
+                                }
+                                self.compile_expr(&arm.body)?;
+                                self.chunk.emit(Op::Jump(0));
+                                self.patch_jump(end_label);
+                                self.label(next_label);
+                            }
+                        }
                         _ => {
-                            // Other patterns (Tuple, Range): not yet supported in VM.
+                            // Other patterns (Range): not yet supported in VM.
                             // Fall through to next arm.
                         }
                     }
@@ -529,11 +569,16 @@ impl BytecodeCompiler {
                 }
             }
             HirExprKind::Tuple(elems) => {
-                // Build a Vec from the elements
-                for e in elems {
-                    self.compile_expr(e)?;
+                if elems.is_empty() {
+                    // `()` is Unit, not an empty tuple
+                    self.chunk.emit(Op::PushUnit);
+                } else {
+                    // Push elements left-to-right, then assemble via Op::MakeTuple
+                    for e in elems {
+                        self.compile_expr(e)?;
+                    }
+                    self.chunk.emit(Op::MakeTuple(elems.len()));
                 }
-                // TODO: proper tuple support in bytecode
             }
             HirExprKind::Range { start, end, inclusive } => {
                 // Compile range expression. Extract integer literals when possible
@@ -627,13 +672,31 @@ impl BytecodeCompiler {
                 } else {
                     self.chunk.emit(Op::PushUnit);
                 }
-                for name in names {
+                if names.len() == 1 {
+                    // Single binding: store entire value
                     let pos = self.locals.len();
-                    self.locals.push(name.clone());
+                    self.locals.push(names[0].clone());
                     self.chunk.emit(Op::Dup);
                     self.chunk.emit(Op::Store(pos));
-                    let gi = self.chunk.add_string(name);
+                    let gi = self.chunk.add_string(&names[0]);
                     self.chunk.emit(Op::StoreGlobal(gi));
+                } else {
+                    // Tuple destructuring: extract each element via TupleGet.
+                    // Stack discipline: init pushes the tuple; each iteration dups
+                    // the tuple, extracts element i, then dups the element so both
+                    // Store (local) and StoreGlobal (global) can pop without
+                    // consuming the tuple. Final Pop drops the tuple.
+                    for (i, name) in names.iter().enumerate() {
+                        self.chunk.emit(Op::Dup);          // [Tuple, Tuple]
+                        self.chunk.emit(Op::TupleGet(i));  // [Tuple, elem]
+                        self.chunk.emit(Op::Dup);          // [Tuple, elem, elem]
+                        let pos = self.locals.len();
+                        self.locals.push(name.clone());
+                        self.chunk.emit(Op::Store(pos));   // [Tuple, elem]
+                        let gi = self.chunk.add_string(name);
+                        self.chunk.emit(Op::StoreGlobal(gi)); // [Tuple]
+                    }
+                    self.chunk.emit(Op::Pop); // [] drop tuple
                 }
             }
             HirStmtKind::Expr(e) => {

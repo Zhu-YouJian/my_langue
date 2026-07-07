@@ -241,11 +241,115 @@ mod tenthc_for_loop {
 
         // ── `env` module (tenthc wasm.th signatures) ──
         linker.func_wrap("env", "println", |_: Caller<()>, _: i64| {}).unwrap();
-        linker.func_wrap("env", "vec_new", |_: Caller<()>| -> i64 { 0 }).unwrap();
-        linker.func_wrap("env", "vec_len", |_: Caller<()>, _: i64| -> i64 { 0 }).unwrap();
+
+        // AUDIT-11.4.5: Real Vec host function stubs (previously no-ops that
+        // always returned 0, which made vec_len-based loop conditions false
+        // and prevented Vec iteration tests from running).
+        //
+        // Vec memory layout (matches `host` module's Vec_new/Vec_push in
+        // wasm/host.rs): 24-byte header = cap(8) + len(8) + dp(4), followed
+        // by an 8-bytes-per-element data region allocated via the bump
+        // allocator. vec_push grows the data region (doubling capacity) when
+        // len >= cap or dp == 0.
+        //
+        // Signature differences from `host` module:
+        //   * tenthc wasm.th Type 3: vec_push (i64, i64) -> ()  [no return]
+        //   * host.rs Vec_push:      (i64, i64) -> i64          [returns vec]
+        let b = bump.clone();
+        linker.func_wrap("env", "vec_new", move |mut caller: Caller<()>| -> i64 {
+            let ptr = b.fetch_add(24, Ordering::SeqCst);
+            let needed = ptr as usize + 24;
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let mut current_len = mem.data(&caller).len();
+            while needed > current_len {
+                let pages = ((needed - current_len + 65535) / 65536) as u32;
+                mem.grow(&mut caller, pages).ok();
+                let new_len = mem.data(&caller).len();
+                if new_len == current_len { break; }
+                current_len = new_len;
+            }
+            let data = mem.data_mut(&mut caller);
+            let p = ptr as usize;
+            data[p..p+8].copy_from_slice(&0i64.to_le_bytes());       // cap
+            data[p+8..p+16].copy_from_slice(&0i64.to_le_bytes());    // len
+            data[p+16..p+20].copy_from_slice(&0i32.to_le_bytes());   // dp
+            ptr as i64
+        }).unwrap();
+
+        linker.func_wrap("env", "vec_len", |caller: Caller<()>, vec: i64| -> i64 {
+            let vec_ptr = vec as i32 as usize;
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let data = mem.data(&caller);
+            if vec_ptr + 16 <= data.len() {
+                i64::from_le_bytes(data[vec_ptr+8..vec_ptr+16].try_into().unwrap())
+            } else { 0 }
+        }).unwrap();
+
         linker.func_wrap("env", "read_file", |_: Caller<()>, _: i64| -> i64 { 0 }).unwrap();
-        linker.func_wrap("env", "vec_push", |_: Caller<()>, _: i64, _: i64| {}).unwrap();
-        linker.func_wrap("env", "vec_get", |_: Caller<()>, _: i64, _: i64| -> i64 { 0 }).unwrap();
+
+        let b = bump.clone();
+        linker.func_wrap("env", "vec_push", move |mut caller: Caller<()>, vec: i64, item: i64| {
+            let vec_ptr = vec as i32 as usize;
+            // Phase 1: read header (cap, len, dp)
+            let (cap, len, dp) = {
+                let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+                let data = mem.data(&caller);
+                let vp = vec_ptr;
+                let cap = if vp+8 <= data.len() { i64::from_le_bytes(data[vp..vp+8].try_into().unwrap()) } else { 0 };
+                let len = if vp+16 <= data.len() { i64::from_le_bytes(data[vp+8..vp+16].try_into().unwrap()) } else { 0 };
+                let dp = if vp+20 <= data.len() { i32::from_le_bytes(data[vp+16..vp+20].try_into().unwrap()) } else { 0 };
+                (cap, len, dp)
+            };
+            // Phase 2: allocate/grow data region if needed (double capacity)
+            let (new_cap, new_dp) = if len >= cap || dp == 0 {
+                let nc = if cap == 0 { 4 } else { cap * 2 };
+                let new_sz = nc as usize * 8;
+                let np = b.fetch_add(new_sz as u32, Ordering::SeqCst);
+                let needed = np as usize + new_sz;
+                let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+                let mut current_len = mem.data(&caller).len();
+                while needed > current_len {
+                    let pages = ((needed - current_len + 65535) / 65536) as u32;
+                    mem.grow(&mut caller, pages).ok();
+                    let new_len = mem.data(&caller).len();
+                    if new_len == current_len { break; }
+                    current_len = new_len;
+                }
+                // Copy old data from dp to new allocation (if any)
+                if dp != 0 && len > 0 {
+                    let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+                    let data = mem.data_mut(&mut caller);
+                    let old_sz = len as usize * 8;
+                    data.copy_within(dp as usize..dp as usize + old_sz, np as usize);
+                }
+                (nc, np as i32)
+            } else {
+                (cap, dp)
+            };
+            // Phase 3: write updated header + new element
+            {
+                let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+                let data = mem.data_mut(&mut caller);
+                let vp = vec_ptr;
+                data[vp..vp+8].copy_from_slice(&new_cap.to_le_bytes());
+                data[vp+8..vp+16].copy_from_slice(&(len + 1).to_le_bytes());
+                data[vp+16..vp+20].copy_from_slice(&new_dp.to_le_bytes());
+                let pos = new_dp as usize + len as usize * 8;
+                data[pos..pos+8].copy_from_slice(&item.to_le_bytes());
+            }
+        }).unwrap();
+
+        linker.func_wrap("env", "vec_get", |caller: Caller<()>, vec: i64, idx: i64| -> i64 {
+            let vec_ptr = vec as i32 as usize;
+            let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
+            let data = mem.data(&caller);
+            if vec_ptr + 20 > data.len() { return 0; }
+            let dp = i32::from_le_bytes(data[vec_ptr+16..vec_ptr+20].try_into().unwrap()) as usize;
+            let pos = dp + idx as usize * 8;
+            if pos + 8 <= data.len() {
+                i64::from_le_bytes(data[pos..pos+8].try_into().unwrap())
+            } else { 0 }
+        }).unwrap();
         linker.func_wrap("env", "write_bytes", |_: Caller<()>, _: i64, _: i64| -> i64 { 0 }).unwrap();
         linker.func_wrap("env", "str_add", |_: Caller<()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
         linker.func_wrap("env", "str_eq", |_: Caller<()>, _: i32, _: i32| -> i32 { 0 }).unwrap();
@@ -549,14 +653,12 @@ mod tenthc_for_loop {
     // path at wasm.th:753-755 correctly omits the drop).
     //
     // UPDATE 2026-07-06: type/drop mismatch fixed (wasm_drop removed).
-    // WASM module now loads & executes, but tests still fail because the
-    // host function stubs in setup_output_store_and_linker (line ~244) are
-    // empty implementations — vec_len always returns 0, so the loop body
-    // never executes. Marked #[ignore] until test infra provides real Vec
-    // host function stubs (HashMap<i64, Vec<i64>> handle→Vec mapping).
+    // UPDATE 2026-07-08 (AUDIT-11.4.5 fix): the empty host function stubs
+    // in setup_output_store_and_linker have been replaced with real Vec
+    // implementations (vec_new/vec_len/vec_push/vec_get backed by WASM
+    // memory + the shared bump allocator). Tests now run and pass.
 
     #[test]
-    #[ignore = "tenthc WASM host stubs: vec_len/vec_push/vec_get are no-ops in test linker; needs real stub impl"]
     fn tenthc_for_vec_literal_basic() {
         let src = "fn f() -> i64 { let mut s: i64 = 0; for x in [10, 20, 30] { s = s + x; }; s }";
         assert_tenthc_for(src, "f", &[], 60);
@@ -589,13 +691,12 @@ mod tenthc_for_loop {
     //         continue is computed identically to Range iteration).
     //
     // BUG: same vec_push type/drop mismatch as Test 7 — see comment there.
-    //      type/drop mismatch was fixed (wasm_drop removed), but tests
-    //      still fail due to empty host function stubs in test linker
-    //      (vec_len always returns 0). Marked #[ignore] until test infra
-    //      provides real Vec host function stubs.
+    //      type/drop mismatch was fixed (wasm_drop removed).
+    // UPDATE 2026-07-08 (AUDIT-11.4.5 fix): host function stubs in
+    //      setup_output_store_and_linker replaced with real Vec
+    //      implementations — tests now run and pass.
 
     #[test]
-    #[ignore = "tenthc WASM host stubs: vec_len/vec_push/vec_get are no-ops in test linker; needs real stub impl"]
     fn tenthc_for_vec_literal_break_continue() {
         let src = "fn f() -> i64 { let mut s: i64 = 0; for x in [1, 2, 3, 4, 5] { if x == 3 { continue; }; if x == 5 { break; }; s = s + x; }; s }";
         assert_tenthc_for(src, "f", &[], 7);

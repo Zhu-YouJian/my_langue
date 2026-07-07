@@ -35,9 +35,14 @@ use super::autodiff::{Tape, TapeOp};
 const DEFAULT_ARENA_CAPACITY: usize = 64 * 1024; // 64K f64 slots = 512 KB
 
 pub struct Interpreter {
-    /// Scope chain: scopes[0] is global, pushed/popped on function entry/exit.
-    /// Variable lookup walks from the last scope backward.
-    pub scopes: Vec<HashMap<String, Value>>,
+    /// AUDIT-11.4.3: 扁平化 `name → Vec<(scope_depth, Value)>` 索引。
+    /// 每个 name 关联一个栈，支持 shadowing；`resolve_var` 为 O(1)。
+    /// 取代旧的 `Vec<HashMap<String, Value>>` 双重存储（lookup 在重嵌套场景下 O(n*m)）。
+    pub vars: HashMap<String, Vec<(usize, Value)>>,
+    /// 当前 scope 深度（0 = 全局）。`push_scope` 递增，`pop_scope` 递减。
+    scope_depth: usize,
+    /// 每层 scope 中插入的变量名列表，`pop_scope` 时只清理这些变量（O(m)，m 为本层变量数）。
+    scope_vars: Vec<Vec<String>>,
     functions: Vec<HirFnDef>,
     generic_funcs: HashMap<String, HirFnDef>,
     methods: HashMap<String, HashMap<String, HirFnDef>>,
@@ -77,7 +82,9 @@ pub struct Interpreter {
 impl Interpreter {
     pub fn new(program: &HirProgram) -> Self {
         Interpreter {
-            scopes: vec![HashMap::new()],
+            vars: HashMap::new(),
+            scope_depth: 0,
+            scope_vars: vec![Vec::new()],
             functions: program.functions.clone(),
             generic_funcs: HashMap::new(),
             methods: program.methods.clone(),
@@ -96,14 +103,84 @@ impl Interpreter {
         }
     }
 
-    /// Convenience: access the global (bottom) scope.
-    pub fn globals(&self) -> &HashMap<String, Value> {
-        &self.scopes[0]
+    /// AUDIT-11.4.3: 进入新 scope（depth +1）。
+    pub(super) fn push_scope(&mut self) {
+        self.scope_depth += 1;
+        self.scope_vars.push(Vec::new());
     }
 
-    /// Convenience: mutable access to the current (top) scope.
-    pub(super) fn current_scope(&mut self) -> &mut HashMap<String, Value> {
-        self.scopes.last_mut().unwrap()
+    /// AUDIT-11.4.3: 退出当前 scope，清理本层变量（O(m)，m 为本层变量数）。
+    /// 全局 scope（depth 0）不可 pop。
+    pub(super) fn pop_scope(&mut self) {
+        if self.scope_depth == 0 {
+            return;
+        }
+        let names = self.scope_vars.pop().unwrap_or_default();
+        for name in &names {
+            if let Some(stack) = self.vars.get_mut(name) {
+                while stack.last().map_or(false, |(d, _)| *d == self.scope_depth) {
+                    stack.pop();
+                }
+                if stack.is_empty() {
+                    self.vars.remove(name);
+                }
+            }
+        }
+        self.scope_depth -= 1;
+    }
+
+    /// AUDIT-11.4.3: 在当前 scope 插入/覆盖变量。
+    /// 同一 scope 内同名变量为覆盖语义（与原 HashMap::insert 一致）；
+    /// 不同 scope 的同名变量为 shadowing（栈追加）。
+    pub(super) fn insert_var(&mut self, name: String, val: Value) {
+        let stack = self.vars.entry(name.clone()).or_default();
+        if stack.last().map_or(false, |(d, _)| *d == self.scope_depth) {
+            stack.last_mut().unwrap().1 = val;
+        } else {
+            stack.push((self.scope_depth, val));
+            if let Some(scope) = self.scope_vars.get_mut(self.scope_depth) {
+                scope.push(name);
+            }
+        }
+    }
+
+    /// AUDIT-11.4.3: 从当前 scope 移除变量（用于模式绑定清理）。
+    pub(super) fn remove_var(&mut self, name: &str) -> Option<Value> {
+        let mut removed = None;
+        if let Some(stack) = self.vars.get_mut(name) {
+            if stack.last().map_or(false, |(d, _)| *d == self.scope_depth) {
+                removed = stack.pop().map(|(_, v)| v);
+                if stack.is_empty() {
+                    self.vars.remove(name);
+                }
+            }
+        }
+        if removed.is_some() {
+            if let Some(scope) = self.scope_vars.get_mut(self.scope_depth) {
+                scope.retain(|n| n != name);
+            }
+        }
+        removed
+    }
+
+    /// AUDIT-11.4.3: REPL 注入全局变量（在 scope_depth==0 时调用）。
+    pub fn extend_globals(&mut self, vars: HashMap<String, Value>) {
+        for (name, val) in vars {
+            self.insert_var(name, val);
+        }
+    }
+
+    /// AUDIT-11.4.3: REPL 提取全局变量（depth==0 的条目）。
+    pub fn globals_clone(&self) -> HashMap<String, Value> {
+        let mut result = HashMap::new();
+        for (name, stack) in &self.vars {
+            if let Some((depth, val)) = stack.first() {
+                if *depth == 0 {
+                    result.insert(name.clone(), val.clone());
+                }
+            }
+        }
+        result
     }
 
     /// Create an interpreter with resource limits enforced.
@@ -118,7 +195,7 @@ impl Interpreter {
     }
 
     pub fn execute_program(&mut self, program: &HirProgram) -> TenthResult<Option<Value>> {
-        self.current_scope().insert(
+        self.insert_var(
             "tensor".to_string(),
             Value::FnRef {
                 name: "tensor".to_string(),
@@ -128,7 +205,7 @@ impl Interpreter {
         );
 
         // Autodiff builtins
-        self.current_scope().insert(
+        self.insert_var(
             "start_grad".to_string(),
             Value::FnRef {
                 name: "start_grad".to_string(),
@@ -136,7 +213,7 @@ impl Interpreter {
                 return_type: Type::unit(),
             },
         );
-        self.current_scope().insert(
+        self.insert_var(
             "new_grad".to_string(),
             Value::FnRef {
                 name: "new_grad".to_string(),
@@ -144,7 +221,7 @@ impl Interpreter {
                 return_type: Type::unit(),
             },
         );
-        self.current_scope().insert(
+        self.insert_var(
             "stop_grad".to_string(),
             Value::FnRef {
                 name: "stop_grad".to_string(),
@@ -152,7 +229,7 @@ impl Interpreter {
                 return_type: Type::unit(),
             },
         );
-        self.current_scope().insert(
+        self.insert_var(
             "zero_grad".to_string(),
             Value::FnRef {
                 name: "zero_grad".to_string(),
@@ -160,7 +237,7 @@ impl Interpreter {
                 return_type: Type::unit(),
             },
         );
-        self.current_scope().insert(
+        self.insert_var(
             "cross_entropy".to_string(),
             Value::FnRef {
                 name: "cross_entropy".to_string(),
@@ -172,7 +249,7 @@ impl Interpreter {
             },
         );
         // select 原语（论文 T47/T48/T50）：逐元素条件选择，支持广播与可微
-        self.current_scope().insert(
+        self.insert_var(
             "select".to_string(),
             Value::FnRef {
                 name: "select".to_string(),
@@ -185,7 +262,7 @@ impl Interpreter {
             },
         );
         // scatter 原语：不可变散布，按 index 沿 dim 覆盖 base 的对应位置
-        self.current_scope().insert(
+        self.insert_var(
             "scatter".to_string(),
             Value::FnRef {
                 name: "scatter".to_string(),
@@ -199,7 +276,7 @@ impl Interpreter {
             },
         );
         // gather 原语：沿 dim 维按 index 取值（与 PyTorch gather 对齐）
-        self.current_scope().insert(
+        self.insert_var(
             "gather".to_string(),
             Value::FnRef {
                 name: "gather".to_string(),
@@ -213,7 +290,7 @@ impl Interpreter {
         );
         // Scalar math
         for name in &["abs", "sqrt", "sin", "cos", "ln", "pow"] {
-            self.current_scope().insert(
+            self.insert_var(
                 name.to_string(),
                 Value::FnRef {
                     name: name.to_string(),
@@ -224,7 +301,7 @@ impl Interpreter {
         }
         // Tensor creation
         for name in &["zeros", "ones"] {
-            self.current_scope().insert(
+            self.insert_var(
                 name.to_string(),
                 Value::FnRef {
                     name: name.to_string(),
@@ -235,7 +312,7 @@ impl Interpreter {
         }
         // Serialization
         for name in &["save_weights", "load_weights"] {
-            self.current_scope().insert(
+            self.insert_var(
                 name.to_string(),
                 Value::FnRef {
                     name: name.to_string(),
@@ -244,7 +321,7 @@ impl Interpreter {
                 },
             );
         }
-        self.current_scope().insert(
+        self.insert_var(
             "param".to_string(),
             Value::FnRef {
                 name: "param".to_string(),
@@ -252,7 +329,7 @@ impl Interpreter {
                 return_type: Type::Unknown,
             },
         );
-        self.current_scope().insert(
+        self.insert_var(
             "backward".to_string(),
             Value::FnRef {
                 name: "backward".to_string(),
@@ -260,7 +337,7 @@ impl Interpreter {
                 return_type: Type::unit(),
             },
         );
-        self.current_scope().insert(
+        self.insert_var(
             "grad".to_string(),
             Value::FnRef {
                 name: "grad".to_string(),
@@ -269,7 +346,7 @@ impl Interpreter {
             },
         );
         // 护城河 F：explain_error() — 返回上一次 backward 失败的根因说明列表
-        self.current_scope().insert(
+        self.insert_var(
             "explain_error".to_string(),
             Value::FnRef {
                 name: "explain_error".to_string(),
@@ -281,7 +358,7 @@ impl Interpreter {
         for func in &program.functions {
             let params = func.params.clone();
             let ret = func.return_type.clone();
-            self.current_scope().insert(
+            self.insert_var(
                 func.name.clone(),
                 Value::FnRef {
                     name: func.name.clone(),
@@ -304,7 +381,7 @@ impl Interpreter {
                         let params = fn_def.params.clone();
                         let ret = fn_def.return_type.clone();
                         self.functions.push(fn_def.clone());
-                        self.current_scope().insert(
+                        self.insert_var(
                             alias.clone(),
                             Value::FnRef {
                                 name: alias.clone(),
@@ -332,22 +409,22 @@ impl Interpreter {
     }
 
     pub(super) fn resolve_var(&self, name: &str) -> Option<Value> {
-        for scope in self.scopes.iter().rev() {
-            match scope.get(name) {
-                Some(Value::Shared(rc)) => return Some(rc.borrow().clone()),
-                Some(Value::Moved) => return None,
-                Some(other) => return Some(other.clone()),
-                None => continue,
-            }
+        // AUDIT-11.4.3: 扁平化索引，O(1) lookup。
+        match self.vars.get(name).and_then(|s| s.last()) {
+            Some((_, Value::Shared(rc))) => Some(rc.borrow().clone()),
+            Some((_, Value::Moved)) => None,
+            Some((_, other)) => Some(other.clone()),
+            None => None,
         }
-        None
     }
 
     pub(super) fn set_var(&mut self, name: String, val: Value) {
-        // Guard: check variable count before inserting a new one
-        let total_vars: usize = self.scopes.iter().map(|s| s.len()).sum();
+        // Guard: check variable count before inserting a new one.
+        // AUDIT-11.4.3: 用 vars.len() 替代 scopes 遍历求和。
+        // 新计数为不同变量名数（shadowing 不重复计数），更合理。
+        let total_vars: usize = self.vars.len();
         if let Some(ref limits) = self.limits {
-            if !self.scopes.iter().any(|s| s.contains_key(&name)) {
+            if !self.vars.contains_key(&name) {
                 if let Err(msg) = limits.guard_vars(total_vars) {
                     eprintln!("[limits] variable limit: {}", msg);
                     if cfg!(feature = "mem-strict") {
@@ -356,30 +433,30 @@ impl Interpreter {
                 }
             }
         }
-        // Find the most recent scope that has this variable and update it there.
-        // This handles both Shared (update in-place) and plain values (overwrite).
-        // We iterate from innermost (last) to outermost (first).
-        for scope in self.scopes.iter_mut().rev() {
-            match scope.get(&name) {
-                Some(Value::Shared(rc)) => {
-                    *rc.borrow_mut() = val;
-                    return;
+        // AUDIT-11.4.3: 用扁平化索引定位变量，O(1)。
+        // 栈顶即最内层 scope 的条目（含 shadowing）。
+        if let Some(stack) = self.vars.get_mut(&name) {
+            if let Some((_, existing)) = stack.last_mut() {
+                match existing {
+                    Value::Shared(rc) => {
+                        *rc.borrow_mut() = val;
+                        return;
+                    }
+                    Value::Moved => {
+                        // Variable was moved; re-insert the new value in this scope.
+                        *existing = val;
+                        return;
+                    }
+                    _ => {
+                        // Plain value: overwrite in the same scope where it was found.
+                        *existing = val;
+                        return;
+                    }
                 }
-                Some(Value::Moved) => {
-                    // Variable was moved; re-insert the new value in this scope.
-                    scope.insert(name, val);
-                    return;
-                }
-                Some(_) => {
-                    // Plain value: overwrite in the same scope where it was found.
-                    scope.insert(name, val);
-                    return;
-                }
-                None => continue,
             }
         }
         // Variable not found in any scope: insert into current scope (new definition).
-        self.current_scope().insert(name, val);
+        self.insert_var(name, val);
     }
 
     /// Execution step counter. Called once per `eval_expr`/`eval_stmt`.
@@ -467,7 +544,7 @@ impl Interpreter {
                         return_type: Type::Unknown,
                     }));
                 }
-                if self.scopes.iter().any(|s| matches!(s.get(name), Some(Value::Moved))) {
+                if self.vars.get(name).map_or(false, |s| s.iter().any(|(_, v)| matches!(v, Value::Moved))) {
                     return Err(TenthError::RuntimeError {
                         message: format!("使用了已移动的值 '{}'", name),
                     });
@@ -609,14 +686,14 @@ impl Interpreter {
                     })?);
                 }
 
-                self.scopes.push(HashMap::new());
+                self.push_scope();
                 for ((pname, _), arg) in template.params.iter().zip(arg_values.iter()) {
-                    self.current_scope().insert(pname.clone(), arg.clone());
+                    self.insert_var(pname.clone(), arg.clone());
                 }
 
                 let result = self.eval_expr(&template.body);
 
-                self.scopes.pop();
+                self.pop_scope();
                 result
             }
 
@@ -830,7 +907,7 @@ impl Interpreter {
                         existing
                     } else {
                         let cell = Rc::new(RefCell::new(val));
-                        self.current_scope().insert(var_name.clone(), Value::Shared(cell.clone()));
+                        self.insert_var(var_name.clone(), Value::Shared(cell.clone()));
                         cell
                     };
                     // Weak reference: does NOT contribute to Rc strong count.
@@ -896,7 +973,7 @@ impl Interpreter {
                                 name: String::new(),
                                 fields: fields.clone(),
                             };
-                            self.current_scope().insert(vn, updated);
+                            self.insert_var(vn, updated);
                         }
                         return Ok(Some(Value::Unit));
                     }
@@ -953,7 +1030,7 @@ impl Interpreter {
                     message: "move 操作数为空值".into(),
                 })?;
                 if let HirExprKind::Var(var_name) = &inner.kind {
-                    self.current_scope().insert(var_name.clone(), Value::Moved);
+                    self.insert_var(var_name.clone(), Value::Moved);
                 }
                 Ok(Some(val))
             }
@@ -1088,11 +1165,23 @@ impl Interpreter {
     pub(super) fn unwrap_return(result: TenthResult<Option<Value>>) -> TenthResult<Option<Value>> {
         match result {
             Err(TenthError::ReturnValue(v)) => Ok(Some(v)),
-            Err(TenthError::TryPropagate(err_val)) => Ok(Some(Value::Enum {
-                enum_name: "Result".to_string(),
-                variant: "Err".to_string(),
-                fields: Rc::new(RefCell::new(vec![("_0".to_string(), err_val)])),
-            })),
+            Err(TenthError::TryPropagate(err_val)) => {
+                // `?` on Result::Err already carries the whole Result::Err(e) value
+                // (see binary.rs UnaryOp::Try). Return it directly to match VM semantics;
+                // wrapping again would produce Result::Err(Result::Err(e)) (double-wrap).
+                match &err_val {
+                    Value::Enum { enum_name, variant, .. }
+                        if enum_name == "Result" && variant == "Err" =>
+                    {
+                        Ok(Some(err_val))
+                    }
+                    _ => Ok(Some(Value::Enum {
+                        enum_name: "Result".to_string(),
+                        variant: "Err".to_string(),
+                        fields: Rc::new(RefCell::new(vec![("_0".to_string(), err_val)])),
+                    })),
+                }
+            }
             other => other,
         }
     }
@@ -1152,19 +1241,19 @@ impl Interpreter {
                 }))
             }
             Value::Closure { params, body, captures } => {
-                self.scopes.push(HashMap::new());
+                self.push_scope();
 
                 for ((pname, _), arg) in params.iter().zip(args.iter()) {
-                    self.current_scope().insert(pname.clone(), arg.clone());
+                    self.insert_var(pname.clone(), arg.clone());
                 }
 
                 for (cap_name, cap_val) in captures {
-                    self.current_scope().insert(cap_name.clone(), cap_val.clone());
+                    self.insert_var(cap_name.clone(), cap_val.clone());
                 }
 
                 let result = self.eval_expr(body);
 
-                self.scopes.pop();
+                self.pop_scope();
 
                 result
             }
@@ -1187,27 +1276,33 @@ impl Interpreter {
                     None => Value::Unit,
                 };
                 if names.len() == 1 {
-                    self.current_scope().insert(names[0].clone(), val);
+                    self.insert_var(names[0].clone(), val);
                 } else {
-                    // Tuple destructuring: val should be a Vec
+                    // Tuple destructuring: val should be a Vec / Array / Tuple
                     match &val {
                         Value::Vec(v) => {
                             let borrowed = v.borrow();
                             for (i, name) in names.iter().enumerate() {
                                 let v = borrowed.get(i).cloned().unwrap_or(Value::Unit);
-                                self.current_scope().insert(name.clone(), v);
+                                self.insert_var(name.clone(), v);
                             }
                         }
                         Value::Array(a) => {
                             let borrowed = a.borrow();
                             for (i, name) in names.iter().enumerate() {
                                 let v = borrowed.get(i).cloned().unwrap_or(Value::Unit);
-                                self.current_scope().insert(name.clone(), v);
+                                self.insert_var(name.clone(), v);
+                            }
+                        }
+                        Value::Tuple(items) => {
+                            for (i, name) in names.iter().enumerate() {
+                                let v = items.get(i).cloned().unwrap_or(Value::Unit);
+                                self.insert_var(name.clone(), v);
                             }
                         }
                         _ => {
                             // Fallback: assign entire value to first name
-                            self.current_scope().insert(names[0].clone(), val);
+                            self.insert_var(names[0].clone(), val);
                         }
                     }
                 }
@@ -1260,7 +1355,7 @@ impl Interpreter {
                     Value::Range { start, end, inclusive } => {
                         let e = if inclusive { end + 1 } else { end };
                         for i in start..e {
-                            self.current_scope().insert(var.clone(), Value::Int(i));
+                            self.insert_var(var.clone(), Value::Int(i));
                             match self.eval_stmt(body) {
                                 Err(TenthError::BreakSignal) => break,
                                 Err(TenthError::ContinueSignal) => continue,
@@ -1275,7 +1370,7 @@ impl Interpreter {
                                 Value::Shared(rc) => rc.borrow().clone(),
                                 other => other.clone(),
                             };
-                            self.current_scope().insert(var.clone(), val);
+                            self.insert_var(var.clone(), val);
                             match self.eval_stmt(body) {
                                 Err(TenthError::BreakSignal) => break,
                                 Err(TenthError::ContinueSignal) => continue,
@@ -1301,7 +1396,7 @@ impl Interpreter {
                             };
                             let row_tensor = Tensor::from_vec(row_data, row_shape);
                             let val = Value::Tensor(Rc::new(RefCell::new(row_tensor)));
-                            self.current_scope().insert(var.clone(), val);
+                            self.insert_var(var.clone(), val);
                             match self.eval_stmt(body) {
                                 Err(TenthError::BreakSignal) => break,
                                 Err(TenthError::ContinueSignal) => continue,
@@ -1319,7 +1414,7 @@ impl Interpreter {
                                     Value::Shared(rc) => rc.borrow().clone(),
                                     other => other.clone(),
                                 };
-                                self.current_scope().insert(var.clone(), val);
+                                self.insert_var(var.clone(), val);
                                 match self.eval_stmt(body) {
                                     Err(TenthError::BreakSignal) => break,
                                     Err(TenthError::ContinueSignal) => continue,

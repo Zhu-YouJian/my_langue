@@ -635,13 +635,17 @@ impl super::Interpreter {
     pub(super) fn apply_closure(&mut self, closure: &Value, args: &[Value]) -> TenthResult<Value> {
         match closure {
             Value::Closure { params, body, captures } => {
-                self.scopes.push(captures.clone().into_iter().collect());
+                // AUDIT-11.4.3: push_scope 后逐个 insert captures
+                self.push_scope();
+                for (cap_name, cap_val) in captures.clone() {
+                    self.insert_var(cap_name, cap_val);
+                }
                 for (i, (name, _)) in params.iter().enumerate() {
                     let val = args.get(i).cloned().unwrap_or(Value::Unit);
-                    self.current_scope().insert(name.clone(), val);
+                    self.insert_var(name.clone(), val);
                 }
                 let result = self.eval_expr(body);
-                self.scopes.pop();
+                self.pop_scope();
                 match result {
                     Ok(Some(v)) => Ok(v),
                     Ok(None) => Ok(Value::Unit),
@@ -785,16 +789,16 @@ impl super::Interpreter {
     }
 
     pub(super) fn call_method_impl(&mut self, receiver: &Value, method_fn: &HirFnDef, args: &[Value]) -> TenthResult<Option<Value>> {
-        self.scopes.push(HashMap::new());
-        self.current_scope().insert("self".to_string(), receiver.clone());
+        self.push_scope();
+        self.insert_var("self".to_string(), receiver.clone());
 
         for ((pname, _), arg) in method_fn.params.iter().skip(1).zip(args.iter()) {
-            self.current_scope().insert(pname.clone(), arg.clone());
+            self.insert_var(pname.clone(), arg.clone());
         }
 
         let result = self.eval_expr(&method_fn.body);
 
-        self.scopes.pop();
+        self.pop_scope();
 
         result
     }

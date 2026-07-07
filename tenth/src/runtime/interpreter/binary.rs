@@ -321,6 +321,10 @@ impl super::Interpreter {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
+            (Value::Tuple(a), Value::Tuple(b)) => {
+                a.len() == b.len()
+                    && a.iter().zip(b.iter()).all(|(x, y)| self.values_eq(x, y))
+            }
             _ => false,
         }
     }
