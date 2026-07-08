@@ -715,6 +715,23 @@ impl super::Interpreter {
                     return Ok(Some(match arg {
                         Value::Int(n) => Value::Float(*n as f64),
                         Value::Float(f) => Value::Float(*f),
+                        Value::Float32(f) => Value::Float(*f as f64),
+                        Value::Tensor(t) => {
+                            let tensor = t.borrow();
+                            let shape = tensor.shape();
+                            let scalar = if shape.is_empty() {
+                                tensor.get(&[])
+                            } else if tensor.size() == 1 {
+                                tensor.get(&vec![0usize; shape.len()])
+                            } else {
+                                return Err(TenthError::RuntimeError {
+                                    message: format!("to_float() 不接受多元素 Tensor (shape={:?})", shape),
+                                });
+                            };
+                            scalar.map(Value::Float).ok_or_else(|| TenthError::RuntimeError {
+                                message: "to_float() Tensor 标量提取失败".into(),
+                            })?
+                        }
                         _ => return Err(TenthError::RuntimeError {
                             message: "to_float() 期望一个数值参数".into(),
                         }),
@@ -731,6 +748,22 @@ impl super::Interpreter {
                         Value::Int(n) => Value::Float(*n as f64),
                         Value::Float(f) => Value::Float(*f),
                         Value::Float32(f) => Value::Float(*f as f64),
+                        Value::Tensor(t) => {
+                            let tensor = t.borrow();
+                            let shape = tensor.shape();
+                            let scalar = if shape.is_empty() {
+                                tensor.get(&[])
+                            } else if tensor.size() == 1 {
+                                tensor.get(&vec![0usize; shape.len()])
+                            } else {
+                                return Err(TenthError::RuntimeError {
+                                    message: format!("to_f64() 不接受多元素 Tensor (shape={:?})", shape),
+                                });
+                            };
+                            scalar.map(Value::Float).ok_or_else(|| TenthError::RuntimeError {
+                                message: "to_f64() Tensor 标量提取失败".into(),
+                            })?
+                        }
                         _ => return Err(TenthError::RuntimeError {
                             message: "to_f64() 期望一个数值参数".into(),
                         }),
@@ -747,6 +780,22 @@ impl super::Interpreter {
                         Value::Int(n) => Value::Float32(*n as f32),
                         Value::Float(f) => Value::Float32(*f as f32),
                         Value::Float32(f) => Value::Float32(*f),
+                        Value::Tensor(t) => {
+                            let tensor = t.borrow();
+                            let shape = tensor.shape();
+                            let scalar = if shape.is_empty() {
+                                tensor.get(&[])
+                            } else if tensor.size() == 1 {
+                                tensor.get(&vec![0usize; shape.len()])
+                            } else {
+                                return Err(TenthError::RuntimeError {
+                                    message: format!("to_f32() 不接受多元素 Tensor (shape={:?})", shape),
+                                });
+                            };
+                            scalar.map(|v| Value::Float32(v as f32)).ok_or_else(|| TenthError::RuntimeError {
+                                message: "to_f32() Tensor 标量提取失败".into(),
+                            })?
+                        }
                         _ => return Err(TenthError::RuntimeError {
                             message: "to_f32() 期望一个数值参数".into(),
                         }),

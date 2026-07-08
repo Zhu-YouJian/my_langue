@@ -142,7 +142,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `io_test.rs` | 4/0/0 | 同步 I/O 原语 |
 | `net_test.rs` | 6/0/0 | 网络 I/O 原语 |
 | `regex_test.rs` | 11/0/0 | 正则表达式（compile/match/find/find_all/replace/split/无效handle/邮箱正则） |
-| `tensor_features_test.rs` | 13/0/4 | 张量修复（序列化 v2 f32/f64/混合/向后兼容 + f16/bf16 构造/运算/序列化 + 优化器 parse；4 项 ignore：use+泛型限制 + to_f64 标量 Tensor 限制） |
+| `tensor_features_test.rs` | 17/0/0 | 张量修复（序列化 v2 f32/f64/混合/向后兼容 + f16/bf16 构造/运算/序列化 + 优化器 parse + clip_grad_by_norm/adamw_step_w use+泛型调用运行时验证） |
 
 ### 预存失败（不回归）
 
@@ -163,7 +163,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试目标 | 数量 | 说明 |
 |----------|------|------|
-| **总计** | **815 passed / 3 failed / 16 ignored** | 57 个测试目标（56 文件 + lib），6 个栈溢出崩溃预存问题 |
+| **总计** | **819 passed / 3 failed / 12 ignored** | 57 个测试目标（56 文件 + lib），6 个栈溢出崩溃预存问题 |
 
 > **2026-07-08 张量修复测试状态**：本次张量修复（f16/bf16 Phase 1 + 序列化 v2 + 4 项小修复）的代码改动已通过现有测试套件验证（lib 16 + integration 14 + native_parity 35 + stdlib 114 = 179 passed；autodiff 5 passed；自举通过），**未新增独立测试文件**——`native_parity_test.rs` 的 35 项已含序列化 v2 parity 测试（test_save_load_weights_parity + test_save_load_weights_nonzero_parity）。Wave 3 测试部补测试任务进行中（accumulate_loop 功能测试 / autodiff unbroadcast shape 测试 / AdamW 单值返回版本测试 / clip_grad_by_norm JIT 路径测试 / 序列化 f32 读写测试 / f16/bf16 基本运算测试），完成后由测试部同步 §三 测试矩阵新增 tensor_features_test 行 + 总计数字。
 

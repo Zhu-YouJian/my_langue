@@ -62,11 +62,35 @@ fn register_test_natives(vm: &mut Vm) {
         let shape: Vec<usize> = args.iter().map(|a| a.as_int().unwrap_or(1) as usize).collect();
         Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::ones(&shape)))))
     });
-    // to_f64 / to_f32（clip_grad_by_norm 测试需要）
+    // to_f64 / to_f32（clip_grad_by_norm 测试需要）— 支持标量 Tensor
+    vm.add_native("sqrt".into(), |_vm, args| match args.first() {
+        Some(Value::Float(f)) => Ok(Value::Float(f.sqrt())),
+        Some(Value::Float32(f)) => Ok(Value::Float32(f.sqrt())),
+        Some(Value::Int(n)) => Ok(Value::Float((*n as f64).sqrt())),
+        _ => Err(tenth::error::TenthError::RuntimeError {
+            message: "sqrt() 需要一个数值参数".into(),
+        }),
+    });
     vm.add_native("to_f64".into(), |_vm, args| match args.first() {
         Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
         Some(Value::Float(f)) => Ok(Value::Float(*f)),
         Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
+        Some(Value::Tensor(t)) => {
+            let tensor = t.borrow();
+            let shape = tensor.shape();
+            let scalar = if shape.is_empty() {
+                tensor.get(&[])
+            } else if tensor.size() == 1 {
+                tensor.get(&vec![0usize; shape.len()])
+            } else {
+                return Err(tenth::error::TenthError::RuntimeError {
+                    message: format!("to_f64() 不接受多元素 Tensor (shape={:?})", shape),
+                });
+            };
+            scalar.map(Value::Float).ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                message: "to_f64() Tensor 标量提取失败".into(),
+            })
+        }
         _ => Err(tenth::error::TenthError::RuntimeError {
             message: "to_f64() 需要一个数值参数".into(),
         }),
@@ -75,6 +99,22 @@ fn register_test_natives(vm: &mut Vm) {
         Some(Value::Int(n)) => Ok(Value::Float32(*n as f32)),
         Some(Value::Float(f)) => Ok(Value::Float32(*f as f32)),
         Some(Value::Float32(f)) => Ok(Value::Float32(*f)),
+        Some(Value::Tensor(t)) => {
+            let tensor = t.borrow();
+            let shape = tensor.shape();
+            let scalar = if shape.is_empty() {
+                tensor.get(&[])
+            } else if tensor.size() == 1 {
+                tensor.get(&vec![0usize; shape.len()])
+            } else {
+                return Err(tenth::error::TenthError::RuntimeError {
+                    message: format!("to_f32() 不接受多元素 Tensor (shape={:?})", shape),
+                });
+            };
+            scalar.map(|v| Value::Float32(v as f32)).ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                message: "to_f32() Tensor 标量提取失败".into(),
+            })
+        }
         _ => Err(tenth::error::TenthError::RuntimeError {
             message: "to_f32() 需要一个数值参数".into(),
         }),
@@ -1112,16 +1152,8 @@ fn test_f16_serialization() {
 // clipped = gw * scale → [0.577, 0.577, 0.577]
 //
 // 使用 use std::optim::clip::clip_grad_by_norm 导入（需要 search_paths 支持）。
-//
-// #[ignore] 原因：use 导入的泛型函数未注册到 generic_funcs 字典，
-// 泛型调用 `clip_grad_by_norm<f64>(...)` 报"未定义的泛型函数"。
-// 这是 HIR lower 层面的已知限制（use 导入只注册 functions/scope，
-// 不注册 generic_funcs）。此外 to_f64 native 不接受标量 Tensor 参数，
-// clip.th 中 `to_f64(norm)` 在 recording 模式下 norm 是 Tensor 时会失败。
-// 已向 runtime/compiler 部门留言（见黑板）。
 
 #[test]
-#[ignore = "use+泛型调用限制：generic_funcs 未注册；to_f64 不支持标量 Tensor"]
 fn test_clip_grad_by_norm() {
     let src = r#"
         use std::optim::clip::clip_grad_by_norm;
@@ -1159,7 +1191,6 @@ fn test_clip_grad_by_norm() {
 // ─── Test 12: clip_grad_by_norm norm<max_norm 时不裁剪 ────────────────────
 
 #[test]
-#[ignore = "use+泛型调用限制：同 test_clip_grad_by_norm"]
 fn test_clip_grad_by_norm_no_clip() {
     let src = r#"
         use std::optim::clip::clip_grad_by_norm;
@@ -1191,19 +1222,16 @@ fn test_clip_grad_by_norm_no_clip() {
 //
 // 需要 autodiff 上下文：先 new_grad + param + backward，再调 adamw_step_w。
 // 验证返回 new_w 是 F64 tensor 且 shape 正确。
-//
-// #[ignore] 原因：同 test_clip_grad_by_norm，use+泛型调用限制。
 
 #[test]
-#[ignore = "use+泛型调用限制：generic_funcs 未注册"]
 fn test_adamw_step_w() {
     let src = r#"
         use std::optim::adamw::adamw_step_w;
         fn run() -> Tensor[f64, ..] {
             new_grad();
             let w = param(tensor[[1.0, 2.0, 3.0]]);
-            let m = zeros(3);
-            let v = zeros(3);
+            let m = zeros(1, 3);
+            let v = zeros(1, 3);
             let loss = (w * w).sum();
             backward(loss);
             stop_grad();
@@ -1216,7 +1244,8 @@ fn test_adamw_step_w() {
     match v {
         Value::Tensor(t) => {
             assert_eq!(t.borrow().dtype(), BaseType::F64, "new_w 应为 F64");
-            assert_eq!(t.borrow().shape(), vec![3], "shape 应为 [3]");
+            // tensor[[1.0, 2.0, 3.0]] 创建 2D [1, 3]，故结果 shape 为 [1, 3]
+            assert_eq!(t.borrow().shape(), vec![1, 3], "shape 应为 [1, 3]");
             // 验证 new_w 是有限值（非 NaN/Inf）
             if let TensorData::F64(arr) = &t.borrow().data {
                 for &x in arr.iter() {
@@ -1236,7 +1265,6 @@ fn test_adamw_step_w() {
 // 由于 tuple 解构在 .th 中可能有已知限制，这里只验证 adamw_step_w 单独可用。
 
 #[test]
-#[ignore = "use+泛型调用限制：同 test_adamw_step_w"]
 fn test_adamw_step_w_returns_finite() {
     let src = r#"
         use std::optim::adamw::adamw_step_w;

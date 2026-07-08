@@ -1853,6 +1853,22 @@ fn register_natives(vm: &mut Vm) {
             Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
             Some(Value::Float(f)) => Ok(Value::Float(*f)),
             Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
+            Some(Value::Tensor(t)) => {
+                let tensor = t.borrow();
+                let shape = tensor.shape();
+                let scalar = if shape.is_empty() {
+                    tensor.get(&[])
+                } else if tensor.size() == 1 {
+                    tensor.get(&vec![0usize; shape.len()])
+                } else {
+                    return Err(tenth::error::TenthError::RuntimeError {
+                        message: format!("to_float() 不接受多元素 Tensor (shape={:?})", shape),
+                    });
+                };
+                scalar.map(Value::Float).ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                    message: "to_float() Tensor 标量提取失败".into(),
+                })
+            }
             _ => Err(tenth::error::TenthError::RuntimeError { message: "to_float() 需要一个数值参数".into() }),
         }
     });
@@ -1861,6 +1877,22 @@ fn register_natives(vm: &mut Vm) {
             Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
             Some(Value::Float(f)) => Ok(Value::Float(*f)),
             Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
+            Some(Value::Tensor(t)) => {
+                let tensor = t.borrow();
+                let shape = tensor.shape();
+                let scalar = if shape.is_empty() {
+                    tensor.get(&[])
+                } else if tensor.size() == 1 {
+                    tensor.get(&vec![0usize; shape.len()])
+                } else {
+                    return Err(tenth::error::TenthError::RuntimeError {
+                        message: format!("to_f64() 不接受多元素 Tensor (shape={:?})", shape),
+                    });
+                };
+                scalar.map(Value::Float).ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                    message: "to_f64() Tensor 标量提取失败".into(),
+                })
+            }
             _ => Err(tenth::error::TenthError::RuntimeError { message: "to_f64() 需要一个数值参数".into() }),
         }
     });
@@ -1869,6 +1901,22 @@ fn register_natives(vm: &mut Vm) {
             Some(Value::Int(n)) => Ok(Value::Float32(*n as f32)),
             Some(Value::Float(f)) => Ok(Value::Float32(*f as f32)),
             Some(Value::Float32(f)) => Ok(Value::Float32(*f)),
+            Some(Value::Tensor(t)) => {
+                let tensor = t.borrow();
+                let shape = tensor.shape();
+                let scalar = if shape.is_empty() {
+                    tensor.get(&[])
+                } else if tensor.size() == 1 {
+                    tensor.get(&vec![0usize; shape.len()])
+                } else {
+                    return Err(tenth::error::TenthError::RuntimeError {
+                        message: format!("to_f32() 不接受多元素 Tensor (shape={:?})", shape),
+                    });
+                };
+                scalar.map(|v| Value::Float32(v as f32)).ok_or_else(|| tenth::error::TenthError::RuntimeError {
+                    message: "to_f32() Tensor 标量提取失败".into(),
+                })
+            }
             _ => Err(tenth::error::TenthError::RuntimeError { message: "to_f32() 需要一个数值参数".into() }),
         }
     });

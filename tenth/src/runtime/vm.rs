@@ -2151,6 +2151,35 @@ impl Vm {
                 }
                 err(&format!("没有方法 '{}'", method))
             }
+            // 标量数学方法（与 interpreter::eval_scalar_method 对齐）
+            // 使 `f64.sqrt()` / `f64.abs()` 等方法调用在 VM 路径可用
+            Value::Float(f) => match method {
+                "sqrt" => Ok(Value::Float(f.sqrt())),
+                "abs" => Ok(Value::Float(f.abs())),
+                "exp" => Ok(Value::Float(f.exp())),
+                "log" | "ln" => Ok(Value::Float(f.ln())),
+                "sin" => Ok(Value::Float(f.sin())),
+                "cos" => Ok(Value::Float(f.cos())),
+                _ => err(&format!("Float 没有方法 '{}'", method)),
+            },
+            Value::Float32(f) => match method {
+                "sqrt" => Ok(Value::Float32(f.sqrt())),
+                "abs" => Ok(Value::Float32(f.abs())),
+                "exp" => Ok(Value::Float32(f.exp())),
+                "log" | "ln" => Ok(Value::Float32(f.ln())),
+                "sin" => Ok(Value::Float32(f.sin())),
+                "cos" => Ok(Value::Float32(f.cos())),
+                _ => err(&format!("Float32 没有方法 '{}'", method)),
+            },
+            Value::Int(n) => match method {
+                "sqrt" => Ok(Value::Float((n as f64).sqrt())),
+                "abs" => Ok(Value::Int(n.abs())),
+                "exp" => Ok(Value::Float((n as f64).exp())),
+                "log" | "ln" => Ok(Value::Float((n as f64).ln())),
+                "sin" => Ok(Value::Float((n as f64).sin())),
+                "cos" => Ok(Value::Float((n as f64).cos())),
+                _ => err(&format!("Int 没有方法 '{}'", method)),
+            },
             _ => err(&format!("没有方法 '{}'", method)),
         }
     }

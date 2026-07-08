@@ -354,6 +354,13 @@ impl Lowerer {
                                     self.functions.push(fn_def.clone());
                                 }
                             }
+                            // 泛型函数存于 module.generic_funcs（非 module.functions）
+                            for fn_def in &module.generic_funcs {
+                                let param_types = fn_def.params.clone();
+                                let ret_ty = fn_def.return_type.clone();
+                                self.scope.define_fn(fn_def.name.clone(), param_types, ret_ty);
+                                self.generic_funcs.insert(fn_def.name.clone(), fn_def.clone());
+                            }
                         } else {
                             // Fall back to nested module navigation (for inline mod blocks)
                             let mod_name = &path_strs[0];
@@ -379,6 +386,12 @@ impl Lowerer {
                                     if !self.functions.iter().any(|f| f.name == fn_def.name) {
                                         self.functions.push(fn_def.clone());
                                     }
+                                }
+                                for fn_def in &module.generic_funcs {
+                                    let param_types = fn_def.params.clone();
+                                    let ret_ty = fn_def.return_type.clone();
+                                    self.scope.define_fn(fn_def.name.clone(), param_types, ret_ty);
+                                    self.generic_funcs.insert(fn_def.name.clone(), fn_def.clone());
                                 }
                             }
                         }
@@ -419,11 +432,22 @@ impl Lowerer {
                                     self.functions.push(fn_def.clone());
                                 }
                             }
-                            // Define the specifically requested function in scope
-                            if let Some(fn_def) = module.functions.iter().find(|f| &f.name == fn_name) {
+                            // 泛型函数存于 module.generic_funcs（非 module.functions）
+                            for fn_def in &module.generic_funcs {
+                                self.generic_funcs.insert(fn_def.name.clone(), fn_def.clone());
+                            }
+                            // Define the specifically requested function in scope.
+                            // 目标函数可能在 functions（非泛型）或 generic_funcs（泛型）中。
+                            let found = module.functions.iter().find(|f| &f.name == fn_name)
+                                .or_else(|| module.generic_funcs.iter().find(|f| &f.name == fn_name));
+                            if let Some(fn_def) = found {
                                 let param_types = fn_def.params.clone();
                                 let ret_ty = fn_def.return_type.clone();
                                 self.scope.define_fn(alias.clone(), param_types, ret_ty);
+                                if !fn_def.generics.is_empty() {
+                                    // 用 alias 作为键，使调用端写 `alias<T>(...)` 能解析到
+                                    self.generic_funcs.insert(alias.clone(), fn_def.clone());
+                                }
                             }
                         } else {
                             // Fall back to nested module navigation (for inline mod blocks)
@@ -443,11 +467,16 @@ impl Lowerer {
                             };
 
                             if let Some(module) = module {
-                                if let Some(fn_def) = module.functions.iter().find(|f| &f.name == fn_name) {
+                                // 目标函数可能在 functions 或 generic_funcs 中
+                                let found = module.functions.iter().find(|f| &f.name == fn_name)
+                                    .or_else(|| module.generic_funcs.iter().find(|f| &f.name == fn_name));
+                                if let Some(fn_def) = found {
                                     let param_types = fn_def.params.clone();
                                     let ret_ty = fn_def.return_type.clone();
                                     self.scope.define_fn(alias.clone(), param_types, ret_ty);
-                                    if !self.functions.iter().any(|f| f.name == fn_def.name) {
+                                    if !fn_def.generics.is_empty() {
+                                        self.generic_funcs.insert(alias.clone(), fn_def.clone());
+                                    } else if !self.functions.iter().any(|f| f.name == fn_def.name) {
                                         self.functions.push(fn_def.clone());
                                     }
                                 }
