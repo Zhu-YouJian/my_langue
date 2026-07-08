@@ -11,6 +11,8 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(source: &str) -> Self {
+        // 跳过 UTF-8 BOM（PowerShell 等编辑器默认添加）
+        let source = source.strip_prefix('\u{FEFF}').unwrap_or(source);
         Lexer {
             source: source.chars().collect(),
             pos: 0,

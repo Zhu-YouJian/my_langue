@@ -1,7 +1,42 @@
 use crate::hir::types::BaseType;
 use half::{bf16, f16};
-use ndarray::{ArrayD, IxDyn};
+use ndarray::{ArrayD, IxDyn, ArrayViewD};
 use std::fmt;
+
+/// 格式化 f64，确保整数值显示 `.0` 后缀（如 `2.0` 而非 `2`）。
+fn format_tensor_f64(n: f64) -> String {
+    let s = format!("{}", n);
+    if n.is_finite() && !s.contains('.') && !s.contains('e') {
+        format!("{}.0", s)
+    } else {
+        s
+    }
+}
+
+/// 递归格式化 ArrayViewD<f64>，确保每个元素都显示 `.0` 后缀（如 `[[1.0, 2.0]]`）。
+fn format_array_f64(f: &mut fmt::Formatter, a: ArrayViewD<f64>) -> fmt::Result {
+    let shape = a.shape();
+    if shape.is_empty() {
+        // 0D 标量张量
+        let v = a.iter().next().copied().unwrap_or(0.0);
+        return write!(f, "{}", format_tensor_f64(v));
+    }
+    if shape.len() == 1 {
+        write!(f, "[")?;
+        for (i, v) in a.iter().enumerate() {
+            if i > 0 { write!(f, ", ")?; }
+            write!(f, "{}", format_tensor_f64(*v))?;
+        }
+        return write!(f, "]");
+    }
+    // N-D：递归格式化外层每一片
+    write!(f, "[")?;
+    for (i, sub) in a.outer_iter().enumerate() {
+        if i > 0 { write!(f, ", ")?; }
+        format_array_f64(f, sub.into_dyn())?;
+    }
+    write!(f, "]")
+}
 
 /// 双精度张量数据存储。f32 与 f64 各占一个变体，避免 f32 退化为「语法糖 f64」。
 /// Wave 2：新增 F16/BF16 半精度变体（前向运算时转 f32 计算后回写）。
@@ -578,6 +613,39 @@ impl Tensor {
             TensorData::F32(a) => a.get(IxDyn(index)).map(|v| *v as f64),
             TensorData::F16(a) => a.get(IxDyn(index)).map(|v| v.to_f64()),
             TensorData::BF16(a) => a.get(IxDyn(index)).map(|v| v.to_f64()),
+        }
+    }
+
+    /// 沿第 0 维索引，返回降维后的子张量（NumPy 语义）。
+    /// 例如 shape [2,3] 的 t[0] → shape [3] 的 1D 张量；
+    /// shape [3] 的 t[0] → 标量（1D 张量，shape []）。
+    /// 索引越界返回 Err。
+    pub fn index_dim(&self, idx: usize) -> Result<Tensor, String> {
+        let ndim = self.data.ndim();
+        if ndim == 0 {
+            return Err("无法对 0D 张量索引".into());
+        }
+        let dim_len = self.data.shape()[0];
+        if idx >= dim_len {
+            return Err(format!("索引 {} 越界，第 0 维长度为 {}", idx, dim_len));
+        }
+        match &self.data {
+            TensorData::F64(a) => {
+                let sub = a.index_axis(ndarray::Axis(0), idx).to_owned();
+                Ok(Tensor::from_data(sub))
+            }
+            TensorData::F32(a) => {
+                let sub = a.index_axis(ndarray::Axis(0), idx).to_owned();
+                Ok(Tensor::from_data_f32(sub))
+            }
+            TensorData::F16(a) => {
+                let sub = a.index_axis(ndarray::Axis(0), idx).to_owned();
+                Ok(Tensor::from_data_f16(sub))
+            }
+            TensorData::BF16(a) => {
+                let sub = a.index_axis(ndarray::Axis(0), idx).to_owned();
+                Ok(Tensor::from_data_bf16(sub))
+            }
         }
     }
 
@@ -2225,11 +2293,11 @@ fn broadcast_to_owned(data: &TensorData, target_shape: &[usize]) -> ArrayD<f64> 
 impl fmt::Display for Tensor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.data {
-            TensorData::F64(a) => write!(f, "{}", a),
-            TensorData::F32(a) => write!(f, "{}", a),
+            TensorData::F64(a) => format_array_f64(f, a.view()),
+            TensorData::F32(a) => format_array_f64(f, a.mapv(|v| v as f64).view()),
             // F16/BF16 cast 为 f64 视图后打印（保留精度信息）
-            TensorData::F16(a) => write!(f, "{}", a.mapv(|v| v.to_f64())),
-            TensorData::BF16(a) => write!(f, "{}", a.mapv(|v| v.to_f64())),
+            TensorData::F16(a) => format_array_f64(f, a.mapv(|v| v.to_f64()).view()),
+            TensorData::BF16(a) => format_array_f64(f, a.mapv(|v| v.to_f64()).view()),
         }
     }
 }

@@ -5,6 +5,27 @@ use std::fmt;
 use super::tensor::Tensor;
 use crate::hir::types::{Type, BaseType, Dim};
 
+/// 格式化 f64，确保整数值显示 `.0` 后缀（如 `2.0` 而非 `2`）。
+/// NaN/Inf 保持原样；已有小数点或科学记数法的值不变。
+fn format_f64(n: f64) -> String {
+    let s = format!("{}", n);
+    if n.is_finite() && !s.contains('.') && !s.contains('e') {
+        format!("{}.0", s)
+    } else {
+        s
+    }
+}
+
+/// 格式化 f32，确保整数值显示 `.0` 后缀。
+fn format_f32(n: f32) -> String {
+    let s = format!("{}", n);
+    if n.is_finite() && !s.contains('.') && !s.contains('e') {
+        format!("{}.0", s)
+    } else {
+        s
+    }
+}
+
 /// A lazy iterator that yields values on demand.
 /// Stores the source data and a chain of transformations (map/filter).
 #[derive(Debug, Clone)]
@@ -233,8 +254,8 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Int(n) => write!(f, "{}", n),
-            Value::Float(n) => write!(f, "{}", n),
-            Value::Float32(n) => write!(f, "{}f32", n),
+            Value::Float(n) => write!(f, "{}", format_f64(*n)),
+            Value::Float32(n) => write!(f, "{}f32", format_f32(*n)),
             Value::Bool(b) => write!(f, "{}", b),
             Value::String(s) => write!(f, "{}", s),
             Value::Tensor(t) => write!(f, "{}", t.borrow()),

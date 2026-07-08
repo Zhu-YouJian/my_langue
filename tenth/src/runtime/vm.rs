@@ -287,6 +287,9 @@ impl Vm {
     pub fn get_global(&self, name: &str) -> Option<Value> { self.globals.get(name).cloned() }
     pub fn set_last_error(&mut self, msg: String) { self.last_error = Some(msg); }
     pub fn take_last_error(&mut self) -> Option<String> { self.last_error.take() }
+    /// 检查是否有未处理的错误（不清除）。
+    /// JIT translator 在 MethodCall 后调用此方法，若发现错误则提前中止。
+    pub fn has_last_error(&self) -> bool { self.last_error.is_some() }
 
     pub fn chunk_index_of(&self, name: &str) -> Option<usize> {
         self.functions.get(name).copied()
@@ -361,6 +364,28 @@ impl Vm {
             Value::String(s) => {
                 let i = idx.as_int().unwrap_or(0) as usize;
                 Ok(Value::String(s.chars().nth(i).map(|c| c.to_string()).unwrap_or_default()))
+            }
+            Value::Tensor(t) => {
+                // NumPy 语义：单索引沿第 0 维降维。
+                // - 1D 张量 t[i] → 标量 Value::Float
+                // - N-D 张量 t[i] → (N-1)-D 子张量 Value::Tensor
+                let i = idx.as_int().unwrap_or(0) as usize;
+                let tensor = t.borrow();
+                if tensor.ndim() <= 1 {
+                    // 1D 或 0D：返回标量
+                    match tensor.get(&[i]) {
+                        Some(val) => Ok(Value::Float(val)),
+                        None => Err(TenthError::RuntimeError {
+                            message: format!("索引 {} 越界，形状为 {:?}", i, tensor.shape()),
+                        }),
+                    }
+                } else {
+                    // N-D：返回降维子张量
+                    match tensor.index_dim(i) {
+                        Ok(sub) => Ok(Value::Tensor(Rc::new(RefCell::new(sub)))),
+                        Err(msg) => Err(TenthError::RuntimeError { message: msg }),
+                    }
+                }
             }
             _ => Err(TenthError::RuntimeError { message: "无法索引".into() }),
         }
@@ -897,6 +922,35 @@ impl Vm {
                             let i = idx.as_int().unwrap_or(0) as usize;
                             let c = s.chars().nth(i).map(|c| c.to_string()).unwrap_or_default();
                             self.stack.push(Value::String(c));
+                        }
+                        Value::Tensor(t) => {
+                            // NumPy 语义：单索引沿第 0 维降维。
+                            // - 1D 张量 t[i] → 标量 Value::Float
+                            // - N-D 张量 t[i] → (N-1)-D 子张量 Value::Tensor
+                            let i = idx.as_int().unwrap_or(0) as usize;
+                            let tensor = t.borrow();
+                            if tensor.ndim() <= 1 {
+                                match tensor.get(&[i]) {
+                                    Some(val) => {
+                                        drop(tensor);
+                                        self.stack.push(Value::Float(val));
+                                    }
+                                    None => {
+                                        return err(&format!(
+                                            "索引 {} 越界，形状为 {:?}",
+                                            i, tensor.shape()
+                                        ));
+                                    }
+                                }
+                            } else {
+                                match tensor.index_dim(i) {
+                                    Ok(sub) => {
+                                        drop(tensor);
+                                        self.stack.push(Value::Tensor(Rc::new(RefCell::new(sub))));
+                                    }
+                                    Err(msg) => return err(&msg),
+                                }
+                            }
                         }
                         _ => return err("无法索引"),
                     }

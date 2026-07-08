@@ -363,6 +363,23 @@ impl<'a, M: Module> Translator<'a, M> {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_call("host_method_call", i as u64, (n + 1) as u64, args_addr, out);
                 self.bump_sp()?;
+                // B2: 检查 host_method_call 是否设置了错误（如 matmul shape mismatch）。
+                // 若有错误，立即返回 ok=false，让 run_jit 读取 last_error 并触发 fallback。
+                // 这避免了"静默 push Unit + 后续 println 输出 ()"的问题。
+                let err_flag = self.call_hostcall_vm_ret_u8("host_check_error");
+                let has_err = self.builder.ins().icmp_imm(IntCC::NotEqual, err_flag, 0);
+                let err_blk = self.builder.create_block();
+                let cont_blk = self.builder.create_block();
+                self.builder.ins().brif(has_err, err_blk, &[], cont_blk, &[]);
+                // 错误路径：返回 ok=0（run_jit 会 take_last_error 并返回 Err）
+                self.builder.switch_to_block(err_blk);
+                self.builder.seal_block(err_blk);
+                let ok_false = self.builder.ins().iconst(types::I8, 0);
+                self.builder.ins().return_(&[ok_false]);
+                // 继续路径
+                self.builder.switch_to_block(cont_blk);
+                self.builder.seal_block(cont_blk);
+                self.terminated = false;
             }
             Ret => {
                 self.sp -= VALUE_SIZE as i32;
@@ -681,6 +698,14 @@ impl<'a, M: Module> Translator<'a, M> {
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[self.ptr], Some(types::I8));
         let call = self.builder.ins().call_indirect(sig, callee, &[self.vm, arg]);
+        self.builder.inst_results(call)[0]
+    }
+
+    /// `fn(vm) -> u8` — e.g. host_check_error.
+    fn call_hostcall_vm_ret_u8(&mut self, name: &str) -> Value_ {
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[], Some(types::I8));
+        let call = self.builder.ins().call_indirect(sig, callee, &[self.vm]);
         self.builder.inst_results(call)[0]
     }
 

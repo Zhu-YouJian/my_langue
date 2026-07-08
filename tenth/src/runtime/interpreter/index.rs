@@ -6,6 +6,8 @@
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
 use crate::runtime::value::Value;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 impl super::Interpreter {
     pub(super) fn eval_index(&mut self, target: &Value, indices: &[Index]) -> TenthResult<Value> {
@@ -65,6 +67,8 @@ impl super::Interpreter {
             Value::Tensor(t) => {
                 let tensor = t.borrow();
                 let shape = tensor.shape();
+                let ndim = shape.len();
+                // 收集 Single 索引；Range/Colon 暂按 0 处理（保持原行为）。
                 let mut idx: Vec<usize> = Vec::new();
                 for (i, index_expr) in indices.iter().enumerate() {
                     match index_expr {
@@ -75,17 +79,42 @@ impl super::Interpreter {
                             idx.push(v.as_int().unwrap_or(0) as usize);
                         }
                         _ => {
-                            if i < shape.len() {
+                            if i < ndim {
                                 idx.push(0);
                             }
                         }
                     }
                 }
-                match tensor.get(&idx) {
-                    Some(val) => Ok(Value::Float(val)),
-                    None => Err(TenthError::RuntimeError {
-                        message: format!("索引 {:?} 越界，形状为 {:?}", idx, shape),
-                    }),
+                if idx.is_empty() {
+                    // 无有效索引：返回张量本身
+                    return Ok(Value::Tensor(t.clone()));
+                }
+                if idx.len() > ndim {
+                    return Err(TenthError::RuntimeError {
+                        message: format!("索引数 {} 大于张量维度数 {}", idx.len(), ndim),
+                    });
+                }
+                if idx.len() == ndim {
+                    // 全索引：返回标量
+                    match tensor.get(&idx) {
+                        Some(val) => Ok(Value::Float(val)),
+                        None => Err(TenthError::RuntimeError {
+                            message: format!("索引 {:?} 越界，形状为 {:?}", idx, shape),
+                        }),
+                    }
+                } else {
+                    // 部分索引（idx.len() < ndim）：迭代沿第 0 维降维，返回子张量。
+                    // NumPy 语义：t[0] 对 N-D 张量返回 (N-1)-D 子张量。
+                    let mut sub = tensor.clone();
+                    for i in &idx {
+                        match sub.index_dim(*i) {
+                            Ok(s) => sub = s,
+                            Err(msg) => {
+                                return Err(TenthError::RuntimeError { message: msg });
+                            }
+                        }
+                    }
+                    Ok(Value::Tensor(Rc::new(RefCell::new(sub))))
                 }
             }
             Value::Vec(items) => {

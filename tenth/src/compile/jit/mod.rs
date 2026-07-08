@@ -80,6 +80,12 @@ pub fn run_jit(vm: &mut Vm, name: &str) -> TenthResult<Value> {
     let mut out = Value::Unit;
     let ok = unsafe { hostcalls::invoke_jit(fn_ptr, vm as *mut Vm, &args, &mut out) };
     if ok {
+        // B2: 安全网——即使 JIT 返回 ok=true，也检查是否有 hostcall 设置了
+        // last_error（如 host_call / host_index_get 等非 MethodCall hostcall 报错）。
+        // 若有错误，surface 之并触发 fallback，而非静默返回可能的 Unit。
+        if let Some(msg) = vm.take_last_error() {
+            return Err(TenthError::RuntimeError { message: msg });
+        }
         vm.stack_push(out.clone());
         Ok(out)
     } else {

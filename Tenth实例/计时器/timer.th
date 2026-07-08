@@ -26,7 +26,7 @@ fn main() {
     let mut sum = 0.0;
     let mut i = 0;
     while i < 100000 {
-        sum = sum + i as f64;
+        sum = sum + to_f64(i);
         i = i + 1;
     }
     let end = time_now();

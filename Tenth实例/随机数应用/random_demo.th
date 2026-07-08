@@ -46,7 +46,7 @@ fn main() {
         n = n + 1;
     }
     // π ≈ 4 * (inside / total)
-    let pi_estimate = 4.0 * inside as f64 / total as f64;
+    let pi_estimate = 4.0 * to_f64(inside) / to_f64(total);
     println("估算 π (10000 个采样点):");
     println(pi_estimate);
     println("实际 π ≈ 3.14159");

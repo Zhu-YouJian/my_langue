@@ -547,6 +547,14 @@ unsafe extern "C" fn host_store_global(vm: *mut Vm, name_idx: u64, val: *const V
     std::ptr::write(out, v);
 }
 
+/// 检查 VM 是否有未处理的错误（如 matmul shape mismatch）。
+/// 返回 1 表示有错误（JIT 应提前中止并返回 false），0 表示无错误。
+/// 不清除错误——`run_jit` 在 JIT 返回 false 后通过 `take_last_error` 取走。
+unsafe extern "C" fn host_check_error(vm: *mut Vm) -> u8 {
+    let vm = &mut *vm;
+    if vm.has_last_error() { 1 } else { 0 }
+}
+
 // ── Symbol table ───────────────────────────────────────────────────────────
 
 pub fn hostcall_addr(name: &str) -> Option<usize> {
@@ -591,6 +599,7 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
         ("host_make_closure", host_make_closure as usize),
         ("host_load_global", host_load_global as usize),
         ("host_store_global", host_store_global as usize),
+        ("host_check_error", host_check_error as usize),
     ];
     map.iter().find(|(n, _)| *n == name).map(|(_, a)| *a)
 }

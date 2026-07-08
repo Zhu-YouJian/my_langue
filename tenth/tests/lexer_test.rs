@@ -59,6 +59,14 @@ fn test_comment_skip() {
 }
 
 #[test]
+fn test_bom_skip() {
+    // UTF-8 BOM (U+FEFF) should be skipped — PowerShell Out-File -Encoding utf8 默认添加
+    let tokens = tokenize("\u{FEFF}fn main");
+    assert_eq!(tokens[0], TokenKind::Fn);
+    assert_eq!(tokens[1], TokenKind::Identifier("main".into()));
+}
+
+#[test]
 fn test_identifier() {
     let tokens = tokenize("my_var tensor randn");
     assert_eq!(tokens[0], TokenKind::Identifier("my_var".into()));
