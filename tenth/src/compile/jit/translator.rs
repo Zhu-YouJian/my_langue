@@ -470,12 +470,13 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.sp -= (count as i32) * (VALUE_SIZE as i32);
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
-                // 阶段 6：根据 dtype 分发到 f32/f64 hostcall，保留 dtype 信息。
-                // dtype 编码与 bytecode 一致：0 = F64，1 = F32。
-                if dtype == 1 {
-                    self.call_hostcall_make_tensor("host_make_tensor_f32", rows as u64, cols as u64, args_addr, out);
-                } else {
-                    self.call_hostcall_make_tensor("host_make_tensor", rows as u64, cols as u64, args_addr, out);
+                // 阶段 6：根据 dtype 分发到对应 hostcall，保留 dtype 信息。
+                // dtype 编码与 bytecode 一致：0 = F64，1 = F32，2 = F16，3 = BF16。
+                match dtype {
+                    1 => self.call_hostcall_make_tensor("host_make_tensor_f32", rows as u64, cols as u64, args_addr, out),
+                    2 => self.call_hostcall_make_tensor("host_make_tensor_f16", rows as u64, cols as u64, args_addr, out),
+                    3 => self.call_hostcall_make_tensor("host_make_tensor_bf16", rows as u64, cols as u64, args_addr, out),
+                    _ => self.call_hostcall_make_tensor("host_make_tensor", rows as u64, cols as u64, args_addr, out),
                 }
                 self.bump_sp()?;
             }

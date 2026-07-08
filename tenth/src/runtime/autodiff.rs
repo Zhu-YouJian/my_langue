@@ -38,7 +38,7 @@ impl FloatElem for f32 {
         match td {
             TensorData::F32(a) => a.clone(),
             TensorData::F64(a) => a.mapv(|v| v as f32),
-            // Wave 2: F16/BF16 转 f32（dispatch_float! 将 F16/BF16 走 f64 路径，这里防御性处理）
+            // Phase 2: F16/BF16 转 f32（dispatch_float! 将 F16/BF16 走 f32 路径）
             TensorData::F16(a) => a.mapv(|v| v.to_f32()),
             TensorData::BF16(a) => a.mapv(|v| v.to_f32()),
         }
@@ -66,10 +66,13 @@ impl FloatElem for f64 {
 /// 按 node.dtype 分发到 f32 或 f64 路径。
 /// `$E` 是类型别名（f32 或 f64），`$body` 是使用 `E` 的代码块。
 /// 块内的 `?` 和 `return` 会从外层函数 early-return（语义与未分发版本一致）。
+/// Phase 2：F16/BF16 走 f32 路径（F32 中间累加策略，AMP）。
+/// F16/BF16 精度低（F16: 10 位尾数，BF16: 7 位尾数），用 F32 中间表示计算
+/// 可避免溢出和精度损失，最终 grad 写回时由 acc_grad 转 F32 buffer。
 macro_rules! dispatch_float {
     ($dtype:expr, $E:ident, $body:block) => {{
         match $dtype {
-            BaseType::F32 => {
+            BaseType::F32 | BaseType::F16 | BaseType::BF16 => {
                 type E = f32;
                 $body
             }
@@ -548,9 +551,10 @@ impl Tape {
             let loss_tensor = &self.nodes[loss_node_id].input_tensors[result_idx].borrow();
             (loss_tensor.shape(), loss_tensor.dtype)
         };
-        // 种子梯度按 loss tensor 的 dtype 构造（f32 → F32 ones，f64 → F64 ones）
+        // 种子梯度按 loss tensor 的 dtype 构造。
+        // Phase 2：F16/BF16 loss 使用 F32 种子（AMP 策略，F32 中间表示）。
         let seed = match loss_dtype {
-            BaseType::F32 => TensorData::F32(ArrayD::ones(IxDyn(&loss_shape))),
+            BaseType::F32 | BaseType::F16 | BaseType::BF16 => TensorData::F32(ArrayD::ones(IxDyn(&loss_shape))),
             _ => TensorData::F64(ArrayD::ones(IxDyn(&loss_shape))),
         };
         node_grads[loss_node_id] = Some(seed);
@@ -1307,10 +1311,10 @@ impl Tape {
                                     })?
                             )
                         },
-                        // Wave 2: F16/BF16 grad 转 f64（dispatch_float! 走 f64 路径，防御性处理）
+                        // Phase 2: F16/BF16 grad 转 f32（dispatch_float! 走 f32 路径）
                         TensorData::F16(a) => {
-                            let data: Vec<f64> = a.iter().map(|v| v.to_f64()).collect();
-                            TensorData::F64(
+                            let data: Vec<f32> = a.iter().map(|v| v.to_f32()).collect();
+                            TensorData::F32(
                                 ArrayD::from_shape_vec(IxDyn(&orig_shape), data)
                                     .map_err(|_| crate::error::TenthError::RuntimeError {
                                         message: format!("Reshape 反向 reshape grad 到 {:?} 失败", orig_shape),
@@ -1318,8 +1322,8 @@ impl Tape {
                             )
                         },
                         TensorData::BF16(a) => {
-                            let data: Vec<f64> = a.iter().map(|v| v.to_f64()).collect();
-                            TensorData::F64(
+                            let data: Vec<f32> = a.iter().map(|v| v.to_f32()).collect();
+                            TensorData::F32(
                                 ArrayD::from_shape_vec(IxDyn(&orig_shape), data)
                                     .map_err(|_| crate::error::TenthError::RuntimeError {
                                         message: format!("Reshape 反向 reshape grad 到 {:?} 失败", orig_shape),
@@ -1495,16 +1499,29 @@ impl Tape {
 
 /// Accumulate `g` into `node_grads[id]`, adding if a gradient already exists.
 /// 阶段 4：支持 TensorData 累加（同 dtype 直接加，异 dtype 提升为 f64）。
+/// Phase 2：F16/BF16 grad 统一提升为 F32 中间表示累加（AMP 策略），
+/// 避免 F16 溢出（max≈65504）和 BF16 精度损失。
 fn acc_node_grad(node_grads: &mut [Option<TensorData>], id: usize, g: &TensorData) {
     let existing = node_grads[id].take();
-    node_grads[id] = match (existing, g) {
+    // Phase 2: F16/BF16 统一提升为 F32 中间表示（AMP 策略）
+    let existing = existing.map(|cur| match cur {
+        TensorData::F16(a) => TensorData::F32(a.mapv(|v| v.to_f32())),
+        TensorData::BF16(a) => TensorData::F32(a.mapv(|v| v.to_f32())),
+        other => other,
+    });
+    let g_normalized: TensorData = match g {
+        TensorData::F16(a) => TensorData::F32(a.mapv(|v| v.to_f32())),
+        TensorData::BF16(a) => TensorData::F32(a.mapv(|v| v.to_f32())),
+        other => other.clone(),
+    };
+    node_grads[id] = match (existing, &g_normalized) {
         (Some(TensorData::F64(cur)), TensorData::F64(g2)) => Some(TensorData::F64(&cur + g2)),
         (Some(TensorData::F32(cur)), TensorData::F32(g2)) => Some(TensorData::F32(&cur + g2)),
         (Some(TensorData::F64(cur)), TensorData::F32(g2)) => Some(TensorData::F64(&cur + &g2.mapv(|v| v as f64))),
         (Some(TensorData::F32(cur)), TensorData::F64(g2)) => Some(TensorData::F64(&cur.mapv(|v| v as f64) + g2)),
-        // Wave 2: F16/BF16 场景统一提升为 f64 累加（Phase 1 简化，F16/BF16 param backward 会 early-return）
+        // 兜底：异 dtype 混合场景提升为 f64
         (Some(cur), g2) => Some(TensorData::F64(cur.as_f64_view() + g2.as_f64_view())),
-        (None, _) => Some(g.clone()),
+        (None, _) => Some(g_normalized),
     };
 }
 

@@ -600,9 +600,13 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     };
     if kind == "float" {
         // Phase 5.2 step 1：float 字面量按 e.ival 决定 dtype
-        // e.ival=1 → F32（sub=3），其他（含默认 0）→ F64（sub=2）
+        // e.ival=0 → F64（sub=2），1 → F32（sub=3），2 → F16（sub=14），3 → BF16（sub=15）
         // 默认行为：ival=0 时仍走 F64，保持向后兼容
-        let sub: i64 = if e.ival == 1 { 3 } else { 2 };
+        // Phase 5.2 F1：新增 f16/bf16 分支
+        let mut sub: i64 = 2;
+        if e.ival == 1 { sub = 3; }
+        else if e.ival == 2 { sub = 14; }
+        else if e.ival == 3 { sub = 15; };
         let ty = add_type(p, 0, sub, "", 0, 0, 0);
         return push_expr(p, 1, 0, e.fval, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
     };

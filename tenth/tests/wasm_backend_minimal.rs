@@ -75,6 +75,9 @@ mod wasm_backend_minimal {
         linker.func_wrap("host", "f64_bits", |_: Caller<HostState>, _: f64| -> i64 { 0 }).unwrap();
         linker.func_wrap("host", "str_slice", |_: Caller<HostState>, _: i32, _: i64, _: i64| -> i32 { 0 }).unwrap();
         linker.func_wrap("host", "tensor_from_vec", |_: Caller<HostState>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
+        // Phase 5.2 F1：F16/BF16 张量专用 hostcall stub（与 tensor_from_vec 同签名）
+        linker.func_wrap("host", "host_make_tensor_f16", |_: Caller<HostState>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
+        linker.func_wrap("host", "host_make_tensor_bf16", |_: Caller<HostState>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
 
         (store, linker)
     }

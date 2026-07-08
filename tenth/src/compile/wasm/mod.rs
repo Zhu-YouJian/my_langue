@@ -29,6 +29,9 @@ pub(super) fn to_val_type(ty: &Type) -> Option<ValType> {
             BaseType::Bool => Some(ValType::I32),
             BaseType::Str => Some(ValType::I64), // stored as i64 internally, converted at host boundary
             BaseType::Unit => None,
+            // Phase 5.2 F1：F16/BF16 原生 WASM 不支持，映射为 I64（指针/打包存储），
+            // 实际数据存放于 host 侧线性内存，通过 hostcall 构造。
+            BaseType::F16 | BaseType::BF16 => Some(ValType::I64),
             _ => None,
         },
         Type::Ref(_) | Type::MutRef(_) => Some(ValType::I64),
@@ -57,6 +60,8 @@ pub(super) fn field_size_and_type(ty: &Type) -> (u32, ValType) {
             BaseType::F64 => (8, ValType::F64),
             BaseType::Bool => (8, ValType::I32),
             BaseType::Str => (8, ValType::I64),
+            // Phase 5.2 F1：F16/BF16 字段按 8 字节对齐（与 I64 一致），ValType::I64
+            BaseType::F16 | BaseType::BF16 => (8, ValType::I64),
             _ => (8, ValType::I64),
         },
         _ => (8, ValType::I64),
@@ -91,7 +96,11 @@ pub(super) const HOST_STR_CMP: u32 = 14;
 pub(super) const HOST_F64_BITS: u32 = 15;
 pub(super) const HOST_STR_SLICE: u32 = 16;
 pub(super) const HOST_TENSOR_FROM_VEC: u32 = 17;
-pub(super) const IMPORT_COUNT: u32 = HOST_TENSOR_FROM_VEC + 1;
+// Phase 5.2 F1：F16/BF16 张量专用 hostcall（WASM 原生不支持 f16/bf16 类型，
+// 通过 hostcall 在 host 侧构造 TensorData，数据从 WASM 线性内存读取）
+pub(super) const HOST_MAKE_TENSOR_F16: u32 = 18;
+pub(super) const HOST_MAKE_TENSOR_BF16: u32 = 19;
+pub(super) const IMPORT_COUNT: u32 = HOST_MAKE_TENSOR_BF16 + 1;
 
 pub struct WasmCompiler {
     type_cache: HashMap<(Vec<ValType>, Vec<ValType>), u32>,

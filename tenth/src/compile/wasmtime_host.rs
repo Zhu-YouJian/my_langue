@@ -432,6 +432,22 @@ pub fn register_wasmtime_host_functions(linker: &mut Linker<u32>) -> TenthResult
             if len < 0 { 0 } else { len as i64 }
     }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
 
+    // 18. host_make_tensor_f16(data_ptr: i32, len: i32, rank: i32) -> i64
+    // Phase 5.2 F1：F16 张量专用 hostcall。WASM 原生不支持 f16 类型，
+    // 数据以 F64 字节序列存储于 WASM 线性内存中，host 侧负责读取并构造 F16 TensorData。
+    // 简化实现：与 tensor_from_vec 一致，返回 len 作为 handle（保证 parity 测试确定性）。
+    linker.func_wrap("host", "host_make_tensor_f16",
+        |_caller: Caller<'_, u32>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
+            if len < 0 { 0 } else { len as i64 }
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+
+    // 19. host_make_tensor_bf16(data_ptr: i32, len: i32, rank: i32) -> i64
+    // Phase 5.2 F1：BF16 张量专用 hostcall，策略与 host_make_tensor_f16 一致。
+    linker.func_wrap("host", "host_make_tensor_bf16",
+        |_caller: Caller<'_, u32>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
+            if len < 0 { 0 } else { len as i64 }
+    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+
     Ok(())
 }
 

@@ -477,15 +477,18 @@ fn push_str_bytes(out: &mut Vec<i64>, s: str) {
 fn is_expr_float(hir: HirProgram, idx: i64) -> bool {
     if idx <= 0 || idx > hir.expr_nodes.len() { return false; };
     let e = hir.expr_nodes[idx - 1];
-    // FloatLiteral 直接是 float（f32 或 f64）
+    // FloatLiteral 直接是 float（f32/f64/f16/bf16）
     if e.disc == 1 { return true; };
-    // 检查 ty 字段：必须 disc==0（Base）且 sub==2(f64) 或 sub==3(f32) 才是 float 标量
+    // 检查 ty 字段：必须 disc==0（Base）且 sub 为 float 类别才是 float 标量
     // 注意：Tensor<f32/f64> 的 type_node disc==1，不是 float 标量
+    // Phase 5.2 F1：新增 F16（sub=14）/ BF16（sub=15）识别
     if e.ty > 0 && e.ty <= hir.type_nodes.len() {
         let tn = hir.type_nodes[e.ty - 1];
         if tn.disc == 0 {
-            if tn.sub == 2 { return true; };
-            if tn.sub == 3 { return true; };
+            if tn.sub == 2 { return true; };   // F64
+            if tn.sub == 3 { return true; };   // F32
+            if tn.sub == 14 { return true; };  // F16
+            if tn.sub == 15 { return true; };  // BF16
         };
     };
     // Binary 表达式：递归检查左操作数

@@ -464,6 +464,67 @@ unsafe extern "C" fn host_make_tensor_f32(
     std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec_f32(data, shape)))));
 }
 
+/// f16 Tensor 构造：保留 dtype=F16，元素从栈上 Value 转换为 f16。
+/// VM Value 无 F16 变体，栈上元素以 f64/f32 形式存在，此处转换为 f16。
+/// Phase 2 缺口 1：F16/BF16 JIT 路径补齐。
+unsafe extern "C" fn host_make_tensor_f16(
+    _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *mut Value,
+) {
+    // 安全：rows * cols 用 checked_mul 防止溢出，并设上限防止 OOM
+    let count = match (rows as usize).checked_mul(cols as usize) {
+        Some(n) if n <= MAX_HOSTCALL_ARGS => n,
+        _ => {
+            std::ptr::write(out, Value::Unit);
+            return;
+        }
+    };
+    let flat = if args_ptr.is_null() || count == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(args_ptr, count)
+    };
+    use half::f16;
+    let data: Vec<f16> = flat.iter().map(|v| match v {
+        Value::Float(f) => f16::from_f64(*f),
+        Value::Float32(f) => f16::from_f32(*f),
+        Value::Int(i) => f16::from_f64(*i as f64),
+        _ => f16::from_f32(0.0),
+    }).collect();
+    use crate::runtime::tensor::Tensor;
+    let shape = if cols == 0 { vec![rows as usize] } else { vec![rows as usize, cols as usize] };
+    std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec_f16(data, shape)))));
+}
+
+/// bf16 Tensor 构造：保留 dtype=BF16，元素从栈上 Value 转换为 bf16。
+/// Phase 2 缺口 1：F16/BF16 JIT 路径补齐。
+unsafe extern "C" fn host_make_tensor_bf16(
+    _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *mut Value,
+) {
+    // 安全：rows * cols 用 checked_mul 防止溢出，并设上限防止 OOM
+    let count = match (rows as usize).checked_mul(cols as usize) {
+        Some(n) if n <= MAX_HOSTCALL_ARGS => n,
+        _ => {
+            std::ptr::write(out, Value::Unit);
+            return;
+        }
+    };
+    let flat = if args_ptr.is_null() || count == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(args_ptr, count)
+    };
+    use half::bf16;
+    let data: Vec<bf16> = flat.iter().map(|v| match v {
+        Value::Float(f) => bf16::from_f64(*f),
+        Value::Float32(f) => bf16::from_f32(*f),
+        Value::Int(i) => bf16::from_f64(*i as f64),
+        _ => bf16::from_f32(0.0),
+    }).collect();
+    use crate::runtime::tensor::Tensor;
+    let shape = if cols == 0 { vec![rows as usize] } else { vec![rows as usize, cols as usize] };
+    std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec_bf16(data, shape)))));
+}
+
 unsafe extern "C" fn host_make_closure(
     vm: *mut Vm, _params: u64, chunk_idx: u64, out: *mut Value,
 ) {
@@ -525,6 +586,8 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
         ("host_push_range", host_push_range as usize),
         ("host_make_tensor", host_make_tensor as usize),
         ("host_make_tensor_f32", host_make_tensor_f32 as usize),
+        ("host_make_tensor_f16", host_make_tensor_f16 as usize),
+        ("host_make_tensor_bf16", host_make_tensor_bf16 as usize),
         ("host_make_closure", host_make_closure as usize),
         ("host_load_global", host_load_global as usize),
         ("host_store_global", host_store_global as usize),

@@ -606,10 +606,12 @@ impl BytecodeCompiler {
             TensorLiteral { data, ty } => {
                 let rows = data.len();
                 let cols = if rows > 0 { data[0].len() } else { 0 };
-                // 根据类型注解选择 dtype（F32 → 1，其他 → 0）
+                // 根据类型注解选择 dtype（统一编码：F64=0, F32=1, F16=2, BF16=3）
                 let dtype_code: u8 = match ty.tensor_dtype() {
                     Some(crate::hir::types::BaseType::F32) => 1,
-                    _ => 0,
+                    Some(crate::hir::types::BaseType::F16) => 2,
+                    Some(crate::hir::types::BaseType::BF16) => 3,
+                    _ => 0,  // F64 或无注解
                 };
                 // Push all elements in row-major order
                 for row in data.iter() {

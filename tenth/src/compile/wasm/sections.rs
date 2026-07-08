@@ -42,6 +42,8 @@ impl WasmCompiler {
         reg(vec![ValType::F64], vec![ValType::I64]);                            // 15: f64_bits(f64) -> i64
         reg(vec![ValType::I32, ValType::I64, ValType::I64], vec![ValType::I32]); // 16: str_slice(ptr, start, end) -> ptr
         reg(vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I64]); // 17: tensor_from_vec(data_ptr, len, rank) -> tensor_handle
+        // Phase 5.2 F1：host_make_tensor_f16/bf16 复用相同签名 (i32,i32,i32)->i64，
+        // type_cache 会去重，所以 type 索引仍为 12（与 tensor_from_vec 共享）
         for func in &program.functions {
             let p: Vec<ValType> = func.params.iter().filter_map(|(_, t)| to_val_type(t)).collect();
             let r: Vec<ValType> = to_val_type(&func.return_type).into_iter().collect();
@@ -88,6 +90,9 @@ impl WasmCompiler {
         imports.import("host", "f64_bits", EntityType::Function(ti(vec![ValType::F64], vec![ValType::I64])));
         imports.import("host", "str_slice", EntityType::Function(ti(vec![ValType::I32, ValType::I64, ValType::I64], vec![ValType::I32])));
         imports.import("host", "tensor_from_vec", EntityType::Function(ti(vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I64])));
+        // Phase 5.2 F1：F16/BF16 张量专用 hostcall（与 tensor_from_vec 同签名）
+        imports.import("host", "host_make_tensor_f16", EntityType::Function(ti(vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I64])));
+        imports.import("host", "host_make_tensor_bf16", EntityType::Function(ti(vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I64])));
         module.section(&imports);
     }
 

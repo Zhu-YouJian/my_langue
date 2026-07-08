@@ -300,10 +300,12 @@ impl Tensor {
     }
 
     /// Accumulate `g` into `self.grad`.
-    /// g 可为 F32 或 F64；按 self.dtype 转换存储（f32 参数→F32 grad，f64 参数→F64 grad）。
+    /// g 可为 F32/F64/F16/BF16；按 self.dtype 转换存储（f32 参数→F32 grad，f64 参数→F64 grad）。
     /// 返回 Err 当 g.shape() 与 self.data.shape() 不一致（防止 silent broadcast 掩盖梯度 shape 错误）。
     /// 阶段 4：签名从 `&ArrayD<f64>` 改为 `&TensorData`，支持真正的 f32 反向传播。
-    /// Wave 2：F16/BF16 param 的 autodiff 走简化方案——返回 Err 提示 Phase 2 实现。
+    /// Phase 2：F16/BF16 param 的 grad 累加使用 F32 中间表示（AMP 策略），
+    /// 避免 F16 溢出（max≈65504）和 BF16 精度损失。grad buffer 存储为 F32，
+    /// 优化器读取时可转回原 dtype。
     pub fn acc_grad(&mut self, g: &TensorData) -> Result<(), String> {
         // shape 校验：梯度 shape 必须与参数 shape 一致（方向 A：消除 silent squeeze）
         let self_shape = self.data.shape();
@@ -314,20 +316,14 @@ impl Tensor {
                 self_shape, g_shape
             ));
         }
-        // Wave 2 简化方案：F16/BF16 param 不做 autodiff（前向可参与计算，反向 grad 不回写）
-        if matches!(self.dtype, BaseType::F16 | BaseType::BF16) {
-            return Err(format!(
-                "F16/BF16 param 的反向传播暂不支持（Wave 2 Phase 1 简化方案），请使用 F32/F64 param 或等待 Phase 2 实现"
-            ));
-        }
-        // 阶段 4：按 self.dtype 转换 g，保持参数 grad dtype 一致。
-        // 策略 B 残留：若 self.grad 已有不同 dtype（混合场景），回退为 f64 累加。
+        // Phase 2：F16/BF16 param 使用 F32 中间累加策略（AMP）。
+        // grad buffer 存储为 F32，避免 F16/BF16 溢出和精度损失。
+        // 输入 g 可能是 F32/F64/F16/BF16，需先转 F32 再累加。
         match self.dtype {
-            BaseType::F32 => {
+            BaseType::F32 | BaseType::F16 | BaseType::BF16 => {
                 let g_f32 = match g {
                     TensorData::F32(a) => a.clone(),
                     TensorData::F64(a) => a.mapv(|v| v as f32),
-                    // F16/BF16 grad 转 f32（理论上不会发生，因为 F16/BF16 param 已 early-return）
                     TensorData::F16(a) => a.mapv(|v| v.to_f32()),
                     TensorData::BF16(a) => a.mapv(|v| v.to_f32()),
                 };
@@ -340,7 +336,7 @@ impl Tensor {
                         let merged = &*cur + &g_f32.mapv(|v| v as f64);
                         *cur = merged;
                     }
-                    // F16/BF16 grad 不应到达此处（F16/BF16 param 已 early-return）；回退为 f32 累加
+                    // 已有 F16/BF16 grad（旧数据或混合场景），提升为 F32 中间表示
                     Some(TensorData::F16(cur)) => {
                         let merged = cur.mapv(|v| v.to_f32()) + &g_f32;
                         self.grad = Some(TensorData::F32(merged));
@@ -370,7 +366,7 @@ impl Tensor {
                         let merged = cur.mapv(|v| v as f64) + &g_f64;
                         self.grad = Some(TensorData::F64(merged));
                     }
-                    // F16/BF16 grad 不应到达此处（F16/BF16 param 已 early-return）；回退为 f64 累加
+                    // F16/BF16 grad 不应到达 F64 param；回退为 f64 累加
                     Some(TensorData::F16(cur)) => {
                         let merged = cur.mapv(|v| v.to_f64()) + &g_f64;
                         self.grad = Some(TensorData::F64(merged));

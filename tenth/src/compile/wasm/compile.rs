@@ -11,6 +11,7 @@ use super::{
     HOST_VEC_NEW, HOST_VEC_PUSH, HOST_VEC_LEN, HOST_VEC_GET,
     HOST_COMPILE_HOST, HOST_STR_LEN, HOST_STR_AT, HOST_STR_CMP,
     HOST_F64_BITS, HOST_STR_SLICE, HOST_TENSOR_FROM_VEC,
+    HOST_MAKE_TENSOR_F16, HOST_MAKE_TENSOR_BF16,
 };
 
 impl WasmCompiler {
@@ -759,15 +760,23 @@ impl WasmCompiler {
 
             HirExprKind::TensorLiteral { data, ty } => {
                 // Phase 5：按 dtype 分支。F32 元素占 4 字节，F64 占 8 字节。
+                // Phase 5.2 F1：F16/BF16 张量按 F64 字节存储（WASM 原生不支持 f16/bf16），
+                // 但调用专用 host_make_tensor_f16/bf16 hostcall 标记 dtype。
                 // Flatten 2D data into elements, allocate memory, write values,
-                // then call tensor_from_vec(data_ptr, len, rank) host import.
+                // then call appropriate host import based on dtype.
                 let rows = data.len() as i32;
                 let total: i32 = data.iter().map(|r| r.len() as i32).sum();
                 // 从 Tensor 类型提取 dtype
-                let is_f32 = match ty {
-                    Type::Tensor { dtype, .. } => matches!(dtype.as_ref(), Type::Base(BaseType::F32)),
-                    _ => false,
+                let (is_f32, is_f16, is_bf16) = match ty {
+                    Type::Tensor { dtype, .. } => match dtype.as_ref() {
+                        Type::Base(BaseType::F32) => (true, false, false),
+                        Type::Base(BaseType::F16) => (false, true, false),
+                        Type::Base(BaseType::BF16) => (false, false, true),
+                        _ => (false, false, false),
+                    },
+                    _ => (false, false, false),
                 };
+                // F32 元素 4 字节；F64/F16/BF16 元素 8 字节（F16/BF16 按 F64 存储）
                 let elem_size: i32 = if is_f32 { 4 } else { 8 };
                 let size = total * elem_size;
 
@@ -796,7 +805,8 @@ impl WasmCompiler {
                             }
                             body.instruction(&Instruction::F32Store(arg));
                         } else {
-                            // F64 tensor: 元素转为 F64 后 F64Store
+                            // F64/F16/BF16 tensor: 元素转为 F64 后 F64Store
+                            // F16/BF16 在 WASM 中以 F64 位表示存储（host 侧负责 reinterpret）
                             if matches!(&elem.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
                                 body.instruction(&Instruction::F64ConvertI64S);
                             } else if matches!(&elem.ty, Type::Base(BaseType::F32)) {
@@ -808,12 +818,18 @@ impl WasmCompiler {
                     }
                 }
 
-                // Call tensor_from_vec(data_ptr, len, rank) — import 17
+                // Phase 5.2 F1：按 dtype 选择 hostcall
+                // F64/F32 → tensor_from_vec (import 17)
+                // F16 → host_make_tensor_f16 (import 18)
+                // BF16 → host_make_tensor_bf16 (import 19)
+                let host_import = if is_f16 { HOST_MAKE_TENSOR_F16 }
+                                  else if is_bf16 { HOST_MAKE_TENSOR_BF16 }
+                                  else { HOST_TENSOR_FROM_VEC };
                 body.instruction(&Instruction::LocalGet(tmp));
                 body.instruction(&Instruction::I32WrapI64); // data_ptr
                 body.instruction(&Instruction::I32Const(total)); // len
                 body.instruction(&Instruction::I32Const(rows)); // rank (rows)
-                body.instruction(&Instruction::Call(HOST_TENSOR_FROM_VEC)); // tensor_from_vec -> i64
+                body.instruction(&Instruction::Call(host_import)); // -> i64 tensor handle
             }
 
             // D5.3/D5.6: Closure — compile as packed i64 (table_idx << 32 | env_ptr)

@@ -995,9 +995,12 @@ impl Vm {
                 Op::MakeTensor(rows, cols, dtype) => {
                     use super::tensor::Tensor;
                     use crate::hir::types::BaseType;
+                    use half::{bf16, f16};
                     let total = rows * cols;
                     let dt = match dtype {
                         1 => BaseType::F32,
+                        2 => BaseType::F16,
+                        3 => BaseType::BF16,
                         _ => BaseType::F64,
                     };
                     if dt == BaseType::F32 {
@@ -1013,6 +1016,34 @@ impl Vm {
                         }
                         data.reverse();
                         let tensor = Tensor::from_vec_f32(data, vec![rows, cols]);
+                        self.stack.push(Value::Tensor(Rc::new(RefCell::new(tensor))));
+                    } else if dt == BaseType::F16 {
+                        let mut data: Vec<f16> = Vec::with_capacity(total);
+                        for _ in 0..total {
+                            let v = self.stack.pop().unwrap_or(Value::Float(0.0));
+                            data.push(match v {
+                                Value::Float(f) => f16::from_f64(f),
+                                Value::Float32(f) => f16::from_f32(f),
+                                Value::Int(n) => f16::from_f64(n as f64),
+                                _ => f16::from_f32(0.0),
+                            });
+                        }
+                        data.reverse();
+                        let tensor = Tensor::from_vec_f16(data, vec![rows, cols]);
+                        self.stack.push(Value::Tensor(Rc::new(RefCell::new(tensor))));
+                    } else if dt == BaseType::BF16 {
+                        let mut data: Vec<bf16> = Vec::with_capacity(total);
+                        for _ in 0..total {
+                            let v = self.stack.pop().unwrap_or(Value::Float(0.0));
+                            data.push(match v {
+                                Value::Float(f) => bf16::from_f64(f),
+                                Value::Float32(f) => bf16::from_f32(f),
+                                Value::Int(n) => bf16::from_f64(n as f64),
+                                _ => bf16::from_f32(0.0),
+                            });
+                        }
+                        data.reverse();
+                        let tensor = Tensor::from_vec_bf16(data, vec![rows, cols]);
                         self.stack.push(Value::Tensor(Rc::new(RefCell::new(tensor))));
                     } else {
                         let mut data = Vec::with_capacity(total);
