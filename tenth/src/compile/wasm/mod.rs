@@ -8,8 +8,10 @@ mod sections;
 mod compile;
 mod closures;
 mod host;
+mod wasmtime_host;
 
 pub use self::host::{register_host_functions, run_wasm_module};
+pub use self::wasmtime_host::{register_wasmtime_host_functions, run_wasm_module_wasmtime, instantiate_wasmtime};
 
 use std::collections::HashMap;
 use wasm_encoder::{Module, ValType};

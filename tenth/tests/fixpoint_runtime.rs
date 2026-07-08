@@ -92,7 +92,7 @@ fn run_benchmark() {
     println!("\n--- T_load: Wasmtime load stage1.wasm ---");
     let t_load_start = Instant::now();
     let (mut store, instance) =
-        tenth::compile::wasmtime_host::instantiate_wasmtime(&wasm_a)
+        tenth::compile::wasm::instantiate_wasmtime(&wasm_a)
             .expect("wasmtime instantiate");
     let t_load = t_load_start.elapsed();
     println!("T_load: {:?}", t_load);

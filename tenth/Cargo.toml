@@ -30,7 +30,7 @@ regex = "1"
 half = "2"
 
 [profile.release]
-# 安全：启用算术溢出检查，让 hostcalls.rs / wasmtime_host.rs 中的
+# 安全：启用算术溢出检查，让 hostcalls.rs / wasm/wasmtime_host.rs 中的
 # `count * 2` / `rows * cols` 等运算在溢出时 panic 而非静默回绕。
 # 对运行时性能影响极小（<2%），但显著降低被构造输入触发 UB 的风险。
 overflow-checks = true

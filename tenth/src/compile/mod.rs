@@ -1,5 +1,4 @@
 pub mod wasm;
-pub mod wasmtime_host;
 pub mod bridge;
 pub mod bytecode;
 pub mod gpu;

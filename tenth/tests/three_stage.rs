@@ -172,7 +172,7 @@ mod three_stage {
 
         println!("=== [Wasmtime] Stage 2: wasmtime executes compiler ===");
         let t1 = Instant::now();
-        let (mut store, instance) = tenth::compile::wasmtime_host::instantiate_wasmtime(&wasm_a)
+        let (mut store, instance) = tenth::compile::wasm::instantiate_wasmtime(&wasm_a)
             .expect("[Wasmtime] instantiate");
 
         // main() returns Vec<i64> (i64 pointer) in the self-hosting pipeline.
@@ -243,7 +243,7 @@ mod three_stage {
     }
 
     /// Wasmtime JIT path for three-stage self-hosting verification.
-    /// Marked `#[ignore]` because，虽然 `wasmtime_host.rs` 中 17/18 个 host
+    /// Marked `#[ignore]` because，虽然 `wasm/wasmtime_host.rs` 中 17/18 个 host
     /// import 已补全真实现，但运行时 tenthc 编译器产出的 WASM-B 仍为 0
     /// 字节（Vec 写回逻辑问题）。wasmi 路径已通过，wasmtime 仅是 JIT 性能
     /// 优化，深度调试 ROI 不高。Run explicitly via:

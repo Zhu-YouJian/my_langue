@@ -5,3 +5,5 @@ pub mod hir;
 pub mod runtime;
 pub mod compile;
 pub mod repl;
+pub mod cli;
+pub mod http;

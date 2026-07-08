@@ -75,6 +75,9 @@ mod f32_wasm {
         linker.func_wrap("host", "f64_bits", |_: Caller<HostState>, _: f64| -> i64 { 0 }).unwrap();
         linker.func_wrap("host", "str_slice", |_: Caller<HostState>, _: i32, _: i64, _: i64| -> i32 { 0 }).unwrap();
         linker.func_wrap("host", "tensor_from_vec", |_: Caller<HostState>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
+        // F1 Phase 2：f16/bf16 张量 hostcall stub（测试不涉及 f16/bf16，返回空指针）
+        linker.func_wrap("host", "host_make_tensor_f16", |_: Caller<HostState>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
+        linker.func_wrap("host", "host_make_tensor_bf16", |_: Caller<HostState>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
 
         (store, linker)
     }

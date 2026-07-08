@@ -238,6 +238,13 @@ mod parity {
         linker.func_wrap("host", "tensor_from_vec", |_: Caller<()>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
             len as i64
         }).unwrap();
+        // F1 Phase 2：f16/bf16 张量 hostcall stub（与 tensor_from_vec 同签名）
+        linker.func_wrap("host", "host_make_tensor_f16", |_: Caller<()>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
+            len as i64
+        }).unwrap();
+        linker.func_wrap("host", "host_make_tensor_bf16", |_: Caller<()>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
+            len as i64
+        }).unwrap();
 
         // ── `env` module (tenthc wasm.th signatures) ──
         // Type 0: println(i64) -> ()
