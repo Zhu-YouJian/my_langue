@@ -401,25 +401,44 @@ impl Lowerer {
                         self.uses.push((path_strs.clone(), alias.clone()));
                         let fn_name = path_strs.last().unwrap();
 
-                        // First try to load the file at <path[..len-1]>.th
+                        // AUDIT #11 修复：先尝试完整 path 作为文件
+                        // （如 `use std::nn::gelu` → 查找 std/nn/gelu.th），
+                        // 失败再回退到 parent_path 作为模块
+                        // （如 `use std::nn::activations::gelu` → 查找 std/nn/activations.th）。
+                        // 此前只用 parent_path，对目录型模块（nn/ 是目录非 nn.th 文件）
+                        // 必然失败，导致 3 段路径 use 报 undefined variable。
                         let parent_path = &path_strs[..path_strs.len()-1];
-                        let mod_key = parent_path.join("::");
+                        let full_key = path_strs.join("::");
+                        let parent_key = parent_path.join("::");
                         let mut loaded_module: Option<&HirProgram> = None;
-                        if !self.modules.contains_key(&mod_key) {
-                            match self.try_import_file(parent_path) {
+                        // 先尝试完整 path（如 std/nn/gelu.th）
+                        if !self.modules.contains_key(&full_key) {
+                            match self.try_import_file(&path_strs) {
                                 Ok(Some(imported_hir)) => {
-                                    self.modules.insert(mod_key.clone(), imported_hir);
+                                    self.modules.insert(full_key.clone(), imported_hir);
                                 }
                                 Ok(None) => {
-                                    // File not found or circular import — fall back to inline mod navigation below
+                                    // 完整 path 找不到文件，回退到 parent_path
+                                    // （如 std/nn/activations.th）
+                                    if !self.modules.contains_key(&parent_key) {
+                                        match self.try_import_file(parent_path) {
+                                            Ok(Some(imported_hir)) => {
+                                                self.modules.insert(parent_key.clone(), imported_hir);
+                                            }
+                                            Ok(None) => {
+                                                // 两者都失败 — fall back to inline mod navigation below
+                                            }
+                                            Err(e) => return Err(e),
+                                        }
+                                    }
                                 }
-                                Err(e) => {
-                                    // Propagate the import error so the user sees the real cause
-                                    return Err(e);
-                                }
+                                Err(e) => return Err(e),
                             }
                         }
-                        if let Some(m) = self.modules.get(&mod_key) {
+                        // 查找加载的模块：先查 full_key，再查 parent_key
+                        if let Some(m) = self.modules.get(&full_key) {
+                            loaded_module = Some(m);
+                        } else if let Some(m) = self.modules.get(&parent_key) {
                             loaded_module = Some(m);
                         }
 
