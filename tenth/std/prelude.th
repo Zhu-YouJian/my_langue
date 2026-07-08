@@ -77,6 +77,12 @@
 //   http_post(url, body)     — HTTP/1.1 POST request -> Result<String>
 //                              (manual HTTP/1.1 implementation, no HTTPS)
 
+// ── Async I/O (built-in native functions, Phase 2 Step 5) ──
+//   async_sleep_ms(ms)       — schedule timer -> Future<Unit> (await resolves after ms)
+//   async_tcp_read(h, n)     — async read up to n bytes -> Future<Result<Vec<i64>>>
+//   async_tcp_write(h, data) — async write byte vec -> Future<Result<i64>> (bytes written)
+//   Design: std::thread + mpsc + thread_local; VM scheduler polls in run_scheduler.
+
 // ── Std lib (use path::to::function) ──
 //   std::nn::linear::linear<T>
 //   std::nn::loss::mse<T>, mse_loss<T>, binary_cross_entropy, l1_loss<T>, huber_loss<T>, huber_loss_train<T>  // binary_cross_entropy 仍 f64
@@ -117,6 +123,7 @@
 //   std::env::env::get, get_result, get_or_empty, set, exit      // 环境变量与进程退出（包装 env_get/env_set/exit native）
 //   std::net::net::connect, read, write, close, set_timeout      // TCP 客户端（包装 tcp_* native，handle table 模式）
 //   std::http::http::get, post                                    // HTTP/1.1 客户端（手写协议，无 HTTPS）
+//   std::async                                                  // 异步 I/O 文档（async_sleep_ms/async_tcp_read/async_tcp_write 为 built-in native）
 //   std::json::json::encode, decode, encode_pretty, load, save
 //   std::runtime::run_with_limit, limit_or_default, run_with_timeout, timeout_or_default
 //   (built-in, no import needed) with_step_limit, with_timeout_ms, is_timeout

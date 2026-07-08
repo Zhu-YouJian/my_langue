@@ -1,0 +1,35 @@
+// Async I/O standard library (Phase 2 Step 5)
+//
+// Built-in native functions for asynchronous I/O. These return Future values
+// that can be awaited. The VM scheduler polls pending I/O in run_scheduler.
+//
+// Design: std::thread + mpsc + thread_local (no mio dependency).
+// - async_sleep_ms registers a timer in ASYNC_IO thread_local state
+// - async_tcp_read/async_tcp_write spawn an OS thread that does blocking I/O
+//   and sends the result through an mpsc channel
+// - The scheduler polls channels/timers and wakes awaiters when I/O completes
+//
+// Usage (built-in, no import needed):
+//   let f = async_sleep_ms(100)
+//   await f
+//
+//   let r = await async_tcp_read(handle, 1024)
+//   match r {
+//       Result::Ok(bytes) => print("read bytes"),
+//       Result::Err(e) => print("read failed"),
+//   }
+//
+// API:
+//   async_sleep_ms(ms: i64) -> Future<Unit>
+//       Schedule a timer. await resolves to Unit after ms milliseconds.
+//       Negative or >24h values raise a runtime error.
+//
+//   async_tcp_read(handle: i64, max_bytes: i64) -> Future<Result<Vec<i64>>>
+//       Spawn a worker thread to read up to max_bytes from the TCP stream.
+//       await resolves to Result<Vec<i64>> (bytes) or Result::Err.
+//       handle is 1-based (from tcp_connect). max_bytes clamped to [0, 65536].
+//
+//   async_tcp_write(handle: i64, data: Vec<i64>) -> Future<Result<i64>>
+//       Spawn a worker thread to write data bytes to the TCP stream.
+//       await resolves to Result<i64> (bytes written) or Result::Err.
+//       handle is 1-based (from tcp_connect).

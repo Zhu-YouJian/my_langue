@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
-use crate::runtime::value::Value;
+use crate::runtime::value::{Value, FutureState};
 use crate::runtime::tensor::Tensor;
 use crate::runtime::autodiff::TapeOp;
 
@@ -390,7 +390,13 @@ impl super::Interpreter {
                 let strs: Vec<String> = items.iter().map(|x| self.value_to_string(x)).collect();
                 format!("({})", strs.join(", "))
             }
-            Value::Future(inner) => self.value_to_string(inner),
+            Value::Future(state) => {
+                match &*state.borrow() {
+                    // Phase 1：Future 总是 Ready，解包显示内部值（保持旧输出格式）。
+                    FutureState::Ready(v) => self.value_to_string(v),
+                    FutureState::Pending(_) => "Future<Pending>".to_string(),
+                }
+            }
         }
     }
 

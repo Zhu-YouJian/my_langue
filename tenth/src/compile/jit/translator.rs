@@ -488,8 +488,9 @@ impl<'a, M: Module> Translator<'a, M> {
                 // Struct pattern matching not JIT-compiled; fallback to VM.
                 return Err(format!("JIT: IsStruct not supported, fallback to VM"));
             }
-            Await | Spawn => {
+            Await | Spawn | Yield => {
                 // Async opcodes not JIT-compiled; fallback to VM.
+                // Yield（Phase 2 Step 3-4 协作式调度）同样需要调度器支持，JIT 不支持。
                 return Err(format!("JIT: async opcode not supported, fallback to VM"));
             }
             MakeTuple(_) | IsTuple(_) | TupleGet(_) | Try => {

@@ -2,13 +2,14 @@
 //!
 //! Architecture: HIR → compile → Chunk (bytecode) → Vm::run()
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
-use super::value::Value;
+use super::value::{Value, FutureState};
 use super::autodiff::{Tape, TapeOp};
 use super::tensor::Tensor;
+use super::async_io::ASYNC_IO;
 
 /// Native Rust function callable from VM bytecode.
 pub type NativeFn = fn(&mut Vm, &[Value]) -> TenthResult<Value>;
@@ -43,6 +44,7 @@ pub enum Op {
     IsTuple(usize),             // expected_len — pops value, pushes Bool(val is Tuple with len)
     TupleGet(usize),            // index — pops Tuple, pushes element at index
     Try,                        // pops Result; Ok(v) → push v; Err(e) → early return TryPropagate(e)
+    Yield,                      // 协作式调度：让出控制权，当前 task 回到 ready_queue 尾部
 }
 
 // ── Chunk ──────────────────────────────────────────────────────────────────
@@ -88,6 +90,7 @@ impl Chunk {
             IsTuple(_) => 50,
             TupleGet(_) => 51,
             Try => 52,
+            Yield => 53,
         });
 
         // Emit operands
@@ -157,6 +160,7 @@ impl Chunk {
             50 => IsTuple(r!(u64) as usize),
             51 => TupleGet(r!(u64) as usize),
             52 => Try,
+            53 => Yield,
             _ => panic!("bad opcode {b}"),
         }
     }
@@ -164,11 +168,35 @@ impl Chunk {
 
 // ── Vm ─────────────────────────────────────────────────────────────────────
 
+/// 协程任务标识。0 保留给主任务；其余由 `next_task_id` 递增分配。
+type TaskId = u64;
+
+/// `run_until_yield` 的退出原因。Phase 2 调度器据此决定下一步调度动作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum YieldReason {
+    /// 任务正常完成（顶层 Ret）。结果已 push 到 `Vm.stack`，调度器负责 pop。
+    Completed,
+    /// 任务在 `await` 处挂起，等待某个 Pending Future。
+    /// 当前调用栈已保存到 `suspended[task_id]`，不自动重新入队——
+    /// 待 Future 就绪时由调度器（或 Step 5 的 I/O 事件）唤醒。
+    Suspended(TaskId),
+    /// 任务主动 `yield` 让出控制权。当前调用栈已保存到 `suspended[task_id]`，
+    /// 且 `task_id` 已被推回 `ready_queue` 尾部，等待下次调度。
+    Yield(TaskId),
+}
+
 struct Frame {
     ip: usize,
     chunk_idx: usize,
     locals: Vec<Value>,
+    /// 兼容字段：保留以减小本次改动的扩散面。新栈模型下不再依赖此值做 truncate。
     stack_base: usize,
+    /// 该 Frame 私有的操作数栈。Phase 2：每任务独立栈，支持协程挂起/恢复。
+    /// 切换 Frame 时与 `Vm.stack` 做 swap：caller 栈保存在此，callee 使用 `Vm.stack`。
+    operand_stack: Vec<Value>,
+    /// 该 Frame 所属的协程任务标识。普通函数调用继承 caller 的 task_id；
+    /// spawn 创建新协程时分配新 task_id（Phase 2 调度器使用）。
+    task_id: TaskId,
 }
 
 pub struct Vm {
@@ -204,11 +232,46 @@ pub struct Vm {
     /// TCP 流句柄表。索引+1 即句柄（1-based，0 表示无效）。
     /// `None` 表示已关闭的槽位（可被复用或保留）。
     pub tcp_streams: Vec<Option<std::net::TcpStream>>,
+    /// 下一个协程任务 ID 生成器。0 保留给主任务；从此字段递增分配。
+    /// Phase 2 Step 1-2 仅初始化，不使用（spawn 仍走同步路径）。
+    next_task_id: TaskId,
+    /// Phase 2 调度器：就绪任务队列。`run_scheduler` 循环 `pop_front` 取任务执行。
+    ready_queue: VecDeque<TaskId>,
+    /// Phase 2 调度器：挂起任务的完整调用栈。
+    /// key = task_id，value = 该任务挂起时的 `self.frames` 快照（含当前帧）。
+    /// `await` 遇到 Pending Future 时写入；`run_scheduler` 恢复时取出。
+    suspended: HashMap<TaskId, Vec<Frame>>,
+    /// Phase 2 调度器：已完成任务的结果。
+    /// 任务顶层 Ret 时写入；主任务（task_id=0）的结果即 `run_scheduler` 返回值。
+    task_results: HashMap<TaskId, Value>,
+    /// Phase 2 调度器：task_id → Future 句柄映射。
+    /// 真正的异步任务（Step 5 的 async I/O）创建 Pending Future 时注册；
+    /// 任务完成时调度器据此把 Future 设为 Ready 并唤醒等待者。
+    /// Phase 2 Step 3-4 中 spawn 仍为 eager（不注册此表），此表为空。
+    task_futures: HashMap<TaskId, Rc<RefCell<FutureState>>>,
+    /// Phase 2 调度器：当前正在执行的任务标识。
+    /// 由 `run_until_yield` 在入口/Frame 切换时同步更新；native 函数可读取此值
+    /// 以便 Step 5 的 async I/O 能正确注册到当前 task。
+    current_task: TaskId,
 }
 
 impl Vm {
     pub fn new() -> Self {
-        Vm { functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(), natives: HashMap::new(), globals: HashMap::new(), stack: Vec::new(), frames: Vec::new(), tape: None, recording: false, step_budget: None, deadline_ms: None, fs_sandbox: None, jit_ctx: None, last_error: None, current_chunk_idx: 0, last_explanation: Vec::new(), tcp_streams: Vec::new() }
+        Vm {
+            functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(),
+            natives: HashMap::new(), globals: HashMap::new(),
+            stack: Vec::new(), frames: Vec::new(),
+            tape: None, recording: false,
+            step_budget: None, deadline_ms: None, fs_sandbox: None,
+            jit_ctx: None, last_error: None, current_chunk_idx: 0,
+            last_explanation: Vec::new(), tcp_streams: Vec::new(),
+            next_task_id: 1,
+            ready_queue: VecDeque::new(),
+            suspended: HashMap::new(),
+            task_results: HashMap::new(),
+            task_futures: HashMap::new(),
+            current_task: 0,
+        }
     }
 
     // ── JIT accessors ──────────────────────────────────────────────────────
@@ -350,28 +413,133 @@ impl Vm {
     pub fn call(&mut self, name: &str) -> TenthResult<Value> {
         let idx = self.functions.get(name).copied()
             .ok_or_else(|| TenthError::RuntimeError { message: format!("未定义的函数 '{}'", name) })?;
-        self.run(idx)
+        self.run_scheduler(idx)
     }
 
-    fn run(&mut self, mut chunk_idx: usize) -> TenthResult<Value> {
-        let mut ip: usize = 0;
-        let num_args = self.chunks[chunk_idx].num_args;
-        // `base` is the stack position BEFORE args. When called via
-        // `call_with_args`, args are already pushed on the stack, so we
-        // subtract num_args. When called directly (e.g. `vm.call("main")`
-        // with num_args=0), this is a no-op.
-        let base = self.stack.len().saturating_sub(num_args);
-        let num_locals = self.chunks[chunk_idx].num_locals;
-        let mut locals = vec![Value::Unit; num_locals.max(num_args)];
+    /// Phase 2 调度器主循环（Step 3-4）。
+    /// 主任务（task_id=0）入队 → 循环取任务 → 恢复 → run_until_yield → 处理结果。
+    /// 主任务完成时返回结果；其他任务完成时把结果写入 task_results 并唤醒等待者。
+    /// Step 3-4 中 spawn 仍为 eager（不创建 task_futures 条目），真正的并发来自
+    /// Step 5 的 async I/O 创建 Pending Future 触发挂起。
+    fn run_scheduler(&mut self, entry_chunk: usize) -> TenthResult<Value> {
+        // 清理上次 run 残留的 async I/O 状态（thread_local 跨调用持久，需显式清理）
+        ASYNC_IO.with(|io| io.borrow_mut().clear());
 
-        // Pop args into locals (args were pushed right-to-left, so pop in reverse)
+        // 创建主任务的初始 Frame 并推入 suspended（统一恢复路径）
+        let num_args = self.chunks[entry_chunk].num_args;
+        let num_locals = self.chunks[entry_chunk].num_locals;
+        let mut locals = vec![Value::Unit; num_locals.max(num_args)];
+        let base = self.stack.len().saturating_sub(num_args);
         for i in (0..num_args).rev() {
             if self.stack.len() > base {
                 locals[i] = self.stack.pop().unwrap();
             }
         }
+        let initial_frame = Frame {
+            ip: 0,
+            chunk_idx: entry_chunk,
+            locals,
+            stack_base: 0,
+            operand_stack: std::mem::take(&mut self.stack),
+            task_id: 0,
+        };
+        self.suspended.insert(0, vec![initial_frame]);
+        self.ready_queue.push_back(0);
 
-        // Load initial chunk data
+        loop {
+            // Phase 2 Step 5：轮询 async I/O，把就绪的 Future 设为 Ready，
+            // 唤醒等待者（waiters）推入 ready_queue。
+            let woken = ASYNC_IO.with(|io| io.borrow_mut().poll());
+            for tid in woken {
+                self.ready_queue.push_back(tid);
+            }
+
+            let task_id = match self.ready_queue.pop_front() {
+                Some(id) => id,
+                None => {
+                    // 无就绪任务。若仍有 pending I/O，短暂休眠后继续轮询
+                    // （避免忙等；1ms 粒度对当前应用足够）。
+                    // 若无 pending I/O，所有任务已完成或死锁，退出调度器。
+                    let has_pending = ASYNC_IO.with(|io| io.borrow().has_pending());
+                    if has_pending {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        continue;
+                    }
+                    break;
+                }
+            };
+
+            // 恢复任务上下文：从 suspended 取出完整调用栈
+            if let Some(frames) = self.suspended.remove(&task_id) {
+                self.frames = frames;
+            } else {
+                // 任务不在 suspended 中（可能已完成或无效），跳过
+                continue;
+            }
+
+            self.current_task = task_id;
+
+            match self.run_until_yield()? {
+                YieldReason::Completed => {
+                    let result = self.stack.pop().unwrap_or(Value::Unit);
+                    self.task_results.insert(task_id, result.clone());
+
+                    // 如果有关联 Future，设为 Ready 并唤醒等待者
+                    //（Step 3-4 中 task_futures 为空，此分支不触发；
+                    //  Step 5 的 async I/O 任务完成时走此路径唤醒 await 者）
+                    if let Some(fut) = self.task_futures.remove(&task_id) {
+                        let waiters = {
+                            let mut state = fut.borrow_mut();
+                            let ws = match &*state {
+                                FutureState::Pending(ws) => ws.clone(),
+                                _ => vec![],
+                            };
+                            *state = FutureState::Ready(result.clone());
+                            ws
+                        };
+                        for w in waiters {
+                            self.ready_queue.push_back(w);
+                        }
+                    }
+
+                    if task_id == 0 {
+                        return Ok(result);
+                    }
+                }
+                YieldReason::Suspended(_) => {
+                    // frames 已在 run_until_yield 中保存到 suspended
+                    // task_id 不自动重新入队——待 Future 就绪时由调度器唤醒
+                }
+                YieldReason::Yield(_) => {
+                    // frames 已在 run_until_yield 中保存到 suspended
+                    // task_id 已在 run_until_yield 中推回 ready_queue
+                }
+            }
+        }
+
+        Ok(self.task_results.get(&0).cloned().unwrap_or(Value::Unit))
+    }
+
+    /// 执行当前任务直到 yield（Step 3-4）。
+    /// 入口：从 `self.frames.pop()` 取出当前帧，恢复局部状态。
+    /// 出口：
+    /// - `Completed`：顶层 Ret，结果已 push 到 `self.stack`，调度器负责 pop
+    /// - `Suspended(task_id)`：await 遇到 Pending Future，调用栈已保存到 `suspended[task_id]`
+    /// - `Yield(task_id)`：主动让出，调用栈已保存到 `suspended[task_id]`，task_id 已推回 ready_queue
+    fn run_until_yield(&mut self) -> TenthResult<YieldReason> {
+        // 从 self.frames 恢复当前帧（调度器已把完整调用栈放入 self.frames）
+        let frame = match self.frames.pop() {
+            Some(f) => f,
+            None => return Ok(YieldReason::Completed),
+        };
+        let mut ip = frame.ip;
+        let mut chunk_idx = frame.chunk_idx;
+        let mut locals = frame.locals;
+        let mut base = frame.stack_base;
+        let mut current_task_id = frame.task_id;
+        self.stack = frame.operand_stack;
+        self.current_task = current_task_id;
+
         let mut code = self.chunks[chunk_idx].code.clone();
         let mut strings = self.chunks[chunk_idx].strings.clone();
 
@@ -410,9 +578,13 @@ impl Vm {
             // Inline opcode read (no closure, so code/strings can be reassigned)
             let op: Op = {
                 use Op::*;
-                if ip >= code.len() { return Ok(Value::Unit); }
+                if ip >= code.len() {
+                    // 代码执行完毕（隐式 Ret）：任务完成，结果为 Unit
+                    self.stack.push(Value::Unit);
+                    return Ok(YieldReason::Completed);
+                }
                 let b = code[ip]; ip += 1;
-                macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if ip + n > code.len() { return Ok(Value::Unit); } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&code[ip..ip+n]); ip += n; <$t>::from_le_bytes(buf) }}; }
+                macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if ip + n > code.len() { self.stack.push(Value::Unit); return Ok(YieldReason::Completed); } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&code[ip..ip+n]); ip += n; <$t>::from_le_bytes(buf) }}; }
                 match b {
                     0 => PushInt(r!(i64)), 1 => PushFloat(r!(f64)),
                     2 => PushBool({ let v = code[ip] != 0; ip += 1; v }),
@@ -447,6 +619,7 @@ impl Vm {
                     50 => IsTuple(r!(u64) as usize),
                     51 => TupleGet(r!(u64) as usize),
                     52 => Try,
+                    53 => Yield,
                     _ => Ret,
                 }
             };
@@ -543,15 +716,27 @@ impl Vm {
                     } else if let Some(&callee_idx) = self.functions.get(&name) {
                         let callee_args = self.chunks[callee_idx].num_args;
                         let callee_locals = self.chunks[callee_idx].num_locals;
-                        self.frames.push(Frame { ip, chunk_idx, locals: locals.clone(), stack_base: base });
+                        // Phase 2 栈迁移：先从 caller 栈 pop args 到 callee locals
+                        let mut new_locals = vec![Value::Unit; callee_locals.max(callee_args)];
+                        for i in (0..callee_args).rev() {
+                            if self.stack.len() > base { new_locals[i] = self.stack.pop().unwrap(); }
+                        }
+                        // 保存 caller 栈到 Frame，给 callee 一个空栈
+                        let caller_stack = std::mem::take(&mut self.stack);
+                        self.frames.push(Frame {
+                            ip,
+                            chunk_idx,
+                            locals: locals.clone(),
+                            stack_base: base,
+                            operand_stack: caller_stack,
+                            task_id: current_task_id,
+                        });
                         chunk_idx = callee_idx;
                         code = self.chunks[chunk_idx].code.clone();
                         strings = self.chunks[chunk_idx].strings.clone();
                         ip = 0;
-                        locals = vec![Value::Unit; callee_locals.max(callee_args)];
-                        for i in (0..callee_args).rev() {
-                            if self.stack.len() > base { locals[i] = self.stack.pop().unwrap(); }
-                        }
+                        locals = new_locals;
+                        base = 0;  // callee 新栈从 0 开始
                     } else {
                         return Err(TenthError::RuntimeError { message: format!("未定义的函数 '{}'", name) });
                     }
@@ -573,24 +758,44 @@ impl Vm {
                         let result = native_fn(self, &args)?;
                         self.stack.push(result);
                     } else if let Some(&callee_idx) = self.functions.get(&callee_name) {
-                        self.frames.push(Frame { ip, chunk_idx, locals: locals.clone(), stack_base: self.stack.len() });
+                        // Phase 2 栈迁移：保存 caller 栈到 Frame，给 callee 一个空栈
+                        let caller_stack = std::mem::take(&mut self.stack);
+                        self.frames.push(Frame {
+                            ip,
+                            chunk_idx,
+                            locals: locals.clone(),
+                            stack_base: base,
+                            operand_stack: caller_stack,
+                            task_id: current_task_id,
+                        });
                         chunk_idx = callee_idx;
                         code = self.chunks[chunk_idx].code.clone();
                         strings = self.chunks[chunk_idx].strings.clone();
                         ip = 0;
                         locals = args;
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
+                        base = 0;  // callee 新栈从 0 开始
                     } else if let Some(native_fn) = self.natives.get(&name).copied() {
                         let result = native_fn(self, &args)?;
                         self.stack.push(result);
                     } else if let Some(&callee_idx) = self.functions.get(&name) {
-                        self.frames.push(Frame { ip, chunk_idx, locals: locals.clone(), stack_base: self.stack.len() });
+                        // Phase 2 栈迁移：保存 caller 栈到 Frame，给 callee 一个空栈
+                        let caller_stack = std::mem::take(&mut self.stack);
+                        self.frames.push(Frame {
+                            ip,
+                            chunk_idx,
+                            locals: locals.clone(),
+                            stack_base: base,
+                            operand_stack: caller_stack,
+                            task_id: current_task_id,
+                        });
                         chunk_idx = callee_idx;
                         code = self.chunks[chunk_idx].code.clone();
                         strings = self.chunks[chunk_idx].strings.clone();
                         ip = 0;
                         locals = args;
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
+                        base = 0;  // callee 新栈从 0 开始
                     } else {
                         return Err(TenthError::RuntimeError { message: format!("未定义的函数 '{}'", name) });
                     }
@@ -608,15 +813,21 @@ impl Vm {
                 Op::Ret => {
                     let result = self.stack.pop().unwrap_or(Value::Unit);
                     if let Some(f) = self.frames.pop() {
-                        self.stack.truncate(f.stack_base);
+                        // Phase 2 栈迁移：恢复 caller 栈（丢弃 callee 栈），push 结果
+                        self.stack = f.operand_stack;
                         self.stack.push(result);
                         ip = f.ip;
                         chunk_idx = f.chunk_idx;
                         code = self.chunks[chunk_idx].code.clone();
                         strings = self.chunks[chunk_idx].strings.clone();
                         locals = f.locals;
+                        base = f.stack_base;
+                        current_task_id = f.task_id;
+                        self.current_task = current_task_id;
                     } else {
-                        return Ok(result);
+                        // 顶层 Ret：任务完成。把结果推回栈供调度器 pop。
+                        self.stack.push(result);
+                        return Ok(YieldReason::Completed);
                     }
                 }
 
@@ -831,16 +1042,59 @@ impl Vm {
 
                 Op::Spawn => {
                     let v = self.stack.pop().unwrap_or(Value::Unit);
-                    self.stack.push(Value::Future(Box::new(v)));
+                    // Phase 2 Step 3-4：spawn 保持 eager 语义（立即求值，包装为 Ready Future）。
+                    // 设计决策：真正的并发不来自 spawn，而来自 Step 5 的 async I/O 创建 Pending Future。
+                    // spawn 的 inner 在 bytecode 层面已被编译为"先求值 inner 再 Op::Spawn"，
+                    // 改为延迟执行需要重构 bytecode 编译逻辑，超出 Step 3-4 范围。
+                    // eager spawn 仍然有用：await 时如果遇到 Pending Future（由 async I/O 创建），
+                    // 调度器会切换到其他就绪任务，包括其他 spawn 产生的 eager Future 的 await 者。
+                    self.stack.push(Value::future_ready(v));
                 }
 
                 Op::Await => {
                     let v = self.stack.pop().unwrap_or(Value::Unit);
-                    let inner = match v {
-                        Value::Future(inner) => *inner,
-                        other => other,
-                    };
-                    self.stack.push(inner);
+                    // Phase 2 Step 3-4：检查 FutureState
+                    // - Ready：直接取值（快路径，Phase 1 兼容）
+                    // - Pending：把当前 task_id 加入 Future 等待者列表，
+                    //   保存当前调用栈到 suspended，返回 Suspended 信号给调度器
+                    match &v {
+                        Value::Future(rc) => {
+                            // clone Rc 以便后续 borrow_mut（避免在 match 借用中修改）
+                            let rc_clone = rc.clone();
+                            let is_ready = matches!(&*rc_clone.borrow(), FutureState::Ready(_));
+                            if is_ready {
+                                let inner = match &*rc_clone.borrow() {
+                                    FutureState::Ready(v) => v.clone(),
+                                    _ => unreachable!(),
+                                };
+                                self.stack.push(inner);
+                            } else {
+                                // Pending：把当前 task_id 加入 Future 的等待者列表
+                                if let FutureState::Pending(waiters) = &mut *rc_clone.borrow_mut() {
+                                    waiters.push(current_task_id);
+                                }
+                                // 把 Future 推回栈顶，以便恢复时重新执行 Await 取值。
+                                // Await 无操作数（1 字节 opcode），ip-1 指向 Await opcode，
+                                // 恢复后重读该字节并重新执行：此时 Future 已 Ready，走快路径取值。
+                                self.stack.push(v.clone());
+                                self.frames.push(Frame {
+                                    ip: ip - 1,
+                                    chunk_idx,
+                                    locals: std::mem::take(&mut locals),
+                                    stack_base: base,
+                                    operand_stack: std::mem::take(&mut self.stack),
+                                    task_id: current_task_id,
+                                });
+                                let frames = std::mem::take(&mut self.frames);
+                                self.suspended.insert(current_task_id, frames);
+                                return Ok(YieldReason::Suspended(current_task_id));
+                            }
+                        }
+                        other => {
+                            // 非 Future 值：直接传值（await 7 → 7）
+                            self.stack.push(other.clone());
+                        }
+                    }
                 }
 
                 Op::MakeTuple(n) => {
@@ -886,16 +1140,21 @@ impl Vm {
                         // 构造 Result::Err 作为函数返回值，执行 early return（复用 Ret 的 frame 恢复逻辑）
                         let result = val.clone();
                         if let Some(f) = self.frames.pop() {
-                            self.stack.truncate(f.stack_base);
+                            // Phase 2 栈迁移：恢复 caller 栈（同 Op::Ret）
+                            self.stack = f.operand_stack;
                             self.stack.push(result);
                             ip = f.ip;
                             chunk_idx = f.chunk_idx;
                             code = self.chunks[chunk_idx].code.clone();
                             strings = self.chunks[chunk_idx].strings.clone();
                             locals = f.locals;
+                            base = f.stack_base;
+                            current_task_id = f.task_id;
+                            self.current_task = current_task_id;
                         } else {
-                            // 最外层函数：直接返回 Result::Err
-                            return Ok(result);
+                            // 最外层函数：任务完成（early return Err）。把结果推回栈供调度器 pop。
+                            self.stack.push(result);
+                            return Ok(YieldReason::Completed);
                         }
                     } else {
                         // Ok(v) → 解包 push v；非 Result 类型直接传值
@@ -909,6 +1168,25 @@ impl Vm {
                         };
                         self.stack.push(inner);
                     }
+                }
+
+                Op::Yield => {
+                    // Phase 2 Step 3-4：协作式调度，主动让出控制权。
+                    // 保存当前帧到 self.frames，take 整个 frames 到 suspended，
+                    // task_id 推回 ready_queue 尾部，返回 Yield 信号给调度器。
+                    // 调度器下次轮到该 task 时会从 suspended 恢复并继续执行（ip 不变）。
+                    self.frames.push(Frame {
+                        ip,
+                        chunk_idx,
+                        locals: std::mem::take(&mut locals),
+                        stack_base: base,
+                        operand_stack: std::mem::take(&mut self.stack),
+                        task_id: current_task_id,
+                    });
+                    let frames = std::mem::take(&mut self.frames);
+                    self.suspended.insert(current_task_id, frames);
+                    self.ready_queue.push_back(current_task_id);
+                    return Ok(YieldReason::Yield(current_task_id));
                 }
             }
         }

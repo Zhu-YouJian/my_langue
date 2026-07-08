@@ -64,6 +64,17 @@ impl LazyIterator {
     }
 }
 
+/// Future 的运行时状态。
+/// - `Pending`：未完成，记录等待该 Future 完成的 task_id 列表（Phase 2 调度器使用）
+/// - `Ready`：已完成，包含最终值
+#[derive(Debug, Clone)]
+pub enum FutureState {
+    /// 等待者 task_id 列表。Phase 1 不使用（spawn 立即完成），Phase 2 调度器使用。
+    Pending(Vec<u64>),
+    /// 已完成，包含最终值。
+    Ready(Value),
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
@@ -103,10 +114,23 @@ pub enum Value {
     Range { start: i64, end: i64, inclusive: bool },
     Iterator(LazyIterator),
     Tuple(Vec<Value>),
-    Future(Box<Value>),
+    /// Future 值。共享语义：多个引用者看到同一 Future。
+    /// Phase 1：spawn 立即包装为 `Ready`，await 立即解包 `Ready`（同步语义）。
+    /// Phase 2：将支持 `Pending` 状态与协程调度。
+    Future(Rc<RefCell<FutureState>>),
 }
 
 impl Value {
+    /// 构造一个已完成的 Future（Phase 1：spawn 立即包装为 Ready）。
+    pub fn future_ready(v: Value) -> Value {
+        Value::Future(Rc::new(RefCell::new(FutureState::Ready(v))))
+    }
+
+    /// 构造一个未完成的 Future（Phase 2：调度器创建协程任务时使用）。
+    pub fn future_pending() -> Value {
+        Value::Future(Rc::new(RefCell::new(FutureState::Pending(vec![]))))
+    }
+
     pub fn type_of(&self) -> Type {
         match self {
             Value::Int(_) => Type::Base(BaseType::I32),
@@ -149,7 +173,12 @@ impl Value {
             Value::Range { .. } => Type::Unknown,
             Value::Iterator(_) => Type::Unknown,
             Value::Tuple(items) => Type::Tuple(items.iter().map(|v| v.type_of()).collect()),
-            Value::Future(inner) => inner.type_of(),
+            Value::Future(state) => {
+                match &*state.borrow() {
+                    FutureState::Ready(v) => v.type_of(),
+                    FutureState::Pending(_) => Type::Unknown,
+                }
+            }
         }
     }
 
@@ -261,8 +290,13 @@ impl fmt::Display for Value {
                 }
                 write!(f, ")")
             }
-            Value::Future(inner) => {
-                write!(f, "Future<{}>", inner)
+            Value::Future(state) => {
+                match &*state.borrow() {
+                    FutureState::Ready(v) => write!(f, "Future<{}>", v),
+                    FutureState::Pending(waiters) => {
+                        write!(f, "Future<Pending({})>", waiters.len())
+                    }
+                }
             }
             Value::Map(entries) => {
                 let entries = entries.borrow();

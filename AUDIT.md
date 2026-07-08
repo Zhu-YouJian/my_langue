@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-07-08 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 | 780+ 项测试通过（55 个测试目标，含 6 个栈溢出崩溃预存问题）
+> 日期：2026-07-08 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 + 异步 Phase 2（协程调度 + async I/O） | 790+ 项测试通过（55 个测试目标，含 6 个栈溢出崩溃预存问题）
 
 ---
 
@@ -133,7 +133,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试文件 | 数量 | 覆盖 |
 |----------|------|------|
-| `async_basic_test.rs` | 6/0/0 | 异步原语基础 |
+| `async_basic_test.rs` | 13/0/0 | 异步原语基础 + Phase 2 协程调度 + async I/O（sleep/TCP echo/无效句柄/yield/多任务切换；2026-07-08 从 6 项扩展到 13 项） |
 
 ### I/O
 
@@ -161,7 +161,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试目标 | 数量 | 说明 |
 |----------|------|------|
-| **总计** | **784 passed / 3 failed / 12 ignored** | 55 个测试目标（54 文件 + lib），6 个栈溢出崩溃预存问题 |
+| **总计** | **791 passed / 3 failed / 12 ignored** | 55 个测试目标（54 文件 + lib），6 个栈溢出崩溃预存问题 |
 
 ---
 
@@ -196,6 +196,8 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | 5 | three_stage wasmtime 路径 stub host 不完整 | `run_test_wasmtime` 中 `vec_new`/`vec_push`/`vec_len` 等 17 个 host import 均为返回 0 的占位实现，导致 WASM-B 为 0 字节。wasmi 路径已通过（WASM-B 460 bytes，add(3,4)=12）。已将 wasmtime 路径拆为 `#[ignore]` 的 `three_stage_selfhost_wasmtime` 独立测试（2026-07-06），默认 `cargo test` 仅跑 wasmi 路径。补全 stub 需参照 `register_host_functions` 实现 17 个 host import 的 wasmtime 版本，与 f32 路线图无关，登记为独立任务。 |
 | 6 | Rust 母编译器 wasm.rs Call 分派缺 str_eq/str_add/str_int 函数调用分支 | `tenth/src/compile/wasm/compile.rs:251-372` 的 `HirExprKind::Call` 分派仅对 `str_len`/`str_at`/`str_cmp`/`str_slice` 有函数调用分支，`str_eq`/`str_add`/`str_int` 缺失。tenthc 源码若以函数调用形式 `str_eq(a,b)` 调用会产出 i64 → i32 类型不匹配的非法 WASM。2026-07-06 f32/f64 parity 路线图阶段 7 发现并规避（tenthc 侧 `parse_tensor_type` 用 `==`/`!=` 操作符走 BinOp 路径）。修复方案：在 `compile.rs` Call 分派里补齐三个分支，与 `str_len`/`str_at`/`str_cmp`/`str_slice` 对齐。 |
 | 7 | 6 个测试文件栈溢出崩溃 | tenthc_generic_tensor_test / tenthc_for_loop_test / jit_stack_overflow_test / tenthc_dotdot_eq_test / selfhost_frontend / parity_test 编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，需增大栈空间或改用 release 模式。**2026-07-08 更新**：`tenthc_for_loop_test` 的 Vec 迭代测试在设置 `RUST_MIN_STACK=268435456`（256MB）后已通过 3/3（vec_literal_basic / vec_literal_break_continue / vec_literal_empty），但默认栈空间下仍栈溢出，根因是 Windows debug 模式栈空间不足（git stash 验证为预存问题）。 |
+| 8 | spawn 仍为 eager 语义（Phase 2 设计决策） | `runtime/vm.rs::Op::Spawn` 立即求值 inner 表达式并包装为 `Future(Ready(v))`，不制造真并行；真正的"并发"来自 async I/O 返回的 `Pending` Future（子线程工作期间调度器可切换到其他就绪任务）。**影响**：CPU 密集型 spawn 不会真并行执行；如需 CPU 并行需引入工作窃取调度器或绿色线程池（Phase 3 遗留）。**登记性质**：设计决策非缺陷——保持 Phase 1 兼容性 + 零新依赖原则。详见 MEMO.md 2026-07-08 feat 条目。 |
+| 9 | yield 无语法层关键字（Phase 2 已就绪未接入） | VM 已支持 `Op::Yield`(opcode 53) 执行（让出控制权，task 回到 `ready_queue` 尾部），但 lower 阶段没有 `yield` 关键字的 AST→HIR→Op 路径，当前 `Op::Yield` 只能通过手动构造字节码或 native 内部触发。**影响**：用户代码无法直接使用 `yield` 表达式；未来添加 `yield` 关键字时直接接入（lexer + parser + lower 三层）。**登记性质**：能力已就绪未暴露，Phase 3 遗留。详见 MEMO.md 2026-07-08 feat 条目 Phase 3 遗留 (c)。 |
 
 ---
 

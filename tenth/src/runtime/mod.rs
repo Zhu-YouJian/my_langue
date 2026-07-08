@@ -6,3 +6,4 @@ pub mod autodiff;
 pub mod limits;
 pub mod vm;
 pub mod relation_debugger;
+pub mod async_io;

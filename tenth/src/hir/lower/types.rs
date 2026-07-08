@@ -434,6 +434,9 @@ impl Lowerer {
             "tcp_connect" | "tcp_read" | "tcp_write" | "http_get" | "http_post" => {
                 Ok(Type::Enum("Result".to_string()))
             }
+            // Phase 2 Step 5：异步 I/O 原语（返回 Future，类型暂为 Unknown——
+            // await 解包后才是 Result/Unit，由 Op::Await 在运行时处理）
+            "async_sleep_ms" | "async_tcp_read" | "async_tcp_write" => Ok(Type::Unknown),
             // Tensor 构造函数：dtype 从参数推断（若无 f32 线索则默认 F64）
             "tensor" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),
             "rand" | "randn" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),

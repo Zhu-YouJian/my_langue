@@ -12,6 +12,7 @@ use tenth::runtime::vm::Vm;
 use tenth::runtime::value::Value;
 use tenth::runtime::autodiff::Tape;
 use tenth::runtime::tensor::Tensor;
+use tenth::runtime::async_io::{ASYNC_IO, IoResult};
 use tenth::compile;
 use tenth::compile::bytecode::BytecodeCompiler;
 use tenth::compile::jit;
@@ -828,6 +829,129 @@ fn register_natives(vm: &mut Vm) {
         } else {
             Err(tenth::error::TenthError::RuntimeError { message: "time_sleep_ms(ms) 期望一个整数".into() })
         }
+    });
+
+    // —— Phase 2 Step 5：异步 I/O native ——
+    // 设计：std::thread + mpsc + thread_local。native 创建 Pending Future，
+    // 注册到 ASYNC_IO，VM 调度器在 run_scheduler 循环中 poll。
+    // await Pending Future 时 Op::Await 把当前 task 加入 waiters 并挂起，
+    // I/O 就绪后 poll 把 Future 设为 Ready 并唤醒 waiters。
+    vm.add_native("async_sleep_ms".into(), |_vm, args| {
+        let ms = match args.first() {
+            Some(Value::Int(n)) => *n,
+            _ => return Err(tenth::error::TenthError::RuntimeError {
+                message: "async_sleep_ms(ms) 期望一个整数".into(),
+            }),
+        };
+        if ms < 0 {
+            return Err(tenth::error::TenthError::RuntimeError {
+                message: format!("async_sleep_ms: 不接受负数（{}）", ms),
+            });
+        }
+        const MAX_SLEEP_MS: i64 = 24 * 60 * 60 * 1000;
+        if ms > MAX_SLEEP_MS {
+            return Err(tenth::error::TenthError::RuntimeError {
+                message: format!("async_sleep_ms: 超过 24 小时上限（{}ms）", ms),
+            });
+        }
+        // 创建 Pending Future，注册定时器
+        let future = Value::future_pending();
+        if let Value::Future(rc) = &future {
+            let rc_clone = rc.clone();
+            ASYNC_IO.with(|io| io.borrow_mut().add_timer(ms as u64, rc_clone));
+        }
+        Ok(future)
+    });
+
+    vm.add_native("async_tcp_read".into(), |vm, args| {
+        // 参数校验：参数错误时返回 Ready Future 包含 Result::Err
+        if args.len() < 2 {
+            return Ok(Value::future_ready(err_result("async_tcp_read 需要 (i64, i64) 参数")));
+        }
+        let (handle, max_bytes) = match (&args[0], &args[1]) {
+            (Value::Int(h), Value::Int(n)) => (*h, *n),
+            _ => return Ok(Value::future_ready(err_result("async_tcp_read 需要 (i64, i64) 参数"))),
+        };
+        let idx = handle as usize;
+        if idx == 0 || idx > vm.tcp_streams.len() {
+            return Ok(Value::future_ready(err_result("无效的句柄")));
+        }
+        // try_clone 让 worker 线程持有 stream 副本，原 stream 留在 VM 中
+        let stream_clone = match vm.tcp_streams[idx - 1].as_ref() {
+            Some(s) => match s.try_clone() {
+                Ok(c) => c,
+                Err(e) => return Ok(Value::future_ready(err_result(format!("句柄克隆失败: {e}")))),
+            },
+            None => return Ok(Value::future_ready(err_result("连接已关闭"))),
+        };
+        // 重置 stream_clone 的 read_timeout 为 None（阻塞读）
+        // （原 stream 可能被 tcp_set_timeout 设了短超时，对 worker 不利）
+        stream_clone.set_read_timeout(None).ok();
+        let max = max_bytes.max(0).min(65536) as usize;
+
+        let future = Value::future_pending();
+        let future_rc = match &future {
+            Value::Future(rc) => rc.clone(),
+            _ => unreachable!(),
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = vec![0u8; max];
+            let mut s = stream_clone;
+            let result = match s.read(&mut buf) {
+                Ok(0) => IoResult::Bytes(Vec::new()), // EOF
+                Ok(n) => IoResult::Bytes(buf[..n].to_vec()),
+                Err(e) => IoResult::Err(format!("读取失败: {e}")),
+            };
+            let _ = tx.send(result);
+        });
+        ASYNC_IO.with(|io| io.borrow_mut().add_io(rx, future_rc));
+        Ok(future)
+    });
+
+    vm.add_native("async_tcp_write".into(), |vm, args| {
+        if args.len() < 2 {
+            return Ok(Value::future_ready(err_result("async_tcp_write 需要 (i64, Vec<i64>) 参数")));
+        }
+        let (handle, data) = match (&args[0], &args[1]) {
+            (Value::Int(h), Value::Vec(v)) => (*h, v.clone()),
+            _ => return Ok(Value::future_ready(err_result("async_tcp_write 需要 (i64, Vec<i64>) 参数"))),
+        };
+        let idx = handle as usize;
+        if idx == 0 || idx > vm.tcp_streams.len() {
+            return Ok(Value::future_ready(err_result("无效的句柄")));
+        }
+        let stream_clone = match vm.tcp_streams[idx - 1].as_ref() {
+            Some(s) => match s.try_clone() {
+                Ok(c) => c,
+                Err(e) => return Ok(Value::future_ready(err_result(format!("句柄克隆失败: {e}")))),
+            },
+            None => return Ok(Value::future_ready(err_result("连接已关闭"))),
+        };
+        stream_clone.set_write_timeout(None).ok();
+        let bytes: Vec<u8> = data.borrow().iter().map(|x| match x {
+            Value::Int(b) => *b as u8,
+            _ => 0,
+        }).collect();
+
+        let future = Value::future_pending();
+        let future_rc = match &future {
+            Value::Future(rc) => rc.clone(),
+            _ => unreachable!(),
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let mut s = stream_clone;
+            let result = match s.write_all(&bytes) {
+                Ok(_) => IoResult::Count(bytes.len()),
+                Err(e) => IoResult::Err(format!("写入失败: {e}")),
+            };
+            let _ = tx.send(result);
+        });
+        ASYNC_IO.with(|io| io.borrow_mut().add_io(rx, future_rc));
+        Ok(future)
     });
     // Random functions — 使用 rand crate 的 CSPRNG（thread_rng），避免可预测种子。
     // 历史 `DefaultHasher` + SystemTime 方案可被攻击者枚举纳秒时刻预测输出。
