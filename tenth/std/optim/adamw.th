@@ -46,3 +46,73 @@ fn adamw_step<T>(
     let new_w = decayed_w - lr * m_hat / (v_hat.sqrt() + eps);
     (new_w, new_m, new_v)
 }
+
+// ── JIT 路径友好版本（单值返回，避免 tuple 解构触发 JIT fallback）──
+//
+// adamw_step 返回 tuple (new_w, new_m, new_v)，在 JIT 路径下 tuple 解构
+// 有已知限制（见 compiler-dept skill「JIT 路径已知限制」）。
+// 下面 3 个函数分别返回 new_w / new_m / new_v，让调用方能逐个调用避免解构。
+//
+// 用法（JIT 路径）：
+//   let nw = adamw_step_w<f64>(w, m, v, lr, b1, b2, eps, decay, b1_t, b2_t);
+//   let nm = adamw_step_m<f64>(w, m, v, lr, b1, b2, eps, decay, b1_t, b2_t);
+//   let nv = adamw_step_v<f64>(w, m, v, lr, b1, b2, eps, decay, b1_t, b2_t);
+//
+// 注：3 次调用会重复计算 gw / new_m / new_v，性能略低于 tuple 版本，
+// 但对 JIT 路径稳定性更重要。interpreter/VM 路径建议仍用 adamw_step。
+
+// 返回更新后的 w（解耦权重衰减 + Adam 更新）。
+fn adamw_step_w<T>(
+    w: Tensor[T, ..],
+    m: Tensor[T, ..],
+    v: Tensor[T, ..],
+    lr: T,
+    beta1: T,
+    beta2: T,
+    eps: T,
+    decay: T,
+    beta1_t: T,
+    beta2_t: T,
+) -> Tensor[T, ..] {
+    let gw = grad(w);
+    let new_m = beta1 * m + (1.0 - beta1) * gw;
+    let new_v = beta2 * v + (1.0 - beta2) * gw * gw;
+    let m_hat = new_m / (1.0 - beta1_t);
+    let v_hat = new_v / (1.0 - beta2_t);
+    let decayed_w = w * (1.0 - lr * decay);
+    decayed_w - lr * m_hat / (v_hat.sqrt() + eps)
+}
+
+// 返回更新后的 m（一阶矩估计）。
+fn adamw_step_m<T>(
+    w: Tensor[T, ..],
+    m: Tensor[T, ..],
+    v: Tensor[T, ..],
+    lr: T,
+    beta1: T,
+    beta2: T,
+    eps: T,
+    decay: T,
+    beta1_t: T,
+    beta2_t: T,
+) -> Tensor[T, ..] {
+    let gw = grad(w);
+    beta1 * m + (1.0 - beta1) * gw
+}
+
+// 返回更新后的 v（二阶矩估计）。
+fn adamw_step_v<T>(
+    w: Tensor[T, ..],
+    m: Tensor[T, ..],
+    v: Tensor[T, ..],
+    lr: T,
+    beta1: T,
+    beta2: T,
+    eps: T,
+    decay: T,
+    beta1_t: T,
+    beta2_t: T,
+) -> Tensor[T, ..] {
+    let gw = grad(w);
+    beta2 * v + (1.0 - beta2) * gw * gw
+}

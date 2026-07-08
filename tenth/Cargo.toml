@@ -26,6 +26,8 @@ cranelift-module = "0.115"
 cranelift-jit = "0.115"
 cranelift-native = "0.115"
 regex = "1"
+# Wave 2：f16/bf16 半精度浮点支持（TensorData::F16/BF16）
+half = "2"
 
 [profile.release]
 # 安全：启用算术溢出检查，让 hostcalls.rs / wasmtime_host.rs 中的

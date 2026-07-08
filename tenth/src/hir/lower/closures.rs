@@ -27,6 +27,7 @@ impl Lowerer {
                 if name.contains("::") { return; }
                 match name.as_str() {
                     "println" | "eprintln" | "eprint" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
+                    | "zeros_f16" | "ones_f16" | "zeros_bf16" | "ones_bf16"
                     | "read_file" | "write_file" | "str_at" | "Vec::new" | "HashMap::new"
                     | "compile_host" | "compile_program" | "write_bytes"
                     | "read_line" | "env_get" | "env_set" | "exit"

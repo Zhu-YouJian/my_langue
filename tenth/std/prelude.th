@@ -109,10 +109,12 @@
 //   std::optim::sgd::sgd_step<T>, sgd_momentum<T>, sgd_weight_decay<T>
 //   std::optim::adam::adam_step<T>
 //   std::optim::adamw::adamw_step<T>       // 解耦权重衰减（Transformer 训练推荐）
+//   std::optim::adamw::adamw_step_w<T>, adamw_step_m<T>, adamw_step_v<T>  // JIT 路径友好（单值返回，避免 tuple 解构）
 //   std::optim::adagrad::adagrad_step<T>
 //   std::optim::rmsprop::rmsprop_step<T>
-//   std::optim::clip::clip_grad_by_value<T>, clip_grad_by_norm<T>  // 梯度裁剪
+//   std::optim::clip::clip_grad_by_value<T>, clip_grad_by_norm<T>  // 梯度裁剪（clip_grad_by_norm 已修复 JIT 路径 tensor-float 比较问题）
 //   std::optim::accumulate::accumulate_grad<T>  // 梯度累积辅助
+//   std::optim::accumulate::accumulate_loop<T>  // 梯度累积循环（高阶函数，对多个 micro_batch 自动 forward+backward）
 //   std::data::dataloader::new, has_next, next_batch, reset, num_batches
 //   std::data::mnist::parse_images, parse_labels, one_hot, normalize_pixel, read_i32_be
 //   std::utils::serialization::save_model, load_model, save_checkpoint

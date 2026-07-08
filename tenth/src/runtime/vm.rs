@@ -1775,6 +1775,8 @@ impl Vm {
                         let bytes_per_elem: i64 = match &tensor.data {
                             super::tensor::TensorData::F64(_) => 8,
                             super::tensor::TensorData::F32(_) => 4,
+                            super::tensor::TensorData::F16(_) => 2,
+                            super::tensor::TensorData::BF16(_) => 2,
                         };
                         Ok(Value::Int(n * bytes_per_elem))
                     }

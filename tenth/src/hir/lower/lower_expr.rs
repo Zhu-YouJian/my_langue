@@ -53,6 +53,7 @@ impl Lowerer {
                     if var_info.is_none() && fn_info.is_none() {
                         match ident.name.as_str() {
                             "println" | "print" | "eprintln" | "eprint" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
+                            | "zeros_f16" | "ones_f16" | "zeros_bf16" | "ones_bf16"
                             | "read_file" | "write_file" | "write_bytes" | "read_bytes"
                             | "read_line" | "env_get" | "env_set" | "exit"
                             | "str_at" | "str_len" | "str_cmp" | "str_slice" | "str_add" | "str_eq" | "str_int"
@@ -254,12 +255,17 @@ impl Lowerer {
                     // shape 推断：字面量参数（如 randn<f32>(3, 4)）→ [Known(3), Known(4)]
                     let ret_ty = Type::tensor(dtype, Self::shape_from_int_args(&lowered_args));
                     // 运行时按名字分发：f32 dtype 映射到 randn_f32/zeros_f32/ones_f32/rand_f32
+                    // Wave 2: f16/bf16 dtype 映射到 zeros_f16/ones_f16/zeros_bf16/ones_bf16
                     // （tensor/tensor_from_vec 不需要后缀，运行时按参数 dtype 构造）
                     let runtime_name = match (func_name.as_str(), dtype) {
                         ("randn", BaseType::F32) => "randn_f32".to_string(),
                         ("zeros", BaseType::F32) => "zeros_f32".to_string(),
                         ("ones", BaseType::F32) => "ones_f32".to_string(),
                         ("rand", BaseType::F32) => "rand_f32".to_string(),
+                        ("zeros", BaseType::F16) => "zeros_f16".to_string(),
+                        ("ones", BaseType::F16) => "ones_f16".to_string(),
+                        ("zeros", BaseType::BF16) => "zeros_bf16".to_string(),
+                        ("ones", BaseType::BF16) => "ones_bf16".to_string(),
                         _ => func_name.clone(),
                     };
                     // 编译期内存预估：泛型构造函数返回大 tensor 时发 warning

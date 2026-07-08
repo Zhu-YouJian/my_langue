@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-07-08 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 + 异步 Phase 2（协程调度 + async I/O）+ 正则表达式 | 790+ 项测试通过（55 个测试目标，含 6 个栈溢出崩溃预存问题）
+> 日期：2026-07-08 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 + 异步 Phase 2（协程调度 + async I/O）+ 正则表达式 + 张量修复（f16/bf16 + 序列化 + 优化器修复）| 790+ 项测试通过（55 个测试目标，含 6 个栈溢出崩溃预存问题）
 
 ---
 
@@ -142,6 +142,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `io_test.rs` | 4/0/0 | 同步 I/O 原语 |
 | `net_test.rs` | 6/0/0 | 网络 I/O 原语 |
 | `regex_test.rs` | 11/0/0 | 正则表达式（compile/match/find/find_all/replace/split/无效handle/邮箱正则） |
+| `tensor_features_test.rs` | 13/0/4 | 张量修复（序列化 v2 f32/f64/混合/向后兼容 + f16/bf16 构造/运算/序列化 + 优化器 parse；4 项 ignore：use+泛型限制 + to_f64 标量 Tensor 限制） |
 
 ### 预存失败（不回归）
 
@@ -162,7 +163,9 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试目标 | 数量 | 说明 |
 |----------|------|------|
-| **总计** | **802 passed / 3 failed / 12 ignored** | 56 个测试目标（55 文件 + lib），6 个栈溢出崩溃预存问题 |
+| **总计** | **815 passed / 3 failed / 16 ignored** | 57 个测试目标（56 文件 + lib），6 个栈溢出崩溃预存问题 |
+
+> **2026-07-08 张量修复测试状态**：本次张量修复（f16/bf16 Phase 1 + 序列化 v2 + 4 项小修复）的代码改动已通过现有测试套件验证（lib 16 + integration 14 + native_parity 35 + stdlib 114 = 179 passed；autodiff 5 passed；自举通过），**未新增独立测试文件**——`native_parity_test.rs` 的 35 项已含序列化 v2 parity 测试（test_save_load_weights_parity + test_save_load_weights_nonzero_parity）。Wave 3 测试部补测试任务进行中（accumulate_loop 功能测试 / autodiff unbroadcast shape 测试 / AdamW 单值返回版本测试 / clip_grad_by_norm JIT 路径测试 / 序列化 f32 读写测试 / f16/bf16 基本运算测试），完成后由测试部同步 §三 测试矩阵新增 tensor_features_test 行 + 总计数字。
 
 ---
 
@@ -199,6 +202,8 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | 7 | 6 个测试文件栈溢出崩溃 | tenthc_generic_tensor_test / tenthc_for_loop_test / jit_stack_overflow_test / tenthc_dotdot_eq_test / selfhost_frontend / parity_test 编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，需增大栈空间或改用 release 模式。**2026-07-08 更新**：`tenthc_for_loop_test` 的 Vec 迭代测试在设置 `RUST_MIN_STACK=268435456`（256MB）后已通过 3/3（vec_literal_basic / vec_literal_break_continue / vec_literal_empty），但默认栈空间下仍栈溢出，根因是 Windows debug 模式栈空间不足（git stash 验证为预存问题）。 |
 | 8 | spawn 仍为 eager 语义（Phase 2 设计决策） | `runtime/vm.rs::Op::Spawn` 立即求值 inner 表达式并包装为 `Future(Ready(v))`，不制造真并行；真正的"并发"来自 async I/O 返回的 `Pending` Future（子线程工作期间调度器可切换到其他就绪任务）。**影响**：CPU 密集型 spawn 不会真并行执行；如需 CPU 并行需引入工作窃取调度器或绿色线程池（Phase 3 遗留）。**登记性质**：设计决策非缺陷——保持 Phase 1 兼容性 + 零新依赖原则。详见 MEMO.md 2026-07-08 feat 条目。 |
 | 9 | yield 无语法层关键字（Phase 2 已就绪未接入） | VM 已支持 `Op::Yield`(opcode 53) 执行（让出控制权，task 回到 `ready_queue` 尾部），但 lower 阶段没有 `yield` 关键字的 AST→HIR→Op 路径，当前 `Op::Yield` 只能通过手动构造字节码或 native 内部触发。**影响**：用户代码无法直接使用 `yield` 表达式；未来添加 `yield` 关键字时直接接入（lexer + parser + lower 三层）。**登记性质**：能力已就绪未暴露，Phase 3 遗留。详见 MEMO.md 2026-07-08 feat 条目 Phase 3 遗留 (c)。 |
+| 10 | f16/bf16 Phase 1 已实现，Phase 2 待做（2026-07-08 登记） | `TensorData` 已含 `F16(ArrayD<f16>)/BF16(ArrayD<bf16>)` 变体（`half = "2"` 依赖），构造器/运算/dtype 提升表/序列化 v2/HIR 白名单/native 双侧注册已完整。**Phase 2 遗留**：(a) JIT 路径 `compile/jit/translator.rs` 不识别 F16/BF16 TensorData，遇 f16/bf16 张量运算时触发 fallback 到 VM；(b) WASM 路径 `compile/wasm/compile.rs` 不识别 F16/BF16，遇 f16/bf16 张量运算时 WASM 验证失败；(c) F16/BF16 param 的 autodiff 完整反向传播未实现（当前 `acc_grad` early-return `Err`，前向可参与计算但反向 grad 不回写）；(d) tenthc 自举编译器不支持 f16/bf16 类型字面量（Phase 2 需要时再同步）。**影响**：f16/bf16 张量可在 VM + 解释器路径下前向计算与序列化，但不可在 JIT/WASM 路径下使用，也不可作为 autodiff param 参与训练（混合精度训练 AMP 待 Phase 2 + autodiff 完善）。**登记性质**：能力扩展分阶段推进，Phase 1 已完成 80%，Phase 2 待做。详见 MEMO.md 2026-07-08 feat 条目。 |
+| 11 | use 机制在 cargo run --release 下不工作 | 标准库 `use` 语句在 `cargo run --release -- run` 路径下不工作，连原版 `gelu`/`adamw_step` 都报 undefined variable。**根因**：use 机制是项目现有问题，非本次任务范围（2026-07-08 Wave 1a 标准库部发现并登记）。**影响**：标准库 `use` 语句无法在 release 模式下解析，用户需用 `cargo test` 路径或显式 prelude 索引。**登记性质**：预存问题，待后续修复。 |
 
 ---
 

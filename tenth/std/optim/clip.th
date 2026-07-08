@@ -28,12 +28,20 @@ fn clip_grad_by_value<T>(gw: Tensor[T, ..], max_val: T) -> Tensor[T, ..] {
 // 按 L2 范数裁剪梯度。
 // 若 ||gw||_2 > max_norm，则 gw = gw * (max_norm / ||gw||_2)。
 // 输入：梯度 tensor gw；返回：裁剪后的梯度 tensor。
-// 注：sum()/sqrt() 返回 f64（标量聚合始终为 f64），max_norm: T 与之比较时按 G4 规则提升。
+//
+// JIT 路径修复：原版直接 `norm > max_norm` 比较，在 JIT 下因 tensor-float 类型
+// 推断问题触发 fallback。这里强制把 norm 与 max_norm 都通过 to_f64() 提升到 f64
+// 后再比较，绕开 JIT 类型推断限制。
+// 注：sum()/sqrt() 本就返回 f64（标量聚合始终为 f64），to_f64(norm) 是显式
+// 标注以保证 JIT 路径稳定；max_norm: T 经 to_f64 后也提升到 f64。
 fn clip_grad_by_norm<T>(gw: Tensor[T, ..], max_norm: T) -> Tensor[T, ..] {
     let sq_sum = (gw * gw).sum();
     let norm = sq_sum.sqrt();
-    if norm > max_norm {
-        let scale = max_norm / norm;
+    // 强制提升到 f64 比较，避免 tensor-float 类型问题（JIT 路径修复）
+    let norm_f64 = to_f64(norm);
+    let max_f64 = to_f64(max_norm);
+    if norm_f64 > max_f64 {
+        let scale = max_f64 / norm_f64;
         gw * scale
     } else {
         gw

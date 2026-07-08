@@ -26,3 +26,34 @@ fn accumulate_grad<T>(w: Tensor[T, ..], accum_steps: i64) -> Tensor[T, ..] {
     let gw = grad(w);
     gw / accum_steps
 }
+
+// 累积循环：对多个 micro_batch 执行 forward+backward，梯度自动累积。
+// 用法：
+//   accumulate_loop<T>(|x| model_loss(x), micro_batches, accum_steps)
+//   // 之后调 optimizer.step() + zero_grad()
+//
+// 设计说明：
+//   - forward_fn 用 closure 传递（Tenth 闭包语法 |x| expr，参考
+//     std::collections::iter::map 的写法）。高阶函数参数不写显式 FnType 注解
+//     （Tenth 惯例）。
+//   - 每个 micro_batch 调用 new_grad() 重置本次反向的临时记录（但不调 zero_grad，
+//     让参数 .grad 跨 micro_batch 累积）。
+//   - 反向时 loss / accum_steps 使累积后梯度等价于大 batch 平均。
+//   - accum_steps 类型为 i64（与 accumulate_grad 一致）。
+//   - 返回 ()：本函数只负责累积梯度，参数更新由调用方在循环外执行。
+//
+// 注：closure 参数 forward_fn 不写类型注解（与 iter.th::map 一致），调用方需保证
+//   forward_fn: fn(Tensor[T, ..]) -> Tensor[T, ..]。
+fn accumulate_loop<T>(
+    forward_fn,
+    micro_batches: Vec,
+    accum_steps: i64,
+) -> () {
+    let n = micro_batches.len();
+    for i in 0..n {
+        new_grad();
+        let x = micro_batches[i];
+        let loss = forward_fn(x);
+        backward(loss / accum_steps);
+    };
+}

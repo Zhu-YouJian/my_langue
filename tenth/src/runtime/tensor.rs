@@ -1,12 +1,16 @@
 use crate::hir::types::BaseType;
+use half::{bf16, f16};
 use ndarray::{ArrayD, IxDyn};
 use std::fmt;
 
 /// 双精度张量数据存储。f32 与 f64 各占一个变体，避免 f32 退化为「语法糖 f64」。
+/// Wave 2：新增 F16/BF16 半精度变体（前向运算时转 f32 计算后回写）。
 #[derive(Debug, Clone)]
 pub enum TensorData {
     F32(ArrayD<f32>),
     F64(ArrayD<f64>),
+    F16(ArrayD<f16>),
+    BF16(ArrayD<bf16>),
 }
 
 impl TensorData {
@@ -15,6 +19,8 @@ impl TensorData {
         match self {
             TensorData::F32(_) => BaseType::F32,
             TensorData::F64(_) => BaseType::F64,
+            TensorData::F16(_) => BaseType::F16,
+            TensorData::BF16(_) => BaseType::BF16,
         }
     }
 
@@ -23,6 +29,8 @@ impl TensorData {
         match self {
             TensorData::F32(a) => a.shape(),
             TensorData::F64(a) => a.shape(),
+            TensorData::F16(a) => a.shape(),
+            TensorData::BF16(a) => a.shape(),
         }
     }
 
@@ -31,6 +39,8 @@ impl TensorData {
         match self {
             TensorData::F32(a) => a.len(),
             TensorData::F64(a) => a.len(),
+            TensorData::F16(a) => a.len(),
+            TensorData::BF16(a) => a.len(),
         }
     }
 
@@ -42,15 +52,19 @@ impl TensorData {
         match self {
             TensorData::F32(a) => a.ndim(),
             TensorData::F64(a) => a.ndim(),
+            TensorData::F16(a) => a.ndim(),
+            TensorData::BF16(a) => a.ndim(),
         }
     }
 
     /// 以 f64 视图访问（用于通用打印、与现有 f64 代码兼容）。
-    /// 若实际为 F32，则逐元素 cast 为 f64（损失精度但保证可用）。
+    /// 若实际为 F32/F16/BF16，则逐元素 cast 为 f64（损失精度但保证可用）。
     pub fn as_f64_view(&self) -> ArrayD<f64> {
         match self {
             TensorData::F64(a) => a.clone(),
             TensorData::F32(a) => a.mapv(|v| v as f64),
+            TensorData::F16(a) => a.mapv(|v| v.to_f64()),
+            TensorData::BF16(a) => a.mapv(|v| v.to_f64()),
         }
     }
 
@@ -59,7 +73,7 @@ impl TensorData {
     pub fn as_f64_slice(&self) -> Option<&[f64]> {
         match self {
             TensorData::F64(a) => a.as_slice(),
-            TensorData::F32(_) => None,
+            _ => None,
         }
     }
 
@@ -68,7 +82,23 @@ impl TensorData {
     pub fn as_f32_slice(&self) -> Option<&[f32]> {
         match self {
             TensorData::F32(a) => a.as_slice(),
-            TensorData::F64(_) => None,
+            _ => None,
+        }
+    }
+
+    /// 以 f16 切片访问（仅 F16 且连续时返回切片）。
+    pub fn as_f16_slice(&self) -> Option<&[f16]> {
+        match self {
+            TensorData::F16(a) => a.as_slice(),
+            _ => None,
+        }
+    }
+
+    /// 以 bf16 切片访问（仅 BF16 且连续时返回切片）。
+    pub fn as_bf16_slice(&self) -> Option<&[bf16]> {
+        match self {
+            TensorData::BF16(a) => a.as_slice(),
+            _ => None,
         }
     }
 
@@ -76,7 +106,7 @@ impl TensorData {
     pub fn as_f32(&self) -> Option<&ArrayD<f32>> {
         match self {
             TensorData::F32(a) => Some(a),
-            TensorData::F64(_) => None,
+            _ => None,
         }
     }
 
@@ -84,25 +114,43 @@ impl TensorData {
     pub fn as_f64(&self) -> Option<&ArrayD<f64>> {
         match self {
             TensorData::F64(a) => Some(a),
-            TensorData::F32(_) => None,
+            _ => None,
         }
     }
 
-    // ── ArrayD<f64> 兼容方法（F32 自动 cast 为 f64，让外部代码零改动）──
-    // 这些方法模拟 ArrayD<f64> 接口，F32 路径自动 cast 为 f64 视图。
-    // 语义降级：F32 张量经过这些方法后变为 f64，但 Phase 1 目标是隔离爆破半径，
-    // 真正的 f32 路径在 Phase 3/4 改造外部代码后恢复。
+    /// 获取 f16 引用（dtype 不匹配返回 None）。
+    pub fn as_f16(&self) -> Option<&ArrayD<f16>> {
+        match self {
+            TensorData::F16(a) => Some(a),
+            _ => None,
+        }
+    }
 
-    /// 模拟 ArrayD<f64>::mapv。F32 时先 cast 为 f64 再应用 f。
+    /// 获取 bf16 引用（dtype 不匹配返回 None）。
+    pub fn as_bf16(&self) -> Option<&ArrayD<bf16>> {
+        match self {
+            TensorData::BF16(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    // ── ArrayD<f64> 兼容方法（F32/F16/BF16 自动 cast 为 f64，让外部代码零改动）──
+    // 这些方法模拟 ArrayD<f64> 接口，F32/F16/BF16 路径自动 cast 为 f64 视图。
+    // 语义降级：F32/F16/BF16 张量经过这些方法后变为 f64，但 Phase 1 目标是隔离爆破半径，
+    // 真正的 f32/f16/bf16 路径在 Phase 3/4 改造外部代码后恢复。
+
+    /// 模拟 ArrayD<f64>::mapv。F32/F16/BF16 时先 cast 为 f64 再应用 f。
     /// 使用 FnMut 以匹配 ndarray::mapv 的签名（允许闭包内部可变借用）。
     pub fn mapv<U, F: FnMut(f64) -> U>(&self, mut f: F) -> ArrayD<U> {
         match self {
             TensorData::F64(a) => a.mapv(f),
             TensorData::F32(a) => a.mapv(|v| f(v as f64)),
+            TensorData::F16(a) => a.mapv(|v| f(v.to_f64())),
+            TensorData::BF16(a) => a.mapv(|v| f(v.to_f64())),
         }
     }
 
-    /// 模拟 ArrayD<f64>::view，返回 owned ArrayD<f64>（F32 cast）。
+    /// 模拟 ArrayD<f64>::view，返回 owned ArrayD<f64>（F32/F16/BF16 cast）。
     /// 注意：返回 owned 而非借用 view，但接口名兼容，让 .view().insert_axis() 等链式调用工作。
     pub fn view(&self) -> ArrayD<f64> {
         self.as_f64_view()
@@ -113,19 +161,23 @@ impl TensorData {
         match self {
             TensorData::F64(a) => a.as_standard_layout().to_owned(),
             TensorData::F32(a) => a.mapv(|v| v as f64).as_standard_layout().to_owned(),
+            TensorData::F16(a) => a.mapv(|v| v.to_f64()).as_standard_layout().to_owned(),
+            TensorData::BF16(a) => a.mapv(|v| v.to_f64()).as_standard_layout().to_owned(),
         }
     }
 
-    /// 迭代 f64 值（F32 cast）。替代 .iter().cloned() 模式。
+    /// 迭代 f64 值（F32/F16/BF16 cast）。替代 .iter().cloned() 模式。
     /// 注意：返回 Box<dyn Iterator<Item=f64>>，调用方不需要 .cloned()。
     pub fn iter(&self) -> Box<dyn Iterator<Item = f64> + '_> {
         match self {
             TensorData::F64(a) => Box::new(a.iter().copied()),
             TensorData::F32(a) => Box::new(a.iter().map(|v| *v as f64)),
+            TensorData::F16(a) => Box::new(a.iter().map(|v| v.to_f64())),
+            TensorData::BF16(a) => Box::new(a.iter().map(|v| v.to_f64())),
         }
     }
 
-    /// 模拟 ArrayD<f64>::as_slice，仅 F64 时返回切片；F32 返回 None。
+    /// 模拟 ArrayD<f64>::as_slice，仅 F64 时返回切片；其他返回 None。
     /// （已在上方定义 as_f64_slice，此处不重复）
 
     /// 模拟 ArrayD<f64>::broadcast，返回 owned ArrayD<f64>（broadcast 后 to_owned）。
@@ -170,6 +222,26 @@ impl Tensor {
         }
     }
 
+    /// 从 f16 数据构造 F16 Tensor（Wave 2）。
+    pub(crate) fn from_data_f16(data: ArrayD<f16>) -> Self {
+        Tensor {
+            dtype: BaseType::F16,
+            data: TensorData::F16(data),
+            grad: None,
+            tape_id: None,
+        }
+    }
+
+    /// 从 bf16 数据构造 BF16 Tensor（Wave 2）。
+    pub(crate) fn from_data_bf16(data: ArrayD<bf16>) -> Self {
+        Tensor {
+            dtype: BaseType::BF16,
+            data: TensorData::BF16(data),
+            grad: None,
+            tape_id: None,
+        }
+    }
+
     /// 从指定 dtype 的 TensorData 构造 Tensor（dtype 自动从 data 推断）。
     pub fn from_tensor_data(data: TensorData) -> Self {
         let dtype = data.dtype();
@@ -194,6 +266,16 @@ impl Tensor {
     /// 是否为 f64 张量。
     pub fn is_f64(&self) -> bool {
         matches!(self.dtype, BaseType::F64)
+    }
+
+    /// 是否为 f16 张量（Wave 2）。
+    pub fn is_f16(&self) -> bool {
+        matches!(self.dtype, BaseType::F16)
+    }
+
+    /// 是否为 bf16 张量（Wave 2）。
+    pub fn is_bf16(&self) -> bool {
+        matches!(self.dtype, BaseType::BF16)
     }
 
     /// 获取 f64 数据引用（dtype 不匹配返回 None）。
@@ -221,6 +303,7 @@ impl Tensor {
     /// g 可为 F32 或 F64；按 self.dtype 转换存储（f32 参数→F32 grad，f64 参数→F64 grad）。
     /// 返回 Err 当 g.shape() 与 self.data.shape() 不一致（防止 silent broadcast 掩盖梯度 shape 错误）。
     /// 阶段 4：签名从 `&ArrayD<f64>` 改为 `&TensorData`，支持真正的 f32 反向传播。
+    /// Wave 2：F16/BF16 param 的 autodiff 走简化方案——返回 Err 提示 Phase 2 实现。
     pub fn acc_grad(&mut self, g: &TensorData) -> Result<(), String> {
         // shape 校验：梯度 shape 必须与参数 shape 一致（方向 A：消除 silent squeeze）
         let self_shape = self.data.shape();
@@ -231,6 +314,12 @@ impl Tensor {
                 self_shape, g_shape
             ));
         }
+        // Wave 2 简化方案：F16/BF16 param 不做 autodiff（前向可参与计算，反向 grad 不回写）
+        if matches!(self.dtype, BaseType::F16 | BaseType::BF16) {
+            return Err(format!(
+                "F16/BF16 param 的反向传播暂不支持（Wave 2 Phase 1 简化方案），请使用 F32/F64 param 或等待 Phase 2 实现"
+            ));
+        }
         // 阶段 4：按 self.dtype 转换 g，保持参数 grad dtype 一致。
         // 策略 B 残留：若 self.grad 已有不同 dtype（混合场景），回退为 f64 累加。
         match self.dtype {
@@ -238,6 +327,9 @@ impl Tensor {
                 let g_f32 = match g {
                     TensorData::F32(a) => a.clone(),
                     TensorData::F64(a) => a.mapv(|v| v as f32),
+                    // F16/BF16 grad 转 f32（理论上不会发生，因为 F16/BF16 param 已 early-return）
+                    TensorData::F16(a) => a.mapv(|v| v.to_f32()),
+                    TensorData::BF16(a) => a.mapv(|v| v.to_f32()),
                 };
                 match &mut self.grad {
                     Some(TensorData::F32(cur)) => {
@@ -248,6 +340,15 @@ impl Tensor {
                         let merged = &*cur + &g_f32.mapv(|v| v as f64);
                         *cur = merged;
                     }
+                    // F16/BF16 grad 不应到达此处（F16/BF16 param 已 early-return）；回退为 f32 累加
+                    Some(TensorData::F16(cur)) => {
+                        let merged = cur.mapv(|v| v.to_f32()) + &g_f32;
+                        self.grad = Some(TensorData::F32(merged));
+                    }
+                    Some(TensorData::BF16(cur)) => {
+                        let merged = cur.mapv(|v| v.to_f32()) + &g_f32;
+                        self.grad = Some(TensorData::F32(merged));
+                    }
                     None => {
                         self.grad = Some(TensorData::F32(g_f32));
                     }
@@ -257,6 +358,8 @@ impl Tensor {
                 let g_f64 = match g {
                     TensorData::F64(a) => a.clone(),
                     TensorData::F32(a) => a.mapv(|v| v as f64),
+                    TensorData::F16(a) => a.mapv(|v| v.to_f64()),
+                    TensorData::BF16(a) => a.mapv(|v| v.to_f64()),
                 };
                 match &mut self.grad {
                     Some(TensorData::F64(cur)) => {
@@ -265,6 +368,15 @@ impl Tensor {
                     // 已有 F32 grad（混合 dtype 场景），回退为 f64 累加（策略 B 残留）
                     Some(TensorData::F32(cur)) => {
                         let merged = cur.mapv(|v| v as f64) + &g_f64;
+                        self.grad = Some(TensorData::F64(merged));
+                    }
+                    // F16/BF16 grad 不应到达此处（F16/BF16 param 已 early-return）；回退为 f64 累加
+                    Some(TensorData::F16(cur)) => {
+                        let merged = cur.mapv(|v| v.to_f64()) + &g_f64;
+                        self.grad = Some(TensorData::F64(merged));
+                    }
+                    Some(TensorData::BF16(cur)) => {
+                        let merged = cur.mapv(|v| v.to_f64()) + &g_f64;
                         self.grad = Some(TensorData::F64(merged));
                     }
                     None => {
@@ -388,12 +500,54 @@ impl Tensor {
         Tensor::from_vec_f32(data, vec![len])
     }
 
+    // ── constructors (f16, Wave 2) ────────────────────────────────────
+
+    pub fn from_vec_f16(data: Vec<f16>, shape: Vec<usize>) -> Self {
+        let array = ArrayD::from_shape_vec(IxDyn(&shape), data)
+            .expect("invalid tensor shape");
+        Tensor::from_data_f16(array)
+    }
+
+    pub fn zeros_f16(shape: &[usize]) -> Self {
+        Tensor::from_data_f16(ArrayD::from_elem(IxDyn(shape), f16::from_f32(0.0)))
+    }
+
+    pub fn ones_f16(shape: &[usize]) -> Self {
+        Tensor::from_data_f16(ArrayD::from_elem(IxDyn(shape), f16::from_f32(1.0)))
+    }
+
+    pub fn full_f16(shape: &[usize], value: f16) -> Self {
+        Tensor::from_data_f16(ArrayD::from_elem(IxDyn(shape), value))
+    }
+
+    // ── constructors (bf16, Wave 2) ───────────────────────────────────
+
+    pub fn from_vec_bf16(data: Vec<bf16>, shape: Vec<usize>) -> Self {
+        let array = ArrayD::from_shape_vec(IxDyn(&shape), data)
+            .expect("invalid tensor shape");
+        Tensor::from_data_bf16(array)
+    }
+
+    pub fn zeros_bf16(shape: &[usize]) -> Self {
+        Tensor::from_data_bf16(ArrayD::from_elem(IxDyn(shape), bf16::from_f32(0.0)))
+    }
+
+    pub fn ones_bf16(shape: &[usize]) -> Self {
+        Tensor::from_data_bf16(ArrayD::from_elem(IxDyn(shape), bf16::from_f32(1.0)))
+    }
+
+    pub fn full_bf16(shape: &[usize], value: bf16) -> Self {
+        Tensor::from_data_bf16(ArrayD::from_elem(IxDyn(shape), value))
+    }
+
     // ── constructors (通用 dtype) ─────────────────────────────────────
 
-    /// 按指定 dtype 构造全零张量。当前支持 F32/F64，其他 dtype 返回 F64 兜底。
+    /// 按指定 dtype 构造全零张量。支持 F32/F64/F16/BF16，其他 dtype 返回 F64 兜底。
     pub fn zeros_with_dtype(shape: &[usize], dtype: BaseType) -> Self {
         match dtype {
             BaseType::F32 => Tensor::zeros_f32(shape),
+            BaseType::F16 => Tensor::zeros_f16(shape),
+            BaseType::BF16 => Tensor::zeros_bf16(shape),
             _ => Tensor::zeros(shape),
         }
     }
@@ -402,6 +556,8 @@ impl Tensor {
     pub fn ones_with_dtype(shape: &[usize], dtype: BaseType) -> Self {
         match dtype {
             BaseType::F32 => Tensor::ones_f32(shape),
+            BaseType::F16 => Tensor::ones_f16(shape),
+            BaseType::BF16 => Tensor::ones_bf16(shape),
             _ => Tensor::ones(shape),
         }
     }
@@ -424,10 +580,12 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => a.get(IxDyn(index)).copied(),
             TensorData::F32(a) => a.get(IxDyn(index)).map(|v| *v as f64),
+            TensorData::F16(a) => a.get(IxDyn(index)).map(|v| v.to_f64()),
+            TensorData::BF16(a) => a.get(IxDyn(index)).map(|v| v.to_f64()),
         }
     }
 
-    // ── 内部 f32/f64 分支辅助 ─────────────────────────────────────────
+    // ── 内部 f32/f64/f16/bf16 分支辅助 ────────────────────────────────
 
     /// 对每个元素应用 f32 → f32 映射（仅 F32 路径）。
     fn map_f32(&self, f: impl Fn(f32) -> f32) -> Tensor {
@@ -439,6 +597,22 @@ impl Tensor {
     fn map_f64(&self, f: impl Fn(f64) -> f64) -> Tensor {
         let a = self.data.as_f64().expect("map_f64 requires F64 tensor");
         Tensor::from_data(a.mapv(f))
+    }
+
+    /// 对每个元素应用 f16 → f16 映射（仅 F16 路径，Wave 2）。
+    /// 实现策略：转 f32 计算，结果转回 f16（f16 精度太低不适合直接运算）。
+    fn map_f16(&self, f: impl Fn(f32) -> f32) -> Tensor {
+        let a = self.data.as_f16().expect("map_f16 requires F16 tensor");
+        let result = a.mapv(|v| f16::from_f32(f(v.to_f32())));
+        Tensor::from_data_f16(result)
+    }
+
+    /// 对每个元素应用 bf16 → bf16 映射（仅 BF16 路径，Wave 2）。
+    /// 实现策略：转 f32 计算，结果转回 bf16。
+    fn map_bf16(&self, f: impl Fn(f32) -> f32) -> Tensor {
+        let a = self.data.as_bf16().expect("map_bf16 requires BF16 tensor");
+        let result = a.mapv(|v| bf16::from_f32(f(v.to_f32())));
+        Tensor::from_data_bf16(result)
     }
 
     /// 对两个同 dtype 张量做元素级 f32 运算（仅 F32 路径，需广播）。
@@ -471,12 +645,46 @@ impl Tensor {
         Ok(Tensor::from_data(out))
     }
 
+    /// 对两个同 dtype 张量做元素级 f16 运算（仅 F16 路径，Wave 2）。
+    /// 实现策略：转 f32 计算，结果转回 f16。
+    fn zip_f16(&self, other: &Tensor, f: impl Fn(f32, f32) -> f32) -> Result<Tensor, String> {
+        let a = self.data.as_f16().expect("zip_f16 self requires F16");
+        let b = other.data.as_f16().expect("zip_f16 other requires F16");
+        let out_shape = Self::broadcast_shape(a.shape(), b.shape())
+            .ok_or_else(|| format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))?;
+        let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
+        let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
+        let mut out: ArrayD<f16> = ArrayD::from_elem(IxDyn(&out_shape), f16::from_f32(0.0));
+        out.zip_mut_with(&a_br.to_owned(), |o, &x| { *o = x; });
+        let b_owned = b_br.to_owned();
+        out.zip_mut_with(&b_owned, |o, &y| { *o = f16::from_f32(f(o.to_f32(), y.to_f32())); });
+        Ok(Tensor::from_data_f16(out))
+    }
+
+    /// 对两个同 dtype 张量做元素级 bf16 运算（仅 BF16 路径，Wave 2）。
+    /// 实现策略：转 f32 计算，结果转回 bf16。
+    fn zip_bf16(&self, other: &Tensor, f: impl Fn(f32, f32) -> f32) -> Result<Tensor, String> {
+        let a = self.data.as_bf16().expect("zip_bf16 self requires BF16");
+        let b = other.data.as_bf16().expect("zip_bf16 other requires BF16");
+        let out_shape = Self::broadcast_shape(a.shape(), b.shape())
+            .ok_or_else(|| format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))?;
+        let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
+        let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
+        let mut out: ArrayD<bf16> = ArrayD::from_elem(IxDyn(&out_shape), bf16::from_f32(0.0));
+        out.zip_mut_with(&a_br.to_owned(), |o, &x| { *o = x; });
+        let b_owned = b_br.to_owned();
+        out.zip_mut_with(&b_owned, |o, &y| { *o = bf16::from_f32(f(o.to_f32(), y.to_f32())); });
+        Ok(Tensor::from_data_bf16(out))
+    }
+
     // ── reductions ─────────────────────────────────────────────────────
 
     pub fn sum(&self) -> f64 {
         match &self.data {
             TensorData::F64(a) => a.sum(),
             TensorData::F32(a) => a.sum() as f64,
+            TensorData::F16(a) => a.iter().map(|v| v.to_f64()).sum(),
+            TensorData::BF16(a) => a.iter().map(|v| v.to_f64()).sum(),
         }
     }
 
@@ -491,6 +699,9 @@ impl Tensor {
         let result = match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.sum_axis(ndarray::Axis(axis))),
             TensorData::F32(a) => Tensor::from_data_f32(a.sum_axis(ndarray::Axis(axis))),
+            // F16/BF16 sum_axis 转 f64 计算（Phase 1 简化）
+            TensorData::F16(a) => Tensor::from_data(a.mapv(|v| v.to_f64()).sum_axis(ndarray::Axis(axis))),
+            TensorData::BF16(a) => Tensor::from_data(a.mapv(|v| v.to_f64()).sum_axis(ndarray::Axis(axis))),
         };
         Ok(result)
     }
@@ -499,6 +710,14 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => a.mean().unwrap_or(0.0),
             TensorData::F32(a) => a.mean().map(|v| v as f64).unwrap_or(0.0),
+            TensorData::F16(a) => {
+                let n = a.len() as f64;
+                if n == 0.0 { 0.0 } else { a.iter().map(|v| v.to_f64()).sum::<f64>() / n }
+            }
+            TensorData::BF16(a) => {
+                let n = a.len() as f64;
+                if n == 0.0 { 0.0 } else { a.iter().map(|v| v.to_f64()).sum::<f64>() / n }
+            }
         }
     }
 
@@ -506,6 +725,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => a.iter().copied().fold(f64::NEG_INFINITY, f64::max),
             TensorData::F32(a) => a.iter().copied().fold(f32::NEG_INFINITY, f32::max) as f64,
+            TensorData::F16(a) => a.iter().map(|v| v.to_f64()).fold(f64::NEG_INFINITY, f64::max),
+            TensorData::BF16(a) => a.iter().map(|v| v.to_f64()).fold(f64::NEG_INFINITY, f64::max),
         }
     }
 
@@ -515,6 +736,8 @@ impl Tensor {
         let iter: Box<dyn Iterator<Item = f64>> = match &self.data {
             TensorData::F64(a) => Box::new(a.iter().copied()),
             TensorData::F32(a) => Box::new(a.iter().map(|v| *v as f64)),
+            TensorData::F16(a) => Box::new(a.iter().map(|v| v.to_f64())),
+            TensorData::BF16(a) => Box::new(a.iter().map(|v| v.to_f64())),
         };
         iter.enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
@@ -528,6 +751,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x + scalar)),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| x + scalar as f32)),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(x.to_f64() + scalar))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(x.to_f64() + scalar))),
         }
     }
 
@@ -535,6 +760,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x - scalar)),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| x - scalar as f32)),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(x.to_f64() - scalar))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(x.to_f64() - scalar))),
         }
     }
 
@@ -542,6 +769,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x * scalar)),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| x * scalar as f32)),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(x.to_f64() * scalar))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(x.to_f64() * scalar))),
         }
     }
 
@@ -549,6 +778,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x / scalar)),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| x / scalar as f32)),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(x.to_f64() / scalar))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(x.to_f64() / scalar))),
         }
     }
 
@@ -557,6 +788,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| scalar / x)),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| scalar as f32 / x)),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(scalar / x.to_f64()))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(scalar / x.to_f64()))),
         }
     }
 
@@ -581,119 +814,117 @@ impl Tensor {
         Some(out)
     }
 
-    /// Element-wise addition with broadcasting.  Errors if shapes are incompatible.
-    /// dtype 提升规则：f32 + f32 → f32；f64 + f64 → f64；混合 → f64（提升）。
-    pub fn add_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
-        match (&self.data, &other.data) {
-            (TensorData::F64(a), TensorData::F64(b)) => {
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))?;
-                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
-                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data(&a_br.to_owned() + &b_br.to_owned()))
-            }
-            (TensorData::F32(a), TensorData::F32(b)) => {
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))?;
-                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
-                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data_f32(&a_br.to_owned() + &b_br.to_owned()))
-            }
-            // 混合 dtype：提升为 f64
-            _ => {
+    /// Wave 2 dtype 提升规则：
+    /// - F64 + 任何 → F64
+    /// - F32 + F32 → F32；F32 + F16/BF16 → F32
+    /// - F16 + F16 → F16；BF16 + BF16 → BF16；F16 + BF16 → F32
+    fn promote_dtype(a: BaseType, b: BaseType) -> BaseType {
+        use BaseType::*;
+        match (a, b) {
+            (F64, _) | (_, F64) => F64,
+            (F32, _) | (_, F32) => F32,
+            (F16, F16) => F16,
+            (BF16, BF16) => BF16,
+            // F16 + BF16 → F32（半精度混合提到 f32）
+            (F16, BF16) | (BF16, F16) => F32,
+            // 兜底（理论上不会到这里，因为上面已覆盖所有浮点组合）
+            _ => F64,
+        }
+    }
+
+    /// 通用元素级二元运算（带广播 + dtype 提升）。
+    /// `f32_op` / `f64_op` 接收 f32/f64 返回 f32/f64，按提升后的 dtype 分发。
+    /// F16/BF16 路径：转 f32 计算，结果转回 F16/BF16。
+    fn elementwise_binary(
+        &self,
+        other: &Tensor,
+        f32_op: impl Fn(f32, f32) -> f32,
+        f64_op: impl Fn(f64, f64) -> f64,
+        op_symbol: &str,
+    ) -> Result<Tensor, String> {
+        let result_dtype = Self::promote_dtype(self.dtype, other.dtype);
+        let a_shape = self.data.shape();
+        let b_shape = other.data.shape();
+        let out_shape = Self::broadcast_shape(a_shape, b_shape)
+            .ok_or_else(|| format!("cannot broadcast shapes {:?} {} {:?}", self.shape(), op_symbol, other.shape()))?;
+
+        match result_dtype {
+            BaseType::F64 => {
                 let a = self.data.as_f64_view();
                 let b = other.data.as_f64_view();
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))?;
                 let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
                 let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data(&a_br.to_owned() + &b_br.to_owned()))
+                let mut out: ArrayD<f64> = ArrayD::zeros(IxDyn(&out_shape));
+                out.zip_mut_with(&a_br.to_owned(), |o, &x| { *o = x; });
+                let b_owned = b_br.to_owned();
+                out.zip_mut_with(&b_owned, |o, &y| { *o = f64_op(*o, y); });
+                Ok(Tensor::from_data(out))
+            }
+            BaseType::F32 => {
+                let a = self.data.as_f64_view().mapv(|v| v as f32);
+                let b = other.data.as_f64_view().mapv(|v| v as f32);
+                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
+                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
+                let mut out: ArrayD<f32> = ArrayD::zeros(IxDyn(&out_shape));
+                out.zip_mut_with(&a_br.to_owned(), |o, &x| { *o = x; });
+                let b_owned = b_br.to_owned();
+                out.zip_mut_with(&b_owned, |o, &y| { *o = f32_op(*o, y); });
+                Ok(Tensor::from_data_f32(out))
+            }
+            BaseType::F16 => {
+                // 仅 F16+F16 走此路径；转 f32 计算，结果转回 f16
+                let a = self.data.as_f16().expect("F16 op requires F16 self").mapv(|v| v.to_f32());
+                let b = other.data.as_f16().expect("F16 op requires F16 other").mapv(|v| v.to_f32());
+                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
+                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
+                let mut out: ArrayD<f16> = ArrayD::from_elem(IxDyn(&out_shape), f16::from_f32(0.0));
+                out.zip_mut_with(&a_br.to_owned(), |o, &x| { *o = f16::from_f32(x); });
+                let b_owned = b_br.to_owned();
+                out.zip_mut_with(&b_owned, |o, &y| { *o = f16::from_f32(f32_op(o.to_f32(), y)); });
+                Ok(Tensor::from_data_f16(out))
+            }
+            BaseType::BF16 => {
+                let a = self.data.as_bf16().expect("BF16 op requires BF16 self").mapv(|v| v.to_f32());
+                let b = other.data.as_bf16().expect("BF16 op requires BF16 other").mapv(|v| v.to_f32());
+                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
+                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
+                let mut out: ArrayD<bf16> = ArrayD::from_elem(IxDyn(&out_shape), bf16::from_f32(0.0));
+                out.zip_mut_with(&a_br.to_owned(), |o, &x| { *o = bf16::from_f32(x); });
+                let b_owned = b_br.to_owned();
+                out.zip_mut_with(&b_owned, |o, &y| { *o = bf16::from_f32(f32_op(o.to_f32(), y)); });
+                Ok(Tensor::from_data_bf16(out))
+            }
+            _ => {
+                // 整数 dtype 等：兜底走 f64
+                let a = self.data.as_f64_view();
+                let b = other.data.as_f64_view();
+                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
+                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
+                let mut out: ArrayD<f64> = ArrayD::zeros(IxDyn(&out_shape));
+                out.zip_mut_with(&a_br.to_owned(), |o, &x| { *o = x; });
+                let b_owned = b_br.to_owned();
+                out.zip_mut_with(&b_owned, |o, &y| { *o = f64_op(*o, y); });
+                Ok(Tensor::from_data(out))
             }
         }
+    }
+
+    /// Element-wise addition with broadcasting.  Errors if shapes are incompatible.
+    /// Wave 2 dtype 提升规则：见 promote_dtype。
+    pub fn add_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
+        self.elementwise_binary(other, |a, b| a + b, |a, b| a + b, "+")
     }
 
     pub fn sub_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
-        match (&self.data, &other.data) {
-            (TensorData::F64(a), TensorData::F64(b)) => {
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} - {:?}", self.shape(), other.shape()))?;
-                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
-                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data(&a_br.to_owned() - &b_br.to_owned()))
-            }
-            (TensorData::F32(a), TensorData::F32(b)) => {
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} - {:?}", self.shape(), other.shape()))?;
-                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
-                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data_f32(&a_br.to_owned() - &b_br.to_owned()))
-            }
-            _ => {
-                let a = self.data.as_f64_view();
-                let b = other.data.as_f64_view();
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} - {:?}", self.shape(), other.shape()))?;
-                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
-                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data(&a_br.to_owned() - &b_br.to_owned()))
-            }
-        }
+        self.elementwise_binary(other, |a, b| a - b, |a, b| a - b, "-")
     }
 
     pub fn mul_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
-        match (&self.data, &other.data) {
-            (TensorData::F64(a), TensorData::F64(b)) => {
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} * {:?}", self.shape(), other.shape()))?;
-                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
-                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data(&a_br.to_owned() * &b_br.to_owned()))
-            }
-            (TensorData::F32(a), TensorData::F32(b)) => {
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} * {:?}", self.shape(), other.shape()))?;
-                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
-                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data_f32(&a_br.to_owned() * &b_br.to_owned()))
-            }
-            _ => {
-                let a = self.data.as_f64_view();
-                let b = other.data.as_f64_view();
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} * {:?}", self.shape(), other.shape()))?;
-                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
-                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data(&a_br.to_owned() * &b_br.to_owned()))
-            }
-        }
+        self.elementwise_binary(other, |a, b| a * b, |a, b| a * b, "*")
     }
 
     pub fn div_tensor(&self, other: &Tensor) -> Result<Tensor, String> {
-        match (&self.data, &other.data) {
-            (TensorData::F64(a), TensorData::F64(b)) => {
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} / {:?}", self.shape(), other.shape()))?;
-                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
-                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data(&a_br.to_owned() / &b_br.to_owned()))
-            }
-            (TensorData::F32(a), TensorData::F32(b)) => {
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} / {:?}", self.shape(), other.shape()))?;
-                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
-                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data_f32(&a_br.to_owned() / &b_br.to_owned()))
-            }
-            _ => {
-                let a = self.data.as_f64_view();
-                let b = other.data.as_f64_view();
-                let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-                    .ok_or_else(|| format!("cannot broadcast shapes {:?} / {:?}", self.shape(), other.shape()))?;
-                let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
-                let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
-                Ok(Tensor::from_data(&a_br.to_owned() / &b_br.to_owned()))
-            }
-        }
+        self.elementwise_binary(other, |a, b| a / b, |a, b| a / b, "/")
     }
 
     // ── matrix multiplication ─────────────────────────────────────────
@@ -890,6 +1121,14 @@ impl Tensor {
                 let result = a.view().permuted_axes(perm);
                 Some(Tensor::from_data_f32(result.to_owned()))
             }
+            TensorData::F16(a) => {
+                let result = a.view().permuted_axes(perm);
+                Some(Tensor::from_data_f16(result.to_owned()))
+            }
+            TensorData::BF16(a) => {
+                let result = a.view().permuted_axes(perm);
+                Some(Tensor::from_data_bf16(result.to_owned()))
+            }
         }
     }
 
@@ -906,6 +1145,14 @@ impl Tensor {
                 let broadcasted = a.broadcast(target_shape)?;
                 Some(Tensor::from_data_f32(broadcasted.to_owned()))
             }
+            TensorData::F16(a) => {
+                let broadcasted = a.broadcast(target_shape)?;
+                Some(Tensor::from_data_f16(broadcasted.to_owned()))
+            }
+            TensorData::BF16(a) => {
+                let broadcasted = a.broadcast(target_shape)?;
+                Some(Tensor::from_data_bf16(broadcasted.to_owned()))
+            }
         }
     }
 
@@ -915,6 +1162,9 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| -x)),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| -x)),
+            // F16/BF16 转 f64 计算，结果转回原 dtype
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(-x.to_f64()))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(-x.to_f64()))),
         }
     }
 
@@ -922,6 +1172,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x.abs())),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| x.abs())),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(x.to_f64().abs()))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(x.to_f64().abs()))),
         }
     }
 
@@ -930,6 +1182,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x.clamp(min_val, max_val))),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| (x as f64).clamp(min_val, max_val) as f32)),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(x.to_f64().clamp(min_val, max_val)))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(x.to_f64().clamp(min_val, max_val)))),
         }
     }
 
@@ -937,6 +1191,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x.sqrt())),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| x.sqrt())),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(x.to_f64().sqrt()))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(x.to_f64().sqrt()))),
         }
     }
 
@@ -944,6 +1200,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x.exp())),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| x.exp())),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(x.to_f64().exp()))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(x.to_f64().exp()))),
         }
     }
 
@@ -951,6 +1209,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x.ln())),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| x.ln())),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(x.to_f64().ln()))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(x.to_f64().ln()))),
         }
     }
 
@@ -958,6 +1218,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| if x > 0.0 { x } else { 0.0 })),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| if x > 0.0 { x } else { 0.0 })),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(if x.to_f64() > 0.0 { x.to_f64() } else { 0.0 }))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(if x.to_f64() > 0.0 { x.to_f64() } else { 0.0 }))),
         }
     }
 
@@ -965,6 +1227,14 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| 1.0 / (1.0 + (-x).exp()))),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| 1.0 / (1.0 + (-x).exp()))),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| {
+                let v = x.to_f64();
+                f16::from_f64(1.0 / (1.0 + (-v).exp()))
+            })),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| {
+                let v = x.to_f64();
+                bf16::from_f64(1.0 / (1.0 + (-v).exp()))
+            })),
         }
     }
 
@@ -972,6 +1242,8 @@ impl Tensor {
         match &self.data {
             TensorData::F64(a) => Tensor::from_data(a.mapv(|x| x.tanh())),
             TensorData::F32(a) => Tensor::from_data_f32(a.mapv(|x| x.tanh())),
+            TensorData::F16(a) => Tensor::from_data_f16(a.mapv(|x| f16::from_f64(x.to_f64().tanh()))),
+            TensorData::BF16(a) => Tensor::from_data_bf16(a.mapv(|x| bf16::from_f64(x.to_f64().tanh()))),
         }
     }
 
@@ -984,6 +1256,14 @@ impl Tensor {
             TensorData::F32(a) => {
                 let array = a.clone().into_shape_with_order(IxDyn(shape)).ok()?;
                 Some(Tensor::from_data_f32(array))
+            }
+            TensorData::F16(a) => {
+                let array = a.clone().into_shape_with_order(IxDyn(shape)).ok()?;
+                Some(Tensor::from_data_f16(array))
+            }
+            TensorData::BF16(a) => {
+                let array = a.clone().into_shape_with_order(IxDyn(shape)).ok()?;
+                Some(Tensor::from_data_bf16(array))
             }
         }
     }
@@ -998,6 +1278,14 @@ impl Tensor {
             TensorData::F32(a) => {
                 let array = a.clone().into_shape_with_order(IxDyn(&[size])).unwrap();
                 Tensor::from_data_f32(array)
+            }
+            TensorData::F16(a) => {
+                let array = a.clone().into_shape_with_order(IxDyn(&[size])).unwrap();
+                Tensor::from_data_f16(array)
+            }
+            TensorData::BF16(a) => {
+                let array = a.clone().into_shape_with_order(IxDyn(&[size])).unwrap();
+                Tensor::from_data_bf16(array)
             }
         }
     }
@@ -1111,6 +1399,23 @@ impl Tensor {
                     0.5 * x * (1.0 + inner.tanh())
                 }))
             }
+            // F16/BF16 转 f64 计算，结果转回原 dtype
+            TensorData::F16(a) => {
+                let sqrt_2_over_pi = (2.0 / std::f64::consts::PI).sqrt();
+                Tensor::from_data_f16(a.mapv(|x| {
+                    let v = x.to_f64();
+                    let inner = sqrt_2_over_pi * (v + 0.044715 * v * v * v);
+                    f16::from_f64(0.5 * v * (1.0 + inner.tanh()))
+                }))
+            }
+            TensorData::BF16(a) => {
+                let sqrt_2_over_pi = (2.0 / std::f64::consts::PI).sqrt();
+                Tensor::from_data_bf16(a.mapv(|x| {
+                    let v = x.to_f64();
+                    let inner = sqrt_2_over_pi * (v + 0.044715 * v * v * v);
+                    bf16::from_f64(0.5 * v * (1.0 + inner.tanh()))
+                }))
+            }
         }
     }
 
@@ -1202,6 +1507,34 @@ impl Tensor {
                     }
                 }
                 Ok(Tensor::from_vec_f32(result, self.shape()))
+            }
+            TensorData::F16(a) => {
+                let self_data = a.as_standard_layout().to_owned();
+                let self_slice = self_data.as_slice().unwrap_or(&[]);
+                let mut result = Vec::with_capacity(self_slice.len());
+                let value_f16 = f16::from_f64(value);
+                for i in 0..self_slice.len() {
+                    if mask_slice.get(i).copied().unwrap_or(0.0) > 0.5 {
+                        result.push(value_f16);
+                    } else {
+                        result.push(self_slice[i]);
+                    }
+                }
+                Ok(Tensor::from_vec_f16(result, self.shape()))
+            }
+            TensorData::BF16(a) => {
+                let self_data = a.as_standard_layout().to_owned();
+                let self_slice = self_data.as_slice().unwrap_or(&[]);
+                let mut result = Vec::with_capacity(self_slice.len());
+                let value_bf16 = bf16::from_f64(value);
+                for i in 0..self_slice.len() {
+                    if mask_slice.get(i).copied().unwrap_or(0.0) > 0.5 {
+                        result.push(value_bf16);
+                    } else {
+                        result.push(self_slice[i]);
+                    }
+                }
+                Ok(Tensor::from_vec_bf16(result, self.shape()))
             }
         }
     }
@@ -1359,6 +1692,26 @@ impl Tensor {
                     a[IxDyn(&actual)] = s;
                 }
             }
+            TensorData::F16(a) => {
+                for flat in 0..total {
+                    let multi = unflatten(flat);
+                    let mut actual = multi.clone();
+                    let v = index_view[IxDyn(&multi)];
+                    actual[dim] = v as usize;
+                    let s = src_view[IxDyn(&multi)];
+                    a[IxDyn(&actual)] = f16::from_f64(s);
+                }
+            }
+            TensorData::BF16(a) => {
+                for flat in 0..total {
+                    let multi = unflatten(flat);
+                    let mut actual = multi.clone();
+                    let v = index_view[IxDyn(&multi)];
+                    actual[dim] = v as usize;
+                    let s = src_view[IxDyn(&multi)];
+                    a[IxDyn(&actual)] = bf16::from_f64(s);
+                }
+            }
         }
         Ok(out)
     }
@@ -1457,6 +1810,34 @@ impl Tensor {
                 }
                 Ok(Tensor::from_vec_f32(out_data, index_shape))
             }
+            TensorData::F16(_) => {
+                let base_f16 = base.data.as_f16().ok_or_else(|| {
+                    "gather: base dtype 不一致（期望 f16）".to_string()
+                })?;
+                let mut out_data: Vec<f16> = Vec::with_capacity(total);
+                for flat in 0..total {
+                    let multi = unflatten(flat);
+                    let mut actual = multi.clone();
+                    let v = index_view[IxDyn(&multi)];
+                    actual[dim] = v as usize;
+                    out_data.push(base_f16[IxDyn(&actual)]);
+                }
+                Ok(Tensor::from_vec_f16(out_data, index_shape))
+            }
+            TensorData::BF16(_) => {
+                let base_bf16 = base.data.as_bf16().ok_or_else(|| {
+                    "gather: base dtype 不一致（期望 bf16）".to_string()
+                })?;
+                let mut out_data: Vec<bf16> = Vec::with_capacity(total);
+                for flat in 0..total {
+                    let multi = unflatten(flat);
+                    let mut actual = multi.clone();
+                    let v = index_view[IxDyn(&multi)];
+                    actual[dim] = v as usize;
+                    out_data.push(base_bf16[IxDyn(&actual)]);
+                }
+                Ok(Tensor::from_vec_bf16(out_data, index_shape))
+            }
         }
     }
 
@@ -1483,6 +1864,14 @@ impl Tensor {
             TensorData::F32(a) => {
                 let result = a.view().permuted_axes(dims.to_vec()).to_owned();
                 Ok(Tensor::from_data_f32(result))
+            }
+            TensorData::F16(a) => {
+                let result = a.view().permuted_axes(dims.to_vec()).to_owned();
+                Ok(Tensor::from_data_f16(result))
+            }
+            TensorData::BF16(a) => {
+                let result = a.view().permuted_axes(dims.to_vec()).to_owned();
+                Ok(Tensor::from_data_bf16(result))
             }
         }
     }
@@ -1537,6 +1926,45 @@ impl Tensor {
                     result_data.extend(probs);
                 }
                 Some(Tensor::from_vec_f32(result_data, shape))
+            }
+            // Wave 2: F16/BF16 softmax 转 f64 计算，结果转回原 dtype
+            TensorData::F16(a) => {
+                let contiguous = a.as_standard_layout().to_owned();
+                let flat = contiguous.as_slice()?;
+                let mut result_data: Vec<f16> = Vec::with_capacity(flat.len());
+                for i in 0..outer_len {
+                    let start = i * axis_len;
+                    let slice = &flat[start..start + axis_len];
+                    let max_val = slice.iter().map(|v| v.to_f64()).fold(f64::NEG_INFINITY, f64::max);
+                    let exps: Vec<f64> = slice.iter().map(|x| (x.to_f64() - max_val).exp()).collect();
+                    let sum: f64 = exps.iter().sum();
+                    let probs: Vec<f16> = if sum == 0.0 {
+                        vec![f16::from_f64(1.0 / axis_len as f64); axis_len]
+                    } else {
+                        exps.iter().map(|x| f16::from_f64(x / sum)).collect()
+                    };
+                    result_data.extend(probs);
+                }
+                Some(Tensor::from_vec_f16(result_data, shape))
+            }
+            TensorData::BF16(a) => {
+                let contiguous = a.as_standard_layout().to_owned();
+                let flat = contiguous.as_slice()?;
+                let mut result_data: Vec<bf16> = Vec::with_capacity(flat.len());
+                for i in 0..outer_len {
+                    let start = i * axis_len;
+                    let slice = &flat[start..start + axis_len];
+                    let max_val = slice.iter().map(|v| v.to_f64()).fold(f64::NEG_INFINITY, f64::max);
+                    let exps: Vec<f64> = slice.iter().map(|x| (x.to_f64() - max_val).exp()).collect();
+                    let sum: f64 = exps.iter().sum();
+                    let probs: Vec<bf16> = if sum == 0.0 {
+                        vec![bf16::from_f64(1.0 / axis_len as f64); axis_len]
+                    } else {
+                        exps.iter().map(|x| bf16::from_f64(x / sum)).collect()
+                    };
+                    result_data.extend(probs);
+                }
+                Some(Tensor::from_vec_bf16(result_data, shape))
             }
         }
     }
@@ -1613,6 +2041,63 @@ impl Tensor {
                 let col_tensor = Tensor::from_vec_f32(cols_f32, vec![n * h_out * w_out, c * kernel_h * kernel_w]);
                 Some((col_tensor, h_out, w_out))
             }
+            // Wave 2: F16/BF16 im2col 转 f64 计算（Phase 1 简化）
+            TensorData::F16(a) => {
+                let flat = a.as_standard_layout().to_owned();
+                let slice = flat.as_slice()?;
+                for ni in 0..n {
+                    for hi in 0..h_out {
+                        for wi in 0..w_out {
+                            for ci in 0..c {
+                                for kh in 0..kernel_h {
+                                    let ih = hi * stride + kh;
+                                    for kw in 0..kernel_w {
+                                        let iw = wi * stride + kw;
+                                        if ih >= pad && ih < h + pad && iw >= pad && iw < w + pad {
+                                            let ih_adj = ih - pad;
+                                            let iw_adj = iw - pad;
+                                            let idx = ((ni * c + ci) * h + ih_adj) * w + iw_adj;
+                                            cols.push(slice.get(idx).map(|v| v.to_f64()).unwrap_or(0.0));
+                                        } else {
+                                            cols.push(0.0);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let col_tensor = Tensor::from_vec(cols, vec![n * h_out * w_out, c * kernel_h * kernel_w]);
+                Some((col_tensor, h_out, w_out))
+            }
+            TensorData::BF16(a) => {
+                let flat = a.as_standard_layout().to_owned();
+                let slice = flat.as_slice()?;
+                for ni in 0..n {
+                    for hi in 0..h_out {
+                        for wi in 0..w_out {
+                            for ci in 0..c {
+                                for kh in 0..kernel_h {
+                                    let ih = hi * stride + kh;
+                                    for kw in 0..kernel_w {
+                                        let iw = wi * stride + kw;
+                                        if ih >= pad && ih < h + pad && iw >= pad && iw < w + pad {
+                                            let ih_adj = ih - pad;
+                                            let iw_adj = iw - pad;
+                                            let idx = ((ni * c + ci) * h + ih_adj) * w + iw_adj;
+                                            cols.push(slice.get(idx).map(|v| v.to_f64()).unwrap_or(0.0));
+                                        } else {
+                                            cols.push(0.0);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let col_tensor = Tensor::from_vec(cols, vec![n * h_out * w_out, c * kernel_h * kernel_w]);
+                Some((col_tensor, h_out, w_out))
+            }
         }
     }
 
@@ -1630,6 +2115,14 @@ impl Tensor {
                     s.zip_mut_with(o, |s, &x| *s = x);
                     return Ok(());
                 }
+                (TensorData::F16(s), TensorData::F16(o)) => {
+                    s.zip_mut_with(o, |s, &x| *s = x);
+                    return Ok(());
+                }
+                (TensorData::BF16(s), TensorData::BF16(o)) => {
+                    s.zip_mut_with(o, |s, &x| *s = x);
+                    return Ok(());
+                }
                 _ => {
                     // dtype 不一致，按 self dtype cast 后赋值
                     let o_view = src.data.as_f64_view();
@@ -1641,6 +2134,16 @@ impl Tensor {
                         TensorData::F32(s) => {
                             let o_f32 = o_view.mapv(|v| v as f32);
                             s.zip_mut_with(&o_f32, |s, &x| *s = x);
+                            return Ok(());
+                        }
+                        TensorData::F16(s) => {
+                            let o_f16 = o_view.mapv(|v| f16::from_f64(v));
+                            s.zip_mut_with(&o_f16, |s, &x| *s = x);
+                            return Ok(());
+                        }
+                        TensorData::BF16(s) => {
+                            let o_bf16 = o_view.mapv(|v| bf16::from_f64(v));
+                            s.zip_mut_with(&o_bf16, |s, &x| *s = x);
                             return Ok(());
                         }
                     }
@@ -1658,6 +2161,16 @@ impl Tensor {
                 TensorData::F32(s) => {
                     let src_br_f32: ArrayD<f32> = src_br.mapv(|v| v as f32);
                     s.zip_mut_with(&src_br_f32, |s, &x| *s = x);
+                    return Ok(());
+                }
+                TensorData::F16(s) => {
+                    let src_br_f16: ArrayD<f16> = src_br.mapv(|v| f16::from_f64(v));
+                    s.zip_mut_with(&src_br_f16, |s, &x| *s = x);
+                    return Ok(());
+                }
+                TensorData::BF16(s) => {
+                    let src_br_bf16: ArrayD<bf16> = src_br.mapv(|v| bf16::from_f64(v));
+                    s.zip_mut_with(&src_br_bf16, |s, &x| *s = x);
                     return Ok(());
                 }
             }
@@ -1718,14 +2231,17 @@ impl fmt::Display for Tensor {
         match &self.data {
             TensorData::F64(a) => write!(f, "{}", a),
             TensorData::F32(a) => write!(f, "{}", a),
+            // F16/BF16 cast 为 f64 视图后打印（保留精度信息）
+            TensorData::F16(a) => write!(f, "{}", a.mapv(|v| v.to_f64())),
+            TensorData::BF16(a) => write!(f, "{}", a.mapv(|v| v.to_f64())),
         }
     }
 }
 
 // ── TensorData 算术 trait impl（让外部代码 &x.data * &y.data 等表达式自动工作）──
-// F32 路径自动 cast 为 f64 视图后参与运算，结果为 ArrayD<f64>。
-// 这是 Phase 1 兼容层：F32 张量在外部算术中表现为 f64，dtype 信息在此层丢失。
-// Phase 3/4 改造外部代码使用真正的 f32 路径后，这些 trait impl 可移除。
+// F32/F16/BF16 路径自动 cast 为 f64 视图后参与运算，结果为 ArrayD<f64>。
+// 这是 Phase 1 兼容层：F32/F16/BF16 张量在外部算术中表现为 f64，dtype 信息在此层丢失。
+// Phase 3/4 改造外部代码使用真正的 f32/f16/bf16 路径后，这些 trait impl 可移除。
 
 use std::ops::{Add, Sub, Mul, Div, Neg, Index};
 
@@ -1739,6 +2255,14 @@ impl Index<[usize; 1]> for TensorData {
                 // 这里用 leak 方式返回 'static 引用，仅供测试断言读取，避免内存泄漏需调用方不长期持有。
                 // 更优做法是改造外部代码用 .get(i) 返回 Option<f64>。
                 let v = a[[idx[0]]] as f64;
+                Box::leak(Box::new(v))
+            }
+            TensorData::F16(a) => {
+                let v = a[[idx[0]]].to_f64();
+                Box::leak(Box::new(v))
+            }
+            TensorData::BF16(a) => {
+                let v = a[[idx[0]]].to_f64();
                 Box::leak(Box::new(v))
             }
         }
@@ -1759,6 +2283,14 @@ impl Index<[usize; 2]> for TensorData {
             TensorData::F64(a) => &a[[idx[0], idx[1]]],
             TensorData::F32(a) => {
                 let v = a[[idx[0], idx[1]]] as f64;
+                Box::leak(Box::new(v))
+            }
+            TensorData::F16(a) => {
+                let v = a[[idx[0], idx[1]]].to_f64();
+                Box::leak(Box::new(v))
+            }
+            TensorData::BF16(a) => {
+                let v = a[[idx[0], idx[1]]].to_f64();
                 Box::leak(Box::new(v))
             }
         }
@@ -1954,6 +2486,40 @@ impl fmt::Display for TensorData {
                         a.iter().copied().nth(1).unwrap_or(0.0),
                         a.iter().copied().nth(a.len().saturating_sub(2)).unwrap_or(0.0),
                         a.last().copied().unwrap_or(0.0))
+                }
+            }
+            TensorData::F16(a) => {
+                write!(f, "f16{:?}", a.shape())?;
+                if a.len() <= 8 {
+                    write!(f, "[")?;
+                    for (i, v) in a.iter().enumerate() {
+                        if i > 0 { write!(f, ", ")?; }
+                        write!(f, "{}", v.to_f64())?;
+                    }
+                    write!(f, "]")
+                } else {
+                    write!(f, "[{}, {}, ..., {}, {}]",
+                        a.first().map(|v| v.to_f64()).unwrap_or(0.0),
+                        a.iter().map(|v| v.to_f64()).nth(1).unwrap_or(0.0),
+                        a.iter().map(|v| v.to_f64()).nth(a.len().saturating_sub(2)).unwrap_or(0.0),
+                        a.last().map(|v| v.to_f64()).unwrap_or(0.0))
+                }
+            }
+            TensorData::BF16(a) => {
+                write!(f, "bf16{:?}", a.shape())?;
+                if a.len() <= 8 {
+                    write!(f, "[")?;
+                    for (i, v) in a.iter().enumerate() {
+                        if i > 0 { write!(f, ", ")?; }
+                        write!(f, "{}", v.to_f64())?;
+                    }
+                    write!(f, "]")
+                } else {
+                    write!(f, "[{}, {}, ..., {}, {}]",
+                        a.first().map(|v| v.to_f64()).unwrap_or(0.0),
+                        a.iter().map(|v| v.to_f64()).nth(1).unwrap_or(0.0),
+                        a.iter().map(|v| v.to_f64()).nth(a.len().saturating_sub(2)).unwrap_or(0.0),
+                        a.last().map(|v| v.to_f64()).unwrap_or(0.0))
                 }
             }
         }

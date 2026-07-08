@@ -38,6 +38,9 @@ impl FloatElem for f32 {
         match td {
             TensorData::F32(a) => a.clone(),
             TensorData::F64(a) => a.mapv(|v| v as f32),
+            // Wave 2: F16/BF16 转 f32（dispatch_float! 将 F16/BF16 走 f64 路径，这里防御性处理）
+            TensorData::F16(a) => a.mapv(|v| v.to_f32()),
+            TensorData::BF16(a) => a.mapv(|v| v.to_f32()),
         }
     }
     fn into_tensor_data(arr: ArrayD<f32>) -> TensorData { TensorData::F32(arr) }
@@ -52,6 +55,9 @@ impl FloatElem for f64 {
         match td {
             TensorData::F64(a) => a.clone(),
             TensorData::F32(a) => a.mapv(|v| v as f64),
+            // Wave 2: F16/BF16 转 f64
+            TensorData::F16(a) => a.mapv(|v| v.to_f64()),
+            TensorData::BF16(a) => a.mapv(|v| v.to_f64()),
         }
     }
     fn into_tensor_data(arr: ArrayD<f64>) -> TensorData { TensorData::F64(arr) }
@@ -1301,6 +1307,25 @@ impl Tape {
                                     })?
                             )
                         },
+                        // Wave 2: F16/BF16 grad 转 f64（dispatch_float! 走 f64 路径，防御性处理）
+                        TensorData::F16(a) => {
+                            let data: Vec<f64> = a.iter().map(|v| v.to_f64()).collect();
+                            TensorData::F64(
+                                ArrayD::from_shape_vec(IxDyn(&orig_shape), data)
+                                    .map_err(|_| crate::error::TenthError::RuntimeError {
+                                        message: format!("Reshape 反向 reshape grad 到 {:?} 失败", orig_shape),
+                                    })?
+                            )
+                        },
+                        TensorData::BF16(a) => {
+                            let data: Vec<f64> = a.iter().map(|v| v.to_f64()).collect();
+                            TensorData::F64(
+                                ArrayD::from_shape_vec(IxDyn(&orig_shape), data)
+                                    .map_err(|_| crate::error::TenthError::RuntimeError {
+                                        message: format!("Reshape 反向 reshape grad 到 {:?} 失败", orig_shape),
+                                    })?
+                            )
+                        },
                     };
                     propagate_grad(node, 0, &g_a, &mut node_grads)?;
                 }
@@ -1477,6 +1502,8 @@ fn acc_node_grad(node_grads: &mut [Option<TensorData>], id: usize, g: &TensorDat
         (Some(TensorData::F32(cur)), TensorData::F32(g2)) => Some(TensorData::F32(&cur + g2)),
         (Some(TensorData::F64(cur)), TensorData::F32(g2)) => Some(TensorData::F64(&cur + &g2.mapv(|v| v as f64))),
         (Some(TensorData::F32(cur)), TensorData::F64(g2)) => Some(TensorData::F64(&cur.mapv(|v| v as f64) + g2)),
+        // Wave 2: F16/BF16 场景统一提升为 f64 累加（Phase 1 简化，F16/BF16 param backward 会 early-return）
+        (Some(cur), g2) => Some(TensorData::F64(cur.as_f64_view() + g2.as_f64_view())),
         (None, _) => Some(g.clone()),
     };
 }

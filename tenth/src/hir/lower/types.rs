@@ -448,6 +448,9 @@ impl Lowerer {
             "randn_f32" => Ok(Type::tensor(BaseType::F32, vec![Dim::Any])),
             // Phase 5.5：补全 f32 构造函数 native 注册
             "rand_f32" | "zeros_f32" | "ones_f32" => Ok(Type::tensor(BaseType::F32, vec![Dim::Any])),
+            // Wave 2：f16/bf16 构造函数 native 注册
+            "zeros_f16" | "ones_f16" => Ok(Type::tensor(BaseType::F16, vec![Dim::Any])),
+            "zeros_bf16" | "ones_bf16" => Ok(Type::tensor(BaseType::BF16, vec![Dim::Any])),
             "read_file" => Ok(Type::str_()),
             "str_at" => Ok(Type::str_()),
             "write_file" | "write_bytes" => Ok(Type::unit()),

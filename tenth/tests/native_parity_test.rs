@@ -14,7 +14,7 @@ use tenth::runtime::vm::Vm;
 use tenth::runtime::interpreter::Interpreter;
 use tenth::runtime::value::Value;
 use tenth::runtime::autodiff::Tape;
-use tenth::runtime::tensor::Tensor;
+use tenth::runtime::tensor::{Tensor, TensorData};
 use tenth::compile::bytecode::BytecodeCompiler;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -218,6 +218,9 @@ fn register_test_natives(vm: &mut Vm) {
                 };
                 let tensors_ref = tensors.borrow();
                 let mut bytes: Vec<u8> = Vec::new();
+                // v2 格式: magic "THW1" + version=2 + num_tensors
+                bytes.extend(b"THW1");
+                bytes.extend(&2i32.to_le_bytes());
                 bytes.extend(&(tensors_ref.len() as i32).to_le_bytes());
                 for val in tensors_ref.iter() {
                     let tensor_rc = match val {
@@ -233,9 +236,49 @@ fn register_test_natives(vm: &mut Vm) {
                         let ndim = shape.len() as i32;
                         bytes.extend(&ndim.to_le_bytes());
                         for &d in &shape { bytes.extend(&(d as i32).to_le_bytes()); }
-                        let flat = t_ref.data.as_standard_layout().to_owned();
-                        if let Some(slice) = flat.as_slice() {
-                            for &x in slice { bytes.extend(&x.to_le_bytes()); }
+                        // dtype 字段: F32=0, F64=1, F16=2, BF16=3 (Wave 2)
+                        let dtype_val: i32 = match &t_ref.data {
+                            TensorData::F32(_) => 0,
+                            TensorData::F64(_) => 1,
+                            TensorData::F16(_) => 2,
+                            TensorData::BF16(_) => 3,
+                        };
+                        bytes.extend(&dtype_val.to_le_bytes());
+                        // 按 dtype 分发写数据
+                        match &t_ref.data {
+                            TensorData::F64(arr) => {
+                                let flat = arr.as_standard_layout();
+                                if let Some(slice) = flat.as_slice() {
+                                    for &x in slice { bytes.extend(&x.to_le_bytes()); }
+                                } else {
+                                    for &x in flat.iter() { bytes.extend(&x.to_le_bytes()); }
+                                }
+                            }
+                            TensorData::F32(arr) => {
+                                let flat = arr.as_standard_layout();
+                                if let Some(slice) = flat.as_slice() {
+                                    for &x in slice { bytes.extend(&x.to_le_bytes()); }
+                                } else {
+                                    for &x in flat.iter() { bytes.extend(&x.to_le_bytes()); }
+                                }
+                            }
+                            // Wave 2: F16/BF16 各 2 字节/元素
+                            TensorData::F16(arr) => {
+                                let flat = arr.as_standard_layout();
+                                if let Some(slice) = flat.as_slice() {
+                                    for &x in slice { bytes.extend(&x.to_le_bytes()); }
+                                } else {
+                                    for &x in flat.iter() { bytes.extend(&x.to_le_bytes()); }
+                                }
+                            }
+                            TensorData::BF16(arr) => {
+                                let flat = arr.as_standard_layout();
+                                if let Some(slice) = flat.as_slice() {
+                                    for &x in slice { bytes.extend(&x.to_le_bytes()); }
+                                } else {
+                                    for &x in flat.iter() { bytes.extend(&x.to_le_bytes()); }
+                                }
+                            }
                         }
                     }
                 }
@@ -258,9 +301,19 @@ fn register_test_natives(vm: &mut Vm) {
                     if bytes.len() < 4 {
                         return Err(tenth::error::TenthError::RuntimeError { message: "load_weights: 文件过短".into() });
                     }
-                    let num = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-                    let mut offset: usize = 4;
                     let mut result: Vec<Value> = Vec::new();
+                    // 检测 v2 格式: magic "THW1"
+                    let is_v2 = bytes.len() >= 12 && &bytes[0..4] == b"THW1";
+                    let num: usize;
+                    let mut offset: usize;
+                    if is_v2 {
+                        let _version = i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+                        num = i32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+                        offset = 12;
+                    } else {
+                        num = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+                        offset = 4;
+                    }
                     for _ in 0..num {
                         if offset + 4 > bytes.len() { break; }
                         let ndim = i32::from_le_bytes([
@@ -277,19 +330,103 @@ fn register_test_natives(vm: &mut Vm) {
                             offset += 4;
                         }
                         let nel: usize = shape.iter().product();
-                        let data_len = nel * 8;
-                        if offset + data_len > bytes.len() { break; }
-                        let mut data = Vec::with_capacity(nel);
-                        for i in 0..nel {
-                            let start = offset + i * 8;
-                            let val = f64::from_le_bytes([
-                                bytes[start], bytes[start+1], bytes[start+2], bytes[start+3],
-                                bytes[start+4], bytes[start+5], bytes[start+6], bytes[start+7],
+                        if is_v2 {
+                            if offset + 4 > bytes.len() { break; }
+                            let dtype = i32::from_le_bytes([
+                                bytes[offset], bytes[offset+1], bytes[offset+2], bytes[offset+3]
                             ]);
-                            data.push(val);
+                            offset += 4;
+                            match dtype {
+                                0 => {
+                                    let data_len = nel * 4;
+                                    if offset + data_len > bytes.len() { break; }
+                                    let mut data = Vec::with_capacity(nel);
+                                    for i in 0..nel {
+                                        let start = offset + i * 4;
+                                        let val = f32::from_le_bytes([
+                                            bytes[start], bytes[start+1], bytes[start+2], bytes[start+3],
+                                        ]);
+                                        data.push(val);
+                                    }
+                                    offset += data_len;
+                                    result.push(Value::Tensor(Rc::new(RefCell::new(
+                                        Tensor::from_vec_f32(data, shape)
+                                    ))));
+                                }
+                                1 => {
+                                    let data_len = nel * 8;
+                                    if offset + data_len > bytes.len() { break; }
+                                    let mut data = Vec::with_capacity(nel);
+                                    for i in 0..nel {
+                                        let start = offset + i * 8;
+                                        let val = f64::from_le_bytes([
+                                            bytes[start], bytes[start+1], bytes[start+2], bytes[start+3],
+                                            bytes[start+4], bytes[start+5], bytes[start+6], bytes[start+7],
+                                        ]);
+                                        data.push(val);
+                                    }
+                                    offset += data_len;
+                                    result.push(Value::Tensor(Rc::new(RefCell::new(
+                                        Tensor::from_vec(data, shape)
+                                    ))));
+                                }
+                                2 => {
+                                    // F16: 2 字节/元素
+                                    let data_len = nel * 2;
+                                    if offset + data_len > bytes.len() { break; }
+                                    let mut data = Vec::with_capacity(nel);
+                                    for i in 0..nel {
+                                        let start = offset + i * 2;
+                                        let val = half::f16::from_le_bytes([
+                                            bytes[start], bytes[start+1],
+                                        ]);
+                                        data.push(val);
+                                    }
+                                    offset += data_len;
+                                    result.push(Value::Tensor(Rc::new(RefCell::new(
+                                        Tensor::from_vec_f16(data, shape)
+                                    ))));
+                                }
+                                3 => {
+                                    // BF16: 2 字节/元素
+                                    let data_len = nel * 2;
+                                    if offset + data_len > bytes.len() { break; }
+                                    let mut data = Vec::with_capacity(nel);
+                                    for i in 0..nel {
+                                        let start = offset + i * 2;
+                                        let val = half::bf16::from_le_bytes([
+                                            bytes[start], bytes[start+1],
+                                        ]);
+                                        data.push(val);
+                                    }
+                                    offset += data_len;
+                                    result.push(Value::Tensor(Rc::new(RefCell::new(
+                                        Tensor::from_vec_bf16(data, shape)
+                                    ))));
+                                }
+                                other => {
+                                    return Err(tenth::error::TenthError::RuntimeError {
+                                        message: format!("load_weights: 未知 dtype={}", other),
+                                    });
+                                }
+                            }
+                        } else {
+                            let data_len = nel * 8;
+                            if offset + data_len > bytes.len() { break; }
+                            let mut data = Vec::with_capacity(nel);
+                            for i in 0..nel {
+                                let start = offset + i * 8;
+                                let val = f64::from_le_bytes([
+                                    bytes[start], bytes[start+1], bytes[start+2], bytes[start+3],
+                                    bytes[start+4], bytes[start+5], bytes[start+6], bytes[start+7],
+                                ]);
+                                data.push(val);
+                            }
+                            offset += data_len;
+                            result.push(Value::Tensor(Rc::new(RefCell::new(
+                                Tensor::from_vec(data, shape)
+                            ))));
                         }
-                        offset += data_len;
-                        result.push(Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec(data, shape)))));
                     }
                     Ok(Value::Vec(Rc::new(RefCell::new(result))))
                 }
