@@ -337,6 +337,37 @@ impl WasmCompiler {
                         body.instruction(&Instruction::Call(HOST_STR_SLICE));
                         body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
                     }
+                    // AUDIT #6 修复：补齐 str_eq/str_add/str_int 的函数调用分支，
+                    // 与 str_len/str_at/str_cmp/str_slice 对齐。此前仅 BinOp 路径
+                    // （`a == b`、`a + b`）和 MethodCall/InterpolatedString 路径支持，
+                    // 函数调用形式 `str_eq(a,b)` 会落入 `_` 分支按普通函数解析，产出
+                    // i64→i32 类型不匹配的非法 WASM。
+                    "str_eq" => {
+                        // str_eq(i32 a, i32 b) -> i32: 字符串相等比较返回 bool
+                        if args.len() >= 2 {
+                            self.compile_string_arg(body, &args[0])?;
+                            self.compile_string_arg(body, &args[1])?;
+                        }
+                        body.instruction(&Instruction::Call(HOST_STR_EQ));
+                        body.instruction(&Instruction::I64ExtendI32U); // i32 bool -> i64
+                    }
+                    "str_add" => {
+                        // str_add(i32 a, i32 b) -> i32: 字符串拼接
+                        if args.len() >= 2 {
+                            self.compile_string_arg(body, &args[0])?;
+                            self.compile_string_arg(body, &args[1])?;
+                        }
+                        body.instruction(&Instruction::Call(HOST_STR_ADD));
+                        body.instruction(&Instruction::I64ExtendI32U); // i32 ptr -> i64
+                    }
+                    "str_int" => {
+                        // str_int(i64 n) -> i32: 整数转字符串
+                        if let Some(a) = args.first() {
+                            self.compile_expr(body, a)?;
+                        }
+                        body.instruction(&Instruction::Call(HOST_STR_INT));
+                        body.instruction(&Instruction::I64ExtendI32U); // i32 ptr -> i64
+                    }
                     _ => {
                         // D5.4: Closure call detection — if fname is a closure variable,
                         // use call_indirect instead of regular call

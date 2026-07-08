@@ -159,4 +159,53 @@ mod wasm_backend_minimal {
         let src = "fn let_test()->i64{ let x=1; x=x+2; x }";
         assert_eq!(call_fn_i64(src, "let_test", &[]), 3);
     }
+
+    // ── AUDIT #6 回归测试：str_eq/str_add/str_int 函数调用形式 ──────────────
+    //
+    // 修复前：Call 分派缺这三个分支，`str_eq(a,b)` 落入 `_` 分支按普通函数解析，
+    // 产出 i64→i32 类型不匹配的非法 WASM，wasmi 实例化失败。
+    // 修复后：三个分支补齐，与 str_len/str_at/str_cmp/str_slice 对齐。
+    // host 端 str_eq/str_add/str_int 返回 0（stub），仅验证编译执行不报错。
+
+    #[test]
+    fn test_str_eq_call_compiles() {
+        let src = r#"fn str_eq_call() -> i64 { let a = "hello"; let b = "world"; let c = str_eq(a, b); 0 }"#;
+        let wasm = compile_to_wasm(src);
+        assert_eq!(&wasm[..4], b"\0asm", "WASM magic");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm).expect("str_eq_call 模块应编译成功");
+        let (mut store, linker) = setup_store_and_linker(&engine);
+        let instance = linker.instantiate(&mut store, &module).expect("inst").start(&mut store).expect("start");
+        let func = instance.get_func(&store, "str_eq_call").expect("get str_eq_call");
+        let mut results = [wasmi::Val::I64(0)];
+        func.call(&mut store, &[], &mut results).expect("str_eq_call 调用应成功");
+    }
+
+    #[test]
+    fn test_str_add_call_compiles() {
+        let src = r#"fn str_add_call() -> i64 { let a = "hello"; let b = "world"; let c = str_add(a, b); 0 }"#;
+        let wasm = compile_to_wasm(src);
+        assert_eq!(&wasm[..4], b"\0asm", "WASM magic");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm).expect("str_add_call 模块应编译成功");
+        let (mut store, linker) = setup_store_and_linker(&engine);
+        let instance = linker.instantiate(&mut store, &module).expect("inst").start(&mut store).expect("start");
+        let func = instance.get_func(&store, "str_add_call").expect("get str_add_call");
+        let mut results = [wasmi::Val::I64(0)];
+        func.call(&mut store, &[], &mut results).expect("str_add_call 调用应成功");
+    }
+
+    #[test]
+    fn test_str_int_call_compiles() {
+        let src = r#"fn str_int_call() -> i64 { let n = 42; let s = str_int(n); 0 }"#;
+        let wasm = compile_to_wasm(src);
+        assert_eq!(&wasm[..4], b"\0asm", "WASM magic");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &wasm).expect("str_int_call 模块应编译成功");
+        let (mut store, linker) = setup_store_and_linker(&engine);
+        let instance = linker.instantiate(&mut store, &module).expect("inst").start(&mut store).expect("start");
+        let func = instance.get_func(&store, "str_int_call").expect("get str_int_call");
+        let mut results = [wasmi::Val::I64(0)];
+        func.call(&mut store, &[], &mut results).expect("str_int_call 调用应成功");
+    }
 }

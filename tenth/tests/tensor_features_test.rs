@@ -20,6 +20,7 @@ use tenth::hir::types::BaseType;
 use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::runtime::autodiff::Tape;
+use tenth::runtime::interpreter::Interpreter;
 use tenth::runtime::tensor::{Tensor, TensorData};
 use tenth::runtime::value::Value;
 use tenth::runtime::vm::Vm;
@@ -623,6 +624,30 @@ fn run_vm_inner(src: &str, search_paths: Option<Vec<String>>) -> Value {
     } else {
         Value::Unit
     }
+}
+
+/// 通过 Interpreter 执行 .th 源码（带 search_paths，支持 use std::... 导入）。
+///
+/// 用途：当测试依赖"作为参数传递的闭包"调用（如 accumulate_loop 的 forward_fn、
+/// iter.th::map 的 f）时，VM 路径因 bytecode.rs 的 Call 分支仅 emit Op::CallN
+/// 按名字查函数表、不支持 CallIndirect 而失败。Interpreter 是 tree-walk，直接
+/// eval 闭包值，无此限制。与 iterator_test.rs 的 run 函数模式一致。
+fn run_interp_with_std(src: &str) -> Value {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap_or_else(|e| panic!("词法错误: {}", e));
+    let mut parser = Parser::new(tokens);
+    let program = parser
+        .parse_program()
+        .unwrap_or_else(|e| panic!("语法错误: {}", e));
+    let mut lowerer = Lowerer::with_search_paths(vec![".".to_string()]);
+    let hir = lowerer
+        .lower_program(&program)
+        .unwrap_or_else(|e| panic!("HIR 错误: {}", e));
+    let mut interpreter = Interpreter::new(&hir);
+    interpreter
+        .execute_program(&hir)
+        .unwrap_or_else(|e| panic!("Interpreter 执行失败: {}", e))
+        .unwrap_or(Value::Unit)
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1318,6 +1343,58 @@ fn test_accumulate_th_parses() {
     let _hir = lowerer
         .lower_program(&program)
         .expect("accumulate.th lower 错误");
+}
+
+// ─── Test 15b: accumulate_loop 端到端功能测试 ─────────────────────────────
+//
+// 验证梯度累积语义：3 个 micro-batch (x=2,4,6)，accum_steps=3，
+// 模型 loss = (w * x).sum()（w=1）。
+// 每轮 backward(loss / 3) 使 grad += x/3，累积后 grad = (2+4+6)/3 = 4.0。
+//
+// 关键点：accumulate_loop 内部每轮调 new_grad() 重置 tape，故 forward 闭包内
+// 必须调 param(w) 重新注册参数到当前 tape（否则 w.tape_id 陈旧导致梯度流向
+// 错误节点）。param 修改共享 Tensor 的 tape_id，.grad 跨轮累积不受影响。
+//
+// 执行路径说明：本测试用 Interpreter（tree-walk）而非 VM。原因是 accumulate_loop
+// 接受闭包作为参数（forward_fn），VM 的 bytecode.rs Call 分支对 Var(name) 直接
+// emit Op::CallN 按名字查函数表，但 forward_fn 是闭包值存在 locals 中、不在函数
+// 表里，VM 会报"未定义的函数"。Interpreter 直接 eval 闭包值，无此限制。这与
+// iter.th::map 的测试惯例对齐（iterator_test.rs 同样用 Interpreter）。
+
+#[test]
+fn test_accumulate_loop_functional() {
+    let src = r#"
+        use std::optim::accumulate::accumulate_loop;
+        fn run() -> Tensor[f64, ..] {
+            let w = tensor[[1.0]];
+            let mut batches = Vec::new();
+            batches.push(tensor[[2.0]]);
+            batches.push(tensor[[4.0]]);
+            batches.push(tensor[[6.0]]);
+            accumulate_loop<f64>(|x| (param(w) * x).sum(), batches, 3);
+            stop_grad();
+            grad(w)
+        }
+        run()
+    "#;
+    let v = run_interp_with_std(src);
+    match v {
+        Value::Tensor(t) => {
+            assert_eq!(t.borrow().dtype(), BaseType::F64, "grad 应为 F64");
+            assert_eq!(t.borrow().shape(), vec![1, 1], "shape 应为 [1, 1]");
+            if let TensorData::F64(arr) = &t.borrow().data {
+                let g = arr.iter().next().expect("grad 非空");
+                assert!(
+                    (g - 4.0).abs() < 1e-9,
+                    "累积梯度应为 4.0（(2+4+6)/3），got {}",
+                    g
+                );
+            } else {
+                panic!("期望 F64 数据");
+            }
+        }
+        v => panic!("期望 Tensor，got {:?}", v),
+    }
 }
 
 // ─── Test 16: adamw.th 解析验证 ───────────────────────────────────────────

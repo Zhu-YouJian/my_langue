@@ -22,9 +22,13 @@
 // 累积辅助：将当前梯度按累积步数缩放后返回。
 // 用于 backward(loss) 后、optimizer step 前的梯度归一化。
 // 输入：参数 w（用于读 grad）、累积步数 accum_steps；返回：归一化后的梯度。
+//
+// 注：accum_steps 为 i64，内部用 to_f64() 转为 f64 再做标量除法（Tensor / i64
+// 无原生支持，Tensor / Float 才有；与 clip.th 的 to_f64 模式一致）。
 fn accumulate_grad<T>(w: Tensor[T, ..], accum_steps: i64) -> Tensor[T, ..] {
     let gw = grad(w);
-    gw / accum_steps
+    let scale = to_f64(accum_steps);
+    gw / scale
 }
 
 // 累积循环：对多个 micro_batch 执行 forward+backward，梯度自动累积。
@@ -44,16 +48,25 @@ fn accumulate_grad<T>(w: Tensor[T, ..], accum_steps: i64) -> Tensor[T, ..] {
 //
 // 注：closure 参数 forward_fn 不写类型注解（与 iter.th::map 一致），调用方需保证
 //   forward_fn: fn(Tensor[T, ..]) -> Tensor[T, ..]。
+//
+// 注：forward_fn 内部应对参数调用 param() 重新注册到当前 tape。accumulate_loop
+//   每轮调 new_grad() 重置 tape，若参数在外部仅 param 一次，其 tape_id 会变陈旧
+//   导致梯度流向错误节点。正确用法：forward_fn 内 `let wp = param(w); ...` 每轮
+//   重新注册（param 修改的是共享 Tensor 的 tape_id，.grad 跨轮累积不受影响）。
+//
+// 注：accum_steps 为 i64，内部用 to_f64() 转为 f64 再做标量除法（Tensor / i64
+// 无原生支持；与 accumulate_grad / clip.th 的 to_f64 模式一致）。
 fn accumulate_loop<T>(
     forward_fn,
     micro_batches: Vec,
     accum_steps: i64,
 ) -> () {
     let n = micro_batches.len();
+    let scale = to_f64(accum_steps);
     for i in 0..n {
         new_grad();
         let x = micro_batches[i];
         let loss = forward_fn(x);
-        backward(loss / accum_steps);
+        backward(loss / scale);
     };
 }

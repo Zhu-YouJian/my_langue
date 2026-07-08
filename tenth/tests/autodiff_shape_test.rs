@@ -11,6 +11,7 @@
 use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::runtime::interpreter::Interpreter;
+use tenth::runtime::tensor::TensorData;
 use tenth::runtime::value::Value;
 use tenth::hir::lower::Lowerer;
 use tenth::error::TenthWarning;
@@ -231,4 +232,153 @@ fn main() {
     let warnings = lower_warnings(src);
     let param_count = warnings.iter().filter(|w| w.message.contains("param()")).count();
     assert!(param_count >= 2, "期望至少 2 个 param warning，实际: {}", param_count);
+}
+
+// ── unbroadcast 专项数值测试 ────────────────────────────────────────────
+//
+// 现有 broadcast_gradient_correct_shape 只验证"广播反向不报错"，未验证梯度数值。
+// 本组测试验证 unbroadcast 在各种广播模式下的梯度数值正确性——即 unbroadcast
+// 是否正确实现了 numpy 广播的对偶伴随（沿广播轴求和归约）。
+//
+// 公式：loss = z.sum() → d(loss)/d(z) = ones_like(z)
+//   - Add: d(loss)/d(b) = unbroadcast(ones, b.shape)
+//   - Mul: d(loss)/d(b) = unbroadcast(ones * w, b.shape) = unbroadcast(w, b.shape)
+//
+// unbroadcast 语义：从右往左对齐维度，对 target[axis]==1 && grad[axis]>1 的轴求和。
+
+/// 辅助：从 Value 提取 F64 Tensor 的扁平数据，用于数值断言。
+fn extract_f64_data(v: &Value) -> Vec<f64> {
+    match v {
+        Value::Tensor(t) => {
+            let t = t.borrow();
+            match &t.data {
+                TensorData::F64(arr) => arr.iter().cloned().collect(),
+                _ => panic!("期望 F64 Tensor，got {:?}", t.data.dtype()),
+            }
+        }
+        _ => panic!("期望 Tensor，got {:?}", v),
+    }
+}
+
+/// 辅助：断言两组 f64 数据近似相等（逐元素）。
+fn assert_f64_approx(actual: &[f64], expected: &[f64], msg: &str) {
+    assert_eq!(actual.len(), expected.len(), "{}: 长度不匹配 actual={:?} expected={:?}", msg, actual, expected);
+    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+        assert!(
+            (a - e).abs() < 1e-9,
+            "{}: 第 {} 个元素不匹配 actual={} expected={}",
+            msg, i, a, e
+        );
+    }
+}
+
+#[test]
+fn unbroadcast_row_broadcast_add_grad() {
+    // 行广播：w[2,3] + b[1,3] → z[2,3]（b 沿 axis 0 广播）
+    // grad(b) = unbroadcast(ones[2,3], [1,3]) = 沿 axis 0 求和 = [[2,2,2]]
+    let src = r#"
+fn run() -> Tensor[f64, ..] {
+    new_grad();
+    let w = param(tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]));
+    let b = param(tensor([[10.0, 20.0, 30.0]]));
+    let z = w + b;
+    let loss = z.sum();
+    backward(loss);
+    grad(b)
+}
+run()
+"#;
+    let v = run_source(src).expect("行广播 Add 反向应成功");
+    let data = extract_f64_data(&v);
+    // grad(b) shape [1,3]，行优先展开 = [2, 2, 2]
+    assert_f64_approx(&data, &[2.0, 2.0, 2.0], "行广播 Add grad(b)");
+}
+
+#[test]
+fn unbroadcast_col_broadcast_add_grad() {
+    // 列广播：w[2,3] + b[2,1] → z[2,3]（b 沿 axis 1 广播）
+    // grad(b) = unbroadcast(ones[2,3], [2,1]) = 沿 axis 1 求和 = [[3],[3]]
+    let src = r#"
+fn run() -> Tensor[f64, ..] {
+    new_grad();
+    let w = param(tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]));
+    let b = param(tensor([[10.0], [20.0]]));
+    let z = w + b;
+    let loss = z.sum();
+    backward(loss);
+    grad(b)
+}
+run()
+"#;
+    let v = run_source(src).expect("列广播 Add 反向应成功");
+    let data = extract_f64_data(&v);
+    // grad(b) shape [2,1]，行优先展开 = [3, 3]
+    assert_f64_approx(&data, &[3.0, 3.0], "列广播 Add grad(b)");
+}
+
+#[test]
+fn unbroadcast_scalar_broadcast_add_grad() {
+    // 标量广播：w[2,3] + b[1,1] → z[2,3]（b 沿两个轴广播）
+    // grad(b) = unbroadcast(ones[2,3], [1,1]) = 沿 axis 0 和 1 求和 = [[6]]
+    let src = r#"
+fn run() -> Tensor[f64, ..] {
+    new_grad();
+    let w = param(tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]));
+    let b = param(tensor([[10.0]]));
+    let z = w + b;
+    let loss = z.sum();
+    backward(loss);
+    grad(b)
+}
+run()
+"#;
+    let v = run_source(src).expect("标量广播 Add 反向应成功");
+    let data = extract_f64_data(&v);
+    // grad(b) shape [1,1]，展开 = [6]
+    assert_f64_approx(&data, &[6.0], "标量广播 Add grad(b)");
+}
+
+#[test]
+fn unbroadcast_mul_broadcast_grad() {
+    // Mul 广播：w[2,3] * b[1,3] → z[2,3]（b 沿 axis 0 广播）
+    // d(loss)/d(b) = unbroadcast(ones * w, [1,3]) = unbroadcast(w, [1,3])
+    //              = w 沿 axis 0 求和 = [[1+4, 2+5, 3+6]] = [[5, 7, 9]]
+    let src = r#"
+fn run() -> Tensor[f64, ..] {
+    new_grad();
+    let w = param(tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]));
+    let b = param(tensor([[10.0, 20.0, 30.0]]));
+    let z = w * b;
+    let loss = z.sum();
+    backward(loss);
+    grad(b)
+}
+run()
+"#;
+    let v = run_source(src).expect("Mul 广播反向应成功");
+    let data = extract_f64_data(&v);
+    // grad(b) shape [1,3] = [5, 7, 9]
+    assert_f64_approx(&data, &[5.0, 7.0, 9.0], "Mul 广播 grad(b)");
+}
+
+#[test]
+fn unbroadcast_sub_broadcast_grad() {
+    // Sub 广播：w[2,3] - b[2,1] → z[2,3]（b 沿 axis 1 广播）
+    // d(loss)/d(b) = unbroadcast(-ones, [2,1]) = -沿 axis 1 求和 = [[-3],[-3]]
+    let src = r#"
+fn run() -> Tensor[f64, ..] {
+    new_grad();
+    let w = param(tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]));
+    let b = param(tensor([[10.0], [20.0]]));
+    let z = w - b;
+    let loss = z.sum();
+    backward(loss);
+    grad(b)
+}
+run()
+"#;
+    let v = run_source(src).expect("Sub 广播反向应成功");
+    let data = extract_f64_data(&v);
+    // grad(b) shape [2,1] = [-3, -3]
+    assert_f64_approx(&data, &[-3.0, -3.0], "Sub 广播 grad(b)");
 }
