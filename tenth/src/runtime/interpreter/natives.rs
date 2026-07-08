@@ -366,6 +366,117 @@ impl super::Interpreter {
                 }
                 return Ok(Some(Value::Unit));
             }
+            // —— 正则表达式原语（句柄表方案，handle 1-based，0 表示无效）——
+            // 与 std/regex.th 对齐：Tenth 层不暴露 Regex 类型，仅用 i64 handle。
+            "regex_compile" => {
+                if let Some(Value::String(pattern)) = args.first() {
+                    match regex::Regex::new(pattern) {
+                        Ok(re) => {
+                            self.regexes.push(Some(re));
+                            let handle = self.regexes.len() as i64; // 1-based
+                            return Ok(Some(ok_result(Value::Int(handle))));
+                        }
+                        Err(e) => return Ok(Some(err_result(format!("正则编译失败: {e}")))),
+                    }
+                }
+                return Ok(Some(err_result("regex_compile 需要 1 个 String 参数")));
+            }
+            "regex_match" => {
+                if args.len() < 2 {
+                    return Ok(Some(Value::Bool(false)));
+                }
+                if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+                    let idx = *handle as usize;
+                    if idx == 0 || idx > self.regexes.len() {
+                        return Ok(Some(Value::Bool(false)));
+                    }
+                    if let Some(ref re) = self.regexes[idx - 1] {
+                        return Ok(Some(Value::Bool(re.is_match(input))));
+                    }
+                    return Ok(Some(Value::Bool(false)));
+                }
+                return Ok(Some(Value::Bool(false)));
+            }
+            "regex_find" => {
+                // 与 std/regex.th 契约对齐：返回 String，无匹配返回空字符串 ""
+                if args.len() < 2 {
+                    return Ok(Some(Value::String(String::new())));
+                }
+                if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+                    let idx = *handle as usize;
+                    if idx == 0 || idx > self.regexes.len() {
+                        return Ok(Some(Value::String(String::new())));
+                    }
+                    if let Some(ref re) = self.regexes[idx - 1] {
+                        if let Some(m) = re.find(input) {
+                            return Ok(Some(Value::String(m.as_str().to_string())));
+                        }
+                    }
+                    return Ok(Some(Value::String(String::new())));
+                }
+                return Ok(Some(Value::String(String::new())));
+            }
+            "regex_find_all" => {
+                // 与 std/regex.th 契约对齐：返回 Vec<String>
+                if args.len() < 2 {
+                    return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
+                }
+                if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+                    let idx = *handle as usize;
+                    if idx == 0 || idx > self.regexes.len() {
+                        return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
+                    }
+                    if let Some(ref re) = self.regexes[idx - 1] {
+                        let collected: Vec<Value> = re
+                            .find_iter(input)
+                            .map(|m| Value::String(m.as_str().to_string()))
+                            .collect();
+                        return Ok(Some(Value::Vec(Rc::new(RefCell::new(collected)))));
+                    }
+                    return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
+                }
+                return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
+            }
+            "regex_replace" => {
+                if args.len() < 3 {
+                    return Ok(Some(Value::String(String::new())));
+                }
+                if let (Value::Int(handle), Value::String(input), Value::String(replacement)) =
+                    (&args[0], &args[1], &args[2])
+                {
+                    let idx = *handle as usize;
+                    if idx == 0 || idx > self.regexes.len() {
+                        return Ok(Some(Value::String(input.clone())));
+                    }
+                    if let Some(ref re) = self.regexes[idx - 1] {
+                        let result = re.replace_all(input, replacement.as_str()).into_owned();
+                        return Ok(Some(Value::String(result)));
+                    }
+                    return Ok(Some(Value::String(input.clone())));
+                }
+                return Ok(Some(Value::String(String::new())));
+            }
+            "regex_split" => {
+                // 与 std/regex.th 契约对齐：返回 Vec<String>
+                if args.len() < 2 {
+                    return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
+                }
+                if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+                    let idx = *handle as usize;
+                    if idx == 0 || idx > self.regexes.len() {
+                        return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
+                    }
+                    if let Some(ref re) = self.regexes[idx - 1] {
+                        let collected: Vec<Value> = re
+                            .split(input)
+                            .map(|s| Value::String(s.to_string()))
+                            .collect();
+                        return Ok(Some(Value::Vec(Rc::new(RefCell::new(collected)))));
+                    }
+                    return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
+                }
+                return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
+            }
             // —— HTTP 客户端原语（手写 HTTP/1.1，10 秒默认超时）——
             "http_get" => {
                 if let Some(Value::String(url)) = args.first() {

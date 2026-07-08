@@ -83,6 +83,15 @@
 //   async_tcp_write(h, data) — async write byte vec -> Future<Result<i64>> (bytes written)
 //   Design: std::thread + mpsc + thread_local; VM scheduler polls in run_scheduler.
 
+// ── Regex (built-in native functions) ──
+//   regex_compile(pattern)        — compile regex -> Result<i64> (handle, >0 on success)
+//   regex_match(handle, input)    — full-match check -> bool
+//   regex_find(handle, input)     — find first match -> String ("" if none)
+//   regex_find_all(handle, input) — find all matches -> Vec<String>
+//   regex_replace(handle, input, replacement) — replace all -> String
+//   regex_split(handle, input)    — split by regex -> Vec<String>
+//   (handle table pattern, same as tcp_* / regex object table in runtime)
+
 // ── Std lib (use path::to::function) ──
 //   std::nn::linear::linear<T>
 //   std::nn::loss::mse<T>, mse_loss<T>, binary_cross_entropy, l1_loss<T>, huber_loss<T>, huber_loss_train<T>  // binary_cross_entropy 仍 f64

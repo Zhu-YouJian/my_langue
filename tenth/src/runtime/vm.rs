@@ -232,6 +232,9 @@ pub struct Vm {
     /// TCP 流句柄表。索引+1 即句柄（1-based，0 表示无效）。
     /// `None` 表示已关闭的槽位（可被复用或保留）。
     pub tcp_streams: Vec<Option<std::net::TcpStream>>,
+    /// 正则表达式句柄表。索引+1 即句柄（1-based，0 表示无效）。
+    /// `None` 表示已释放的槽位（可被复用或保留）。
+    pub regexes: Vec<Option<regex::Regex>>,
     /// 下一个协程任务 ID 生成器。0 保留给主任务；从此字段递增分配。
     /// Phase 2 Step 1-2 仅初始化，不使用（spawn 仍走同步路径）。
     next_task_id: TaskId,
@@ -265,6 +268,7 @@ impl Vm {
             step_budget: None, deadline_ms: None, fs_sandbox: None,
             jit_ctx: None, last_error: None, current_chunk_idx: 0,
             last_explanation: Vec::new(), tcp_streams: Vec::new(),
+            regexes: Vec::new(),
             next_task_id: 1,
             ready_queue: VecDeque::new(),
             suspended: HashMap::new(),

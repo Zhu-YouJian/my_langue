@@ -1,0 +1,57 @@
+// Regular expression primitives
+//
+// Based on Rust regex crate (native functions registered by runtime).
+// Handle table pattern (same as std::net): the native layer maintains the
+// regex object table; the .th layer only holds an i64 handle.
+// handle > 0 means valid; 0/Err means compile failure or invalid handle.
+//
+// Usage:
+//   use std::regex
+//   let r = regex::compile(r"\d+");
+//   match r {
+//       Result::Ok(h) => {
+//           let is_match = regex::match_(h, "hello123");   // true
+//           let first   = regex::find(h, "hello123");      // "123"
+//       }
+//       Result::Err(_) => { /* compile failure */ }
+//   }
+//
+// Note: Tenth has no Option type, so regex_find returns String
+// (empty string "" means no match). Vec<String> has no precedent in
+// .th files either, so find_all/split return Vec (following the
+// fs.th::list_dir / read_lines convention).
+
+/// 编译正则表达式，返回 handle
+/// 成功：Result::Ok(handle)，handle > 0
+/// 失败：Result::Err(error_message)
+fn compile(pattern: String) -> Result<i64> {
+    regex_compile(pattern)
+}
+
+/// 全匹配检查，返回 bool
+fn match_(handle: i64, input: String) -> bool {
+    regex_match(handle, input)
+}
+
+/// 查找第一个匹配，返回匹配的字符串
+/// 有匹配：返回匹配字符串
+/// 无匹配：返回空字符串 ""
+fn find(handle: i64, input: String) -> String {
+    regex_find(handle, input)
+}
+
+/// 查找所有匹配，返回 Vec<String>
+/// 无匹配时返回空 Vec
+fn find_all(handle: i64, input: String) -> Vec {
+    regex_find_all(handle, input)
+}
+
+/// 替换所有匹配，返回替换后的字符串
+fn replace(handle: i64, input: String, replacement: String) -> String {
+    regex_replace(handle, input, replacement)
+}
+
+/// 按正则分割字符串，返回 Vec<String>
+fn split(handle: i64, input: String) -> Vec {
+    regex_split(handle, input)
+}

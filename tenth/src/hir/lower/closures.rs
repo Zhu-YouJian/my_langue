@@ -46,7 +46,10 @@ impl Lowerer {
                     | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_close" | "tcp_set_timeout"
                     | "http_get" | "http_post"
                     // Phase 2 Step 5：异步 I/O 原语（返回 Future）
-                    | "async_sleep_ms" | "async_tcp_read" | "async_tcp_write" => {}
+                    | "async_sleep_ms" | "async_tcp_read" | "async_tcp_write"
+                    // 正则表达式原语（句柄表方案，与 tcp_streams 对齐）
+                    | "regex_compile" | "regex_match" | "regex_find" | "regex_find_all"
+                    | "regex_replace" | "regex_split" => {}
                     _ => { vars.insert(name.clone()); }
                 }
             }

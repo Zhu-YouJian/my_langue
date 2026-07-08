@@ -77,6 +77,9 @@ pub struct Interpreter {
     /// TCP 流句柄表（与 vm.rs 的 Vm::tcp_streams 对齐）。
     /// 索引+1 即句柄（1-based，0 表示无效）。`None` 表示已关闭的槽位。
     pub tcp_streams: Vec<Option<std::net::TcpStream>>,
+    /// 正则表达式句柄表（与 vm.rs 的 Vm::regexes 对齐）。
+    /// 索引+1 即句柄（1-based，0 表示无效）。`None` 表示已释放的槽位。
+    pub regexes: Vec<Option<regex::Regex>>,
 }
 
 impl Interpreter {
@@ -100,6 +103,7 @@ impl Interpreter {
             fs_sandbox: None,
             last_explanation: Vec::new(),
             tcp_streams: Vec::new(),
+            regexes: Vec::new(),
         }
     }
 
@@ -581,7 +585,8 @@ impl Interpreter {
                             | "json_encode" | "json_encode_pretty" | "json_decode"
                             // Stage 3+4 TCP/HTTP 原语
                             | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_close" | "tcp_set_timeout"
-                            | "http_get" | "http_post" => {
+                            | "http_get" | "http_post"
+                            | "regex_compile" | "regex_match" | "regex_find" | "regex_find_all" | "regex_replace" | "regex_split" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),

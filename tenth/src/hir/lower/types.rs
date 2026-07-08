@@ -437,6 +437,11 @@ impl Lowerer {
             // Phase 2 Step 5：异步 I/O 原语（返回 Future，类型暂为 Unknown——
             // await 解包后才是 Result/Unit，由 Op::Await 在运行时处理）
             "async_sleep_ms" | "async_tcp_read" | "async_tcp_write" => Ok(Type::Unknown),
+            // 正则表达式原语：handle table 模式，与 std/regex.th 契约对齐
+            "regex_compile" => Ok(Type::Enum("Result".to_string())),
+            "regex_match" => Ok(Type::Base(BaseType::Bool)),
+            "regex_find" | "regex_replace" => Ok(Type::str_()),
+            "regex_find_all" | "regex_split" => Ok(Type::Array(Box::new(Type::Unknown))),
             // Tensor 构造函数：dtype 从参数推断（若无 f32 线索则默认 F64）
             "tensor" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),
             "rand" | "randn" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),
