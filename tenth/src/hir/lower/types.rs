@@ -42,7 +42,7 @@ pub(super) fn broadcast_shapes(l: &[Dim], r: &[Dim]) -> Option<Vec<Dim>> {
 
 /// 判断 dims 是否包含任何静态信息（Known 或 Symbol）。
 /// 全 `Any` 时返回 false（无法检查）。
-fn has_static_info(dims: &[Dim]) -> bool {
+pub(super) fn has_static_info(dims: &[Dim]) -> bool {
     dims.iter().any(|d| !matches!(d, Dim::Any))
 }
 
@@ -57,7 +57,7 @@ fn binop_name(op: &ast::BinOp) -> &'static str {
 }
 
 /// 格式化 dims 为人类可读字符串（如 `[3, 4]` / `[M, K]` / `[..]`）。
-fn fmt_dims(dims: &[Dim]) -> String {
+pub(super) fn fmt_dims(dims: &[Dim]) -> String {
     let parts: Vec<String> = dims.iter().map(|d| match d {
         Dim::Known(n) => n.to_string(),
         Dim::Symbol(s) => s.clone(),
@@ -67,7 +67,7 @@ fn fmt_dims(dims: &[Dim]) -> String {
 }
 
 /// 格式化单个维度。
-fn fmt_dim(d: &Dim) -> String {
+pub(super) fn fmt_dim(d: &Dim) -> String {
     match d {
         Dim::Known(n) => n.to_string(),
         Dim::Symbol(s) => s.clone(),
@@ -804,6 +804,14 @@ impl Lowerer {
                                             ),
                                         });
                                     }
+                                    // 护城河 A Phase 1：反向 shape 验证
+                                    // matmul 梯度 shape 与输入 shape 一致（d_a=M,K; d_b=K,N），当前总是通过；
+                                    // 调用统一入口以便 Phase 2 跨算子传播扩展
+                                    let fwd_in_shapes = vec![ldims.to_vec(), rdims.to_vec()];
+                                    let fwd_out_shape = vec![ldims[0].clone(), rdims[1].clone()];
+                                    super::backward_shapes::check_backward_shape_compat(
+                                        "matmul", &fwd_in_shapes, &fwd_out_shape, span,
+                                    )?;
                                 } else if rdims.len() != 0 {
                                     // 非 2D 参数：运行时只支持 2D，但这里不报错（让运行时报）
                                 }
@@ -854,16 +862,96 @@ impl Lowerer {
                                             ),
                                         });
                                     }
+                                    // 护城河 A Phase 1：反向 shape 验证
+                                    // bmm 梯度 shape 与输入 shape 一致（d_a=B,M,K; d_b=B,K,N），当前总是通过
+                                    let fwd_in_shapes = vec![ldims.to_vec(), rdims.to_vec()];
+                                    let fwd_out_shape = vec![
+                                        ldims[0].clone(),
+                                        ldims[1].clone(),
+                                        rdims[2].clone(),
+                                    ];
+                                    super::backward_shapes::check_backward_shape_compat(
+                                        "bmm", &fwd_in_shapes, &fwd_out_shape, span,
+                                    )?;
                                 }
                                 // 非 3D 参数：运行时只支持 3D，但这里不报错（让运行时报 "requires 3D"）
                             }
                         }
                     }
                 }
+                "reshape" | "view" => {
+                    // 护城河 A Phase 1：reshape 反向 shape 验证
+                    // d_input = grad.reshape(input_shape)，需 output numel == input numel
+                    Self::check_reshape_shape(receiver, args, span)?;
+                }
                 _ => {}
             }
         }
         Ok(())
+    }
+
+    /// 编译期 shape 检查：reshape/view 方法的元素数一致性验证。
+    ///
+    /// reshape 反向：d_input = grad.reshape(input_shape)，需 output numel == input numel。
+    /// 仅在两侧 shape 全 Known 时检查；含 Any/Symbol 时跳过（保守）。
+    pub(super) fn check_reshape_shape(
+        receiver: &Type,
+        args: &[HirExpr],
+        span: &Span,
+    ) -> TenthResult<()> {
+        if let Type::Tensor { dims: ldims, .. } = receiver {
+            let out_shape = Self::shape_from_int_args(args);
+            let fwd_in_shapes = vec![ldims.to_vec()];
+            super::backward_shapes::check_backward_shape_compat(
+                "reshape", &fwd_in_shapes, &out_shape, span,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// 编译期 shape 检查：cross_entropy native 函数的 logits/target shape 兼容性。
+    ///
+    /// 规则：
+    /// - logits shape 应为 [B, V] 或更高维（至少 2D）
+    /// - target shape 应为 [B] 或 [B, V]（与 logits 的 batch 维对齐）
+    /// - 不兼容时返回 `TenthError::TypeError`
+    ///
+    /// 保守策略：任一 shape 全 Any 时跳过。
+    /// target shape 的核心兼容性检查委托给
+    /// `backward_shapes::check_backward_shape_compat("cross_entropy", ...)`。
+    pub(super) fn check_cross_entropy_shape(args: &[HirExpr], span: &Span) -> TenthResult<()> {
+        if args.len() < 2 {
+            return Ok(());
+        }
+        let (logits_dims, target_dims) = match (&args[0].ty, &args[1].ty) {
+            (Type::Tensor { dims: ld, .. }, Type::Tensor { dims: td, .. }) => {
+                (ld.to_vec(), td.to_vec())
+            }
+            _ => return Ok(()), // 非 Tensor，保守跳过
+        };
+        // 任一全 Any 时跳过
+        if !has_static_info(&logits_dims) || !has_static_info(&target_dims) {
+            return Ok(());
+        }
+        // logits 应为至少 2D [B, V]
+        if logits_dims.len() < 2 {
+            return Err(TenthError::TypeError {
+                line: span.line,
+                col: span.col,
+                message: format!(
+                    "cross_entropy logits 期望至少 2D [B, V]，实际 {}",
+                    fmt_dims(&logits_dims)
+                ),
+            });
+        }
+        // 委托给 backward_shapes 检查 target shape 兼容性
+        // cross_entropy 不依赖 output shape（output 是标量），传空 vec
+        super::backward_shapes::check_backward_shape_compat(
+            "cross_entropy",
+            &[logits_dims, target_dims],
+            &[],
+            span,
+        )
     }
 
     // ── 编译期内存/算力预估（护城河 D）──────────────────────────────────────

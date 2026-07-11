@@ -12,6 +12,8 @@ mod lower_expr;
 mod lower_stmt;
 mod types;
 mod closures;
+mod backward_shapes;
+mod backward_shape_pass;
 
 use self::scope::Scope;
 use self::scope::Ownership;

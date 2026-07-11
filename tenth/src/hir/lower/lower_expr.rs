@@ -195,6 +195,11 @@ impl Lowerer {
                             }
                         }
                     }
+                    // 护城河 A Phase 1：cross_entropy native 函数的 logits/target shape 检查
+                    // 把运行时 cross_entropy 反向 shape 错误提升到编译期 TypeError
+                    if name == "cross_entropy" {
+                        Self::check_cross_entropy_shape(&lowered_args, &span)?;
+                    }
                 }
 
                 (HirExprKind::Call {

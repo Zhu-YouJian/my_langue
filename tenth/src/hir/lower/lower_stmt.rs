@@ -572,6 +572,15 @@ impl Lowerer {
             }
         }
 
+        // 护城河 A 深化 Phase 2：跨算子反向 shape 传播 pass
+        // 在所有 fn_defs lowering 完成后，对每个函数体做后向分析，
+        // 把方向 A 的运行时 acc_grad shape 不匹配错误提升到编译期 TypeError。
+        // 详见 `backward_shape_pass::backward_shape_pass`。
+        let phase2_errors = super::backward_shape_pass::backward_shape_pass(&self.functions);
+        if let Some(first_err) = phase2_errors.into_iter().next() {
+            return Err(first_err);
+        }
+
         Ok(HirProgram {
             functions: self.functions.clone(),
             generic_funcs: self.generic_funcs.values().cloned().collect(),
