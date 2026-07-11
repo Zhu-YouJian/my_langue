@@ -40,7 +40,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试文件 | 数量 | 覆盖 |
 |----------|------|------|
-| `enum_test.rs` | 9/0/0 | 枚举定义/字段/match/通配/元组变体/match 绑定 |
+| `enum_test.rs` | 12/0/0 | 枚举定义/字段/match/通配/元组变体/match 绑定/match 穷尽性检查（2026-07-11 +3） |
 | `struct_test.rs` | 8/0/0 | 结构体/嵌套/impl/默认字段/..语法 |
 | `trait_test.rs` | 9/0/0 | trait 定义/builtin bound/inherent impl/默认方法/多 trait |
 | `module_test.rs` | 6/0/0 | mod/use/嵌套模块/重导出 |
@@ -190,6 +190,11 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | ~~解释器 `values_eq` 缺 `(Float32,Float32)` 分支（f32 的 `==` 永远 false）~~ | ✅ 已修复 (2026-07-11)：同上 |
 | ~~VM 失败后静默回退到解释器，副作用双重执行~~ | ✅ 已修复 (2026-07-11)：新增 `TenthError::VmCompileFailed` 区分编译期失败（静默回退）与运行时失败（硬失败），`main.rs:162-176` + `vm_run` 均已处理 |
 | ~~解释器路径输出多余的 `= ()`~~ | ✅ 已修复 (2026-07-11)：`main.rs` 三处解释器输出均加 `if !matches!(val, Value::Unit)` 过滤，与 VM 路径一致 |
+| ~~Option/Result 非泛型（`Type::Enum` 而非 `Type::Generic`）~~ | ✅ 已修复 (2026-07-11)：`lower_expr.rs` EnumLiteral/Call/Ident 三条路径为 Option/Result 推断 `Type::Generic { base: Enum, args }`，从字段值推断类型参数 |
+| ~~HashMap 键仅支持 str~~ | ✅ 已修复 (2026-07-11)：`interpreter/methods.rs` + `vm/natives.rs` 双侧新增 `map_key_to_string`/`vm_map_key_to_string`，支持 str/int/bool/float 键 |
+| ~~Range 非一等类型（降级为内部类型）~~ | ✅ 已修复 (2026-07-11)：`hir/types.rs` 新增 `Type::Range { inner, inclusive }` 变体 + Display，`lower_expr.rs` Range 表达式推断为 `Type::Range` |
+| ~~match 无穷尽性检查~~ | ✅ 已修复 (2026-07-11)：`lower_expr.rs` match 表达式新增穷尽性检查，支持 `Type::Enum` 与 `Type::Generic` 两种 scrutinee 类型，缺变体报 TypeError |
+| ~~函数返回类型未检查（body 为空返回 Unit 但声明非 Unit）~~ | ✅ 已修复 (2026-07-11)：`hir/lower/types.rs` `check_and_merge_tensor_shape` 非 Tensor 分支新增 Unit 返回检测，声明非 Unit 但实际 Unit 时报 TypeError |
 
 ---
 

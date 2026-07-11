@@ -651,10 +651,27 @@ impl Lowerer {
         if matches!(actual, Type::Never) {
             return Ok(annot.clone());
         }
-        // 非 Tensor 类型：不检查，保留 annotation
+        // 非 Tensor 类型：检查函数返回值是否匹配（问题11）
         let (annot_dtype, annot_dims) = match annot {
             Type::Tensor { dtype, dims } => (dtype.clone(), dims.clone()),
-            _ => return Ok(annot.clone()),
+            _ => {
+                // 问题11修复：函数返回值检查——若声明非 Unit 类型但 body 返回 Unit，
+                // 报 TypeError（如 `fn f() -> i64 { }` 不会报错的问题）
+                if context == "函数返回值"
+                    && !matches!(annot, Type::Base(BaseType::Unit) | Type::Unknown)
+                    && matches!(actual, Type::Base(BaseType::Unit))
+                {
+                    return Err(TenthError::TypeError {
+                        line: span.line,
+                        col: span.col,
+                        message: format!(
+                            "函数声明返回 {} 但函数体未返回值（body 为空或缺少 return 表达式）",
+                            annot
+                        ),
+                    });
+                }
+                return Ok(annot.clone());
+            }
         };
         let actual_dims: Vec<Dim> = match actual {
             Type::Tensor { dims, .. } => dims.clone(),

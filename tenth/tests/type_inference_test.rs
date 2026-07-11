@@ -116,14 +116,18 @@ fn test_array_float_type() {
 fn test_enum_literal_type() {
     let hir = lower_code("Option::None");
     let ty = main_expr_type(&hir).unwrap();
-    assert_eq!(ty, Type::Enum("Option".to_string()));
+    // 问题1：Option 现在是泛型枚举 → Generic { base: Enum("Option"), args: [Unknown] }
+    assert!(matches!(ty, Type::Generic { ref base, ref args }
+        if matches!(**base, Type::Enum(ref n) if n == "Option") && args.len() == 1));
 }
 
 #[test]
 fn test_result_ok_type() {
     let hir = lower_code("Result::Ok(42)");
     let ty = main_expr_type(&hir).unwrap();
-    assert_eq!(ty, Type::Enum("Result".to_string()));
+    // 问题1：Result 现在是泛型枚举 → Generic { base: Enum("Result"), args: [i32, str] }
+    assert!(matches!(ty, Type::Generic { ref base, ref args }
+        if matches!(**base, Type::Enum(ref n) if n == "Result") && args.len() == 2));
 }
 
 // --- Match expression type inference ---
@@ -182,7 +186,15 @@ fn test_closure_type() {
 fn test_range_type() {
     let hir = lower_code("0..10");
     let ty = main_expr_type(&hir).unwrap();
-    assert_eq!(ty, Type::i32());
+    // 问题9：Range 现在是一等类型 Type::Range { inner, inclusive }
+    assert!(matches!(ty, Type::Range { ref inner, inclusive: false } if **inner == Type::i32()));
+}
+
+#[test]
+fn test_range_inclusive_type() {
+    let hir = lower_code("0..=10");
+    let ty = main_expr_type(&hir).unwrap();
+    assert!(matches!(ty, Type::Range { ref inner, inclusive: true } if **inner == Type::i32()));
 }
 
 // --- Interpolated string type ---
@@ -193,6 +205,68 @@ fn test_interp_string_type() {
     let hir = lower_code(src);
     let ty = main_expr_type(&hir).unwrap();
     assert_eq!(ty, Type::str_());
+}
+
+// --- 问题1：Option/Result 真泛型化 ---
+
+#[test]
+fn test_option_some_generic_type() {
+    // Option::Some(42) → Generic { base: Enum("Option"), args: [i32] }
+    let hir = lower_code("Option::Some(42)");
+    let ty = main_expr_type(&hir).unwrap();
+    match ty {
+        Type::Generic { base, args } => {
+            assert!(matches!(*base, Type::Enum(ref n) if n == "Option"));
+            assert_eq!(args.len(), 1);
+            assert_eq!(args[0], Type::i32());
+        }
+        v => panic!("expected Generic Option, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_option_none_generic_type() {
+    // Option::None → Generic { base: Enum("Option"), args: [Unknown] }
+    let hir = lower_code("Option::None");
+    let ty = main_expr_type(&hir).unwrap();
+    match ty {
+        Type::Generic { base, args } => {
+            assert!(matches!(*base, Type::Enum(ref n) if n == "Option"));
+            assert_eq!(args.len(), 1);
+        }
+        v => panic!("expected Generic Option, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_result_ok_generic_type() {
+    // Result::Ok(42) → Generic { base: Enum("Result"), args: [i32, str] }
+    let hir = lower_code("Result::Ok(42)");
+    let ty = main_expr_type(&hir).unwrap();
+    match ty {
+        Type::Generic { base, args } => {
+            assert!(matches!(*base, Type::Enum(ref n) if n == "Result"));
+            assert_eq!(args.len(), 2);
+            assert_eq!(args[0], Type::i32());
+            assert_eq!(args[1], Type::str_());
+        }
+        v => panic!("expected Generic Result, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_result_err_generic_type() {
+    // Result::Err("error") → Generic { base: Enum("Result"), args: [Unknown, str] }
+    let hir = lower_code(r#"Result::Err("error")"#);
+    let ty = main_expr_type(&hir).unwrap();
+    match ty {
+        Type::Generic { base, args } => {
+            assert!(matches!(*base, Type::Enum(ref n) if n == "Result"));
+            assert_eq!(args.len(), 2);
+            assert_eq!(args[1], Type::str_());
+        }
+        v => panic!("expected Generic Result, got {:?}", v),
+    }
 }
 
 // --- If-else type inference ---

@@ -18,6 +18,22 @@ use crate::runtime::value::{Value, LazyIterator, IteratorTransform};
 use crate::runtime::tensor::Tensor;
 use crate::runtime::autodiff::TapeOp;
 
+/// 问题2：将 Value 键转换为 HashMap 内部存储的 String 键。
+/// 支持 String / Int / Bool / Float（浮点键按整数部分转字符串，仅推荐整数场景）。
+/// 其他类型返回 TypeError。
+fn map_key_to_string(v: &Value) -> TenthResult<String> {
+    match v {
+        Value::String(s) => Ok(s.clone()),
+        Value::Int(n) => Ok(n.to_string()),
+        Value::Bool(b) => Ok(b.to_string()),
+        Value::Float32(f) => Ok(format!("{}", f)),
+        Value::Float(f) => Ok(format!("{}", f)),
+        _ => Err(TenthError::RuntimeError { line: None, col: None,
+            message: format!("HashMap 键类型不支持: {:?}（仅支持 str/int/bool/float）", v),
+        }),
+    }
+}
+
 impl super::Interpreter {
     pub(super) fn eval_method_call(&mut self, recv: &Value, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
         // Auto-dereference Ref/MutRef/Shared to reach the inner value
@@ -674,13 +690,9 @@ impl super::Interpreter {
                         message: "get() 需要 1 个参数".into(),
                     });
                 }
-                if let Value::String(key) = &args[0] {
-                    Ok(m.borrow().get(key).cloned().or(Some(Value::Unit)))
-                } else {
-                    Err(TenthError::RuntimeError { line: None, col: None,
-                        message: "HashMap 键必须是字符串".into(),
-                    })
-                }
+                // 问题2：支持字符串、整数、布尔键（内部统一转为 String 存储）
+                let key = map_key_to_string(&args[0])?;
+                Ok(m.borrow().get(&key).cloned().or(Some(Value::Unit)))
             }
             "insert" => {
                 if args.len() != 2 {
@@ -688,14 +700,9 @@ impl super::Interpreter {
                         message: "insert() 需要 2 个参数".into(),
                     });
                 }
-                if let Value::String(key) = &args[0] {
-                    m.borrow_mut().insert(key.clone(), args[1].clone());
-                    Ok(Some(Value::Unit))
-                } else {
-                    Err(TenthError::RuntimeError { line: None, col: None,
-                        message: "HashMap 键必须是字符串".into(),
-                    })
-                }
+                let key = map_key_to_string(&args[0])?;
+                m.borrow_mut().insert(key, args[1].clone());
+                Ok(Some(Value::Unit))
             }
             "contains_key" => {
                 if args.len() != 1 {
@@ -703,13 +710,8 @@ impl super::Interpreter {
                         message: "contains_key() 需要 1 个参数".into(),
                     });
                 }
-                if let Value::String(key) = &args[0] {
-                    Ok(Some(Value::Bool(m.borrow().contains_key(key))))
-                } else {
-                    Err(TenthError::RuntimeError { line: None, col: None,
-                        message: "HashMap 键必须是字符串".into(),
-                    })
-                }
+                let key = map_key_to_string(&args[0])?;
+                Ok(Some(Value::Bool(m.borrow().contains_key(&key))))
             }
             "remove" => {
                 if args.len() != 1 {
@@ -717,13 +719,8 @@ impl super::Interpreter {
                         message: "remove() 需要 1 个参数".into(),
                     });
                 }
-                if let Value::String(key) = &args[0] {
-                    Ok(m.borrow_mut().remove(key))
-                } else {
-                    Err(TenthError::RuntimeError { line: None, col: None,
-                        message: "HashMap 键必须是字符串".into(),
-                    })
-                }
+                let key = map_key_to_string(&args[0])?;
+                Ok(m.borrow_mut().remove(&key))
             }
             "keys" => {
                 let map = m.borrow();

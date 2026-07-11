@@ -101,3 +101,32 @@ fn test_enum_tuple_variant_string_field() {
         v => panic!("expected Int(-1), got {:?}", v),
     }
 }
+
+// --- 问题10：match 穷尽性检查 ---
+
+#[test]
+fn test_match_exhaustive_all_variants() {
+    // 覆盖所有变体 → 应通过
+    let src = "enum Color { Red, Green, Blue }; let c = Color::Red; match c { Color::Red => 1, Color::Green => 2, Color::Blue => 3, }";
+    let result = run(src);
+    assert!(result.is_ok(), "exhaustive match should pass, got: {:?}", result);
+}
+
+#[test]
+fn test_match_exhaustive_with_wildcard() {
+    // 有通配符 _ → 应通过
+    let src = "enum Color { Red, Green, Blue }; let c = Color::Red; match c { Color::Red => 1, _ => 0, }";
+    let result = run(src);
+    assert!(result.is_ok(), "match with wildcard should pass, got: {:?}", result);
+}
+
+#[test]
+fn test_match_non_exhaustive_fails() {
+    // 缺少 Blue 变体 → 应报 TypeError
+    let src = "enum Color { Red, Green, Blue }; let c = Color::Red; match c { Color::Red => 1, Color::Green => 2, }";
+    let result = run(src);
+    assert!(result.is_err(), "non-exhaustive match should fail");
+    let err_msg = result.unwrap_err();
+    assert!(err_msg.contains("不穷尽") || err_msg.contains("Blue"), 
+           "error should mention missing variant, got: {}", err_msg);
+}

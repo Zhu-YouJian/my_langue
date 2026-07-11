@@ -43,6 +43,13 @@ pub enum Type {
     /// 语义：Never 可以统一到任何类型 T（unify 结果为 T）。
     /// 若函数体所有分支都是 Never，则函数返回类型为 Never。
     Never,
+    /// Range 类型（一等类型，问题9）：`1..10` 或 `1..=10`。
+    /// inner 为元素类型（通常 i32/i64），inclusive 标记是否含 end。
+    /// 可作为函数参数/返回值类型注解，可存储在变量中。
+    Range {
+        inner: Box<Type>,
+        inclusive: bool,
+    },
     Unknown,
 }
 
@@ -77,6 +84,13 @@ impl fmt::Display for Type {
             },
             Type::Unknown => write!(f, "<unknown>"),
             Type::Never => write!(f, "!"),
+            Type::Range { inner, inclusive } => {
+                if *inclusive {
+                    write!(f, "Range<{}, inclusive>", inner)
+                } else {
+                    write!(f, "Range<{}>", inner)
+                }
+            }
             Type::TypeParam { name } => write!(f, "{}", name),
             Type::Generic { base, args } => {
                 write!(f, "{}<", base)?;

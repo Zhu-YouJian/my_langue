@@ -1,4 +1,4 @@
-﻿//! VM 方法分派：call_method_priv（String/Vec/Map/Tensor/Struct/Float/Int 方法）。
+//! VM 方法分派：call_method_priv（String/Vec/Map/Tensor/Struct/Float/Int 方法）。
 //!
 //! 从 runtime/vm.rs 拆分而来（T3b 架构重构）。
 
@@ -11,6 +11,19 @@ use crate::runtime::tensor::Tensor;
 
 use super::Vm;
 use super::err;
+
+/// 问题2：将 Value 键转换为 HashMap 内部存储的 String 键（VM 端）。
+/// 支持 String / Int / Bool / Float，其他类型返回错误。
+fn vm_map_key_to_string(v: &Value) -> TenthResult<String> {
+    match v {
+        Value::String(s) => Ok(s.clone()),
+        Value::Int(n) => Ok(n.to_string()),
+        Value::Bool(b) => Ok(b.to_string()),
+        Value::Float32(f) => Ok(format!("{}", f)),
+        Value::Float(f) => Ok(format!("{}", f)),
+        _ => err(&format!("Map 的键类型不支持: {:?}（仅支持 str/int/bool/float）", v)),
+    }
+}
 
 impl Vm {
     pub(super) fn call_method_priv(&mut self, receiver: &Value, method: &str, args: &[Value]) -> TenthResult<Value> {
@@ -179,28 +192,25 @@ impl Vm {
                 "len" => Ok(Value::Int(m.borrow().len() as i64)),
                 "insert" => {
                     if args.len() != 2 { return err("insert() 需要 2 个参数 (键, 值)"); }
-                    if let Value::String(key) = &args[0] {
-                        m.borrow_mut().insert(key.clone(), args[1].clone());
-                        Ok(Value::Unit)
-                    } else { err("Map 的键必须是字符串") }
+                    // 问题2：支持 str/int/bool/float 键（内部统一转 String 存储）
+                    let key = vm_map_key_to_string(&args[0])?;
+                    m.borrow_mut().insert(key, args[1].clone());
+                    Ok(Value::Unit)
                 }
                 "get" => {
                     if args.len() != 1 { return err("get() 需要 1 个参数 (键)"); }
-                    if let Value::String(key) = &args[0] {
-                        Ok(m.borrow().get(key).cloned().unwrap_or(Value::Unit))
-                    } else { err("Map 的键必须是字符串") }
+                    let key = vm_map_key_to_string(&args[0])?;
+                    Ok(m.borrow().get(&key).cloned().unwrap_or(Value::Unit))
                 }
                 "contains_key" => {
                     if args.len() != 1 { return err("contains_key() 需要 1 个参数 (键)"); }
-                    if let Value::String(key) = &args[0] {
-                        Ok(Value::Bool(m.borrow().contains_key(key)))
-                    } else { err("Map 的键必须是字符串") }
+                    let key = vm_map_key_to_string(&args[0])?;
+                    Ok(Value::Bool(m.borrow().contains_key(&key)))
                 }
                 "remove" => {
                     if args.len() != 1 { return err("remove() 需要 1 个参数 (键)"); }
-                    if let Value::String(key) = &args[0] {
-                        Ok(m.borrow_mut().remove(key).unwrap_or(Value::Unit))
-                    } else { err("Map 的键必须是字符串") }
+                    let key = vm_map_key_to_string(&args[0])?;
+                    Ok(m.borrow_mut().remove(&key).unwrap_or(Value::Unit))
                 }
                 "keys" => {
                     let keys: Vec<Value> = m.borrow().keys().map(|k| Value::String(k.clone())).collect();

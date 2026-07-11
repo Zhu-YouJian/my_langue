@@ -59,8 +59,41 @@ fn test_hashmap_new_and_len() {
 fn test_hashmap_get() {
     let src = "HashMap::new().get(\"missing\")";
     let result = run_code(src).unwrap();
-    // get returns None → no matching variable → should return None/Unit
-    assert!(result.is_none(), "expected None for missing key, got {:?}", result);
+    // get on missing key returns Value::Unit (not None)
+    match result {
+        Some(Value::Unit) | None => {}
+        v => panic!("expected Unit or None for missing key, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_hashmap_int_key() {
+    // 问题2：HashMap 支持整数键（内部转为字符串存储）
+    let src = r#"
+        let m = HashMap::new();
+        m.insert(42, "answer");
+        m.get(42)
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::String(s)) if s == "answer" => {}
+        v => panic!("expected String(\"answer\"), got {:?}", v),
+    }
+}
+
+#[test]
+fn test_hashmap_bool_key() {
+    // 问题2：HashMap 支持布尔键
+    let src = r#"
+        let m = HashMap::new();
+        m.insert(true, "yes");
+        m.get(true)
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::String(s)) if s == "yes" => {}
+        v => panic!("expected String(\"yes\"), got {:?}", v),
+    }
 }
 
 #[test]
