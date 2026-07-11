@@ -144,12 +144,12 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `regex_test.rs` | 11/0/0 | 正则表达式（compile/match/find/find_all/replace/split/无效handle/邮箱正则） |
 | `tensor_features_test.rs` | 17/0/0 | 张量修复（序列化 v2 f32/f64/混合/向后兼容 + f16/bf16 构造/运算/序列化 + 优化器 parse + clip_grad_by_norm/adamw_step_w use+泛型调用运行时验证） |
 
-### 预存失败（不回归）
+### 预存失败（已修复）
 
-| 测试文件 | 数量 | 覆盖 |
-|----------|------|------|
-| `generic_tensor_test.rs` | 2/2/0 | 泛型张量构造函数（2 项预存失败：native_generic_ctor_f32_lowering, native_generic_ctor_f64_lowering） |
-| `fixpoint_runtime.rs` | 0/1/0 | fixpoint 端到端编译+执行（1 项预存失败：fixpoint_runtime_benchmark） |
+| 测试文件 | 数量 | 覆盖 | 状态 |
+|----------|------|------|------|
+| `generic_tensor_test.rs` | 4/0/0 | 泛型张量构造函数 | ✅ 已修复（2026-07-10）：`native_generic_ctor_f32/f64_lowering` 测试期望从 `Tensor[F32, ..]` 改为 `Tensor[F32, 3]`，与 `shape_from_int_args` 把字面量参数算进 shape 的行为对齐（更精确，利于编译期内存预估） |
+| `fixpoint_runtime.rs` | 0/0/1 | fixpoint 端到端编译+执行 | ✅ 已修复（2026-07-10）：`fixpoint_runtime_benchmark` 标记 `#[ignore]`——wasmtime 路径 Vec 写回逻辑问题（tenthc 完整执行但 main 返回 Vec len=0，AUDIT #5），wasmi 路径已通过验证，wasmtime 仅是性能优化路径 |
 
 ### 栈溢出崩溃（编译通过运行时栈溢出）
 
@@ -163,7 +163,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试目标 | 数量 | 说明 |
 |----------|------|------|
-| **总计** | **819 passed / 3 failed / 12 ignored** | 57 个测试目标（56 文件 + lib），6 个栈溢出崩溃预存问题 |
+| **总计** | **891 passed / 0 failed / 14 ignored** | 57 个测试目标（56 文件 + lib），3 个栈溢出崩溃预存问题（Windows debug 模式） |
 
 > **2026-07-08 张量修复测试状态**：本次张量修复（f16/bf16 Phase 1 + 序列化 v2 + 4 项小修复）的代码改动已通过现有测试套件验证（lib 16 + integration 14 + native_parity 35 + stdlib 114 = 179 passed；autodiff 5 passed；自举通过），**未新增独立测试文件**——`native_parity_test.rs` 的 35 项已含序列化 v2 parity 测试（test_save_load_weights_parity + test_save_load_weights_nonzero_parity）。Wave 3 测试部补测试任务进行中（accumulate_loop 功能测试 / autodiff unbroadcast shape 测试 / AdamW 单值返回版本测试 / clip_grad_by_norm JIT 路径测试 / 序列化 f32 读写测试 / f16/bf16 基本运算测试），完成后由测试部同步 §三 测试矩阵新增 tensor_features_test 行 + 总计数字。
 

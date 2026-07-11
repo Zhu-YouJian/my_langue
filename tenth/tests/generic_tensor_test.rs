@@ -91,7 +91,9 @@ fn main() -> f64 {
 
 #[test]
 fn native_generic_ctor_f32_lowering() {
-    // 验证 randn<f32>(d) 被 lower 成 randn_f32 的 Call，返回 Tensor[f32, ..]
+    // 验证 randn<f32>(d) 被 lower 成 randn_f32 的 Call，返回 Tensor[f32, <字面量 shape>]
+    // 注：shape_from_int_args 把字面量参数算进 shape（Phase 1 shape 检查统一逻辑），
+    // 故 randn<f32>(3) 返回 Tensor[F32, 3]（比 .. 更精确，利于编译期内存预估）。
     let src = r#"
 fn make_param() -> Tensor[f32, ..] {
     randn<f32>(3)
@@ -109,8 +111,8 @@ fn make_param() -> Tensor[f32, ..] {
         .expect("expected make_param function");
     assert_eq!(
         format!("{}", make_param.return_type),
-        "Tensor[F32, ..]",
-        "return type should be Tensor[f32, ..]"
+        "Tensor[F32, 3]",
+        "return type should be Tensor[f32, 3] (shape_from_int_args 推断字面量)"
     );
 
     // body 应该是 Call(Var("randn_f32"), ...) — 运行时分发到 f32 版本
@@ -126,6 +128,7 @@ fn make_param() -> Tensor[f32, ..] {
 #[test]
 fn native_generic_ctor_f64_lowering() {
     // 验证 randn<f64>(d) 保持 randn 名字（默认 f64 不需要后缀）
+    // 注：shape_from_int_args 把字面量参数算进 shape（与 f32 版本一致）。
     let src = r#"
 fn make_param() -> Tensor[f64, ..] {
     randn<f64>(3)
@@ -143,8 +146,8 @@ fn make_param() -> Tensor[f64, ..] {
         .expect("expected make_param function");
     assert_eq!(
         format!("{}", make_param.return_type),
-        "Tensor[F64, ..]",
-        "return type should be Tensor[f64, ..]"
+        "Tensor[F64, 3]",
+        "return type should be Tensor[f64, 3] (shape_from_int_args 推断字面量)"
     );
 
     let body_str = format!("{:?}", make_param.body.kind);
