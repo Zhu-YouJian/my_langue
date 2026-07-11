@@ -1,4 +1,4 @@
-//! Expression and statement compilation.
+﻿//! Expression and statement compilation.
 
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 use crate::error::{TenthError, TenthResult};
@@ -106,7 +106,7 @@ impl WasmCompiler {
             "Vec::len" | "Vec_len" => Ok(HOST_VEC_LEN),
             "Vec::get" | "Vec_get" => Ok(HOST_VEC_GET),
             "compile_host" => Ok(HOST_COMPILE_HOST),
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("WASM: 未定义函数 '{}'", name),
                 }),
         }
@@ -164,12 +164,12 @@ impl WasmCompiler {
                             _ => {}
                         }
                     } else if !["println","eprintln","write_file","read_file"].contains(&name.as_str()) {
-                        return Err(TenthError::RuntimeError {
+                        return Err(TenthError::RuntimeError { line: None, col: None,
                             message: format!("WASM: 未定义变量 '{}'", name),
                         });
                     }
                 } else if !["println","eprintln","write_file","read_file"].contains(&name.as_str()) {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: format!("WASM: 未定义变量 '{}'", name),
                     });
                 }
@@ -252,7 +252,7 @@ impl WasmCompiler {
             HirExprKind::Call { func, args, .. } => {
                 let fname = match &func.kind {
                     HirExprKind::Var(n) => n.clone(),
-                    _ => return Err(TenthError::RuntimeError {
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "WASM: 不支持间接调用".into(),
                     }),
                 };
@@ -523,7 +523,7 @@ impl WasmCompiler {
                 self.local_count += 1;
                 body.instruction(&Instruction::LocalSet(tmp));
                 let layout = self.struct_layouts.get(&layout_key).cloned()
-                    .ok_or_else(|| TenthError::RuntimeError {
+                    .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: format!("WASM: 未知的枚举变体 '{}/{}'", enum_name, variant),
                     })?;
                 for (fname, fexpr) in fields {
@@ -560,7 +560,7 @@ impl WasmCompiler {
                 self.local_count += 1;
                 body.instruction(&Instruction::LocalSet(tmp));
                 let layout = self.struct_layouts.get(name).cloned()
-                    .ok_or_else(|| TenthError::RuntimeError {
+                    .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: format!("WASM: 未知结构体 '{}'", name),
                     })?;
                 for (fname, fexpr) in fields {
@@ -657,7 +657,7 @@ impl WasmCompiler {
                         }
                         body.instruction(&Instruction::Call(HOST_VEC_GET)); // Vec_get(i64, i64) -> i64
                     }
-                    _ => return Err(TenthError::RuntimeError {
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
                         message: format!("WASM: 不支持的方法 '{}'", method),
                     }),
                 }
@@ -727,7 +727,7 @@ impl WasmCompiler {
                     Some(Index::Range { start, end }) => {
                         // String slice: s[start..end] -> str_slice(ptr, start, end) -> ptr
                         if !is_string {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "WASM: Vec range slicing not yet supported".to_string(),
                             });
                         }
@@ -835,7 +835,7 @@ impl WasmCompiler {
             // D5.3/D5.6: Closure — compile as packed i64 (table_idx << 32 | env_ptr)
             HirExprKind::Closure { captures, .. } => {
                 let ptr = expr as *const HirExpr as usize;
-                let cidx = *self.closure_expr_map.get(&ptr).ok_or_else(|| TenthError::RuntimeError {
+                let cidx = *self.closure_expr_map.get(&ptr).ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "WASM: 闭包未注册".into(),
                 })?;
                 let (_func_idx, _type_idx, _pc) = self.closure_info[cidx];
@@ -878,7 +878,7 @@ impl WasmCompiler {
                 }
             }
 
-            _ => return Err(TenthError::RuntimeError {
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("WASM: 不支持的表达式 {:?}", expr.kind),
             }),
         }
@@ -1039,12 +1039,12 @@ impl WasmCompiler {
                         body.instruction(&Instruction::End); // block
                         self.if_depths.pop();
                     }
-                    _ => return Err(TenthError::RuntimeError {
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
                         message: format!("WASM: For 循环仅支持 Range 迭代器, got {:?}", iter.kind),
                     }),
                 }
             }
-            _ => return Err(TenthError::RuntimeError {
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("WASM: 不支持的语句 {:?}", stmt.kind),
             }),
         }

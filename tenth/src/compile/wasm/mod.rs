@@ -1,4 +1,4 @@
-//! HIR -> WebAssembly bytecode compiler.
+﻿//! HIR -> WebAssembly bytecode compiler.
 //!
 //! Generates a WASM module from a Tenth HIR program using `wasm-encoder`.
 //! The module is designed to be executed by `wasmi` (embedded in the Rust host).
@@ -46,7 +46,7 @@ pub(super) fn to_val_type(ty: &Type) -> Option<ValType> {
 }
 
 pub(super) fn to_val_type_required(ty: &Type) -> TenthResult<ValType> {
-    to_val_type(ty).ok_or_else(|| TenthError::RuntimeError {
+    to_val_type(ty).ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
         message: format!("无法将类型 {:?} 映射到 WASM 值类型", ty),
     })
 }

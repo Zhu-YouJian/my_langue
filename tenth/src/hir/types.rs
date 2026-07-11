@@ -39,6 +39,10 @@ pub enum Type {
     Enum(String),
     Tuple(Vec<Type>),
     Future(Box<Type>),
+    /// Never 类型（发散类型 `!`）：标记永不返回的表达式/函数（如 `exit()`、无限循环）。
+    /// 语义：Never 可以统一到任何类型 T（unify 结果为 T）。
+    /// 若函数体所有分支都是 Never，则函数返回类型为 Never。
+    Never,
     Unknown,
 }
 
@@ -72,6 +76,7 @@ impl fmt::Display for Type {
                 write!(f, ">")
             },
             Type::Unknown => write!(f, "<unknown>"),
+            Type::Never => write!(f, "!"),
             Type::TypeParam { name } => write!(f, "{}", name),
             Type::Generic { base, args } => {
                 write!(f, "{}<", base)?;
@@ -203,6 +208,7 @@ impl Type {
                     "bool" => Type::Base(BaseType::Bool),
                     "char" => Type::Base(BaseType::Char),
                     "str" => Type::Base(BaseType::Str),
+                    "!" => Type::Never,
                     _ => Type::TypeParam { name: ident.name.clone() },
                 }
             }

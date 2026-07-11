@@ -1,4 +1,4 @@
-//! HIR → Bytecode compiler.
+﻿//! HIR → Bytecode compiler.
 //!
 //! Walks HIR and emits bytecode for the stack VM.
 
@@ -514,7 +514,7 @@ impl BytecodeCompiler {
                     }
                     self.chunk.emit(Op::CallN(i, args.len()));
                 } else {
-                    return Err(crate::error::TenthError::RuntimeError {
+                    return Err(crate::error::TenthError::RuntimeError { line: None, col: None,
                         message: "字节码：间接 GenericCall（回退）".into(),
                     });
                 }

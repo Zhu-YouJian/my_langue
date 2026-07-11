@@ -1,4 +1,4 @@
-// f32 自动微分专项测试 — Phase 4
+﻿// f32 自动微分专项测试 — Phase 4
 // 验证方案 B（前向 f32 + 反向 f64 + 梯度按参数 dtype 写回）正确性。
 //
 // 核心路径：
@@ -45,7 +45,7 @@ fn run_vm_autodiff(src: &str) -> Result<Value, String> {
         if args.len() == 1 {
             Ok(args[0].clone())
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "tensor() unexpected args".into() })
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "tensor() unexpected args".into() })
         }
     });
 
@@ -63,21 +63,21 @@ fn run_vm_autodiff(src: &str) -> Result<Value, String> {
             }
             Ok(Value::Tensor(t.clone()))
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "param() requires a tensor argument".into() })
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "param() requires a tensor argument".into() })
         }
     });
     vm.add_native("backward".into(), |vm, args| {
         if let Some(Value::Tensor(t)) = args.first() {
             if let Some(ref tape) = vm.tape {
                 let loss_id = t.borrow().tape_id
-                    .ok_or_else(|| tenth::error::TenthError::RuntimeError { message: "backward(): tensor has no tape_id".into() })?;
+                    .ok_or_else(|| tenth::error::TenthError::RuntimeError { line: None, col: None, message: "backward(): tensor has no tape_id".into() })?;
                 tape.backward(loss_id);
                 Ok(Value::Unit)
             } else {
-                Err(tenth::error::TenthError::RuntimeError { message: "new_grad() not called".into() })
+                Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "new_grad() not called".into() })
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "backward() requires a tensor argument".into() })
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "backward() requires a tensor argument".into() })
         }
     });
     vm.add_native("grad".into(), |_vm, args| {
@@ -96,7 +96,7 @@ fn run_vm_autodiff(src: &str) -> Result<Value, String> {
                 Ok(Value::Tensor(Rc::new(RefCell::new(zeros))))
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "grad() requires a tensor argument".into() })
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "grad() requires a tensor argument".into() })
         }
     });
     vm.add_native("stop_grad".into(), |vm, args| {
@@ -117,13 +117,13 @@ fn run_vm_autodiff(src: &str) -> Result<Value, String> {
     });
     vm.add_native("cross_entropy".into(), |vm, args| {
         if args.len() < 2 {
-            return Err(tenth::error::TenthError::RuntimeError { message: "cross_entropy(logits, target) expects two tensors".into() });
+            return Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "cross_entropy(logits, target) expects two tensors".into() });
         }
         if let (Value::Tensor(logits), Value::Tensor(target)) = (&args[0], &args[1]) {
             let logits_data = logits.borrow();
             let target_data = target.borrow();
             let sm = logits_data.softmax().ok_or_else(|| {
-                tenth::error::TenthError::RuntimeError { message: "softmax failed in cross_entropy".into() }
+                tenth::error::TenthError::RuntimeError { line: None, col: None, message: "softmax failed in cross_entropy".into() }
             })?;
             let eps = 1e-10;
             let sm_data = sm.data.as_standard_layout().to_owned();
@@ -162,7 +162,7 @@ fn run_vm_autodiff(src: &str) -> Result<Value, String> {
             }
             Ok(Value::Tensor(result))
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "cross_entropy(logits, target) expects two tensors".into() })
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "cross_entropy(logits, target) expects two tensors".into() })
         }
     });
 

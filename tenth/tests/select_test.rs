@@ -1,4 +1,4 @@
-// select 原语测试套件（论文 T47/T48/T50 验证）
+﻿// select 原语测试套件（论文 T47/T48/T50 验证）
 // 覆盖：前向基本用例、广播用例、反向梯度用例、leaky_relu_select 对比、huber_loss
 
 use tenth::lexer::lexer::Lexer;
@@ -399,24 +399,24 @@ fn test_select_vm_path() {
         if args.len() == 1 {
             Ok(args[0].clone())
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "tensor() 参数异常".into() })
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "tensor() 参数异常".into() })
         }
     });
     // 注册 select native（与 main.rs::register_natives 一致）
     vm.add_native("select".into(), |vm, args| {
         if args.len() < 3 {
-            return Err(tenth::error::TenthError::RuntimeError {
+            return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "select 期望三个参数".into(),
             });
         }
         let (cond, then, else_) = match (&args[0], &args[1], &args[2]) {
             (Value::Tensor(c), Value::Tensor(t), Value::Tensor(e)) => (c.clone(), t.clone(), e.clone()),
-            _ => return Err(tenth::error::TenthError::RuntimeError {
+            _ => return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "select 期望三个张量参数".into(),
             }),
         };
         let result_tensor = tenth::runtime::tensor::Tensor::select(&cond.borrow(), &then.borrow(), &else_.borrow())
-            .map_err(|msg| tenth::error::TenthError::RuntimeError { message: msg })?;
+            .map_err(|msg| tenth::error::TenthError::RuntimeError { line: None, col: None, message: msg })?;
         let result = Rc::new(RefCell::new(result_tensor));
         if vm.recording {
             if let Some(ref mut tape) = vm.tape {

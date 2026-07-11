@@ -1,4 +1,4 @@
-//! Bytecode VM for Tenth — stack-based virtual machine.
+﻿//! Bytecode VM for Tenth — stack-based virtual machine.
 //!
 //! Architecture: HIR → compile → Chunk (bytecode) → Vm::run()
 //!
@@ -156,10 +156,10 @@ impl Vm {
     pub fn rem(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         match (a, b) {
             (Value::Int(x), Value::Int(y)) => {
-                if *y == 0 { return Err(TenthError::RuntimeError { message: "整数取模除零".into() }); }
+                if *y == 0 { return Err(TenthError::RuntimeError { line: None, col: None, message: "整数取模除零".into() }); }
                 Ok(Value::Int(x % y))
             }
-            _ => Err(TenthError::RuntimeError { message: "% 需要整数".into() }),
+            _ => Err(TenthError::RuntimeError { line: None, col: None, message: "% 需要整数".into() }),
         }
     }
     pub fn neg(&mut self, a: &Value) -> TenthResult<Value> {
@@ -168,7 +168,7 @@ impl Vm {
             Value::Float(n) => Ok(Value::Float(-n)),
             Value::Float32(n) => Ok(Value::Float32(-n)),
             Value::Tensor(t) => Ok(Value::Tensor(Rc::new(RefCell::new(t.borrow().neg())))),
-            _ => Err(TenthError::RuntimeError { message: "无法取负".into() }),
+            _ => Err(TenthError::RuntimeError { line: None, col: None, message: "无法取负".into() }),
         }
     }
     pub fn not(&mut self, a: &Value) -> TenthResult<Value> {
@@ -208,7 +208,7 @@ impl Vm {
                     // 1D 或 0D：返回标量
                     match tensor.get(&[i]) {
                         Some(val) => Ok(Value::Float(val)),
-                        None => Err(TenthError::RuntimeError {
+                        None => Err(TenthError::RuntimeError { line: None, col: None,
                             message: format!("索引 {} 越界，形状为 {:?}", i, tensor.shape()),
                         }),
                     }
@@ -216,11 +216,11 @@ impl Vm {
                     // N-D：返回降维子张量
                     match tensor.index_dim(i) {
                         Ok(sub) => Ok(Value::Tensor(Rc::new(RefCell::new(sub)))),
-                        Err(msg) => Err(TenthError::RuntimeError { message: msg }),
+                        Err(msg) => Err(TenthError::RuntimeError { line: None, col: None, message: msg }),
                     }
                 }
             }
-            _ => Err(TenthError::RuntimeError { message: "无法索引".into() }),
+            _ => Err(TenthError::RuntimeError { line: None, col: None, message: "无法索引".into() }),
         }
     }
     pub fn slice_str(&mut self, target: &Value, start: &Value, end: &Value) -> TenthResult<Value> {
@@ -233,11 +233,11 @@ impl Vm {
                 let si = start_idx.min(len);
                 let ei = end_idx.min(len);
                 if si > ei {
-                    return Err(TenthError::RuntimeError { message: "字符串切片起始位置大于结束位置".into() });
+                    return Err(TenthError::RuntimeError { line: None, col: None, message: "字符串切片起始位置大于结束位置".into() });
                 }
                 Ok(Value::String(chars[si..ei].iter().collect()))
             }
-            _ => Err(TenthError::RuntimeError { message: "SliceStr 需要字符串目标".into() }),
+            _ => Err(TenthError::RuntimeError { line: None, col: None, message: "SliceStr 需要字符串目标".into() }),
         }
     }
     pub fn call_method(&mut self, receiver: &Value, method: &str, args: &[Value]) -> TenthResult<Value> {
@@ -268,17 +268,17 @@ impl Vm {
         if let Some(f) = self.natives.get(name).copied() {
             f(self, args)
         } else {
-            Err(TenthError::RuntimeError { message: format!("未定义的原生函数 '{}'", name) })
+            Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的原生函数 '{}'", name) })
         }
     }
 
     pub fn call(&mut self, name: &str) -> TenthResult<Value> {
         let idx = self.functions.get(name).copied()
-            .ok_or_else(|| TenthError::RuntimeError { message: format!("未定义的函数 '{}'", name) })?;
+            .ok_or_else(|| TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) })?;
         self.run_scheduler(idx)
     }
 }
 
 fn err<T>(msg: &str) -> TenthResult<T> {
-    Err(TenthError::RuntimeError { message: msg.into() })
+    Err(TenthError::RuntimeError { line: None, col: None, message: msg.into() })
 }

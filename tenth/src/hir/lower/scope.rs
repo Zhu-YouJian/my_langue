@@ -76,7 +76,7 @@ impl Scope {
         if let Some(Ownership::Moved) = self.get_ownership(name) {
             return Err(TenthError::TypeError {
                 line: span.line, col: span.col,
-                message: format!("use of moved value '{}'", name),
+                message: format!("使用了已移动的值 '{}'", name),
             });
         }
         Ok(())
@@ -90,7 +90,7 @@ impl Scope {
             }),
             Some(Ownership::Moved) => Err(TenthError::TypeError {
                 line: span.line, col: span.col,
-                message: format!("cannot borrow moved value '{}'", name),
+                message: format!("不可借用已移动的值 '{}'", name),
             }),
             _ => Ok(()),
         }
@@ -100,15 +100,15 @@ impl Scope {
         match self.get_ownership(name) {
             Some(Ownership::SharedRef(n)) if n > 0 => Err(TenthError::TypeError {
                 line: span.line, col: span.col,
-                message: format!("cannot borrow '{}' as mutable because it is also borrowed as shared", name),
+                message: format!("不可将 '{}' 可变借用，因为它已被共享借用", name),
             }),
             Some(Ownership::ExclusiveRef) => Err(TenthError::TypeError {
                 line: span.line, col: span.col,
-                message: format!("cannot borrow '{}' as mutable more than once at a time", name),
+                message: format!("不可同时多次可变借用 '{}'", name),
             }),
             Some(Ownership::Moved) => Err(TenthError::TypeError {
                 line: span.line, col: span.col,
-                message: format!("cannot borrow moved value '{}'", name),
+                message: format!("不可借用已移动的值 '{}'", name),
             }),
             _ => Ok(()),
         }

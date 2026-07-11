@@ -57,7 +57,7 @@ impl super::Interpreter {
                     }));
                 }
                 if self.vars.get(name).map_or(false, |s| s.iter().any(|(_, v)| matches!(v, Value::Moved))) {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: Some(expr.span.line), col: Some(expr.span.col),
                         message: format!("使用了已移动的值 '{}'", name),
                     });
                 }
@@ -104,7 +104,7 @@ impl super::Interpreter {
                             _ => None,
                         }
                     })
-                    .ok_or_else(|| TenthError::RuntimeError {
+                    .ok_or_else(|| TenthError::RuntimeError { line: Some(expr.span.line), col: Some(expr.span.col),
                         message: format!("未定义变量 '{}'", name),
                     })
                     .map(Some)
@@ -114,34 +114,34 @@ impl super::Interpreter {
                 // Short-circuit evaluation for && and ||
                 match op {
                     BinOp::And => {
-                        let l = self.eval_expr(left)?.ok_or_else(|| TenthError::RuntimeError {
+                        let l = self.eval_expr(left)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "左操作数为空值".into(),
                         })?;
                         if !l.is_truthy() {
                             return Ok(Some(Value::Bool(false)));
                         }
-                        let r = self.eval_expr(right)?.ok_or_else(|| TenthError::RuntimeError {
+                        let r = self.eval_expr(right)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "右操作数为空值".into(),
                         })?;
                         Ok(Some(Value::Bool(r.is_truthy())))
                     }
                     BinOp::Or => {
-                        let l = self.eval_expr(left)?.ok_or_else(|| TenthError::RuntimeError {
+                        let l = self.eval_expr(left)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "左操作数为空值".into(),
                         })?;
                         if l.is_truthy() {
                             return Ok(Some(Value::Bool(true)));
                         }
-                        let r = self.eval_expr(right)?.ok_or_else(|| TenthError::RuntimeError {
+                        let r = self.eval_expr(right)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "右操作数为空值".into(),
                         })?;
                         Ok(Some(Value::Bool(r.is_truthy())))
                     }
                     _ => {
-                        let l = self.eval_expr(left)?.ok_or_else(|| TenthError::RuntimeError {
+                        let l = self.eval_expr(left)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "左操作数为空值".into(),
                         })?;
-                        let r = self.eval_expr(right)?.ok_or_else(|| TenthError::RuntimeError {
+                        let r = self.eval_expr(right)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "右操作数为空值".into(),
                         })?;
                         self.eval_binary(op, &l, &r).map(Some)
@@ -150,20 +150,20 @@ impl super::Interpreter {
             }
 
             HirExprKind::Unary { op, expr: inner, .. } => {
-                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
+                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "一元操作数为空值".into(),
                 })?;
                 self.eval_unary(op, &val).map(Some)
             }
 
             HirExprKind::Call { func, args, .. } => {
-                let f = self.eval_expr(func)?.ok_or_else(|| TenthError::RuntimeError {
+                let f = self.eval_expr(func)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "函数值为空值".into(),
                 })?;
 
                 let mut arg_values = Vec::new();
                 for a in args {
-                    arg_values.push(self.eval_expr(a)?.ok_or_else(|| TenthError::RuntimeError {
+                    arg_values.push(self.eval_expr(a)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "参数为空值".into(),
                     })?);
                 }
@@ -175,14 +175,14 @@ impl super::Interpreter {
                 let func_name = match &func.kind {
                     HirExprKind::Var(name) => name.clone(),
                     _ => {
-                        return Err(TenthError::RuntimeError {
+                        return Err(TenthError::RuntimeError { line: Some(expr.span.line), col: Some(expr.span.col),
                             message: "泛型调用的目标必须是具名函数".into(),
                         });
                     }
                 };
 
                 let template = self.generic_funcs.get(&func_name)
-                    .ok_or_else(|| TenthError::RuntimeError {
+                    .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: format!("未定义的泛型函数 '{}'", func_name),
                     })?
                     .clone();
@@ -194,7 +194,7 @@ impl super::Interpreter {
 
                 let mut arg_values = Vec::new();
                 for a in args {
-                    arg_values.push(self.eval_expr(a)?.ok_or_else(|| TenthError::RuntimeError {
+                    arg_values.push(self.eval_expr(a)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "参数为空值".into(),
                     })?);
                 }
@@ -211,13 +211,13 @@ impl super::Interpreter {
             }
 
             HirExprKind::MethodCall { receiver, method, args, .. } => {
-                let recv = self.eval_expr(receiver)?.ok_or_else(|| TenthError::RuntimeError {
+                let recv = self.eval_expr(receiver)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "接收者为空值".into(),
                 })?;
 
                 let mut arg_values = Vec::new();
                 for a in args {
-                    arg_values.push(self.eval_expr(a)?.ok_or_else(|| TenthError::RuntimeError {
+                    arg_values.push(self.eval_expr(a)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "方法参数为空值".into(),
                     })?);
                 }
@@ -226,14 +226,14 @@ impl super::Interpreter {
             }
 
             HirExprKind::Index { target, indices } => {
-                let t = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
+                let t = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "索引目标为空值".into(),
                 })?;
                 self.eval_index(&t, indices).map(Some)
             }
 
             HirExprKind::Field { target, field } => {
-                let t = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
+                let t = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "字段访问目标为空值".into(),
                 })?;
                 self.eval_field(&t, field)
@@ -242,7 +242,7 @@ impl super::Interpreter {
             HirExprKind::ArrayLiteral { elements, .. } => {
                 let mut vals = Vec::new();
                 for elem in elements {
-                    let v = self.eval_expr(elem)?.ok_or_else(|| TenthError::RuntimeError {
+                    let v = self.eval_expr(elem)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "数组元素为空值".into(),
                     })?;
                     // Wrap in Shared so elements can be mutated via indexed assignment
@@ -260,7 +260,7 @@ impl super::Interpreter {
                     let mut row_f32: Vec<f32> = Vec::new();
                     let mut row_f64: Vec<f64> = Vec::new();
                     for elem in row {
-                        let v = self.eval_expr(elem)?.ok_or_else(|| TenthError::RuntimeError {
+                        let v = self.eval_expr(elem)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "张量元素为空值".into(),
                         })?;
                         if is_f32 {
@@ -289,7 +289,7 @@ impl super::Interpreter {
             }
 
             HirExprKind::If { cond, then_branch, else_branch, .. } => {
-                let c = self.eval_expr(cond)?.ok_or_else(|| TenthError::RuntimeError {
+                let c = self.eval_expr(cond)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "if 条件为空值".into(),
                 })?;
                 if c.is_truthy() {
@@ -312,7 +312,7 @@ impl super::Interpreter {
             }
 
             HirExprKind::Assign { target, value } => {
-                let v = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
+                let v = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "赋值值为空值".into(),
                 })?;
                 self.set_var(target.clone(), v);
@@ -320,21 +320,21 @@ impl super::Interpreter {
             }
 
             HirExprKind::DerefAssign { target, value } => {
-                let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
+                let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "解引用赋值目标为空值".into(),
                 })?;
-                let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
+                let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "解引用赋值值为空值".into(),
                 })?;
                 match &target_val {
                     Value::MutRef(weak) => {
-                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
+                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "无法通过悬垂的 &mut 引用赋值".into(),
                         })?;
                         *rc.borrow_mut() = rhs;
                         Ok(Some(Value::Unit))
                     }
-                    _ => Err(TenthError::RuntimeError {
+                    _ => Err(TenthError::RuntimeError { line: None, col: None,
                         message: "只能通过可变引用赋值".into(),
                     }),
                 }
@@ -342,11 +342,11 @@ impl super::Interpreter {
 
             HirExprKind::AssignOp { target, op, value } => {
                 let current = self.resolve_var(target).ok_or_else(|| {
-                    TenthError::RuntimeError {
+                    TenthError::RuntimeError { line: None, col: None,
                         message: format!("undefined variable '{}'", target),
                     }
                 })?;
-                let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
+                let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "复合赋值值为空值".into(),
                 })?;
                 let result = self.eval_binary(op, &current, &rhs)?;
@@ -355,15 +355,15 @@ impl super::Interpreter {
             }
 
             HirExprKind::DerefAssignOp { target, op, value } => {
-                let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
+                let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "解引用复合赋值目标为空值".into(),
                 })?;
-                let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
+                let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "解引用复合赋值值为空值".into(),
                 })?;
                 match &target_val {
                     Value::MutRef(weak) => {
-                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
+                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "无法通过悬垂的 &mut 引用赋值".into(),
                         })?;
                         let current = rc.borrow().clone();
@@ -371,7 +371,7 @@ impl super::Interpreter {
                         *rc.borrow_mut() = result;
                         Ok(Some(Value::Unit))
                     }
-                    _ => Err(TenthError::RuntimeError {
+                    _ => Err(TenthError::RuntimeError { line: None, col: None,
                         message: "只能通过可变引用赋值".into(),
                     }),
                 }
@@ -404,14 +404,14 @@ impl super::Interpreter {
             }
 
             HirExprKind::Ref(inner) => {
-                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
+                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "引用操作数为空值".into(),
                 })?;
                 Ok(Some(Value::Ref(Rc::new(RefCell::new(val)))))
             }
 
             HirExprKind::MutRef(inner) => {
-                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
+                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "可变引用操作数为空值".into(),
                 })?;
                 if let HirExprKind::Var(var_name) = &inner.kind {
@@ -434,28 +434,28 @@ impl super::Interpreter {
             }
 
             HirExprKind::Deref(inner) => {
-                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
+                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "解引用操作数为空值".into(),
                 })?;
                 match &val {
                     Value::Ref(rc) => Ok(Some(rc.borrow().clone())),
                     Value::MutRef(weak) => {
-                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
+                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "无法解引用悬垂的 &mut 引用".into(),
                         })?;
                         Ok(Some(rc.borrow().clone()))
                     }
-                    _ => Err(TenthError::RuntimeError {
+                    _ => Err(TenthError::RuntimeError { line: None, col: None,
                         message: "无法解引用非引用值".into(),
                     }),
                 }
             }
 
             HirExprKind::FieldAssign { target, field, value } => {
-                let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError {
+                let target_val = self.eval_expr(target)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "字段赋值目标为空值".into(),
                 })?;
-                let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError {
+                let rhs = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "字段赋值值为空值".into(),
                 })?;
                 let target_var_name = if let HirExprKind::Var(vn) = &target.kind {
@@ -475,7 +475,7 @@ impl super::Interpreter {
                             }
                         }
                         if !found {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: Some(expr.span.line), col: Some(expr.span.col),
                                 message: format!("结构体没有字段 '{}'", field),
                             });
                         }
@@ -491,7 +491,7 @@ impl super::Interpreter {
                         return Ok(Some(Value::Unit));
                     }
                     Value::MutRef(weak) => {
-                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError {
+                        let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "无法通过悬垂的 &mut 引用赋值字段".into(),
                         })?;
                         let mut inner = rc.borrow_mut();
@@ -503,11 +503,11 @@ impl super::Interpreter {
                                         return Ok(Some(Value::Unit));
                                     }
                                 }
-                                Err(TenthError::RuntimeError {
+                                Err(TenthError::RuntimeError { line: None, col: None,
                                     message: format!("结构体没有字段 '{}'", field),
                                 })
                             }
-                            _ => Err(TenthError::RuntimeError {
+                            _ => Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "字段赋值仅支持结构体".into(),
                             }),
                         }
@@ -523,23 +523,23 @@ impl super::Interpreter {
                                         return Ok(Some(Value::Unit));
                                     }
                                 }
-                                Err(TenthError::RuntimeError {
+                                Err(TenthError::RuntimeError { line: None, col: None,
                                     message: format!("结构体没有字段 '{}'", field),
                                 })
                             }
-                            _ => Err(TenthError::RuntimeError {
+                            _ => Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "字段赋值仅支持结构体".into(),
                             }),
                         }
                     }
-                    _ => Err(TenthError::RuntimeError {
+                    _ => Err(TenthError::RuntimeError { line: None, col: None,
                         message: "只能通过可变引用赋值字段".into(),
                     }),
                 }
             }
 
             HirExprKind::Move(inner) => {
-                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError {
+                let val = self.eval_expr(inner)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "move 操作数为空值".into(),
                 })?;
                 if let HirExprKind::Var(var_name) = &inner.kind {
@@ -573,7 +573,7 @@ impl super::Interpreter {
             }
 
             HirExprKind::Await(_) | HirExprKind::Spawn(_) => {
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: Some(expr.span.line), col: Some(expr.span.col),
                     message: "async/await/spawn 不支持解释器路径，请使用 VM".into(),
                 });
             }
@@ -614,7 +614,7 @@ impl super::Interpreter {
             HirExprKind::StructLiteral { name, fields, has_default: _ } => {
                 let mut field_vals = Vec::new();
                 for (fname, fexpr) in fields {
-                    let v = self.eval_expr(fexpr)?.ok_or_else(|| TenthError::RuntimeError {
+                    let v = self.eval_expr(fexpr)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: format!("结构体字段 '{}' 为空值", fname),
                     })?;
                     field_vals.push((fname.clone(), v));
@@ -628,7 +628,7 @@ impl super::Interpreter {
             HirExprKind::EnumLiteral { enum_name, variant, fields } => {
                 let mut field_vals = Vec::new();
                 for (fname, fexpr) in fields {
-                    let v = self.eval_expr(fexpr)?.ok_or_else(|| TenthError::RuntimeError {
+                    let v = self.eval_expr(fexpr)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: format!("枚举字段 '{}' 为空值", fname),
                     })?;
                     field_vals.push((fname.clone(), v));
@@ -641,7 +641,7 @@ impl super::Interpreter {
             }
 
             HirExprKind::Match { scrutinee, arms } => {
-                let val = self.eval_expr(scrutinee)?.ok_or_else(|| TenthError::RuntimeError {
+                let val = self.eval_expr(scrutinee)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "match 表达式为空值".into(),
                 })?;
 
@@ -671,7 +671,7 @@ impl super::Interpreter {
                 }
                 Ok(Some(Value::Unit))
             }
-        }
+        }.map_err(|e| Self::fill_span(e, &expr.span))
     }
 
     pub(super) fn eval_call(
@@ -709,7 +709,7 @@ impl super::Interpreter {
 
                 result
             }
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: "不是可调用值".into(),
             }),
         }
@@ -785,7 +785,7 @@ impl super::Interpreter {
             }
             HirStmtKind::While { cond, body } => {
                 loop {
-                    let c = self.eval_expr(cond)?.ok_or_else(|| TenthError::RuntimeError {
+                    let c = self.eval_expr(cond)?.ok_or_else(|| TenthError::RuntimeError { line: Some(stmt.span.line), col: Some(stmt.span.col),
                         message: "while 条件为空值".into(),
                     })?;
                     if !c.is_truthy() {
@@ -800,7 +800,7 @@ impl super::Interpreter {
                 Ok(())
             }
             HirStmtKind::For { var, iter, body } => {
-                let iter_val = self.eval_expr(iter)?.ok_or_else(|| TenthError::RuntimeError {
+                let iter_val = self.eval_expr(iter)?.ok_or_else(|| TenthError::RuntimeError { line: Some(stmt.span.line), col: Some(stmt.span.col),
                     message: "for 迭代对象为空值".into(),
                 })?;
                 match iter_val {
@@ -876,13 +876,28 @@ impl super::Interpreter {
                         }
                     }
                     _ => {
-                        return Err(TenthError::RuntimeError {
+                        return Err(TenthError::RuntimeError { line: Some(stmt.span.line), col: Some(stmt.span.col),
                             message: "for 循环支持 range、Vec、张量和迭代器".into(),
                         });
                     }
                 }
                 Ok(())
             }
+        }.map_err(|e| Self::fill_span(e, &stmt.span))
+    }
+
+    /// 问题12：补全 RuntimeError 的源码位置。
+    /// 若 RuntimeError 已有 line/col（手动填充的），则保留；
+    /// 否则用当前表达式/语句的 span 填充。
+    fn fill_span(e: TenthError, span: &crate::lexer::token::Span) -> TenthError {
+        if let TenthError::RuntimeError { line, col, message } = e {
+            TenthError::RuntimeError {
+                line: line.or(Some(span.line)),
+                col: col.or(Some(span.col)),
+                message,
+            }
+        } else {
+            e
         }
     }
 }

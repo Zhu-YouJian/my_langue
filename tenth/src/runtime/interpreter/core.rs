@@ -497,7 +497,7 @@ impl Interpreter {
         let elements = data.len();
         if let Some(ref limits) = self.limits {
             if let Err(msg) = limits.guard_tensor(elements) {
-                return Err(TenthError::RuntimeError { message: msg });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: msg });
             }
         }
         Ok(Tensor::from_vec(data, shape))

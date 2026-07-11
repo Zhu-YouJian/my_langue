@@ -98,7 +98,7 @@ impl Lowerer {
                                 return Err(TenthError::TypeError {
                                     line: span.line,
                                     col: span.col,
-                                    message: format!("undefined variable '{}'", ident.name),
+                                    message: format!("未定义变量 '{}'", ident.name),
                                 });
                             }
                         }
@@ -503,8 +503,20 @@ impl Lowerer {
                 if let Some(ref eb) = e {
                     Self::check_branch_shape_compat(&t.ty, &eb.ty, &span, "if/else")?;
                 }
+                // 类型推断规则（含 Never 类型）：
+                // - 无 else 分支：返回 Unit（旧语义）
+                // - else 存在：
+                //   * then=Never → 用 else 类型（then 永不返回）
+                //   * else=Never → 用 then 类型（else 永不返回）
+                //   * 两者都=Never → Never（整段永不返回）
+                //   * 否则 → 用 else 类型（保持原行为）
                 let ty = if let Some(ref eb) = e {
-                    eb.ty.clone()
+                    match (&t.ty, &eb.ty) {
+                        (Type::Never, Type::Never) => Type::Never,
+                        (Type::Never, _) => eb.ty.clone(),
+                        (_, Type::Never) => t.ty.clone(),
+                        _ => eb.ty.clone(),
+                    }
                 } else {
                     Type::unit()
                 };
@@ -531,7 +543,17 @@ impl Lowerer {
                     _ => None,
                 });
 
-                let ty = final_expr.as_ref().map(|e| e.ty.clone()).unwrap_or(Type::unit());
+                // Block 类型推断：
+                // - 末尾是 Expr → 用其类型
+                // - 末尾是 Return → Never（块永不正常返回）
+                // - 否则 → Unit
+                let ty = if let Some(e) = final_expr.as_ref() {
+                    e.ty.clone()
+                } else if matches!(lowered_stmts.last().map(|s| &s.kind), Some(HirStmtKind::Return(_))) {
+                    Type::Never
+                } else {
+                    Type::unit()
+                };
 
                 let stmts_without_final: Vec<HirStmt> = if final_expr.is_some() {
                     lowered_stmts[..lowered_stmts.len().saturating_sub(1)].to_vec()
@@ -601,7 +623,7 @@ impl Lowerer {
                         return Err(TenthError::ParseError {
                             line: span.line,
                             col: span.col,
-                            message: "invalid assignment target".into(),
+                            message: "无效的赋值目标".into(),
                         });
                     }
                 }
@@ -623,7 +645,7 @@ impl Lowerer {
                     _ => return Err(TenthError::ParseError {
                         line: span.line,
                         col: span.col,
-                        message: "invalid assignment target".into(),
+                        message: "无效的赋值目标".into(),
                     }),
                 }
             }
@@ -744,10 +766,15 @@ impl Lowerer {
                         Self::check_branch_shape_compat(&first_arm.body.ty, &arm.body.ty, &span, "match arm")?;
                     }
                 }
-                // Infer match type from first non-Unknown arm, falling back to first arm
+                // Infer match type: prefer first non-Unknown/non-Never arm（普通类型），
+                // 其次 Never（所有 arm 都 return 时），最后 Unknown 兜底。
+                // 这样含 return 的 arm 不会污染整个 match 的类型。
                 let match_ty = lowered_arms.iter()
                     .map(|arm| arm.body.ty.clone())
-                    .find(|ty| !matches!(ty, Type::Unknown))
+                    .find(|ty| !matches!(ty, Type::Unknown | Type::Never))
+                    .or_else(|| lowered_arms.iter()
+                        .map(|arm| arm.body.ty.clone())
+                        .find(|ty| matches!(ty, Type::Never)))
                     .or_else(|| lowered_arms.first().map(|arm| arm.body.ty.clone()))
                     .unwrap_or(Type::Unknown);
                 (HirExprKind::Match {

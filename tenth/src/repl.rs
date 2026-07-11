@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use crate::error::{TenthError, TenthResult};
@@ -241,7 +241,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                     // 用户未保存工作。改为返回错误并 continue，保持会话存活。
                     // 调用方（main.rs / 测试）若需硬失败可在外层 catch。
                     if cfg!(feature = "mem-strict") {
-                        return Err(crate::error::TenthError::RuntimeError {
+                        return Err(crate::error::TenthError::RuntimeError { line: None, col: None,
                             message: format!("definition limit exceeded: {}", msg),
                         });
                     }
@@ -444,7 +444,7 @@ fn load_file(
     def_count: &mut usize,
 ) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
-        .map_err(|e| TenthError::RuntimeError {
+        .map_err(|e| TenthError::RuntimeError { line: None, col: None,
             message: format!("cannot read {}: {}", path, e),
         })?;
 
@@ -464,7 +464,7 @@ fn load_file(
 
     if let Err(msg) = limits.guard_defs(*def_count) {
         *def_count -= new_defs;
-        return Err(TenthError::RuntimeError { message: msg });
+        return Err(TenthError::RuntimeError { line: None, col: None, message: msg });
     }
 
     // Merge definitions
@@ -523,7 +523,7 @@ fn execute_line_with_limits(
     if let Err(msg) = limits.guard_defs(*def_count) {
         // Roll back count if we're rejecting
         *def_count -= new_defs;
-        return Err(TenthError::RuntimeError { message: msg });
+        return Err(TenthError::RuntimeError { line: None, col: None, message: msg });
     }
 
     accumulated_program.functions.extend(hir_program.functions.clone());

@@ -280,6 +280,44 @@ Tenth 源码 → Lexer → Parser → Lowerer → WASM Compiler → .wasm → wa
 
 ---
 
+### v0.3.3 日常体验痛点第二批（2026-07-11）
+
+> 总师统筹的第二批修复，聚焦日常体验。6 项中 5 项已在之前 session 实现，本次补全问题12 的源码位置传递。
+
+| # | 问题 | 状态 | 说明 |
+|---|------|------|------|
+| 4 | `char` 类型无法构造（lexer 无 `read_char`） | ✅ 已实现（之前 session） | `lexer.rs:318` read_char 已存在，`'a'` 可正确解析为 `CharLiteral(char)` |
+| 6 | 无十六进制/二进制/八进制字面量 | ✅ 已实现（之前 session） | `lexer.rs:99-151` 支持 `0xFF`/`0b1010`/`0o777`，含下划线分隔 |
+| 12 | 运行时错误无源码位置 | ✅ 本 session 补全 | `error.rs:70-75` RuntimeError 已有 `line/col: Option<usize>` 字段（之前 session 改的），但所有创建点都是 `None`。本次在 `eval.rs` 的 `eval_expr`/`eval_stmt` 返回处加 `fill_span` map_err 自动补全位置，3 处 `return Err` 手动补 span |
+| 13 | `HashMap.get()` 缺键崩溃 | ✅ 已实现（之前 session） | `methods.rs:678` `or(Some(Value::Unit))` 缺键返回 Unit 而非 None |
+| 14 | 错误信息中英混杂 | ✅ 已实现（之前 session） | `scope.rs` 等全部统一为中文 |
+| 28 | 无 `Never`/`!` 发散类型 | ✅ 已实现（之前 session） | `types.rs:42-45` Type::Never + `lower/types.rs:644-653` 类型推断（Never 可统一到任何类型） |
+
+**本次修改**：`runtime/interpreter/eval.rs` — eval_expr/eval_stmt 末尾加 `.map_err(|e| Self::fill_span(e, &expr.span))`，新增 `fill_span` 函数用 `Option::or` 补全位置（已有位置不覆盖）。3 处 `return Err(RuntimeError { line: None, ... })` 改为 `Some(expr.span.line/col)`。
+
+**验证**：`cargo build --release` 成功 | lib 23 + 集成 121 passed | 自举 `[OK]`
+
+**自举同步**：问题4/6 的 lexer 改动无需同步 tenthc——tenthc/main.th 不使用 char 字面量或进制字面量，能力差异不影响自举。
+
+---
+
+### v0.3.3 真 Bug 修复第一批（2026-07-11）
+
+> 总师统筹的第一批真 Bug 修复，聚焦行为正确性。4 项局部修复，不触及护城河。
+
+| # | 问题 | 修复 | 文件 |
+|---|------|------|------|
+| 7 | `1 == 1.0` 永远 false（`values_eq` 缺 `(Int,Float)` 分支，与 `<`/`>` 行为不一致） | 补齐 `values_eq` 所有数值类型组合，与 VM `vm_eq` 对齐 | `runtime/interpreter/binary.rs:317-339` |
+| 8 | `f32` 的 `==` 永远 false（`values_eq` 缺 `(Float32,Float32)` 分支） | 同上 | 同上 |
+| 15 | VM 失败后静默回退到解释器，副作用双重执行（println 两遍、文件写两次） | 新增 `TenthError::VmCompileFailed` 区分编译期失败（静默回退）与运行时失败（硬失败） | `error.rs:73-78` + `main.rs:162-176,348-354` |
+| 16 | 解释器路径输出 `= ()`（VM 路径过滤了 Unit，解释器没过滤） | 三处解释器输出均加 `if !matches!(val, Value::Unit)` 过滤 | `main.rs:184-187,348-354,369-372` |
+
+**验证**：`cargo build --release` 成功 | lib test 23 passed | 关键集成测试 87 passed（integration/vm_autodiff/enum/ownership/type_inference/pattern_match/tuple/try_operator/generic/f32_parity/f32_runtime）| 自举 `[OK]`
+
+**注意**：问题7、8 的 VM 路径 `vm_eq` 本就正确，仅解释器路径 `values_eq` 有缺陷。由于问题15 将运行时失败改为硬失败，解释器路径仍作为编译期失败的 fallback，因此 `values_eq` 的修复仍然必要。
+
+---
+
 ### v0.3.3 新增（2026-06-14）
 
 #### GPU 后端脚手架

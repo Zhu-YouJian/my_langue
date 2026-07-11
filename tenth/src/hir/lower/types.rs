@@ -641,6 +641,16 @@ impl Lowerer {
         span: &Span,
         context: &str,
     ) -> TenthResult<Type> {
+        // Never 类型：保留 annotation（Never 可统一到任何类型，
+        // 但作为返回类型注解时应当被保留——如 `fn exit() -> !`）
+        if matches!(annot, Type::Never) {
+            return Ok(Type::Never);
+        }
+        // actual 为 Never（body 永不返回，如纯 return/loop）：
+        // 保留 annotation（Never 统一到 annotation 类型）
+        if matches!(actual, Type::Never) {
+            return Ok(annot.clone());
+        }
         // 非 Tensor 类型：不检查，保留 annotation
         let (annot_dtype, annot_dims) = match annot {
             Type::Tensor { dtype, dims } => (dtype.clone(), dims.clone()),
@@ -716,12 +726,19 @@ impl Lowerer {
     ///
     /// 仅在两侧 shape 都含静态信息（Known 或 Symbol，非全 Any）时才检查；
     /// 不兼容时返回 TypeError。任一侧全 Any 则跳过。
+    ///
+    /// Never 类型（`!`）可以统一到任何类型——若任一分支为 Never，则跳过检查
+    /// （如 `if cond { return exit() } else { 42 }` 应当通过）。
     pub(super) fn check_branch_shape_compat(
         then_ty: &Type,
         else_ty: &Type,
         span: &Span,
         context: &str,
     ) -> TenthResult<()> {
+        // Never 类型统一到任何类型——不报错
+        if matches!(then_ty, Type::Never) || matches!(else_ty, Type::Never) {
+            return Ok(());
+        }
         if let (Type::Tensor { dims: ldims, .. }, Type::Tensor { dims: rdims, .. }) = (then_ty, else_ty) {
             if has_static_info(ldims) && has_static_info(rdims) {
                 if broadcast_shapes(ldims, rdims).is_none() {

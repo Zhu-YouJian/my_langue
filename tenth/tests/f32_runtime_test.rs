@@ -1,4 +1,4 @@
-// f32 运行时专项测试 — Phase 3 Task 3.6
+﻿// f32 运行时专项测试 — Phase 3 Task 3.6
 // 验证 VM 算术 f32 分支、MakeTensor dtype、混合提升、native 函数 f32 支持。
 
 use tenth::hir::types::BaseType;
@@ -81,7 +81,7 @@ fn run_src(src: &str) -> Result<Value, String> {
             Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
             Some(Value::Float(f)) => Ok(Value::Float(*f)),
             Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
-            _ => Err(tenth::error::TenthError::RuntimeError { message: "to_float() 需要数值".into() }),
+            _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "to_float() 需要数值".into() }),
         }
     });
     vm.add_native("to_f64".into(), |_vm, args| {
@@ -89,7 +89,7 @@ fn run_src(src: &str) -> Result<Value, String> {
             Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
             Some(Value::Float(f)) => Ok(Value::Float(*f)),
             Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
-            _ => Err(tenth::error::TenthError::RuntimeError { message: "to_f64() 需要数值".into() }),
+            _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "to_f64() 需要数值".into() }),
         }
     });
     vm.add_native("to_f32".into(), |_vm, args| {
@@ -97,7 +97,7 @@ fn run_src(src: &str) -> Result<Value, String> {
             Some(Value::Int(n)) => Ok(Value::Float32(*n as f32)),
             Some(Value::Float(f)) => Ok(Value::Float32(*f as f32)),
             Some(Value::Float32(f)) => Ok(Value::Float32(*f)),
-            _ => Err(tenth::error::TenthError::RuntimeError { message: "to_f32() 需要数值".into() }),
+            _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "to_f32() 需要数值".into() }),
         }
     });
     // randn_f32 native
@@ -113,7 +113,7 @@ fn run_src(src: &str) -> Result<Value, String> {
             Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
             Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
             Some(Value::Float32(f)) => Ok(Value::Float32(f.abs())),
-            _ => Err(tenth::error::TenthError::RuntimeError { message: "abs() 需要数值".into() }),
+            _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "abs() 需要数值".into() }),
         }
     });
     vm.add_native("sqrt".into(), |_vm, args| {
@@ -121,7 +121,7 @@ fn run_src(src: &str) -> Result<Value, String> {
             Some(Value::Float(f)) => Ok(Value::Float(f.sqrt())),
             Some(Value::Float32(f)) => Ok(Value::Float32(f.sqrt())),
             Some(Value::Int(n)) => Ok(Value::Float((*n as f64).sqrt())),
-            _ => Err(tenth::error::TenthError::RuntimeError { message: "sqrt() 需要数值".into() }),
+            _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "sqrt() 需要数值".into() }),
         }
     });
 

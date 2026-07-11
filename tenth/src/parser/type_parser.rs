@@ -13,6 +13,11 @@ impl Parser {
     pub(super) fn parse_type(&mut self) -> TenthResult<TypeAnnotation> {
         let span = self.span();
         match self.peek_kind() {
+            // Never 类型：`!` 标记永不返回的函数（如 `fn exit() -> !`）
+            TokenKind::Not => {
+                self.advance();
+                Ok(TypeAnnotation::Named(Ident { name: "!".to_string(), span }))
+            }
             TokenKind::LParen => {
                 // Tuple type: (A, B, C)
                 self.advance();

@@ -294,3 +294,83 @@ fn test_mixed_int_float_promotion() {
     let ty = main_expr_type(&hir).unwrap();
     assert_eq!(ty, Type::f64());
 }
+
+// --- Never 类型（问题28）---
+
+#[test]
+fn test_never_type_display() {
+    assert_eq!(format!("{}", Type::Never), "!");
+}
+
+#[test]
+fn test_never_function_annotation() {
+    // `fn exit() -> !` 的返回类型注解应被解析为 Type::Never
+    let src = r#"
+        fn exit() -> ! { exit() }
+        42
+    "#;
+    let hir = lower_code(src);
+    // 主表达式类型应为 i32（不受 exit 函数影响）
+    let ty = main_expr_type(&hir).unwrap();
+    assert_eq!(ty, Type::i32());
+    // exit 函数的返回类型应为 Never
+    let exit_fn = hir.functions.iter().find(|f| f.name == "exit").unwrap();
+    assert_eq!(exit_fn.return_type, Type::Never);
+}
+
+#[test]
+fn test_never_if_else_then_never() {
+    // then 分支为 Never（return），else 分支为 i32 → 整体类型应为 i32
+    let src = r#"
+        fn check(x: i32) -> i32 {
+            if x == 0 { return 0 } else { 42 }
+        }
+        check(1)
+    "#;
+    let hir = lower_code(src);
+    let ty = main_expr_type(&hir).unwrap();
+    assert_eq!(ty, Type::i32());
+}
+
+#[test]
+fn test_never_if_else_else_never() {
+    // else 分支为 Never（return），then 分支为 i32 → 整体类型应为 i32
+    let src = r#"
+        fn check(x: i32) -> i32 {
+            if x == 0 { 42 } else { return 1 }
+        }
+        check(0)
+    "#;
+    let hir = lower_code(src);
+    let ty = main_expr_type(&hir).unwrap();
+    assert_eq!(ty, Type::i32());
+}
+
+#[test]
+fn test_never_block_ending_with_return() {
+    // 块以 return 结尾 → 块类型为 Never
+    // 函数体 `{ return 42 }` 标注 `-> !` 应通过类型检查
+    let src = r#"
+        fn diverge() -> ! { return 0 }
+        42
+    "#;
+    let hir = lower_code(src);
+    let ty = main_expr_type(&hir).unwrap();
+    assert_eq!(ty, Type::i32());
+    let diverge_fn = hir.functions.iter().find(|f| f.name == "diverge").unwrap();
+    assert_eq!(diverge_fn.return_type, Type::Never);
+}
+
+#[test]
+fn test_never_preserved_in_function_return_type() {
+    // 即使函数体推断出的类型不是 Never，注解为 `-> !` 时应保留 Never
+    let src = r#"
+        fn always_diverge() -> ! {
+            always_diverge()
+        }
+        42
+    "#;
+    let hir = lower_code(src);
+    let diverge_fn = hir.functions.iter().find(|f| f.name == "always_diverge").unwrap();
+    assert_eq!(diverge_fn.return_type, Type::Never);
+}

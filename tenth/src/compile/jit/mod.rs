@@ -1,4 +1,4 @@
-//! Cranelift-based JIT compiler for Tenth bytecode.
+﻿//! Cranelift-based JIT compiler for Tenth bytecode.
 //!
 //! Strategy (conservative JIT):
 //! - Compiles a single `Chunk` into a Cranelift function with signature
@@ -84,13 +84,13 @@ pub fn run_jit(vm: &mut Vm, name: &str) -> TenthResult<Value> {
         // last_error（如 host_call / host_index_get 等非 MethodCall hostcall 报错）。
         // 若有错误，surface 之并触发 fallback，而非静默返回可能的 Unit。
         if let Some(msg) = vm.take_last_error() {
-            return Err(TenthError::RuntimeError { message: msg });
+            return Err(TenthError::RuntimeError { line: None, col: None, message: msg });
         }
         vm.stack_push(out.clone());
         Ok(out)
     } else {
         // The trampoline sets the VM's last-error field; surface it here.
         let msg = vm.take_last_error().unwrap_or_else(|| "JIT 执行失败".into());
-        Err(TenthError::RuntimeError { message: msg })
+        Err(TenthError::RuntimeError { line: None, col: None, message: msg })
     }
 }

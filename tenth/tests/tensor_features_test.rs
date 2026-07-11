@@ -1,4 +1,4 @@
-//! Wave 3 张量修复补测试。
+﻿//! Wave 3 张量修复补测试。
 //!
 //! 覆盖本次 Wave 1a/1b/2 修复的 6 项改动：
 //! - 序列化 v2 格式（F32/F64 往返 + 旧 v1 向后兼容）
@@ -50,7 +50,7 @@ fn register_test_natives(vm: &mut Vm) {
         if args.len() == 1 {
             Ok(args[0].clone())
         } else {
-            Err(tenth::error::TenthError::RuntimeError {
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "tensor() 参数异常".into(),
             })
         }
@@ -68,7 +68,7 @@ fn register_test_natives(vm: &mut Vm) {
         Some(Value::Float(f)) => Ok(Value::Float(f.sqrt())),
         Some(Value::Float32(f)) => Ok(Value::Float32(f.sqrt())),
         Some(Value::Int(n)) => Ok(Value::Float((*n as f64).sqrt())),
-        _ => Err(tenth::error::TenthError::RuntimeError {
+        _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: "sqrt() 需要一个数值参数".into(),
         }),
     });
@@ -84,15 +84,15 @@ fn register_test_natives(vm: &mut Vm) {
             } else if tensor.size() == 1 {
                 tensor.get(&vec![0usize; shape.len()])
             } else {
-                return Err(tenth::error::TenthError::RuntimeError {
+                return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                     message: format!("to_f64() 不接受多元素 Tensor (shape={:?})", shape),
                 });
             };
-            scalar.map(Value::Float).ok_or_else(|| tenth::error::TenthError::RuntimeError {
+            scalar.map(Value::Float).ok_or_else(|| tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "to_f64() Tensor 标量提取失败".into(),
             })
         }
-        _ => Err(tenth::error::TenthError::RuntimeError {
+        _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: "to_f64() 需要一个数值参数".into(),
         }),
     });
@@ -108,15 +108,15 @@ fn register_test_natives(vm: &mut Vm) {
             } else if tensor.size() == 1 {
                 tensor.get(&vec![0usize; shape.len()])
             } else {
-                return Err(tenth::error::TenthError::RuntimeError {
+                return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                     message: format!("to_f32() 不接受多元素 Tensor (shape={:?})", shape),
                 });
             };
-            scalar.map(|v| Value::Float32(v as f32)).ok_or_else(|| tenth::error::TenthError::RuntimeError {
+            scalar.map(|v| Value::Float32(v as f32)).ok_or_else(|| tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "to_f32() Tensor 标量提取失败".into(),
             })
         }
-        _ => Err(tenth::error::TenthError::RuntimeError {
+        _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: "to_f32() 需要一个数值参数".into(),
         }),
     });
@@ -165,7 +165,7 @@ fn register_test_natives(vm: &mut Vm) {
             }
             Ok(Value::Tensor(t.clone()))
         } else {
-            Err(tenth::error::TenthError::RuntimeError {
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "param() 需要一个张量参数".into(),
             })
         }
@@ -174,22 +174,22 @@ fn register_test_natives(vm: &mut Vm) {
         if let Some(Value::Tensor(t)) = args.first() {
             if let Some(ref tape) = vm.tape {
                 let loss_id = t.borrow().tape_id.ok_or_else(|| {
-                    tenth::error::TenthError::RuntimeError {
+                    tenth::error::TenthError::RuntimeError { line: None, col: None,
                         message: "backward(): 张量没有 tape_id".into(),
                     }
                 })?;
                 tape.backward(loss_id)
-                    .map_err(|e| tenth::error::TenthError::RuntimeError {
+                    .map_err(|e| tenth::error::TenthError::RuntimeError { line: None, col: None,
                         message: format!("{}", e),
                     })?;
                 Ok(Value::Unit)
             } else {
-                Err(tenth::error::TenthError::RuntimeError {
+                Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                     message: "未调用 new_grad()".into(),
                 })
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError {
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "backward() 需要一个张量参数".into(),
             })
         }
@@ -210,7 +210,7 @@ fn register_test_natives(vm: &mut Vm) {
                 Ok(Value::Tensor(Rc::new(RefCell::new(zeros))))
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError {
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "grad() 需要一个张量参数".into(),
             })
         }
@@ -240,7 +240,7 @@ fn register_test_natives(vm: &mut Vm) {
                     match sb.check_write(path) {
                         Ok(p) => p,
                         Err(e) => {
-                            return Err(tenth::error::TenthError::RuntimeError { message: e })
+                            return Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: e })
                         }
                     }
                 } else {
@@ -250,7 +250,7 @@ fn register_test_natives(vm: &mut Vm) {
                     Value::Vec(v) => v,
                     Value::Array(a) => a,
                     _ => {
-                        return Err(tenth::error::TenthError::RuntimeError {
+                        return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                             message: "save_weights 期望一个张量列表".into(),
                         })
                     }
@@ -346,7 +346,7 @@ fn register_test_natives(vm: &mut Vm) {
                 return Ok(Value::Unit);
             }
         }
-        Err(tenth::error::TenthError::RuntimeError {
+        Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: "save_weights(路径, 张量列表)".into(),
         })
     });
@@ -355,7 +355,7 @@ fn register_test_natives(vm: &mut Vm) {
             let resolved = if let Some(ref sb) = vm.fs_sandbox {
                 match sb.check_read(path) {
                     Ok(p) => p,
-                    Err(e) => return Err(tenth::error::TenthError::RuntimeError { message: e }),
+                    Err(e) => return Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: e }),
                 }
             } else {
                 std::path::PathBuf::from(path)
@@ -363,7 +363,7 @@ fn register_test_natives(vm: &mut Vm) {
             match std::fs::read(&resolved) {
                 Ok(bytes) => {
                     if bytes.len() < 4 {
-                        return Err(tenth::error::TenthError::RuntimeError {
+                        return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                             message: "load_weights: 文件过短".into(),
                         });
                     }
@@ -508,7 +508,7 @@ fn register_test_natives(vm: &mut Vm) {
                                     ))));
                                 }
                                 other => {
-                                    return Err(tenth::error::TenthError::RuntimeError {
+                                    return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                                         message: format!("load_weights: 未知 dtype={}", other),
                                     });
                                 }
@@ -542,12 +542,12 @@ fn register_test_natives(vm: &mut Vm) {
                     }
                     Ok(Value::Vec(Rc::new(RefCell::new(result))))
                 }
-                Err(e) => Err(tenth::error::TenthError::RuntimeError {
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                     message: format!("load_weights: {}", e),
                 }),
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError {
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "load_weights(路径)".into(),
             })
         }

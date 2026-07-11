@@ -1,4 +1,4 @@
-//! Bridge: convert the Tenth self-hosting parser's compact Program representation
+﻿//! Bridge: convert the Tenth self-hosting parser's compact Program representation
 //! into the Rust AST, then lower + compile to WASM.
 //!
 //! The compact representation uses flat Vec arrays with 1-based integer indices
@@ -85,7 +85,7 @@ fn clone_struct_fields(val: &Value, expected_name: &str) -> TenthResult<Vec<(Str
     match val {
         Value::Struct { name, fields } => {
             if name != expected_name {
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("期望结构体 '{}'，但得到了 '{}'", expected_name, name),
                 });
             }
@@ -95,7 +95,7 @@ fn clone_struct_fields(val: &Value, expected_name: &str) -> TenthResult<Vec<(Str
             let inner = rc.borrow();
             clone_struct_fields(&inner, expected_name)
         }
-        _ => Err(TenthError::RuntimeError {
+        _ => Err(TenthError::RuntimeError { line: None, col: None,
             message: format!("期望结构体 '{}'，但得到了 {:?}", expected_name, val.type_of()),
         }),
     }
@@ -117,12 +117,12 @@ fn get_field_i64(fields: &[(String, Value)], name: &str) -> TenthResult<i64> {
             let inner = rc.borrow();
             match &*inner {
                 Value::Int(n) => Ok(*n),
-                v => Err(TenthError::RuntimeError {
+                v => Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("字段 '{}' 期望 i64，但得到了 {:?}", name, v),
                 }),
             }
         }
-        v => Err(TenthError::RuntimeError {
+        v => Err(TenthError::RuntimeError { line: None, col: None,
             message: format!("字段 '{}' 期望 i64，但得到了 {:?}", name, v),
         }),
     }
@@ -135,13 +135,13 @@ fn get_field_string(fields: &[(String, Value)], name: &str) -> TenthResult<Strin
             let inner = rc.borrow();
             match &*inner {
                 Value::String(s) => Ok(s.clone()),
-                v => Err(TenthError::RuntimeError {
+                v => Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("字段 '{}' 期望字符串，但得到了 {:?}", name, v),
                 }),
             }
         }
         Value::Int(n) => Ok(n.to_string()),
-        v => Err(TenthError::RuntimeError {
+        v => Err(TenthError::RuntimeError { line: None, col: None,
             message: format!("字段 '{}' 期望字符串，但得到了 {:?}", name, v),
         }),
     }
@@ -466,12 +466,12 @@ fn convert_expr_depth(
     depth: usize,
 ) -> TenthResult<ast::Expr> {
     if depth > 50 {
-        return Err(TenthError::RuntimeError {
+        return Err(TenthError::RuntimeError { line: None, col: None,
             message: format!("表达式转换递归过深，索引 {}（深度={}）", idx, depth),
         });
     }
     if idx == 0 || idx > expr_nodes.len() {
-        return Err(TenthError::RuntimeError {
+        return Err(TenthError::RuntimeError { line: None, col: None,
             message: format!("表达式索引 {} 越界（长度={}）", idx, expr_nodes.len()),
         });
     }
@@ -485,7 +485,7 @@ fn convert_expr_depth(
     // }
     let fields = match clone_struct_fields_opt(val) {
         Some(f) => f,
-        None => return Err(TenthError::RuntimeError {
+        None => return Err(TenthError::RuntimeError { line: None, col: None,
             message: "表达式节点不是结构体".into(),
         }),
     };
@@ -539,7 +539,7 @@ fn convert_expr_depth(
             let op = match sval.as_str() {
                 "-" => ast::UnaryOp::Neg,
                 "!" => ast::UnaryOp::Not,
-                _ => return Err(TenthError::RuntimeError {
+                _ => return Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("未知的一元运算符：{}", sval),
                 }),
             };
@@ -718,7 +718,7 @@ fn parse_binop(s: &str) -> TenthResult<ast::BinOp> {
         ">=" => Ok(ast::BinOp::GtEq),
         "&&" => Ok(ast::BinOp::And),
         "||" => Ok(ast::BinOp::Or),
-        _ => Err(TenthError::RuntimeError {
+        _ => Err(TenthError::RuntimeError { line: None, col: None,
             message: format!("未知的二元运算符：{}", s),
         }),
     }

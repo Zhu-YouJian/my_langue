@@ -1,4 +1,4 @@
-//! 原生函数注册：`call_named_fn`。
+﻿//! 原生函数注册：`call_named_fn`。
 //!
 //! 从 `interpreter.rs` 第 3255-4489 行迁移而来。包含所有内置原生函数的分派：
 //! - I/O：println / to_string / type_name / format / parse_int / parse_float
@@ -393,11 +393,11 @@ impl super::Interpreter {
                 // with_step_limit(limit: Int, fn) -> runs fn with a step budget.
                 // Returns whatever fn returns, or () on timeout.
                 if args.len() < 2 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "with_step_limit(limit, fn) 需要 2 个参数".into(),
                     });
                 }
-                let limit = args[0].as_int().ok_or_else(|| TenthError::RuntimeError {
+                let limit = args[0].as_int().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "with_step_limit 的第一个参数必须是整数步数".into(),
                 })?;
                 let closure = args[1].clone();
@@ -419,11 +419,11 @@ impl super::Interpreter {
             "with_timeout_ms" => {
                 // with_timeout_ms(ms: Int, fn) -> runs fn with a wall-clock deadline.
                 if args.len() < 2 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "with_timeout_ms(ms, fn) 需要 2 个参数".into(),
                     });
                 }
-                let ms = args[0].as_int().ok_or_else(|| TenthError::RuntimeError {
+                let ms = args[0].as_int().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "with_timeout_ms 的第一个参数必须是整数毫秒".into(),
                 })?;
                 let closure = args[1].clone();
@@ -476,7 +476,7 @@ impl super::Interpreter {
                     }
                     return Ok(Some(Value::Tensor(t.clone())));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "param() 期望一个张量参数".into(),
                 });
             }
@@ -535,7 +535,7 @@ impl super::Interpreter {
                     }
                     return Ok(Some(Value::Unit));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "backward() 期望一个张量参数".into(),
                 });
             }
@@ -565,23 +565,23 @@ impl super::Interpreter {
                     return Ok(Some(match arg {
                         Value::Int(n) => Value::Int(n.abs()),
                         Value::Float(n) => Value::Float(n.abs()),
-                        _ => return Err(TenthError::RuntimeError {
+                        _ => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "abs() 期望一个数值参数".into(),
                         }),
                     }));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "abs() 期望 1 个参数".into(),
                 });
             }
             "sqrt" => {
                 if let Some(arg) = args.first() {
-                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "sqrt() 期望一个数值参数".into(),
                     })?;
                     return Ok(Some(Value::Float(n.sqrt())));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "sqrt() 期望 1 个参数".into(),
                 });
             }
@@ -599,20 +599,20 @@ impl super::Interpreter {
                             } else if tensor.size() == 1 {
                                 tensor.get(&vec![0usize; shape.len()])
                             } else {
-                                return Err(TenthError::RuntimeError {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
                                     message: format!("to_float() 不接受多元素 Tensor (shape={:?})", shape),
                                 });
                             };
-                            scalar.map(Value::Float).ok_or_else(|| TenthError::RuntimeError {
+                            scalar.map(Value::Float).ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                 message: "to_float() Tensor 标量提取失败".into(),
                             })?
                         }
-                        _ => return Err(TenthError::RuntimeError {
+                        _ => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "to_float() 期望一个数值参数".into(),
                         }),
                     }));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "to_float() 期望 1 个参数".into(),
                 });
             }
@@ -631,20 +631,20 @@ impl super::Interpreter {
                             } else if tensor.size() == 1 {
                                 tensor.get(&vec![0usize; shape.len()])
                             } else {
-                                return Err(TenthError::RuntimeError {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
                                     message: format!("to_f64() 不接受多元素 Tensor (shape={:?})", shape),
                                 });
                             };
-                            scalar.map(Value::Float).ok_or_else(|| TenthError::RuntimeError {
+                            scalar.map(Value::Float).ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                 message: "to_f64() Tensor 标量提取失败".into(),
                             })?
                         }
-                        _ => return Err(TenthError::RuntimeError {
+                        _ => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "to_f64() 期望一个数值参数".into(),
                         }),
                     }));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "to_f64() 期望 1 个参数".into(),
                 });
             }
@@ -663,42 +663,42 @@ impl super::Interpreter {
                             } else if tensor.size() == 1 {
                                 tensor.get(&vec![0usize; shape.len()])
                             } else {
-                                return Err(TenthError::RuntimeError {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
                                     message: format!("to_f32() 不接受多元素 Tensor (shape={:?})", shape),
                                 });
                             };
-                            scalar.map(|v| Value::Float32(v as f32)).ok_or_else(|| TenthError::RuntimeError {
+                            scalar.map(|v| Value::Float32(v as f32)).ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                 message: "to_f32() Tensor 标量提取失败".into(),
                             })?
                         }
-                        _ => return Err(TenthError::RuntimeError {
+                        _ => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "to_f32() 期望一个数值参数".into(),
                         }),
                     }));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "to_f32() 期望 1 个参数".into(),
                 });
             }
             "f64_bits" => {
                 if let Some(arg) = args.first() {
-                    let f = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+                    let f = arg.as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "f64_bits() 期望一个 f64 参数".into(),
                     })?;
                     return Ok(Some(Value::Int(f.to_bits() as i64)));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "f64_bits() 期望 1 个参数".into(),
                 });
             }
             "f64_from_bits" => {
                 if let Some(arg) = args.first() {
-                    let n = arg.as_int().ok_or_else(|| TenthError::RuntimeError {
+                    let n = arg.as_int().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "f64_from_bits() 期望一个 i64 参数".into(),
                     })?;
                     return Ok(Some(Value::Float(f64::from_bits(n as u64))));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "f64_from_bits() 期望 1 个参数".into(),
                 });
             }
@@ -717,59 +717,59 @@ impl super::Interpreter {
                         return Ok(Some(Value::Tensor(Rc::new(RefCell::new(tensor)))));
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "tensor_from_vec(vec, rows, cols) 期望一个 Vec 和两个整数".into(),
                 });
             }
             "sin" => {
                 if let Some(arg) = args.first() {
-                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "sin() 期望一个数值参数".into(),
                     })?;
                     return Ok(Some(Value::Float(n.sin())));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "sin() 期望 1 个参数".into(),
                 });
             }
             "cos" => {
                 if let Some(arg) = args.first() {
-                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "cos() 期望一个数值参数".into(),
                     })?;
                     return Ok(Some(Value::Float(n.cos())));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "cos() 期望 1 个参数".into(),
                 });
             }
             "ln" => {
                 if let Some(arg) = args.first() {
-                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+                    let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "ln() 期望一个数值参数".into(),
                     })?;
                     if n <= 0.0 {
-                        return Err(TenthError::RuntimeError {
+                        return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "ln() 参数必须 > 0".into(),
                         });
                     }
                     return Ok(Some(Value::Float(n.ln())));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "ln() 期望 1 个参数".into(),
                 });
             }
             "pow" => {
                 if args.len() >= 2 {
-                    let base = args[0].as_float().ok_or_else(|| TenthError::RuntimeError {
+                    let base = args[0].as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "pow() 期望数值参数".into(),
                     })?;
-                    let exp = args[1].as_float().ok_or_else(|| TenthError::RuntimeError {
+                    let exp = args[1].as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "pow() 期望数值参数".into(),
                     })?;
                     return Ok(Some(Value::Float(base.powf(exp))));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "pow() 期望 2 个参数".into(),
                 });
             }
@@ -781,7 +781,7 @@ impl super::Interpreter {
 
                         // Compute softmax along last axis
                         let sm = logits_data.softmax().ok_or_else(|| {
-                            TenthError::RuntimeError { message: "cross_entropy 中 softmax 失败".into() }
+                            TenthError::RuntimeError { line: None, col: None, message: "cross_entropy 中 softmax 失败".into() }
                         })?;
 
                         // CE loss: -mean(sum(target * log(softmax + ε)))
@@ -823,7 +823,7 @@ impl super::Interpreter {
                         return Ok(Some(Value::Tensor(result)));
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "cross_entropy(logits, target) 期望两个张量".into(),
                 });
             }
@@ -831,18 +831,18 @@ impl super::Interpreter {
                 // select(cond, then, else) — 逐元素条件选择原语（论文 T47/T48/T50）
                 // 支持广播；cond 非 0 视为 true。可微：d_then = grad*mask, d_else = grad*(1-mask)
                 if args.len() < 3 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "select(cond, then, else) 期望三个参数".into(),
                     });
                 }
                 let (cond, then, else_) = match (&args[0], &args[1], &args[2]) {
                     (Value::Tensor(c), Value::Tensor(t), Value::Tensor(e)) => (c.clone(), t.clone(), e.clone()),
-                    _ => return Err(TenthError::RuntimeError {
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "select(cond, then, else) 期望三个张量参数".into(),
                     }),
                 };
                 let result_tensor = Tensor::select(&cond.borrow(), &then.borrow(), &else_.borrow())
-                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                    .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                 let result = Rc::new(RefCell::new(result_tensor));
                 if self.recording {
                     if let Some(ref mut tape) = self.tape {
@@ -859,19 +859,19 @@ impl super::Interpreter {
                 // 支持任意 dim + 多维 index/src（PyTorch 对齐）。
                 // 可微：d_src=gather(grad,index,dim), d_base=grad 但 index 指向位置置 0
                 if args.len() < 4 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "scatter(base, dim, index, src) 期望四个参数".into(),
                     });
                 }
                 let dim = args[1].as_int().unwrap_or(0) as usize;
                 let (base, index, src) = match (&args[0], &args[2], &args[3]) {
                     (Value::Tensor(b), Value::Tensor(i), Value::Tensor(s)) => (b.clone(), i.clone(), s.clone()),
-                    _ => return Err(TenthError::RuntimeError {
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "scatter(base, dim, index, src) 期望 base/index/src 为张量".into(),
                     }),
                 };
                 let result_tensor = Tensor::scatter(&base.borrow(), dim, &index.borrow(), &src.borrow())
-                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                    .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                 let result = Rc::new(RefCell::new(result_tensor));
                 if self.recording {
                     if let Some(ref mut tape) = self.tape {
@@ -889,19 +889,19 @@ impl super::Interpreter {
                 // 可微：d_base = zeros_like(base); d_base[actual] += grad[idx] (scatter-add 语义)
                 // index 不可微
                 if args.len() < 3 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "gather(base, dim, index) 期望三个参数".into(),
                     });
                 }
                 let dim = args[1].as_int().unwrap_or(0) as usize;
                 let (base, index) = match (&args[0], &args[2]) {
                     (Value::Tensor(b), Value::Tensor(i)) => (b.clone(), i.clone()),
-                    _ => return Err(TenthError::RuntimeError {
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "gather(base, dim, index) 期望 base/index 为张量".into(),
                     }),
                 };
                 let result_tensor = Tensor::gather(&base.borrow(), dim, &index.borrow())
-                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                    .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                 let result = Rc::new(RefCell::new(result_tensor));
                 if self.recording {
                     if let Some(ref mut tape) = self.tape {
@@ -924,7 +924,7 @@ impl super::Interpreter {
                     let zeros = Tensor::zeros_with_dtype(&shape, p.dtype());
                     return Ok(Some(Value::Tensor(Rc::new(RefCell::new(zeros)))));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "grad() 期望一个张量参数".into(),
                 });
             }
@@ -1021,7 +1021,7 @@ impl super::Interpreter {
                         let resolved = if let Some(ref sb) = self.fs_sandbox {
                             match sb.check_write(path) {
                                 Ok(p) => p,
-                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                                Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                             }
                         } else {
                             std::path::PathBuf::from(path)
@@ -1031,7 +1031,7 @@ impl super::Interpreter {
                             Value::Vec(v) => v,
                             Value::Array(a) => a,
                             _ => {
-                                return Err(TenthError::RuntimeError {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
                                     message: "save_weights 期望一个张量列表".into(),
                                 });
                             }
@@ -1111,7 +1111,7 @@ impl super::Interpreter {
                         return Ok(Some(Value::Unit));
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "save_weights(路径, 张量列表)".into(),
                 });
             }
@@ -1121,7 +1121,7 @@ impl super::Interpreter {
                     let resolved = if let Some(ref sb) = self.fs_sandbox {
                         match sb.check_read(path) {
                             Ok(p) => p,
-                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                         }
                     } else {
                         std::path::PathBuf::from(path)
@@ -1129,7 +1129,7 @@ impl super::Interpreter {
                     match std::fs::read(&resolved) {
                         Ok(bytes) => {
                             if bytes.len() < 4 {
-                                return Err(TenthError::RuntimeError {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
                                     message: "load_weights: 文件过短".into(),
                                 });
                             }
@@ -1242,7 +1242,7 @@ impl super::Interpreter {
                                             ))));
                                         }
                                         other => {
-                                            return Err(TenthError::RuntimeError {
+                                            return Err(TenthError::RuntimeError { line: None, col: None,
                                                 message: format!("load_weights: 未知 dtype={}", other),
                                             });
                                         }
@@ -1268,12 +1268,12 @@ impl super::Interpreter {
                             }
                             return Ok(Some(Value::Vec(Rc::new(RefCell::new(result)))));
                         }
-                        Err(e) => return Err(TenthError::RuntimeError {
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: format!("load_weights: {}", e),
                         }),
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "load_weights(路径)".into(),
                 });
             }
@@ -1283,19 +1283,19 @@ impl super::Interpreter {
                     let resolved = if let Some(ref sb) = self.fs_sandbox {
                         match sb.check_read(path) {
                             Ok(p) => p,
-                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                         }
                     } else {
                         std::path::PathBuf::from(path)
                     };
                     match std::fs::read_to_string(&resolved) {
                         Ok(content) => return Ok(Some(Value::String(content))),
-                        Err(e) => return Err(TenthError::RuntimeError {
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: format!("读取文件失败: {}", e),
                         }),
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "read_file(路径) 期望一个字符串路径".into(),
                 });
             }
@@ -1306,20 +1306,20 @@ impl super::Interpreter {
                         let resolved = if let Some(ref sb) = self.fs_sandbox {
                             match sb.check_write(path) {
                                 Ok(p) => p,
-                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                                Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                             }
                         } else {
                             std::path::PathBuf::from(path)
                         };
                         match std::fs::write(&resolved, content) {
                             Ok(()) => return Ok(Some(Value::Unit)),
-                            Err(e) => return Err(TenthError::RuntimeError {
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: format!("写入文件失败: {}", e),
                             }),
                         }
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "write_file(路径, 内容) 期望两个字符串参数".into(),
                 });
             }
@@ -1330,7 +1330,7 @@ impl super::Interpreter {
                         let resolved = if let Some(ref sb) = self.fs_sandbox {
                             match sb.check_write(path) {
                                 Ok(p) => p,
-                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                                Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                             }
                         } else {
                             std::path::PathBuf::from(path)
@@ -1340,13 +1340,13 @@ impl super::Interpreter {
                         }).collect();
                         match std::fs::write(&resolved, &data) {
                             Ok(()) => return Ok(Some(Value::Unit)),
-                            Err(e) => return Err(TenthError::RuntimeError {
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: format!("写入字节失败: {}", e),
                             }),
                         }
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "write_bytes(路径, 字节数组) 期望一个字符串和一个字节 Vec".into(),
                 });
             }
@@ -1356,7 +1356,7 @@ impl super::Interpreter {
                     let resolved = if let Some(ref sb) = self.fs_sandbox {
                         match sb.check_read(path) {
                             Ok(p) => p,
-                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                         }
                     } else {
                         std::path::PathBuf::from(path)
@@ -1368,12 +1368,12 @@ impl super::Interpreter {
                                 .collect();
                             return Ok(Some(Value::Vec(Rc::new(RefCell::new(bytes)))));
                         }
-                        Err(e) => return Err(TenthError::RuntimeError {
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: format!("读取字节失败: {}", e),
                         }),
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "read_bytes(路径) 期望一个字符串路径".into(),
                 });
             }
@@ -1384,7 +1384,7 @@ impl super::Interpreter {
                         return Ok(Some(Value::String(joined.to_string_lossy().to_string())));
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "path_join(基础路径, 子路径) 期望两个字符串参数".into(),
                 });
             }
@@ -1393,12 +1393,12 @@ impl super::Interpreter {
                     // H-2: 沙箱校验（只读检查）
                     if let Some(ref sb) = self.fs_sandbox {
                         if let Err(e) = sb.check_read(path) {
-                            return Err(TenthError::RuntimeError { message: e });
+                            return Err(TenthError::RuntimeError { line: None, col: None, message: e });
                         }
                     }
                     return Ok(Some(Value::Bool(std::path::Path::new(path).exists())));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "path_exists(路径) 期望一个字符串路径".into(),
                 });
             }
@@ -1406,12 +1406,12 @@ impl super::Interpreter {
                 if let Some(Value::String(path)) = args.first() {
                     if let Some(ref sb) = self.fs_sandbox {
                         if let Err(e) = sb.check_read(path) {
-                            return Err(TenthError::RuntimeError { message: e });
+                            return Err(TenthError::RuntimeError { line: None, col: None, message: e });
                         }
                     }
                     return Ok(Some(Value::Bool(std::path::Path::new(path).is_file())));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "path_is_file(路径) 期望一个字符串路径".into(),
                 });
             }
@@ -1419,12 +1419,12 @@ impl super::Interpreter {
                 if let Some(Value::String(path)) = args.first() {
                     if let Some(ref sb) = self.fs_sandbox {
                         if let Err(e) = sb.check_read(path) {
-                            return Err(TenthError::RuntimeError { message: e });
+                            return Err(TenthError::RuntimeError { line: None, col: None, message: e });
                         }
                     }
                     return Ok(Some(Value::Bool(std::path::Path::new(path).is_dir())));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "path_is_dir(路径) 期望一个字符串路径".into(),
                 });
             }
@@ -1434,19 +1434,19 @@ impl super::Interpreter {
                     let resolved = if let Some(ref sb) = self.fs_sandbox {
                         match sb.check_write(path) {
                             Ok(p) => p,
-                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                         }
                     } else {
                         std::path::PathBuf::from(path)
                     };
                     match std::fs::create_dir_all(&resolved) {
                         Ok(()) => return Ok(Some(Value::Unit)),
-                        Err(e) => return Err(TenthError::RuntimeError {
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: format!("创建目录失败: {}", e),
                         }),
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "mkdir(路径) 期望一个字符串路径".into(),
                 });
             }
@@ -1456,7 +1456,7 @@ impl super::Interpreter {
                     let resolved = if let Some(ref sb) = self.fs_sandbox {
                         match sb.check_read(path) {
                             Ok(p) => p,
-                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                         }
                     } else {
                         std::path::PathBuf::from(path)
@@ -1468,12 +1468,12 @@ impl super::Interpreter {
                             }).collect();
                             return Ok(Some(Value::Vec(Rc::new(RefCell::new(names)))));
                         }
-                        Err(e) => return Err(TenthError::RuntimeError {
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: format!("列出目录失败: {}", e),
                         }),
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "list_dir(路径) 期望一个字符串路径".into(),
                 });
             }
@@ -1483,19 +1483,19 @@ impl super::Interpreter {
                     let resolved = if let Some(ref sb) = self.fs_sandbox {
                         match sb.check_read(path) {
                             Ok(p) => p,
-                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                         }
                     } else {
                         std::path::PathBuf::from(path)
                     };
                     match std::fs::metadata(&resolved) {
                         Ok(meta) => return Ok(Some(Value::Int(meta.len() as i64))),
-                        Err(e) => return Err(TenthError::RuntimeError {
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: format!("获取文件大小失败: {}", e),
                         }),
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "file_size(路径) 期望一个字符串路径".into(),
                 });
             }
@@ -1505,19 +1505,19 @@ impl super::Interpreter {
                     let resolved = if let Some(ref sb) = self.fs_sandbox {
                         match sb.check_write(path) {
                             Ok(p) => p,
-                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                         }
                     } else {
                         std::path::PathBuf::from(path)
                     };
                     match std::fs::remove_file(&resolved) {
                         Ok(()) => return Ok(Some(Value::Unit)),
-                        Err(e) => return Err(TenthError::RuntimeError {
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: format!("删除文件失败: {}", e),
                         }),
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "remove_file(路径) 期望一个字符串路径".into(),
                 });
             }
@@ -1528,7 +1528,7 @@ impl super::Interpreter {
                         let src_resolved = if let Some(ref sb) = self.fs_sandbox {
                             match sb.check_read(src) {
                                 Ok(p) => p,
-                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                                Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                             }
                         } else {
                             std::path::PathBuf::from(src)
@@ -1536,20 +1536,20 @@ impl super::Interpreter {
                         let dst_resolved = if let Some(ref sb) = self.fs_sandbox {
                             match sb.check_write(dst) {
                                 Ok(p) => p,
-                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                                Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                             }
                         } else {
                             std::path::PathBuf::from(dst)
                         };
                         match std::fs::copy(&src_resolved, &dst_resolved) {
                             Ok(_) => return Ok(Some(Value::Unit)),
-                            Err(e) => return Err(TenthError::RuntimeError {
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: format!("复制文件失败: {}", e),
                             }),
                         }
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "copy_file(源路径, 目标路径) 期望两个字符串参数".into(),
                 });
             }
@@ -1560,7 +1560,7 @@ impl super::Interpreter {
                         let src_resolved = if let Some(ref sb) = self.fs_sandbox {
                             match sb.check_read(src) {
                                 Ok(p) => p,
-                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                                Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                             }
                         } else {
                             std::path::PathBuf::from(src)
@@ -1568,20 +1568,20 @@ impl super::Interpreter {
                         let dst_resolved = if let Some(ref sb) = self.fs_sandbox {
                             match sb.check_write(dst) {
                                 Ok(p) => p,
-                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                                Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                             }
                         } else {
                             std::path::PathBuf::from(dst)
                         };
                         match std::fs::rename(&src_resolved, &dst_resolved) {
                             Ok(()) => return Ok(Some(Value::Unit)),
-                            Err(e) => return Err(TenthError::RuntimeError {
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: format!("重命名文件失败: {}", e),
                             }),
                         }
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "rename_file(源路径, 目标路径) 期望两个字符串参数".into(),
                 });
             }
@@ -1594,7 +1594,7 @@ impl super::Interpreter {
                         let out_resolved = if let Some(ref sb) = self.fs_sandbox {
                             match sb.check_write(out) {
                                 Ok(p) => p,
-                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                                Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                             }
                         } else {
                             std::path::PathBuf::from(out)
@@ -1612,7 +1612,7 @@ impl super::Interpreter {
                         }
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "compile_host(源码, 输出路径) 期望两个字符串参数".into(),
                 });
             }
@@ -1625,7 +1625,7 @@ impl super::Interpreter {
                         let out_resolved = if let Some(ref sb) = self.fs_sandbox {
                             match sb.check_write(out) {
                                 Ok(p) => p,
-                                Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                                Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                             }
                         } else {
                             std::path::PathBuf::from(out)
@@ -1642,13 +1642,13 @@ impl super::Interpreter {
                         }
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "compile_program(程序, 输出路径) 期望 Program 结构体和字符串路径".into(),
                 });
             }
             "format" => {
                 if args.is_empty() {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "format() 至少需要一个模板字符串".into(),
                     });
                 }
@@ -1692,7 +1692,7 @@ impl super::Interpreter {
                     }
                     return Ok(Some(Value::String(result)));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "format() 第一个参数必须是字符串模板".into(),
                 })
             }
@@ -1702,7 +1702,7 @@ impl super::Interpreter {
                         return Ok(Some(Value::Int(s.trim().parse::<i64>().unwrap_or(0))));
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "parse_int() 期望一个字符串参数".into(),
                 })
             }
@@ -1712,7 +1712,7 @@ impl super::Interpreter {
                         return Ok(Some(Value::Float(s.trim().parse::<f64>().unwrap_or(0.0))));
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "parse_float() 期望一个字符串参数".into(),
                 })
             }
@@ -1768,7 +1768,7 @@ impl super::Interpreter {
                     std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
                     return Ok(Some(Value::Unit));
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "time_sleep_ms(ms) 期望一个整数".into(),
                 });
             }
@@ -1947,7 +1947,7 @@ impl super::Interpreter {
                         return Self::unwrap_return(result);
                     }
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("未定义函数 '{}'", name),
                 });
             }
@@ -1970,7 +1970,7 @@ impl super::Interpreter {
             return Self::unwrap_return(result);
         }
 
-        Err(TenthError::RuntimeError {
+        Err(TenthError::RuntimeError { line: None, col: None,
             message: format!("undefined function '{}'", name),
         })
     }

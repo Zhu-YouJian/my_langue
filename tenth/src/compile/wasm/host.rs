@@ -1,4 +1,4 @@
-//! wasmi host functions and WASM module execution.
+﻿//! wasmi host functions and WASM module execution.
 
 use wasmi::{Engine, Store, Linker, Caller};
 use crate::error::{TenthError, TenthResult};
@@ -11,7 +11,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
         let data = mem.data(&caller);
         let end = data[ptr as usize..].iter().position(|&b| b == 0).unwrap_or(0);
         println!("{}", std::str::from_utf8(&data[ptr as usize..ptr as usize + end]).unwrap_or(""));
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     linker.func_wrap("host", "write_file",
         |caller: Caller<'_, u32>, path_ptr: i32, content_ptr: i32| {
@@ -22,7 +22,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
                 std::str::from_utf8(&data[p as usize..p as usize + end]).unwrap_or("")
             };
             let _ = std::fs::write(rs(path_ptr), rs(content_ptr));
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // read_file(path: i32) -> i32
     linker.func_wrap("host", "read_file",
@@ -47,7 +47,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
                 }
                 Err(_) => 0i32,
             }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     linker.func_wrap("host", "str_add",
         |mut caller: Caller<'_, u32>, a_ptr: i32, b_ptr: i32| -> i32 {
@@ -71,7 +71,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
             d[np as usize..np as usize + bytes.len()].copy_from_slice(bytes);
             d[np as usize + bytes.len()] = 0;
             np as i32
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     linker.func_wrap("host", "str_eq",
         |caller: Caller<'_, u32>, a_ptr: i32, b_ptr: i32| -> i32 {
@@ -82,7 +82,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
                 std::str::from_utf8(&data[p as usize..p as usize + end]).unwrap_or("")
             };
             if rs(a_ptr) == rs(b_ptr) { 1 } else { 0 }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     linker.func_wrap("host", "str_int",
         |mut caller: Caller<'_, u32>, n: i64| -> i32 {
@@ -96,7 +96,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
                 data[off as usize + b.len()] = 0;
                 off
             } else { 0 }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // tenth_alloc(size: i32) -> i32
     linker.func_wrap("host", "tenth_alloc",
@@ -114,7 +114,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
             }
             *caller.data_mut() = ptr + size as u32;
             ptr as i32
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // Vec_new() -> i64 (pointer extended to i64)
     linker.func_wrap("host", "Vec_new",
@@ -130,7 +130,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
             data[p+16..p+20].copy_from_slice(&0i32.to_le_bytes());   // dp
             *caller.data_mut() = ptr + 24;
             ptr as i64
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // Vec_len(vec: i64) -> i64
     linker.func_wrap("host", "Vec_len",
@@ -141,7 +141,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
             if vec_ptr + 16 <= data.len() {
                 i64::from_le_bytes(data[vec_ptr+8..vec_ptr+16].try_into().unwrap())
             } else { 0 }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // Vec_get(vec: i64, idx: i64) -> i64
     linker.func_wrap("host", "Vec_get",
@@ -155,7 +155,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
             if pos + 8 <= data.len() {
                 i64::from_le_bytes(data[pos..pos+8].try_into().unwrap())
             } else { 0 }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // Vec_push(vec: i64, item: i64) -> i64
     linker.func_wrap("host", "Vec_push",
@@ -200,7 +200,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
                 data[pos..pos+8].copy_from_slice(&item.to_le_bytes());
             }
             vec
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // compile_host(src: i64, out_path: i64) -> i32
     // Reads source from WASM memory, compiles it via Rust pipeline, writes .wasm.
@@ -227,7 +227,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
                 }
                 Err(_) => 1i32,
             }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // str_len(s: i32) -> i32  — returns length of null-terminated string
     linker.func_wrap("host", "str_len",
@@ -236,7 +236,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
             let data = mem.data(&caller);
             let off = ptr as usize;
             data[off..].iter().position(|&b| b == 0).unwrap_or(0) as i32
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // str_at(s: i32, idx: i64) -> i32  — returns single-char string at index
     // Characters are pre-interned as "X\0" in the data section, so we
@@ -272,7 +272,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
             d[np as usize..np as usize + ch_bytes.len()].copy_from_slice(ch_bytes);
             d[np as usize + ch_bytes.len()] = 0;
             np as i32
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // str_cmp(op: i32, a: i32, b: i32) -> i32  — op: 0=LT,1=GT,2=LE,3=GE; returns 0 or 1
     linker.func_wrap("host", "str_cmp",
@@ -294,13 +294,13 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
                 _ => false,
             };
             result as i32
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // f64_bits(f64) -> i64: convert f64 to its IEEE 754 bit representation
     linker.func_wrap("host", "f64_bits",
         |val: f64| -> i64 {
             val.to_bits() as i64
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // str_slice(ptr: i32, start: i64, end: i64) -> i32: allocate new string s[start..end]
     linker.func_wrap("host", "str_slice",
@@ -332,7 +332,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
             d[np as usize..np as usize + slice_len].copy_from_slice(&slice_bytes);
             d[np as usize + slice_len] = 0;
             np as i32
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // tensor_from_vec(data_ptr: i32, len: i32, rank: i32) -> i64
     // Simplified: return total element count (len) as the tensor handle.
@@ -340,7 +340,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
     linker.func_wrap("host", "tensor_from_vec",
         |_caller: Caller<'_, u32>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
             len as i64
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // Phase 5.2 F1：host_make_tensor_f16(data_ptr: i32, len: i32, rank: i32) -> i64
     // F16 张量专用 hostcall。WASM 原生不支持 f16 类型，数据以 F64 字节序列
@@ -350,14 +350,14 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
     linker.func_wrap("host", "host_make_tensor_f16",
         |_caller: Caller<'_, u32>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
             if len < 0 { 0 } else { len as i64 }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // Phase 5.2 F1：host_make_tensor_bf16(data_ptr: i32, len: i32, rank: i32) -> i64
     // BF16 张量专用 hostcall，策略与 host_make_tensor_f16 一致。
     linker.func_wrap("host", "host_make_tensor_bf16",
         |_caller: Caller<'_, u32>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
             if len < 0 { 0 } else { len as i64 }
-    }).map_err(|e| TenthError::RuntimeError { message: format!("链接器：{}", e) })?;
+    }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     Ok(())
 }
@@ -366,7 +366,7 @@ pub fn register_host_functions(linker: &mut Linker<u32>) -> TenthResult<()> {
 pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
     let engine = Engine::default();
     let module = wasmi::Module::new(&engine, wasm_bytes).map_err(|e| {
-        TenthError::RuntimeError { message: format!("WASM 模块解析错误：{}", e) }
+        TenthError::RuntimeError { line: None, col: None, message: format!("WASM 模块解析错误：{}", e) }
     })?;
 
     let mut store = Store::new(&engine, 8192u32);
@@ -375,22 +375,22 @@ pub fn run_wasm_module(wasm_bytes: &[u8]) -> TenthResult<()> {
 
     let instance = linker.instantiate(&mut store, &module)
         .and_then(|pre| pre.start(&mut store))
-        .map_err(|e| TenthError::RuntimeError {
+        .map_err(|e| TenthError::RuntimeError { line: None, col: None,
             message: format!("WASM 实例化错误：{}", e),
         })?;
 
     let main_fn = instance.get_typed_func::<(), i32>(&store, "main")
-        .map_err(|_| TenthError::RuntimeError {
+        .map_err(|_| TenthError::RuntimeError { line: None, col: None,
             message: "WASM 模块没有导出的 'main' 函数".into(),
         })?;
 
     let exit_code = main_fn.call(&mut store, ())
-        .map_err(|e| TenthError::RuntimeError {
+        .map_err(|e| TenthError::RuntimeError { line: None, col: None,
             message: format!("WASM main() 错误：{}", e),
         })?;
 
     if exit_code != 0 {
-        return Err(TenthError::RuntimeError {
+        return Err(TenthError::RuntimeError { line: None, col: None,
             message: format!("WASM main() 以代码 {} 退出", exit_code),
         });
     }

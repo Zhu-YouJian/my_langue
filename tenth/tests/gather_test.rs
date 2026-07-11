@@ -1,4 +1,4 @@
-// gather 原语测试套件
+﻿// gather 原语测试套件
 // 覆盖：前向基本用例（dim=0/dim=1/1D index）、shape 校验、dtype 保留、
 //       autodiff 梯度（d_base scatter-add 语义、重复 index 累加、index 不可微、与 matmul 链式）、
 //       VM/解释器 parity。
@@ -296,23 +296,23 @@ fn register_test_natives(vm: &mut Vm) {
     });
     vm.add_native("tensor".into(), |_vm, args| {
         if args.len() == 1 { Ok(args[0].clone()) }
-        else { Err(tenth::error::TenthError::RuntimeError { message: "tensor() 参数异常".into() }) }
+        else { Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "tensor() 参数异常".into() }) }
     });
     vm.add_native("gather".into(), |vm, args| {
         if args.len() < 3 {
-            return Err(tenth::error::TenthError::RuntimeError {
+            return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "gather(base, dim, index) 期望三个参数".into(),
             });
         }
         let dim = args[1].as_int().unwrap_or(0) as usize;
         let (base, index) = match (&args[0], &args[2]) {
             (Value::Tensor(b), Value::Tensor(i)) => (b.clone(), i.clone()),
-            _ => return Err(tenth::error::TenthError::RuntimeError {
+            _ => return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "gather(base, dim, index) 期望 base/index 为张量".into(),
             }),
         };
         let result_tensor = Tensor::gather(&base.borrow(), dim, &index.borrow())
-            .map_err(|msg| tenth::error::TenthError::RuntimeError { message: msg })?;
+            .map_err(|msg| tenth::error::TenthError::RuntimeError { line: None, col: None, message: msg })?;
         let result = Rc::new(RefCell::new(result_tensor));
         if vm.recording {
             if let Some(ref mut tape) = vm.tape {
@@ -325,19 +325,19 @@ fn register_test_natives(vm: &mut Vm) {
     });
     vm.add_native("scatter".into(), |vm, args| {
         if args.len() < 4 {
-            return Err(tenth::error::TenthError::RuntimeError {
+            return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "scatter(base, dim, index, src) 期望四个参数".into(),
             });
         }
         let dim = args[1].as_int().unwrap_or(0) as usize;
         let (base, index, src) = match (&args[0], &args[2], &args[3]) {
             (Value::Tensor(b), Value::Tensor(i), Value::Tensor(s)) => (b.clone(), i.clone(), s.clone()),
-            _ => return Err(tenth::error::TenthError::RuntimeError {
+            _ => return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "scatter(base, dim, index, src) 期望 base/index/src 为张量".into(),
             }),
         };
         let result_tensor = Tensor::scatter(&base.borrow(), dim, &index.borrow(), &src.borrow())
-            .map_err(|msg| tenth::error::TenthError::RuntimeError { message: msg })?;
+            .map_err(|msg| tenth::error::TenthError::RuntimeError { line: None, col: None, message: msg })?;
         let result = Rc::new(RefCell::new(result_tensor));
         if vm.recording {
             if let Some(ref mut tape) = vm.tape {
@@ -363,21 +363,21 @@ fn register_test_natives(vm: &mut Vm) {
             }
             Ok(Value::Tensor(t.clone()))
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "param() requires a tensor argument".into() })
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "param() requires a tensor argument".into() })
         }
     });
     vm.add_native("backward".into(), |vm, args| {
         if let Some(Value::Tensor(t)) = args.first() {
             if let Some(ref tape) = vm.tape {
                 let loss_id = t.borrow().tape_id
-                    .ok_or_else(|| tenth::error::TenthError::RuntimeError { message: "backward(): tensor has no tape_id".into() })?;
-                tape.backward(loss_id).map_err(|e| tenth::error::TenthError::RuntimeError { message: format!("{:?}", e) })?;
+                    .ok_or_else(|| tenth::error::TenthError::RuntimeError { line: None, col: None, message: "backward(): tensor has no tape_id".into() })?;
+                tape.backward(loss_id).map_err(|e| tenth::error::TenthError::RuntimeError { line: None, col: None, message: format!("{:?}", e) })?;
                 Ok(Value::Unit)
             } else {
-                Err(tenth::error::TenthError::RuntimeError { message: "new_grad() not called".into() })
+                Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "new_grad() not called".into() })
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "backward() requires a tensor argument".into() })
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "backward() requires a tensor argument".into() })
         }
     });
     vm.add_native("grad".into(), |_vm, args| {
@@ -391,7 +391,7 @@ fn register_test_natives(vm: &mut Vm) {
                 Ok(Value::Tensor(Rc::new(RefCell::new(zeros))))
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError { message: "grad() requires a tensor argument".into() })
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "grad() requires a tensor argument".into() })
         }
     });
     vm.add_native("stop_grad".into(), |vm, args| {

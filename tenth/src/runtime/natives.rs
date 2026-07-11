@@ -1,4 +1,4 @@
-//! Native 函数集中注册：`register_all_natives(vm)`。
+﻿//! Native 函数集中注册：`register_all_natives(vm)`。
 //!
 //! 从 `main.rs` 迁移而来（T1.3）。原 `register_natives` 改名为
 //! `register_all_natives`，作为后续 T2 NativeRegistry 统一的入口点。
@@ -365,14 +365,14 @@ pub fn register_all_natives(vm: &mut Vm) {
             let resolved = if let Some(ref sb) = vm.fs_sandbox {
                 match sb.check_read(path) {
                     Ok(p) => p,
-                    Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                    Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                 }
             } else {
                 std::path::PathBuf::from(path)
             };
             match std::fs::read_to_string(&resolved) {
                 Ok(s) => Ok(Value::String(s)),
-                Err(e) => Err(TenthError::RuntimeError { message: format!("读取文件: {e}") }),
+                Err(e) => Err(TenthError::RuntimeError { line: None, col: None, message: format!("读取文件: {e}") }),
             }
         } else {
             Ok(Value::String(String::new()))
@@ -388,7 +388,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         if args.len() == 1 {
             Ok(args[0].clone())
         } else {
-            Err(TenthError::RuntimeError { message: "tensor() 参数异常".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "tensor() 参数异常".into() })
         }
     });
     vm.add_native("write_bytes".into(), |vm, args| {
@@ -399,7 +399,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                     let resolved = if let Some(ref sb) = vm.fs_sandbox {
                         match sb.check_write(path) {
                             Ok(p) => p,
-                            Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                         }
                     } else {
                         std::path::PathBuf::from(path)
@@ -418,7 +418,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             let resolved = if let Some(ref sb) = vm.fs_sandbox {
                 match sb.check_read(path) {
                     Ok(p) => p,
-                    Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                    Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                 }
             } else {
                 std::path::PathBuf::from(path)
@@ -430,12 +430,12 @@ pub fn register_all_natives(vm: &mut Vm) {
                         .collect();
                     Ok(Value::Vec(Rc::new(RefCell::new(bytes))))
                 }
-                Err(e) => Err(TenthError::RuntimeError {
+                Err(e) => Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("读取字节失败: {}", e),
                 }),
             }
         } else {
-            Err(TenthError::RuntimeError {
+            Err(TenthError::RuntimeError { line: None, col: None,
                 message: "read_bytes(路径) 期望一个字符串路径".into(),
             })
         }
@@ -493,19 +493,19 @@ pub fn register_all_natives(vm: &mut Vm) {
             // 上限 24 小时，防止 `.th` 程序意外将进程睡眠数年
             const MAX_SLEEP_MS: i64 = 24 * 60 * 60 * 1000;
             if *ms < 0 {
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("time_sleep_ms: 不接受负数（{}）", ms),
                 });
             }
             if *ms > MAX_SLEEP_MS {
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("time_sleep_ms: 超过 24 小时上限（{}ms）", ms),
                 });
             }
             std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
             Ok(Value::Unit)
         } else {
-            Err(TenthError::RuntimeError { message: "time_sleep_ms(ms) 期望一个整数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "time_sleep_ms(ms) 期望一个整数".into() })
         }
     });
 
@@ -517,18 +517,18 @@ pub fn register_all_natives(vm: &mut Vm) {
     vm.add_native("async_sleep_ms".into(), |_vm, args| {
         let ms = match args.first() {
             Some(Value::Int(n)) => *n,
-            _ => return Err(TenthError::RuntimeError {
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
                 message: "async_sleep_ms(ms) 期望一个整数".into(),
             }),
         };
         if ms < 0 {
-            return Err(TenthError::RuntimeError {
+            return Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("async_sleep_ms: 不接受负数（{}）", ms),
             });
         }
         const MAX_SLEEP_MS: i64 = 24 * 60 * 60 * 1000;
         if ms > MAX_SLEEP_MS {
-            return Err(TenthError::RuntimeError {
+            return Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("async_sleep_ms: 超过 24 小时上限（{}ms）", ms),
             });
         }
@@ -798,7 +798,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 let out_resolved = if let Some(ref sb) = vm.fs_sandbox {
                     match sb.check_write(out) {
                         Ok(p) => p,
-                        Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                     }
                 } else {
                     std::path::PathBuf::from(out)
@@ -822,7 +822,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 let out_resolved = if let Some(ref sb) = vm.fs_sandbox {
                     match sb.check_write(out) {
                         Ok(p) => p,
-                        Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                     }
                 } else {
                     std::path::PathBuf::from(out)
@@ -850,14 +850,14 @@ pub fn register_all_natives(vm: &mut Vm) {
             }
             Ok(Value::Tensor(t.clone()))
         } else {
-            Err(TenthError::RuntimeError { message: "param() 需要一个张量参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "param() 需要一个张量参数".into() })
         }
     });
     vm.add_native("backward".into(), |vm, args| {
         if let Some(Value::Tensor(t)) = args.first() {
             if let Some(ref tape) = vm.tape {
                 let loss_id = t.borrow().tape_id
-                    .ok_or_else(|| TenthError::RuntimeError { message: "backward(): 张量没有 tape_id".into() })?;
+                    .ok_or_else(|| TenthError::RuntimeError { line: None, col: None, message: "backward(): 张量没有 tape_id".into() })?;
                 // 护城河 F：包裹 backward 错误，附加 formal_explain 根因分析
                 // Phase 1：从 backward 抛出的 ShapeMismatch 错误中提取真实 v_err/expected/actual，
                 // 传给 formal_explain 提升根因分析精度（替代 Phase 0 的占位值 loss_id/&[]/&[]）。
@@ -910,10 +910,10 @@ pub fn register_all_natives(vm: &mut Vm) {
                     }
                 }
             } else {
-                Err(TenthError::RuntimeError { message: "未调用 new_grad()".into() })
+                Err(TenthError::RuntimeError { line: None, col: None, message: "未调用 new_grad()".into() })
             }
         } else {
-            Err(TenthError::RuntimeError { message: "backward() 需要一个张量参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "backward() 需要一个张量参数".into() })
         }
     });
     // 护城河 F：explain_error() — 返回上一次 backward 失败的根因说明列表
@@ -939,7 +939,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 Ok(Value::Tensor(Rc::new(RefCell::new(zeros))))
             }
         } else {
-            Err(TenthError::RuntimeError { message: "grad() 需要一个张量参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "grad() 需要一个张量参数".into() })
         }
     });
     vm.add_native("stop_grad".into(), |vm, args| {
@@ -963,18 +963,18 @@ pub fn register_all_natives(vm: &mut Vm) {
         // select(cond, then, else) — 逐元素条件选择原语（论文 T47/T48/T50）
         // 支持广播；cond 非 0 视为 true。可微：d_then = grad*mask, d_else = grad*(1-mask)
         if args.len() < 3 {
-            return Err(TenthError::RuntimeError {
+            return Err(TenthError::RuntimeError { line: None, col: None,
                 message: "select(cond, then, else) 期望三个参数".into(),
             });
         }
         let (cond, then, else_) = match (&args[0], &args[1], &args[2]) {
             (Value::Tensor(c), Value::Tensor(t), Value::Tensor(e)) => (c.clone(), t.clone(), e.clone()),
-            _ => return Err(TenthError::RuntimeError {
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
                 message: "select(cond, then, else) 期望三个张量参数".into(),
             }),
         };
         let result_tensor = Tensor::select(&cond.borrow(), &then.borrow(), &else_.borrow())
-            .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+            .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
         let result = Rc::new(RefCell::new(result_tensor));
         if vm.recording {
             if let Some(ref mut tape) = vm.tape {
@@ -991,19 +991,19 @@ pub fn register_all_natives(vm: &mut Vm) {
         // 支持任意 dim + 多维 index/src（PyTorch 对齐）。
         // 可微：d_src=gather(grad,index,dim), d_base=grad 但 index 指向位置置 0
         if args.len() < 4 {
-            return Err(TenthError::RuntimeError {
+            return Err(TenthError::RuntimeError { line: None, col: None,
                 message: "scatter(base, dim, index, src) 期望四个参数".into(),
             });
         }
         let dim = args[1].as_int().unwrap_or(0) as usize;
         let (base, index, src) = match (&args[0], &args[2], &args[3]) {
             (Value::Tensor(b), Value::Tensor(i), Value::Tensor(s)) => (b.clone(), i.clone(), s.clone()),
-            _ => return Err(TenthError::RuntimeError {
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
                 message: "scatter(base, dim, index, src) 期望 base/index/src 为张量".into(),
             }),
         };
         let result_tensor = Tensor::scatter(&base.borrow(), dim, &index.borrow(), &src.borrow())
-            .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+            .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
         let result = Rc::new(RefCell::new(result_tensor));
         if vm.recording {
             if let Some(ref mut tape) = vm.tape {
@@ -1021,19 +1021,19 @@ pub fn register_all_natives(vm: &mut Vm) {
         // 可微：d_base = zeros_like(base); d_base[actual] += grad[idx] (scatter-add 语义)
         // index 不可微
         if args.len() < 3 {
-            return Err(TenthError::RuntimeError {
+            return Err(TenthError::RuntimeError { line: None, col: None,
                 message: "gather(base, dim, index) 期望三个参数".into(),
             });
         }
         let dim = args[1].as_int().unwrap_or(0) as usize;
         let (base, index) = match (&args[0], &args[2]) {
             (Value::Tensor(b), Value::Tensor(i)) => (b.clone(), i.clone()),
-            _ => return Err(TenthError::RuntimeError {
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
                 message: "gather(base, dim, index) 期望 base/index 为张量".into(),
             }),
         };
         let result_tensor = Tensor::gather(&base.borrow(), dim, &index.borrow())
-            .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+            .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
         let result = Rc::new(RefCell::new(result_tensor));
         if vm.recording {
             if let Some(ref mut tape) = vm.tape {
@@ -1046,14 +1046,14 @@ pub fn register_all_natives(vm: &mut Vm) {
     });
     vm.add_native("cross_entropy".into(), |vm, args| {
         if args.len() < 2 {
-            return Err(TenthError::RuntimeError { message: "cross_entropy(logits, target) 期望两个张量".into() });
+            return Err(TenthError::RuntimeError { line: None, col: None, message: "cross_entropy(logits, target) 期望两个张量".into() });
         }
         if let (Value::Tensor(logits), Value::Tensor(target)) = (&args[0], &args[1]) {
             let logits_data = logits.borrow();
             let target_data = target.borrow();
             let is_f32 = logits_data.is_f32();
             let sm = logits_data.softmax().ok_or_else(|| {
-                TenthError::RuntimeError { message: "cross_entropy 中 softmax 失败".into() }
+                TenthError::RuntimeError { line: None, col: None, message: "cross_entropy 中 softmax 失败".into() }
             })?;
             let eps = 1e-10;
             let sm_data = sm.data.as_standard_layout().to_owned();
@@ -1091,7 +1091,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             }
             Ok(Value::Tensor(result))
         } else {
-            Err(TenthError::RuntimeError { message: "cross_entropy(logits, target) 期望两个张量".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "cross_entropy(logits, target) 期望两个张量".into() })
         }
     });
     // File system functions
@@ -1102,20 +1102,20 @@ pub fn register_all_natives(vm: &mut Vm) {
                 let resolved = if let Some(ref sb) = vm.fs_sandbox {
                     match sb.check_write(path) {
                         Ok(p) => p,
-                        Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                     }
                 } else {
                     std::path::PathBuf::from(path)
                 };
                 match std::fs::write(&resolved, content) {
                     Ok(()) => Ok(Value::Unit),
-                    Err(e) => Err(TenthError::RuntimeError { message: format!("写入文件失败: {}", e) }),
+                    Err(e) => Err(TenthError::RuntimeError { line: None, col: None, message: format!("写入文件失败: {}", e) }),
                 }
             } else {
-                Err(TenthError::RuntimeError { message: "write_file(路径, 内容) 期望两个字符串参数".into() })
+                Err(TenthError::RuntimeError { line: None, col: None, message: "write_file(路径, 内容) 期望两个字符串参数".into() })
             }
         } else {
-            Err(TenthError::RuntimeError { message: "write_file(路径, 内容) 期望两个字符串参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "write_file(路径, 内容) 期望两个字符串参数".into() })
         }
     });
     vm.add_native("path_join".into(), |_vm, args| {
@@ -1124,10 +1124,10 @@ pub fn register_all_natives(vm: &mut Vm) {
                 let joined = std::path::Path::new(base).join(rest);
                 Ok(Value::String(joined.to_string_lossy().to_string()))
             } else {
-                Err(TenthError::RuntimeError { message: "path_join(基础路径, 子路径) 期望两个字符串参数".into() })
+                Err(TenthError::RuntimeError { line: None, col: None, message: "path_join(基础路径, 子路径) 期望两个字符串参数".into() })
             }
         } else {
-            Err(TenthError::RuntimeError { message: "path_join(基础路径, 子路径) 期望两个字符串参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "path_join(基础路径, 子路径) 期望两个字符串参数".into() })
         }
     });
     vm.add_native("path_exists".into(), |vm, args| {
@@ -1135,36 +1135,36 @@ pub fn register_all_natives(vm: &mut Vm) {
             // H-2: 沙箱校验
             if let Some(ref sb) = vm.fs_sandbox {
                 if let Err(e) = sb.check_read(path) {
-                    return Err(TenthError::RuntimeError { message: e });
+                    return Err(TenthError::RuntimeError { line: None, col: None, message: e });
                 }
             }
             Ok(Value::Bool(std::path::Path::new(path).exists()))
         } else {
-            Err(TenthError::RuntimeError { message: "path_exists(路径) 期望一个字符串路径".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "path_exists(路径) 期望一个字符串路径".into() })
         }
     });
     vm.add_native("path_is_file".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
             if let Some(ref sb) = vm.fs_sandbox {
                 if let Err(e) = sb.check_read(path) {
-                    return Err(TenthError::RuntimeError { message: e });
+                    return Err(TenthError::RuntimeError { line: None, col: None, message: e });
                 }
             }
             Ok(Value::Bool(std::path::Path::new(path).is_file()))
         } else {
-            Err(TenthError::RuntimeError { message: "path_is_file(路径) 期望一个字符串路径".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "path_is_file(路径) 期望一个字符串路径".into() })
         }
     });
     vm.add_native("path_is_dir".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
             if let Some(ref sb) = vm.fs_sandbox {
                 if let Err(e) = sb.check_read(path) {
-                    return Err(TenthError::RuntimeError { message: e });
+                    return Err(TenthError::RuntimeError { line: None, col: None, message: e });
                 }
             }
             Ok(Value::Bool(std::path::Path::new(path).is_dir()))
         } else {
-            Err(TenthError::RuntimeError { message: "path_is_dir(路径) 期望一个字符串路径".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "path_is_dir(路径) 期望一个字符串路径".into() })
         }
     });
     vm.add_native("mkdir".into(), |vm, args| {
@@ -1173,17 +1173,17 @@ pub fn register_all_natives(vm: &mut Vm) {
             let resolved = if let Some(ref sb) = vm.fs_sandbox {
                 match sb.check_write(path) {
                     Ok(p) => p,
-                    Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                    Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                 }
             } else {
                 std::path::PathBuf::from(path)
             };
             match std::fs::create_dir_all(&resolved) {
                 Ok(()) => Ok(Value::Unit),
-                Err(e) => Err(TenthError::RuntimeError { message: format!("创建目录失败: {}", e) }),
+                Err(e) => Err(TenthError::RuntimeError { line: None, col: None, message: format!("创建目录失败: {}", e) }),
             }
         } else {
-            Err(TenthError::RuntimeError { message: "mkdir(路径) 期望一个字符串路径".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "mkdir(路径) 期望一个字符串路径".into() })
         }
     });
     vm.add_native("list_dir".into(), |vm, args| {
@@ -1192,7 +1192,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             let resolved = if let Some(ref sb) = vm.fs_sandbox {
                 match sb.check_read(path) {
                     Ok(p) => p,
-                    Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                    Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                 }
             } else {
                 std::path::PathBuf::from(path)
@@ -1205,10 +1205,10 @@ pub fn register_all_natives(vm: &mut Vm) {
                         .collect();
                     Ok(Value::Vec(Rc::new(RefCell::new(items))))
                 }
-                Err(e) => Err(TenthError::RuntimeError { message: format!("列出目录失败: {}", e) }),
+                Err(e) => Err(TenthError::RuntimeError { line: None, col: None, message: format!("列出目录失败: {}", e) }),
             }
         } else {
-            Err(TenthError::RuntimeError { message: "list_dir(路径) 期望一个字符串路径".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "list_dir(路径) 期望一个字符串路径".into() })
         }
     });
     vm.add_native("file_size".into(), |vm, args| {
@@ -1217,17 +1217,17 @@ pub fn register_all_natives(vm: &mut Vm) {
             let resolved = if let Some(ref sb) = vm.fs_sandbox {
                 match sb.check_read(path) {
                     Ok(p) => p,
-                    Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                    Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                 }
             } else {
                 std::path::PathBuf::from(path)
             };
             match std::fs::metadata(&resolved) {
                 Ok(meta) => Ok(Value::Int(meta.len() as i64)),
-                Err(e) => Err(TenthError::RuntimeError { message: format!("获取文件大小失败: {}", e) }),
+                Err(e) => Err(TenthError::RuntimeError { line: None, col: None, message: format!("获取文件大小失败: {}", e) }),
             }
         } else {
-            Err(TenthError::RuntimeError { message: "file_size(路径) 期望一个字符串路径".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "file_size(路径) 期望一个字符串路径".into() })
         }
     });
     vm.add_native("remove_file".into(), |vm, args| {
@@ -1236,17 +1236,17 @@ pub fn register_all_natives(vm: &mut Vm) {
             let resolved = if let Some(ref sb) = vm.fs_sandbox {
                 match sb.check_write(path) {
                     Ok(p) => p,
-                    Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                    Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                 }
             } else {
                 std::path::PathBuf::from(path)
             };
             match std::fs::remove_file(&resolved) {
                 Ok(()) => Ok(Value::Unit),
-                Err(e) => Err(TenthError::RuntimeError { message: format!("删除文件失败: {}", e) }),
+                Err(e) => Err(TenthError::RuntimeError { line: None, col: None, message: format!("删除文件失败: {}", e) }),
             }
         } else {
-            Err(TenthError::RuntimeError { message: "remove_file(路径) 期望一个字符串路径".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "remove_file(路径) 期望一个字符串路径".into() })
         }
     });
     vm.add_native("copy_file".into(), |vm, args| {
@@ -1256,7 +1256,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 let src_resolved = if let Some(ref sb) = vm.fs_sandbox {
                     match sb.check_read(src) {
                         Ok(p) => p,
-                        Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                     }
                 } else {
                     std::path::PathBuf::from(src)
@@ -1264,20 +1264,20 @@ pub fn register_all_natives(vm: &mut Vm) {
                 let dst_resolved = if let Some(ref sb) = vm.fs_sandbox {
                     match sb.check_write(dst) {
                         Ok(p) => p,
-                        Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                     }
                 } else {
                     std::path::PathBuf::from(dst)
                 };
                 match std::fs::copy(&src_resolved, &dst_resolved) {
                     Ok(_) => Ok(Value::Unit),
-                    Err(e) => Err(TenthError::RuntimeError { message: format!("复制文件失败: {}", e) }),
+                    Err(e) => Err(TenthError::RuntimeError { line: None, col: None, message: format!("复制文件失败: {}", e) }),
                 }
             } else {
-                Err(TenthError::RuntimeError { message: "copy_file(源路径, 目标路径) 期望两个字符串参数".into() })
+                Err(TenthError::RuntimeError { line: None, col: None, message: "copy_file(源路径, 目标路径) 期望两个字符串参数".into() })
             }
         } else {
-            Err(TenthError::RuntimeError { message: "copy_file(源路径, 目标路径) 期望两个字符串参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "copy_file(源路径, 目标路径) 期望两个字符串参数".into() })
         }
     });
     vm.add_native("rename_file".into(), |vm, args| {
@@ -1287,7 +1287,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 let src_resolved = if let Some(ref sb) = vm.fs_sandbox {
                     match sb.check_read(src) {
                         Ok(p) => p,
-                        Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                     }
                 } else {
                     std::path::PathBuf::from(src)
@@ -1295,20 +1295,20 @@ pub fn register_all_natives(vm: &mut Vm) {
                 let dst_resolved = if let Some(ref sb) = vm.fs_sandbox {
                     match sb.check_write(dst) {
                         Ok(p) => p,
-                        Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                     }
                 } else {
                     std::path::PathBuf::from(dst)
                 };
                 match std::fs::rename(&src_resolved, &dst_resolved) {
                     Ok(()) => Ok(Value::Unit),
-                    Err(e) => Err(TenthError::RuntimeError { message: format!("重命名文件失败: {}", e) }),
+                    Err(e) => Err(TenthError::RuntimeError { line: None, col: None, message: format!("重命名文件失败: {}", e) }),
                 }
             } else {
-                Err(TenthError::RuntimeError { message: "rename_file(源路径, 目标路径) 期望两个字符串参数".into() })
+                Err(TenthError::RuntimeError { line: None, col: None, message: "rename_file(源路径, 目标路径) 期望两个字符串参数".into() })
             }
         } else {
-            Err(TenthError::RuntimeError { message: "rename_file(源路径, 目标路径) 期望两个字符串参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "rename_file(源路径, 目标路径) 期望两个字符串参数".into() })
         }
     });
     vm.add_native("randn".into(), |_vm, args| {
@@ -1413,7 +1413,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
             Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
             Some(Value::Float32(f)) => Ok(Value::Float32(f.abs())),
-            _ => Err(TenthError::RuntimeError { message: "abs() 需要一个数值参数".into() }),
+            _ => Err(TenthError::RuntimeError { line: None, col: None, message: "abs() 需要一个数值参数".into() }),
         }
     });
     vm.add_native("sqrt".into(), |_vm, args| {
@@ -1421,7 +1421,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             Some(Value::Float(f)) => Ok(Value::Float(f.sqrt())),
             Some(Value::Float32(f)) => Ok(Value::Float32(f.sqrt())),
             Some(Value::Int(n)) => Ok(Value::Float((*n as f64).sqrt())),
-            _ => Err(TenthError::RuntimeError { message: "sqrt() 需要一个数值参数".into() }),
+            _ => Err(TenthError::RuntimeError { line: None, col: None, message: "sqrt() 需要一个数值参数".into() }),
         }
     });
     vm.add_native("to_float".into(), |_vm, args| {
@@ -1437,15 +1437,15 @@ pub fn register_all_natives(vm: &mut Vm) {
                 } else if tensor.size() == 1 {
                     tensor.get(&vec![0usize; shape.len()])
                 } else {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: format!("to_float() 不接受多元素 Tensor (shape={:?})", shape),
                     });
                 };
-                scalar.map(Value::Float).ok_or_else(|| TenthError::RuntimeError {
+                scalar.map(Value::Float).ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "to_float() Tensor 标量提取失败".into(),
                 })
             }
-            _ => Err(TenthError::RuntimeError { message: "to_float() 需要一个数值参数".into() }),
+            _ => Err(TenthError::RuntimeError { line: None, col: None, message: "to_float() 需要一个数值参数".into() }),
         }
     });
     vm.add_native("to_f64".into(), |_vm, args| {
@@ -1461,15 +1461,15 @@ pub fn register_all_natives(vm: &mut Vm) {
                 } else if tensor.size() == 1 {
                     tensor.get(&vec![0usize; shape.len()])
                 } else {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: format!("to_f64() 不接受多元素 Tensor (shape={:?})", shape),
                     });
                 };
-                scalar.map(Value::Float).ok_or_else(|| TenthError::RuntimeError {
+                scalar.map(Value::Float).ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "to_f64() Tensor 标量提取失败".into(),
                 })
             }
-            _ => Err(TenthError::RuntimeError { message: "to_f64() 需要一个数值参数".into() }),
+            _ => Err(TenthError::RuntimeError { line: None, col: None, message: "to_f64() 需要一个数值参数".into() }),
         }
     });
     vm.add_native("to_f32".into(), |_vm, args| {
@@ -1485,15 +1485,15 @@ pub fn register_all_natives(vm: &mut Vm) {
                 } else if tensor.size() == 1 {
                     tensor.get(&vec![0usize; shape.len()])
                 } else {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: format!("to_f32() 不接受多元素 Tensor (shape={:?})", shape),
                     });
                 };
-                scalar.map(|v| Value::Float32(v as f32)).ok_or_else(|| TenthError::RuntimeError {
+                scalar.map(|v| Value::Float32(v as f32)).ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "to_f32() Tensor 标量提取失败".into(),
                 })
             }
-            _ => Err(TenthError::RuntimeError { message: "to_f32() 需要一个数值参数".into() }),
+            _ => Err(TenthError::RuntimeError { line: None, col: None, message: "to_f32() 需要一个数值参数".into() }),
         }
     });
     vm.add_native("tensor_from_vec".into(), |_vm, args| {
@@ -1511,10 +1511,10 @@ pub fn register_all_natives(vm: &mut Vm) {
                     Ok(Value::Tensor(Rc::new(RefCell::new(tensor))))
                 }
             } else {
-                Err(TenthError::RuntimeError { message: "tensor_from_vec(vec, rows, cols) 期望一个 Vec 和两个整数".into() })
+                Err(TenthError::RuntimeError { line: None, col: None, message: "tensor_from_vec(vec, rows, cols) 期望一个 Vec 和两个整数".into() })
             }
         } else {
-            Err(TenthError::RuntimeError { message: "tensor_from_vec(vec, rows, cols) 期望 3 个参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "tensor_from_vec(vec, rows, cols) 期望 3 个参数".into() })
         }
     });
 
@@ -1556,11 +1556,11 @@ pub fn register_all_natives(vm: &mut Vm) {
     //    VM 中闭包以 Value::FnRef 表示（Op::MakeClosure 创建），可通过 call_with_args 调用。
     vm.add_native("with_step_limit".into(), |vm, args| {
         if args.len() < 2 {
-            return Err(TenthError::RuntimeError {
+            return Err(TenthError::RuntimeError { line: None, col: None,
                 message: "with_step_limit(limit, fn) 需要 2 个参数".into(),
             });
         }
-        let limit = args[0].as_int().ok_or_else(|| TenthError::RuntimeError {
+        let limit = args[0].as_int().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
             message: "with_step_limit 的第一个参数必须是整数步数".into(),
         })?;
         let saved_budget = vm.step_budget;
@@ -1587,11 +1587,11 @@ pub fn register_all_natives(vm: &mut Vm) {
     // 4. with_timeout_ms(ms, fn) — 毫秒截止期内执行闭包
     vm.add_native("with_timeout_ms".into(), |vm, args| {
         if args.len() < 2 {
-            return Err(TenthError::RuntimeError {
+            return Err(TenthError::RuntimeError { line: None, col: None,
                 message: "with_timeout_ms(ms, fn) 需要 2 个参数".into(),
             });
         }
-        let ms = args[0].as_int().ok_or_else(|| TenthError::RuntimeError {
+        let ms = args[0].as_int().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
             message: "with_timeout_ms 的第一个参数必须是整数毫秒".into(),
         })?;
         let now = std::time::SystemTime::now()
@@ -1636,72 +1636,72 @@ pub fn register_all_natives(vm: &mut Vm) {
     // 7. f64_bits — f64 → i64 位表示
     vm.add_native("f64_bits".into(), |_vm, args| {
         if let Some(arg) = args.first() {
-            let f = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+            let f = arg.as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                 message: "f64_bits() 期望一个 f64 参数".into(),
             })?;
             Ok(Value::Int(f.to_bits() as i64))
         } else {
-            Err(TenthError::RuntimeError { message: "f64_bits() 期望 1 个参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "f64_bits() 期望 1 个参数".into() })
         }
     });
     // 8. f64_from_bits — i64 → f64
     vm.add_native("f64_from_bits".into(), |_vm, args| {
         if let Some(arg) = args.first() {
-            let n = arg.as_int().ok_or_else(|| TenthError::RuntimeError {
+            let n = arg.as_int().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                 message: "f64_from_bits() 期望一个 i64 参数".into(),
             })?;
             Ok(Value::Float(f64::from_bits(n as u64)))
         } else {
-            Err(TenthError::RuntimeError { message: "f64_from_bits() 期望 1 个参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "f64_from_bits() 期望 1 个参数".into() })
         }
     });
     // 9-12. 标量数学（sin/cos/ln/pow）— 与解释器一致，仅操作 Float（as_float 自动提升 Int/Float32）
     vm.add_native("sin".into(), |_vm, args| {
         if let Some(arg) = args.first() {
-            let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+            let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                 message: "sin() 期望一个数值参数".into(),
             })?;
             Ok(Value::Float(n.sin()))
         } else {
-            Err(TenthError::RuntimeError { message: "sin() 期望 1 个参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "sin() 期望 1 个参数".into() })
         }
     });
     vm.add_native("cos".into(), |_vm, args| {
         if let Some(arg) = args.first() {
-            let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+            let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                 message: "cos() 期望一个数值参数".into(),
             })?;
             Ok(Value::Float(n.cos()))
         } else {
-            Err(TenthError::RuntimeError { message: "cos() 期望 1 个参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "cos() 期望 1 个参数".into() })
         }
     });
     vm.add_native("ln".into(), |_vm, args| {
         if let Some(arg) = args.first() {
-            let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError {
+            let n = arg.as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                 message: "ln() 期望一个数值参数".into(),
             })?;
             if n <= 0.0 {
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "ln() 参数必须 > 0".into(),
                 });
             }
             Ok(Value::Float(n.ln()))
         } else {
-            Err(TenthError::RuntimeError { message: "ln() 期望 1 个参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "ln() 期望 1 个参数".into() })
         }
     });
     vm.add_native("pow".into(), |_vm, args| {
         if args.len() >= 2 {
-            let base = args[0].as_float().ok_or_else(|| TenthError::RuntimeError {
+            let base = args[0].as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                 message: "pow() 期望数值参数".into(),
             })?;
-            let exp = args[1].as_float().ok_or_else(|| TenthError::RuntimeError {
+            let exp = args[1].as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                 message: "pow() 期望数值参数".into(),
             })?;
             Ok(Value::Float(base.powf(exp)))
         } else {
-            Err(TenthError::RuntimeError { message: "pow() 期望 2 个参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "pow() 期望 2 个参数".into() })
         }
     });
     // 13. save_weights(path, tensors) — 张量列表序列化到二进制文件（ML 训练关键路径）
@@ -1713,7 +1713,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 let resolved = if let Some(ref sb) = vm.fs_sandbox {
                     match sb.check_write(path) {
                         Ok(p) => p,
-                        Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                     }
                 } else {
                     std::path::PathBuf::from(path)
@@ -1721,7 +1721,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 let tensors: &Rc<RefCell<Vec<Value>>> = match &args[1] {
                     Value::Vec(v) => v,
                     Value::Array(a) => a,
-                    _ => return Err(TenthError::RuntimeError {
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "save_weights 期望一个张量列表".into(),
                     }),
                 };
@@ -1800,7 +1800,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 return Ok(Value::Unit);
             }
         }
-        Err(TenthError::RuntimeError {
+        Err(TenthError::RuntimeError { line: None, col: None,
             message: "save_weights(路径, 张量列表)".into(),
         })
     });
@@ -1811,7 +1811,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             let resolved = if let Some(ref sb) = vm.fs_sandbox {
                 match sb.check_read(path) {
                     Ok(p) => p,
-                    Err(e) => return Err(TenthError::RuntimeError { message: e }),
+                    Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
                 }
             } else {
                 std::path::PathBuf::from(path)
@@ -1819,7 +1819,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             match std::fs::read(&resolved) {
                 Ok(bytes) => {
                     if bytes.len() < 4 {
-                        return Err(TenthError::RuntimeError {
+                        return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "load_weights: 文件过短".into(),
                         });
                     }
@@ -1932,7 +1932,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                                     ))));
                                 }
                                 other => {
-                                    return Err(TenthError::RuntimeError {
+                                    return Err(TenthError::RuntimeError { line: None, col: None,
                                         message: format!("load_weights: 未知 dtype={}", other),
                                     });
                                 }
@@ -1958,12 +1958,12 @@ pub fn register_all_natives(vm: &mut Vm) {
                     }
                     Ok(Value::Vec(Rc::new(RefCell::new(result))))
                 }
-                Err(e) => Err(TenthError::RuntimeError {
+                Err(e) => Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("load_weights: {}", e),
                 }),
             }
         } else {
-            Err(TenthError::RuntimeError {
+            Err(TenthError::RuntimeError { line: None, col: None,
                 message: "load_weights(路径)".into(),
             })
         }
@@ -1971,7 +1971,7 @@ pub fn register_all_natives(vm: &mut Vm) {
     // 15. format(template, args...) — 模板字符串格式化（{}/{{/}}）
     vm.add_native("format".into(), |_vm, args| {
         if args.is_empty() {
-            return Err(TenthError::RuntimeError {
+            return Err(TenthError::RuntimeError { line: None, col: None,
                 message: "format() 至少需要一个模板字符串".into(),
             });
         }
@@ -2014,7 +2014,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             }
             Ok(Value::String(result))
         } else {
-            Err(TenthError::RuntimeError {
+            Err(TenthError::RuntimeError { line: None, col: None,
                 message: "format() 第一个参数必须是字符串模板".into(),
             })
         }
@@ -2024,7 +2024,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         if let Some(Value::String(s)) = args.first() {
             Ok(Value::Int(s.trim().parse::<i64>().unwrap_or(0)))
         } else {
-            Err(TenthError::RuntimeError {
+            Err(TenthError::RuntimeError { line: None, col: None,
                 message: "parse_int() 期望一个字符串参数".into(),
             })
         }
@@ -2034,7 +2034,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         if let Some(Value::String(s)) = args.first() {
             Ok(Value::Float(s.trim().parse::<f64>().unwrap_or(0.0)))
         } else {
-            Err(TenthError::RuntimeError {
+            Err(TenthError::RuntimeError { line: None, col: None,
                 message: "parse_float() 期望一个字符串参数".into(),
             })
         }

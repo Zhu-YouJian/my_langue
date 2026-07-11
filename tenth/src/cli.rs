@@ -1,4 +1,4 @@
-//! 命令行参数解析：内存配置 / 文件系统沙箱 / 墙钟超时。
+﻿//! 命令行参数解析：内存配置 / 文件系统沙箱 / 墙钟超时。
 //!
 //! 从 `main.rs` 迁移而来（T1.1）。保持函数签名和实现不变，仅改为 `pub`。
 //! 这些解析器是纯函数，无副作用，便于复用和测试。
@@ -51,16 +51,16 @@ pub fn parse_fs_sandbox(args: &[String]) -> TenthResult<Option<FsSandbox>> {
         .and_then(|i| args.get(i + 1))
     {
         let sb = FsSandbox::new(Path::new(root), read_only)
-            .map_err(|e| crate::error::TenthError::RuntimeError { message: e })?;
+            .map_err(|e| crate::error::TenthError::RuntimeError { line: None, col: None, message: e })?;
         return Ok(Some(sb));
     }
     if args.iter().any(|a| a == "--fs-cwd") {
         let sb = FsSandbox::cwd(read_only)
-            .map_err(|e| crate::error::TenthError::RuntimeError { message: e })?;
+            .map_err(|e| crate::error::TenthError::RuntimeError { line: None, col: None, message: e })?;
         return Ok(Some(sb));
     }
     if read_only {
-        return Err(crate::error::TenthError::RuntimeError {
+        return Err(crate::error::TenthError::RuntimeError { line: None, col: None,
             message: "--read-only 必须配合 --fs-root <dir> 或 --fs-cwd 使用".into(),
         });
     }

@@ -67,8 +67,19 @@ pub enum TenthError {
         message: String,
     },
 
-    #[error("运行时错误 — {message}")]
-    RuntimeError { message: String },
+    #[error("{formatted}", formatted = runtime_error_format(*line, *col, message))]
+    RuntimeError {
+        line: Option<usize>,
+        col: Option<usize>,
+        message: String,
+    },
+
+    /// VM 编译期失败：VM 不支持某些结构（如特定语法/算子），
+    /// 在执行前就失败，**没有副作用**，可安全回退到解释器。
+    /// 与 `RuntimeError` 区分：`RuntimeError` 是运行时失败（可能已部分
+    /// 执行并产生副作用如 println），不应回退。
+    #[error("VM 编译期不支持 — {message}")]
+    VmCompileFailed { message: String },
 
     /// 形状错误（护城河 F：T2 FormalExplain 动态层）。
     /// 携带 tape 上下文与根因分析说明，由 autodiff backward 抛出。
@@ -122,6 +133,16 @@ pub enum TenthError {
 }
 
 pub type TenthResult<T> = Result<T, TenthError>;
+
+/// 格式化 RuntimeError 的显示文本（问题12）。
+/// 若 line/col 存在则显示 "第 L 行第 C 列：运行时错误 — message"，
+/// 否则保持原格式 "运行时错误 — message"。
+fn runtime_error_format(line: Option<usize>, col: Option<usize>, message: &str) -> String {
+    match (line, col) {
+        (Some(l), Some(c)) => format!("第 {} 行第 {} 列：运行时错误 — {}", l, c, message),
+        _ => format!("运行时错误 — {}", message),
+    }
+}
 
 /// 编译期警告（非致命）。用于内存/算力预估等不阻断编译的提示。
 #[derive(Debug, Clone, PartialEq)]
@@ -178,6 +199,7 @@ impl TenthError {
             TenthError::LexerError { line, col, .. }
             | TenthError::ParseError { line, col, .. }
             | TenthError::TypeError { line, col, .. } => (Some(*line), Some(*col)),
+            TenthError::RuntimeError { line, col, .. } => (*line, *col),
             _ => (None, None),
         }
     }
@@ -216,7 +238,7 @@ impl TenthError {
                     String::new()
                 }
             }
-            TenthError::RuntimeError { message } => {
+            TenthError::RuntimeError { message, .. } => {
                 if message.contains("未定义") {
                     extract_var_hint(message)
                 } else if message.contains("已移动") || message.contains("移动后") {

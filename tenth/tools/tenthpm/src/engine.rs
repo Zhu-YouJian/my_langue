@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+﻿use std::path::{Path, PathBuf};
 
 use tenth::hir::hir::HirProgram;
 use tenth::hir::lower::Lowerer;
@@ -167,7 +167,7 @@ fn register_natives(vm: &mut Vm) {
         if let Some(Value::String(path)) = args.first() {
             match std::fs::read_to_string(path) {
                 Ok(s) => Ok(Value::String(s)),
-                Err(e) => Err(tenth::error::TenthError::RuntimeError {
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                     message: format!("读取文件: {e}"),
                 }),
             }
@@ -180,17 +180,17 @@ fn register_natives(vm: &mut Vm) {
             if let (Value::String(path), Value::String(content)) = (&args[0], &args[1]) {
                 match std::fs::write(path, content) {
                     Ok(()) => Ok(Value::Unit),
-                    Err(e) => Err(tenth::error::TenthError::RuntimeError {
+                    Err(e) => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                         message: format!("写入文件失败: {}", e),
                     }),
                 }
             } else {
-                Err(tenth::error::TenthError::RuntimeError {
+                Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                     message: "write_file(路径, 内容) 期望两个字符串参数".into(),
                 })
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError {
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "write_file(路径, 内容) 期望两个字符串参数".into(),
             })
         }
@@ -207,7 +207,7 @@ fn register_natives(vm: &mut Vm) {
         if let Some(Value::String(path)) = args.first() {
             Ok(Value::Bool(std::path::Path::new(path).exists()))
         } else {
-            Err(tenth::error::TenthError::RuntimeError {
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "path_exists(路径) 期望一个字符串路径".into(),
             })
         }
@@ -216,7 +216,7 @@ fn register_natives(vm: &mut Vm) {
         if let Some(Value::String(path)) = args.first() {
             Ok(Value::Bool(std::path::Path::new(path).is_file()))
         } else {
-            Err(tenth::error::TenthError::RuntimeError {
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "path_is_file(路径) 期望一个字符串路径".into(),
             })
         }
@@ -225,7 +225,7 @@ fn register_natives(vm: &mut Vm) {
         if let Some(Value::String(path)) = args.first() {
             Ok(Value::Bool(std::path::Path::new(path).is_dir()))
         } else {
-            Err(tenth::error::TenthError::RuntimeError {
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "path_is_dir(路径) 期望一个字符串路径".into(),
             })
         }
@@ -240,12 +240,12 @@ fn register_natives(vm: &mut Vm) {
                         .collect();
                     Ok(Value::Vec(Rc::new(RefCell::new(items))))
                 }
-                Err(e) => Err(tenth::error::TenthError::RuntimeError {
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                     message: format!("列出目录失败: {}", e),
                 }),
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError {
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "list_dir(路径) 期望一个字符串路径".into(),
             })
         }
@@ -254,12 +254,12 @@ fn register_natives(vm: &mut Vm) {
         if let Some(Value::String(path)) = args.first() {
             match std::fs::create_dir_all(path) {
                 Ok(()) => Ok(Value::Unit),
-                Err(e) => Err(tenth::error::TenthError::RuntimeError {
+                Err(e) => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                     message: format!("创建目录失败: {}", e),
                 }),
             }
         } else {
-            Err(tenth::error::TenthError::RuntimeError {
+            Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "mkdir(路径) 期望一个字符串路径".into(),
             })
         }
@@ -267,21 +267,21 @@ fn register_natives(vm: &mut Vm) {
     vm.add_native("abs".into(), |_vm, args| match args.first() {
         Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
         Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
-        _ => Err(tenth::error::TenthError::RuntimeError {
+        _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: "abs() 需要一个数值参数".into(),
         }),
     });
     vm.add_native("sqrt".into(), |_vm, args| match args.first() {
         Some(Value::Float(f)) => Ok(Value::Float(f.sqrt())),
         Some(Value::Int(n)) => Ok(Value::Float((*n as f64).sqrt())),
-        _ => Err(tenth::error::TenthError::RuntimeError {
+        _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: "sqrt() 需要一个数值参数".into(),
         }),
     });
     vm.add_native("to_float".into(), |_vm, args| match args.first() {
         Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
         Some(Value::Float(f)) => Ok(Value::Float(*f)),
-        _ => Err(tenth::error::TenthError::RuntimeError {
+        _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: "to_float() 需要一个数值参数".into(),
         }),
     });

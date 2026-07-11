@@ -1,4 +1,4 @@
-//! VM 调度器、执行循环、私有算术、字段访问、autodiff 记录。
+﻿//! VM 调度器、执行循环、私有算术、字段访问、autodiff 记录。
 //!
 //! 从 runtime/vm.rs 拆分而来（T3b 架构重构）。
 
@@ -338,7 +338,7 @@ impl Vm {
                         locals = new_locals;
                         base = 0;  // callee 新栈从 0 开始
                     } else {
-                        return Err(TenthError::RuntimeError { message: format!("未定义的函数 '{}'", name) });
+                        return Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) });
                     }
                 }
                 Op::CallN(i, num_args) => {
@@ -397,7 +397,7 @@ impl Vm {
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
                         base = 0;  // callee 新栈从 0 开始
                     } else {
-                        return Err(TenthError::RuntimeError { message: format!("未定义的函数 '{}'", name) });
+                        return Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) });
                     }
                 }
                 Op::MethodCall(i, num_args) => {
@@ -912,7 +912,7 @@ impl Vm {
             }
             (Value::Tensor(t1), Value::Tensor(t2)) => {
                 let result_tensor = t1.borrow().add_tensor(&t2.borrow())
-                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                    .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                 let result = Rc::new(RefCell::new(result_tensor));
                 if self.recording { self.record_binary(TapeOp::Add, &t1, &t2, &result); }
                 Value::Tensor(result)
@@ -970,7 +970,7 @@ impl Vm {
             }
             (Value::Tensor(t1), Value::Tensor(t2)) => {
                 let result_tensor = t1.borrow().sub_tensor(&t2.borrow())
-                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                    .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                 let result = Rc::new(RefCell::new(result_tensor));
                 if self.recording { self.record_binary(TapeOp::Sub, &t1, &t2, &result); }
                 Value::Tensor(result)
@@ -1028,7 +1028,7 @@ impl Vm {
             }
             (Value::Tensor(t1), Value::Tensor(t2)) => {
                 let result_tensor = t1.borrow().mul_tensor(&t2.borrow())
-                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                    .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                 let result = Rc::new(RefCell::new(result_tensor));
                 if self.recording { self.record_binary(TapeOp::Mul, &t1, &t2, &result); }
                 Value::Tensor(result)
@@ -1093,7 +1093,7 @@ impl Vm {
             }
             (Value::Tensor(t1), Value::Tensor(t2)) => {
                 let result_tensor = t1.borrow().div_tensor(&t2.borrow())
-                    .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                    .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                 let result = Rc::new(RefCell::new(result_tensor));
                 if self.recording { self.record_binary(TapeOp::Div, &t1, &t2, &result); }
                 Value::Tensor(result)

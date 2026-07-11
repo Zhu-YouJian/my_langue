@@ -186,6 +186,10 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | ~~VM StoreField/code 切换死循环~~ | ✅ 已修复 (CallN/Ret 同步更新 code/strings) |
 | `runtime/autodiff.rs` | ✅ 张量级可用，已集成解释器（21 算子） |
 | Lowerer 大文件性能 | ⚠️ 实际不慢 (release 39 函数 <0.01s)，之前误判为瓶颈 |
+| ~~解释器 `values_eq` 缺跨类型数值分支（`1 == 1.0` 永远 false）~~ | ✅ 已修复 (2026-07-11)：`binary.rs:317-339` 补齐 `(Int,Float)`/`(Float,Int)`/`(Float32,Float32)` 等所有数值类型组合，与 VM `vm_eq` 及 `<`/`>` 行为对齐 |
+| ~~解释器 `values_eq` 缺 `(Float32,Float32)` 分支（f32 的 `==` 永远 false）~~ | ✅ 已修复 (2026-07-11)：同上 |
+| ~~VM 失败后静默回退到解释器，副作用双重执行~~ | ✅ 已修复 (2026-07-11)：新增 `TenthError::VmCompileFailed` 区分编译期失败（静默回退）与运行时失败（硬失败），`main.rs:162-176` + `vm_run` 均已处理 |
+| ~~解释器路径输出多余的 `= ()`~~ | ✅ 已修复 (2026-07-11)：`main.rs` 三处解释器输出均加 `if !matches!(val, Value::Unit)` 过滤，与 VM 路径一致 |
 
 ---
 

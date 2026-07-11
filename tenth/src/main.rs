@@ -1,4 +1,4 @@
-use std::rc::Rc;
+﻿use std::rc::Rc;
 use std::cell::RefCell;
 use tenth::error::TenthResult;
 use tenth::repl;
@@ -135,7 +135,7 @@ fn source_to_hir(source: &str) -> TenthResult<tenth::hir::hir::HirProgram> {
 /// Run a .th source file — try VM first, fall back to tree-walk interpreter.
 fn run_file(path: &str, config: MemoryConfig, sandbox: Option<FsSandbox>, timeout_ms: Option<u128>) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
-        .map_err(|e| tenth::error::TenthError::RuntimeError {
+        .map_err(|e| tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: format!("无法读取 {}：{}", path, e),
         })?;
     let hir = match source_to_hir(&source) {
@@ -159,16 +159,19 @@ fn run_file(path: &str, config: MemoryConfig, sandbox: Option<FsSandbox>, timeou
                 if !matches!(val, Value::Unit) { println!("= {}", val); }
                 return Ok(());
             }
+            Err(tenth::error::TenthError::VmCompileFailed { message }) => {
+                // 编译期失败：VM 不支持某些结构，无副作用，静默回退到解释器。
+                // 不打印 warning——这是正常的能力差异，不是错误。
+                eprintln!("[info] VM 不支持此程序结构（{}），使用解释器执行。", message);
+            }
             Err(e) => {
-                // Print a warning so the user knows why output may be duplicated or
-                // why the interpreter is being used. VM may have partially executed
-                // statements (e.g. println) before failing, so the interpreter
-                // re-running from the start can produce duplicate side effects.
-                eprintln!("[warning] VM 执行失败，回退到解释器重新执行整个程序。");
-                eprintln!("[warning] 回退原因: {}", e);
-                eprintln!("[warning] 注意: VM 可能已部分执行并产生副作用（如 println 输出），");
-                eprintln!("[warning]       解释器将从头重新执行，可能导致副作用重复。");
-                eprintln!("[warning] 如需禁用 VM，请设置环境变量 TENTH_NO_VM=1。");
+                // 问题15修复：运行时失败（VM 已部分执行并可能产生副作用），
+                // 不再静默回退到解释器（否则会导致副作用双重执行：println 两遍、
+                // 文件写两次、网络请求两次）。改为硬失败，避免静默的双重副作用。
+                eprintln!("[error] VM 运行时失败：{}", e);
+                eprintln!("[error] VM 可能已部分执行并产生副作用，不会回退到解释器以避免副作用重复。");
+                eprintln!("[error] 如需强制使用解释器（跳过 VM），请设置环境变量 TENTH_NO_VM=1 后重试。");
+                return Err(e);
             }
         }
     }
@@ -179,8 +182,9 @@ fn run_file(path: &str, config: MemoryConfig, sandbox: Option<FsSandbox>, timeou
     interpreter.fs_sandbox = sandbox;
     interpreter.deadline_ms = timeout_ms;
     match interpreter.execute_program(&hir)? {
-        Some(val) => println!("= {}", val),
-        None => {}
+        // 问题16修复：与 VM 路径一致，过滤 Unit 值避免输出 "= ()"
+        Some(val) if !matches!(val, Value::Unit) => println!("= {}", val),
+        _ => {}
     }
     Ok(())
 }
@@ -222,7 +226,8 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram, sandbox: Option<FsSandbox>, tim
                 vm.add_fn(name, closure_chunk);
             }
         } else {
-            return Err(tenth::error::TenthError::RuntimeError {
+            // 编译期失败：VM 不支持 main_expr 中的结构，无副作用，可安全回退
+            return Err(tenth::error::TenthError::VmCompileFailed {
                 message: "VM 编译失败".into(),
             });
         }
@@ -230,8 +235,8 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram, sandbox: Option<FsSandbox>, tim
     } else if hir.functions.is_empty() {
         Ok(Value::Unit)
     } else {
-        // Functions exist but none could be compiled for VM → signal fallback
-        Err(tenth::error::TenthError::RuntimeError {
+        // 编译期失败：函数存在但 VM 无法编译 main，无副作用，可安全回退
+        Err(tenth::error::TenthError::VmCompileFailed {
             message: "VM: main 未编译（包含不支持的结构，回退到解释器）".into(),
         })
     }
@@ -240,7 +245,7 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram, sandbox: Option<FsSandbox>, tim
 /// Compile a .th file to a .wasm binary.
 fn build_wasm(path: &str) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
-        .map_err(|e| tenth::error::TenthError::RuntimeError {
+        .map_err(|e| tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: format!("无法读取 {}：{}", path, e),
         })?;
     let hir = source_to_hir(&source)?;
@@ -248,7 +253,7 @@ fn build_wasm(path: &str) -> TenthResult<()> {
 
     let out_path = path.replace(".th", ".wasm");
     std::fs::write(&out_path, &wasm_bytes)
-        .map_err(|e| tenth::error::TenthError::RuntimeError {
+        .map_err(|e| tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: format!("无法写入 {}：{}", out_path, e),
         })?;
     println!("Compiled to {}", out_path);
@@ -258,7 +263,7 @@ fn build_wasm(path: &str) -> TenthResult<()> {
 /// Compile a .th file to WASM and execute it via wasmi.
 fn run_wasm(path: &str) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
-        .map_err(|e| tenth::error::TenthError::RuntimeError {
+        .map_err(|e| tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: format!("无法读取 {}：{}", path, e),
         })?;
     let hir = source_to_hir(&source)?;
@@ -269,7 +274,7 @@ fn run_wasm(path: &str) -> TenthResult<()> {
 #[allow(dead_code)]
 fn vm_run(path: &str) -> TenthResult<()> {
     let source = std::fs::read_to_string(path)
-        .map_err(|e| tenth::error::TenthError::RuntimeError {
+        .map_err(|e| tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: format!("无法读取 {}：{}", path, e),
         })?;
     let hir = source_to_hir(&source)?;
@@ -341,13 +346,11 @@ fn vm_run(path: &str) -> TenthResult<()> {
                 }
             }
             Err(e) => {
-                // Fallback to tree-walk interpreter
-                eprintln!("[vm] error: {} — falling back to interpreter", e);
-                let mut interpreter = Interpreter::new(&hir);
-                match interpreter.execute_program(&hir)? {
-                    Some(val) => println!("= {}", val),
-                    None => {}
-                }
+                // 问题15修复：VM 运行时失败不回退到解释器，避免双重副作用。
+                // 用户显式使用 --vm 子命令，应报告失败而非静默回退。
+                eprintln!("[vm] error: {}", e);
+                eprintln!("[vm] VM 运行时失败，不回退到解释器以避免副作用重复。");
+                return Err(e);
             }
         }
     } else if let Some(ref expr) = hir.main_expr {
@@ -366,8 +369,8 @@ fn vm_run(path: &str) -> TenthResult<()> {
             Err(_) => {
                 let mut interpreter = Interpreter::new(&hir);
                 match interpreter.execute_program(&hir)? {
-                    Some(val) => println!("= {}", val),
-                    None => {}
+                    Some(val) if !matches!(val, Value::Unit) => println!("= {}", val),
+                    _ => {}
                 }
             }
         }

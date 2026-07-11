@@ -45,8 +45,8 @@ impl Lowerer {
 
     pub(super) fn load_and_compile_file(&mut self, path: &std::path::Path, canonical_key: &str) -> TenthResult<Option<HirProgram>> {
         let source = std::fs::read_to_string(path)
-            .map_err(|e| TenthError::RuntimeError {
-                message: format!("cannot read import '{}': {}", path.display(), e),
+            .map_err(|e| TenthError::RuntimeError { line: None, col: None,
+                message: format!("无法读取导入 '{}': {}", path.display(), e),
             })?;
 
         self.imported_files.insert(canonical_key.to_string());

@@ -1,4 +1,4 @@
-//! VM 方法分派：call_method_priv（String/Vec/Map/Tensor/Struct/Float/Int 方法）。
+﻿//! VM 方法分派：call_method_priv（String/Vec/Map/Tensor/Struct/Float/Int 方法）。
 //!
 //! 从 runtime/vm.rs 拆分而来（T3b 架构重构）。
 
@@ -298,7 +298,7 @@ impl Vm {
                     }
                     "softmax" => {
                         let result_tensor = tensor.softmax().ok_or_else(|| {
-                            TenthError::RuntimeError { message: "softmax 计算失败".into() }
+                            TenthError::RuntimeError { line: None, col: None, message: "softmax 计算失败".into() }
                         })?;
                         let result = Rc::new(RefCell::new(result_tensor));
                         if self.recording { self.record_unary(TapeOp::Softmax, &t, &result); }
@@ -308,7 +308,7 @@ impl Vm {
                     // 梯度裁剪辅助：元素级裁剪到 [min_val, max_val]（与 interpreter 同步）
                     "clip_scalar" => {
                         if args.len() < 2 {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "clip_scalar() 需要 min_val 和 max_val".into(),
                             });
                         }
@@ -345,7 +345,7 @@ impl Vm {
                             .map(|a| a.as_int().unwrap_or(1) as usize)
                             .collect();
                         let result_tensor = tensor.reshape(&shape).ok_or_else(|| {
-                            TenthError::RuntimeError { message: format!("无法重塑形状为 {:?}", shape) }
+                            TenthError::RuntimeError { line: None, col: None, message: format!("无法重塑形状为 {:?}", shape) }
                         })?;
                         let result = Rc::new(RefCell::new(result_tensor));
                         if self.recording { self.record_unary(TapeOp::Reshape, &t, &result); }
@@ -354,7 +354,7 @@ impl Vm {
                     "flatten" => Ok(Value::Tensor(Rc::new(RefCell::new(tensor.flatten())))),
                     "transpose" => {
                         let result_tensor = tensor.transpose().ok_or_else(|| {
-                            TenthError::RuntimeError { message: "转置至少需要 2 个维度".into() }
+                            TenthError::RuntimeError { line: None, col: None, message: "转置至少需要 2 个维度".into() }
                         })?;
                         let result = Rc::new(RefCell::new(result_tensor));
                         if self.recording { self.record_unary(TapeOp::Transpose, &t, &result); }
@@ -365,7 +365,7 @@ impl Vm {
                             .map(|a| a.as_int().unwrap_or(0) as usize)
                             .collect();
                         let result = tensor.permute(&dims)
-                            .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                         Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                     }
                     "broadcast_to" => {
@@ -373,7 +373,7 @@ impl Vm {
                             .map(|a| a.as_int().unwrap_or(1) as usize)
                             .collect();
                         let result = tensor.broadcast_to(&target_shape).ok_or_else(|| {
-                            TenthError::RuntimeError { message: format!("无法广播到 {:?}", target_shape) }
+                            TenthError::RuntimeError { line: None, col: None, message: format!("无法广播到 {:?}", target_shape) }
                         })?;
                         Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                     }
@@ -384,7 +384,7 @@ impl Vm {
                         let dim = args.get(1).and_then(|a| a.as_int()).unwrap_or(0) as usize;
                         if let Value::Tensor(other) = &args[0] {
                             let result = tensor.cat(&other.borrow(), dim)
-                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                                .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                             Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                         } else {
                             err("cat() 第一个参数必须是张量")
@@ -397,7 +397,7 @@ impl Vm {
                         let value = args[1].as_float().unwrap_or(0.0);
                         if let Value::Tensor(mask_rc) = &args[0] {
                             let result_tensor = tensor.masked_fill(&mask_rc.borrow(), value)
-                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                                .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                             let result = Rc::new(RefCell::new(result_tensor));
                             if self.recording {
                                 if let Some(ref mut tape) = self.tape {
@@ -419,7 +419,7 @@ impl Vm {
                         }
                         if let Value::Tensor(other) = &args[0] {
                             let result_tensor = tensor.matmul(&other.borrow())
-                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                                .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                             let result = Rc::new(RefCell::new(result_tensor));
                             if self.recording { self.record_binary(TapeOp::MatMul, &t, &other, &result); }
                             Ok(Value::Tensor(result))
@@ -434,7 +434,7 @@ impl Vm {
                         }
                         if let Value::Tensor(other) = &args[0] {
                             let result_tensor = tensor.bmm(&other.borrow())
-                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                                .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                             let result = Rc::new(RefCell::new(result_tensor));
                             if self.recording { self.record_binary(TapeOp::BatchedMatMul, &t, &other, &result); }
                             Ok(Value::Tensor(result))
@@ -468,21 +468,21 @@ impl Vm {
                                 ));
                             }
                             let (cols, h_out, w_out) = tensor.im2col(k_h, k_w, stride, pad)
-                                .ok_or_else(|| TenthError::RuntimeError {
+                                .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                     message: "im2col 失败（输入必须是 4D）".into(),
                                 })?;
                             let c_out = w_shape[0];
                             let w_flat = w_data.reshape(&[c_out, w_shape[1] * w_shape[2] * w_shape[3]])
-                                .ok_or_else(|| TenthError::RuntimeError {
+                                .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                     message: "权重重塑失败".into(),
                                 })?;
                             let output_2d = cols.matmul(&w_flat.transpose()
-                                .ok_or_else(|| TenthError::RuntimeError {
+                                .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                     message: "权重转置失败".into(),
-                                })?).map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                                })?).map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                             let n = tensor.shape()[0];
                             let result_tensor = output_2d.reshape(&[n, c_out, h_out, w_out])
-                                .ok_or_else(|| TenthError::RuntimeError {
+                                .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                     message: "输出重塑失败".into(),
                                 })?;
                             let result = Rc::new(RefCell::new(result_tensor));

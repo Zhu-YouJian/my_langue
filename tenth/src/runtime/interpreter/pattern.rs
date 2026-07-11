@@ -1,4 +1,4 @@
-//! 字段访问与模式匹配。
+﻿//! 字段访问与模式匹配。
 //!
 //! 从 `interpreter.rs` 第 1142-1330 行迁移而来。包含：
 //! - `eval_field`：结构体/枚举字段访问（自动解引用 Ref/MutRef/Shared）
@@ -22,7 +22,7 @@ impl super::Interpreter {
                     let inner = rc.borrow();
                     return self.eval_field(&inner, field);
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("无法访问悬垂 &mut 引用上的字段 '{}'", field),
                 });
             }
@@ -40,7 +40,7 @@ impl super::Interpreter {
                         return Ok(Some(fval.clone()));
                     }
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("结构体没有字段 '{}'", field),
                 })
             }
@@ -50,7 +50,7 @@ impl super::Interpreter {
                         return Ok(Some(fval.clone()));
                     }
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("枚举变体没有字段 '{}'", field),
                 })
             }
@@ -59,11 +59,11 @@ impl super::Interpreter {
                 if field == "len" {
                     return Ok(Some(Value::Int(items.borrow().len() as i64)));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("Vec 没有字段 '{}'", field),
                 })
             }
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("无法访问 {:?} 上的字段 '{}'", v, field),
             }),
         }

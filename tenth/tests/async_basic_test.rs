@@ -1,4 +1,4 @@
-use tenth::lexer::lexer::Lexer;
+﻿use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::hir::lower::Lowerer;
 use tenth::runtime::vm::Vm;
@@ -44,12 +44,12 @@ fn run_vm(src: &str) -> Result<Value, String> {
     vm.add_native("async_sleep_ms".into(), |_vm, args| {
         let ms = match args.first() {
             Some(Value::Int(n)) => *n,
-            _ => return Err(tenth::error::TenthError::RuntimeError {
+            _ => return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "async_sleep_ms(ms) 期望一个整数".into(),
             }),
         };
         if ms < 0 {
-            return Err(tenth::error::TenthError::RuntimeError {
+            return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: format!("async_sleep_ms: 不接受负数（{}）", ms),
             });
         }

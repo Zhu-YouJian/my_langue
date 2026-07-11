@@ -1,4 +1,4 @@
-//! 反向传播实现：`impl Tape::backward` + 专用辅助函数。
+﻿//! 反向传播实现：`impl Tape::backward` + 专用辅助函数。
 //!
 //! 从 `autodiff.rs` 拆分而来（T3c 架构重构），保持原有可见性与语义不变。
 //! `backward` 方法原本是 `impl Tape` 的 `pub fn`，拆分后保持 `pub` 不变。
@@ -207,7 +207,7 @@ impl Tape {
                                 grad_arr.clone()
                             } else {
                                 // 方向 A：grad.ndim() > 2 不再静默 clone
-                                return Err(crate::error::TenthError::RuntimeError {
+                                return Err(crate::error::TenthError::RuntimeError { line: None, col: None,
                                     message: format!("MatMul 反向传播：grad ndim={} > 2 不支持（方向 A：不再静默兜底）", grad_arr.ndim()),
                                 });
                             };
@@ -296,25 +296,25 @@ impl Tape {
                                 });
                             }
                             if grad.ndim() != 3 {
-                                return Err(crate::error::TenthError::RuntimeError {
+                                return Err(crate::error::TenthError::RuntimeError { line: None, col: None,
                                     message: format!(
                                         "BatchedMatMul 反向传播：grad ndim={}（期望 3）",
                                         grad.ndim()
                                     ),
                                 });
                             }
-                            let b_t = b_ref.transpose().ok_or_else(|| crate::error::TenthError::RuntimeError {
+                            let b_t = b_ref.transpose().ok_or_else(|| crate::error::TenthError::RuntimeError { line: None, col: None,
                                 message: "BatchedMatMul 反向：b.transpose() 失败".into(),
                             })?;
-                            let a_t = a_ref.transpose().ok_or_else(|| crate::error::TenthError::RuntimeError {
+                            let a_t = a_ref.transpose().ok_or_else(|| crate::error::TenthError::RuntimeError { line: None, col: None,
                                 message: "BatchedMatMul 反向：a.transpose() 失败".into(),
                             })?;
                             // grad 是 TensorData，转为 Tensor 才能调用 bmm
                             let grad_t = Tensor::from_tensor_data(grad.clone());
-                            let d_a_t = grad_t.bmm(&b_t).map_err(|e| crate::error::TenthError::RuntimeError {
+                            let d_a_t = grad_t.bmm(&b_t).map_err(|e| crate::error::TenthError::RuntimeError { line: None, col: None,
                                 message: format!("BatchedMatMul 反向 d_a：{}", e),
                             })?;
-                            let d_b_t = a_t.bmm(&grad_t).map_err(|e| crate::error::TenthError::RuntimeError {
+                            let d_b_t = a_t.bmm(&grad_t).map_err(|e| crate::error::TenthError::RuntimeError { line: None, col: None,
                                 message: format!("BatchedMatMul 反向 d_b：{}", e),
                             })?;
                             // d_a_t/d_b_t 的 data 是 TensorData，直接保留 dtype
@@ -714,13 +714,13 @@ impl Tape {
                             BaseType::F32 => {
                                 let d_base = TensorData::F32(
                                     ArrayD::from_shape_vec(IxDyn(&base_shape), d_base_data.iter().map(|v| *v as f32).collect())
-                                        .map_err(|_| crate::error::TenthError::RuntimeError {
+                                        .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
                                             message: "Scatter 反向 d_base reshape 失败".into(),
                                         })?
                                 );
                                 let d_src = TensorData::F32(
                                     ArrayD::from_shape_vec(IxDyn(&index_shape), d_src_data.iter().map(|v| *v as f32).collect())
-                                        .map_err(|_| crate::error::TenthError::RuntimeError {
+                                        .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
                                             message: "Scatter 反向 d_src reshape 失败".into(),
                                         })?
                                 );
@@ -729,13 +729,13 @@ impl Tape {
                             _ => {
                                 let d_base = TensorData::F64(
                                     ArrayD::from_shape_vec(IxDyn(&base_shape), d_base_data)
-                                        .map_err(|_| crate::error::TenthError::RuntimeError {
+                                        .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
                                             message: "Scatter 反向 d_base reshape 失败".into(),
                                         })?
                                 );
                                 let d_src = TensorData::F64(
                                     ArrayD::from_shape_vec(IxDyn(&index_shape), d_src_data)
-                                        .map_err(|_| crate::error::TenthError::RuntimeError {
+                                        .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
                                             message: "Scatter 反向 d_src reshape 失败".into(),
                                         })?
                                 );
@@ -791,13 +791,13 @@ impl Tape {
                         let d_base = match node.dtype {
                             BaseType::F32 => TensorData::F32(
                                 ArrayD::from_shape_vec(IxDyn(&base_shape), d_base_data.iter().map(|v| *v as f32).collect())
-                                    .map_err(|_| crate::error::TenthError::RuntimeError {
+                                    .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
                                         message: "Gather 反向 d_base reshape 失败".into(),
                                     })?
                             ),
                             _ => TensorData::F64(
                                 ArrayD::from_shape_vec(IxDyn(&base_shape), d_base_data)
-                                    .map_err(|_| crate::error::TenthError::RuntimeError {
+                                    .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
                                         message: "Gather 反向 d_base reshape 失败".into(),
                                     })?
                             ),
@@ -834,7 +834,7 @@ impl Tape {
                             let data: Vec<f32> = a.iter().cloned().collect();
                             TensorData::F32(
                                 ArrayD::from_shape_vec(IxDyn(&orig_shape), data)
-                                    .map_err(|_| crate::error::TenthError::RuntimeError {
+                                    .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
                                         message: format!("Reshape 反向 reshape grad 到 {:?} 失败", orig_shape),
                                     })?
                             )
@@ -843,7 +843,7 @@ impl Tape {
                             let data: Vec<f64> = a.iter().cloned().collect();
                             TensorData::F64(
                                 ArrayD::from_shape_vec(IxDyn(&orig_shape), data)
-                                    .map_err(|_| crate::error::TenthError::RuntimeError {
+                                    .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
                                         message: format!("Reshape 反向 reshape grad 到 {:?} 失败", orig_shape),
                                     })?
                             )
@@ -853,7 +853,7 @@ impl Tape {
                             let data: Vec<f32> = a.iter().map(|v| v.to_f32()).collect();
                             TensorData::F32(
                                 ArrayD::from_shape_vec(IxDyn(&orig_shape), data)
-                                    .map_err(|_| crate::error::TenthError::RuntimeError {
+                                    .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
                                         message: format!("Reshape 反向 reshape grad 到 {:?} 失败", orig_shape),
                                     })?
                             )
@@ -862,7 +862,7 @@ impl Tape {
                             let data: Vec<f32> = a.iter().map(|v| v.to_f32()).collect();
                             TensorData::F32(
                                 ArrayD::from_shape_vec(IxDyn(&orig_shape), data)
-                                    .map_err(|_| crate::error::TenthError::RuntimeError {
+                                    .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
                                         message: format!("Reshape 反向 reshape grad 到 {:?} 失败", orig_shape),
                                     })?
                             )
@@ -915,7 +915,7 @@ impl Tape {
                                 let grad_2d: ArrayD<E> = {
                                     let v: Vec<E> = grad_arr.iter().cloned().collect();
                                     ArrayD::from_shape_vec(IxDyn(&[hw_out * n, c_out]), v).map_err(|_| {
-                                        crate::error::TenthError::RuntimeError {
+                                        crate::error::TenthError::RuntimeError { line: None, col: None,
                                             message: "Conv2D 反向 reshape grad 失败".into(),
                                         }
                                     })?
@@ -927,12 +927,12 @@ impl Tape {
                                 let d_w_flat_t = d_w_flat.view().reversed_axes().to_owned();
                                 let total_w: usize = w_shape.iter().product();
                                 if d_w_flat_t.len() != total_w {
-                                    return Err(crate::error::TenthError::RuntimeError {
+                                    return Err(crate::error::TenthError::RuntimeError { line: None, col: None,
                                         message: format!("Conv2D 反向 dW 元素数不匹配：{} != {}", d_w_flat_t.len(), total_w),
                                     });
                                 }
                                 let d_w = ArrayD::from_shape_vec(IxDyn(&w_shape), d_w_flat_t.iter().cloned().collect()).map_err(|_| {
-                                    crate::error::TenthError::RuntimeError {
+                                    crate::error::TenthError::RuntimeError { line: None, col: None,
                                         message: "Conv2D 反向 dW reshape 失败".into(),
                                     }
                                 })?;
@@ -941,7 +941,7 @@ impl Tape {
                                 let w_flat: ArrayD<E> = {
                                     let v: Vec<E> = w_arr.iter().cloned().collect();
                                     ArrayD::from_shape_vec(IxDyn(&[c_out, w_shape[1] * w_shape[2] * w_shape[3]]), v).map_err(|_| {
-                                        crate::error::TenthError::RuntimeError {
+                                        crate::error::TenthError::RuntimeError { line: None, col: None,
                                             message: "Conv2D 反向 w_flat reshape 失败".into(),
                                         }
                                     })?
@@ -951,12 +951,12 @@ impl Tape {
                                 // col2im: accumulate d_col back into input shape
                                 let x_total: usize = x_shape.iter().product();
                                 if d_col.len() != x_total {
-                                    return Err(crate::error::TenthError::RuntimeError {
+                                    return Err(crate::error::TenthError::RuntimeError { line: None, col: None,
                                         message: format!("Conv2D 反向 dX 元素数不匹配：d_col {} != x_total {}", d_col.len(), x_total),
                                     });
                                 }
                                 let d_x = ArrayD::from_shape_vec(IxDyn(&x_shape), d_col.iter().cloned().collect()).map_err(|_| {
-                                    crate::error::TenthError::RuntimeError {
+                                    crate::error::TenthError::RuntimeError { line: None, col: None,
                                         message: "Conv2D 反向 dX reshape 失败".into(),
                                     }
                                 })?;
@@ -1108,12 +1108,12 @@ fn unbroadcast<E: FloatElem>(
 /// 阶段 4：泛型化，支持 f32 和 f64。
 fn matmul_2d<E: FloatElem>(a: &ArrayD<E>, b: &ArrayD<E>) -> Result<ArrayD<E>, crate::error::TenthError> {
     let a2 = a.view().into_dimensionality::<ndarray::Ix2>().map_err(|_| {
-        crate::error::TenthError::RuntimeError {
+        crate::error::TenthError::RuntimeError { line: None, col: None,
             message: format!("matmul_2d 期望 2D 输入，实际 a shape = {:?}（方向 A：不再静默返回零数组）", a.shape()),
         }
     })?;
     let b2 = b.view().into_dimensionality::<ndarray::Ix2>().map_err(|_| {
-        crate::error::TenthError::RuntimeError {
+        crate::error::TenthError::RuntimeError { line: None, col: None,
             message: format!("matmul_2d 期望 2D 输入，实际 b shape = {:?}（方向 A：不再静默返回零数组）", b.shape()),
         }
     })?;

@@ -1,4 +1,4 @@
-//! Struct layout computation and field resolution.
+﻿//! Struct layout computation and field resolution.
 
 use std::collections::HashMap;
 use wasm_encoder::ValType;
@@ -68,7 +68,7 @@ impl WasmCompiler {
                 return Ok((sname.clone(), info.0, info.1, info.2));
             }
         }
-        Err(TenthError::RuntimeError {
+        Err(TenthError::RuntimeError { line: None, col: None,
             message: format!("WASM: 没有结构体包含字段 '{}'", field),
         })
     }

@@ -98,6 +98,58 @@ impl Lexer {
 
     fn read_number(&mut self, first: char) -> TenthResult<Token> {
         let span = self.span();
+
+        // 进制字面量：0x..（十六进制）/ 0b..（二进制）/ 0o..（八进制）
+        // 仅当 first=='0' 且下一个字符是进制前缀时进入此分支；
+        // 否则按原十进制路径处理（含 0、0.5、0e1 等）。
+        if first == '0' {
+            if let Some(prefix) = self.peek() {
+                let radix: u32 = match prefix {
+                    'x' | 'X' => 16,
+                    'b' | 'B' => 2,
+                    'o' | 'O' => 8,
+                    _ => 0,
+                };
+                if radix != 0 {
+                    self.advance(); // consume prefix (x/X/b/B/o/O)
+                    let mut digits = String::new();
+                    while let Some(ch) = self.peek() {
+                        let is_valid = match radix {
+                            16 => ch.is_ascii_hexdigit(),
+                            2 => ch == '0' || ch == '1',
+                            8 => ('0'..='7').contains(&ch),
+                            _ => false,
+                        };
+                        if is_valid {
+                            digits.push(ch);
+                            self.advance();
+                        } else if ch == '_' {
+                            // 支持下划线分隔（如 0xFF_FF）——跳过不加入 digits
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    if digits.is_empty() {
+                        return Err(TenthError::LexerError {
+                            line: span.line,
+                            col: span.col,
+                            message: format!("无效的进制字面量：0{}（前缀后无数字）", prefix),
+                        });
+                    }
+                    let n: i64 = i64::from_str_radix(&digits, radix).map_err(|_| TenthError::LexerError {
+                        line: span.line,
+                        col: span.col,
+                        message: format!("无效的进制字面量：0{}{}", prefix, digits),
+                    })?;
+                    return Ok(Token {
+                        kind: TokenKind::IntLiteral(n),
+                        span,
+                    });
+                }
+            }
+        }
+
         let mut s = String::new();
         s.push(first);
 
@@ -260,6 +312,64 @@ impl Lexer {
         Token { kind, span }
     }
 
+    /// 解析字符字面量：`'a'`、`'\n'`、`'\t'`、`'\r'`、`'\\'`、`'\''`、`'\0'` 等。
+    /// 调用前 `self.peek()` 必须是开头的 `'`。返回 `TokenKind::CharLiteral(char)`。
+    /// 风格参考 `read_string` 的转义处理。
+    fn read_char(&mut self) -> TenthResult<Token> {
+        let span = self.span();
+        self.advance(); // consume opening '
+
+        let c = match self.peek() {
+            None => {
+                return Err(TenthError::LexerError {
+                    line: span.line,
+                    col: span.col,
+                    message: "字符字面量未闭合".into(),
+                });
+            }
+            Some('\\') => {
+                self.advance(); // consume backslash
+                let escaped = match self.peek() {
+                    Some('n') => { self.advance(); '\n' }
+                    Some('t') => { self.advance(); '\t' }
+                    Some('r') => { self.advance(); '\r' }
+                    Some('\\') => { self.advance(); '\\' }
+                    Some('\'') => { self.advance(); '\'' }
+                    Some('"') => { self.advance(); '"' }
+                    Some('0') => { self.advance(); '\0' }
+                    Some(c) => { self.advance(); c }
+                    None => {
+                        return Err(TenthError::LexerError {
+                            line: span.line,
+                            col: span.col,
+                            message: "字符字面量转义序列不完整".into(),
+                        });
+                    }
+                };
+                escaped
+            }
+            Some(c) => {
+                self.advance();
+                c
+            }
+        };
+
+        // 期望闭合的 `'`
+        if self.peek() != Some('\'') {
+            return Err(TenthError::LexerError {
+                line: span.line,
+                col: span.col,
+                message: "字符字面量未闭合（缺少结尾 '）".into(),
+            });
+        }
+        self.advance(); // consume closing '
+
+        Ok(Token {
+            kind: TokenKind::CharLiteral(c),
+            span,
+        })
+    }
+
     fn read_string(&mut self) -> TenthResult<Token> {
         let span = self.span();
         self.advance(); // consume opening "
@@ -414,6 +524,10 @@ impl Lexer {
 
         if ch == '"' {
             return self.read_string();
+        }
+
+        if ch == '\'' {
+            return self.read_char();
         }
 
         self.advance();

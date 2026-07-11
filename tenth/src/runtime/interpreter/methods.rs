@@ -1,4 +1,4 @@
-//! 方法分派：String / Vec / Map / Range / Iterator / Tensor / Scalar 方法实现。
+﻿//! 方法分派：String / Vec / Map / Range / Iterator / Tensor / Scalar 方法实现。
 //!
 //! 从 `interpreter.rs` 第 1780-3099 行迁移而来。包含：
 //! - `eval_method_call` / `eval_native_method`：方法分派入口
@@ -31,7 +31,7 @@ impl super::Interpreter {
                     let inner = rc.borrow();
                     return self.eval_method_call(&inner, method, args);
                 }
-                return Err(TenthError::RuntimeError {
+                return Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("悬垂 &mut 引用上的方法 '{}'", method),
                 });
             }
@@ -74,7 +74,7 @@ impl super::Interpreter {
             Value::String(_) | Value::Vec(_) | Value::Map(_) | Value::Range { .. } | Value::Iterator(_) => {
                 self.eval_native_method(recv, method, args)
             }
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("此类型不支持方法 '{}'", method),
             }),
         }
@@ -87,7 +87,7 @@ impl super::Interpreter {
             Value::Map(m) => self.eval_map_method(m, method, args),
             Value::Range { start, end, inclusive } => self.eval_range_method(*start, *end, *inclusive, method, args),
             Value::Iterator(iter) => self.eval_iterator_method(iter, method, args),
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("原生方法 '{}' 不可用", method),
             }),
         }
@@ -105,7 +105,7 @@ impl super::Interpreter {
                         return Ok(Some(Value::String(s.replace(from.as_str(), to.as_str()))));
                     }
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "replace() 需要 2 个字符串参数".into(),
                 })
             }
@@ -116,7 +116,7 @@ impl super::Interpreter {
                         .collect();
                     return Ok(Some(Value::Vec(Rc::new(RefCell::new(parts)))));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "split() 需要一个字符串分隔符".into(),
                 })
             }
@@ -129,7 +129,7 @@ impl super::Interpreter {
                     let sub: String = chars[start..end].iter().collect();
                     return Ok(Some(Value::String(sub)));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "substring() 需要起始位置和长度".into(),
                 })
             }
@@ -137,7 +137,7 @@ impl super::Interpreter {
                 if let Some(Value::String(sub)) = args.first() {
                     return Ok(Some(Value::Bool(s.contains(sub.as_str()))));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "contains() 需要一个字符串参数".into(),
                 })
             }
@@ -145,7 +145,7 @@ impl super::Interpreter {
                 if let Some(Value::String(sub)) = args.first() {
                     return Ok(Some(Value::Int(s.find(sub.as_str()).map(|i| i as i64).unwrap_or(-1))));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "find() 需要一个字符串参数".into(),
                 })
             }
@@ -153,7 +153,7 @@ impl super::Interpreter {
                 if let Some(Value::String(prefix)) = args.first() {
                     return Ok(Some(Value::Bool(s.starts_with(prefix.as_str()))));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "starts_with() 需要一个字符串参数".into(),
                 })
             }
@@ -161,7 +161,7 @@ impl super::Interpreter {
                 if let Some(Value::String(suffix)) = args.first() {
                     return Ok(Some(Value::Bool(s.ends_with(suffix.as_str()))));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "ends_with() 需要一个字符串参数".into(),
                 })
             }
@@ -179,7 +179,7 @@ impl super::Interpreter {
                     let n = arg.as_int().unwrap_or(0).max(0) as usize;
                     return Ok(Some(Value::String(s.repeat(n))));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "repeat() 需要一个整数参数".into(),
                 })
             }
@@ -200,7 +200,7 @@ impl super::Interpreter {
                         None => Value::String(s.to_string()),
                     }));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "strip_prefix() 需要一个字符串参数".into(),
                 })
             }
@@ -211,11 +211,11 @@ impl super::Interpreter {
                         None => Value::String(s.to_string()),
                     }));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "strip_suffix() 需要一个字符串参数".into(),
                 })
             }
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("String 没有方法 '{}'", method),
             }),
         }
@@ -226,7 +226,7 @@ impl super::Interpreter {
             "len" => Ok(Some(Value::Int(items.borrow().len() as i64))),
             "push" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "push() 需要 1 个参数".into(),
                     });
                 }
@@ -241,7 +241,7 @@ impl super::Interpreter {
             }
             "get" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "get() 需要 1 个参数".into(),
                     });
                 }
@@ -249,7 +249,7 @@ impl super::Interpreter {
                 let vec = items.borrow();
                 match vec.get(idx) {
                     Some(v) => Ok(Some(v.clone())),
-                    None => Err(TenthError::RuntimeError {
+                    None => Err(TenthError::RuntimeError { line: None, col: None,
                         message: format!("Vec 索引 {} 越界", idx),
                     }),
                 }
@@ -258,14 +258,14 @@ impl super::Interpreter {
                 let mut vec = items.borrow_mut();
                 match vec.pop() {
                     Some(v) => Ok(Some(v)),
-                    None => Err(TenthError::RuntimeError {
+                    None => Err(TenthError::RuntimeError { line: None, col: None,
                             message: "对空 Vec 调用 pop()".into(),
                     }),
                 }
             }
             "set" => {
                 if args.len() != 2 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "set() 需要 2 个参数 (索引, 值)".into(),
                     });
                 }
@@ -278,7 +278,7 @@ impl super::Interpreter {
                     };
                     Ok(Some(Value::Unit))
                 } else {
-                    Err(TenthError::RuntimeError {
+                    Err(TenthError::RuntimeError { line: None, col: None,
                         message: format!("Vec 索引 {} 越界", idx),
                     })
                 }
@@ -289,7 +289,7 @@ impl super::Interpreter {
             }
             "contains" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "contains() 需要 1 个参数".into(),
                     });
                 }
@@ -305,7 +305,7 @@ impl super::Interpreter {
             }
             "index_of" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "index_of() 需要 1 个参数".into(),
                     });
                 }
@@ -323,31 +323,31 @@ impl super::Interpreter {
             }
             "remove" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "remove() 需要 1 个参数 (索引)".into(),
                     });
                 }
-                let idx = args[0].as_int().ok_or_else(|| TenthError::RuntimeError {
+                let idx = args[0].as_int().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                     message: "remove() 索引必须是整数".into(),
                 })? as usize;
                 let mut vec = items.borrow_mut();
                 if idx < vec.len() {
                     Ok(Some(vec.remove(idx)))
                 } else {
-                    Err(TenthError::RuntimeError {
+                    Err(TenthError::RuntimeError { line: None, col: None,
                         message: format!("Vec remove 索引 {} 越界", idx),
                     })
                 }
             }
             "join" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "join() 需要 1 个参数 (分隔符)".into(),
                     });
                 }
                 let delim = match &args[0] {
                     Value::String(s) => s.clone(),
-                    _ => return Err(TenthError::RuntimeError {
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "join() 分隔符必须是字符串".into(),
                     }),
                 };
@@ -370,7 +370,7 @@ impl super::Interpreter {
             }
             "slice" => {
                 if args.len() != 2 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "slice() 需要 2 个参数 (起始, 结束)".into(),
                     });
                 }
@@ -386,7 +386,7 @@ impl super::Interpreter {
             }
             "extend" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "extend() 需要 1 个参数 (Vec)".into(),
                     });
                 }
@@ -402,7 +402,7 @@ impl super::Interpreter {
                     }
                     return Ok(Some(Value::Unit));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "extend() 参数必须是 Vec".into(),
                 })
             }
@@ -471,7 +471,7 @@ impl super::Interpreter {
             }
             "chunks" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "chunks() 需要 1 个参数 (大小)".into(),
                     });
                 }
@@ -490,7 +490,7 @@ impl super::Interpreter {
             }
             "map" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "map() 需要 1 个参数 (闭包)".into(),
                     });
                 }
@@ -500,7 +500,7 @@ impl super::Interpreter {
             }
             "filter" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "filter() 需要 1 个参数 (闭包)".into(),
                     });
                 }
@@ -512,7 +512,7 @@ impl super::Interpreter {
                 // Vec.collect() is a no-op — already a Vec
                 Ok(Some(Value::Vec(items.clone())))
             }
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("Vec 没有方法 '{}'", method),
             }),
         }
@@ -525,7 +525,7 @@ impl super::Interpreter {
                 let len = if inclusive { (end - start + 1).max(0) as i64 } else { (end - start).max(0) as i64 };
                 Ok(Some(Value::Int(len)))
             }
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("Range 没有方法 '{}'", method),
             }),
         }
@@ -535,7 +535,7 @@ impl super::Interpreter {
         match method {
             "map" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "map() 需要 1 个参数 (闭包)".into(),
                     });
                 }
@@ -544,7 +544,7 @@ impl super::Interpreter {
             }
             "filter" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "filter() 需要 1 个参数 (闭包)".into(),
                     });
                 }
@@ -553,7 +553,7 @@ impl super::Interpreter {
             }
             "take" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "take() 需要 1 个参数 (n)".into(),
                     });
                 }
@@ -563,7 +563,7 @@ impl super::Interpreter {
             }
             "skip" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "skip() 需要 1 个参数 (n)".into(),
                     });
                 }
@@ -625,7 +625,7 @@ impl super::Interpreter {
                     _ => Ok(Some(Value::Int(0))),
                 }
             }
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("Iterator 没有方法 '{}'", method),
             }),
         }
@@ -659,7 +659,7 @@ impl super::Interpreter {
                 let result = self.call_named_fn(name, args, &span)?;
                 Ok(result.unwrap_or(Value::Unit))
             }
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("期望可调用值，得到 {:?}", closure),
             }),
         }
@@ -670,21 +670,21 @@ impl super::Interpreter {
             "len" => Ok(Some(Value::Int(m.borrow().len() as i64))),
             "get" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "get() 需要 1 个参数".into(),
                     });
                 }
                 if let Value::String(key) = &args[0] {
-                    Ok(m.borrow().get(key).cloned())
+                    Ok(m.borrow().get(key).cloned().or(Some(Value::Unit)))
                 } else {
-                    Err(TenthError::RuntimeError {
+                    Err(TenthError::RuntimeError { line: None, col: None,
                         message: "HashMap 键必须是字符串".into(),
                     })
                 }
             }
             "insert" => {
                 if args.len() != 2 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "insert() 需要 2 个参数".into(),
                     });
                 }
@@ -692,35 +692,35 @@ impl super::Interpreter {
                     m.borrow_mut().insert(key.clone(), args[1].clone());
                     Ok(Some(Value::Unit))
                 } else {
-                    Err(TenthError::RuntimeError {
+                    Err(TenthError::RuntimeError { line: None, col: None,
                         message: "HashMap 键必须是字符串".into(),
                     })
                 }
             }
             "contains_key" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "contains_key() 需要 1 个参数".into(),
                     });
                 }
                 if let Value::String(key) = &args[0] {
                     Ok(Some(Value::Bool(m.borrow().contains_key(key))))
                 } else {
-                    Err(TenthError::RuntimeError {
+                    Err(TenthError::RuntimeError { line: None, col: None,
                         message: "HashMap 键必须是字符串".into(),
                     })
                 }
             }
             "remove" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "remove() 需要 1 个参数".into(),
                     });
                 }
                 if let Value::String(key) = &args[0] {
                     Ok(m.borrow_mut().remove(key))
                 } else {
-                    Err(TenthError::RuntimeError {
+                    Err(TenthError::RuntimeError { line: None, col: None,
                         message: "HashMap 键必须是字符串".into(),
                     })
                 }
@@ -750,7 +750,7 @@ impl super::Interpreter {
             }
             "merge" => {
                 if args.len() != 1 {
-                    return Err(TenthError::RuntimeError {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
                         message: "merge() 需要 1 个参数 (HashMap)".into(),
                     });
                 }
@@ -762,11 +762,11 @@ impl super::Interpreter {
                     }
                     return Ok(Some(Value::Unit));
                 }
-                Err(TenthError::RuntimeError {
+                Err(TenthError::RuntimeError { line: None, col: None,
                     message: "merge() 参数必须是 HashMap".into(),
                 })
             }
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("HashMap 没有方法 '{}'", method),
             }),
         }
@@ -825,7 +825,7 @@ impl super::Interpreter {
                             let axis = args[0].as_int().unwrap_or(0) as usize;
                             match tensor.sum_axis(axis) {
                                 Ok(result) => Ok(Value::Tensor(Rc::new(RefCell::new(result)))),
-                                Err(msg) => Err(TenthError::RuntimeError { message: msg }),
+                                Err(msg) => Err(TenthError::RuntimeError { line: None, col: None, message: msg }),
                             }
                         }
                     }
@@ -893,20 +893,20 @@ impl super::Interpreter {
                     }
                     "matmul" => {
                         if args.len() != 1 {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "matmul() 需要 1 个参数".into(),
                             });
                         }
                         if let Value::Tensor(other) = &args[0] {
                             let result_tensor = tensor.matmul(&other.borrow())
-                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                                .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                             let result = Rc::new(RefCell::new(result_tensor));
                             if self.recording {
                                 self.record_binary(TapeOp::MatMul, t, other, &result);
                             }
                             Ok(Value::Tensor(result))
                         } else {
-                            Err(TenthError::RuntimeError {
+                            Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "matmul() 参数必须是张量".into(),
                             })
                         }
@@ -914,32 +914,32 @@ impl super::Interpreter {
                     "bmm" => {
                         // batched matmul: (B, M, K) @ (B, K, N) -> (B, M, N)
                         if args.len() != 1 {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "bmm() 需要 1 个参数".into(),
                             });
                         }
                         if let Value::Tensor(other) = &args[0] {
                             let result_tensor = tensor.bmm(&other.borrow())
-                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                                .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                             let result = Rc::new(RefCell::new(result_tensor));
                             if self.recording {
                                 self.record_binary(TapeOp::BatchedMatMul, t, other, &result);
                             }
                             Ok(Value::Tensor(result))
                         } else {
-                            Err(TenthError::RuntimeError {
+                            Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "bmm() 参数必须是张量".into(),
                             })
                         }
                     }
                     "transpose" => {
                         if !args.is_empty() {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "transpose() 不需要参数".into(),
                             });
                         }
                         let result_tensor = tensor.transpose().ok_or_else(|| {
-                            TenthError::RuntimeError {
+                            TenthError::RuntimeError { line: None, col: None,
                                 message: "转置至少需要 2 个维度".into(),
                             }
                         })?;
@@ -954,7 +954,7 @@ impl super::Interpreter {
                             .map(|a| a.as_int().unwrap_or(1) as usize)
                             .collect();
                         let result_tensor = tensor.reshape(&shape).ok_or_else(|| {
-                            TenthError::RuntimeError {
+                            TenthError::RuntimeError { line: None, col: None,
                                 message: format!("无法重塑形状为 {:?}", shape),
                             }
                         })?;
@@ -971,7 +971,7 @@ impl super::Interpreter {
                     "conv2d" => {
                         // x.conv2d(w, kernel_h, kernel_w, stride, pad)
                         if args.len() < 5 {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "conv2d() 需要 5 个参数: w, kH, kW, stride, pad".into(),
                             });
                         }
@@ -984,7 +984,7 @@ impl super::Interpreter {
                             let w_shape = w_data.shape();
                             // Validate weight shape: must be 4D (C_out, C_in, kH, kW)
                             if w_shape.len() != 4 {
-                                return Err(TenthError::RuntimeError {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
                                     message: format!(
                                         "conv2d: 权重必须是 4D (C_out, C_in, kH, kW)，得到 {:?}D",
                                         w_shape.len()
@@ -992,7 +992,7 @@ impl super::Interpreter {
                                 });
                             }
                             if w_shape[2] != k_h || w_shape[3] != k_w {
-                                return Err(TenthError::RuntimeError {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
                                     message: format!(
                                         "conv2d: 权重 kernel 尺寸 {:?} 与参数 kH={}, kW={} 不匹配",
                                         &w_shape[2..4], k_h, k_w
@@ -1001,24 +1001,24 @@ impl super::Interpreter {
                             }
                             // im2col: (N,C,H,W) → (N*H_out*W_out, C*kH*kW)
                             let (cols, h_out, w_out) = tensor.im2col(k_h, k_w, stride, pad)
-                                .ok_or_else(|| TenthError::RuntimeError {
+                                .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                     message: "im2col 失败 (输入必须是 4D)".into(),
                                 })?;
                             // Reshape weight: (C_out, C_in, kH, kW) → (C_out, C_in*kH*kW)
                             let c_out = w_shape[0];
                             // matmul: cols @ w_flat^T → (N*H_out*W_out, C_out)
                             let w_flat = w_data.reshape(&[c_out, w_shape[1] * w_shape[2] * w_shape[3]])
-                                .ok_or_else(|| TenthError::RuntimeError {
+                                .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                     message: "权重重塑失败".into(),
                                 })?;
                             let output_2d = cols.matmul(&w_flat.transpose()
-                                .ok_or_else(|| TenthError::RuntimeError {
+                                .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                     message: "权重转置失败".into(),
-                                })?).map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                                })?).map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                             // Reshape output to (N, C_out, H_out, W_out)
                             let n = tensor.shape()[0];
                             let result = output_2d.reshape(&[n, c_out, h_out, w_out])
-                                .ok_or_else(|| TenthError::RuntimeError {
+                                .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                     message: "输出重塑失败".into(),
                                 })?;
                             let result_rc = Rc::new(RefCell::new(result));
@@ -1039,7 +1039,7 @@ impl super::Interpreter {
                             }
                             return Ok(Value::Tensor(result_rc));
                         }
-                        return Err(TenthError::RuntimeError {
+                        return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "conv2d: 权重必须是张量".into(),
                         });
                     }
@@ -1048,7 +1048,7 @@ impl super::Interpreter {
                         // gamma, beta: 1D tensors of shape (C,)
                         // x: (N, C, H, W) — computes mean/var over N, H, W per channel
                         if args.len() < 3 {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "batchnorm() 需要 gamma, beta, eps".into(),
                             });
                         }
@@ -1056,7 +1056,7 @@ impl super::Interpreter {
                         if let (Value::Tensor(gamma_rc), Value::Tensor(beta_rc)) = (&args[0], &args[1]) {
                             let x_shape = tensor.shape();
                             if x_shape.len() < 2 {
-                                return Err(TenthError::RuntimeError {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
                                     message: "batchnorm 需要至少 2D 输入".into(),
                                 });
                             }
@@ -1141,13 +1141,13 @@ impl super::Interpreter {
                             }
                             return Ok(Value::Tensor(result));
                         }
-                        return Err(TenthError::RuntimeError {
+                        return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "batchnorm: gamma 和 beta 必须是张量".into(),
                         });
                     }
                     "dropout" => {
                         if args.is_empty() {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "dropout() 需要 1 个参数 (比率)".into(),
                             });
                         }
@@ -1193,7 +1193,7 @@ impl super::Interpreter {
                     "layer_norm" => {
                         // x.layer_norm(gamma, beta, eps)
                         if args.len() < 2 {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "layer_norm() 需要 gamma, beta, [eps]".into(),
                             });
                         }
@@ -1209,7 +1209,7 @@ impl super::Interpreter {
                             let g_shape = gamma_rc.borrow().shape();
                             let b_shape = beta_rc.borrow().shape();
                             if g_shape.len() != 1 || g_shape[0] != axis_len {
-                                return Err(TenthError::RuntimeError {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
                                     message: format!(
                                         "layer_norm: gamma shape {:?} does not match last axis length {}",
                                         g_shape, axis_len
@@ -1217,7 +1217,7 @@ impl super::Interpreter {
                                 });
                             }
                             if b_shape.len() != 1 || b_shape[0] != axis_len {
-                                return Err(TenthError::RuntimeError {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
                                     message: format!(
                                         "layer_norm: beta shape {:?} does not match last axis length {}",
                                         b_shape, axis_len
@@ -1278,7 +1278,7 @@ impl super::Interpreter {
                             }
                             return Ok(Value::Tensor(result));
                         }
-                        return Err(TenthError::RuntimeError {
+                        return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "layer_norm: gamma 和 beta 必须是张量".into(),
                         });
                     }
@@ -1293,17 +1293,17 @@ impl super::Interpreter {
                     "cat" => {
                         // x.cat(other, dim)
                         if args.is_empty() {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "cat() 至少需要 1 个参数 (other, [dim])".into(),
                             });
                         }
                         let dim = args.get(1).and_then(|a| a.as_int()).unwrap_or(0) as usize;
                         if let Value::Tensor(other) = &args[0] {
                             let result_tensor = tensor.cat(&other.borrow(), dim)
-                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                                .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                             Ok(Value::Tensor(Rc::new(RefCell::new(result_tensor))))
                         } else {
-                            Err(TenthError::RuntimeError {
+                            Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "cat() 第一个参数必须是张量".into(),
                             })
                         }
@@ -1311,14 +1311,14 @@ impl super::Interpreter {
                     "masked_fill" => {
                         // x.masked_fill(mask, value)
                         if args.len() < 2 {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "masked_fill() 需要 mask 和 value".into(),
                             });
                         }
                         let value = args[1].as_float().unwrap_or(0.0);
                         if let Value::Tensor(mask_rc) = &args[0] {
                             let result_tensor = tensor.masked_fill(&mask_rc.borrow(), value)
-                                .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                                .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                             let result = Rc::new(RefCell::new(result_tensor));
                             if self.recording {
                                 let node_id = if let Some(ref mut tape) = self.tape {
@@ -1331,7 +1331,7 @@ impl super::Interpreter {
                             }
                             Ok(Value::Tensor(result))
                         } else {
-                            Err(TenthError::RuntimeError {
+                            Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "masked_fill() mask 必须是张量".into(),
                             })
                         }
@@ -1342,11 +1342,11 @@ impl super::Interpreter {
                             .map(|a| a.as_int().unwrap_or(0) as usize)
                             .collect();
                         let result_tensor = tensor.permute(&dims)
-                            .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                            .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                         Ok(Value::Tensor(Rc::new(RefCell::new(result_tensor))))
                     }
                     "softmax" => {
-                        let result_tensor = tensor.softmax().ok_or_else(|| TenthError::RuntimeError {
+                        let result_tensor = tensor.softmax().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "softmax 失败".into(),
                         })?;
                         let result = Rc::new(RefCell::new(result_tensor));
@@ -1360,7 +1360,7 @@ impl super::Interpreter {
                     // 用于 std::optim::clip 模块，避免依赖 tensor mask
                     "clip_scalar" => {
                         if args.len() < 2 {
-                            return Err(TenthError::RuntimeError {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
                                 message: "clip_scalar() 需要 min_val 和 max_val".into(),
                             });
                         }
@@ -1390,15 +1390,15 @@ impl super::Interpreter {
                             Tensor::from_data(ArrayD::from_shape_vec(IxDyn(&[shape.len()]), shape).unwrap())
                         ))))
                     }
-                    _ => Err(TenthError::RuntimeError {
+                    _ => Err(TenthError::RuntimeError { line: None, col: None,
                         message: format!("未知的张量方法: {}", method),
                     }),
                 }
             }
-            Value::Struct { .. } => Err(TenthError::RuntimeError {
+            Value::Struct { .. } => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("未知的方法 '{}'", method),
             }),
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("此类型不支持方法 '{}'", method),
             }),
         }
@@ -1410,7 +1410,7 @@ impl super::Interpreter {
             "abs" => Ok(Value::Float(val.abs())),
             "exp" => Ok(Value::Float(val.exp())),
             "log" => Ok(Value::Float(val.ln())),
-            _ => Err(TenthError::RuntimeError {
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("标量上未知的方法 '{}'", method),
             }),
         }

@@ -1,4 +1,4 @@
-//! 二元/一元运算与值转换。
+﻿//! 二元/一元运算与值转换。
 //!
 //! 从 `interpreter.rs` 第 1365-1778 行迁移而来。包含：
 //! - `eval_binary`：算术/比较/逻辑运算（含 f32 标量与张量分支）
@@ -30,7 +30,7 @@ impl super::Interpreter {
                 (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
                 (Value::Tensor(t1), Value::Tensor(t2)) => {
                     let result_tensor = t1.borrow().add_tensor(&t2.borrow())
-                        .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                        .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                     let result = Rc::new(RefCell::new(result_tensor));
                     if self.recording {
                         self.record_binary(TapeOp::Add, t1, t2, &result);
@@ -72,7 +72,7 @@ impl super::Interpreter {
                     }
                     Ok(Value::Tensor(result))
                 }
-                _ => Err(TenthError::RuntimeError {
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "加法类型不匹配".into(),
                 }),
             },
@@ -89,7 +89,7 @@ impl super::Interpreter {
                 (Value::Float32(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
                 (Value::Tensor(t1), Value::Tensor(t2)) => {
                     let result_tensor = t1.borrow().sub_tensor(&t2.borrow())
-                        .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                        .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                     let result = Rc::new(RefCell::new(result_tensor));
                     if self.recording {
                         self.record_binary(TapeOp::Sub, t1, t2, &result);
@@ -133,7 +133,7 @@ impl super::Interpreter {
                     }
                     Ok(Value::Tensor(result))
                 }
-                _ => Err(TenthError::RuntimeError {
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "减法类型不匹配".into(),
                 }),
             },
@@ -150,7 +150,7 @@ impl super::Interpreter {
                 (Value::Float32(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
                 (Value::Tensor(t1), Value::Tensor(t2)) => {
                     let result_tensor = t1.borrow().mul_tensor(&t2.borrow())
-                        .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                        .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                     let result = Rc::new(RefCell::new(result_tensor));
                     if self.recording {
                         self.record_binary(TapeOp::Mul, t1, t2, &result);
@@ -192,14 +192,14 @@ impl super::Interpreter {
                     }
                     Ok(Value::Tensor(result))
                 }
-                _ => Err(TenthError::RuntimeError {
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "乘法类型不匹配".into(),
                 }),
             },
             BinOp::Div => match (l, r) {
                 (Value::Int(a), Value::Int(b)) => {
                     if *b == 0 {
-                        return Err(TenthError::RuntimeError {
+                        return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "整数除零".into(),
                         });
                     }
@@ -216,7 +216,7 @@ impl super::Interpreter {
                 (Value::Float32(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
                 (Value::Tensor(t1), Value::Tensor(t2)) => {
                     let result_tensor = t1.borrow().div_tensor(&t2.borrow())
-                        .map_err(|msg| TenthError::RuntimeError { message: msg })?;
+                        .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
                     let result = Rc::new(RefCell::new(result_tensor));
                     if self.recording {
                         self.record_binary(TapeOp::Div, t1, t2, &result);
@@ -250,20 +250,20 @@ impl super::Interpreter {
                     }
                     Ok(Value::Tensor(result))
                 }
-                _ => Err(TenthError::RuntimeError {
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "除法类型不匹配".into(),
                 }),
             },
             BinOp::Mod => match (l, r) {
                 (Value::Int(a), Value::Int(b)) => {
                     if *b == 0 {
-                        return Err(TenthError::RuntimeError {
+                        return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "整数取模除零".into(),
                         });
                     }
                     Ok(Value::Int(a % b))
                 }
-                _ => Err(TenthError::RuntimeError {
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "取模仅支持整数".into(),
                 }),
             },
@@ -275,7 +275,7 @@ impl super::Interpreter {
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) < *b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a < *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a < b)),
-                _ => Err(TenthError::RuntimeError {
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "比较需要数值类型".into(),
                 }),
             },
@@ -285,7 +285,7 @@ impl super::Interpreter {
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) > *b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a > *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a > b)),
-                _ => Err(TenthError::RuntimeError {
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "比较需要数值类型".into(),
                 }),
             },
@@ -295,7 +295,7 @@ impl super::Interpreter {
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) <= *b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a <= *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a <= b)),
-                _ => Err(TenthError::RuntimeError {
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "比较需要数值类型".into(),
                 }),
             },
@@ -305,7 +305,7 @@ impl super::Interpreter {
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) >= *b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a >= *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a >= b)),
-                _ => Err(TenthError::RuntimeError {
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "比较需要数值类型".into(),
                 }),
             },
@@ -318,6 +318,15 @@ impl super::Interpreter {
         match (l, r) {
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => (a - b).abs() < 1e-10,
+            (Value::Float32(a), Value::Float32(b)) => (a - b).abs() < 1e-6,
+            // 跨类型数值比较：与 <、>、<=、>= 保持一致（问题7）
+            (Value::Int(a), Value::Float(b)) => ((*a as f64) - b).abs() < 1e-10,
+            (Value::Float(a), Value::Int(b)) => (a - (*b as f64)).abs() < 1e-10,
+            // Float32 与其他数值类型跨类型比较（问题8 扩展，保持一致性）
+            (Value::Int(a), Value::Float32(b)) => ((*a as f32) - b).abs() < 1e-6,
+            (Value::Float32(a), Value::Int(b)) => (a - (*b as f32)).abs() < 1e-6,
+            (Value::Float(a), Value::Float32(b)) => ((*a as f32) - b).abs() < 1e-6,
+            (Value::Float32(a), Value::Float(b)) => (a - (*b as f32)).abs() < 1e-6,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
@@ -409,7 +418,7 @@ impl super::Interpreter {
                     let result = t.borrow().neg();
                     Ok(Value::Tensor(Rc::new(RefCell::new(result))))
                 }
-                _ => Err(TenthError::RuntimeError {
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "无法对此值取负".into(),
                 }),
             },
