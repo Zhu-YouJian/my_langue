@@ -20,6 +20,10 @@ mod backward;
 
 pub use tape_op::{TapeNode, TapeOp};
 
+// 护城河 F Phase 1：op_name 去重——re-export 供 relation_debugger 复用。
+// grad 模块本身是私有子模块，通过此 re-export 暴露 op_name 到 crate 内。
+pub(crate) use grad::op_name;
+
 // ── Tape ──────────────────────────────────────────────────────────────
 
 pub struct Tape {

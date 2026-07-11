@@ -10,6 +10,13 @@ use super::tape_op::{TapeNode, TapeOp};
 /// 阶段 4：支持 TensorData 累加（同 dtype 直接加，异 dtype 提升为 f64）。
 /// Phase 2：F16/BF16 grad 统一提升为 F32 中间表示累加（AMP 策略），
 /// 避免 F16 溢出（max≈65504）和 BF16 精度损失。
+///
+/// 护城河 F Phase 2：DtypeConflict 检测（保守策略）。
+/// 当 existing 与 g 的 dtype 不一致（F32 vs F64，经 AMP 提升后）时，
+/// 输出 warning 到 stderr。不改为 error 以避免破坏现有测试——保持现有的
+/// 静默提升为 f64 的行为，仅增加可观测性。formal_explain 侧通过
+/// `classify_error_type` 检测 error_msg 中的 "dtype"/"f32/f64" 关键词
+/// 标记 DtypeConflict，与本检测互补。
 pub(super) fn acc_node_grad(node_grads: &mut [Option<TensorData>], id: usize, g: &TensorData) {
     let existing = node_grads[id].take();
     // Phase 2: F16/BF16 统一提升为 F32 中间表示（AMP 策略）
@@ -23,6 +30,20 @@ pub(super) fn acc_node_grad(node_grads: &mut [Option<TensorData>], id: usize, g:
         TensorData::BF16(a) => TensorData::F32(a.mapv(|v| v.to_f32())),
         other => other.clone(),
     };
+    // 护城河 F Phase 2：DtypeConflict 检测（保守策略，仅 warning 不改 error）
+    // AMP 提升后 existing/g_normalized 只剩 F32/F64；二者不一致即为 dtype 冲突。
+    if let Some(ref cur) = existing {
+        let cur_is_f64 = matches!(cur, TensorData::F64(_));
+        let g_is_f64 = matches!(g_normalized, TensorData::F64(_));
+        if cur_is_f64 != g_is_f64 {
+            let cur_dt = if cur_is_f64 { "f64" } else { "f32" };
+            let g_dt = if g_is_f64 { "f64" } else { "f32" };
+            eprintln!(
+                "警告（护城河 F DtypeConflict）：节点 #{} 梯度累积 dtype 不一致（existing={} vs new={}），已静默提升为 f64",
+                id, cur_dt, g_dt
+            );
+        }
+    }
     node_grads[id] = match (existing, &g_normalized) {
         (Some(TensorData::F64(cur)), TensorData::F64(g2)) => Some(TensorData::F64(&cur + g2)),
         (Some(TensorData::F32(cur)), TensorData::F32(g2)) => Some(TensorData::F32(&cur + g2)),
@@ -50,9 +71,20 @@ pub(super) fn propagate_grad(
         acc_node_grad(node_grads, node.inputs[input_idx], g);
     } else {
         if let Some(t) = node.input_tensors.get(input_idx) {
+            // 护城河 F Phase 1：结构化提取 (v_err=node.id, op=op_name, expected=input.shape, actual=grad.shape)
+            // 注意：先取 input shape 再 borrow_mut，避免 RefCell 二次 borrow。
+            let input_shape = t.borrow().shape();
+            let grad_shape = g.shape().to_vec();
+            let op_str = op_name(&node.op);
             t.borrow_mut().acc_grad(g).map_err(|e| {
-                crate::error::TenthError::RuntimeError {
-                    message: format!("反向传播 shape 错误（节点 #{} {} direct input {}）：{}", node.id, op_name(&node.op), input_idx, e),
+                crate::error::TenthError::ShapeMismatch {
+                    context: crate::error::TapeErrorContext {
+                        tape_node_id: node.id,
+                        op: op_str.to_string(),
+                        expected_shape: input_shape,
+                        actual_shape: grad_shape,
+                    },
+                    message: format!("反向传播 shape 错误（节点 #{} {} direct input {}）：{}", node.id, op_str, input_idx, e),
                 }
             })?;
         }
@@ -61,7 +93,10 @@ pub(super) fn propagate_grad(
 }
 
 /// 人类可读的 TapeOp 名称（用于错误信息）。
-fn op_name(op: &TapeOp) -> &'static str {
+///
+/// 护城河 F：`pub(crate)` 以便 `relation_debugger` 复用，避免重复实现
+///（原先 `relation_debugger.rs` 有一份同步副本，现已删除）。
+pub(crate) fn op_name(op: &TapeOp) -> &'static str {
     match op {
         TapeOp::Input => "Input",
         TapeOp::Add => "Add",

@@ -7,10 +7,11 @@
 
 use ndarray::{ArrayD, IxDyn};
 use super::tape_op::{FloatElem, TapeOp, dispatch_float};
-use super::grad::propagate_grad;
+use super::grad::{op_name, propagate_grad};
 use crate::runtime::tensor::{Tensor, TensorData};
 use crate::hir::types::BaseType;
 use super::Tape;
+use crate::error::TapeErrorContext;
 
 impl Tape {
     // ── backward pass ─────────────────────────────────────────────────
@@ -53,8 +54,17 @@ impl Tape {
                 TapeOp::Input => {
                     // Leaf: accumulate gradient into the parameter tensor.
                     // 方向 A：此处校验梯度 shape 与参数 shape 一致（消除 silent squeeze）
+                    // 护城河 F Phase 1：结构化提取 (v_err=node.id, op="Input", expected=param.shape, actual=grad.shape)
+                    let param_shape = node.input_tensors[0].borrow().shape();
+                    let grad_shape = grad.shape().to_vec();
                     node.input_tensors[0].borrow_mut().acc_grad(&grad).map_err(|e| {
-                        crate::error::TenthError::RuntimeError {
+                        crate::error::TenthError::ShapeMismatch {
+                            context: TapeErrorContext {
+                                tape_node_id: node.id,
+                                op: "Input".to_string(),
+                                expected_shape: param_shape,
+                                actual_shape: grad_shape,
+                            },
                             message: format!("反向传播 shape 错误（节点 #{} Input）：{}", node.id, e),
                         }
                     })?;
@@ -64,14 +74,15 @@ impl Tape {
                     let shapes: Vec<Vec<usize>> = (0..node.input_tensors.len().min(2))
                         .map(|i| node.input_tensors[i].borrow().shape())
                         .collect();
+                    let op_str = op_name(&node.op);
                     dispatch_float!(node.dtype, E, {
                         let grad_arr = E::from_tensor_data(&grad);
                         let sign = E::from_f64(sign_f64);
                         for (i, input_shape) in shapes.iter().enumerate() {
                             let g_i = if i == 0 {
-                                unbroadcast(&grad_arr, input_shape)?
+                                unbroadcast(&grad_arr, input_shape, node.id, op_str)?
                             } else {
-                                unbroadcast(&grad_arr, input_shape)?.mapv(|v| v * sign)
+                                unbroadcast(&grad_arr, input_shape, node.id, op_str)?.mapv(|v| v * sign)
                             };
                             propagate_grad(node, i, &E::into_tensor_data(g_i), &mut node_grads)?;
                         }
@@ -84,12 +95,13 @@ impl Tape {
                         let b = node.input_tensors[1].borrow();
                         (a.data.clone(), a.shape(), b.data.clone(), b.shape())
                     };
+                    let op_str = op_name(&node.op);
                     dispatch_float!(node.dtype, E, {
                         let a_arr = E::from_tensor_data(&a_data);
                         let b_arr = E::from_tensor_data(&b_data);
                         let grad_arr = E::from_tensor_data(&grad);
-                        let ga = unbroadcast(&(&grad_arr * &b_arr), &a_shape)?;
-                        let gb = unbroadcast(&(&grad_arr * &a_arr), &b_shape)?;
+                        let ga = unbroadcast(&(&grad_arr * &b_arr), &a_shape, node.id, op_str)?;
+                        let gb = unbroadcast(&(&grad_arr * &a_arr), &b_shape, node.id, op_str)?;
                         propagate_grad(node, 0, &E::into_tensor_data(ga), &mut node_grads)?;
                         propagate_grad(node, 1, &E::into_tensor_data(gb), &mut node_grads)?;
                     });
@@ -100,12 +112,13 @@ impl Tape {
                         let b = node.input_tensors[1].borrow();
                         (a.data.clone(), a.shape(), b.data.clone(), b.shape())
                     };
+                    let op_str = op_name(&node.op);
                     dispatch_float!(node.dtype, E, {
                         let a_arr = E::from_tensor_data(&a_data);
                         let b_arr = E::from_tensor_data(&b_data);
                         let grad_arr = E::from_tensor_data(&grad);
-                        let ga = unbroadcast(&(&grad_arr / &b_arr), &a_shape)?;
-                        let gb = unbroadcast(&(-&grad_arr * &a_arr / (&b_arr * &b_arr)), &b_shape)?;
+                        let ga = unbroadcast(&(&grad_arr / &b_arr), &a_shape, node.id, op_str)?;
+                        let gb = unbroadcast(&(-&grad_arr * &a_arr / (&b_arr * &b_arr)), &b_shape, node.id, op_str)?;
                         propagate_grad(node, 0, &E::into_tensor_data(ga), &mut node_grads)?;
                         propagate_grad(node, 1, &E::into_tensor_data(gb), &mut node_grads)?;
                     });
@@ -142,13 +155,26 @@ impl Tape {
                         };
 
                         // 方向 A：校验输入维度（仅支持 1D/2D，更高维报错而非静默）
+                        // 护城河 F Phase 1：结构化提取 (v_err=node.id, op="MatMul", expected=空, actual=输入 shape)
                         if a_ndim > 2 {
-                            return Err(crate::error::TenthError::RuntimeError {
+                            return Err(crate::error::TenthError::ShapeMismatch {
+                                context: TapeErrorContext {
+                                    tape_node_id: node.id,
+                                    op: "MatMul".to_string(),
+                                    expected_shape: vec![],
+                                    actual_shape: node.input_tensors[0].borrow().shape(),
+                                },
                                 message: format!("MatMul 反向传播：a ndim={} > 2 不支持（方向 A：不再静默处理）", a_ndim),
                             });
                         }
                         if b_ndim > 2 {
-                            return Err(crate::error::TenthError::RuntimeError {
+                            return Err(crate::error::TenthError::ShapeMismatch {
+                                context: TapeErrorContext {
+                                    tape_node_id: node.id,
+                                    op: "MatMul".to_string(),
+                                    expected_shape: vec![],
+                                    actual_shape: node.input_tensors[1].borrow().shape(),
+                                },
                                 message: format!("MatMul 反向传播：b ndim={} > 2 不支持（方向 A：不再静默处理）", b_ndim),
                             });
                         }
@@ -195,9 +221,16 @@ impl Tape {
 
                             // Squeeze gradients back to match original input shapes.
                             // 方向 A：1D squeeze 前校验 shape 符合预期（避免静默 squeeze 错误 shape）
+                            // 护城河 F Phase 1：结构化提取 (v_err=node.id, op="MatMul", expected=[1], actual=d_2d.shape)
                             let d_a: ArrayD<E> = if a_ndim == 1 {
                                 if d_a_2d.shape().get(0).copied() != Some(1) {
-                                    return Err(crate::error::TenthError::RuntimeError {
+                                    return Err(crate::error::TenthError::ShapeMismatch {
+                                        context: TapeErrorContext {
+                                            tape_node_id: node.id,
+                                            op: "MatMul".to_string(),
+                                            expected_shape: vec![1],
+                                            actual_shape: d_a_2d.shape().to_vec(),
+                                        },
                                         message: format!(
                                             "MatMul 反向 1D squeeze 失败：d_a_2d shape = {:?}，期望第 0 维为 1（方向 A：不再静默 squeeze）",
                                             d_a_2d.shape()
@@ -210,7 +243,13 @@ impl Tape {
                             };
                             let d_b: ArrayD<E> = if b_ndim == 1 {
                                 if d_b_2d.shape().get(1).copied() != Some(1) {
-                                    return Err(crate::error::TenthError::RuntimeError {
+                                    return Err(crate::error::TenthError::ShapeMismatch {
+                                        context: TapeErrorContext {
+                                            tape_node_id: node.id,
+                                            op: "MatMul".to_string(),
+                                            expected_shape: vec![1],
+                                            actual_shape: d_b_2d.shape().to_vec(),
+                                        },
                                         message: format!(
                                             "MatMul 反向 1D squeeze 失败：d_b_2d shape = {:?}，期望第 1 维为 1（方向 A：不再静默 squeeze）",
                                             d_b_2d.shape()
@@ -242,7 +281,14 @@ impl Tape {
                             let a_ndim = a_ref.ndim();
                             let b_ndim = b_ref.ndim();
                             if a_ndim != 3 || b_ndim != 3 {
-                                return Err(crate::error::TenthError::RuntimeError {
+                                // 护城河 F Phase 1：结构化提取 (v_err=node.id, op="BatchedMatMul", expected=[3,3,3], actual=[a_ndim, b_ndim])
+                                return Err(crate::error::TenthError::ShapeMismatch {
+                                    context: TapeErrorContext {
+                                        tape_node_id: node.id,
+                                        op: "BatchedMatMul".to_string(),
+                                        expected_shape: vec![3, 3, 3],
+                                        actual_shape: vec![a_ndim, b_ndim],
+                                    },
                                     message: format!(
                                         "BatchedMatMul 反向传播：a ndim={}, b ndim={}（期望均为 3）",
                                         a_ndim, b_ndim
@@ -570,6 +616,7 @@ impl Tape {
                             (cond_ref.data.clone(), then_ref.shape(), else_ref.shape())
                         };
                         let _grad_shape = grad.shape().to_vec();
+                        let op_str = op_name(&node.op);
                         dispatch_float!(node.dtype, E, {
                             let grad_arr = E::from_tensor_data(&grad);
                             let cond_view = E::from_tensor_data(&cond_data);
@@ -583,10 +630,10 @@ impl Tape {
                             };
                             let one = E::from_f64(1.0);
                             // d_then = unbroadcast(grad * cond_mask, then.shape)
-                            let d_then = unbroadcast(&(&grad_arr * &cond_mask), &then_shape)?;
+                            let d_then = unbroadcast(&(&grad_arr * &cond_mask), &then_shape, node.id, op_str)?;
                             // d_else = unbroadcast(grad * (1 - cond_mask), else.shape)
                             let inv_mask = cond_mask.mapv(|v| one - v);
-                            let d_else = unbroadcast(&(&grad_arr * &inv_mask), &else_shape)?;
+                            let d_else = unbroadcast(&(&grad_arr * &inv_mask), &else_shape, node.id, op_str)?;
 
                             propagate_grad(node, 0, &E::into_tensor_data(d_then), &mut node_grads)?;
                             propagate_grad(node, 1, &E::into_tensor_data(d_else), &mut node_grads)?;
@@ -763,10 +810,17 @@ impl Tape {
                     // input_tensors = [input, result]（原始 shape 从 input.shape() 读取）
                     // 元素数必须一致（reshape 不改变元素数）
                     // Reshape 是 dtype 无关操作，直接在 TensorData 上 reshape
+                    // 护城河 F Phase 1：结构化提取 (v_err=node.id, op="Reshape", expected=input.shape, actual=grad.shape)
                     let orig_shape = node.input_tensors[0].borrow().shape();
                     let total: usize = orig_shape.iter().product();
                     if grad.len() != total {
-                        return Err(crate::error::TenthError::RuntimeError {
+                        return Err(crate::error::TenthError::ShapeMismatch {
+                            context: TapeErrorContext {
+                                tape_node_id: node.id,
+                                op: "Reshape".to_string(),
+                                expected_shape: orig_shape.clone(),
+                                actual_shape: grad.shape().to_vec(),
+                            },
                             message: format!(
                                 "Reshape 反向元素数不匹配：grad {} 元素，原始 shape {:?} 期望 {} 元素",
                                 grad.len(), orig_shape, total
@@ -981,7 +1035,14 @@ fn flatten_index(multi: &[usize], shape: &[usize]) -> usize {
 /// over broadcast dimensions.  Follows numpy-style broadcasting rules.
 /// 返回 Err 当 reshape 失败（方向 A：不再静默保留错误 shape）。
 /// 阶段 4：泛型化，支持 f32 和 f64。
-fn unbroadcast<E: FloatElem>(grad: &ArrayD<E>, target_shape: &[usize]) -> Result<ArrayD<E>, crate::error::TenthError> {
+/// 护城河 F Phase 1：新增 `node_id` / `op` 参数，错误抛出时结构化填充 TapeErrorContext
+/// （expected=target_shape, actual=grad/当前 shape），供 formal_explain 根因分析使用。
+fn unbroadcast<E: FloatElem>(
+    grad: &ArrayD<E>,
+    target_shape: &[usize],
+    node_id: usize,
+    op: &str,
+) -> Result<ArrayD<E>, crate::error::TenthError> {
     let grad_shape = grad.shape();
     if grad_shape == target_shape {
         return Ok(grad.clone());
@@ -1010,7 +1071,13 @@ fn unbroadcast<E: FloatElem>(grad: &ArrayD<E>, target_shape: &[usize]) -> Result
         let total: usize = target_shape.iter().product();
         if total == result.len() {
             result = result.clone().into_shape_with_order(IxDyn(target_shape)).map_err(|_| {
-                crate::error::TenthError::RuntimeError {
+                crate::error::TenthError::ShapeMismatch {
+                    context: TapeErrorContext {
+                        tape_node_id: node_id,
+                        op: op.to_string(),
+                        expected_shape: target_shape.to_vec(),
+                        actual_shape: current_shape.clone(),
+                    },
                     message: format!(
                         "unbroadcast reshape 失败：梯度 shape {:?} 无法 reshape 到目标 shape {:?}（方向 A：不再静默保留错误 shape）",
                         current_shape, target_shape
@@ -1018,7 +1085,13 @@ fn unbroadcast<E: FloatElem>(grad: &ArrayD<E>, target_shape: &[usize]) -> Result
                 }
             })?;
         } else {
-            return Err(crate::error::TenthError::RuntimeError {
+            return Err(crate::error::TenthError::ShapeMismatch {
+                context: TapeErrorContext {
+                    tape_node_id: node_id,
+                    op: op.to_string(),
+                    expected_shape: target_shape.to_vec(),
+                    actual_shape: current_shape.clone(),
+                },
                 message: format!(
                     "unbroadcast 元素数不匹配：梯度 {} 元素，目标 {} 元素（shape {:?} → {:?}）",
                     result.len(), total, current_shape, target_shape

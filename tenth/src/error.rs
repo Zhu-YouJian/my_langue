@@ -1,6 +1,24 @@
 use thiserror::Error;
 use crate::runtime::value::Value;
 
+/// 护城河 F：关系调试器的 5 类错误分类（T2 §4.3 FormalExplain 扩展）。
+///
+/// 用于 `TenthError::RelationError` 与 `RootCause::error_type`，对 backward
+/// 失败的原因进行细粒度归类，供关系调试器输出结构化诊断。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorType {
+    /// shape 不匹配（MatMul 的 K≠K'、Conv2D 通道数不符等）。
+    ShapeMismatch,
+    /// 试图静默 squeeze（护城河 A 已在编译期拦截，F 附加关系上下文）。
+    SilentSqueeze,
+    /// 广播失败（Add/Sub/Mul/Div 两操作数 shape 不可广播）。
+    BroadcastFail,
+    /// 梯度 shape 漂移（前向 shape 流 vs 反向 grad shape 流不一致）。
+    GradDrift,
+    /// dtype 冲突（f32 vs f64 / F16 vs BF16 混合运算未提升）。
+    DtypeConflict,
+}
+
 /// 形状错误上下文（护城河 F：T2 FormalExplain 动态层）。
 /// 由 autodiff backward 在抛出 ShapeMismatch 时填充，
 /// 携带报错节点的 id、算子名与期望/实际 shape。
@@ -57,6 +75,18 @@ pub enum TenthError {
     #[error("形状错误（{context}）— {message}")]
     ShapeMismatch {
         context: TapeErrorContext,
+        message: String,
+    },
+
+    /// 关系调试器错误（护城河 F：5 类错误分类）。
+    /// 由 autodiff backward 在检测到关系级错误时抛出，携带错误类型分类
+    ///（`ErrorType`）与报错节点 id。与 `ShapeMismatch` 区分：
+    /// - `ShapeMismatch`：前向 shape 不匹配（携带完整 `TapeErrorContext`）
+    /// - `RelationError`：关系调试器归类后的错误（携带 5 类 `ErrorType`）
+    #[error("关系错误（{error_type:?}，节点 #{tape_node_id}）— {message}")]
+    RelationError {
+        error_type: ErrorType,
+        tape_node_id: usize,
         message: String,
     },
 

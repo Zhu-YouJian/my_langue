@@ -21,8 +21,9 @@
 //! - `Reduce`：维度减少（Sum / Mean）
 //! - `Expand`：维度增加（MatMul / Transpose）
 
-use std::collections::HashSet;
-use crate::runtime::autodiff::{Tape, TapeNode, TapeOp};
+use std::collections::{HashMap, HashSet};
+use crate::error::ErrorType;
+use crate::runtime::autodiff::{Tape, TapeNode, TapeOp, op_name};
 
 /// 根因分类（T2 §4.3）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +61,17 @@ pub struct RootCause {
     pub classification: ExplainClass,
     /// 人类可读说明（含节点 id / 算子名 / shape / 分类理由）。
     pub explanation: String,
+    /// 护城河 F Phase 1：5 类错误分类（ShapeMismatch / SilentSqueeze /
+    /// BroadcastFail / GradDrift / DtypeConflict）。
+    /// 由 backward 抛错时填充；`formal_explain` 本身不主动推断错误类型，
+    /// 保留 `None` 表示"未分类"（由 runtime 部门在抛 `RelationError` 时填充）。
+    pub error_type: Option<ErrorType>,
+    /// 护城河 F Phase 1：边级归因 `(src_node, dst_node)`。
+    /// 表示该根因候选节点是通过哪条边被 BFS 反向遍历到的：
+    /// - `dst_node` == `tape_node_id`（本候选节点）
+    /// - `src_node` == 从 v_err 反向到达本节点的"下一跳"（更靠近 v_err 的节点）
+    /// `None` 表示本节点是 v_err 自身或无上游边（如直接作为根因）。
+    pub edge: Option<(usize, usize)>,
 }
 
 /// 对 TapeOp 进行形状变换分类（T2 引理 3.1 / T7 定理）。
@@ -116,21 +128,36 @@ impl Tape {
     /// - `v_err`：报错节点 id（backward 失败的节点）
     /// - `expected`：期望的 shape（若未知则传空切片）
     /// - `actual`：实际的 shape（若未知则传空切片）
+    /// - `error_msg`：backward 抛出的错误消息（用于 5 类错误分类）
     ///
     /// 输出：所有可达且可能相关的根因候选列表，按 ExplainsError > PartialExplain
     /// 排序。复杂度 O(|V|+|E|)。
+    ///
+    /// 护城河 F Phase 2：根据 v_err 节点的 op 与 error_msg 调用
+    /// `classify_error_type` 推断 5 类错误类型，填入每个 RootCause.error_type。
     pub fn formal_explain(
         &self,
         v_err: usize,
         expected: &[usize],
         actual: &[usize],
+        error_msg: &str,
     ) -> Vec<RootCause> {
-        // 1. BFS 反向 reachable 集合（C1）
-        let reachable = self.bfs_reverse_reachable(v_err);
+        // 1. BFS 反向 reachable 集合（C1）+ 边级归因（parent 映射）
+        //    parent[node_id] = Some(next_hop) 表示从 v_err 反向到达 node_id 的下一跳；
+        //    parent[v_err] = None（起点）。
+        let parent = self.bfs_reverse_reachable_with_edges(v_err);
+
+        // 护城河 F Phase 2：对错误进行 5 类分类（针对错误发生点 v_err 一次性分类）
+        // v_err 节点的 op 决定分类方向；error_msg 关键词决定具体类型。
+        let v_err_op = self
+            .node(v_err)
+            .map(|n| n.op.clone())
+            .unwrap_or(TapeOp::Input);
+        let error_type = Self::classify_error_type(&v_err_op, expected, actual, error_msg);
 
         // 2. 对每个 reachable 节点判定 C2，构造 RootCause
         let mut causes: Vec<RootCause> = Vec::new();
-        for &node_id in &reachable {
+        for &node_id in parent.keys() {
             // 跳过 v_err 自身（它是错误发生点，不是根因候选）
             if node_id == v_err {
                 continue;
@@ -140,7 +167,8 @@ impl Tape {
                 None => continue,
             };
             let cls = self.classify_node(node, expected, actual);
-            let explanation = self.render_explanation(node, &cls, expected, actual);
+            let explanation =
+                self.render_explanation(node, &cls, expected, actual, Some(error_type.clone()));
             let s_in: Vec<Vec<usize>> = node
                 .input_tensors
                 .iter()
@@ -152,6 +180,13 @@ impl Tape {
                 .last()
                 .map(|t| t.borrow().shape())
                 .unwrap_or_default();
+            // 边级归因：(src=parent 下一跳, dst=本节点)
+            // parent[dst]=Some(src) 表示 src 是更靠近 v_err 的那一端。
+            let edge = parent
+                .get(&node_id)
+                .copied()
+                .flatten()
+                .map(|src| (src, node_id));
             causes.push(RootCause {
                 tape_node_id: node_id,
                 op: node.op.clone(),
@@ -159,6 +194,8 @@ impl Tape {
                 s_out,
                 classification: cls,
                 explanation,
+                error_type: Some(error_type.clone()),
+                edge,
             });
         }
 
@@ -191,6 +228,34 @@ impl Tape {
             }
         }
         visited
+    }
+
+    /// BFS 反向可达集合 + 边级归因（护城河 F Phase 1）。
+    ///
+    /// 与 `bfs_reverse_reachable` 相同的遍历，但额外记录每个可达节点
+    /// 的"下一跳" parent（更靠近 v_err 的节点），用于 `RootCause::edge`。
+    ///
+    /// 返回 `HashMap<node_id, Option<parent>>`：
+    /// - `parent[v_err] = None`（起点，无下一跳）
+    /// - `parent[node] = Some(next_hop)` 表示从 v_err 反向到达 node 的下一跳是 next_hop
+    ///
+    /// 复杂度 O(|V|+|E|)，与原 BFS 一致（T2 F5 不变量保持）。
+    fn bfs_reverse_reachable_with_edges(&self, v_err: usize) -> HashMap<usize, Option<usize>> {
+        let mut parent: HashMap<usize, Option<usize>> = HashMap::new();
+        let mut queue: Vec<usize> = vec![v_err];
+        parent.insert(v_err, None);
+        while let Some(node_id) = queue.pop() {
+            if let Some(node) = self.node(node_id) {
+                for &input_id in &node.inputs {
+                    // 仅在首次访问时记录 parent（BFS 树的第一条边）
+                    if !parent.contains_key(&input_id) {
+                        parent.insert(input_id, Some(node_id));
+                        queue.push(input_id);
+                    }
+                }
+            }
+        }
+        parent
     }
 
     /// C2 相关性判定（T2 §4.3）。
@@ -239,6 +304,7 @@ impl Tape {
         cls: &ExplainClass,
         expected: &[usize],
         actual: &[usize],
+        error_type: Option<ErrorType>,
     ) -> String {
         let op_name = op_name(&node.op);
         let s_out: Vec<usize> = node
@@ -272,12 +338,36 @@ impl Tape {
         format!(
             "节点 #{} ({}) [{}]: 输入 shape={:?}, 输出 shape={:?}；{}{}——{}",
             node.id, op_name, class_str, s_in, s_out, shape_info, expected_info,
-            self.root_cause_hint(&node.op)
+            self.root_cause_hint(&node.op, error_type)
         )
     }
 
-    /// 针对特定算子的根因提示（人类可读的诊断建议）。
-    fn root_cause_hint(&self, op: &TapeOp) -> &'static str {
+    /// 针对特定算子+错误类型的根因提示（人类可读的诊断建议）。
+    ///
+    /// 护城河 F Phase 2：优先按 `error_type` 给出 4 类特殊错误的针对性提示；
+    /// 若 `error_type` 为 `None` 或 `ShapeMismatch`，退化为按 op 分类的通用提示。
+    fn root_cause_hint(&self, op: &TapeOp, error_type: Option<ErrorType>) -> &'static str {
+        // 优先按 error_type 给出针对性提示（4 类特殊错误）
+        if let Some(et) = error_type {
+            match et {
+                ErrorType::SilentSqueeze => {
+                    return "MatMul 1D squeeze 被拒绝——这通常意味着输入 shape 设计错误，梯度无法 squeeze 回原始 shape";
+                }
+                ErrorType::BroadcastFail => {
+                    return "广播失败——两个张量的 shape 无法对齐，检查上游算子的输出 shape";
+                }
+                ErrorType::GradDrift => {
+                    return "梯度 shape 漂移——反向传播到参数时 grad shape 与参数 shape 不一致，根因可能在前向的 reshape/transpose";
+                }
+                ErrorType::DtypeConflict => {
+                    return "dtype 冲突——f32/f64 混用导致精度提升，检查上游算子的 dtype";
+                }
+                ErrorType::ShapeMismatch => {
+                    // 退化为按 op 分类的通用提示
+                }
+            }
+        }
+        // 按 op 分类的通用提示（ShapeMismatch 或未分类）
         match op {
             TapeOp::MatMul => "可能是矩阵维度不匹配（K ≠ K'），检查权重矩阵的第二维与输入的第一维",
             TapeOp::Add | TapeOp::Sub | TapeOp::Mul | TapeOp::Div => {
@@ -300,43 +390,67 @@ impl Tape {
             _ => "检查该节点的输入 shape 与算子语义是否匹配",
         }
     }
-}
 
-// 复用 autodiff.rs 的 op_name 实现，避免重复定义。
-// 由于 autodiff::op_name 是私有 fn，这里重新实现一份用于展示。
-// 注意：两份必须保持同步——若 TapeOp 新增变体，此处也要更新。
-fn op_name(op: &TapeOp) -> &'static str {
-    match op {
-        TapeOp::Input => "Input",
-        TapeOp::Add => "Add",
-        TapeOp::Sub => "Sub",
-        TapeOp::Mul => "Mul",
-        TapeOp::Div => "Div",
-        TapeOp::Neg => "Neg",
-        TapeOp::ReLU => "ReLU",
-        TapeOp::MatMul => "MatMul",
-        TapeOp::BatchedMatMul => "BatchedMatMul",
-        TapeOp::Transpose => "Transpose",
-        TapeOp::Sum => "Sum",
-        TapeOp::Mean => "Mean",
-        TapeOp::Exp => "Exp",
-        TapeOp::Log => "Log",
-        TapeOp::Sigmoid => "Sigmoid",
-        TapeOp::Softmax => "Softmax",
-        TapeOp::CrossEntropy => "CrossEntropy",
-        TapeOp::Dropout => "Dropout",
-        TapeOp::Conv2D => "Conv2D",
-        TapeOp::BatchNorm => "BatchNorm",
-        TapeOp::LayerNorm => "LayerNorm",
-        TapeOp::Gelu => "Gelu",
-        TapeOp::Select => "Select",
-        TapeOp::Abs => "Abs",
-        TapeOp::Scatter => "Scatter",
-        TapeOp::Gather => "Gather",
-        TapeOp::Reshape => "Reshape",
-        TapeOp::MaskedFill => "MaskedFill",
+    /// 护城河 F Phase 2：根据算子、shape 和错误消息推断 5 类错误类型。
+    ///
+    /// 分类规则（按优先级，先匹配先返回）：
+    /// 1. op 是 MatMul/BatchedMatMul 且 error_msg 含 "squeeze" 或 "1D" → SilentSqueeze
+    /// 2. op 是 Add/Sub/Mul/Div 且 error_msg 含 "broadcast"（覆盖 "unbroadcast"）→ BroadcastFail
+    /// 3. op 是 Input 且 error_msg 含 "acc_grad"/"反向传播 shape 错误"/"梯度 shape" → GradDrift
+    /// 4. error_msg 含 "dtype"/"f32/f64" → DtypeConflict（与 op 无关）
+    /// 5. 其他 shape 不匹配 → ShapeMismatch（兜底）
+    ///
+    /// 说明：
+    /// - DtypeConflict 排在 op 特定分类之后——当 op 特定关键词命中时，
+    ///   优先返回更具体的类型（如 MatMul+squeeze → SilentSqueeze 而非 DtypeConflict）。
+    ///   若 error_msg 同时含 "dtype" 但未命中 op 特定关键词，则返回 DtypeConflict。
+    /// - GradDrift 使用精准关键词（"反向传播 shape 错误"）而非泛化的 "shape 错误"，
+    ///   避免误匹配非 GradDrift 场景（如 "参数 shape 错误" 应归类为 ShapeMismatch）。
+    /// - BroadcastFail 检测 "broadcast" 子串，自然覆盖 "unbroadcast"（含 "broadcast"）。
+    fn classify_error_type(
+        op: &TapeOp,
+        _expected: &[usize],
+        _actual: &[usize],
+        error_msg: &str,
+    ) -> ErrorType {
+        // 1-3：op 特定关键词匹配
+        match op {
+            TapeOp::MatMul | TapeOp::BatchedMatMul => {
+                // SilentSqueeze：1D 输入 squeeze 失败
+                if error_msg.contains("squeeze") || error_msg.contains("1D") {
+                    return ErrorType::SilentSqueeze;
+                }
+            }
+            TapeOp::Add | TapeOp::Sub | TapeOp::Mul | TapeOp::Div => {
+                // BroadcastFail：广播失败（"broadcast" 覆盖 "unbroadcast"）
+                if error_msg.contains("broadcast") {
+                    return ErrorType::BroadcastFail;
+                }
+            }
+            TapeOp::Input => {
+                // GradDrift：梯度累积时 shape 漂移
+                // 用精准关键词避免误匹配（"shape 错误" 过于泛化）
+                if error_msg.contains("acc_grad")
+                    || error_msg.contains("反向传播 shape 错误")
+                    || error_msg.contains("梯度 shape")
+                {
+                    return ErrorType::GradDrift;
+                }
+            }
+            _ => {}
+        }
+        // 4：DtypeConflict 独立检测（不依赖 op）
+        if error_msg.contains("dtype") || error_msg.contains("f32/f64") {
+            return ErrorType::DtypeConflict;
+        }
+        // 5：兜底
+        ErrorType::ShapeMismatch
     }
 }
+
+// op_name 实现已统一到 `crate::runtime::autodiff::grad::op_name`（pub(crate)），
+// 本模块通过 `use` 导入复用，不再维护重复副本。
+// 历史：原先此处有一份同步副本（27 变体），护城河 F Phase 1 去重时删除。
 
 #[cfg(test)]
 mod tests {
@@ -446,7 +560,7 @@ mod tests {
         let mm_id = tape.binary(TapeOp::MatMul, a_id, b_id, a.clone(), b.clone(), result.clone());
 
         // 调用 formal_explain：v_err = mm_id, actual = [2,2]
-        let causes = tape.formal_explain(mm_id, &[2, 3], &[2, 2]);
+        let causes = tape.formal_explain(mm_id, &[2, 3], &[2, 2], "");
         // 应该返回 a_id 和 b_id 两个候选（不含 mm_id 自身）
         assert_eq!(causes.len(), 2);
         // 由于 Input 是 Construct，二者都应分类为 ExplainsError
@@ -476,7 +590,7 @@ mod tests {
         let exp_id = tape.unary(TapeOp::Exp, c_id, c.clone(), exp.clone());
 
         // 调用 formal_explain on relu_id：c_id 不应出现在结果中
-        let causes = tape.formal_explain(relu_id, &[], &[]);
+        let causes = tape.formal_explain(relu_id, &[], &[], "");
         let cause_ids: Vec<usize> = causes.iter().map(|c| c.tape_node_id).collect();
         assert!(!cause_ids.contains(&c_id));
         assert!(!cause_ids.contains(&exp_id));
@@ -501,7 +615,7 @@ mod tests {
         let relu2_id = tape.unary(TapeOp::ReLU, relu_id, relu.clone(), relu2.clone());
 
         // 调用 formal_explain on relu2_id（不提供 actual，C2a 失效）
-        let causes = tape.formal_explain(relu2_id, &[], &[]);
+        let causes = tape.formal_explain(relu2_id, &[], &[], "");
         // x_id 是 Input（Construct）→ ExplainsError
         // relu_id 是 ReLU（Preserve）→ PartialExplain
         let x_cause = causes.iter().find(|c| c.tape_node_id == x_id).unwrap();
@@ -525,9 +639,167 @@ mod tests {
         let relu2 = Rc::new(RefCell::new(Tensor::from_data(relu2_data)));
         let relu2_id = tape.unary(TapeOp::ReLU, relu_id, relu.clone(), relu2.clone());
 
-        let causes = tape.formal_explain(relu2_id, &[], &[]);
+        let causes = tape.formal_explain(relu2_id, &[], &[], "");
         // 第一个应为 ExplainsError（x_id），第二个为 PartialExplain（relu_id）
         assert_eq!(causes[0].classification, ExplainClass::ExplainsError);
         assert_eq!(causes[1].classification, ExplainClass::PartialExplain);
+    }
+
+    // ── 护城河 F Phase 2：5 类错误分类测试 ──────────────────────────────
+
+    #[test]
+    fn test_classify_error_type_silent_squeeze() {
+        // MatMul + "squeeze" → SilentSqueeze
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::MatMul, &[], &[], "MatMul 反向 1D squeeze 失败"),
+            ErrorType::SilentSqueeze
+        );
+        // BatchedMatMul + "squeeze" → SilentSqueeze
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::BatchedMatMul, &[], &[], "squeeze 失败"),
+            ErrorType::SilentSqueeze
+        );
+        // MatMul + "1D"（无 "squeeze"）→ SilentSqueeze（Phase 2 增强关键词）
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::MatMul, &[], &[], "MatMul 反向 1D 输入处理失败"),
+            ErrorType::SilentSqueeze
+        );
+    }
+
+    #[test]
+    fn test_classify_error_type_broadcast_fail() {
+        // Add + "unbroadcast" → BroadcastFail
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Add, &[], &[], "unbroadcast reshape 失败"),
+            ErrorType::BroadcastFail
+        );
+        // Sub + "unbroadcast" → BroadcastFail
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Sub, &[], &[], "unbroadcast 元素数不匹配"),
+            ErrorType::BroadcastFail
+        );
+        // Mul/Div 同理
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Mul, &[], &[], "unbroadcast 失败"),
+            ErrorType::BroadcastFail
+        );
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Div, &[], &[], "unbroadcast"),
+            ErrorType::BroadcastFail
+        );
+        // Add + "broadcast"（无 "un" 前缀）→ BroadcastFail（Phase 2 增强关键词）
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Add, &[], &[], "broadcast 失败，shape 无法对齐"),
+            ErrorType::BroadcastFail
+        );
+    }
+
+    #[test]
+    fn test_classify_error_type_grad_drift() {
+        // Input + "acc_grad" → GradDrift
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Input, &[], &[], "acc_grad shape 不匹配"),
+            ErrorType::GradDrift
+        );
+        // Input + "反向传播 shape 错误" → GradDrift
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Input, &[], &[], "反向传播 shape 错误（节点 #0 Input）"),
+            ErrorType::GradDrift
+        );
+        // Input + "梯度 shape" → GradDrift（任务要求关键词）
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Input, &[], &[], "梯度 shape 漂移"),
+            ErrorType::GradDrift
+        );
+    }
+
+    #[test]
+    fn test_classify_error_type_dtype_conflict() {
+        // 任意 op + "dtype" → DtypeConflict（当 op 特定关键词未命中时）
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::ReLU, &[], &[], "dtype 不匹配"),
+            ErrorType::DtypeConflict
+        );
+        // 任意 op + "f32/f64" → DtypeConflict
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Exp, &[], &[], "f32/f64 混用"),
+            ErrorType::DtypeConflict
+        );
+        // MatMul + "dtype"（无 "squeeze"）→ DtypeConflict
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::MatMul, &[], &[], "dtype 冲突"),
+            ErrorType::DtypeConflict
+        );
+    }
+
+    #[test]
+    fn test_classify_error_type_shape_mismatch_default() {
+        // MatMul 无 "squeeze"/"1D" → ShapeMismatch
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::MatMul, &[], &[], "MatMul 维度不匹配"),
+            ErrorType::ShapeMismatch
+        );
+        // Add 无 "broadcast" → ShapeMismatch
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Add, &[], &[], "shape 不一致"),
+            ErrorType::ShapeMismatch
+        );
+        // Input 无 "acc_grad"/"反向传播 shape 错误"/"梯度 shape" → ShapeMismatch
+        //（"参数 shape 错误" 不含精准关键词，不误判为 GradDrift）
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Input, &[], &[], "参数 shape 错误"),
+            ErrorType::ShapeMismatch
+        );
+        // 空 error_msg → ShapeMismatch
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Conv2D, &[], &[], ""),
+            ErrorType::ShapeMismatch
+        );
+    }
+
+    #[test]
+    fn test_classify_error_type_priority() {
+        // op 特定关键词优先于 DtypeConflict
+        // MatMul + "squeeze" + "dtype" → SilentSqueeze（op 特定优先）
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::MatMul, &[], &[], "squeeze dtype"),
+            ErrorType::SilentSqueeze
+        );
+        // Add + "unbroadcast" + "dtype" → BroadcastFail
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Add, &[], &[], "unbroadcast dtype"),
+            ErrorType::BroadcastFail
+        );
+        // Input + "acc_grad" + "dtype" → GradDrift
+        assert_eq!(
+            Tape::classify_error_type(&TapeOp::Input, &[], &[], "acc_grad dtype"),
+            ErrorType::GradDrift
+        );
+    }
+
+    #[test]
+    fn test_formal_explain_fills_error_type() {
+        // 验证 formal_explain 正确填充 RootCause.error_type
+        // 构造 MatMul 节点，error_msg 含 "squeeze" → SilentSqueeze
+        let a = make_tensor(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        let b = make_tensor(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let mut tape = Tape::new();
+        let a_id = tape.input(a.clone());
+        let b_id = tape.input(b.clone());
+        let result = make_tensor(vec![0.0; 4], vec![2, 2]);
+        let mm_id = tape.binary(TapeOp::MatMul, a_id, b_id, a.clone(), b.clone(), result.clone());
+
+        // SilentSqueeze：MatMul + "squeeze"
+        let causes = tape.formal_explain(mm_id, &[1], &[2], "MatMul 反向 1D squeeze 失败");
+        assert!(causes.len() >= 1);
+        for c in &causes {
+            assert_eq!(c.error_type, Some(ErrorType::SilentSqueeze));
+        }
+
+        // ShapeMismatch：MatMul + 无 "squeeze"
+        let causes2 = tape.formal_explain(mm_id, &[], &[], "MatMul 维度不匹配");
+        for c in &causes2 {
+            assert_eq!(c.error_type, Some(ErrorType::ShapeMismatch));
+        }
     }
 }

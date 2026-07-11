@@ -484,17 +484,35 @@ impl super::Interpreter {
                 if let Some(Value::Tensor(loss)) = args.first() {
                     if let (Some(tape), Some(loss_id)) = (&self.tape, loss.borrow().tape_id) {
                         // 护城河 F：包裹 backward 错误，附加 formal_explain 根因分析
+                        // Phase 1：从 backward 抛出的 ShapeMismatch 错误中提取真实 v_err/expected/actual，
+                        // 传给 formal_explain 提升根因分析精度（替代 Phase 0 的占位值 loss_id/&[]/&[]）。
                         match tape.backward(loss_id) {
                             Ok(()) => return Ok(Some(Value::Unit)),
                             Err(e) => {
-                                let causes = tape.formal_explain(loss_id, &[], &[]);
+                                // 从错误中提取结构化上下文（若错误是 ShapeMismatch）
+                                let (v_err, expected, actual, error_msg) = match &e {
+                                    TenthError::ShapeMismatch { context, message } => (
+                                        context.tape_node_id,
+                                        context.expected_shape.as_slice(),
+                                        context.actual_shape.as_slice(),
+                                        message.as_str(),
+                                    ),
+                                    _ => (loss_id, &[][..], &[][..], ""),
+                                };
+                                // 护城河 F Phase 2：error_msg 用于 5 类错误分类
+                                let causes = tape.formal_explain(v_err, expected, actual, error_msg);
                                 let explanations: Vec<String> = causes.iter().map(|c| c.explanation.clone()).collect();
                                 self.last_explanation = explanations.clone();
-                                let context = crate::error::TapeErrorContext {
-                                    tape_node_id: loss_id,
-                                    op: "backward".to_string(),
-                                    expected_shape: Vec::new(),
-                                    actual_shape: Vec::new(),
+                                // 若 backward 已返回 ShapeMismatch，复用其 context（保留真实 v_err/expected/actual）；
+                                // 否则构造一个以 loss_id 为 v_err 的兜底 context。
+                                let context = match &e {
+                                    TenthError::ShapeMismatch { context, .. } => context.clone(),
+                                    _ => crate::error::TapeErrorContext {
+                                        tape_node_id: loss_id,
+                                        op: "backward".to_string(),
+                                        expected_shape: Vec::new(),
+                                        actual_shape: Vec::new(),
+                                    },
                                 };
                                 let root_cause_msg = if explanations.is_empty() {
                                     format!("{}", e)
