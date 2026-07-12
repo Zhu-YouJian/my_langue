@@ -116,7 +116,7 @@ fn record_error_and_recover(p: &mut Parser, msg: str) {
 // Used by parse_program to distinguish expression statements from error tokens.
 fn is_expr_start_token(disc: i64) -> bool {
     // IntLiteral(0), FloatLiteral(1), StringLiteral(2), Identifier(3)
-    disc == 0 || disc == 1 || disc == 2 || disc == 3 ||
+    disc == 0 || disc == 1 || disc == 2 || disc == 3 || disc == 67 ||
     // If(7), Match(9)
     disc == 7 || disc == 9 ||
     // True(22), False(23), Move(24), Self_(25), Await(65), Spawn(66)
@@ -167,8 +167,8 @@ fn parse_primary(p: &mut Parser) -> i64 {
         p.expr_nodes[idx - 1].ival = tok.ival;
         return idx;
     };
-    // StringLiteral (2) — may be interpolated
-    if d == 2 {
+    // StringLiteral (2) or InterpolatedString (67) — may be interpolated
+    if d == 2 || d == 67 {
         let s = tok.sval;
         // Check for interpolation: scan for '{'
         let mut has_brace = false;
