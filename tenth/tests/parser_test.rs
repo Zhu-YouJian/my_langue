@@ -20,7 +20,7 @@ fn parse_program(src: &str) -> Result<Program, String> {
 fn test_simple_int() {
     let expr = parse_expr("42").unwrap();
     match expr.kind {
-        ExprKind::Literal(Literal::Int(42)) => {},
+        ExprKind::Literal(Literal::Int(42, _)) => {},
         _ => panic!("expected int literal"),
     }
 }

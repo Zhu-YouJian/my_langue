@@ -20,7 +20,7 @@ fn test_string_len() {
     let src = "\"hello\".len()";
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(5)) => {}
+        Some(Value::Int(5, _)) => {}
         v => panic!("expected Some(Int(5)), got {:?}", v),
     }
 }
@@ -40,7 +40,7 @@ fn test_vec_new_and_len() {
     let src = "Vec::new().len()";
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(0)) => {}
+        Some(Value::Int(0, _)) => {}
         v => panic!("expected Some(Int(0)), got {:?}", v),
     }
 }
@@ -50,7 +50,7 @@ fn test_hashmap_new_and_len() {
     let src = "HashMap::new().len()";
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(0)) => {}
+        Some(Value::Int(0, _)) => {}
         v => panic!("expected Some(Int(0)), got {:?}", v),
     }
 }
@@ -149,7 +149,7 @@ fn test_string_find() {
     let src = r#""hello world".find("world")"#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(6)) => {}
+        Some(Value::Int(6, _)) => {}
         v => panic!("expected Int(6), got {:?}", v),
     }
 }
@@ -159,7 +159,7 @@ fn test_string_find_not_found() {
     let src = r#""hello".find("xyz")"#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(-1)) => {}
+        Some(Value::Int(-1, _)) => {}
         v => panic!("expected Int(-1), got {:?}", v),
     }
 }
@@ -179,7 +179,7 @@ fn test_string_parse_int() {
     let src = r#""42".parse_int()"#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {}
+        Some(Value::Int(42, _)) => {}
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -232,7 +232,7 @@ fn test_vec_index_of() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(1)) => {}
+        Some(Value::Int(1, _)) => {}
         v => panic!("expected Int(1), got {:?}", v),
     }
 }
@@ -249,7 +249,7 @@ fn test_vec_remove() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(2)) => {}
+        Some(Value::Int(2, _)) => {}
         v => panic!("expected Int(2), got {:?}", v),
     }
 }
@@ -284,11 +284,11 @@ fn test_vec_reverse() {
         Some(Value::Shared(rc)) => {
             let val = rc.borrow();
             match &*val {
-                Value::Int(3) => {}
+                Value::Int(3, _) => {}
                 v => panic!("expected Int(3), got {:?}", v),
             }
         }
-        Some(Value::Int(3)) => {}
+        Some(Value::Int(3, _)) => {}
         v => panic!("expected 3, got {:?}", v),
     }
 }
@@ -306,7 +306,7 @@ fn test_vec_slice() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(2)) => {}
+        Some(Value::Int(2, _)) => {}
         v => panic!("expected Int(2), got {:?}", v),
     }
 }
@@ -337,7 +337,7 @@ fn test_hashmap_remove() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(0)) => {}
+        Some(Value::Int(0, _)) => {}
         v => panic!("expected Int(0), got {:?}", v),
     }
 }
@@ -352,7 +352,7 @@ fn test_hashmap_keys() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(2)) => {}
+        Some(Value::Int(2, _)) => {}
         v => panic!("expected Int(2), got {:?}", v),
     }
 }
@@ -374,7 +374,7 @@ fn test_string_chars() {
     let src = r#""abc".chars().len()"#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(3)) => {}
+        Some(Value::Int(3, _)) => {}
         v => panic!("expected Int(3), got {:?}", v),
     }
 }
@@ -384,7 +384,7 @@ fn test_string_bytes() {
     let src = r#""ABC".bytes().len()"#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(3)) => {}
+        Some(Value::Int(3, _)) => {}
         v => panic!("expected Int(3), got {:?}", v),
     }
 }
@@ -435,7 +435,7 @@ fn test_vec_extend() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(4)) => {}
+        Some(Value::Int(4, _)) => {}
         v => panic!("expected Int(4), got {:?}", v),
     }
 }
@@ -454,11 +454,11 @@ fn test_vec_sort() {
     match result {
         Some(Value::Shared(rc)) => {
             match &*rc.borrow() {
-                Value::Int(1) => {}
+                Value::Int(1, _) => {}
                 v => panic!("expected Int(1), got {:?}", v),
             }
         }
-        Some(Value::Int(1)) => {}
+        Some(Value::Int(1, _)) => {}
         v => panic!("expected 1, got {:?}", v),
     }
 }
@@ -476,7 +476,7 @@ fn test_vec_dedup() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(2)) => {}
+        Some(Value::Int(2, _)) => {}
         v => panic!("expected Int(2), got {:?}", v),
     }
 }
@@ -515,7 +515,7 @@ fn test_vec_flatten() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(3)) => {}
+        Some(Value::Int(3, _)) => {}
         v => panic!("expected Int(3), got {:?}", v),
     }
 }
@@ -534,7 +534,7 @@ fn test_vec_chunks() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(3)) => {}
+        Some(Value::Int(3, _)) => {}
         v => panic!("expected Int(3), got {:?}", v),
     }
 }
@@ -551,7 +551,7 @@ fn test_hashmap_entries() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(2)) => {}
+        Some(Value::Int(2, _)) => {}
         v => panic!("expected Int(2), got {:?}", v),
     }
 }
@@ -568,7 +568,7 @@ fn test_hashmap_merge() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(2)) => {}
+        Some(Value::Int(2, _)) => {}
         v => panic!("expected Int(2), got {:?}", v),
     }
 }
@@ -606,7 +606,7 @@ fn test_try_operator_ok() {
     let src = r#"Result::Ok(10)?"#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(10)) => {}
+        Some(Value::Int(10, _)) => {}
         v => panic!("expected Int(10), got {:?}", v),
     }
 }
@@ -888,7 +888,7 @@ fn test_file_size() {
     let src = format!(r#"file_size("{}")"#, path);
     let result = run_code(&src).unwrap();
     match result {
-        Some(Value::Int(n)) => assert_eq!(n, 5),
+        Some(Value::Int(n, _)) => assert_eq!(n, 5),
         v => panic!("expected Int(5), got {:?}", v),
     }
     let _ = std::fs::remove_file(&tmp);
@@ -1020,7 +1020,7 @@ fn test_random_float() {
 fn test_random_int() {
     let result = run_code("random_int(1, 10)").unwrap();
     match result {
-        Some(Value::Int(n)) => assert!(n >= 1 && n <= 10, "random_int(1,10) should be in [1,10], got {}", n),
+        Some(Value::Int(n, _)) => assert!(n >= 1 && n <= 10, "random_int(1,10) should be in [1,10], got {}", n),
         v => panic!("expected Int, got {:?}", v),
     }
 }
@@ -1081,7 +1081,7 @@ fn test_json_decode_string() {
 fn test_json_decode_int() {
     let result = run_code("json_decode(\"42\")").unwrap();
     match result {
-        Some(Value::Int(n)) => assert_eq!(n, 42, "json_decode int, got {}", n),
+        Some(Value::Int(n, _)) => assert_eq!(n, 42, "json_decode int, got {}", n),
         v => panic!("expected Int, got {:?}", v),
     }
 }
@@ -1101,7 +1101,7 @@ fn test_json_decode_null() {
 fn test_cli_args_count() {
     let result = run_code("cli_args_count()").unwrap();
     match result {
-        Some(Value::Int(n)) => assert!(n >= 1, "cli_args_count should be >= 1, got {}", n),
+        Some(Value::Int(n, _)) => assert!(n >= 1, "cli_args_count should be >= 1, got {}", n),
         v => panic!("expected Int, got {:?}", v),
     }
 }

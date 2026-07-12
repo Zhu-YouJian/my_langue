@@ -70,7 +70,7 @@ fn test_match_binding() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(43)) => {}
+        Some(Value::Int(43, _)) => {}
         v => panic!("expected Int(43), got {:?}", v),
     }
 }
@@ -89,7 +89,7 @@ fn test_match_range_exclusive() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(20)) => {}
+        Some(Value::Int(20, _)) => {}
         v => panic!("expected Int(20), got {:?}", v),
     }
 }
@@ -107,7 +107,7 @@ fn test_match_range_inclusive() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(10)) => {}
+        Some(Value::Int(10, _)) => {}
         v => panic!("expected Int(10), got {:?}", v),
     }
 }
@@ -126,7 +126,7 @@ fn test_match_range_no_match() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(30)) => {}
+        Some(Value::Int(30, _)) => {}
         v => panic!("expected Int(30), got {:?}", v),
     }
 }
@@ -143,7 +143,7 @@ fn test_match_tuple_destructuring() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(30)) => {}
+        Some(Value::Int(30, _)) => {}
         v => panic!("expected Int(30), got {:?}", v),
     }
 }
@@ -162,7 +162,7 @@ fn test_match_tuple_with_literal() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(20)) => {}
+        Some(Value::Int(20, _)) => {}
         v => panic!("expected Int(20), got {:?}", v),
     }
 }
@@ -181,7 +181,7 @@ fn test_match_guard() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(100)) => {}
+        Some(Value::Int(100, _)) => {}
         v => panic!("expected Int(100), got {:?}", v),
     }
 }
@@ -200,7 +200,7 @@ fn test_match_guard_fallback() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(50)) => {}
+        Some(Value::Int(50, _)) => {}
         v => panic!("expected Int(50), got {:?}", v),
     }
 }
@@ -220,7 +220,7 @@ fn test_match_guard_with_enum() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(84)) => {}
+        Some(Value::Int(84, _)) => {}
         v => panic!("expected Int(84), got {:?}", v),
     }
 }
@@ -237,7 +237,7 @@ fn test_match_tuple_three_elements() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(6)) => {}
+        Some(Value::Int(6, _)) => {}
         v => panic!("expected Int(6), got {:?}", v),
     }
 }
@@ -256,7 +256,7 @@ fn test_match_binding_with_range_fallback() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(100)) => {}
+        Some(Value::Int(100, _)) => {}
         v => panic!("expected Int(100), got {:?}", v),
     }
 }
@@ -313,7 +313,7 @@ fn test_match_struct_with_wildcard_fallback() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(200)) => {}
+        Some(Value::Int(200, _)) => {}
         v => panic!("expected Int(200), got {:?}", v),
     }
 }
@@ -331,7 +331,7 @@ fn test_match_struct_partial_bind() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(7)) => {}
+        Some(Value::Int(7, _)) => {}
         v => panic!("expected Int(7), got {:?}", v),
     }
 }
@@ -351,7 +351,7 @@ fn test_vm_match_struct_destructuring_shorthand() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(7) => {}
+        Value::Int(7, _) => {}
         v => panic!("expected Int(7), got {:?}", v),
     }
 }
@@ -372,7 +372,7 @@ fn test_vm_match_struct_with_fallback() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(200) => {}
+        Value::Int(200, _) => {}
         v => panic!("expected Int(200), got {:?}", v),
     }
 }

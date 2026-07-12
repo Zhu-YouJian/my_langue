@@ -50,7 +50,7 @@ fn test_iter_map() {
                     other => other.clone(),
                 };
                 match val {
-                    Value::Int(n) => assert!(n == 2 || n == 4 || n == 6, "got {}", n),
+                    Value::Int(n, _) => assert!(n == 2 || n == 4 || n == 6, "got {}", n),
                     v => panic!("expected Int, got {:?}", v),
                 }
             }
@@ -159,7 +159,7 @@ fn test_for_iterator() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(6)) => {},
+        Some(Value::Int(6, _)) => {},
         v => panic!("expected Int(6), got {:?}", v),
     }
 }

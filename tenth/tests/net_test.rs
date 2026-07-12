@@ -95,7 +95,7 @@ fn test_tcp_connect_fail() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(1)) => {}
+        Some(Value::Int(1, _)) => {}
         v => panic!("期望 Some(Int(1)) 表示连接失败返回 Err，got {:?}", v),
     }
 }
@@ -125,7 +125,7 @@ fn test_tcp_echo() {
     );
     let result = run_code(&src).unwrap();
     match result {
-        Some(Value::Int(2)) => {}
+        Some(Value::Int(2, _)) => {}
         v => panic!("期望 Some(Int(2)) 表示读到 2 字节，got {:?}", v),
     }
 }
@@ -154,7 +154,7 @@ fn test_tcp_close() {
     );
     let result = run_code(&src).unwrap();
     match result {
-        Some(Value::Int(1)) => {}
+        Some(Value::Int(1, _)) => {}
         v => panic!("期望 Some(Int(1)) 表示 close 后 read 返回 Err，got {:?}", v),
     }
 }
@@ -195,7 +195,7 @@ fn test_http_get_invalid_url() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(1)) => {}
+        Some(Value::Int(1, _)) => {}
         v => panic!("期望 Some(Int(1)) 表示无效 URL 返回 Err，got {:?}", v),
     }
 }
@@ -214,7 +214,7 @@ fn test_http_get_https_rejected() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(1)) => {}
+        Some(Value::Int(1, _)) => {}
         v => panic!("期望 Some(Int(1)) 表示 HTTPS 被拒绝，got {:?}", v),
     }
 }

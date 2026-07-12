@@ -1,4 +1,4 @@
-﻿//! Bridge: convert the Tenth self-hosting parser's compact Program representation
+//! Bridge: convert the Tenth self-hosting parser's compact Program representation
 //! into the Rust AST, then lower + compile to WASM.
 //!
 //! The compact representation uses flat Vec arrays with 1-based integer indices
@@ -6,6 +6,7 @@
 //! All values are cloned from the interpreter's Value tree to avoid borrowing issues.
 
 use crate::error::{TenthError, TenthResult};
+use crate::hir::types::BaseType;
 use crate::lexer::token::Span;
 use crate::parser::ast as ast;
 use crate::runtime::value::Value;
@@ -112,11 +113,11 @@ fn get_field_clone(fields: &[(String, Value)], name: &str) -> Value {
 
 fn get_field_i64(fields: &[(String, Value)], name: &str) -> TenthResult<i64> {
     match get_field_clone(fields, name) {
-        Value::Int(n) => Ok(n),
+        Value::Int(n, _) => Ok(n),
         Value::Shared(rc) => {
             let inner = rc.borrow();
             match &*inner {
-                Value::Int(n) => Ok(*n),
+                Value::Int(n, _) => Ok(*n),
                 v => Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("字段 '{}' 期望 i64，但得到了 {:?}", name, v),
                 }),
@@ -140,7 +141,7 @@ fn get_field_string(fields: &[(String, Value)], name: &str) -> TenthResult<Strin
                 }),
             }
         }
-        Value::Int(n) => Ok(n.to_string()),
+        Value::Int(n, _) => Ok(n.to_string()),
         v => Err(TenthError::RuntimeError { line: None, col: None,
             message: format!("字段 '{}' 期望字符串，但得到了 {:?}", name, v),
         }),
@@ -502,7 +503,7 @@ fn convert_expr_depth(
 
     match kind.as_str() {
         "int" => Ok(ast::Expr {
-            kind: ast::ExprKind::Literal(ast::Literal::Int(ival)),
+            kind: ast::ExprKind::Literal(ast::Literal::Int(ival, BaseType::I32)),
             span: span.clone(),
         }),
         "float" => Ok(ast::Expr {
@@ -696,7 +697,7 @@ fn convert_expr_depth(
             eprintln!("[bridge] unknown expr kind: '{}' (ival={}, sval='{}', left={}, right={}, extra_start={}, extra_count={})",
                 kind, ival, sval, left, right, extra_start, extra_count);
             Ok(ast::Expr {
-                kind: ast::ExprKind::Literal(ast::Literal::Int(0)),
+                kind: ast::ExprKind::Literal(ast::Literal::Int(0, BaseType::I32)),
                 span: span.clone(),
             })
         }

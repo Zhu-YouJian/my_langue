@@ -1,4 +1,4 @@
-﻿//! Bytecode VM for Tenth — stack-based virtual machine.
+//! Bytecode VM for Tenth — stack-based virtual machine.
 //!
 //! Architecture: HIR → compile → Chunk (bytecode) → Vm::run()
 //!
@@ -9,6 +9,7 @@
 //! - natives.rs：call_method_priv 方法分派
 
 use std::collections::{HashMap, VecDeque};
+use crate::hir::types::BaseType;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
@@ -155,16 +156,16 @@ impl Vm {
     pub fn div(&mut self, a: &Value, b: &Value) -> TenthResult<Value> { self.div_priv(a, b) }
     pub fn rem(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         match (a, b) {
-            (Value::Int(x), Value::Int(y)) => {
+            (Value::Int(x, _), Value::Int(y, _)) => {
                 if *y == 0 { return Err(TenthError::RuntimeError { line: None, col: None, message: "整数取模除零".into() }); }
-                Ok(Value::Int(x % y))
+                Ok(Value::Int(x % y, BaseType::I32))
             }
             _ => Err(TenthError::RuntimeError { line: None, col: None, message: "% 需要整数".into() }),
         }
     }
     pub fn neg(&mut self, a: &Value) -> TenthResult<Value> {
         match a {
-            Value::Int(n) => Ok(Value::Int(-n)),
+            Value::Int(n, _) => Ok(Value::Int(-n, BaseType::I32)),
             Value::Float(n) => Ok(Value::Float(-n)),
             Value::Float32(n) => Ok(Value::Float32(-n)),
             Value::Tensor(t) => Ok(Value::Tensor(Rc::new(RefCell::new(t.borrow().neg())))),

@@ -172,7 +172,7 @@ fn test_f32_value_as_f32() {
 #[test]
 fn test_f32_value_int_to_float32_promote() {
     // Int 通过 as_f32() 隐式提升为 f32
-    let v = Value::Int(42);
+    let v = Value::Int(42, BaseType::I32);
     assert_eq!(v.as_f32(), Some(42.0f32));
 }
 

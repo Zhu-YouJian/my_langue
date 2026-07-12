@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fmt;
 use super::tensor::Tensor;
 use crate::hir::types::{Type, BaseType, Dim};
+use crate::error::TenthResult;
 
 /// 格式化 f64，确保整数值显示 `.0` 后缀（如 `2.0` 而非 `2`）。
 /// NaN/Inf 保持原样；已有小数点或科学记数法的值不变。
@@ -63,9 +64,9 @@ impl LazyIterator {
 
     pub fn from_range(start: i64, end: i64, inclusive: bool) -> Self {
         let items: Vec<Value> = if inclusive {
-            (start..=end).map(Value::Int).collect()
+            (start..=end).map(|n| Value::Int(n, BaseType::I32)).collect()
         } else {
-            (start..end).map(Value::Int).collect()
+            (start..end).map(|n| Value::Int(n, BaseType::I32)).collect()
         };
         LazyIterator {
             source: Rc::new(RefCell::new(items)),
@@ -98,7 +99,8 @@ pub enum FutureState {
 
 #[derive(Debug, Clone)]
 pub enum Value {
-    Int(i64),
+    /// 整数值。第二字段为 dtype（I8/I16/I32/I64/U8/U16/U32/U64），保留到运行时。
+    Int(i64, BaseType),
     Float(f64),
     /// f32 标量值。与 Float(f64) 区分以保留 dtype 信息到运行时。
     Float32(f32),
@@ -154,7 +156,7 @@ impl Value {
 
     pub fn type_of(&self) -> Type {
         match self {
-            Value::Int(_) => Type::Base(BaseType::I32),
+            Value::Int(_, dt) => Type::Base(*dt),
             Value::Float(_) => Type::Base(BaseType::F64),
             Value::Float32(_) => Type::Base(BaseType::F32),
             Value::Bool(_) => Type::Base(BaseType::Bool),
@@ -207,7 +209,7 @@ impl Value {
         match self {
             Value::Float(f) => Some(*f),
             Value::Float32(f) => Some(*f as f64),
-            Value::Int(i) => Some(*i as f64),
+            Value::Int(i, _) => Some(*i as f64),
             _ => None,
         }
     }
@@ -218,14 +220,14 @@ impl Value {
         match self {
             Value::Float32(f) => Some(*f),
             Value::Float(f) => Some(*f as f32),
-            Value::Int(i) => Some(*i as f32),
+            Value::Int(i, _) => Some(*i as f32),
             _ => None,
         }
     }
 
     pub fn as_int(&self) -> Option<i64> {
         match self {
-            Value::Int(i) => Some(*i),
+            Value::Int(i, _) => Some(*i),
             Value::Float(f) => Some(*f as i64),
             Value::Float32(f) => Some(*f as i64),
             _ => None,
@@ -235,7 +237,7 @@ impl Value {
     pub fn is_truthy(&self) -> bool {
         match self {
             Value::Bool(b) => *b,
-            Value::Int(n) => *n != 0,
+            Value::Int(n, _) => *n != 0,
             Value::Float(f) => *f != 0.0,
             Value::Float32(f) => *f != 0.0,
             Value::Ref(v) => v.borrow().is_truthy(),
@@ -250,10 +252,39 @@ impl Value {
     }
 }
 
+/// 检查整数运算结果是否在 dtype 范围内。溢出时返回 Err。
+pub fn check_int_overflow(result: i64, dtype: BaseType) -> TenthResult<()> {
+    use crate::error::TenthError;
+    let ok = match dtype {
+        BaseType::I8 => result >= -128 && result <= 127,
+        BaseType::I16 => result >= -32768 && result <= 32767,
+        BaseType::I32 => result >= -2147483648 && result <= 2147483647,
+        BaseType::I64 => true,
+        BaseType::U8 => result >= 0 && result <= 255,
+        BaseType::U16 => result >= 0 && result <= 65535,
+        BaseType::U32 => result >= 0 && result <= 4294967295,
+        BaseType::U64 => result >= 0,
+        _ => true,
+    };
+    if !ok {
+        let name = match dtype {
+            BaseType::I8 => "i8", BaseType::I16 => "i16", BaseType::I32 => "i32", BaseType::I64 => "i64",
+            BaseType::U8 => "u8", BaseType::U16 => "u16", BaseType::U32 => "u32", BaseType::U64 => "u64",
+            _ => "unknown",
+        };
+        Err(TenthError::RuntimeError {
+            line: None, col: None,
+            message: format!("整数运算结果 {} 溢出 {} 范围", result, name),
+        })
+    } else {
+        Ok(())
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::Int(n) => write!(f, "{}", n),
+            Value::Int(n, _) => write!(f, "{}", n),
             Value::Float(n) => write!(f, "{}", format_f64(*n)),
             Value::Float32(n) => write!(f, "{}f32", format_f32(*n)),
             Value::Bool(b) => write!(f, "{}", b),

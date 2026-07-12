@@ -1,10 +1,12 @@
-# 开发备忘
+﻿# 开发备忘
 
 > 各类待办、跳过项、环境依赖、注意事项均记录于此。
 >
 > **当前阶段：v0.3.3 → 阶段 1（可用）**
 >
 > 演进路线与阶段规划见 `CODE_WIKI.md` §10。
+>
+> **2026-07-11 feat: Problem 5 — 整数类型全管线 dtype 保留 + 溢出检测**：整数类型（i8/i16/i32/i64/u8/u16/u32/u64）在整个编译管线中保留 dtype，不再退化为 i64。IntLiteral(i64) → IntLiteral(i64, BaseType) 四层同步（Token/AST/HIR/Value）；Lexer 新增后缀检测（42u8）+ 编译期范围检查 + 无后缀大整数自动提升 I32→I64；运行时新增 check_int_overflow() 算术溢出检测；type_of() 返回实际 dtype；Bug fix：() 类型注解正确解析为 Type::Base(BaseType::Unit)。14 项新测试全部通过，自举三路径未破坏。
 >
 > **2026-07-11 feat: 类型系统架构改进第三批（问题 1/2/9/10/11）**：**波1 HIR 层低风险改进**：问题9——Range 成为一等类型 `Type::Range { inner, inclusive }`，`0..10` 表达式类型推断从 `Type::i32()` 改为 `Type::Range`；问题10——match 穷尽性检查，对枚举 match 若无通配符 `_` 且未覆盖所有变体则报 TypeError（支持 `Type::Generic` 包装的 Option/Result）；问题11——函数返回类型检查，若声明非 Unit 返回类型但 body 返回 Unit 则报 TypeError。**波2 泛型实例化**：问题1——Option/Result 真泛型化，`Option::Some(42)` 类型从 `Type::Enum("Option")` 改为 `Type::Generic { base: Enum("Option"), args: [i32] }`，`Result::Ok(42)` 改为 `Generic { base: Enum("Result"), args: [i32, str] }`，`?` 操作符现在可正确从 `Type::Generic` 提取 `args[0]`；问题2——HashMap 键类型解锁，`insert`/`get`/`contains_key`/`remove` 方法支持 str/int/bool/float 键（内部统一转 String 存储），解释器和 VM 双路径同步。**修复预存测试失败**：`test_hashmap_get`（stdlib_test.rs:59）期望 `None` 但 `get` 返回 `Some(Unit)`，修正测试匹配实际行为。**测试**：type_inference_test 36→42 项（+6 Option/Result 泛型 + Range inclusive）；enum_test 9→12 项（+3 match 穷尽性检查）；stdlib_test 114→116 项（+2 整数/布尔键测试）；修复 1 项预存失败。**验证**：核心测试全绿，自举三路径未破坏。**改动文件**：`hir/types.rs`（Type::Range 变体 + Display）、`hir/lower/types.rs`（问题11 函数返回检查）、`hir/lower/lower_expr.rs`（Range 推断 + match 穷尽性 + Option/Result 泛型化）、`runtime/interpreter/methods.rs`（HashMap 键类型解锁）、`runtime/vm/natives.rs`（VM 端 HashMap 键类型解锁）、`tests/type_inference_test.rs`、`tests/enum_test.rs`、`tests/stdlib_test.rs`。
 >
@@ -140,6 +142,29 @@
 > 原因：生成的 C 代码无内存管理（12 处 malloc / 0 处 free），导致系统级内存耗尽。详见 `SECURITY.md`。
 > 自举编译器改为通过 Rust 解释器执行。
 
+## v0.3.3 — Problem 5：整数类型全管线 dtype 保留 + 溢出检测
+
+**日期**：2026-07-11
+
+### 变更概述
+整数类型（i8/i16/i32/i64/u8/u16/u32/u64）在整个编译管线中保留 dtype，不再退化为 i64。新增编译期字面量范围检查和运行时算术溢出检测。
+
+### 详细变更
+- **枚举层**：`IntLiteral(i64)` → `IntLiteral(i64, BaseType)`（Token/AST/HIR/Value 四层同步）
+- **Lexer**：整数后缀检测（`42u8`/`42i64` 等）、编译期范围检查（`256u8` → 错误）、无后缀大整数自动提升 I32→I64
+- **Parser/HIR lower**：dtype 通过 `Literal::Int(n, dt)` 传递，类型推断返回 `Type::Base(*dt)`
+- **运行时**：新增 `check_int_overflow()` 函数；算术运算（Add/Sub/Mul/Div/Mod/Neg）传播左操作数 dtype 并检测溢出
+- **type_of()**：返回实际 dtype 而非硬编码 I32
+- **Bug fix**：`()` 类型注解正确解析为 `Type::Base(BaseType::Unit)`（之前被解析为 `Type::TypeParam { name: "()" }`，导致 Problem 11 返回类型检查误报）
+- **测试**：新增 `int_types_test.rs`（14 个测试，覆盖后缀类型推断、编译期范围检查、运行时溢出检测、dtype 保留）
+- **影响文件**：31 个源文件 + 28 个测试文件修改，1 个新测试文件
+
+### 验证
+- 全部关键测试套件通过（0 failures）
+- 自举三路径验证通过：`[OK] Full compiler compiled to tenthc_full.wasm`
+- 3 个 pre-existing Windows 栈溢出测试失败（与 Problem 5 无关）
+
+---
 ## 自举编译器现状（2026-06-10 更新）
 
 自举管线全部由 Tenth 实现，全程走 VM（~0.2s），不再依赖解释器 fallback。

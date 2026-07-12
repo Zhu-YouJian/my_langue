@@ -29,7 +29,7 @@ fn test_ref_and_deref() {
     let src = "{ let x = 42; let r = &x; *r }";
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {}
+        Some(Value::Int(42, _)) => {}
         v => panic!("expected Some(Int(42)), got {:?}", v),
     }
 }
@@ -39,7 +39,7 @@ fn test_mut_ref_modify() {
     let src = "{ let mut x = 10; let m = &mut x; *m = 20; x }";
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(20)) => {}
+        Some(Value::Int(20, _)) => {}
         v => panic!("expected Some(Int(20)), got {:?}", v),
     }
 }
@@ -49,7 +49,7 @@ fn test_shared_ref_still_readable() {
     let src = "{ let x = 100; let r1 = &x; let r2 = &x; *r1 + *r2 }";
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(200)) => {}
+        Some(Value::Int(200, _)) => {}
         v => panic!("expected Some(Int(200)), got {:?}", v),
     }
 }
@@ -76,7 +76,7 @@ fn test_move_semantics() {
     let src = "{ let x = 42; let y = move x; y }";
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {}
+        Some(Value::Int(42, _)) => {}
         v => panic!("expected Some(Int(42)), got {:?}", v),
     }
 }

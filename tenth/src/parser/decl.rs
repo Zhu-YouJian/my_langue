@@ -10,6 +10,7 @@
 //! - 特质：`trait Name<T> { fn ...; type T; }`
 
 use crate::error::{TenthError, TenthResult};
+use crate::hir::types::BaseType;
 use crate::lexer::token::{Span, Token, TokenKind};
 use super::ast::*;
 use super::parser::Parser;

@@ -40,7 +40,7 @@ fn test_read_bytes_native() {
 
     let result = run_interp(&src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 8, "expected 8 bytes, got {}", n),
+        Value::Int(n, _) => assert_eq!(n, 8, "expected 8 bytes, got {}", n),
         _ => panic!("expected int, got {:?}", result),
     }
 
@@ -74,7 +74,7 @@ fn test_read_bytes_big_endian_i32() {
 
     let result = run_interp(&src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 2051, "expected magic 2051, got {}", n),
+        Value::Int(n, _) => assert_eq!(n, 2051, "expected magic 2051, got {}", n),
         _ => panic!("expected int, got {:?}", result),
     }
 
@@ -108,7 +108,7 @@ fn test_idx_parse_images_metadata() {
 
     let result = run_interp(&src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 2051 + 2 + 2, "expected {}, got {}", 2051 + 2 + 2, n),
+        Value::Int(n, _) => assert_eq!(n, 2051 + 2 + 2, "expected {}, got {}", 2051 + 2 + 2, n),
         _ => panic!("expected int, got {:?}", result),
     }
 
@@ -141,7 +141,7 @@ fn test_idx_parse_pixel_data() {
 
     let result = run_interp(&src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 60, "expected pixel sum 60, got {}", n),
+        Value::Int(n, _) => assert_eq!(n, 60, "expected pixel sum 60, got {}", n),
         _ => panic!("expected int, got {:?}", result),
     }
 

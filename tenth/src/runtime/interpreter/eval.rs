@@ -8,6 +8,7 @@
 //! - `eval_stmt`：语句执行（let/return/break/continue/loop/while/for）
 
 use std::collections::HashMap;
+use crate::hir::types::BaseType;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
@@ -24,7 +25,7 @@ impl super::Interpreter {
         match &expr.kind {
             HirExprKind::Literal(lit) => {
                 Ok(Some(match lit {
-                    Literal::Int(n) => Value::Int(*n),
+                    Literal::Int(n, _) => Value::Int(*n, BaseType::I32),
                     Literal::Float(n, dt) => match dt {
                         crate::hir::types::BaseType::F32 => Value::Float32(*n as f32),
                         _ => Value::Float(*n),
@@ -807,7 +808,7 @@ impl super::Interpreter {
                     Value::Range { start, end, inclusive } => {
                         let e = if inclusive { end + 1 } else { end };
                         for i in start..e {
-                            self.insert_var(var.clone(), Value::Int(i));
+                            self.insert_var(var.clone(), Value::Int(i, BaseType::I32));
                             match self.eval_stmt(body) {
                                 Err(TenthError::BreakSignal) => break,
                                 Err(TenthError::ContinueSignal) => continue,

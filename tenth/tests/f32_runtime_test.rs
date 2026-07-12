@@ -1,4 +1,4 @@
-﻿// f32 运行时专项测试 — Phase 3 Task 3.6
+// f32 运行时专项测试 — Phase 3 Task 3.6
 // 验证 VM 算术 f32 分支、MakeTensor dtype、混合提升、native 函数 f32 支持。
 
 use tenth::hir::types::BaseType;
@@ -50,11 +50,11 @@ fn test_vm_f32_mixed_promote() {
 fn test_vm_int_float32_promote() {
     let mut vm = Vm::new();
     // Int + Float32 = Float32
-    let r = vm.add(&Value::Int(3), &Value::Float32(2.5)).unwrap();
+    let r = vm.add(&Value::Int(3, BaseType::I32), &Value::Float32(2.5)).unwrap();
     assert!(matches!(r, Value::Float32(x) if (x - 5.5).abs() < 1e-6), "Int+Float32 应为 Float32");
 
     // Float32 + Int = Float32
-    let r = vm.add(&Value::Float32(2.5), &Value::Int(3)).unwrap();
+    let r = vm.add(&Value::Float32(2.5), &Value::Int(3, BaseType::I32)).unwrap();
     assert!(matches!(r, Value::Float32(x) if (x - 5.5).abs() < 1e-6));
 }
 
@@ -78,7 +78,7 @@ fn run_src(src: &str) -> Result<Value, String> {
     // f32/f64 转换 natives
     vm.add_native("to_float".into(), |_vm, args| {
         match args.first() {
-            Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
+            Some(Value::Int(n, _)) => Ok(Value::Float(*n as f64)),
             Some(Value::Float(f)) => Ok(Value::Float(*f)),
             Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
             _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "to_float() 需要数值".into() }),
@@ -86,7 +86,7 @@ fn run_src(src: &str) -> Result<Value, String> {
     });
     vm.add_native("to_f64".into(), |_vm, args| {
         match args.first() {
-            Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
+            Some(Value::Int(n, _)) => Ok(Value::Float(*n as f64)),
             Some(Value::Float(f)) => Ok(Value::Float(*f)),
             Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
             _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "to_f64() 需要数值".into() }),
@@ -94,7 +94,7 @@ fn run_src(src: &str) -> Result<Value, String> {
     });
     vm.add_native("to_f32".into(), |_vm, args| {
         match args.first() {
-            Some(Value::Int(n)) => Ok(Value::Float32(*n as f32)),
+            Some(Value::Int(n, _)) => Ok(Value::Float32(*n as f32)),
             Some(Value::Float(f)) => Ok(Value::Float32(*f as f32)),
             Some(Value::Float32(f)) => Ok(Value::Float32(*f)),
             _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "to_f32() 需要数值".into() }),
@@ -102,15 +102,15 @@ fn run_src(src: &str) -> Result<Value, String> {
     });
     // randn_f32 native
     vm.add_native("randn_f32".into(), |_vm, args| {
-        let rows = match args.first() { Some(Value::Int(n)) => *n as usize, _ => 1 };
-        let cols = match args.get(1) { Some(Value::Int(n)) => *n as usize, _ => 1 };
+        let rows = match args.first() { Some(Value::Int(n, _)) => *n as usize, _ => 1 };
+        let cols = match args.get(1) { Some(Value::Int(n, _)) => *n as usize, _ => 1 };
         let t = Tensor::randn_f32(&[rows, cols]);
         Ok(Value::Tensor(Rc::new(RefCell::new(t))))
     });
     // abs / sqrt natives
     vm.add_native("abs".into(), |_vm, args| {
         match args.first() {
-            Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
+            Some(Value::Int(n, _)) => Ok(Value::Int(n.abs(), BaseType::I32)),
             Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
             Some(Value::Float32(f)) => Ok(Value::Float32(f.abs())),
             _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "abs() 需要数值".into() }),
@@ -120,7 +120,7 @@ fn run_src(src: &str) -> Result<Value, String> {
         match args.first() {
             Some(Value::Float(f)) => Ok(Value::Float(f.sqrt())),
             Some(Value::Float32(f)) => Ok(Value::Float32(f.sqrt())),
-            Some(Value::Int(n)) => Ok(Value::Float((*n as f64).sqrt())),
+            Some(Value::Int(n, _)) => Ok(Value::Float((*n as f64).sqrt())),
             _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "sqrt() 需要数值".into() }),
         }
     });

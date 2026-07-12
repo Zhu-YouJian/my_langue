@@ -1,4 +1,4 @@
-﻿//! HIR → Bytecode compiler.
+//! HIR → Bytecode compiler.
 //!
 //! Walks HIR and emits bytecode for the stack VM.
 
@@ -66,7 +66,7 @@ impl BytecodeCompiler {
         use HirExprKind::*;
         match &expr.kind {
             Literal(lit) => match lit {
-                crate::hir::hir::Literal::Int(n) => self.chunk.emit(Op::PushInt(*n)),
+                crate::hir::hir::Literal::Int(n, _) => self.chunk.emit(Op::PushInt(*n)),
                 crate::hir::hir::Literal::Float(f, dt) => match dt {
                     crate::hir::types::BaseType::F32 => self.chunk.emit(Op::PushFloat32(*f as f32)),
                     _ => self.chunk.emit(Op::PushFloat(*f)),
@@ -395,7 +395,7 @@ impl BytecodeCompiler {
                             // `0 => body` or `0 if guard => body`
                             self.chunk.emit(Op::Dup); // [scrut, scrut]
                             match lit {
-                                crate::hir::hir::Literal::Int(n) => self.chunk.emit(Op::PushInt(*n)),
+                                crate::hir::hir::Literal::Int(n, _) => self.chunk.emit(Op::PushInt(*n)),
                                 crate::hir::hir::Literal::Float(f, dt) => match dt {
                                     crate::hir::types::BaseType::F32 => self.chunk.emit(Op::PushFloat32(*f as f32)),
                                     _ => self.chunk.emit(Op::PushFloat(*f)),
@@ -587,14 +587,14 @@ impl BytecodeCompiler {
                 // directly and does not use PushRange).
                 let s = start.as_ref().and_then(|e| match &e.kind {
                     HirExprKind::Literal(lit) => match lit {
-                        crate::hir::hir::Literal::Int(n) => Some(*n),
+                        crate::hir::hir::Literal::Int(n, _) => Some(*n),
                         _ => None,
                     },
                     _ => None,
                 }).unwrap_or(0);
                 let e = end.as_ref().and_then(|e| match &e.kind {
                     HirExprKind::Literal(lit) => match lit {
-                        crate::hir::hir::Literal::Int(n) => Some(*n),
+                        crate::hir::hir::Literal::Int(n, _) => Some(*n),
                         _ => None,
                     },
                     _ => None,

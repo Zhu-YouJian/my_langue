@@ -28,7 +28,7 @@ fn test_generic_identity_i32() {
     let src = "fn identity<T>(x: T) -> T { x }; identity<i32>(42)";
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {}
+        Some(Value::Int(42, _)) => {}
         v => panic!("expected Int(42), got {}", v.unwrap()),
     }
 }
@@ -66,7 +66,7 @@ fn test_generic_struct_single_param() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(100)) => {}
+        Some(Value::Int(100, _)) => {}
         v => panic!("expected Int(100), got {}", v.unwrap()),
     }
 }

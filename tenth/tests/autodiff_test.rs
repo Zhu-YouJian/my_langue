@@ -230,7 +230,7 @@ fn test_closure_captures_variable() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(15)) => {}
+        Some(Value::Int(15, _)) => {}
         v => panic!("expected Int(15), got {:?}", v),
     }
 }
@@ -245,7 +245,7 @@ fn test_closure_captures_multiple_variables() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(10)) => {}
+        Some(Value::Int(10, _)) => {}
         v => panic!("expected Int(10), got {:?}", v),
     }
 }
@@ -260,7 +260,7 @@ fn test_closure_nested_capture() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(18)) => {}
+        Some(Value::Int(18, _)) => {}
         v => panic!("expected Int(18), got {:?}", v),
     }
 }
@@ -273,7 +273,7 @@ fn test_closure_does_not_capture_params() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(300)) => {}
+        Some(Value::Int(300, _)) => {}
         v => panic!("expected Int(300), got {:?}", v),
     }
 }
@@ -310,7 +310,7 @@ fn test_closure_capture_dedup_same_var_many_uses() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(51)) => {}
+        Some(Value::Int(51, _)) => {}
         v => panic!("expected Int(51), got {:?}", v),
     }
 }
@@ -330,7 +330,7 @@ fn test_closure_capture_does_not_capture_builtins() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(15)) => {}
+        Some(Value::Int(15, _)) => {}
         v => panic!("expected Int(15), got {:?}", v),
     }
 }
@@ -462,7 +462,7 @@ fn test_vm_for_range() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(10) => {}  // 0+1+2+3+4 = 10
+        Value::Int(10, _) => {}  // 0+1+2+3+4 = 10
         v => panic!("expected Int(10), got {:?}", v),
     }
 }
@@ -481,7 +481,7 @@ fn test_vm_for_range_inclusive() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(15) => {}  // 1+2+3+4+5 = 15
+        Value::Int(15, _) => {}  // 1+2+3+4+5 = 15
         v => panic!("expected Int(15), got {:?}", v),
     }
 }
@@ -500,7 +500,7 @@ fn test_vm_for_in_function() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(15) => {}  // 0+1+2+3+4+5 = 15
+        Value::Int(15, _) => {}  // 0+1+2+3+4+5 = 15
         v => panic!("expected Int(15), got {:?}", v),
     }
 }
@@ -536,7 +536,7 @@ fn test_vm_closure_simple() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(42) => {}
+        Value::Int(42, _) => {}
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -553,7 +553,7 @@ fn test_vm_closure_captures() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(21) => {}
+        Value::Int(21, _) => {}
         v => panic!("expected Int(21), got {:?}", v),
     }
 }
@@ -604,7 +604,7 @@ fn test_closure_pipe_syntax_basic() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(10)) => {}
+        Some(Value::Int(10, _)) => {}
         v => panic!("expected Int(10), got {:?}", v),
     }
 }
@@ -617,7 +617,7 @@ fn test_closure_pipe_syntax_multi_param() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(7)) => {}
+        Some(Value::Int(7, _)) => {}
         v => panic!("expected Int(7), got {:?}", v),
     }
 }
@@ -630,7 +630,7 @@ fn test_closure_pipe_syntax_with_type_annotation() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {}
+        Some(Value::Int(42, _)) => {}
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -646,7 +646,7 @@ fn test_closure_pipe_syntax_as_argument() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(21)) => {}
+        Some(Value::Int(21, _)) => {}
         v => panic!("expected Int(21), got {:?}", v),
     }
 }
@@ -662,7 +662,7 @@ fn test_vm_closure_pipe_syntax() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(100) => {}
+        Value::Int(100, _) => {}
         v => panic!("expected Int(100), got {:?}", v),
     }
 }
@@ -680,7 +680,7 @@ fn test_vm_closure_multi_capture() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(35) => {}
+        Value::Int(35, _) => {}
         v => panic!("expected Int(35), got {:?}", v),
     }
 }
@@ -716,7 +716,7 @@ fn test_vm_struct_default_fields() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(0) => {}
+        Value::Int(0, _) => {}
         v => panic!("expected Int(0), got {:?}", v),
     }
 }
@@ -736,7 +736,7 @@ fn test_vm_struct_impl_method() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(42) => {}
+        Value::Int(42, _) => {}
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -759,7 +759,7 @@ fn test_vm_enum_match() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(2) => {}
+        Value::Int(2, _) => {}
         v => panic!("expected Int(2), got {:?}", v),
     }
 }
@@ -779,7 +779,7 @@ fn test_vm_enum_tuple_variant() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(42) => {}
+        Value::Int(42, _) => {}
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -799,7 +799,7 @@ fn test_vm_generic_function() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(42) => {}
+        Value::Int(42, _) => {}
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -816,7 +816,7 @@ fn test_vm_generic_struct() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(30) => {}
+        Value::Int(30, _) => {}
         v => panic!("expected Int(30), got {:?}", v),
     }
 }
@@ -835,7 +835,7 @@ fn test_vm_for_loop_sum() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(10) => {}
+        Value::Int(10, _) => {}
         v => panic!("expected Int(10), got {:?}", v),
     }
 }
@@ -856,7 +856,7 @@ fn test_vm_while_loop() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(15) => {}
+        Value::Int(15, _) => {}
         v => panic!("expected Int(15), got {:?}", v),
     }
 }
@@ -871,7 +871,7 @@ fn test_vm_if_else() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(10) => {}
+        Value::Int(10, _) => {}
         v => panic!("expected Int(10), got {:?}", v),
     }
 }
@@ -886,7 +886,7 @@ fn test_vm_recursive_function() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(55) => {}
+        Value::Int(55, _) => {}
         v => panic!("expected Int(55), got {:?}", v),
     }
 }

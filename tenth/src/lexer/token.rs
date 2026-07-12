@@ -11,7 +11,8 @@ pub enum StringPart {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    IntLiteral(i64),
+    /// 整数字面量。第二字段为 dtype：`42u8` → U8，`42i64` → I64，`42` → I32（默认）。
+    IntLiteral(i64, BaseType),
     /// 浮点字面量。第二字段为 dtype：`3.14f32` → F32，`3.14f64` 或 `3.14` → F64。
     FloatLiteral(f64, BaseType),
     StringLiteral(String),
@@ -116,7 +117,7 @@ pub struct Token {
 impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TokenKind::IntLiteral(n) => write!(f, "{}", n),
+            TokenKind::IntLiteral(n, _) => write!(f, "{}", n),
             TokenKind::FloatLiteral(n, _) => write!(f, "{}", n),
             TokenKind::StringLiteral(s) => write!(f, "\"{}\"", s),
             TokenKind::InterpolatedString(parts) => {

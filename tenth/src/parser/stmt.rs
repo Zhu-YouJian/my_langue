@@ -8,6 +8,7 @@
 //! - `parse_pattern_fields` / `parse_pattern_fields_inner`：枚举变体字段绑定
 
 use crate::error::{TenthError, TenthResult};
+use crate::hir::types::BaseType;
 use crate::lexer::token::{Span, Token, TokenKind};
 use super::ast::*;
 use super::parser::Parser;
@@ -253,14 +254,14 @@ impl Parser {
                 self.advance();
                 Ok(Pattern::Wildcard)
             }
-            TokenKind::IntLiteral(n) => {
+            TokenKind::IntLiteral(n, _) => {
                 let n = *n;
                 self.advance();
                 // Check for range pattern: 1..10 or 1..=10
                 if matches!(self.peek_kind(), TokenKind::DotDot) {
                     self.advance();
                     let inclusive = self.match_token(TokenKind::Assign);
-                    if let TokenKind::IntLiteral(end) = &self.peek().kind {
+                    if let TokenKind::IntLiteral(end, _) = &self.peek().kind {
                         let end = *end;
                         self.advance();
                         return Ok(Pattern::Range { start: n, end, inclusive });
@@ -273,7 +274,7 @@ impl Parser {
                 }
                 if matches!(self.peek_kind(), TokenKind::DotDotEq) {
                     self.advance();
-                    if let TokenKind::IntLiteral(end) = &self.peek().kind {
+                    if let TokenKind::IntLiteral(end, _) = &self.peek().kind {
                         let end = *end;
                         self.advance();
                         return Ok(Pattern::Range { start: n, end, inclusive: true });
@@ -284,7 +285,7 @@ impl Parser {
                         message: "范围模式缺少结束值".into(),
                     });
                 }
-                Ok(Pattern::Literal(Literal::Int(n)))
+                Ok(Pattern::Literal(Literal::Int(n, BaseType::I32)))
             }
             TokenKind::FloatLiteral(n, dt) => {
                 let n = *n;

@@ -58,7 +58,7 @@ fn test_env_get_not_found_returns_err() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(1)) => {}
+        Some(Value::Int(1, _)) => {}
         v => panic!("期望 Some(Int(1)) 表示 Err，got {:?}", v),
     }
 }
@@ -103,7 +103,7 @@ fn test_read_line_returns_result_type() {
     let result = run_code(src);
     assert!(result.is_ok(), "read_line 不应 panic: {:?}", result.err());
     match result.unwrap() {
-        Some(Value::Int(n)) => assert!(n == 0 || n == 1, "期望 0 或 1，got {}", n),
+        Some(Value::Int(n, _)) => assert!(n == 0 || n == 1, "期望 0 或 1，got {}", n),
         v => panic!("期望 Some(Int(0|1))，got {:?}", v),
     }
 }

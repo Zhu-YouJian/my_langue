@@ -84,11 +84,11 @@ fn test_tuple_create() {
         Some(Value::Tuple(items)) => {
             assert_eq!(items.len(), 2, "二元组应有 2 个元素");
             match &items[0] {
-                Value::Int(1) => {}
+                Value::Int(1, _) => {}
                 v => panic!("第一个元素应为 Int(1), got {:?}", v),
             }
             match &items[1] {
-                Value::Int(2) => {}
+                Value::Int(2, _) => {}
                 v => panic!("第二个元素应为 Int(2), got {:?}", v),
             }
         }
@@ -106,7 +106,7 @@ fn test_tuple_destructure_let() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(3)) => {}
+        Some(Value::Int(3, _)) => {}
         v => panic!("期望 Int(3), got {:?}", v),
     }
 }
@@ -124,7 +124,7 @@ fn test_tuple_destructure_match() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(3)) => {}
+        Some(Value::Int(3, _)) => {}
         v => panic!("期望 Int(3), got {:?}", v),
     }
 }
@@ -141,7 +141,7 @@ fn test_tuple_triple() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(1)) => {}
+        Some(Value::Int(1, _)) => {}
         v => panic!("期望 Int(1), got {:?}", v),
     }
 }
@@ -161,7 +161,7 @@ fn test_tuple_nested() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(6)) => {}
+        Some(Value::Int(6, _)) => {}
         v => panic!("期望 Int(6) 表示嵌套解构 1+2+3, got {:?}", v),
     }
 }
@@ -181,7 +181,7 @@ fn test_tuple_function_return() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(3)) => {}
+        Some(Value::Int(3, _)) => {}
         v => panic!("期望 Int(3), got {:?}", v),
     }
 }
@@ -208,11 +208,11 @@ fn test_vm_tuple_create() {
         Value::Tuple(items) => {
             assert_eq!(items.len(), 2, "VM: 二元组应有 2 个元素");
             match &items[0] {
-                Value::Int(1) => {}
+                Value::Int(1, _) => {}
                 v => panic!("VM: 第一个元素应为 Int(1), got {:?}", v),
             }
             match &items[1] {
-                Value::Int(2) => {}
+                Value::Int(2, _) => {}
                 v => panic!("VM: 第二个元素应为 Int(2), got {:?}", v),
             }
         }
@@ -232,7 +232,7 @@ fn test_vm_tuple_destructure_let() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(3) => {}
+        Value::Int(3, _) => {}
         v => panic!("VM: 期望 Int(3), got {:?}", v),
     }
 }
@@ -249,7 +249,7 @@ fn test_vm_tuple_destructure_match() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(3) => {}
+        Value::Int(3, _) => {}
         v => panic!("VM: 期望 Int(3), got {:?}", v),
     }
 }
@@ -269,7 +269,7 @@ fn test_vm_tuple_function_return() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(3) => {}
+        Value::Int(3, _) => {}
         v => panic!("VM: 期望 Int(3), got {:?}", v),
     }
 }

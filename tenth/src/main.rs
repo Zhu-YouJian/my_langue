@@ -1,4 +1,5 @@
-﻿use std::rc::Rc;
+use std::rc::Rc;
+use tenth::hir::types::BaseType;
 use std::cell::RefCell;
 use tenth::error::TenthResult;
 use tenth::repl;
@@ -293,12 +294,12 @@ fn vm_run(path: &str) -> TenthResult<()> {
                     .and_then(|prog| tenth::hir::lower::Lowerer::new().lower_program(&prog))
                     .and_then(|hir| tenth::compile::compile_to_wasm(&hir))
                 {
-                    Ok(bytes) => { let _ = std::fs::write(out, &bytes); return Ok(Value::Int(0)); }
-                    Err(_) => return Ok(Value::Int(1)),
+                    Ok(bytes) => { let _ = std::fs::write(out, &bytes); return Ok(Value::Int(0, BaseType::I32)); }
+                    Err(_) => return Ok(Value::Int(1, BaseType::I32)),
                 }
             }
         }
-        Ok(Value::Int(1))
+        Ok(Value::Int(1, BaseType::I32))
     });
     vm.add_native("compile_program".into(), |_vm, args| {
         if args.len() >= 2 {
@@ -306,13 +307,13 @@ fn vm_run(path: &str) -> TenthResult<()> {
                 match tenth::compile::compile_program_to_wasm(&args[0]) {
                     Ok(bytes) => {
                         let _ = std::fs::write(out, &bytes);
-                        return Ok(Value::Int(0));
+                        return Ok(Value::Int(0, BaseType::I32));
                     }
-                    Err(_) => return Ok(Value::Int(1)),
+                    Err(_) => return Ok(Value::Int(1, BaseType::I32)),
                 }
             }
         }
-        Ok(Value::Int(1))
+        Ok(Value::Int(1, BaseType::I32))
     });
 
     // Compile each function to bytecode

@@ -17,7 +17,7 @@ impl Lowerer {
         let (kind, ty) = match &expr.kind {
             ExprKind::Literal(lit) => {
                 let (hir_lit, ty) = match lit {
-                    ast::Literal::Int(n) => (Literal::Int(*n), Type::i32()),
+            ast::Literal::Int(n, dt) => (Literal::Int(*n, *dt), Type::Base(*dt)),
                     ast::Literal::Float(n, dt) => (Literal::Float(*n, *dt), Type::Base(*dt)),
                     ast::Literal::Bool(b) => (Literal::Bool(*b), Type::bool_()),
                     ast::Literal::String(s) => (Literal::String(s.clone()), Type::str_()),
@@ -710,7 +710,7 @@ impl Lowerer {
                                     Type::Base(b) => match b {
                                         BaseType::I32 | BaseType::I64 | BaseType::I8 | BaseType::I16
                                         | BaseType::U8 | BaseType::U16 | BaseType::U32 | BaseType::U64 => HirExpr {
-                                            kind: HirExprKind::Literal(Literal::Int(0)),
+                                            kind: HirExprKind::Literal(Literal::Int(0, *b)),
                                             ty: fty.clone(),
                                             span: name.span.clone(),
                                         },
@@ -730,18 +730,18 @@ impl Lowerer {
                                             span: name.span.clone(),
                                         },
                                         BaseType::Char => HirExpr {
-                                            kind: HirExprKind::Literal(Literal::Int(0)),
+                                            kind: HirExprKind::Literal(Literal::Int(0, BaseType::Char)),
                                             ty: fty.clone(),
                                             span: name.span.clone(),
                                         },
                                         BaseType::Unit => HirExpr {
-                                            kind: HirExprKind::Literal(Literal::Int(0)),
+                                            kind: HirExprKind::Literal(Literal::Int(0, BaseType::I32)),
                                             ty: Type::unit(),
                                             span: name.span.clone(),
                                         },
                                     },
                                     _ => HirExpr {
-                                        kind: HirExprKind::Literal(Literal::Int(0)),
+                                        kind: HirExprKind::Literal(Literal::Int(0, BaseType::I32)),
                                         ty: Type::Unknown,
                                         span: name.span.clone(),
                                     },
@@ -1015,7 +1015,7 @@ impl Lowerer {
             ast::Pattern::Wildcard => Ok(HirPattern::Wildcard),
             ast::Pattern::Literal(lit) => {
                 let hir_lit = match lit {
-                    ast::Literal::Int(n) => Literal::Int(*n),
+        ast::Literal::Int(n, dt) => Literal::Int(*n, *dt),
                     ast::Literal::Float(n, dt) => Literal::Float(*n, *dt),
                     ast::Literal::Bool(b) => Literal::Bool(*b),
                     ast::Literal::String(s) => Literal::String(s.clone()),

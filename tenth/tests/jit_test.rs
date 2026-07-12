@@ -81,7 +81,7 @@ fn test_jit_int_addition() {
     let src = "fn main() -> Int { 3 + 4 }";
     let result = run_jit(src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 7),
+        Value::Int(n, _) => assert_eq!(n, 7),
         v => panic!("expected Int(7), got {:?}", v),
     }
 }
@@ -91,7 +91,7 @@ fn test_jit_int_subtraction() {
     let src = "fn main() -> Int { 10 - 3 }";
     let result = run_jit(src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 7),
+        Value::Int(n, _) => assert_eq!(n, 7),
         v => panic!("expected Int(7), got {:?}", v),
     }
 }
@@ -101,7 +101,7 @@ fn test_jit_int_multiplication() {
     let src = "fn main() -> Int { 6 * 7 }";
     let result = run_jit(src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 42),
+        Value::Int(n, _) => assert_eq!(n, 42),
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -129,7 +129,7 @@ fn test_jit_local_variables() {
     "#;
     let result = run_jit(src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 30),
+        Value::Int(n, _) => assert_eq!(n, 30),
         v => panic!("expected Int(30), got {:?}", v),
     }
 }
@@ -145,7 +145,7 @@ fn test_jit_if_else_true() {
     "#;
     let result = run_jit(src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 100),
+        Value::Int(n, _) => assert_eq!(n, 100),
         v => panic!("expected Int(100), got {:?}", v),
     }
 }
@@ -159,7 +159,7 @@ fn test_jit_if_else_false() {
     "#;
     let result = run_jit(src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 200),
+        Value::Int(n, _) => assert_eq!(n, 200),
         v => panic!("expected Int(200), got {:?}", v),
     }
 }
@@ -173,7 +173,7 @@ fn test_jit_if_bool_literal_true() {
     "#;
     let result = run_jit(src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 100, "if true should take then-branch"),
+        Value::Int(n, _) => assert_eq!(n, 100, "if true should take then-branch"),
         v => panic!("expected Int(100), got {:?}", v),
     }
 }
@@ -188,7 +188,7 @@ fn test_jit_function_call() {
     "#;
     let result = run_jit(src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 7),
+        Value::Int(n, _) => assert_eq!(n, 7),
         v => panic!("expected Int(7), got {:?}", v),
     }
 }
@@ -202,7 +202,7 @@ fn test_jit_nested_calls() {
     "#;
     let result = run_jit(src).unwrap();
     match result {
-        Value::Int(n) => assert_eq!(n, 14),
+        Value::Int(n, _) => assert_eq!(n, 14),
         v => panic!("expected Int(14), got {:?}", v),
     }
 }

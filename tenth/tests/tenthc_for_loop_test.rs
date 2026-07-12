@@ -538,7 +538,7 @@ mod tenthc_for_loop {
         let mut interpreter = Interpreter::new(&hir);
         let result = interpreter.execute_program(&hir).expect("execute");
         match result {
-            Some(Value::Int(9)) => {},
+            Some(Value::Int(9, _)) => {},
             v => panic!("expected Int(9), got {:?}", v),
         }
     }
@@ -581,7 +581,7 @@ mod tenthc_for_loop {
         let mut interpreter = Interpreter::new(&hir);
         let result = interpreter.execute_program(&hir).expect("execute");
         match result {
-            Some(Value::Int(60)) => {},
+            Some(Value::Int(60, _)) => {},
             v => panic!("expected Int(60), got {:?}", v),
         }
     }

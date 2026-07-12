@@ -1,4 +1,4 @@
-﻿use tenth::lexer::lexer::Lexer;
+use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::hir::lower::Lowerer;
 use tenth::runtime::vm::Vm;
@@ -7,6 +7,7 @@ use tenth::runtime::async_io::{ASYNC_IO, IoResult};
 use tenth::compile::bytecode::BytecodeCompiler;
 use std::rc::Rc;
 use std::cell::RefCell;
+use tenth::hir::types::BaseType;
 
 /// Run source through lexer → parser → HIR → bytecode → VM.
 /// Provides `print`/`println` + async I/O natives so tests can observe values
@@ -38,12 +39,12 @@ fn run_vm(src: &str) -> Result<Value, String> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        Ok(Value::Int(ms))
+        Ok(Value::Int(ms, BaseType::I32))
     });
     // async_sleep_ms: register timer in ASYNC_IO
     vm.add_native("async_sleep_ms".into(), |_vm, args| {
         let ms = match args.first() {
-            Some(Value::Int(n)) => *n,
+            Some(Value::Int(n, _)) => *n,
             _ => return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "async_sleep_ms(ms) 期望一个整数".into(),
             }),
@@ -65,13 +66,13 @@ fn run_vm(src: &str) -> Result<Value, String> {
         if args.len() < 2 {
             return Ok(err_result("tcp_connect 需要 (String, i64) 参数"));
         }
-        if let (Value::String(host), Value::Int(port)) = (&args[0], &args[1]) {
+        if let (Value::String(host), Value::Int(port, _)) = (&args[0], &args[1]) {
             let addr = format!("{}:{}", host, port);
             match std::net::TcpStream::connect(&addr) {
                 Ok(stream) => {
                     vm.tcp_streams.push(Some(stream));
                     let handle = vm.tcp_streams.len() as i64;
-                    Ok(ok_result(Value::Int(handle)))
+                    Ok(ok_result(Value::Int(handle, BaseType::I32)))
                 }
                 Err(e) => Ok(err_result(format!("连接失败: {e}"))),
             }
@@ -80,7 +81,7 @@ fn run_vm(src: &str) -> Result<Value, String> {
         }
     });
     vm.add_native("tcp_close".into(), |vm, args| {
-        if let Some(Value::Int(handle)) = args.first() {
+        if let Some(Value::Int(handle, _)) = args.first() {
             let idx = *handle as usize;
             if idx > 0 && idx <= vm.tcp_streams.len() {
                 vm.tcp_streams[idx - 1] = None;
@@ -94,7 +95,7 @@ fn run_vm(src: &str) -> Result<Value, String> {
             return Ok(Value::future_ready(err_result("async_tcp_read 需要 (i64, i64) 参数")));
         }
         let (handle, max_bytes) = match (&args[0], &args[1]) {
-            (Value::Int(h), Value::Int(n)) => (*h, *n),
+            (Value::Int(h, _), Value::Int(n, _)) => (*h, *n),
             _ => return Ok(Value::future_ready(err_result("async_tcp_read 需要 (i64, i64) 参数"))),
         };
         let idx = handle as usize;
@@ -136,7 +137,7 @@ fn run_vm(src: &str) -> Result<Value, String> {
             return Ok(Value::future_ready(err_result("async_tcp_write 需要 (i64, Vec<i64>) 参数")));
         }
         let (handle, data) = match (&args[0], &args[1]) {
-            (Value::Int(h), Value::Vec(v)) => (*h, v.clone()),
+            (Value::Int(h, _), Value::Vec(v)) => (*h, v.clone()),
             _ => return Ok(Value::future_ready(err_result("async_tcp_write 需要 (i64, Vec<i64>) 参数"))),
         };
         let idx = handle as usize;
@@ -152,7 +153,7 @@ fn run_vm(src: &str) -> Result<Value, String> {
         };
         stream_clone.set_write_timeout(None).ok();
         let bytes: Vec<u8> = data.borrow().iter().map(|x| match x {
-            Value::Int(b) => *b as u8,
+            Value::Int(b, _) => *b as u8,
             _ => 0,
         }).collect();
 
@@ -468,7 +469,7 @@ fn test_async_tcp_echo() {
     assert!(result.is_ok(), "async TCP echo should complete: {:?}", result.err());
     // Should have read back 2 bytes ("Hi")
     match result.unwrap() {
-        Value::Int(n) => assert_eq!(n, 2, "expected 2 bytes echoed, got {}", n),
+        Value::Int(n, _) => assert_eq!(n, 2, "expected 2 bytes echoed, got {}", n),
         v => panic!("expected Int(2), got {:?}", v),
     }
 }
@@ -490,7 +491,7 @@ fn test_async_tcp_read_invalid_handle() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(1) => {}
+        Value::Int(1, _) => {}
         v => panic!("expected Int(1) for invalid handle, got {:?}", v),
     }
 }
@@ -513,7 +514,7 @@ fn test_async_tcp_write_invalid_handle() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(1) => {}
+        Value::Int(1, _) => {}
         v => panic!("expected Int(1) for invalid handle, got {:?}", v),
     }
 }
@@ -542,7 +543,7 @@ fn test_spawn_returns_ready_future() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(7) => {}
+        Value::Int(7, _) => {}
         v => panic!("expected Int(7) from eager spawn, got {:?}", v),
     }
 }
@@ -567,7 +568,7 @@ fn test_async_sleep_returns_pending_future() {
     let result = run_vm(src);
     assert!(result.is_ok(), "Pending Future await should work: {:?}", result.err());
     match result.unwrap() {
-        Value::Int(42) => {}
+        Value::Int(42, _) => {}
         v => panic!("expected Int(42) after Pending Future resolved, got {:?}", v),
     }
 }
@@ -596,7 +597,7 @@ fn test_other_task_runs_during_await_sleep() {
     let result = run_vm(src);
     assert!(result.is_ok(), "scheduler should resume after sleep: {:?}", result.err());
     match result.unwrap() {
-        Value::Int(100) => {}
+        Value::Int(100, _) => {}
         v => panic!("expected Int(100), got {:?}", v),
     }
 }
@@ -623,7 +624,7 @@ fn test_multiple_sleeps_different_durations() {
     let result = run_vm(src);
     assert!(result.is_ok(), "multiple sleeps with different durations: {:?}", result.err());
     match result.unwrap() {
-        Value::Int(7) => {}
+        Value::Int(7, _) => {}
         v => panic!("expected Int(7), got {:?}", v),
     }
 }
@@ -644,7 +645,7 @@ fn test_async_sleep_zero_ms() {
     let result = run_vm(src);
     assert!(result.is_ok(), "0ms sleep should complete: {:?}", result.err());
     match result.unwrap() {
-        Value::Int(1) => {}
+        Value::Int(1, _) => {}
         v => panic!("expected Int(1) after 0ms sleep, got {:?}", v),
     }
 }
@@ -666,7 +667,7 @@ fn test_async_sleep_chain() {
     let result = run_vm(src);
     assert!(result.is_ok(), "chained sleeps should complete: {:?}", result.err());
     match result.unwrap() {
-        Value::Int(99) => {}
+        Value::Int(99, _) => {}
         v => panic!("expected Int(99) after chained sleeps, got {:?}", v),
     }
 }
@@ -691,7 +692,7 @@ fn test_await_same_future_twice() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(22) => {}
+        Value::Int(22, _) => {}
         v => panic!("expected Int(22) (11+11) from double await, got {:?}", v),
     }
 }
@@ -714,7 +715,7 @@ fn test_await_pending_future_twice() {
     let result = run_vm(src);
     assert!(result.is_ok(), "double await on Pending Future: {:?}", result.err());
     match result.unwrap() {
-        Value::Int(3) => {}
+        Value::Int(3, _) => {}
         v => panic!("expected Int(3) after double await, got {:?}", v),
     }
 }
@@ -766,7 +767,7 @@ fn test_async_tcp_write_only() {
     let result = run_vm(&src);
     assert!(result.is_ok(), "async_tcp_write only should complete: {:?}", result.err());
     match result.unwrap() {
-        Value::Int(3) => {}
+        Value::Int(3, _) => {}
         v => panic!("expected Int(3) bytes written, got {:?}", v),
     }
 }
@@ -831,7 +832,7 @@ fn test_async_tcp_write_with_sleep() {
     let result = run_vm(&src);
     assert!(result.is_ok(), "sleep + write should complete: {:?}", result.err());
     match result.unwrap() {
-        Value::Int(2) => {}
+        Value::Int(2, _) => {}
         v => panic!("expected Int(2) bytes written, got {:?}", v),
     }
 }
@@ -860,7 +861,7 @@ fn test_spawn_multiple_with_sleep() {
     let result = run_vm(src);
     assert!(result.is_ok(), "mixed spawn + sleep should complete: {:?}", result.err());
     match result.unwrap() {
-        Value::Int(6) => {}
+        Value::Int(6, _) => {}
         v => panic!("expected Int(6) (1+2+3), got {:?}", v),
     }
 }

@@ -1,4 +1,4 @@
-﻿//! Expression and statement compilation.
+//! Expression and statement compilation.
 
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 use crate::error::{TenthError, TenthResult};
@@ -1055,7 +1055,7 @@ impl WasmCompiler {
 
     pub(super) fn compile_literal(&mut self, body: &mut Function, lit: &Literal) -> TenthResult<()> {
         match lit {
-            Literal::Int(n) => { body.instruction(&Instruction::I64Const(*n)); }
+            Literal::Int(n, _) => { body.instruction(&Instruction::I64Const(*n)); }
             // Phase 5：消除策略 A，按 dtype 分支发 F32Const/F64Const
             Literal::Float(n, dt) => {
                 match dt {
@@ -1164,7 +1164,7 @@ impl WasmCompiler {
             HirExprKind::Literal(Literal::String(s)) => {
                 body.instruction(&Instruction::I32Const(self.intern_string(s) as i32));
             }
-            HirExprKind::Literal(Literal::Int(n)) => {
+            HirExprKind::Literal(Literal::Int(n, _)) => {
                 body.instruction(&Instruction::I64Const(*n));
                 body.instruction(&Instruction::Call(HOST_STR_INT));
             }

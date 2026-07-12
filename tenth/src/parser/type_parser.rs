@@ -5,6 +5,7 @@
 //! - `parse_generic_params`：泛型参数列表 `<T: Bound, U>`
 
 use crate::error::{TenthError, TenthResult};
+use crate::hir::types::BaseType;
 use crate::lexer::token::{Span, Token, TokenKind};
 use super::ast::*;
 use super::parser::Parser;
@@ -92,7 +93,7 @@ impl Parser {
                             continue;
                         }
                         match self.peek_kind() {
-                            TokenKind::IntLiteral(n) => {
+                            TokenKind::IntLiteral(n, _) => {
                                 let n = *n;
                                 self.advance();
                                 dims.push(DimSpec::Literal(n));

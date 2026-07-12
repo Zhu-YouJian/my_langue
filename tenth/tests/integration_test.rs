@@ -19,7 +19,7 @@ fn run_code(src: &str) -> Result<Option<Value>, String> {
 fn test_simple_arithmetic() {
     let result = run_code("1 + 2").unwrap();
     match result {
-        Some(Value::Int(3)) => {}
+        Some(Value::Int(3, _)) => {}
         v => panic!("expected Some(Int(3)), got {}", v.unwrap()),
     }
 }
@@ -29,7 +29,7 @@ fn test_variable_and_use() {
     let src = "let x = 42; x + 10";
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(52)) => {}
+        Some(Value::Int(52, _)) => {}
         v => panic!("expected Some(Int(52)), got {}", v.unwrap()),
     }
 }
@@ -66,7 +66,7 @@ fn test_if_expression() {
     let src = "if true { 1 } else { 2 }";
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(1)) => {}
+        Some(Value::Int(1, _)) => {}
         v => panic!("expected Some(Int(1)), got {}", v.unwrap()),
     }
 }
@@ -96,7 +96,7 @@ fn test_while_loop() {
     let src = "{ let mut x = 0; while x < 3 { x = x + 1 }; x }";
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(3)) => {}
+        Some(Value::Int(3, _)) => {}
         v => panic!("expected Some(Int(3)), got {}", v.unwrap()),
     }
 }
@@ -122,7 +122,7 @@ fn test_closure_simple() {
     let src = "{ let f = |x, y| x + y; f(10, 20) }";
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(30)) => {}
+        Some(Value::Int(30, _)) => {}
         v => panic!("expected Some(Int(30)), got {:?}", v),
     }
 }

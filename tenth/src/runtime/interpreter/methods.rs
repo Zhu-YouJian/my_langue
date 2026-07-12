@@ -1,4 +1,4 @@
-﻿//! 方法分派：String / Vec / Map / Range / Iterator / Tensor / Scalar 方法实现。
+//! 方法分派：String / Vec / Map / Range / Iterator / Tensor / Scalar 方法实现。
 //!
 //! 从 `interpreter.rs` 第 1780-3099 行迁移而来。包含：
 //! - `eval_method_call` / `eval_native_method`：方法分派入口
@@ -9,6 +9,7 @@
 //! - `eval_tensor_method` / `eval_scalar_method`：张量与标量方法
 
 use std::collections::HashMap;
+use crate::hir::types::BaseType;
 use std::rc::Rc;
 use std::cell::RefCell;
 use ndarray::{IxDyn, ArrayD};
@@ -24,7 +25,7 @@ use crate::runtime::autodiff::TapeOp;
 fn map_key_to_string(v: &Value) -> TenthResult<String> {
     match v {
         Value::String(s) => Ok(s.clone()),
-        Value::Int(n) => Ok(n.to_string()),
+        Value::Int(n, _) => Ok(n.to_string()),
         Value::Bool(b) => Ok(b.to_string()),
         Value::Float32(f) => Ok(format!("{}", f)),
         Value::Float(f) => Ok(format!("{}", f)),
@@ -83,7 +84,7 @@ impl super::Interpreter {
             Value::Float(f) => {
                 self.eval_scalar_method(*f, method, args).map(Some)
             }
-            Value::Int(i) => {
+            Value::Int(i, _) => {
                 let f = *i as f64;
                 self.eval_scalar_method(f, method, args).map(Some)
             }
@@ -111,7 +112,7 @@ impl super::Interpreter {
 
     pub(super) fn eval_string_method(&self, s: &str, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
         match method {
-            "len" => Ok(Some(Value::Int(s.chars().count() as i64))),
+            "len" => Ok(Some(Value::Int(s.chars().count() as i64, BaseType::I32))),
             "trim" => Ok(Some(Value::String(s.trim().to_string()))),
             "to_upper" => Ok(Some(Value::String(s.to_uppercase()))),
             "to_lower" => Ok(Some(Value::String(s.to_lowercase()))),
@@ -159,7 +160,7 @@ impl super::Interpreter {
             }
             "find" => {
                 if let Some(Value::String(sub)) = args.first() {
-                    return Ok(Some(Value::Int(s.find(sub.as_str()).map(|i| i as i64).unwrap_or(-1))));
+                    return Ok(Some(Value::Int(s.find(sub.as_str()).map(|i| i as i64).unwrap_or(-1), BaseType::I32)));
                 }
                 Err(TenthError::RuntimeError { line: None, col: None,
                     message: "find() 需要一个字符串参数".into(),
@@ -182,7 +183,7 @@ impl super::Interpreter {
                 })
             }
             "parse_int" => {
-                return Ok(Some(Value::Int(s.trim().parse::<i64>().unwrap_or(0))));
+                return Ok(Some(Value::Int(s.trim().parse::<i64>().unwrap_or(0), BaseType::I32)));
             }
             "parse_float" => {
                 return Ok(Some(Value::Float(s.trim().parse::<f64>().unwrap_or(0.0))));
@@ -204,7 +205,7 @@ impl super::Interpreter {
                 Ok(Some(Value::Vec(Rc::new(RefCell::new(chars)))))
             }
             "bytes" => {
-                let bytes: Vec<Value> = s.bytes().map(|b| Value::Int(b as i64)).collect();
+                let bytes: Vec<Value> = s.bytes().map(|b| Value::Int(b as i64, BaseType::I32)).collect();
                 Ok(Some(Value::Vec(Rc::new(RefCell::new(bytes)))))
             }
             "trim_start" => Ok(Some(Value::String(s.trim_start().to_string()))),
@@ -239,7 +240,7 @@ impl super::Interpreter {
 
     pub(super) fn eval_vec_method(&mut self, items: &Rc<RefCell<Vec<Value>>>, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
         match method {
-            "len" => Ok(Some(Value::Int(items.borrow().len() as i64))),
+            "len" => Ok(Some(Value::Int(items.borrow().len() as i64, BaseType::I32))),
             "push" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError { line: None, col: None,
@@ -332,10 +333,10 @@ impl super::Interpreter {
                         other => other.clone(),
                     };
                     if self.values_eq(&unwrapped, &args[0]) {
-                        return Ok(Some(Value::Int(i as i64)));
+                        return Ok(Some(Value::Int(i as i64, BaseType::I32)));
                     }
                 }
-                Ok(Some(Value::Int(-1)))
+                Ok(Some(Value::Int(-1, BaseType::I32)))
             }
             "remove" => {
                 if args.len() != 1 {
@@ -428,7 +429,7 @@ impl super::Interpreter {
                     let av = match a { Value::Shared(rc) => rc.borrow().clone(), o => o.clone() };
                     let bv = match b { Value::Shared(rc) => rc.borrow().clone(), o => o.clone() };
                     match (&av, &bv) {
-                        (Value::Int(x), Value::Int(y)) => x.cmp(y),
+                        (Value::Int(x, _), Value::Int(y, _)) => x.cmp(y),
                         (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
                         (Value::String(x), Value::String(y)) => x.cmp(y),
                         _ => std::cmp::Ordering::Equal,
@@ -539,7 +540,7 @@ impl super::Interpreter {
             "iter" => Ok(Some(Value::Iterator(LazyIterator::from_range(start, end, inclusive)))),
             "len" => {
                 let len = if inclusive { (end - start + 1).max(0) as i64 } else { (end - start).max(0) as i64 };
-                Ok(Some(Value::Int(len)))
+                Ok(Some(Value::Int(len, BaseType::I32)))
             }
             _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("Range 没有方法 '{}'", method),
@@ -637,8 +638,8 @@ impl super::Interpreter {
                 // Materialize to count — not ideal but correct
                 let collected = self.eval_iterator_method(iter, "collect", &[])?;
                 match collected {
-                    Some(Value::Vec(v)) => Ok(Some(Value::Int(v.borrow().len() as i64))),
-                    _ => Ok(Some(Value::Int(0))),
+                    Some(Value::Vec(v)) => Ok(Some(Value::Int(v.borrow().len() as i64, BaseType::I32))),
+                    _ => Ok(Some(Value::Int(0, BaseType::I32))),
                 }
             }
             _ => Err(TenthError::RuntimeError { line: None, col: None,
@@ -683,7 +684,7 @@ impl super::Interpreter {
 
     pub(super) fn eval_map_method(&mut self, m: &Rc<RefCell<HashMap<String, Value>>>, method: &str, args: &[Value]) -> TenthResult<Option<Value>> {
         match method {
-            "len" => Ok(Some(Value::Int(m.borrow().len() as i64))),
+            "len" => Ok(Some(Value::Int(m.borrow().len() as i64, BaseType::I32))),
             "get" => {
                 if args.len() != 1 {
                     return Err(TenthError::RuntimeError { line: None, col: None,
@@ -1352,7 +1353,7 @@ impl super::Interpreter {
                         }
                         Ok(Value::Tensor(result))
                     }
-                    "argmax" => Ok(Value::Int(tensor.argmax())),
+                    "argmax" => Ok(Value::Int(tensor.argmax(), BaseType::I32)),
                     // 梯度裁剪辅助：元素级裁剪到 [min_val, max_val]
                     // 用于 std::optim::clip 模块，避免依赖 tensor mask
                     "clip_scalar" => {
@@ -1367,7 +1368,7 @@ impl super::Interpreter {
                         Ok(Value::Tensor(Rc::new(RefCell::new(clipped))))
                     }
                     // 张量属性查询（配合护城河 D 内存预估）
-                    "numel" => Ok(Value::Int(tensor.data.len() as i64)),
+                    "numel" => Ok(Value::Int(tensor.data.len() as i64, BaseType::I32)),
                     "nbytes" | "bytes" => {
                         // 字节数 = 元素数 * dtype 字节数
                         let n = tensor.data.len() as i64;
@@ -1377,9 +1378,9 @@ impl super::Interpreter {
                             crate::runtime::tensor::TensorData::F16(_) => 2,
                             crate::runtime::tensor::TensorData::BF16(_) => 2,
                         };
-                        Ok(Value::Int(n * bytes_per_elem))
+                        Ok(Value::Int(n * bytes_per_elem, BaseType::I32))
                     }
-                    "ndim" | "rank" => Ok(Value::Int(tensor.data.ndim() as i64)),
+                    "ndim" | "rank" => Ok(Value::Int(tensor.data.ndim() as i64, BaseType::I32)),
                     "shape_tensor" => {
                         // 返回 shape 作为 f64 tensor（便于运行时查询）
                         let shape: Vec<f64> = tensor.data.shape().iter().map(|&d| d as f64).collect();
@@ -1413,3 +1414,4 @@ impl super::Interpreter {
         }
     }
 }
+

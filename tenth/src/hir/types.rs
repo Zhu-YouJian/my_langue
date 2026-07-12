@@ -223,6 +223,7 @@ impl Type {
                     "char" => Type::Base(BaseType::Char),
                     "str" => Type::Base(BaseType::Str),
                     "!" => Type::Never,
+                    "()" => Type::Base(BaseType::Unit),
                     _ => Type::TypeParam { name: ident.name.clone() },
                 }
             }

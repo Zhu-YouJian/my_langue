@@ -10,9 +10,9 @@ fn tokenize(src: &str) -> Vec<TokenKind> {
 #[test]
 fn test_integers() {
     let tokens = tokenize("42 0 100");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(42));
-    assert_eq!(tokens[1], TokenKind::IntLiteral(0));
-    assert_eq!(tokens[2], TokenKind::IntLiteral(100));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(42, BaseType::I32));
+    assert_eq!(tokens[1], TokenKind::IntLiteral(0, BaseType::I32));
+    assert_eq!(tokens[2], TokenKind::IntLiteral(100, BaseType::I32));
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn test_string_literal() {
 #[test]
 fn test_comment_skip() {
     let tokens = tokenize("// this is a comment\n42");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(42));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(42, BaseType::I32));
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn test_char_literal_in_expression() {
     // char literal followed by other tokens
     let tokens = tokenize("'x' 42");
     assert_eq!(tokens[0], TokenKind::CharLiteral('x'));
-    assert_eq!(tokens[1], TokenKind::IntLiteral(42));
+    assert_eq!(tokens[1], TokenKind::IntLiteral(42, BaseType::I32));
 }
 
 // --- 问题6：进制字面量 ---
@@ -144,100 +144,100 @@ fn test_char_literal_in_expression() {
 #[test]
 fn test_hex_literal() {
     let tokens = tokenize("0xFF");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(255));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(255, BaseType::I32));
 }
 
 #[test]
 fn test_hex_literal_uppercase_prefix() {
     let tokens = tokenize("0XFF");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(255));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(255, BaseType::I32));
 }
 
 #[test]
 fn test_hex_literal_lowercase() {
     let tokens = tokenize("0xff");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(255));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(255, BaseType::I32));
 }
 
 #[test]
 fn test_hex_literal_mixed_case() {
     let tokens = tokenize("0xAbCdEf");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(0xABCDEF));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(0xABCDEF, BaseType::I32));
 }
 
 #[test]
 fn test_hex_literal_with_underscore() {
     let tokens = tokenize("0xFF_FF");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(0xFFFF));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(0xFFFF, BaseType::I32));
 }
 
 #[test]
 fn test_hex_literal_zero() {
     let tokens = tokenize("0x0");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(0));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(0, BaseType::I32));
 }
 
 #[test]
 fn test_hex_literal_max_i64() {
     let tokens = tokenize("0x7FFFFFFFFFFFFFFF");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(i64::MAX));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(i64::MAX, BaseType::I32));
 }
 
 #[test]
 fn test_binary_literal() {
     let tokens = tokenize("0b1010");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(10));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(10, BaseType::I32));
 }
 
 #[test]
 fn test_binary_literal_uppercase_prefix() {
     let tokens = tokenize("0B1010");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(10));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(10, BaseType::I32));
 }
 
 #[test]
 fn test_binary_literal_with_underscore() {
     let tokens = tokenize("0b1010_1010");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(0b10101010));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(0b10101010, BaseType::I32));
 }
 
 #[test]
 fn test_binary_literal_zero() {
     let tokens = tokenize("0b0");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(0));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(0, BaseType::I32));
 }
 
 #[test]
 fn test_octal_literal() {
     let tokens = tokenize("0o777");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(511));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(511, BaseType::I32));
 }
 
 #[test]
 fn test_octal_literal_uppercase_prefix() {
     let tokens = tokenize("0O777");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(511));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(511, BaseType::I32));
 }
 
 #[test]
 fn test_octal_literal_with_underscore() {
     let tokens = tokenize("0o777_777");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(0o777777));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(0o777777, BaseType::I32));
 }
 
 #[test]
 fn test_octal_literal_zero() {
     let tokens = tokenize("0o0");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(0));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(0, BaseType::I32));
 }
 
 #[test]
 fn test_decimal_still_works_after_radix_support() {
     // 0 不应被误认为进制前缀
     let tokens = tokenize("0 42 100");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(0));
-    assert_eq!(tokens[1], TokenKind::IntLiteral(42));
-    assert_eq!(tokens[2], TokenKind::IntLiteral(100));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(0, BaseType::I32));
+    assert_eq!(tokens[1], TokenKind::IntLiteral(42, BaseType::I32));
+    assert_eq!(tokens[2], TokenKind::IntLiteral(100, BaseType::I32));
 }
 
 #[test]

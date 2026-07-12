@@ -1,4 +1,4 @@
-﻿//! 二元/一元运算与值转换。
+//! 二元/一元运算与值转换。
 //!
 //! 从 `interpreter.rs` 第 1365-1778 行迁移而来。包含：
 //! - `eval_binary`：算术/比较/逻辑运算（含 f32 标量与张量分支）
@@ -6,10 +6,11 @@
 //! - `values_eq` / `value_to_string`：值比较与字符串化
 
 use std::rc::Rc;
+use crate::hir::types::BaseType;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
-use crate::runtime::value::{Value, FutureState};
+use crate::runtime::value::{Value, FutureState, check_int_overflow};
 use crate::runtime::tensor::Tensor;
 use crate::runtime::autodiff::TapeOp;
 
@@ -17,14 +18,17 @@ impl super::Interpreter {
     pub(super) fn eval_binary(&mut self, op: &BinOp, l: &Value, r: &Value) -> TenthResult<Value> {
         match op {
             BinOp::Add => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
+                (Value::Int(a, dt), Value::Int(b, _)) => {
+                    check_int_overflow(a + b, *dt)?;
+                    Ok(Value::Int(a + b, *dt))
+                }
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
-                (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
-                (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
+                (Value::Int(a, _), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
+                (Value::Float(a), Value::Int(b, _)) => Ok(Value::Float(a + *b as f64)),
                 // Phase 5.4：f32 标量算术（按 promote_float_dtype 规则：F32 op F32/Int → F32，F32 op F64 → F64）
                 (Value::Float32(a), Value::Float32(b)) => Ok(Value::Float32(a + b)),
-                (Value::Int(a), Value::Float32(b)) => Ok(Value::Float32(*a as f32 + b)),
-                (Value::Float32(a), Value::Int(b)) => Ok(Value::Float32(a + *b as f32)),
+                (Value::Int(a, _), Value::Float32(b)) => Ok(Value::Float32(*a as f32 + b)),
+                (Value::Float32(a), Value::Int(b, _)) => Ok(Value::Float32(a + *b as f32)),
                 (Value::Float(a), Value::Float32(b)) => Ok(Value::Float(a + *b as f64)),
                 (Value::Float32(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
                 (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
@@ -77,14 +81,14 @@ impl super::Interpreter {
                 }),
             },
             BinOp::Sub => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
+                (Value::Int(a, _), Value::Int(b, _)) => Ok(Value::Int(a - b, BaseType::I32)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
-                (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
-                (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
+                (Value::Int(a, _), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
+                (Value::Float(a), Value::Int(b, _)) => Ok(Value::Float(a - *b as f64)),
                 // Phase 5.4：f32 标量算术
                 (Value::Float32(a), Value::Float32(b)) => Ok(Value::Float32(a - b)),
-                (Value::Int(a), Value::Float32(b)) => Ok(Value::Float32(*a as f32 - b)),
-                (Value::Float32(a), Value::Int(b)) => Ok(Value::Float32(a - *b as f32)),
+                (Value::Int(a, _), Value::Float32(b)) => Ok(Value::Float32(*a as f32 - b)),
+                (Value::Float32(a), Value::Int(b, _)) => Ok(Value::Float32(a - *b as f32)),
                 (Value::Float(a), Value::Float32(b)) => Ok(Value::Float(a - *b as f64)),
                 (Value::Float32(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
                 (Value::Tensor(t1), Value::Tensor(t2)) => {
@@ -138,14 +142,17 @@ impl super::Interpreter {
                 }),
             },
             BinOp::Mul => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
+                (Value::Int(a, dt), Value::Int(b, _)) => {
+                    check_int_overflow(a * b, *dt)?;
+                    Ok(Value::Int(a * b, *dt))
+                }
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
-                (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
-                (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
+                (Value::Int(a, _), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
+                (Value::Float(a), Value::Int(b, _)) => Ok(Value::Float(a * *b as f64)),
                 // Phase 5.4：f32 标量算术
                 (Value::Float32(a), Value::Float32(b)) => Ok(Value::Float32(a * b)),
-                (Value::Int(a), Value::Float32(b)) => Ok(Value::Float32(*a as f32 * b)),
-                (Value::Float32(a), Value::Int(b)) => Ok(Value::Float32(a * *b as f32)),
+                (Value::Int(a, _), Value::Float32(b)) => Ok(Value::Float32(*a as f32 * b)),
+                (Value::Float32(a), Value::Int(b, _)) => Ok(Value::Float32(a * *b as f32)),
                 (Value::Float(a), Value::Float32(b)) => Ok(Value::Float(a * *b as f64)),
                 (Value::Float32(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
                 (Value::Tensor(t1), Value::Tensor(t2)) => {
@@ -197,21 +204,22 @@ impl super::Interpreter {
                 }),
             },
             BinOp::Div => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => {
+                (Value::Int(a, dt), Value::Int(b, _)) => {
                     if *b == 0 {
                         return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "整数除零".into(),
                         });
                     }
-                    Ok(Value::Int(a / b))
+                    check_int_overflow(a / b, *dt)?;
+                    Ok(Value::Int(a / b, *dt))
                 }
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
-                (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
-                (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
+                (Value::Int(a, _), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
+                (Value::Float(a), Value::Int(b, _)) => Ok(Value::Float(a / *b as f64)),
                 // Phase 5.4：f32 标量算术
                 (Value::Float32(a), Value::Float32(b)) => Ok(Value::Float32(a / b)),
-                (Value::Int(a), Value::Float32(b)) => Ok(Value::Float32(*a as f32 / b)),
-                (Value::Float32(a), Value::Int(b)) => Ok(Value::Float32(a / *b as f32)),
+                (Value::Int(a, _), Value::Float32(b)) => Ok(Value::Float32(*a as f32 / b)),
+                (Value::Float32(a), Value::Int(b, _)) => Ok(Value::Float32(a / *b as f32)),
                 (Value::Float(a), Value::Float32(b)) => Ok(Value::Float(a / *b as f64)),
                 (Value::Float32(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
                 (Value::Tensor(t1), Value::Tensor(t2)) => {
@@ -255,13 +263,14 @@ impl super::Interpreter {
                 }),
             },
             BinOp::Mod => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => {
+                (Value::Int(a, dt), Value::Int(b, _)) => {
                     if *b == 0 {
                         return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "整数取模除零".into(),
                         });
                     }
-                    Ok(Value::Int(a % b))
+                    check_int_overflow(a % b, *dt)?;
+                    Ok(Value::Int(a % b, *dt))
                 }
                 _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "取模仅支持整数".into(),
@@ -270,40 +279,40 @@ impl super::Interpreter {
             BinOp::Eq => Ok(Value::Bool(self.values_eq(l, r))),
             BinOp::NotEq => Ok(Value::Bool(!self.values_eq(l, r))),
             BinOp::Lt => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
+                (Value::Int(a, _), Value::Int(b, _)) => Ok(Value::Bool(a < b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
-                (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) < *b)),
-                (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a < *b as f64)),
+                (Value::Int(a, _), Value::Float(b)) => Ok(Value::Bool((*a as f64) < *b)),
+                (Value::Float(a), Value::Int(b, _)) => Ok(Value::Bool(*a < *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a < b)),
                 _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "比较需要数值类型".into(),
                 }),
             },
             BinOp::Gt => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
+                (Value::Int(a, _), Value::Int(b, _)) => Ok(Value::Bool(a > b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
-                (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) > *b)),
-                (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a > *b as f64)),
+                (Value::Int(a, _), Value::Float(b)) => Ok(Value::Bool((*a as f64) > *b)),
+                (Value::Float(a), Value::Int(b, _)) => Ok(Value::Bool(*a > *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a > b)),
                 _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "比较需要数值类型".into(),
                 }),
             },
             BinOp::LtEq => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
+                (Value::Int(a, _), Value::Int(b, _)) => Ok(Value::Bool(a <= b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
-                (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) <= *b)),
-                (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a <= *b as f64)),
+                (Value::Int(a, _), Value::Float(b)) => Ok(Value::Bool((*a as f64) <= *b)),
+                (Value::Float(a), Value::Int(b, _)) => Ok(Value::Bool(*a <= *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a <= b)),
                 _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "比较需要数值类型".into(),
                 }),
             },
             BinOp::GtEq => match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
+                (Value::Int(a, _), Value::Int(b, _)) => Ok(Value::Bool(a >= b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
-                (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) >= *b)),
-                (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a >= *b as f64)),
+                (Value::Int(a, _), Value::Float(b)) => Ok(Value::Bool((*a as f64) >= *b)),
+                (Value::Float(a), Value::Int(b, _)) => Ok(Value::Bool(*a >= *b as f64)),
                 (Value::String(a), Value::String(b)) => Ok(Value::Bool(a >= b)),
                 _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "比较需要数值类型".into(),
@@ -316,15 +325,15 @@ impl super::Interpreter {
 
     pub(super) fn values_eq(&self, l: &Value, r: &Value) -> bool {
         match (l, r) {
-            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Int(a, _), Value::Int(b, _)) => a == b,
             (Value::Float(a), Value::Float(b)) => (a - b).abs() < 1e-10,
             (Value::Float32(a), Value::Float32(b)) => (a - b).abs() < 1e-6,
             // 跨类型数值比较：与 <、>、<=、>= 保持一致（问题7）
-            (Value::Int(a), Value::Float(b)) => ((*a as f64) - b).abs() < 1e-10,
-            (Value::Float(a), Value::Int(b)) => (a - (*b as f64)).abs() < 1e-10,
+            (Value::Int(a, _), Value::Float(b)) => ((*a as f64) - b).abs() < 1e-10,
+            (Value::Float(a), Value::Int(b, _)) => (a - (*b as f64)).abs() < 1e-10,
             // Float32 与其他数值类型跨类型比较（问题8 扩展，保持一致性）
-            (Value::Int(a), Value::Float32(b)) => ((*a as f32) - b).abs() < 1e-6,
-            (Value::Float32(a), Value::Int(b)) => (a - (*b as f32)).abs() < 1e-6,
+            (Value::Int(a, _), Value::Float32(b)) => ((*a as f32) - b).abs() < 1e-6,
+            (Value::Float32(a), Value::Int(b, _)) => (a - (*b as f32)).abs() < 1e-6,
             (Value::Float(a), Value::Float32(b)) => ((*a as f32) - b).abs() < 1e-6,
             (Value::Float32(a), Value::Float(b)) => (a - (*b as f32)).abs() < 1e-6,
             (Value::Bool(a), Value::Bool(b)) => a == b,
@@ -340,7 +349,7 @@ impl super::Interpreter {
 
     pub(super) fn value_to_string(&self, val: &Value) -> String {
         match val {
-            Value::Int(n) => n.to_string(),
+            Value::Int(n, _) => n.to_string(),
             Value::Float(f) => f.to_string(),
             Value::Float32(f) => f.to_string(),
             Value::Bool(b) => b.to_string(),
@@ -412,7 +421,10 @@ impl super::Interpreter {
     pub(super) fn eval_unary(&self, op: &UnaryOp, val: &Value) -> TenthResult<Value> {
         match op {
             UnaryOp::Neg => match val {
-                Value::Int(n) => Ok(Value::Int(-n)),
+                Value::Int(n, dt) => {
+                    check_int_overflow(-n, *dt)?;
+                    Ok(Value::Int(-n, *dt))
+                }
                 Value::Float(n) => Ok(Value::Float(-n)),
                 Value::Tensor(t) => {
                     let result = t.borrow().neg();

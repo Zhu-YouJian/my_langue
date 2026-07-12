@@ -1,4 +1,4 @@
-﻿//! Native 函数集中注册：`register_all_natives(vm)`。
+//! Native 函数集中注册：`register_all_natives(vm)`。
 //!
 //! 从 `main.rs` 迁移而来（T1.3）。原 `register_natives` 改名为
 //! `register_all_natives`，作为后续 T2 NativeRegistry 统一的入口点。
@@ -10,6 +10,7 @@
 //! 类型转换（to_float/to_f64/to_f32/to_string/type_name）、字符串格式化等。
 
 use std::cell::RefCell;
+use crate::hir::types::BaseType;
 use std::rc::Rc;
 
 use crate::error::TenthError;
@@ -102,7 +103,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         Ok(Value::Unit)
     });
     vm.add_native("exit".into(), |_vm, args| {
-        let code = if let Some(Value::Int(c)) = args.first() { *c } else { 0 };
+        let code = if let Some(Value::Int(c, _)) = args.first() { *c } else { 0 };
         std::process::exit(code as i32);
     });
 
@@ -111,13 +112,13 @@ pub fn register_all_natives(vm: &mut Vm) {
         if args.len() < 2 {
             return Ok(err_result("tcp_connect 需要 (String, i64) 参数"));
         }
-        if let (Value::String(host), Value::Int(port)) = (&args[0], &args[1]) {
+        if let (Value::String(host), Value::Int(port, _)) = (&args[0], &args[1]) {
             let addr = format!("{}:{}", host, port);
             match std::net::TcpStream::connect(&addr) {
                 Ok(stream) => {
                     vm.tcp_streams.push(Some(stream));
                     let handle = vm.tcp_streams.len() as i64; // 1-based
-                    Ok(ok_result(Value::Int(handle)))
+                    Ok(ok_result(Value::Int(handle, BaseType::I32)))
                 }
                 Err(e) => Ok(err_result(format!("连接失败: {e}"))),
             }
@@ -129,7 +130,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         if args.len() < 2 {
             return Ok(err_result("tcp_read 需要 (i64, i64) 参数"));
         }
-        if let (Value::Int(handle), Value::Int(n)) = (&args[0], &args[1]) {
+        if let (Value::Int(handle, _), Value::Int(n, _)) = (&args[0], &args[1]) {
             let idx = *handle as usize;
             if idx == 0 || idx > vm.tcp_streams.len() {
                 return Ok(err_result("无效的句柄"));
@@ -146,7 +147,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                     Ok(read_n) => {
                         let bytes: Vec<Value> = buf[..read_n]
                             .iter()
-                            .map(|b| Value::Int(*b as i64))
+                            .map(|b| Value::Int(*b as i64, BaseType::I32))
                             .collect();
                         Ok(ok_result(Value::Vec(Rc::new(RefCell::new(bytes)))))
                     }
@@ -163,7 +164,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         if args.len() < 2 {
             return Ok(err_result("tcp_write 需要 (i64, Vec<i64>) 参数"));
         }
-        if let (Value::Int(handle), Value::Vec(data)) = (&args[0], &args[1]) {
+        if let (Value::Int(handle, _), Value::Vec(data)) = (&args[0], &args[1]) {
             let idx = *handle as usize;
             if idx == 0 || idx > vm.tcp_streams.len() {
                 return Ok(err_result("无效的句柄"));
@@ -172,14 +173,14 @@ pub fn register_all_natives(vm: &mut Vm) {
                 .borrow()
                 .iter()
                 .map(|x| match x {
-                    Value::Int(b) => *b as u8,
+                    Value::Int(b, _) => *b as u8,
                     _ => 0,
                 })
                 .collect();
             if let Some(ref mut stream) = vm.tcp_streams[idx - 1] {
                 use std::io::Write;
                 match stream.write_all(&bytes) {
-                    Ok(_) => Ok(ok_result(Value::Int(bytes.len() as i64))),
+                    Ok(_) => Ok(ok_result(Value::Int(bytes.len() as i64, BaseType::I32))),
                     Err(e) => Ok(err_result(format!("写入失败: {e}"))),
                 }
             } else {
@@ -190,7 +191,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         }
     });
     vm.add_native("tcp_close".into(), |vm, args| {
-        if let Some(Value::Int(handle)) = args.first() {
+        if let Some(Value::Int(handle, _)) = args.first() {
             let idx = *handle as usize;
             if idx > 0 && idx <= vm.tcp_streams.len() {
                 vm.tcp_streams[idx - 1] = None; // drop 自动关闭
@@ -200,7 +201,7 @@ pub fn register_all_natives(vm: &mut Vm) {
     });
     vm.add_native("tcp_set_timeout".into(), |vm, args| {
         if args.len() >= 2 {
-            if let (Value::Int(handle), Value::Int(ms)) = (&args[0], &args[1]) {
+            if let (Value::Int(handle, _), Value::Int(ms, _)) = (&args[0], &args[1]) {
                 let idx = *handle as usize;
                 if idx > 0 && idx <= vm.tcp_streams.len() {
                     if let Some(ref mut stream) = vm.tcp_streams[idx - 1] {
@@ -223,7 +224,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 Ok(re) => {
                     vm.regexes.push(Some(re));
                     let handle = vm.regexes.len() as i64; // 1-based
-                    Ok(ok_result(Value::Int(handle)))
+                    Ok(ok_result(Value::Int(handle, BaseType::I32)))
                 }
                 Err(e) => Ok(err_result(format!("正则编译失败: {e}"))),
             }
@@ -235,7 +236,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         if args.len() < 2 {
             return Ok(Value::Bool(false));
         }
-        if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+        if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
             let idx = *handle as usize;
             if idx == 0 || idx > vm.regexes.len() {
                 return Ok(Value::Bool(false));
@@ -253,7 +254,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         if args.len() < 2 {
             return Ok(Value::String(String::new()));
         }
-        if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+        if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
             let idx = *handle as usize;
             if idx == 0 || idx > vm.regexes.len() {
                 return Ok(Value::String(String::new()));
@@ -273,7 +274,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         if args.len() < 2 {
             return Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))));
         }
-        if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+        if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
             let idx = *handle as usize;
             if idx == 0 || idx > vm.regexes.len() {
                 return Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))));
@@ -294,7 +295,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         if args.len() < 3 {
             return Ok(Value::String(String::new()));
         }
-        if let (Value::Int(handle), Value::String(input), Value::String(replacement)) =
+        if let (Value::Int(handle, _), Value::String(input), Value::String(replacement)) =
             (&args[0], &args[1], &args[2])
         {
             let idx = *handle as usize;
@@ -315,7 +316,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         if args.len() < 2 {
             return Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))));
         }
-        if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+        if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
             let idx = *handle as usize;
             if idx == 0 || idx > vm.regexes.len() {
                 return Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))));
@@ -406,11 +407,11 @@ pub fn register_all_natives(vm: &mut Vm) {
                     };
                     let bytes: Vec<u8> = items.borrow().iter().map(|v| v.as_int().unwrap_or(0) as u8).collect();
                     let _ = std::fs::write(&resolved, &bytes);
-                    return Ok(Value::Int(0));
+                    return Ok(Value::Int(0, BaseType::I32));
                 }
             }
         }
-        Ok(Value::Int(1))
+        Ok(Value::Int(1, BaseType::I32))
     });
     vm.add_native("read_bytes".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
@@ -426,7 +427,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             match std::fs::read(&resolved) {
                 Ok(data) => {
                     let bytes: Vec<Value> = data.iter()
-                        .map(|b| Value::Int(*b as i64))
+                        .map(|b| Value::Int(*b as i64, BaseType::I32))
                         .collect();
                     Ok(Value::Vec(Rc::new(RefCell::new(bytes))))
                 }
@@ -488,7 +489,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         Ok(Value::String(format!("{}-{:02}-{:02} {}:{:02}:{:02}", year, month, day, h, m, s)))
     });
     vm.add_native("time_sleep_ms".into(), |_vm, args| {
-        if let Some(Value::Int(ms)) = args.first() {
+        if let Some(Value::Int(ms, _)) = args.first() {
             // 安全：拒绝负数（`as u64` 会符号扩展为巨大值，导致近乎永久的 DoS）
             // 上限 24 小时，防止 `.th` 程序意外将进程睡眠数年
             const MAX_SLEEP_MS: i64 = 24 * 60 * 60 * 1000;
@@ -516,7 +517,7 @@ pub fn register_all_natives(vm: &mut Vm) {
     // I/O 就绪后 poll 把 Future 设为 Ready 并唤醒 waiters。
     vm.add_native("async_sleep_ms".into(), |_vm, args| {
         let ms = match args.first() {
-            Some(Value::Int(n)) => *n,
+            Some(Value::Int(n, _)) => *n,
             _ => return Err(TenthError::RuntimeError { line: None, col: None,
                 message: "async_sleep_ms(ms) 期望一个整数".into(),
             }),
@@ -547,7 +548,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             return Ok(Value::future_ready(err_result("async_tcp_read 需要 (i64, i64) 参数")));
         }
         let (handle, max_bytes) = match (&args[0], &args[1]) {
-            (Value::Int(h), Value::Int(n)) => (*h, *n),
+            (Value::Int(h, _), Value::Int(n, _)) => (*h, *n),
             _ => return Ok(Value::future_ready(err_result("async_tcp_read 需要 (i64, i64) 参数"))),
         };
         let idx = handle as usize;
@@ -593,7 +594,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             return Ok(Value::future_ready(err_result("async_tcp_write 需要 (i64, Vec<i64>) 参数")));
         }
         let (handle, data) = match (&args[0], &args[1]) {
-            (Value::Int(h), Value::Vec(v)) => (*h, v.clone()),
+            (Value::Int(h, _), Value::Vec(v)) => (*h, v.clone()),
             _ => return Ok(Value::future_ready(err_result("async_tcp_write 需要 (i64, Vec<i64>) 参数"))),
         };
         let idx = handle as usize;
@@ -609,7 +610,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         };
         stream_clone.set_write_timeout(None).ok();
         let bytes: Vec<u8> = data.borrow().iter().map(|x| match x {
-            Value::Int(b) => *b as u8,
+            Value::Int(b, _) => *b as u8,
             _ => 0,
         }).collect();
 
@@ -635,11 +636,11 @@ pub fn register_all_natives(vm: &mut Vm) {
     // 历史 `DefaultHasher` + SystemTime 方案可被攻击者枚举纳秒时刻预测输出。
     vm.add_native("random_int".into(), |_vm, args| {
         let lo = match args.first() {
-            Some(Value::Int(n)) => *n,
+            Some(Value::Int(n, _)) => *n,
             _ => 0,
         };
         let hi = match args.get(1) {
-            Some(Value::Int(n)) => *n,
+            Some(Value::Int(n, _)) => *n,
             _ => lo,
         };
         use rand::Rng;
@@ -648,7 +649,7 @@ pub fn register_all_natives(vm: &mut Vm) {
         // 用 u64 全域取模，避免 i64 范围回绕到负数
         let range = (high as u64).saturating_sub(low as u64).saturating_add(1).max(1);
         let r: u64 = rand::thread_rng().r#gen();
-        Ok(Value::Int(low + ((r % range) as i64)))
+        Ok(Value::Int(low + (r % range) as i64, BaseType::I32))
     });
     vm.add_native("random_float".into(), |_vm, _args| {
         use rand::Rng;
@@ -764,7 +765,7 @@ pub fn register_all_natives(vm: &mut Vm) {
     });
     // CLI functions
     vm.add_native("cli_args_count".into(), |_vm, _args| {
-        Ok(Value::Int(1))
+        Ok(Value::Int(1, BaseType::I32))
     });
     vm.add_native("cli_arg".into(), |_vm, _args| {
         Ok(Value::String(String::new()))
@@ -808,12 +809,12 @@ pub fn register_all_natives(vm: &mut Vm) {
                     .and_then(|prog| crate::hir::lower::Lowerer::new().lower_program(&prog))
                     .and_then(|hir| crate::compile::compile_to_wasm(&hir))
                 {
-                    Ok(bytes) => { let _ = std::fs::write(&out_resolved, &bytes); return Ok(Value::Int(0)); }
-                    Err(_) => return Ok(Value::Int(1)),
+                    Ok(bytes) => { let _ = std::fs::write(&out_resolved, &bytes); return Ok(Value::Int(0, BaseType::I32)); }
+                    Err(_) => return Ok(Value::Int(1, BaseType::I32)),
                 }
             }
         }
-        Ok(Value::Int(1))
+        Ok(Value::Int(1, BaseType::I32))
     });
     vm.add_native("compile_program".into(), |vm, args| {
         if args.len() >= 2 {
@@ -828,12 +829,12 @@ pub fn register_all_natives(vm: &mut Vm) {
                     std::path::PathBuf::from(out)
                 };
                 match crate::compile::compile_program_to_wasm(&args[0]) {
-                    Ok(bytes) => { let _ = std::fs::write(&out_resolved, &bytes); return Ok(Value::Int(0)); }
-                    Err(_) => return Ok(Value::Int(1)),
+                    Ok(bytes) => { let _ = std::fs::write(&out_resolved, &bytes); return Ok(Value::Int(0, BaseType::I32)); }
+                    Err(_) => return Ok(Value::Int(1, BaseType::I32)),
                 }
             }
         }
-        Ok(Value::Int(1))
+        Ok(Value::Int(1, BaseType::I32))
     });
 
     // ── Autodiff native functions ──
@@ -1223,7 +1224,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 std::path::PathBuf::from(path)
             };
             match std::fs::metadata(&resolved) {
-                Ok(meta) => Ok(Value::Int(meta.len() as i64)),
+                Ok(meta) => Ok(Value::Int(meta.len() as i64, BaseType::I32)),
                 Err(e) => Err(TenthError::RuntimeError { line: None, col: None, message: format!("获取文件大小失败: {}", e) }),
             }
         } else {
@@ -1312,8 +1313,8 @@ pub fn register_all_natives(vm: &mut Vm) {
         }
     });
     vm.add_native("randn".into(), |_vm, args| {
-        let rows = match args.first() { Some(Value::Int(n)) => *n as usize, _ => 1 };
-        let cols = match args.get(1) { Some(Value::Int(n)) => *n as usize, _ => 1 };
+        let rows = match args.first() { Some(Value::Int(n, _)) => *n as usize, _ => 1 };
+        let cols = match args.get(1) { Some(Value::Int(n, _)) => *n as usize, _ => 1 };
         use rand::Rng;
         let mut rng = rand::thread_rng();
         let data: Vec<f64> = (0..rows * cols).map(|_| {
@@ -1325,8 +1326,8 @@ pub fn register_all_natives(vm: &mut Vm) {
         Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec(data, vec![rows, cols])))))
     });
     vm.add_native("randn_f32".into(), |_vm, args| {
-        let rows = match args.first() { Some(Value::Int(n)) => *n as usize, _ => 1 };
-        let cols = match args.get(1) { Some(Value::Int(n)) => *n as usize, _ => 1 };
+        let rows = match args.first() { Some(Value::Int(n, _)) => *n as usize, _ => 1 };
+        let cols = match args.get(1) { Some(Value::Int(n, _)) => *n as usize, _ => 1 };
         use rand::Rng;
         let mut rng = rand::thread_rng();
         let data: Vec<f32> = (0..rows * cols).map(|_| {
@@ -1410,7 +1411,7 @@ pub fn register_all_natives(vm: &mut Vm) {
     });
     vm.add_native("abs".into(), |_vm, args| {
         match args.first() {
-            Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
+            Some(Value::Int(n, _)) => Ok(Value::Int(n.abs(), BaseType::I32)),
             Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
             Some(Value::Float32(f)) => Ok(Value::Float32(f.abs())),
             _ => Err(TenthError::RuntimeError { line: None, col: None, message: "abs() 需要一个数值参数".into() }),
@@ -1420,13 +1421,13 @@ pub fn register_all_natives(vm: &mut Vm) {
         match args.first() {
             Some(Value::Float(f)) => Ok(Value::Float(f.sqrt())),
             Some(Value::Float32(f)) => Ok(Value::Float32(f.sqrt())),
-            Some(Value::Int(n)) => Ok(Value::Float((*n as f64).sqrt())),
+            Some(Value::Int(n, _)) => Ok(Value::Float((*n as f64).sqrt())),
             _ => Err(TenthError::RuntimeError { line: None, col: None, message: "sqrt() 需要一个数值参数".into() }),
         }
     });
     vm.add_native("to_float".into(), |_vm, args| {
         match args.first() {
-            Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
+            Some(Value::Int(n, _)) => Ok(Value::Float(*n as f64)),
             Some(Value::Float(f)) => Ok(Value::Float(*f)),
             Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
             Some(Value::Tensor(t)) => {
@@ -1450,7 +1451,7 @@ pub fn register_all_natives(vm: &mut Vm) {
     });
     vm.add_native("to_f64".into(), |_vm, args| {
         match args.first() {
-            Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
+            Some(Value::Int(n, _)) => Ok(Value::Float(*n as f64)),
             Some(Value::Float(f)) => Ok(Value::Float(*f)),
             Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
             Some(Value::Tensor(t)) => {
@@ -1474,7 +1475,7 @@ pub fn register_all_natives(vm: &mut Vm) {
     });
     vm.add_native("to_f32".into(), |_vm, args| {
         match args.first() {
-            Some(Value::Int(n)) => Ok(Value::Float32(*n as f32)),
+            Some(Value::Int(n, _)) => Ok(Value::Float32(*n as f32)),
             Some(Value::Float(f)) => Ok(Value::Float32(*f as f32)),
             Some(Value::Float32(f)) => Ok(Value::Float32(*f)),
             Some(Value::Tensor(t)) => {
@@ -1498,7 +1499,7 @@ pub fn register_all_natives(vm: &mut Vm) {
     });
     vm.add_native("tensor_from_vec".into(), |_vm, args| {
         if args.len() >= 3 {
-            if let (Value::Vec(items), Value::Int(rows), Value::Int(cols)) = (&args[0], &args[1], &args[2]) {
+            if let (Value::Vec(items), Value::Int(rows, _), Value::Int(cols, _)) = (&args[0], &args[1], &args[2]) {
                 // 按 Vec 内元素 dtype 判断：含 Float32 → f32 Tensor
                 let has_f32 = items.borrow().iter().any(|v| matches!(v, Value::Float32(_)));
                 if has_f32 {
@@ -1533,7 +1534,7 @@ pub fn register_all_natives(vm: &mut Vm) {
     vm.add_native("type_name".into(), |_vm, args| {
         if let Some(arg) = args.first() {
             let tn = match arg {
-                Value::Int(_) => "int",
+                Value::Int(_, _) => "int",
                 Value::Float(_) => "float",
                 Value::Float32(_) => "float",
                 Value::Bool(_) => "bool",
@@ -1639,7 +1640,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             let f = arg.as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                 message: "f64_bits() 期望一个 f64 参数".into(),
             })?;
-            Ok(Value::Int(f.to_bits() as i64))
+            Ok(Value::Int(f.to_bits() as i64, BaseType::I32))
         } else {
             Err(TenthError::RuntimeError { line: None, col: None, message: "f64_bits() 期望 1 个参数".into() })
         }
@@ -2022,7 +2023,7 @@ pub fn register_all_natives(vm: &mut Vm) {
     // 16. parse_int(s) — 字符串→整数（解析失败返回 0，与解释器一致）
     vm.add_native("parse_int".into(), |_vm, args| {
         if let Some(Value::String(s)) = args.first() {
-            Ok(Value::Int(s.trim().parse::<i64>().unwrap_or(0)))
+            Ok(Value::Int(s.trim().parse::<i64>().unwrap_or(0), BaseType::I32))
         } else {
             Err(TenthError::RuntimeError { line: None, col: None,
                 message: "parse_int() 期望一个字符串参数".into(),
@@ -2040,3 +2041,4 @@ pub fn register_all_natives(vm: &mut Vm) {
         }
     });
 }
+

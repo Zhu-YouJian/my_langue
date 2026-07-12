@@ -163,7 +163,8 @@ pub struct HirExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
-    Int(i64),
+    /// 整数字面量。第二字段为 dtype（I8/I16/I32/I64/U8/U16/U32/U64），保留到运行时。
+    Int(i64, BaseType),
     /// 浮点字面量。第二字段为 dtype（F32 或 F64），保留到字节码与运行时。
     Float(f64, BaseType),
     Bool(bool),

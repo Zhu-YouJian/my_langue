@@ -25,7 +25,7 @@ fn test_module_function_direct() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(3)) => {}
+        Some(Value::Int(3, _)) => {}
         v => panic!("expected Int(3), got {:?}", v),
     }
 }
@@ -41,7 +41,7 @@ fn test_use_import() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {}
+        Some(Value::Int(42, _)) => {}
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -60,7 +60,7 @@ fn test_use_glob_import() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(17)) => {}
+        Some(Value::Int(17, _)) => {}
         v => panic!("expected Int(17), got {:?}", v),
     }
 }
@@ -81,7 +81,7 @@ fn test_nested_module() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {}
+        Some(Value::Int(42, _)) => {}
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -99,7 +99,7 @@ fn test_pub_function() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(99)) => {}
+        Some(Value::Int(99, _)) => {}
         v => panic!("expected Int(99), got {:?}", v),
     }
 }
@@ -118,7 +118,7 @@ fn test_module_multiple_functions() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(17)) => {}
+        Some(Value::Int(17, _)) => {}
         v => panic!("expected Int(17), got {:?}", v),
     }
 }

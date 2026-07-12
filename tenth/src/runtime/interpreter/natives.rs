@@ -1,4 +1,4 @@
-﻿//! 原生函数注册：`call_named_fn`。
+//! 原生函数注册：`call_named_fn`。
 //!
 //! 从 `interpreter.rs` 第 3255-4489 行迁移而来。包含所有内置原生函数的分派：
 //! - I/O：println / to_string / type_name / format / parse_int / parse_float
@@ -24,6 +24,7 @@
 //! （带 H-6 深度闸门与转义状态机修复）。
 
 use std::collections::HashMap;
+use crate::hir::types::BaseType;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
@@ -116,7 +117,7 @@ impl super::Interpreter {
                 return Ok(Some(Value::Unit));
             }
             "exit" => {
-                let code = if let Some(Value::Int(c)) = args.first() { *c } else { 0 };
+                let code = if let Some(Value::Int(c, _)) = args.first() { *c } else { 0 };
                 std::process::exit(code as i32);
             }
             // —— TCP 网络原语（句柄表方案，handle 1-based，0 表示无效）——
@@ -124,13 +125,13 @@ impl super::Interpreter {
                 if args.len() < 2 {
                     return Ok(Some(err_result("tcp_connect 需要 (String, i64) 参数")));
                 }
-                if let (Value::String(host), Value::Int(port)) = (&args[0], &args[1]) {
+                if let (Value::String(host), Value::Int(port, _)) = (&args[0], &args[1]) {
                     let addr = format!("{}:{}", host, port);
                     match std::net::TcpStream::connect(&addr) {
                         Ok(stream) => {
                             self.tcp_streams.push(Some(stream));
                             let handle = self.tcp_streams.len() as i64; // 1-based
-                            return Ok(Some(ok_result(Value::Int(handle))));
+                            return Ok(Some(ok_result(Value::Int(handle, BaseType::I32))));
                         }
                         Err(e) => return Ok(Some(err_result(format!("连接失败: {e}")))),
                     }
@@ -141,7 +142,7 @@ impl super::Interpreter {
                 if args.len() < 2 {
                     return Ok(Some(err_result("tcp_read 需要 (i64, i64) 参数")));
                 }
-                if let (Value::Int(handle), Value::Int(n)) = (&args[0], &args[1]) {
+                if let (Value::Int(handle, _), Value::Int(n, _)) = (&args[0], &args[1]) {
                     let idx = *handle as usize;
                     if idx == 0 || idx > self.tcp_streams.len() {
                         return Ok(Some(err_result("无效的句柄")));
@@ -158,7 +159,7 @@ impl super::Interpreter {
                             Ok(read_n) => {
                                 let bytes: Vec<Value> = buf[..read_n]
                                     .iter()
-                                    .map(|b| Value::Int(*b as i64))
+                                    .map(|b| Value::Int(*b as i64, BaseType::I32))
                                     .collect();
                                 return Ok(Some(ok_result(Value::Vec(Rc::new(RefCell::new(bytes))))));
                             }
@@ -174,7 +175,7 @@ impl super::Interpreter {
                 if args.len() < 2 {
                     return Ok(Some(err_result("tcp_write 需要 (i64, Vec<i64>) 参数")));
                 }
-                if let (Value::Int(handle), Value::Vec(data)) = (&args[0], &args[1]) {
+                if let (Value::Int(handle, _), Value::Vec(data)) = (&args[0], &args[1]) {
                     let idx = *handle as usize;
                     if idx == 0 || idx > self.tcp_streams.len() {
                         return Ok(Some(err_result("无效的句柄")));
@@ -183,14 +184,14 @@ impl super::Interpreter {
                         .borrow()
                         .iter()
                         .map(|x| match x {
-                            Value::Int(b) => *b as u8,
+                            Value::Int(b, _) => *b as u8,
                             _ => 0,
                         })
                         .collect();
                     if let Some(ref mut stream) = self.tcp_streams[idx - 1] {
                         use std::io::Write;
                         match stream.write_all(&bytes) {
-                            Ok(_) => return Ok(Some(ok_result(Value::Int(bytes.len() as i64)))),
+                            Ok(_) => return Ok(Some(ok_result(Value::Int(bytes.len() as i64, BaseType::I32)))),
                             Err(e) => return Ok(Some(err_result(format!("写入失败: {e}")))),
                         }
                     } else {
@@ -200,7 +201,7 @@ impl super::Interpreter {
                 return Ok(Some(err_result("tcp_write 需要 (i64, Vec<i64>) 参数")));
             }
             "tcp_close" => {
-                if let Some(Value::Int(handle)) = args.first() {
+                if let Some(Value::Int(handle, _)) = args.first() {
                     let idx = *handle as usize;
                     if idx > 0 && idx <= self.tcp_streams.len() {
                         self.tcp_streams[idx - 1] = None; // drop 自动关闭
@@ -210,7 +211,7 @@ impl super::Interpreter {
             }
             "tcp_set_timeout" => {
                 if args.len() >= 2 {
-                    if let (Value::Int(handle), Value::Int(ms)) = (&args[0], &args[1]) {
+                    if let (Value::Int(handle, _), Value::Int(ms, _)) = (&args[0], &args[1]) {
                         let idx = *handle as usize;
                         if idx > 0 && idx <= self.tcp_streams.len() {
                             if let Some(ref mut stream) = self.tcp_streams[idx - 1] {
@@ -231,7 +232,7 @@ impl super::Interpreter {
                         Ok(re) => {
                             self.regexes.push(Some(re));
                             let handle = self.regexes.len() as i64; // 1-based
-                            return Ok(Some(ok_result(Value::Int(handle))));
+                            return Ok(Some(ok_result(Value::Int(handle, BaseType::I32))));
                         }
                         Err(e) => return Ok(Some(err_result(format!("正则编译失败: {e}")))),
                     }
@@ -242,7 +243,7 @@ impl super::Interpreter {
                 if args.len() < 2 {
                     return Ok(Some(Value::Bool(false)));
                 }
-                if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+                if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
                     let idx = *handle as usize;
                     if idx == 0 || idx > self.regexes.len() {
                         return Ok(Some(Value::Bool(false)));
@@ -259,7 +260,7 @@ impl super::Interpreter {
                 if args.len() < 2 {
                     return Ok(Some(Value::String(String::new())));
                 }
-                if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+                if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
                     let idx = *handle as usize;
                     if idx == 0 || idx > self.regexes.len() {
                         return Ok(Some(Value::String(String::new())));
@@ -278,7 +279,7 @@ impl super::Interpreter {
                 if args.len() < 2 {
                     return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
                 }
-                if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+                if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
                     let idx = *handle as usize;
                     if idx == 0 || idx > self.regexes.len() {
                         return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
@@ -298,7 +299,7 @@ impl super::Interpreter {
                 if args.len() < 3 {
                     return Ok(Some(Value::String(String::new())));
                 }
-                if let (Value::Int(handle), Value::String(input), Value::String(replacement)) =
+                if let (Value::Int(handle, _), Value::String(input), Value::String(replacement)) =
                     (&args[0], &args[1], &args[2])
                 {
                     let idx = *handle as usize;
@@ -318,7 +319,7 @@ impl super::Interpreter {
                 if args.len() < 2 {
                     return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
                 }
-                if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+                if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
                     let idx = *handle as usize;
                     if idx == 0 || idx > self.regexes.len() {
                         return Ok(Some(Value::Vec(Rc::new(RefCell::new(Vec::new())))));
@@ -372,7 +373,7 @@ impl super::Interpreter {
             "type_name" => {
                 if let Some(arg) = args.first() {
                     let tn = match arg {
-                        Value::Int(_) => "int",
+                        Value::Int(_, _) => "int",
                         Value::Float(_) => "float",
                         Value::Bool(_) => "bool",
                         Value::String(_) => "string",
@@ -563,7 +564,7 @@ impl super::Interpreter {
             "abs" => {
                 if let Some(arg) = args.first() {
                     return Ok(Some(match arg {
-                        Value::Int(n) => Value::Int(n.abs()),
+                        Value::Int(n, _) => Value::Int(n.abs(), BaseType::I32),
                         Value::Float(n) => Value::Float(n.abs()),
                         _ => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "abs() 期望一个数值参数".into(),
@@ -588,7 +589,7 @@ impl super::Interpreter {
             "to_float" => {
                 if let Some(arg) = args.first() {
                     return Ok(Some(match arg {
-                        Value::Int(n) => Value::Float(*n as f64),
+                        Value::Int(n, _) => Value::Float(*n as f64),
                         Value::Float(f) => Value::Float(*f),
                         Value::Float32(f) => Value::Float(*f as f64),
                         Value::Tensor(t) => {
@@ -620,7 +621,7 @@ impl super::Interpreter {
             "to_f64" => {
                 if let Some(arg) = args.first() {
                     return Ok(Some(match arg {
-                        Value::Int(n) => Value::Float(*n as f64),
+                        Value::Int(n, _) => Value::Float(*n as f64),
                         Value::Float(f) => Value::Float(*f),
                         Value::Float32(f) => Value::Float(*f as f64),
                         Value::Tensor(t) => {
@@ -652,7 +653,7 @@ impl super::Interpreter {
             "to_f32" => {
                 if let Some(arg) = args.first() {
                     return Ok(Some(match arg {
-                        Value::Int(n) => Value::Float32(*n as f32),
+                        Value::Int(n, _) => Value::Float32(*n as f32),
                         Value::Float(f) => Value::Float32(*f as f32),
                         Value::Float32(f) => Value::Float32(*f),
                         Value::Tensor(t) => {
@@ -685,7 +686,7 @@ impl super::Interpreter {
                     let f = arg.as_float().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: "f64_bits() 期望一个 f64 参数".into(),
                     })?;
-                    return Ok(Some(Value::Int(f.to_bits() as i64)));
+                    return Ok(Some(Value::Int(f.to_bits() as i64, BaseType::I32)));
                 }
                 return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "f64_bits() 期望 1 个参数".into(),
@@ -704,7 +705,7 @@ impl super::Interpreter {
             }
             "tensor_from_vec" => {
                 if args.len() >= 3 {
-                    if let (Value::Vec(items), Value::Int(rows), Value::Int(cols)) = (&args[0], &args[1], &args[2]) {
+                    if let (Value::Vec(items), Value::Int(rows, _), Value::Int(cols, _)) = (&args[0], &args[1], &args[2]) {
                         // 按 Vec 内元素 dtype 判断：含 Float32 → f32 Tensor
                         let has_f32 = items.borrow().iter().any(|v| matches!(v, Value::Float32(_)));
                         if has_f32 {
@@ -1336,7 +1337,7 @@ impl super::Interpreter {
                             std::path::PathBuf::from(path)
                         };
                         let data: Vec<u8> = bytes.borrow().iter().filter_map(|v| {
-                            if let Value::Int(n) = v { Some(*n as u8) } else { None }
+                            if let Value::Int(n, _) = v { Some(*n as u8) } else { None }
                         }).collect();
                         match std::fs::write(&resolved, &data) {
                             Ok(()) => return Ok(Some(Value::Unit)),
@@ -1364,7 +1365,7 @@ impl super::Interpreter {
                     match std::fs::read(&resolved) {
                         Ok(data) => {
                             let bytes: Vec<Value> = data.iter()
-                                .map(|b| Value::Int(*b as i64))
+                                .map(|b| Value::Int(*b as i64, BaseType::I32))
                                 .collect();
                             return Ok(Some(Value::Vec(Rc::new(RefCell::new(bytes)))));
                         }
@@ -1489,7 +1490,7 @@ impl super::Interpreter {
                         std::path::PathBuf::from(path)
                     };
                     match std::fs::metadata(&resolved) {
-                        Ok(meta) => return Ok(Some(Value::Int(meta.len() as i64))),
+                        Ok(meta) => return Ok(Some(Value::Int(meta.len() as i64, BaseType::I32))),
                         Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: format!("获取文件大小失败: {}", e),
                         }),
@@ -1606,9 +1607,9 @@ impl super::Interpreter {
                         {
                             Ok(wasm_bytes) => {
                                 let _ = std::fs::write(&out_resolved, &wasm_bytes);
-                                return Ok(Some(Value::Int(0)));
+                                return Ok(Some(Value::Int(0, BaseType::I32)));
                             }
-                            Err(_) => return Ok(Some(Value::Int(1))),
+                            Err(_) => return Ok(Some(Value::Int(1, BaseType::I32))),
                         }
                     }
                 }
@@ -1633,11 +1634,11 @@ impl super::Interpreter {
                         match crate::compile::compile_program_to_wasm(&args[0]) {
                             Ok(wasm_bytes) => {
                                 let _ = std::fs::write(&out_resolved, &wasm_bytes);
-                                return Ok(Some(Value::Int(0)));
+                                return Ok(Some(Value::Int(0, BaseType::I32)));
                             }
                             Err(e) => {
                                 eprintln!("[compile_program] error: {}", e);
-                                return Ok(Some(Value::Int(1)));
+                                return Ok(Some(Value::Int(1, BaseType::I32)));
                             }
                         }
                     }
@@ -1699,7 +1700,7 @@ impl super::Interpreter {
             "parse_int" => {
                 if let Some(arg) = args.first() {
                     if let Value::String(s) = arg {
-                        return Ok(Some(Value::Int(s.trim().parse::<i64>().unwrap_or(0))));
+                        return Ok(Some(Value::Int(s.trim().parse::<i64>().unwrap_or(0), BaseType::I32)));
                     }
                 }
                 return Err(TenthError::RuntimeError { line: None, col: None,
@@ -1764,7 +1765,7 @@ impl super::Interpreter {
                 return Ok(Some(Value::String(format!("{}-{:02}-{:02} {}:{:02}:{:02}", year, month, day, h, m, s))));
             }
             "time_sleep_ms" => {
-                if let Some(Value::Int(ms)) = args.first() {
+                if let Some(Value::Int(ms, _)) = args.first() {
                     std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
                     return Ok(Some(Value::Unit));
                 }
@@ -1774,7 +1775,7 @@ impl super::Interpreter {
             }
             // Random functions
             "random_int" => {
-                if let (Some(Value::Int(lo)), Some(Value::Int(hi))) = (args.first(), args.get(1)) {
+                if let (Some(Value::Int(lo, _)), Some(Value::Int(hi, _))) = (args.first(), args.get(1)) {
                     use std::collections::hash_map::DefaultHasher;
                     use std::hash::{Hash, Hasher};
                     let now = std::time::SystemTime::now()
@@ -1786,9 +1787,9 @@ impl super::Interpreter {
                     let rand_val = hasher.finish();
                     let range = (*hi - *lo + 1).max(1);
                     let result = *lo + ((rand_val % (range as u64)) as i64);
-                    return Ok(Some(Value::Int(result)));
+                    return Ok(Some(Value::Int(result, BaseType::I32)));
                 }
-                return Ok(Some(Value::Int(0)));
+                return Ok(Some(Value::Int(0, BaseType::I32)));
             }
             "random_float" => {
                 use std::collections::hash_map::DefaultHasher;
@@ -1896,10 +1897,10 @@ impl super::Interpreter {
             }
             // CLI functions
             "cli_args_count" => {
-                return Ok(Some(Value::Int(1))); // Default: just program name
+                return Ok(Some(Value::Int(1, BaseType::I32))); // Default: just program name
             }
             "cli_arg" => {
-                if let Some(Value::Int(_idx)) = args.first() {
+                if let Some(Value::Int(_idx, _)) = args.first() {
                     return Ok(Some(Value::String(String::new())));
                 }
                 return Ok(Some(Value::String(String::new())));
@@ -1975,3 +1976,4 @@ impl super::Interpreter {
         })
     }
 }
+

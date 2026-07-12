@@ -132,7 +132,7 @@ fn jit_stack_within_limit_compiles() {
     let src = right_nested_add(10);
     let result = run_jit(&src).expect("small expr should JIT-compile");
     match result {
-        Value::Int(n) => assert_eq!(n, arith_sum(10), "1+2+...+10 = 55"),
+        Value::Int(n, _) => assert_eq!(n, arith_sum(10), "1+2+...+10 = 55"),
         v => panic!("expected Int({}), got {:?}", arith_sum(10), v),
     }
 }
@@ -156,7 +156,7 @@ fn jit_stack_overflow_falls_back_to_vm() {
     let src = right_nested_add(n);
     let result = run_jit(&src).expect("fallback should produce a result");
     match result {
-        Value::Int(v) => assert_eq!(
+        Value::Int(v, _) => assert_eq!(
             v, arith_sum(n as i64),
             "1+2+...+{} = {}, got {}", n, arith_sum(n as i64), v
         ),
@@ -185,7 +185,7 @@ fn jit_stack_overflow_no_panic() {
     // test fails with a panic backtrace instead of a clean assertion.
     let result = run_jit(&src);
     assert!(result.is_ok(), "run_jit should not error/panic on stack overflow: {:?}", result);
-    if let Ok(Value::Int(v)) = result {
+    if let Ok(Value::Int(v, _)) = result {
         assert_eq!(v, arith_sum(n as i64));
     } else {
         panic!("expected Ok(Int(_))");

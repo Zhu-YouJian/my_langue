@@ -13,6 +13,7 @@
 //! - All trampolines are `extern "C"` (no unwinding across FFI).
 
 use std::cell::RefCell;
+use crate::hir::types::BaseType;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use crate::runtime::value::Value;
@@ -80,7 +81,7 @@ unsafe fn safe_slice<'a>(ptr: *const Value, count: u64) -> &'a [Value] {
 // ── Value construction trampolines ─────────────────────────────────────────
 
 unsafe extern "C" fn host_make_int(_vm: *mut Vm, n: i64, out: *mut Value) {
-    std::ptr::write(out, Value::Int(n));
+    std::ptr::write(out, Value::Int(n, BaseType::I32));
 }
 
 unsafe extern "C" fn host_make_float(_vm: *mut Vm, f: f64, out: *mut Value) {
@@ -112,7 +113,7 @@ unsafe extern "C" fn host_truthy(_vm: *mut Vm, v: *const Value) -> u8 {
     let v = &*v;
     match v {
         Value::Bool(b) => *b as u8,
-        Value::Int(i) => (*i != 0) as u8,
+        Value::Int(i, _) => (*i != 0) as u8,
         Value::Float(f) => (*f != 0.0) as u8,
         Value::Unit => 0,
         Value::String(s) => (!s.is_empty()) as u8,
@@ -427,7 +428,7 @@ unsafe extern "C" fn host_make_tensor(
     let data: Vec<f64> = flat.iter().map(|v| match v {
         Value::Float(f) => *f,
         Value::Float32(f) => *f as f64,
-        Value::Int(i) => *i as f64,
+        Value::Int(i, _) => *i as f64,
         _ => 0.0,
     }).collect();
     use crate::runtime::tensor::Tensor;
@@ -456,7 +457,7 @@ unsafe extern "C" fn host_make_tensor_f32(
     let data: Vec<f32> = flat.iter().map(|v| match v {
         Value::Float32(f) => *f,
         Value::Float(f) => *f as f32,
-        Value::Int(i) => *i as f32,
+        Value::Int(i, _) => *i as f32,
         _ => 0.0,
     }).collect();
     use crate::runtime::tensor::Tensor;
@@ -487,7 +488,7 @@ unsafe extern "C" fn host_make_tensor_f16(
     let data: Vec<f16> = flat.iter().map(|v| match v {
         Value::Float(f) => f16::from_f64(*f),
         Value::Float32(f) => f16::from_f32(*f),
-        Value::Int(i) => f16::from_f64(*i as f64),
+        Value::Int(i, _) => f16::from_f64(*i as f64),
         _ => f16::from_f32(0.0),
     }).collect();
     use crate::runtime::tensor::Tensor;
@@ -517,7 +518,7 @@ unsafe extern "C" fn host_make_tensor_bf16(
     let data: Vec<bf16> = flat.iter().map(|v| match v {
         Value::Float(f) => bf16::from_f64(*f),
         Value::Float32(f) => bf16::from_f32(*f),
-        Value::Int(i) => bf16::from_f64(*i as f64),
+        Value::Int(i, _) => bf16::from_f64(*i as f64),
         _ => bf16::from_f32(0.0),
     }).collect();
     use crate::runtime::tensor::Tensor;

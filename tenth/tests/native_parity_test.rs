@@ -1,4 +1,4 @@
-﻿//! 论文 T37 修复第二批：VM/解释器 native 注册对齐测试。
+//! 论文 T37 修复第二批：VM/解释器 native 注册对齐测试。
 //!
 //! 覆盖补齐的 20 项 native（VM 17 项 + 解释器 3 项），验证 VM 路径与
 //! 解释器路径对同一 .th 源码产生一致结果。
@@ -18,6 +18,7 @@ use tenth::runtime::tensor::{Tensor, TensorData};
 use tenth::compile::bytecode::BytecodeCompiler;
 use std::rc::Rc;
 use std::cell::RefCell;
+use tenth::hir::types::BaseType;
 
 /// 注册测试所需的 native（复制自 main.rs::register_natives 的相关子集）。
 /// 17 项新 native 必须与 main.rs 完全一致；辅助 native（println/Vec::new 等）
@@ -51,7 +52,7 @@ fn register_test_natives(vm: &mut Vm) {
     });
     vm.add_native("to_f64".into(), |_vm, args| {
         match args.first() {
-            Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
+            Some(Value::Int(n, _)) => Ok(Value::Float(*n as f64)),
             Some(Value::Float(f)) => Ok(Value::Float(*f)),
             Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
             _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "to_f64() 需要一个数值参数".into() }),
@@ -59,7 +60,7 @@ fn register_test_natives(vm: &mut Vm) {
     });
     vm.add_native("to_f32".into(), |_vm, args| {
         match args.first() {
-            Some(Value::Int(n)) => Ok(Value::Float32(*n as f32)),
+            Some(Value::Int(n, _)) => Ok(Value::Float32(*n as f32)),
             Some(Value::Float(f)) => Ok(Value::Float32(*f as f32)),
             Some(Value::Float32(f)) => Ok(Value::Float32(*f)),
             _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "to_f32() 需要一个数值参数".into() }),
@@ -74,7 +75,7 @@ fn register_test_natives(vm: &mut Vm) {
     vm.add_native("type_name".into(), |_vm, args| {
         if let Some(arg) = args.first() {
             let tn = match arg {
-                Value::Int(_) => "int",
+                Value::Int(_, _) => "int",
                 Value::Float(_) => "float",
                 Value::Float32(_) => "float",
                 Value::Bool(_) => "bool",
@@ -159,7 +160,7 @@ fn register_test_natives(vm: &mut Vm) {
         if let Some(arg) = args.first() {
             let f = arg.as_float().ok_or_else(|| tenth::error::TenthError::RuntimeError { line: None, col: None,
                 message: "f64_bits() 期望一个 f64 参数".into() })?;
-            Ok(Value::Int(f.to_bits() as i64))
+            Ok(Value::Int(f.to_bits() as i64, BaseType::I32))
         } else { Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "f64_bits() 期望 1 个参数".into() }) }
     });
     vm.add_native("f64_from_bits".into(), |_vm, args| {
@@ -478,7 +479,7 @@ fn register_test_natives(vm: &mut Vm) {
     });
     vm.add_native("parse_int".into(), |_vm, args| {
         if let Some(Value::String(s)) = args.first() {
-            Ok(Value::Int(s.trim().parse::<i64>().unwrap_or(0)))
+            Ok(Value::Int(s.trim().parse::<i64>().unwrap_or(0), BaseType::I32))
         } else {
             Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "parse_int() 期望一个字符串参数".into() })
         }
@@ -561,7 +562,7 @@ fn run_interp(src: &str) -> Result<Value, String> {
 /// 比较两个 Value 是否语义相等（Float 用近似比较）。
 fn values_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
-        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Int(x, _), Value::Int(y, _)) => x == y,
         (Value::Float(x), Value::Float(y)) => (x - y).abs() < 1e-9,
         (Value::Float32(x), Value::Float32(y)) => (x - y).abs() < 1e-6,
         (Value::Bool(x), Value::Bool(y)) => x == y,
@@ -628,7 +629,7 @@ fn test_with_step_limit_parity() {
     // 命名函数作为闭包传递；步数预算充足时应返回函数结果
     let src = "fn make() -> Int { with_step_limit(1000000, get_42) }\nfn get_42() -> Int { 42 }\nmake()";
     let v = assert_parity(src);
-    assert!(matches!(v, Value::Int(42)));
+    assert!(matches!(v, Value::Int(42, _)));
 }
 
 #[test]
@@ -636,7 +637,7 @@ fn test_with_timeout_ms_parity() {
     // 毫秒预算充足时应返回函数结果
     let src = "fn make() -> Int { with_timeout_ms(5000, get_42) }\nfn get_42() -> Int { 42 }\nmake()";
     let v = assert_parity(src);
-    assert!(matches!(v, Value::Int(42)));
+    assert!(matches!(v, Value::Int(42, _)));
 }
 
 #[test]
@@ -656,14 +657,14 @@ fn test_start_grad_parity() {
     // start_grad 应与 new_grad 同义：设置 tape 后返回 Unit
     let src = "fn run() -> Int { let _ = start_grad(); 42 }\nrun()";
     let v = assert_parity(src);
-    assert!(matches!(v, Value::Int(42)));
+    assert!(matches!(v, Value::Int(42, _)));
 }
 
 #[test]
 fn test_f64_bits_parity() {
     // 1.0f64 的位模式是 0x3FF0000000000000 = 4607182418800017408
     let v = assert_parity("f64_bits(1.0)");
-    assert!(matches!(v, Value::Int(n) if n == 4607182418800017408));
+    assert!(matches!(v, Value::Int(n, _) if n == 4607182418800017408));
 }
 
 #[test]
@@ -738,20 +739,20 @@ fn test_format_string_arg_parity() {
 #[test]
 fn test_parse_int_parity() {
     let v = assert_parity("parse_int(\"42\")");
-    assert!(matches!(v, Value::Int(42)));
+    assert!(matches!(v, Value::Int(42, _)));
 }
 
 #[test]
 fn test_parse_int_negative_parity() {
     let v = assert_parity("parse_int(\"-17\")");
-    assert!(matches!(v, Value::Int(-17)));
+    assert!(matches!(v, Value::Int(-17, _)));
 }
 
 #[test]
 fn test_parse_int_invalid_parity() {
     // 解析失败返回 0（与解释器一致）
     let v = assert_parity("parse_int(\"abc\")");
-    assert!(matches!(v, Value::Int(0)));
+    assert!(matches!(v, Value::Int(0, _)));
 }
 
 #[test]
@@ -810,7 +811,7 @@ fn test_save_load_weights_parity() {
         interp_res
     );
     // zeros(2,2).numel() 应为 4
-    assert!(matches!(&vm_res, Value::Int(n) if *n == 4));
+    assert!(matches!(&vm_res, Value::Int(n, _) if *n == 4));
 
     // 清理临时文件
     let _ = std::fs::remove_file(&vm_path);
@@ -853,7 +854,7 @@ fn test_save_load_weights_nonzero_parity() {
 
     assert!(values_eq(&vm_res, &interp_res));
     // ones(3,1).numel() 应为 3
-    assert!(matches!(&vm_res, Value::Int(n) if *n == 3));
+    assert!(matches!(&vm_res, Value::Int(n, _) if *n == 3));
 
     let _ = std::fs::remove_file(&vm_path);
     let _ = std::fs::remove_file(&interp_path);
@@ -868,7 +869,7 @@ fn test_print_parity() {
     // print 返回 Unit；用后续表达式验证不报错
     let src = "fn run() -> Int { let _ = print(\"x\"); 42 }\nrun()";
     let v = assert_parity(src);
-    assert!(matches!(v, Value::Int(42)));
+    assert!(matches!(v, Value::Int(42, _)));
 }
 
 #[test]

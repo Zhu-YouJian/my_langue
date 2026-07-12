@@ -143,7 +143,7 @@ impl Lexer {
                         message: format!("无效的进制字面量：0{}{}", prefix, digits),
                     })?;
                     return Ok(Token {
-                        kind: TokenKind::IntLiteral(n),
+                        kind: TokenKind::IntLiteral(n, BaseType::I32),
                         span,
                     });
                 }
@@ -244,13 +244,72 @@ impl Lexer {
                 span,
             })
         } else {
+            // 整数后缀检测：i8/i16/i32/i64/u8/u16/u32/u64
+            let mut int_dtype = BaseType::I32;
+            if matches!(self.peek(), Some('i') | Some('u')) {
+                let c0 = self.peek().unwrap();
+                let c1 = self.source.get(self.pos + 1).copied();
+                let c2 = self.source.get(self.pos + 2).copied();
+                let c3 = self.source.get(self.pos + 3).copied();
+                let b2 = c2.map_or(true, |c| !c.is_alphanumeric() && c != '_');
+                let b3 = c3.map_or(true, |c| !c.is_alphanumeric() && c != '_');
+                let matched = match (c0, c1, c2, b2, b3) {
+                    ('i', Some('8'), _, true, _) => { self.advance(); self.advance(); Some(BaseType::I8) }
+                    ('u', Some('8'), _, true, _) => { self.advance(); self.advance(); Some(BaseType::U8) }
+                    ('i', Some('1'), Some('6'), _, true) => { self.advance(); self.advance(); self.advance(); Some(BaseType::I16) }
+                    ('i', Some('3'), Some('2'), _, true) => { self.advance(); self.advance(); self.advance(); Some(BaseType::I32) }
+                    ('i', Some('6'), Some('4'), _, true) => { self.advance(); self.advance(); self.advance(); Some(BaseType::I64) }
+                    ('u', Some('1'), Some('6'), _, true) => { self.advance(); self.advance(); self.advance(); Some(BaseType::U16) }
+                    ('u', Some('3'), Some('2'), _, true) => { self.advance(); self.advance(); self.advance(); Some(BaseType::U32) }
+                    ('u', Some('6'), Some('4'), _, true) => { self.advance(); self.advance(); self.advance(); Some(BaseType::U64) }
+                    _ => None,
+                };
+                if let Some(dt) = matched {
+                    int_dtype = dt;
+                }
+            }
+
             let n: i64 = s.parse().map_err(|_| TenthError::LexerError {
                 line: span.line,
                 col: span.col,
                 message: format!("无效的整数：{}", s),
             })?;
+
+            // 编译期字面量范围检查
+            // 无后缀（默认 I32）时：超出 i32 范围自动提升为 I64，不报错
+            if int_dtype == BaseType::I32 && (n < -2147483648 || n > 2147483647) { int_dtype = BaseType::I64; }
+            let range_ok = match int_dtype {
+                BaseType::I8 => (n >= -128 && n <= 127),
+                BaseType::I16 => (n >= -32768 && n <= 32767),
+                BaseType::I32 => (n >= -2147483648 && n <= 2147483647),
+                BaseType::I64 => true,
+                BaseType::U8 => (n >= 0 && n <= 255),
+                BaseType::U16 => (n >= 0 && n <= 65535),
+                BaseType::U32 => (n >= 0 && n <= 4294967295),
+                BaseType::U64 => (n >= 0),
+                _ => true,
+            };
+            if !range_ok {
+                let dtype_name = match int_dtype {
+                    BaseType::I8 => "i8",
+                    BaseType::I16 => "i16",
+                    BaseType::I32 => "i32",
+                    BaseType::I64 => "i64",
+                    BaseType::U8 => "u8",
+                    BaseType::U16 => "u16",
+                    BaseType::U32 => "u32",
+                    BaseType::U64 => "u64",
+                    _ => "?",
+                };
+                return Err(TenthError::LexerError {
+                    line: span.line,
+                    col: span.col,
+                    message: format!("整数字面量 {} 超出 {} 范围", n, dtype_name),
+                });
+            }
+
             Ok(Token {
-                kind: TokenKind::IntLiteral(n),
+                kind: TokenKind::IntLiteral(n, int_dtype),
                 span,
             })
         }

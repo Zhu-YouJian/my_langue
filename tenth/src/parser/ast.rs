@@ -3,7 +3,8 @@ use crate::lexer::token::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
-    Int(i64),
+    /// 整数字面量。第二字段为 dtype（I8/I16/I32/I64/U8/U16/U32/U64），由 lexer 后缀决定，默认 I32。
+    Int(i64, BaseType),
     /// 浮点字面量。第二字段为 dtype（F32 或 F64），由 lexer 的 `f32`/`f64` 后缀决定。
     Float(f64, BaseType),
     Bool(bool),

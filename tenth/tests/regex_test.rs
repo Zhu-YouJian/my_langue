@@ -26,6 +26,7 @@ use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::runtime::value::Value;
 use tenth::runtime::vm::Vm;
+use tenth::hir::types::BaseType;
 
 /// 构造 Result::Ok(value)
 fn ok_result(value: Value) -> Value {
@@ -60,7 +61,7 @@ fn register_test_natives(vm: &mut Vm) {
                 Ok(re) => {
                     vm.regexes.push(Some(re));
                     let handle = vm.regexes.len() as i64; // 1-based
-                    Ok(ok_result(Value::Int(handle)))
+                    Ok(ok_result(Value::Int(handle, BaseType::I32)))
                 }
                 Err(e) => Ok(err_result(format!("正则编译失败: {e}"))),
             }
@@ -72,7 +73,7 @@ fn register_test_natives(vm: &mut Vm) {
         if args.len() < 2 {
             return Ok(Value::Bool(false));
         }
-        if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+        if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
             let idx = *handle as usize;
             if idx == 0 || idx > vm.regexes.len() {
                 return Ok(Value::Bool(false));
@@ -89,7 +90,7 @@ fn register_test_natives(vm: &mut Vm) {
         if args.len() < 2 {
             return Ok(Value::String(String::new()));
         }
-        if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+        if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
             let idx = *handle as usize;
             if idx == 0 || idx > vm.regexes.len() {
                 return Ok(Value::String(String::new()));
@@ -108,7 +109,7 @@ fn register_test_natives(vm: &mut Vm) {
         if args.len() < 2 {
             return Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))));
         }
-        if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+        if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
             let idx = *handle as usize;
             if idx == 0 || idx > vm.regexes.len() {
                 return Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))));
@@ -129,7 +130,7 @@ fn register_test_natives(vm: &mut Vm) {
         if args.len() < 3 {
             return Ok(Value::String(String::new()));
         }
-        if let (Value::Int(handle), Value::String(input), Value::String(replacement)) =
+        if let (Value::Int(handle, _), Value::String(input), Value::String(replacement)) =
             (&args[0], &args[1], &args[2])
         {
             let idx = *handle as usize;
@@ -149,7 +150,7 @@ fn register_test_natives(vm: &mut Vm) {
         if args.len() < 2 {
             return Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))));
         }
-        if let (Value::Int(handle), Value::String(input)) = (&args[0], &args[1]) {
+        if let (Value::Int(handle, _), Value::String(input)) = (&args[0], &args[1]) {
             let idx = *handle as usize;
             if idx == 0 || idx > vm.regexes.len() {
                 return Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))));
@@ -467,7 +468,7 @@ fn test_regex_email() {
     "#;
     let v = run_vm(src);
     match v {
-        Value::Int(n) => assert_eq!(n, 2, "期望 2（m1=true, m2=false），got {}", n),
+        Value::Int(n, _) => assert_eq!(n, 2, "期望 2（m1=true, m2=false），got {}", n),
         v => panic!("期望 Int(2)，got {:?}", v),
     }
 }

@@ -34,7 +34,7 @@ fn test_match_enum_some() {
     let src = "enum Option { Some(value: i32), None }; let x = Option::Some(value: 42); match x { Option::Some(value: v) => v * 2, Option::None => 0, }";
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(84)) => {}
+        Some(Value::Int(84, _)) => {}
         v => panic!("expected Int(84), got {:?}", v),
     }
 }
@@ -44,7 +44,7 @@ fn test_match_enum_none() {
     let src = "enum Option { Some(value: i32), None }; let x = Option::None; match x { Option::Some(value: v) => v, Option::None => -1, }";
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(-1)) => {}
+        Some(Value::Int(-1, _)) => {}
         v => panic!("expected Int(-1), got {:?}", v),
     }
 }
@@ -54,7 +54,7 @@ fn test_match_wildcard() {
     let src = "enum Option { Some(value: i32), None }; let x = Option::None; match x { Option::Some(value: v) => v, _ => -1, }";
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(-1)) => {}
+        Some(Value::Int(-1, _)) => {}
         v => panic!("expected Int(-1), got {:?}", v),
     }
 }
@@ -77,7 +77,7 @@ fn test_enum_tuple_variant_match() {
     let src = "enum TokenKind { IntLiteral(i64), Identifier(str), Plus, Eof }; let tok = TokenKind::IntLiteral(42); match tok { TokenKind::IntLiteral(n) => n, TokenKind::Identifier(s) => 0, TokenKind::Plus => -1, TokenKind::Eof => -2, }";
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {}
+        Some(Value::Int(42, _)) => {}
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -87,7 +87,7 @@ fn test_enum_tuple_variant_multi_field() {
     let src = "enum Expr { Add(i64, i64), Val(i64), None }; let e = Expr::Add(3, 5); match e { Expr::Add(a, b) => a + b, Expr::Val(v) => v, Expr::None => 0, }";
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(8)) => {}
+        Some(Value::Int(8, _)) => {}
         v => panic!("expected Int(8), got {:?}", v),
     }
 }
@@ -97,7 +97,7 @@ fn test_enum_tuple_variant_string_field() {
     let src = "enum Result { Ok(i64), Err(str) }; let r = Result::Err(\"not found\"); match r { Result::Ok(v) => v, Result::Err(msg) => -1, }";
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(-1)) => {}
+        Some(Value::Int(-1, _)) => {}
         v => panic!("expected Int(-1), got {:?}", v),
     }
 }

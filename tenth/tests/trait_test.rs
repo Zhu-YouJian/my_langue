@@ -90,7 +90,7 @@ fn test_builtin_trait_in_bound() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {},
+        Some(Value::Int(42, _)) => {},
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -136,7 +136,7 @@ fn test_trait_associated_type() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {},
+        Some(Value::Int(42, _)) => {},
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -172,7 +172,7 @@ fn test_trait_all_default_methods() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {},
+        Some(Value::Int(42, _)) => {},
         v => panic!("expected Int(42), got {:?}", v),
     }
 }
@@ -187,7 +187,7 @@ fn test_multiple_trait_bounds() {
     "#;
     let result = run_code(src).unwrap();
     match result {
-        Some(Value::Int(7)) => {},
+        Some(Value::Int(7, _)) => {},
         v => panic!("expected Int(7), got {:?}", v),
     }
 }

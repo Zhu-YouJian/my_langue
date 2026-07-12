@@ -1,6 +1,7 @@
 //! Owns the Cranelift `JITModule` and caches compiled function pointers.
 
 use cranelift::prelude::*;
+use crate::hir::types::BaseType;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 use std::collections::HashMap;

@@ -121,7 +121,7 @@ fn test_try_ok() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(42)) => {}
+        Some(Value::Int(42, _)) => {}
         v => panic!("期望 Int(42), got {:?}", v),
     }
 }
@@ -165,7 +165,7 @@ fn test_try_chain_success() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(84)) => {}
+        Some(Value::Int(84, _)) => {}
         v => panic!("期望 Int(84), got {:?}", v),
     }
 }
@@ -255,7 +255,7 @@ fn test_vm_try_ok() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(42) => {}
+        Value::Int(42, _) => {}
         v => panic!("VM: 期望 Int(42), got {:?}", v),
     }
 }
@@ -287,7 +287,7 @@ fn test_vm_try_chain_success() {
     "#;
     let result = run_vm(src).unwrap();
     match result {
-        Value::Int(84) => {}
+        Value::Int(84, _) => {}
         v => panic!("VM: 期望 Int(84), got {:?}", v),
     }
 }

@@ -19,6 +19,7 @@
 //!   poll 时从 FutureState 提取，这样解耦了 Future 创建者与等待者。
 
 use std::cell::RefCell;
+use crate::hir::types::BaseType;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
@@ -99,10 +100,10 @@ impl AsyncIoState {
                     let (_, future) = self.io_receivers.swap_remove(i);
                     let val = match result {
                         IoResult::Bytes(bytes) => {
-                            let v: Vec<Value> = bytes.iter().map(|b| Value::Int(*b as i64)).collect();
+                            let v: Vec<Value> = bytes.iter().map(|b| Value::Int(*b as i64, BaseType::I32)).collect();
                             ok_result(Value::Vec(Rc::new(RefCell::new(v))))
                         }
-                        IoResult::Count(n) => ok_result(Value::Int(n as i64)),
+                        IoResult::Count(n) => ok_result(Value::Int(n as i64, BaseType::I32)),
                         IoResult::Err(e) => err_result(e),
                     };
                     wake_future(future, val, &mut woken);

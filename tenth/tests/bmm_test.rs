@@ -88,7 +88,7 @@ fn test_bmm_forward_shape() {
     "#;
     let result = run_code(src).unwrap();
     // c.numel() = 2*3*5 = 30
-    assert!(matches!(result, Some(Value::Int(30))), "expected 30, got {:?}", result);
+    assert!(matches!(result, Some(Value::Int(30, _))), "expected 30, got {:?}", result);
 }
 
 // ── 2. batch 维不匹配报错 ──

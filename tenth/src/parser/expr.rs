@@ -12,6 +12,7 @@
 //! - 辅助：`parse_block_or_expr` / `parse_qualified_path` / `expect_ident`
 
 use crate::error::{TenthError, TenthResult};
+use crate::hir::types::BaseType;
 use crate::lexer::token::{Span, Token, TokenKind};
 use super::ast::*;
 use super::parser::Parser;
@@ -23,7 +24,7 @@ impl Parser {
         let expr_span = token.span.clone();
 
         let kind = match &token.kind {
-            TokenKind::IntLiteral(n) => ExprKind::Literal(Literal::Int(*n)),
+            TokenKind::IntLiteral(n, dt) => ExprKind::Literal(Literal::Int(*n, *dt)),
             TokenKind::FloatLiteral(n, dt) => ExprKind::Literal(Literal::Float(*n, *dt)),
             TokenKind::True => ExprKind::Literal(Literal::Bool(true)),
             TokenKind::False => ExprKind::Literal(Literal::Bool(false)),

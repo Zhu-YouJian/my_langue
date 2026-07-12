@@ -13,6 +13,7 @@
 //! `extern "C" fn(vm: *mut u8, args: *const u8, n: usize, out: *mut u8) -> bool`
 
 use cranelift::prelude::*;
+use crate::hir::types::BaseType;
 use cranelift_module::{Linkage, Module};
 use std::collections::{HashMap, HashSet};
 use std::mem::size_of;

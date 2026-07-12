@@ -9,12 +9,13 @@
 //! 3. `json_unescape` 替代链式 `replace()`，正确处理反斜杠后接引号的情况。
 
 use crate::runtime::value::Value;
+use crate::hir::types::BaseType;
 use std::rc::Rc;
 use std::cell::RefCell;
 
 pub fn json_encode_value(val: &Value) -> String {
     match val {
-        Value::Int(n) => format!("{}", n),
+        Value::Int(n, _) => format!("{}", n),
         Value::Float(f) => format!("{}", f),
         Value::Bool(b) => if *b { "true".into() } else { "false".into() },
         Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\t', "\\t")),
@@ -41,7 +42,7 @@ pub fn json_encode_value_pretty(val: &Value, indent: usize) -> String {
     let prefix = "  ".repeat(indent);
     let inner_prefix = "  ".repeat(indent + 1);
     match val {
-        Value::Int(n) => format!("{}", n),
+        Value::Int(n, _) => format!("{}", n),
         Value::Float(f) => format!("{}", f),
         Value::Bool(b) => if *b { "true".into() } else { "false".into() },
         Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\t', "\\t")),
@@ -88,7 +89,7 @@ fn json_decode_string_depth(s: &str, depth: usize) -> Value {
         let inner = &s[1..s.len()-1];
         return Value::String(json_unescape(inner));
     }
-    if let Ok(n) = s.parse::<i64>() { return Value::Int(n); }
+    if let Ok(n) = s.parse::<i64>() { return Value::Int(n, BaseType::I32); }
     if let Ok(f) = s.parse::<f64>() { return Value::Float(f); }
     if s.starts_with('[') && s.ends_with(']') {
         let inner = &s[1..s.len()-1];

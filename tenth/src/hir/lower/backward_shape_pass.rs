@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use crate::error::TenthError;
 use crate::hir::hir::*;
-use crate::hir::types::{Dim, Type};
+use crate::hir::types::{Dim, Type, BaseType};
 use crate::lexer::token::Span;
 use super::backward_shapes::backward_shape;
 use super::types::{has_static_info, fmt_dims};

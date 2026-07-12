@@ -1,4 +1,4 @@
-﻿//! Wave 3 张量修复补测试。
+//! Wave 3 张量修复补测试。
 //!
 //! 覆盖本次 Wave 1a/1b/2 修复的 6 项改动：
 //! - 序列化 v2 格式（F32/F64 往返 + 旧 v1 向后兼容）
@@ -67,13 +67,13 @@ fn register_test_natives(vm: &mut Vm) {
     vm.add_native("sqrt".into(), |_vm, args| match args.first() {
         Some(Value::Float(f)) => Ok(Value::Float(f.sqrt())),
         Some(Value::Float32(f)) => Ok(Value::Float32(f.sqrt())),
-        Some(Value::Int(n)) => Ok(Value::Float((*n as f64).sqrt())),
+        Some(Value::Int(n, _)) => Ok(Value::Float((*n as f64).sqrt())),
         _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: "sqrt() 需要一个数值参数".into(),
         }),
     });
     vm.add_native("to_f64".into(), |_vm, args| match args.first() {
-        Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
+        Some(Value::Int(n, _)) => Ok(Value::Float(*n as f64)),
         Some(Value::Float(f)) => Ok(Value::Float(*f)),
         Some(Value::Float32(f)) => Ok(Value::Float(*f as f64)),
         Some(Value::Tensor(t)) => {
@@ -97,7 +97,7 @@ fn register_test_natives(vm: &mut Vm) {
         }),
     });
     vm.add_native("to_f32".into(), |_vm, args| match args.first() {
-        Some(Value::Int(n)) => Ok(Value::Float32(*n as f32)),
+        Some(Value::Int(n, _)) => Ok(Value::Float32(*n as f32)),
         Some(Value::Float(f)) => Ok(Value::Float32(*f as f32)),
         Some(Value::Float32(f)) => Ok(Value::Float32(*f)),
         Some(Value::Tensor(t)) => {
@@ -825,7 +825,7 @@ fn test_save_load_mixed_weights() {
     );
     let v = run_vm(&src);
     match v {
-        Value::Int(n) => assert_eq!(n, 2, "应加载 2 个张量"),
+        Value::Int(n, _) => assert_eq!(n, 2, "应加载 2 个张量"),
         v => panic!("期望 Int(2)，got {:?}", v),
     }
 
@@ -839,7 +839,7 @@ fn test_save_load_mixed_weights() {
     );
     let v0 = run_vm(&src2);
     match v0 {
-        Value::Int(n) => assert_eq!(n, 3, "第一个张量 numel 应为 3"),
+        Value::Int(n, _) => assert_eq!(n, 3, "第一个张量 numel 应为 3"),
         v => panic!("期望 Int(3)，got {:?}", v),
     }
 
@@ -852,7 +852,7 @@ fn test_save_load_mixed_weights() {
     );
     let v1 = run_vm(&src3);
     match v1 {
-        Value::Int(n) => assert_eq!(n, 2, "第二个张量 numel 应为 2"),
+        Value::Int(n, _) => assert_eq!(n, 2, "第二个张量 numel 应为 2"),
         v => panic!("期望 Int(2)，got {:?}", v),
     }
 

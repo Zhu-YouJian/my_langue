@@ -3,6 +3,7 @@
 //! 从 runtime/vm.rs 拆分而来（T3b 架构重构）。
 
 use std::rc::Rc;
+use crate::hir::types::BaseType;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::runtime::value::Value;
@@ -17,7 +18,7 @@ use super::err;
 fn vm_map_key_to_string(v: &Value) -> TenthResult<String> {
     match v {
         Value::String(s) => Ok(s.clone()),
-        Value::Int(n) => Ok(n.to_string()),
+        Value::Int(n, _) => Ok(n.to_string()),
         Value::Bool(b) => Ok(b.to_string()),
         Value::Float32(f) => Ok(format!("{}", f)),
         Value::Float(f) => Ok(format!("{}", f)),
@@ -36,7 +37,7 @@ impl Vm {
         };
         match recv {
             Value::String(s) => match method {
-                "len" => Ok(Value::Int(s.chars().count() as i64)),
+                "len" => Ok(Value::Int(s.chars().count() as i64, BaseType::I32)),
                 "trim" => Ok(Value::String(s.trim().to_string())),
                 "to_upper" => Ok(Value::String(s.to_uppercase())),
                 "to_lower" => Ok(Value::String(s.to_lowercase())),
@@ -70,7 +71,7 @@ impl Vm {
                 }
                 "find" => {
                     if let Some(Value::String(sub)) = args.first() {
-                        Ok(Value::Int(s.find(sub.as_str()).map(|i| i as i64).unwrap_or(-1)))
+                        Ok(Value::Int(s.find(sub.as_str()).map(|i| i as i64).unwrap_or(-1), BaseType::I32))
                     } else { err("find() 需要一个字符串参数") }
                 }
                 "starts_with" => {
@@ -83,7 +84,7 @@ impl Vm {
                         Ok(Value::Bool(s.ends_with(suffix.as_str())))
                     } else { err("ends_with() 需要一个字符串参数") }
                 }
-                "parse_int" => Ok(Value::Int(s.trim().parse::<i64>().unwrap_or(0))),
+                "parse_int" => Ok(Value::Int(s.trim().parse::<i64>().unwrap_or(0), BaseType::I32)),
                 "parse_float" => Ok(Value::Float(s.trim().parse::<f64>().unwrap_or(0.0))),
                 "is_empty" => Ok(Value::Bool(s.is_empty())),
                 "repeat" => {
@@ -97,7 +98,7 @@ impl Vm {
                     Ok(Value::Vec(Rc::new(RefCell::new(chars))))
                 }
                 "bytes" => {
-                    let bytes: Vec<Value> = s.bytes().map(|b| Value::Int(b as i64)).collect();
+                    let bytes: Vec<Value> = s.bytes().map(|b| Value::Int(b as i64, BaseType::I32)).collect();
                     Ok(Value::Vec(Rc::new(RefCell::new(bytes))))
                 }
                 "trim_start" => Ok(Value::String(s.trim_start().to_string())),
@@ -121,7 +122,7 @@ impl Vm {
                 _ => err(&format!("字符串没有方法 '{}'", method)),
             },
             Value::Vec(items) => match method {
-                "len" => Ok(Value::Int(items.borrow().len() as i64)),
+                "len" => Ok(Value::Int(items.borrow().len() as i64, BaseType::I32)),
                 "push" => {
                     if args.len() == 1 {
                         items.borrow_mut().push(args[0].clone());
@@ -189,7 +190,7 @@ impl Vm {
                 _ => err(&format!("Vec 没有方法 '{}'", method)),
             },
             Value::Map(m) => match method {
-                "len" => Ok(Value::Int(m.borrow().len() as i64)),
+                "len" => Ok(Value::Int(m.borrow().len() as i64, BaseType::I32)),
                 "insert" => {
                     if args.len() != 2 { return err("insert() 需要 2 个参数 (键, 值)"); }
                     // 问题2：支持 str/int/bool/float 键（内部统一转 String 存储）
@@ -314,7 +315,7 @@ impl Vm {
                         if self.recording { self.record_unary(TapeOp::Softmax, &t, &result); }
                         Ok(Value::Tensor(result))
                     }
-                    "argmax" => Ok(Value::Int(tensor.argmax())),
+                    "argmax" => Ok(Value::Int(tensor.argmax(), BaseType::I32)),
                     // 梯度裁剪辅助：元素级裁剪到 [min_val, max_val]（与 interpreter 同步）
                     "clip_scalar" => {
                         if args.len() < 2 {
@@ -328,7 +329,7 @@ impl Vm {
                         Ok(Value::Tensor(Rc::new(RefCell::new(clipped))))
                     }
                     // 张量属性查询（配合护城河 D 内存预估，与 interpreter 同步）
-                    "numel" => Ok(Value::Int(tensor.data.len() as i64)),
+                    "numel" => Ok(Value::Int(tensor.data.len() as i64, BaseType::I32)),
                     "nbytes" | "bytes" => {
                         let n = tensor.data.len() as i64;
                         let bytes_per_elem: i64 = match &tensor.data {
@@ -337,9 +338,9 @@ impl Vm {
                             crate::runtime::tensor::TensorData::F16(_) => 2,
                             crate::runtime::tensor::TensorData::BF16(_) => 2,
                         };
-                        Ok(Value::Int(n * bytes_per_elem))
+                        Ok(Value::Int(n * bytes_per_elem, BaseType::I32))
                     }
-                    "ndim" | "rank" => Ok(Value::Int(tensor.data.ndim() as i64)),
+                    "ndim" | "rank" => Ok(Value::Int(tensor.data.ndim() as i64, BaseType::I32)),
                     "shape_tensor" => {
                         // 返回 shape 作为 f64 tensor（便于运行时查询）
                         let shape: Vec<f64> = tensor.data.shape().iter().map(|&d| d as f64).collect();
@@ -728,9 +729,9 @@ impl Vm {
                 "cos" => Ok(Value::Float32(f.cos())),
                 _ => err(&format!("Float32 没有方法 '{}'", method)),
             },
-            Value::Int(n) => match method {
+            Value::Int(n, _) => match method {
                 "sqrt" => Ok(Value::Float((n as f64).sqrt())),
-                "abs" => Ok(Value::Int(n.abs())),
+                "abs" => Ok(Value::Int(n.abs(), BaseType::I32)),
                 "exp" => Ok(Value::Float((n as f64).exp())),
                 "log" | "ln" => Ok(Value::Float((n as f64).ln())),
                 "sin" => Ok(Value::Float((n as f64).sin())),
@@ -741,3 +742,4 @@ impl Vm {
         }
     }
 }
+

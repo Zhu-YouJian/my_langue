@@ -95,7 +95,7 @@ fn test_struct_default_int_and_str_fields() {
     "#;
     let result = run(src).unwrap();
     match result {
-        Some(Value::Int(n)) => assert_eq!(n, 42, "expected ival=42, got {}", n),
+        Some(Value::Int(n, _)) => assert_eq!(n, 42, "expected ival=42, got {}", n),
         v => panic!("expected Some(Int(42)), got {:?}", v),
     }
 }

@@ -1,12 +1,13 @@
-﻿//! VM 调度器、执行循环、私有算术、字段访问、autodiff 记录。
+//! VM 调度器、执行循环、私有算术、字段访问、autodiff 记录。
 //!
 //! 从 runtime/vm.rs 拆分而来（T3b 架构重构）。
 
 use std::collections::HashMap;
+use crate::hir::types::BaseType;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
-use crate::runtime::value::{Value, FutureState};
+use crate::runtime::value::{Value, FutureState, check_int_overflow};
 use crate::runtime::autodiff::TapeOp;
 use crate::runtime::tensor::Tensor;
 use crate::runtime::async_io::ASYNC_IO;
@@ -224,7 +225,7 @@ impl Vm {
                 }
             };
             match op {
-                Op::PushInt(n) => self.stack.push(Value::Int(n)),
+                Op::PushInt(n) => self.stack.push(Value::Int(n, BaseType::I32)),
                 Op::PushFloat(f) => self.stack.push(Value::Float(f)),
                 Op::PushFloat32(f) => self.stack.push(Value::Float32(f)),
                 Op::PushBool(b) => self.stack.push(Value::Bool(b)),
@@ -268,17 +269,21 @@ impl Vm {
                     if b == 0 {
                         return err("整数取模除零");
                     }
-                    self.stack.push(Value::Int(a % b));
+                    self.stack.push(Value::Int(a % b, BaseType::I32));
+                    // 注：Mod 指令通过 pop_int 获取值，丢失 dtype，默认 I32
                 }
                 Op::Neg => {
                     let v = self.stack.pop().unwrap_or(Value::Unit);
-                    self.stack.push(match v {
-                        Value::Int(n) => Value::Int(-n),
-                        Value::Float(n) => Value::Float(-n),
-                        Value::Float32(n) => Value::Float32(-n),
-                        Value::Tensor(t) => Value::Tensor(Rc::new(RefCell::new(t.borrow().neg()))),
+                    match v {
+                        Value::Int(n, dt) => {
+                            check_int_overflow(-n, dt)?;
+                            self.stack.push(Value::Int(-n, dt));
+                        }
+                        Value::Float(n) => self.stack.push(Value::Float(-n)),
+                        Value::Float32(n) => self.stack.push(Value::Float32(-n)),
+                        Value::Tensor(t) => self.stack.push(Value::Tensor(Rc::new(RefCell::new(t.borrow().neg())))),
                         _ => return err("无法取负"),
-                    });
+                    }
                 }
                 Op::Not => {
                     let v = self.stack.pop().unwrap_or(Value::Unit);
@@ -634,7 +639,7 @@ impl Vm {
                             data.push(match v {
                                 Value::Float32(f) => f,
                                 Value::Float(f) => f as f32,
-                                Value::Int(n) => n as f32,
+                                Value::Int(n, _) => n as f32,
                                 _ => 0.0,
                             });
                         }
@@ -648,7 +653,7 @@ impl Vm {
                             data.push(match v {
                                 Value::Float(f) => f16::from_f64(f),
                                 Value::Float32(f) => f16::from_f32(f),
-                                Value::Int(n) => f16::from_f64(n as f64),
+                                Value::Int(n, _) => f16::from_f64(n as f64),
                                 _ => f16::from_f32(0.0),
                             });
                         }
@@ -662,7 +667,7 @@ impl Vm {
                             data.push(match v {
                                 Value::Float(f) => bf16::from_f64(f),
                                 Value::Float32(f) => bf16::from_f32(f),
-                                Value::Int(n) => bf16::from_f64(n as f64),
+                                Value::Int(n, _) => bf16::from_f64(n as f64),
                                 _ => bf16::from_f32(0.0),
                             });
                         }
@@ -676,7 +681,7 @@ impl Vm {
                             data.push(match v {
                                 Value::Float(f) => f,
                                 Value::Float32(f) => f as f64,
-                                Value::Int(n) => n as f64,
+                                Value::Int(n, _) => n as f64,
                                 _ => 0.0,
                             });
                         }
@@ -859,21 +864,21 @@ impl Vm {
 
     fn pop_int(&mut self) -> TenthResult<i64> {
         match self.stack.pop() {
-            Some(Value::Int(n)) => Ok(n),
+            Some(Value::Int(n, _)) => Ok(n),
             _ => err("期望整数"),
         }
     }
 
     pub(super) fn add_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
-            (Value::Int(x), Value::Int(y)) => Value::Int(x + y),
+            (Value::Int(x, dt), Value::Int(y, _)) => { check_int_overflow(x + y, *dt)?; Value::Int(x + y, *dt) },
             (Value::Float(x), Value::Float(y)) => Value::Float(x + y),
-            (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 + y),
-            (Value::Float(x), Value::Int(y)) => Value::Float(x + *y as f64),
+            (Value::Int(x, _), Value::Float(y)) => Value::Float(*x as f64 + y),
+            (Value::Float(x), Value::Int(y, _)) => Value::Float(x + *y as f64),
             // f32 路径：相同 dtype 保持 f32，混合提升为 f64
             (Value::Float32(x), Value::Float32(y)) => Value::Float32(x + y),
-            (Value::Int(x), Value::Float32(y)) => Value::Float32(*x as f32 + y),
-            (Value::Float32(x), Value::Int(y)) => Value::Float32(x + *y as f32),
+            (Value::Int(x, _), Value::Float32(y)) => Value::Float32(*x as f32 + y),
+            (Value::Float32(x), Value::Int(y, _)) => Value::Float32(x + *y as f32),
             (Value::Float32(x), Value::Float(y)) => Value::Float(*x as f64 + y),
             (Value::Float(x), Value::Float32(y)) => Value::Float(x + *y as f64),
             (Value::String(x), Value::String(y)) => Value::String(format!("{x}{y}")),
@@ -923,14 +928,14 @@ impl Vm {
 
     pub(super) fn sub_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
-            (Value::Int(x), Value::Int(y)) => Value::Int(x - y),
+            (Value::Int(x, dt), Value::Int(y, _)) => { check_int_overflow(x - y, *dt)?; Value::Int(x - y, *dt) },
             (Value::Float(x), Value::Float(y)) => Value::Float(x - y),
-            (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 - y),
-            (Value::Float(x), Value::Int(y)) => Value::Float(x - *y as f64),
+            (Value::Int(x, _), Value::Float(y)) => Value::Float(*x as f64 - y),
+            (Value::Float(x), Value::Int(y, _)) => Value::Float(x - *y as f64),
             // f32 路径
             (Value::Float32(x), Value::Float32(y)) => Value::Float32(x - y),
-            (Value::Int(x), Value::Float32(y)) => Value::Float32(*x as f32 - y),
-            (Value::Float32(x), Value::Int(y)) => Value::Float32(x - *y as f32),
+            (Value::Int(x, _), Value::Float32(y)) => Value::Float32(*x as f32 - y),
+            (Value::Float32(x), Value::Int(y, _)) => Value::Float32(x - *y as f32),
             (Value::Float32(x), Value::Float(y)) => Value::Float(*x as f64 - y),
             (Value::Float(x), Value::Float32(y)) => Value::Float(x - *y as f64),
             (Value::Tensor(t), Value::Float(s)) => {
@@ -981,14 +986,14 @@ impl Vm {
 
     pub(super) fn mul_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
-            (Value::Int(x), Value::Int(y)) => Value::Int(x * y),
+            (Value::Int(x, dt), Value::Int(y, _)) => { check_int_overflow(x * y, *dt)?; Value::Int(x * y, *dt) },
             (Value::Float(x), Value::Float(y)) => Value::Float(x * y),
-            (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 * y),
-            (Value::Float(x), Value::Int(y)) => Value::Float(x * *y as f64),
+            (Value::Int(x, _), Value::Float(y)) => Value::Float(*x as f64 * y),
+            (Value::Float(x), Value::Int(y, _)) => Value::Float(x * *y as f64),
             // f32 路径
             (Value::Float32(x), Value::Float32(y)) => Value::Float32(x * y),
-            (Value::Int(x), Value::Float32(y)) => Value::Float32(*x as f32 * y),
-            (Value::Float32(x), Value::Int(y)) => Value::Float32(x * *y as f32),
+            (Value::Int(x, _), Value::Float32(y)) => Value::Float32(*x as f32 * y),
+            (Value::Float32(x), Value::Int(y, _)) => Value::Float32(x * *y as f32),
             (Value::Float32(x), Value::Float(y)) => Value::Float(*x as f64 * y),
             (Value::Float(x), Value::Float32(y)) => Value::Float(x * *y as f64),
             (Value::Tensor(t), Value::Float(s)) => {
@@ -1039,19 +1044,19 @@ impl Vm {
 
     pub(super) fn div_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
-            (Value::Int(x), Value::Int(y)) => {
+            (Value::Int(x, dt), Value::Int(y, _)) => {
                 if *y == 0 {
                     return err("整数除零");
                 }
-                Value::Int(x / y)
+                { check_int_overflow(x / y, *dt)?; Value::Int(x / y, *dt) }
             }
             (Value::Float(x), Value::Float(y)) => Value::Float(x / y),
-            (Value::Int(x), Value::Float(y)) => Value::Float(*x as f64 / y),
-            (Value::Float(x), Value::Int(y)) => Value::Float(x / *y as f64),
+            (Value::Int(x, _), Value::Float(y)) => Value::Float(*x as f64 / y),
+            (Value::Float(x), Value::Int(y, _)) => Value::Float(x / *y as f64),
             // f32 路径
             (Value::Float32(x), Value::Float32(y)) => Value::Float32(x / y),
-            (Value::Int(x), Value::Float32(y)) => Value::Float32(*x as f32 / y),
-            (Value::Float32(x), Value::Int(y)) => Value::Float32(x / *y as f32),
+            (Value::Int(x, _), Value::Float32(y)) => Value::Float32(*x as f32 / y),
+            (Value::Float32(x), Value::Int(y, _)) => Value::Float32(x / *y as f32),
             (Value::Float32(x), Value::Float(y)) => Value::Float(*x as f64 / y),
             (Value::Float(x), Value::Float32(y)) => Value::Float(x / *y as f64),
             (Value::Tensor(t), Value::Float(s)) => {
@@ -1104,14 +1109,14 @@ impl Vm {
 
     pub(super) fn compare(&self, a: &Value, b: &Value, nf: fn(f64, f64) -> bool, sf: fn(&str, &str) -> bool) -> TenthResult<bool> {
         Ok(match (a, b) {
-            (Value::Int(x), Value::Int(y)) => nf(*x as f64, *y as f64),
+            (Value::Int(x, _), Value::Int(y, _)) => nf(*x as f64, *y as f64),
             (Value::Float(x), Value::Float(y)) => nf(*x, *y),
-            (Value::Int(x), Value::Float(y)) => nf(*x as f64, *y),
-            (Value::Float(x), Value::Int(y)) => nf(*x, *y as f64),
+            (Value::Int(x, _), Value::Float(y)) => nf(*x as f64, *y),
+            (Value::Float(x), Value::Int(y, _)) => nf(*x, *y as f64),
             // f32 路径：提升为 f64 比较
             (Value::Float32(x), Value::Float32(y)) => nf(*x as f64, *y as f64),
-            (Value::Int(x), Value::Float32(y)) => nf(*x as f64, *y as f64),
-            (Value::Float32(x), Value::Int(y)) => nf(*x as f64, *y as f64),
+            (Value::Int(x, _), Value::Float32(y)) => nf(*x as f64, *y as f64),
+            (Value::Float32(x), Value::Int(y, _)) => nf(*x as f64, *y as f64),
             (Value::Float32(x), Value::Float(y)) => nf(*x as f64, *y),
             (Value::Float(x), Value::Float32(y)) => nf(*x, *y as f64),
             (Value::String(x), Value::String(y)) => sf(x, y),
@@ -1162,16 +1167,16 @@ impl Vm {
 
     pub(super) fn vm_eq(&self, a: &Value, b: &Value) -> bool {
         match (a, b) {
-            (Value::Int(x), Value::Int(y)) => x == y,
+            (Value::Int(x, _), Value::Int(y, _)) => x == y,
             (Value::Float(x), Value::Float(y)) => (x - y).abs() < 1e-10,
             (Value::Float32(x), Value::Float32(y)) => (x - y).abs() < 1e-6,
             // f32 与 f64 比较：按 f64 精度判等（f32 提升为 f64 无损）
             (Value::Float32(x), Value::Float(y)) => ((*x as f64) - y).abs() < 1e-10,
             (Value::Float(x), Value::Float32(y)) => (x - (*y as f64)).abs() < 1e-10,
-            (Value::Int(x), Value::Float32(y)) => (*x as f32 - y).abs() < 1e-6,
-            (Value::Float32(x), Value::Int(y)) => (x - *y as f32).abs() < 1e-6,
-            (Value::Int(x), Value::Float(y)) => ((*x as f64) - y).abs() < 1e-10,
-            (Value::Float(x), Value::Int(y)) => (x - (*y as f64)).abs() < 1e-10,
+            (Value::Int(x, _), Value::Float32(y)) => (*x as f32 - y).abs() < 1e-6,
+            (Value::Float32(x), Value::Int(y, _)) => (x - *y as f32).abs() < 1e-6,
+            (Value::Int(x, _), Value::Float(y)) => ((*x as f64) - y).abs() < 1e-10,
+            (Value::Float(x), Value::Int(y, _)) => (x - (*y as f64)).abs() < 1e-10,
             (Value::Bool(x), Value::Bool(y)) => x == y,
             (Value::String(x), Value::String(y)) => x == y,
             (Value::Unit, Value::Unit) => true,

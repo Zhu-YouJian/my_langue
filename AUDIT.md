@@ -1,6 +1,6 @@
-# 项目总览与审计报告
+﻿# 项目总览与审计报告
 
-> 日期：2026-07-08 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 + 异步 Phase 2（协程调度 + async I/O）+ 正则表达式 + 张量修复（f16/bf16 + 序列化 + 优化器修复）| 790+ 项测试通过（55 个测试目标，含 6 个栈溢出崩溃预存问题）
+> 日期：2026-07-11 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 + 异步 Phase 2（协程调度 + async I/O）+ 正则表达式 + 张量修复（f16/bf16 + 序列化 + 优化器修复）| 790+ 项测试通过（55 个测试目标，含 6 个栈溢出崩溃预存问题）
 
 ---
 
@@ -24,7 +24,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 ## 三、测试矩阵
 
-> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。统计日期：2026-07-08。
+> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。统计日期：2026-07-11。
 
 ### 基础管线
 
@@ -51,6 +51,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `iterator_test.rs` | 10/0/0 | 迭代器/for/生成器 |
 | `tuple_test.rs` | 12/0/0 | 元组创建/解构/嵌套/函数返回/空元组（2026-07-08 新增） |
 | `try_operator_test.rs` | 12/0/0 | `?` 操作符成功/错误传播/链式/I/O 模拟（2026-07-08 新增） |
+| `int_types_test.rs` | 14/0/0 | 整数类型 dtype 保留/后缀类型推断（i8/i16/i32/i64/u8/u16/u32/u64）/编译期范围检查/运行时算术溢出检测（2026-07-11 新增） |
 
 ### 张量与自动微分
 
@@ -163,7 +164,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试目标 | 数量 | 说明 |
 |----------|------|------|
-| **总计** | **891 passed / 0 failed / 14 ignored** | 57 个测试目标（56 文件 + lib），3 个栈溢出崩溃预存问题（Windows debug 模式） |
+| **总计** | **905 passed / 0 failed / 14 ignored** | 58 个测试目标（57 文件 + lib），3 个栈溢出崩溃预存问题（Windows debug 模式） |
 
 > **2026-07-08 张量修复测试状态**：本次张量修复（f16/bf16 Phase 1 + 序列化 v2 + 4 项小修复）的代码改动已通过现有测试套件验证（lib 16 + integration 14 + native_parity 35 + stdlib 114 = 179 passed；autodiff 5 passed；自举通过），**未新增独立测试文件**——`native_parity_test.rs` 的 35 项已含序列化 v2 parity 测试（test_save_load_weights_parity + test_save_load_weights_nonzero_parity）。Wave 3 测试部补测试任务进行中（accumulate_loop 功能测试 / autodiff unbroadcast shape 测试 / AdamW 单值返回版本测试 / clip_grad_by_norm JIT 路径测试 / 序列化 f32 读写测试 / f16/bf16 基本运算测试），完成后由测试部同步 §三 测试矩阵新增 tensor_features_test 行 + 总计数字。
 
@@ -195,6 +196,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | ~~Range 非一等类型（降级为内部类型）~~ | ✅ 已修复 (2026-07-11)：`hir/types.rs` 新增 `Type::Range { inner, inclusive }` 变体 + Display，`lower_expr.rs` Range 表达式推断为 `Type::Range` |
 | ~~match 无穷尽性检查~~ | ✅ 已修复 (2026-07-11)：`lower_expr.rs` match 表达式新增穷尽性检查，支持 `Type::Enum` 与 `Type::Generic` 两种 scrutinee 类型，缺变体报 TypeError |
 | ~~函数返回类型未检查（body 为空返回 Unit 但声明非 Unit）~~ | ✅ 已修复 (2026-07-11)：`hir/lower/types.rs` `check_and_merge_tensor_shape` 非 Tensor 分支新增 Unit 返回检测，声明非 Unit 但实际 Unit 时报 TypeError |
+| ~~整数类型运行时全退化为 i64（dtype 丢失）~~ | ✅ 已修复 (2026-07-11)：`IntLiteral(i64)` → `IntLiteral(i64, BaseType)` 四层同步（Token/AST/HIR/Value）；Lexer 新增后缀检测（`42u8`）+ 编译期范围检查（`256u8` → 错误）+ 无后缀大整数自动提升 I32→I64；运行时新增 `check_int_overflow()` 算术溢出检测（Add/Sub/Mul/Div/Mod/Neg）；type_of() 返回实际 dtype 而非硬编码 I32；Bug fix：`()` 类型注解正确解析为 `Type::Base(BaseType::Unit)`。14 项 `int_types_test.rs` 全部通过 |
 
 ---
 

@@ -1,4 +1,4 @@
-﻿//! 字段访问与模式匹配。
+//! 字段访问与模式匹配。
 //!
 //! 从 `interpreter.rs` 第 1142-1330 行迁移而来。包含：
 //! - `eval_field`：结构体/枚举字段访问（自动解引用 Ref/MutRef/Shared）
@@ -6,6 +6,7 @@
 //!   模式测试、变量绑定与解绑
 
 use crate::error::{TenthError, TenthResult};
+use crate::hir::types::BaseType;
 use crate::hir::hir::*;
 use crate::runtime::value::Value;
 
@@ -57,7 +58,7 @@ impl super::Interpreter {
             Value::Vec(items) => {
                 // Allow .len() on Vec — handled in MethodCall, but also allow field-style access
                 if field == "len" {
-                    return Ok(Some(Value::Int(items.borrow().len() as i64)));
+                    return Ok(Some(Value::Int(items.borrow().len() as i64, BaseType::I32)));
                 }
                 Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("Vec 没有字段 '{}'", field),
@@ -75,7 +76,7 @@ impl super::Interpreter {
             HirPattern::Binding(_) => true,
             HirPattern::Literal(lit) => {
                 match (lit, val) {
-                    (Literal::Int(a), Value::Int(b)) => a == b,
+                    (Literal::Int(a, _), Value::Int(b, _)) => a == b,
                     (Literal::Float(a, _), Value::Float(b)) => (a - b).abs() < 1e-10,
                     (Literal::Float(a, _), Value::Float32(b)) => ((a - *b as f64).abs() as f64) < 1e-6,
                     (Literal::Bool(a), Value::Bool(b)) => a == b,
@@ -107,7 +108,7 @@ impl super::Interpreter {
             }
             HirPattern::Range { start, end, inclusive } => {
                 match val {
-                    Value::Int(n) => {
+                    Value::Int(n, _) => {
                         if *inclusive {
                             *n >= *start && *n <= *end
                         } else {
@@ -205,3 +206,4 @@ impl super::Interpreter {
         }
     }
 }
+

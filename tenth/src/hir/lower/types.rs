@@ -1,4 +1,5 @@
 use crate::error::{TenthError, TenthResult, TenthWarning};
+use crate::hir::types::BaseType;
 use crate::lexer::token::Span;
 use crate::parser::ast as ast;
 use crate::hir::hir::*;
@@ -79,7 +80,7 @@ pub(super) fn fmt_dim(d: &Dim) -> String {
 /// 返回 None 表示无字面量 axis 参数。
 fn literal_axis_arg(args: &[HirExpr]) -> Option<i64> {
     for a in args {
-        if let HirExprKind::Literal(Literal::Int(n)) = &a.kind {
+        if let HirExprKind::Literal(Literal::Int(n, _)) = &a.kind {
             return Some(*n);
         }
     }
@@ -93,7 +94,7 @@ fn literal_int_args(args: &[HirExpr]) -> Option<Vec<i64>> {
     let mut out: Vec<i64> = Vec::with_capacity(args.len());
     for a in args {
         match &a.kind {
-            HirExprKind::Literal(Literal::Int(n)) => out.push(*n),
+            HirExprKind::Literal(Literal::Int(n, _)) => out.push(*n),
             _ => return None,
         }
     }
@@ -360,7 +361,7 @@ impl Lowerer {
                     "cat" => {
                         let dim = _args.get(1)
                             .and_then(|a| match &a.kind {
-                                HirExprKind::Literal(Literal::Int(n)) => Some(*n),
+                                HirExprKind::Literal(Literal::Int(n, _)) => Some(*n),
                                 _ => None,
                             })
                             .unwrap_or(0);
@@ -554,7 +555,7 @@ impl Lowerer {
         let mut dims: Vec<Dim> = Vec::with_capacity(args.len());
         for a in args {
             match &a.kind {
-                HirExprKind::Literal(Literal::Int(n)) => dims.push(Dim::Known(*n)),
+                HirExprKind::Literal(Literal::Int(n, _)) => dims.push(Dim::Known(*n)),
                 _ => return vec![Dim::Any],
             }
         }
