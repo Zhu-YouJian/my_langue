@@ -1272,9 +1272,24 @@ fn parse_match_pattern(pat_kind: &str, pat_name: &str, pat_bind: &str) -> TenthR
             })
         }
         "tuple" => {
-            // We don't have detailed tuple pattern info from tenthc parser
-            // (it skips the contents). Return a wildcard as fallback.
-            Ok(ast::Pattern::Wildcard)
+            // Problem 21 降级项 5 修复：parser.th:1148-1194 已解析 tuple pattern
+            // 的子模式名，存入 pat_bind（逗号分隔，如 "a,b,c"）。下划线 "_" 表示通配。
+            // 拆分 pat_bind 构造 Pattern::Tuple，每个子模式为 Binding 或 Wildcard。
+            // 注：嵌套 tuple pattern 在 parser.th 中以 "_" 占位（保守）。
+            if pat_bind.is_empty() {
+                Ok(ast::Pattern::Wildcard)
+            } else {
+                let mut sub_patterns: Vec<ast::Pattern> = Vec::new();
+                for s in pat_bind.split(',') {
+                    let trimmed = s.trim();
+                    if trimmed.is_empty() || trimmed == "_" {
+                        sub_patterns.push(ast::Pattern::Wildcard);
+                    } else {
+                        sub_patterns.push(ast::Pattern::Binding(trimmed.to_string()));
+                    }
+                }
+                Ok(ast::Pattern::Tuple(sub_patterns))
+            }
         }
         "struct" => {
             // We don't have detailed struct pattern info from tenthc parser

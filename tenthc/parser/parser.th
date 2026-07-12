@@ -1148,17 +1148,48 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
         } else if pat_tok.disc == 47 {
             // LParen — tuple pattern: (a, b, c)
             pat_kind = "tuple";
-            // Skip to matching RParen
-            let mut depth: i64 = 1;
+            parser_advance(p); // skip (
+            let mut bind_names: Vec<str> = Vec::new();
             loop {
                 let t = parser_peek(p);
-                if t.disc == 61 { break; }; // Eof
-                if t.disc == 47 { depth = depth + 1; };
-                if t.disc == 48 {
-                    depth = depth - 1;
-                    if depth == 0 { parser_advance(p); break; };
+                if t.disc == 48 || t.disc == 61 { break; }; // ) or Eof
+                if t.disc == 53 { parser_advance(p); continue; }; // skip ,
+                if t.disc == 3 {
+                    // Identifier — 简单绑定
+                    let sub_tok = parser_advance(p);
+                    if sub_tok.sval == "_" {
+                        bind_names.push("_");
+                    } else {
+                        bind_names.push(sub_tok.sval);
+                    };
+                } else if t.disc == 47 {
+                    // 嵌套 LParen：用 depth 跳过整个嵌套（保守，占位 _）
+                    let mut nd: i64 = 1;
+                    parser_advance(p);
+                    while nd > 0 {
+                        let nt = parser_peek(p);
+                        if nt.disc == 61 { break; };
+                        if nt.disc == 47 { nd = nd + 1; };
+                        if nt.disc == 48 { nd = nd - 1; };
+                        if nd > 0 { parser_advance(p); };
+                    };
+                    bind_names.push("_");
+                } else {
+                    // 字面量等其他 token：跳过，占位 _
+                    parser_advance(p);
+                    bind_names.push("_");
                 };
-                parser_advance(p);
+            };
+            if parser_peek(p).disc == 48 { parser_advance(p); }; // skip )
+            // 将变量名列表存入 pat_bind（逗号分隔）
+            let mut bi: i64 = 0;
+            while bi < bind_names.len() {
+                if bi == 0 {
+                    pat_bind = bind_names[bi];
+                } else {
+                    pat_bind = pat_bind + "," + bind_names[bi];
+                };
+                bi = bi + 1;
             };
         };
 

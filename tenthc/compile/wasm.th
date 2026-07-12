@@ -1299,6 +1299,15 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             let arm_idx = arms_start + ai;
             if arm_idx > 0 && arm_idx <= hir.match_arms.len() {
                 let arm = hir.match_arms[arm_idx - 1];
+                // Problem 21 降级项 5 限制说明：
+                // pat_disc=6 (Tuple pattern) 在 tenthc WASM 后端不支持——
+                // tenthc WASM 后端不支持 tuple values（见 disc=36 处注释），
+                // 也没有 IsTuple/TupleGet 指令生成。tuple pattern 会落入 else
+                // 分支按 literal/variant 处理（pat_variant 为空，不匹配）。
+                // 路径 A（Rust 全栈）和路径 B（bridge.rs → Rust 后端）支持 tuple pattern：
+                //   - 路径 A：Rust parser 直接构造 Pattern::Tuple
+                //   - 路径 B：bridge.rs:1274 解析 pat_bind 构造 Pattern::Tuple
+                // 路径 C（全 WASM）不支持 tuple pattern 绑定。
                 if arm.pat_disc == 1 {
                     // Wildcard — compile body, br to outer
                     compile_expr(ctx, out, hir, arm.body_expr);
