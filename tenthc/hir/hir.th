@@ -7,7 +7,17 @@
 // 8:I8 9:I16 10:U8 11:U16 12:U32 13:U64 14:F16 15:BF16
 
 // ── HirType (flattened) ──
-// disc: 0=Base 1=Tensor 2=Array 3=FnType 4=TypeParam 5=Generic 6=Ref 7=MutRef 8=Struct 9=Enum 10=Unknown 11=Unit
+// disc: 0=Base 1=Tensor 2=Array 3=FnType 4=TypeParam 5=Generic 6=Ref 7=MutRef
+//       8=Struct 9=Enum 10=Unknown 11=Unit
+// Problem 21 batch 3 新增（追加 disc，不改已有值）:
+//       12=Never   13=Tuple  14=Future  15=Range
+//
+// 字段复用约定（与 Rust 侧 types.rs 对齐）：
+//   Never  (disc=12): 无字段（发散类型 `!`，unify 时统一到任何类型 T）
+//   Tuple  (disc=13): params_start/params_count 指向 type_args 中的元素类型索引
+//   Future (disc=14): sub = inner type index（Future<T> 的 T）
+//   Range  (disc=15): sub = inner type index（Range<T> 的 T）
+//                     dim0 = inclusive 标志（0=false 半开区间 `a..b`，1=true 闭区间 `a..=b`）
 struct HirType {
     disc: i64,
     sub: i64,         // BaseType discriminant, or inner type index
@@ -18,6 +28,7 @@ struct HirType {
     // ── Shape info (Phase 4: tenthc shape check) ──
     // For Tensor (disc=1): tracks Known dims for compile-time shape checking.
     // dim_count=0 → unknown/Any/Symbol (skip check); 1 → 1D (dim0); 2 → 2D (dim0=M, dim1=K/N)
+    // For Range (disc=15): dim0 复用为 inclusive 标志（0=false, 1=true）。
     // Non-Tensor types: always 0. Uses `..` default for zero-init.
     dim_count: i64,
     dim0: i64,
@@ -42,6 +53,17 @@ struct HirType {
 //  24: AssignOp    25: GenericCall  26: DerefAssign  27: DerefAssignOp
 //  28: Range       29: TensorLiteral 30: Move
 //  31: Slice       32: Await         33: Spawn
+// Problem 21 batch 3 新增（追加 disc，不改已有值）:
+//  34: Try         35: As           36: Tuple
+//
+// 字段复用约定：
+//   Try (disc=34): left = inner expr；ty = inner 的类型（Try 解包 Result/Option，类似 ?）
+//   As  (disc=35): left = inner expr；ty = 目标类型索引（expr as T 中的 T）
+//   Tuple (disc=36): args_start/args_count 指向 arg_list 中的元素 expr 索引；
+//                    ty 为 Tuple 类型索引（disc=13）
+//   注：parser 当前对 tuple 字面量产出 kind="tuple"，原 lower.th 复用 disc=22
+//   (ArrayLiteral) 编码。本批次新增 disc=36 以区分语义（Tuple vs Array），
+//   但 wasm 后端处理仍与 ArrayLiteral 一致（逐元素 lower 后打包）。
 struct HirExpr {
     disc: i64,
     // Literal values
@@ -96,8 +118,23 @@ struct HirStmt {
 struct HirParam { name: str, ty: i64 }
 
 // ── Match arm ──
+// pat_disc 编码（与 Rust 侧 hir.rs HirPattern 对齐）：
+//   0=EnumVariant  1=Wildcard  2=Literal
+// Problem 21 batch 3 新增（追加 disc，不改已有值）:
+//   3=Struct       4=Binding    5=Range     6=Tuple
+//
+// 字段复用约定：
+//   EnumVariant (0): pat_enum=枚举名, pat_variant=变体名, pat_bind=字段绑定串
+//   Wildcard    (1): 无字段
+//   Literal     (2): pat_variant=字面量字符串
+//   Struct      (3): pat_enum=结构体名, pat_bind=字段绑定串（"x: a, y: b" 格式）
+//                    穷尽性检查视为通配（覆盖所有）
+//   Binding     (4): pat_bind=绑定变量名；穷尽性检查视为通配（覆盖所有）
+//   Range       (5): pat_bind=范围串（如 "1..10" 或 "1..=10"）；穷尽性检查视为不覆盖
+//   Tuple       (6): pat_bind=子模式描述；穷尽性检查视为通配（覆盖所有）
+//                    parser 当前不记录子模式细节，lower 时按通配处理
 struct HirMatchArm {
-    pat_disc: i64,   // 0=EnumVariant 1=Wildcard 2=Literal
+    pat_disc: i64,   // 0=EnumVariant 1=Wildcard 2=Literal 3=Struct 4=Binding 5=Range 6=Tuple
     pat_enum: str,
     pat_variant: str,
     pat_bind: str,
@@ -159,6 +196,13 @@ struct HirVarType { name: str, ty: i64 }
 // state encoding: 0=Owned, 100+n=SharedRef(n), 2=ExclusiveRef, 3=Moved
 struct HirOwnership { name: str, state: i64 }
 
+// ── Borrow holder entry (AUDIT-11.1.1 / T19 B6 修复) ──
+// 记录持久借用关系：holder 持有 borrowed 的引用。
+// 由 `let r = &x;` / `let m = &mut x;` / `let r = if c { &x } else { &y };` 触发，
+// 让 release_borrows 在 holder 仍活跃（Owned/SharedRef/ExclusiveRef，未 Moved）
+// 时保留 borrowed 的借用状态，防止跨语句借用被偷走。
+struct HirBorrowHolder { holder: str, borrowed: str }
+
 // ── Borrow check error (collected during lowering, does not abort) ──
 struct HirError { message: str }
 
@@ -189,5 +233,9 @@ struct HirProgram {
     impl_method_names: Vec<str>,              // 扁平：impl 方法原始名（与 impl_fn_indices 并行）
     generic_funcs: Vec<HirFnDef>,             // 泛型函数模板（不输出到 WASM，仅用于实例化）
     ownership: Vec<HirOwnership>,             // 借用检查：变量所有权状态
+    borrow_holders: Vec<HirBorrowHolder>,     // 跨语句借用跟踪（AUDIT-11.1.1/T19 B6）
     errors: Vec<HirError>,                    // 借用检查错误（不中断编译）
+    // Problem 21 批次4：编译期 warning（与 Rust 侧 TenthWarning 对齐）
+    // 用于内存/FLOPs 预估等不中断编译的提示信息。
+    warnings: Vec<HirError>,
 }

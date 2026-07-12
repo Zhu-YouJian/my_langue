@@ -1,12 +1,12 @@
 // Self-hosting Parser — v0.3.3 recursive descent
 // Uses v0.3.3 idioms: `..` defaults, for-in, tuple variants
 
-struct Expr { kind: str, ival: i64, fval: f64, sval: str, left: i64, right: i64, arg_start: i64, arg_count: i64, extra_start: i64, extra_count: i64, name: str, variant: str }
+struct Expr { kind: str, ival: i64, fval: f64, sval: str, left: i64, right: i64, arg_start: i64, arg_count: i64, extra_start: i64, extra_count: i64, name: str, variant: str, dtype: i64 }
 struct Stmt { kind: str, name: str, expr_idx: i64, body_start: i64, body_count: i64, else_start: i64, else_count: i64 }
 struct Param { name: str, type_ann: str }
 struct StructField { name: str, type_ann: str }
 struct EnumVariant { name: str, fields: Vec<StructField> }
-struct FnDef { name: str, params: Vec<Param>, return_type: str, body_start: i64, body_count: i64, generics: Vec<str> }
+struct FnDef { name: str, params: Vec<Param>, return_type: str, body_start: i64, body_count: i64, generics: Vec<str>, is_async: bool }
 struct StructDef { name: str, fields: Vec<StructField>, generics: Vec<str> }
 struct EnumDef { name: str, variants: Vec<EnumVariant> }
 struct TraitMethodSig { name: str, params: Vec<Param>, return_type: str }
@@ -150,11 +150,13 @@ fn parse_primary(p: &mut Parser) -> i64 {
     let tok = parser_advance(p);
     let d = tok.disc;
 
-    // IntLiteral (0)
+    // IntLiteral (0) — value in ival, dtype in dtype (hir.th BaseType encoding)
     if d == 0 {
         let n = tok.ival;
+        let dt = tok.dtype;
         let idx = add_expr(p, "int");
         p.expr_nodes[idx - 1].ival = n;
+        p.expr_nodes[idx - 1].dtype = dt;
         return idx;
     };
     // FloatLiteral (1)
@@ -337,11 +339,51 @@ fn parse_primary(p: &mut Parser) -> i64 {
         p.expr_nodes[idx - 1].sval = "self";
         return idx;
     };
-    // LParen (47)
+    // LParen (47) — parenthesized expr, empty tuple (), or tuple (a, b, c)
     if d == 47 {
-        let expr_idx = parse_expr(p);
+        // Check for empty tuple: ()
+        let next = parser_peek(p);
+        if next.disc == 48 {
+            // RParen — empty tuple ()
+            parser_advance(p); // skip )
+            let idx = add_expr(p, "tuple");
+            p.expr_nodes[idx - 1].arg_start = 0;
+            p.expr_nodes[idx - 1].arg_count = 0;
+            return idx;
+        };
+        // Parse first expression
+        let first_expr = parse_expr(p);
+        // Check for comma → tuple literal (a, b, c)
+        let next2 = parser_peek(p);
+        if next2.disc == 53 {
+            // Comma — tuple
+            let mut elem_idxs: Vec<i64> = Vec::new();
+            elem_idxs.push(first_expr);
+            loop {
+                let t = parser_peek(p);
+                if t.disc != 53 { break; }; // not Comma
+                parser_advance(p); // skip ,
+                let t2 = parser_peek(p);
+                if t2.disc == 48 { break; }; // RParen — trailing comma
+                let elem_idx = parse_expr(p);
+                elem_idxs.push(elem_idx);
+            };
+            parser_advance(p); // skip )
+            // Create contiguous "arg" nodes for tuple elements
+            let start = p.expr_nodes.len() + 1;
+            let count = elem_idxs.len();
+            for i in 0..count {
+                let aidx = add_expr(p, "arg");
+                p.expr_nodes[aidx - 1].left = elem_idxs[i];
+            };
+            let idx = add_expr(p, "tuple");
+            p.expr_nodes[idx - 1].arg_start = start;
+            p.expr_nodes[idx - 1].arg_count = count;
+            return idx;
+        };
+        // Single parenthesized expression
         parser_advance(p); // expect RParen
-        return expr_idx;
+        return first_expr;
     };
     // LBrace (49)
     if d == 49 { return parse_block_expr(p); };
@@ -506,6 +548,28 @@ fn parse_primary(p: &mut Parser) -> i64 {
         parser_advance(p);
         let inner = parse_unary(p);
         let idx = add_expr(p, "move");
+        p.expr_nodes[idx - 1].left = inner;
+        return idx;
+    };
+
+    // Await (65) — await expression (prefix unary)
+    if d == 65 {
+        let inner = parse_unary(p);
+        let idx = add_expr(p, "await");
+        p.expr_nodes[idx - 1].left = inner;
+        return idx;
+    };
+    // Spawn (66) — spawn expression (prefix unary)
+    if d == 66 {
+        let inner = parse_unary(p);
+        let idx = add_expr(p, "spawn");
+        p.expr_nodes[idx - 1].left = inner;
+        return idx;
+    };
+    // Try (69) — try block: try { ... }
+    if d == 69 {
+        let inner = parse_expr(p);
+        let idx = add_expr(p, "try_block");
         p.expr_nodes[idx - 1].left = inner;
         return idx;
     };
@@ -745,6 +809,13 @@ fn parse_postfix(p: &mut Parser) -> i64 {
                 p.expr_nodes[idx - 1].sval = field_name;
                 expr_idx = idx;
             };
+        } else if d == 81 {
+            // QuestionMark (81) — Try postfix: expr?
+            parser_advance(p); // skip ?
+            let idx = add_expr(p, "unary");
+            p.expr_nodes[idx - 1].sval = "?";
+            p.expr_nodes[idx - 1].left = expr_idx;
+            expr_idx = idx;
         } else {
             break;
         };
@@ -965,24 +1036,130 @@ fn parse_match_expr(p: &mut Parser) -> i64 {
         let mut pat_bind = "";
 
         if pat_tok.disc == 3 {
-            // Identifier — "_" is wildcard, anything else is enum variant
+            // Identifier
             if pat_tok.sval == "_" {
                 pat_kind = "wildcard";
             } else {
-                pat_kind = "enum_variant";
                 pat_name = pat_tok.sval;
-                // Check for ::Variant
                 let next = parser_peek(p);
                 if next.disc == 60 {
-                    parser_advance(p);
+                    // ::Variant — enum variant path: EnumName::Variant
+                    parser_advance(p); // skip ::
                     let variant_tok = parser_advance(p);
+                    pat_kind = "enum_variant";
+                    pat_bind = pat_name; // store enum name in pat_bind
                     if variant_tok.disc == 3 { pat_name = variant_tok.sval; };
+                    // Check for ( (tuple variant with fields): Some(x)
+                    let next2 = parser_peek(p);
+                    if next2.disc == 47 {
+                        parser_advance(p); // skip (
+                        // Parse field bindings (positional identifiers)
+                        let mut first_field = true;
+                        loop {
+                            let t = parser_peek(p);
+                            if t.disc == 48 { break; }; // RParen
+                            if t.disc == 61 { break; }; // Eof
+                            let field_tok = parser_advance(p);
+                            // Store first field name in pat_bind (appended to enum name)
+                            if first_field {
+                                pat_bind = pat_bind + ":" + field_tok.sval;
+                                first_field = false;
+                            };
+                            let t2 = parser_peek(p);
+                            if t2.disc == 53 { parser_advance(p); } // skip ,
+                            else { break; };
+                        };
+                        parser_advance(p); // skip )
+                    };
+                } else if next.disc == 47 {
+                    // LParen — short-form enum variant with fields: Variant(x)
+                    pat_kind = "enum_variant";
+                    pat_bind = ""; // no enum name
+                    parser_advance(p); // skip (
+                    let mut first_field = true;
+                    loop {
+                        let t = parser_peek(p);
+                        if t.disc == 48 { break; }; // RParen
+                        if t.disc == 61 { break; }; // Eof
+                        let field_tok = parser_advance(p);
+                        if first_field {
+                            pat_bind = ":" + field_tok.sval;
+                            first_field = false;
+                        };
+                        let t2 = parser_peek(p);
+                        if t2.disc == 53 { parser_advance(p); } // skip ,
+                        else { break; };
+                    };
+                    parser_advance(p); // skip )
+                } else if next.disc == 49 {
+                    // LBrace — struct destructuring: Point { x, y } or Point { x: a, y: b }
+                    pat_kind = "struct";
+                    parser_advance(p); // skip {
+                    // Parse field bindings (skip for now, just consume)
+                    loop {
+                        let t = parser_peek(p);
+                        if t.disc == 50 { break; }; // RBrace
+                        if t.disc == 61 { break; }; // Eof
+                        parser_advance(p); // skip field name
+                        let t2 = parser_peek(p);
+                        if t2.disc == 55 {
+                            // : bind_name
+                            parser_advance(p); // skip :
+                            parser_advance(p); // skip bind_name
+                        };
+                        let t3 = parser_peek(p);
+                        if t3.disc == 53 { parser_advance(p); } // skip ,
+                        else { break; };
+                    };
+                    parser_advance(p); // skip }
+                } else {
+                    // Plain identifier — binding pattern (binds value to variable)
+                    pat_kind = "binding";
                 };
             };
         } else if pat_tok.disc == 0 {
-            // IntLiteral — literal pattern
+            // IntLiteral — literal pattern, check for range
             pat_kind = "literal";
             pat_name = int_to_str(pat_tok.ival);
+            let next = parser_peek(p);
+            if next.disc == 57 || next.disc == 62 {
+                // DotDot (57) or DotDotEq (62) — range pattern: start..end or start..=end
+                let inclusive = next.disc == 62;
+                parser_advance(p); // skip .. or ..=
+                let end_tok = parser_advance(p);
+                if end_tok.disc == 0 {
+                    pat_kind = "range";
+                    let end_str = int_to_str(end_tok.ival);
+                    if inclusive {
+                        pat_bind = pat_name + "..=" + end_str;
+                    } else {
+                        pat_bind = pat_name + ".." + end_str;
+                    };
+                };
+            };
+        } else if pat_tok.disc == 22 {
+            // True — literal pattern
+            pat_kind = "literal";
+            pat_name = "true";
+        } else if pat_tok.disc == 23 {
+            // False — literal pattern
+            pat_kind = "literal";
+            pat_name = "false";
+        } else if pat_tok.disc == 47 {
+            // LParen — tuple pattern: (a, b, c)
+            pat_kind = "tuple";
+            // Skip to matching RParen
+            let mut depth: i64 = 1;
+            loop {
+                let t = parser_peek(p);
+                if t.disc == 61 { break; }; // Eof
+                if t.disc == 47 { depth = depth + 1; };
+                if t.disc == 48 {
+                    depth = depth - 1;
+                    if depth == 0 { parser_advance(p); break; };
+                };
+                parser_advance(p);
+            };
         };
 
         parser_advance(p); // skip =>
@@ -1020,6 +1197,51 @@ fn parse_stmt(p: &mut Parser) -> i64 {
         let mut mutable = false;
         let t2 = parser_peek(p);
         if t2.disc == 6 { parser_advance(p); mutable = true; };
+
+        // Check for tuple destructuring: let (a, b, c) = expr
+        let t_after_mut = parser_peek(p);
+        if t_after_mut.disc == 47 {
+            // LParen — tuple destructuring
+            parser_advance(p); // skip (
+            let mut name_strs: Vec<str> = Vec::new();
+            loop {
+                let t = parser_peek(p);
+                if t.disc == 48 { break; }; // RParen
+                if t.disc == 61 { break; }; // Eof
+                let pname_tok = parser_advance(p);
+                name_strs.push(pname_tok.sval);
+                let t2 = parser_peek(p);
+                if t2.disc == 53 { parser_advance(p); } // skip ,
+                else { break; };
+            };
+            parser_advance(p); // skip )
+            // Optional type annotation (rare for tuple destructure, but support syntax)
+            let t3 = parser_peek(p);
+            if t3.disc == 55 {
+                parser_advance(p); // skip :
+                parse_type_annotation(p, 42, 54, -1);
+            };
+            // Expect = init
+            let t4 = parser_peek(p);
+            let mut init: i64 = 0;
+            if t4.disc == 42 {
+                parser_advance(p);
+                init = parse_expr(p);
+            };
+            // Create contiguous ident expr nodes for the variable names
+            let names_start = p.expr_nodes.len() + 1;
+            let names_count = name_strs.len();
+            for i in 0..names_count {
+                let nidx = add_expr(p, "ident");
+                p.expr_nodes[nidx - 1].sval = name_strs[i];
+            };
+            let idx = add_stmt(p, "let_tuple");
+            p.stmt_nodes[idx - 1].expr_idx = init;
+            p.stmt_nodes[idx - 1].else_start = names_start;
+            p.stmt_nodes[idx - 1].else_count = names_count;
+            return idx;
+        };
+
         let name_tok = parser_advance(p);
         let mut name = name_tok.sval;
         // Phase 5.2 step 4：检测类型注解是否为 f32（单 token 类型）
@@ -1194,7 +1416,11 @@ fn token_type_str(t: Token) -> str {
     if t.disc == 60 { return "::"; };
     if t.disc == 33 { return "<"; };
     if t.disc == 34 { return ">"; };
-    if t.disc == 38 { return "&"; };
+    if t.disc == 40 { return "&"; };        // Ampersand (batch 1: disc=40)
+    if t.disc == 54 { return ";"; };        // Semicolon (for array types [T; N])
+    if t.disc == 58 { return "->"; };       // Arrow
+    if t.disc == 59 { return "=>"; };       // FatArrow
+    if t.disc == 62 { return "..="; };      // DotDotEq
     if t.disc == 47 { return "("; };
     if t.disc == 48 { return ")"; };
     if t.disc == 49 { return "{"; };
@@ -1203,50 +1429,73 @@ fn token_type_str(t: Token) -> str {
     ""
 }
 
-// Stage 7: Collect a type annotation that may include composite types like
-// `Tensor[T, ..]` or `Tensor[f32, 2, 3]`. Returns the type as a string
-// (e.g., "Tensor [T , ..]"). The composite type is stored verbatim so
-// lower.th's parse_type can recognize the `Tensor[<dtype>, <dims>]` pattern.
+// Stage 7 + Problem 21 batch 2: Collect a type annotation that may include
+// composite types like `Tensor[T, ..]`, `Vec<i64>`, `[T; N]`, `fn(i64) -> i64`.
+// Returns the type as a canonical string (e.g., "Tensor[T,..]", "Vec<i64>",
+// "fn(i64)->i64"). lower.th's parse_type recognizes these patterns.
 //
 // term1/term2/term3 are up to 3 terminator token discs that END the
 // surrounding context at top level (pass -1 for unused slots).
-// Inside `[...]`, only Eof terminates — terminators are part of the type.
+// Inside `[...]`, `<...>`, or `(...)`, only Eof terminates — terminators are
+// part of the type.
 //
-// At top level (bracket_depth == 0), tokens are joined with single spaces
-// using their `sval` (preserves existing behavior for simple types like
-// `i64`, `f32`, `T`, even `&Vec<Expr>`). Inside brackets, `token_type_str`
-// is used so operator tokens render correctly.
+// All tokens use `token_type_str` for rendering (handles punctuation tokens
+// with empty sval). Inside any bracket/angle/paren, tokens are joined without
+// spaces (compact mode). At top level, tokens are joined with single spaces.
 fn parse_type_annotation(p: &mut Parser, term1: i64, term2: i64, term3: i64) -> str {
     let mut result = "";
-    let mut bracket_depth: i64 = 0;
+    let mut bracket_depth: i64 = 0;  // [ ]
+    let mut angle_depth: i64 = 0;    // < >
+    let mut paren_depth: i64 = 0;    // ( )
     loop {
         let t = parser_peek(p);
         if t.disc == 61 { break; };  // Eof always terminates
-        if bracket_depth == 0 {
+        // Terminators only apply at top level (all depths 0)
+        if bracket_depth == 0 && angle_depth == 0 && paren_depth == 0 {
             if term1 >= 0 && t.disc == term1 { break; };
             if term2 >= 0 && t.disc == term2 { break; };
             if term3 >= 0 && t.disc == term3 { break; };
         };
-        // Track bracket depth BEFORE consuming. `[` and `]` themselves are
-        // rendered via token_type_str (composite mode), so we use the
-        // pre-update depth plus a disc check for `[` to decide rendering.
+        // Determine if we're inside any bracket/angle/paren (for compact joining)
         let in_bracket = bracket_depth > 0 || t.disc == 51;
+        let in_angle = angle_depth > 0 || t.disc == 33;
+        let in_paren = paren_depth > 0 || t.disc == 47;
+        let compact = in_bracket || in_angle || in_paren;
+        // Update depths BEFORE consuming
         if t.disc == 51 {
             bracket_depth = bracket_depth + 1;
         } else if t.disc == 52 {
             bracket_depth = bracket_depth - 1;
             if bracket_depth < 0 { bracket_depth = 0; };
+        } else if t.disc == 33 {
+            angle_depth = angle_depth + 1;
+        } else if t.disc == 34 {
+            angle_depth = angle_depth - 1;
+            if angle_depth < 0 { angle_depth = 0; };
+        } else if t.disc == 63 {
+            // >> — close two angle levels
+            angle_depth = angle_depth - 2;
+            if angle_depth < 0 { angle_depth = 0; };
+        } else if t.disc == 47 {
+            paren_depth = paren_depth + 1;
+        } else if t.disc == 48 {
+            paren_depth = paren_depth - 1;
+            if paren_depth < 0 { paren_depth = 0; };
         };
         let tok = parser_advance(p);
-        let s = if in_bracket { token_type_str(tok) } else { tok.sval };
-        // Composite mode (inside brackets): join without spaces so lower.th's
-        // parse_type can match exact patterns like "Tensor[T,..]". Top-level
-        // tokens keep space-separated format for backward compat.
-        if in_bracket {
+        // At top level (compact=false), use tok.sval so punctuation tokens are
+        // dropped — this preserves backward compatibility with existing type
+        // strings (e.g. `&str` → "str", `fn(i64) -> i64` → "fn i64 i64").
+        // Inside brackets/angles/parens (compact=true), use token_type_str so
+        // composite types like `Vec<i64>`, `[T;N]`, `fn(i64)` render correctly.
+        let s = if compact { token_type_str(tok) } else { tok.sval };
+        if compact {
             result = result + s;
         } else {
-            if result != "" { result = result + " "; };
-            result = result + s;
+            if s != "" {
+                if result != "" { result = result + " "; };
+                result = result + s;
+            };
         };
     };
     result
@@ -1273,7 +1522,7 @@ fn parse_generic_params(p: &mut Parser) -> Vec<str> {
     generics
 }
 
-fn parse_fn(p: &mut Parser) -> FnDef {
+fn parse_fn(p: &mut Parser, is_async: bool) -> FnDef {
     parser_advance(p); // skip fn
     // async already consumed by caller (parse_program / parse_impl_block)
     let name_tok = parser_advance(p);
@@ -1371,7 +1620,7 @@ fn parse_fn(p: &mut Parser) -> FnDef {
         p.block_idxs.push(local_idxs[i]);
     };
 
-    FnDef { name: name, params: params, return_type: return_type, body_start: body_start, body_count: body_count, generics: generics }
+    FnDef { name: name, params: params, return_type: return_type, body_start: body_start, body_count: body_count, generics: generics, is_async: is_async }
 }
 
 fn parse_struct_def(p: &mut Parser) -> StructDef {
@@ -1549,8 +1798,9 @@ fn parse_impl_block(p: &mut Parser) -> ImplBlock {
         let t2 = parser_peek(p);
         if is_end_of_block(t2) { break; };
         if t2.disc != 4 && t2.disc != 64 { break; }; // expect fn or async fn
-        if t2.disc == 64 { parser_advance(p); }; // skip async
-        fns.push(parse_fn(p));
+        let is_async = (t2.disc == 64);
+        if is_async { parser_advance(p); }; // skip async
+        fns.push(parse_fn(p, is_async));
         let t3 = parser_peek(p);
         if t3.disc == 54 { parser_advance(p); };
     };
@@ -1601,8 +1851,9 @@ fn parse_program(tokens: Vec<Token>) -> Program {
             if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
         } else if d == 4 || d == 64 {
             // Fn (4) or async fn (Async=64, consume async then parse_fn)
-            if d == 64 { parser_advance(&mut p); };
-            fns.push(parse_fn(&mut p));
+            let is_async = (d == 64);
+            if is_async { parser_advance(&mut p); };
+            fns.push(parse_fn(&mut p, is_async));
             if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
         } else if d == 19 {
             // Trait (19)
@@ -1611,6 +1862,41 @@ fn parse_program(tokens: Vec<Token>) -> Program {
         } else if d == 18 {
             // Impl (18)
             impls.push(parse_impl_block(&mut p));
+            if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
+        } else if d == 70 {
+            // Pub (70) — visibility modifier, skip and let next iteration handle the declaration
+            parser_advance(&mut p);
+        } else if d == 20 {
+            // Use (20) — use path::to::item; or use path::*;
+            // Parse and discard (tenthc has no module system yet)
+            parser_advance(&mut p); // skip use
+            loop {
+                let t = parser_peek(&p);
+                if t.disc == 54 || t.disc == 61 { break; }; // ; or Eof
+                parser_advance(&mut p);
+            };
+            if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
+        } else if d == 21 {
+            // Mod (21) — mod name; or mod name { items }
+            // Parse and discard (tenthc has no module system yet)
+            parser_advance(&mut p); // skip mod
+            parser_advance(&mut p); // skip name
+            let t = parser_peek(&p);
+            if t.disc == 49 {
+                // { — skip to matching }
+                let mut depth: i64 = 1;
+                parser_advance(&mut p); // skip {
+                loop {
+                    let t2 = parser_peek(&p);
+                    if t2.disc == 61 { break; }; // Eof
+                    if t2.disc == 49 { depth = depth + 1; };
+                    if t2.disc == 50 {
+                        depth = depth - 1;
+                        if depth == 0 { parser_advance(&mut p); break; };
+                    };
+                    parser_advance(&mut p);
+                };
+            };
             if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
         } else if d == 61 {
             // Eof (61)

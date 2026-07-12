@@ -1,4 +1,4 @@
-﻿use tenth::lexer::lexer::Lexer;
+use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::hir::lower::Lowerer;
 use tenth::hir::types::{Type, BaseType};
@@ -63,14 +63,14 @@ fn test_u8_max_ok() {
 fn test_u8_overflow_fails() {
     let mut lexer = Lexer::new("256u8");
     let result = lexer.tokenize();
-    assert!(result.is_err(), "256u8 out of range");
+    assert!(result.is_err(), "256u8 应超出 u8 范围报错");
 }
 
 #[test]
 fn test_i8_overflow_fails() {
     let mut lexer = Lexer::new("128i8");
     let result = lexer.tokenize();
-    assert!(result.is_err(), "128i8 out of range");
+    assert!(result.is_err(), "128i8 应超出 i8 范围报错");
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn test_u16_max_ok() {
 fn test_u16_overflow_fails() {
     let mut lexer = Lexer::new("65536u16");
     let result = lexer.tokenize();
-    assert!(result.is_err(), "65536u16 out of range");
+    assert!(result.is_err(), "65536u16 应超出 u16 范围报错");
 }
 
 #[test]

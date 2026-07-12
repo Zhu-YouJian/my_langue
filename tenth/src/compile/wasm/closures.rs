@@ -147,7 +147,7 @@ impl WasmCompiler {
         self.compiling_closure = true;
         self.current_captures = captures.to_vec();
         // All extra locals are i64
-        let locals: Vec<ValType> = (0..256).map(|_| ValType::I64).collect();
+        let locals: Vec<ValType> = (0..512).map(|_| ValType::I64).collect();
         let mut func = Function::new_with_locals_types(locals);
         self.compile_expr(&mut func, body)?;
         if matches!(&body.ty, Type::Base(BaseType::Unit)) {

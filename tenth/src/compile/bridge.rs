@@ -12,6 +12,19 @@ use crate::parser::ast as ast;
 use crate::runtime::value::Value;
 
 
+/// Bundle of shared program arrays (all 1-based indexed, 0 = nil).
+/// Passed by reference to all conversion functions to avoid deep cloning.
+struct ProgArrays<'a> {
+    expr_nodes: &'a [Value],
+    stmt_nodes: &'a [Value],
+    /// Block expression body statement indices (used by `block` expr).
+    block_idxs: &'a [Value],
+    /// while/for/loop body statement indices.
+    loop_idxs: &'a [Value],
+    /// Match arms (Value::Struct "MatchArm").
+    match_arms: &'a [Value],
+}
+
 /// Convert a Tenth Program Value (from the self-hosting parser) into Rust AST.
 pub fn compact_program_to_ast(prog_val: &Value) -> TenthResult<ast::Program> {
     let fields = clone_struct_fields(prog_val, "Program")?;
@@ -23,8 +36,18 @@ pub fn compact_program_to_ast(prog_val: &Value) -> TenthResult<ast::Program> {
     let main_stmts_count = get_field_i64(&fields, "main_stmts_count")?;
     let expr_nodes = extract_vec(&get_field_clone(&fields, "expr_nodes"));
     let stmt_nodes = extract_vec(&get_field_clone(&fields, "stmt_nodes"));
+    let block_idxs = extract_vec(&get_field_clone(&fields, "block_idxs"));
+    let loop_idxs = extract_vec(&get_field_clone(&fields, "loop_idxs"));
+    let match_arms = extract_vec(&get_field_clone(&fields, "match_arms"));
 
     let dummy_span = Span { line: 0, col: 0 };
+    let arrays = ProgArrays {
+        expr_nodes: &expr_nodes,
+        stmt_nodes: &stmt_nodes,
+        block_idxs: &block_idxs,
+        loop_idxs: &loop_idxs,
+        match_arms: &match_arms,
+    };
     let mut items: Vec<ast::Item> = Vec::new();
 
     // Convert struct definitions
@@ -38,23 +61,15 @@ pub fn compact_program_to_ast(prog_val: &Value) -> TenthResult<ast::Program> {
     }
 
     // Convert function definitions
-    // eprintln!("[bridge] compiling {} fns, {} exprs, {} stmts",
-    //     fns_val.len(), expr_nodes.len(), stmt_nodes.len());
-    // for (ei, ev) in expr_nodes.iter().enumerate() {
-    //     eprintln!("[bridge]   expr[{}]: {:?}", ei+1, clone_struct_fields_opt(ev));
-    // }
     for (_fi, f_val) in fns_val.iter().enumerate() {
-        // eprintln!("[bridge] fn #{}", _fi);
-        items.push(convert_fn_def(f_val, &expr_nodes, &stmt_nodes, &dummy_span)?);
+        items.push(convert_fn_def(f_val, &arrays, &dummy_span)?);
     }
 
     // Convert main body statements (if any)
     if main_stmts_count > 0 {
         let start = main_stmts_start.max(1) as usize;
         let end = (start as i64 + main_stmts_count - 1) as usize;
-        let body_stmts = convert_stmt_range_direct(
-            &expr_nodes, &stmt_nodes, &dummy_span, start, end,
-        )?;
+        let body_stmts = convert_stmt_range_direct(&arrays, &dummy_span, start, end)?;
         if !body_stmts.is_empty() {
             let main_body = ast::Expr {
                 kind: ast::ExprKind::Block(body_stmts),
@@ -75,7 +90,6 @@ pub fn compact_program_to_ast(prog_val: &Value) -> TenthResult<ast::Program> {
         }
     }
 
-    eprintln!("[bridge] compact_program_to_ast done, {} items", items.len());
     Ok(ast::Program { items })
 }
 
@@ -290,8 +304,7 @@ fn parse_dim_specs(s: &str) -> Vec<ast::DimSpec> {
 
 fn convert_fn_def(
     val: &Value,
-    expr_nodes: &[Value],
-    stmt_nodes: &[Value],
+    arrays: &ProgArrays,
     span: &Span,
 ) -> TenthResult<ast::Item> {
     let fields = clone_struct_fields(val, "FnDef")?;
@@ -317,9 +330,9 @@ fn convert_fn_def(
     let body_stmts = if body_count > 0 {
         let start = body_start.max(1) as usize;
         let end = start + body_count as usize - 1;
-        convert_stmt_range_direct(expr_nodes, stmt_nodes, span, start, end)?
+        convert_stmt_range_direct(arrays, span, start, end)?
     } else if body_start > 0 {
-        let body_expr = convert_expr(body_start as usize, expr_nodes, stmt_nodes, span)?;
+        let body_expr = convert_expr(body_start as usize, arrays, span)?;
         vec![ast::Stmt {
             kind: ast::StmtKind::Return(Some(body_expr)),
             span: span.clone(),
@@ -353,19 +366,49 @@ fn convert_fn_def(
 
 // ── Statement conversion ───────────────────────────────────────────────────
 
-/// Convert a range of statement indices.
+/// Convert a range of statement indices (1-based, inclusive).
 fn convert_stmt_range_direct(
-    expr_nodes: &[Value],
-    stmt_nodes: &[Value],
+    arrays: &ProgArrays,
     span: &Span,
-    start: usize,  // 1-based start
-    end: usize,    // 1-based inclusive end
+    start: usize,
+    end: usize,
 ) -> TenthResult<Vec<ast::Stmt>> {
     let mut stmts = Vec::new();
     for i in start..=end {
-        if i == 0 || i > stmt_nodes.len() { continue; }
-        let val = &stmt_nodes[i - 1];
-        if let Some(stmt) = convert_stmt(val, expr_nodes, stmt_nodes, span)? {
+        if i == 0 || i > arrays.stmt_nodes.len() { continue; }
+        let val = &arrays.stmt_nodes[i - 1];
+        if let Some(stmt) = convert_stmt(val, arrays, span)? {
+            stmts.push(stmt);
+        }
+    }
+    Ok(stmts)
+}
+
+/// Convert statements from the loop_idxs array (used by while/for/loop bodies).
+fn convert_loop_body_range(
+    arrays: &ProgArrays,
+    span: &Span,
+    start: usize,
+    end: usize,
+) -> TenthResult<Vec<ast::Stmt>> {
+    let mut stmts = Vec::new();
+    for i in start..=end {
+        if i == 0 || i > arrays.loop_idxs.len() { continue; }
+        // loop_idxs stores i64 statement indices into stmt_nodes
+        let stmt_idx = match &arrays.loop_idxs[i - 1] {
+            Value::Int(n, _) => *n as usize,
+            Value::Shared(rc) => {
+                let inner = rc.borrow();
+                match &*inner {
+                    Value::Int(n, _) => *n as usize,
+                    _ => continue,
+                }
+            }
+            _ => continue,
+        };
+        if stmt_idx == 0 || stmt_idx > arrays.stmt_nodes.len() { continue; }
+        let val = &arrays.stmt_nodes[stmt_idx - 1];
+        if let Some(stmt) = convert_stmt(val, arrays, span)? {
             stmts.push(stmt);
         }
     }
@@ -374,8 +417,7 @@ fn convert_stmt_range_direct(
 
 fn convert_stmt(
     val: &Value,
-    expr_nodes: &[Value],
-    stmt_nodes: &[Value],
+    arrays: &ProgArrays,
     span: &Span,
 ) -> TenthResult<Option<ast::Stmt>> {
     let fields = match clone_struct_fields_opt(val) {
@@ -390,7 +432,7 @@ fn convert_stmt(
         "let" => {
             let var_name = get_field_string(&fields, "name")?;
             let init = if expr_idx > 0 {
-                Some(convert_expr(expr_idx as usize, expr_nodes, stmt_nodes, span)?)
+                Some(convert_expr(expr_idx as usize, arrays, span)?)
             } else {
                 None
             };
@@ -404,9 +446,43 @@ fn convert_stmt(
                 span: span.clone(),
             }))
         }
+        "let_tuple" => {
+            // let (a, b, c) = expr
+            // else_start/else_count are reused to store names_start/names_count
+            // names are ident expr_nodes at [names_start..names_start+names_count)
+            let names_start = get_field_i64(&fields, "else_start")?;
+            let names_count = get_field_i64(&fields, "else_count")?;
+            let mut names = Vec::new();
+            if names_count > 0 {
+                let s = names_start.max(1) as usize;
+                let e = s + names_count as usize;
+                for i in s..e {
+                    if i == 0 || i > arrays.expr_nodes.len() { continue; }
+                    let nval = &arrays.expr_nodes[i - 1];
+                    if let Some(nf) = clone_struct_fields_opt(nval) {
+                        let nname = get_field_string(&nf, "sval")?;
+                        names.push(ast::Ident { name: nname, span: span.clone() });
+                    }
+                }
+            }
+            let init = if expr_idx > 0 {
+                Some(convert_expr(expr_idx as usize, arrays, span)?)
+            } else {
+                None
+            };
+            Ok(Some(ast::Stmt {
+                kind: ast::StmtKind::Let {
+                    names,
+                    type_ann: None,
+                    mutable: false,
+                    init,
+                },
+                span: span.clone(),
+            }))
+        }
         "expr" => {
             if expr_idx > 0 {
-                let e = convert_expr(expr_idx as usize, expr_nodes, stmt_nodes, span)?;
+                let e = convert_expr(expr_idx as usize, arrays, span)?;
                 Ok(Some(ast::Stmt {
                     kind: ast::StmtKind::Expr(e),
                     span: span.clone(),
@@ -417,12 +493,108 @@ fn convert_stmt(
         }
         "return" => {
             let val_expr = if expr_idx > 0 {
-                Some(convert_expr(expr_idx as usize, expr_nodes, stmt_nodes, span)?)
+                Some(convert_expr(expr_idx as usize, arrays, span)?)
             } else {
                 None
             };
             Ok(Some(ast::Stmt {
                 kind: ast::StmtKind::Return(val_expr),
+                span: span.clone(),
+            }))
+        }
+        "while" => {
+            // expr_idx = cond, body_start/body_count in loop_idxs
+            let body_start = get_field_i64(&fields, "body_start")?;
+            let body_count = get_field_i64(&fields, "body_count")?;
+            let cond = if expr_idx > 0 {
+                convert_expr(expr_idx as usize, arrays, span)?
+            } else {
+                ast::Expr {
+                    kind: ast::ExprKind::Literal(ast::Literal::Bool(true)),
+                    span: span.clone(),
+                }
+            };
+            let body_stmts = if body_count > 0 {
+                let s = body_start.max(1) as usize;
+                let e = s + body_count as usize - 1;
+                convert_loop_body_range(arrays, span, s, e)?
+            } else {
+                Vec::new()
+            };
+            Ok(Some(ast::Stmt {
+                kind: ast::StmtKind::While {
+                    cond,
+                    body: Box::new(ast::Stmt {
+                        kind: ast::StmtKind::Expr(ast::Expr {
+                            kind: ast::ExprKind::Block(body_stmts),
+                            span: span.clone(),
+                        }),
+                        span: span.clone(),
+                    }),
+                },
+                span: span.clone(),
+            }))
+        }
+        "for" => {
+            // name = loop var, expr_idx = iterable, body_start/body_count in loop_idxs
+            let var_name = get_field_string(&fields, "name")?;
+            let body_start = get_field_i64(&fields, "body_start")?;
+            let body_count = get_field_i64(&fields, "body_count")?;
+            let iter = if expr_idx > 0 {
+                convert_expr(expr_idx as usize, arrays, span)?
+            } else {
+                ast::Expr {
+                    kind: ast::ExprKind::Literal(ast::Literal::Int(0, BaseType::I32)),
+                    span: span.clone(),
+                }
+            };
+            let body_stmts = if body_count > 0 {
+                let s = body_start.max(1) as usize;
+                let e = s + body_count as usize - 1;
+                convert_loop_body_range(arrays, span, s, e)?
+            } else {
+                Vec::new()
+            };
+            Ok(Some(ast::Stmt {
+                kind: ast::StmtKind::For {
+                    var: ast::Ident { name: var_name, span: span.clone() },
+                    iter,
+                    body: Box::new(ast::Stmt {
+                        kind: ast::StmtKind::Expr(ast::Expr {
+                            kind: ast::ExprKind::Block(body_stmts),
+                            span: span.clone(),
+                        }),
+                        span: span.clone(),
+                    }),
+                },
+                span: span.clone(),
+            }))
+        }
+        "loop" => {
+            // body_start/body_count in loop_idxs
+            let body_start = get_field_i64(&fields, "body_start")?;
+            let body_count = get_field_i64(&fields, "body_count")?;
+            let body_stmts = if body_count > 0 {
+                let s = body_start.max(1) as usize;
+                let e = s + body_count as usize - 1;
+                convert_loop_body_range(arrays, span, s, e)?
+            } else {
+                Vec::new()
+            };
+            Ok(Some(ast::Stmt {
+                kind: ast::StmtKind::Loop { body: body_stmts },
+                span: span.clone(),
+            }))
+        }
+        "break" => {
+            Ok(Some(ast::Stmt {
+                kind: ast::StmtKind::Break,
+                span: span.clone(),
+            }))
+        }
+        "continue" => {
+            Ok(Some(ast::Stmt {
+                kind: ast::StmtKind::Continue,
                 span: span.clone(),
             }))
         }
@@ -451,18 +623,16 @@ fn clone_struct_fields_opt(val: &Value) -> Option<Vec<(String, Value)>> {
 // ── Expression conversion ──────────────────────────────────────────────────
 
 fn convert_expr(
-    idx: usize,  // 1-based index into expr_nodes
-    expr_nodes: &[Value],
-    stmt_nodes: &[Value],
+    idx: usize,
+    arrays: &ProgArrays,
     span: &Span,
 ) -> TenthResult<ast::Expr> {
-    convert_expr_depth(idx, expr_nodes, stmt_nodes, span, 0)
+    convert_expr_depth(idx, arrays, span, 0)
 }
 
 fn convert_expr_depth(
     idx: usize,
-    expr_nodes: &[Value],
-    stmt_nodes: &[Value],
+    arrays: &ProgArrays,
     span: &Span,
     depth: usize,
 ) -> TenthResult<ast::Expr> {
@@ -471,19 +641,13 @@ fn convert_expr_depth(
             message: format!("表达式转换递归过深，索引 {}（深度={}）", idx, depth),
         });
     }
-    if idx == 0 || idx > expr_nodes.len() {
+    if idx == 0 || idx > arrays.expr_nodes.len() {
         return Err(TenthError::RuntimeError { line: None, col: None,
-            message: format!("表达式索引 {} 越界（长度={}）", idx, expr_nodes.len()),
+            message: format!("表达式索引 {} 越界（长度={}）", idx, arrays.expr_nodes.len()),
         });
     }
 
-    let val = &expr_nodes[idx - 1];
-    // if idx == 8 || depth < 5 {
-    //     let k = clone_struct_fields_opt(val).and_then(|f| {
-    //         f.iter().find(|(n,_)| n=="kind").map(|(_,v)| format!("{:?}", v))
-    //     }).unwrap_or_default();
-    //     eprintln!("[bridge] convert_expr idx={} depth={} kind={}", idx, depth, k);
-    // }
+    let val = &arrays.expr_nodes[idx - 1];
     let fields = match clone_struct_fields_opt(val) {
         Some(f) => f,
         None => return Err(TenthError::RuntimeError { line: None, col: None,
@@ -500,6 +664,8 @@ fn convert_expr_depth(
     let arg_count = get_field_i64(&fields, "arg_count")?;
     let extra_start = get_field_i64(&fields, "extra_start")?;
     let extra_count = get_field_i64(&fields, "extra_count")?;
+    let name = get_field_string(&fields, "name")?;
+    let variant = get_field_string(&fields, "variant")?;
 
     match kind.as_str() {
         "int" => Ok(ast::Expr {
@@ -522,9 +688,35 @@ fn convert_expr_depth(
             kind: ast::ExprKind::Literal(ast::Literal::Bool(ival != 0)),
             span: span.clone(),
         }),
+        "interp" => {
+            // Interpolated string: extra_start..extra_start+extra_count are
+            // alternating "str" (literal) and "ident" (expression name) nodes.
+            let mut parts = Vec::new();
+            if extra_count > 0 {
+                let s = extra_start.max(1) as usize;
+                let e = s + extra_count as usize;
+                for i in s..e {
+                    if i == 0 || i > arrays.expr_nodes.len() { continue; }
+                    let pval = &arrays.expr_nodes[i - 1];
+                    if let Some(pf) = clone_struct_fields_opt(pval) {
+                        let pkind = get_field_string(&pf, "kind")?;
+                        let psval = get_field_string(&pf, "sval")?;
+                        match pkind.as_str() {
+                            "str" => parts.push(ast::InterpPart::Literal(psval)),
+                            "ident" => parts.push(ast::InterpPart::Expr(psval)),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Ok(ast::Expr {
+                kind: ast::ExprKind::InterpolatedString(parts),
+                span: span.clone(),
+            })
+        }
         "binary" => {
-            let left_expr = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
-            let right_expr = convert_expr_depth(right as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let left_expr = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            let right_expr = convert_expr_depth(right as usize, arrays, span, depth + 1)?;
             let op = parse_binop(&sval)?;
             Ok(ast::Expr {
                 kind: ast::ExprKind::Binary {
@@ -536,10 +728,11 @@ fn convert_expr_depth(
             })
         }
         "unary" => {
-            let inner = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let inner = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
             let op = match sval.as_str() {
                 "-" => ast::UnaryOp::Neg,
                 "!" => ast::UnaryOp::Not,
+                "?" => ast::UnaryOp::Try,
                 _ => return Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("未知的一元运算符：{}", sval),
                 }),
@@ -554,26 +747,43 @@ fn convert_expr_depth(
                 kind: ast::ExprKind::Ident(ast::Ident { name: sval, span: span.clone() }),
                 span: span.clone(),
             };
-            let mut args = Vec::new();
-            if arg_count > 0 {
-                let start = arg_start.max(1) as usize;
-                let end = start + arg_count as usize;
-                for i in start..end {
-                    if i > 0 && i <= expr_nodes.len() {
-                        args.push(convert_expr_depth(i, expr_nodes, stmt_nodes, span, depth + 1)?);
-                    }
-                }
-            }
+            let args = convert_arg_range(arg_start, arg_count, arrays, span, depth)?;
             Ok(ast::Expr {
                 kind: ast::ExprKind::Call { func: Box::new(func_expr), args },
                 span: span.clone(),
             })
         }
+        "generic_call" => {
+            // sval = function name, arg_start/arg_count = call args,
+            // extra_start/extra_count = type arg ident nodes
+            let func_expr = ast::Expr {
+                kind: ast::ExprKind::Ident(ast::Ident { name: sval, span: span.clone() }),
+                span: span.clone(),
+            };
+            let args = convert_arg_range(arg_start, arg_count, arrays, span, depth)?;
+            let mut generics = Vec::new();
+            if extra_count > 0 {
+                let s = extra_start.max(1) as usize;
+                let e = s + extra_count as usize;
+                for i in s..e {
+                    if i == 0 || i > arrays.expr_nodes.len() { continue; }
+                    let tval = &arrays.expr_nodes[i - 1];
+                    if let Some(tf) = clone_struct_fields_opt(tval) {
+                        let tname = get_field_string(&tf, "sval")?;
+                        generics.push(parse_type_annotation(&tname, span));
+                    }
+                }
+            }
+            Ok(ast::Expr {
+                kind: ast::ExprKind::GenericCall { func: Box::new(func_expr), generics, args },
+                span: span.clone(),
+            })
+        }
         "if" => {
-            let cond = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
-            let then_branch = convert_expr_depth(right as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let cond = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            let then_branch = convert_expr_depth(right as usize, arrays, span, depth + 1)?;
             let else_branch = if extra_start > 0 {
-                Some(convert_expr_depth(extra_start as usize, expr_nodes, stmt_nodes, span, depth + 1)?)
+                Some(convert_expr_depth(extra_start as usize, arrays, span, depth + 1)?)
             } else {
                 None
             };
@@ -587,33 +797,36 @@ fn convert_expr_depth(
             })
         }
         "assign" => {
-            let target = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
-            let value = convert_expr_depth(right as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let target = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            let value = convert_expr_depth(right as usize, arrays, span, depth + 1)?;
             Ok(ast::Expr {
                 kind: ast::ExprKind::Assign { target: Box::new(target), value: Box::new(value) },
                 span: span.clone(),
             })
         }
+        "assign_op" => {
+            // sval is like "+=", "-=", "*=", "/="
+            let target = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            let value = convert_expr_depth(right as usize, arrays, span, depth + 1)?;
+            // Strip trailing "=" to get the binary op
+            let op_str = if sval.ends_with('=') { &sval[..sval.len() - 1] } else { &sval };
+            let op = parse_binop(op_str)?;
+            Ok(ast::Expr {
+                kind: ast::ExprKind::AssignOp { target: Box::new(target), op, value: Box::new(value) },
+                span: span.clone(),
+            })
+        }
         "method_call" => {
-            let receiver = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let receiver = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
             let method = ast::Ident { name: sval, span: span.clone() };
-            let mut args = Vec::new();
-            if arg_count > 0 {
-                let start = arg_start.max(1) as usize;
-                let end = start + arg_count as usize;
-                for i in start..end {
-                    if i > 0 && i <= expr_nodes.len() {
-                        args.push(convert_expr_depth(i, expr_nodes, stmt_nodes, span, depth + 1)?);
-                    }
-                }
-            }
+            let args = convert_arg_range(arg_start, arg_count, arrays, span, depth)?;
             Ok(ast::Expr {
                 kind: ast::ExprKind::MethodCall { receiver: Box::new(receiver), method, args },
                 span: span.clone(),
             })
         }
         "field" => {
-            let target = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let target = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
             Ok(ast::Expr {
                 kind: ast::ExprKind::Field {
                     target: Box::new(target),
@@ -623,8 +836,8 @@ fn convert_expr_depth(
             })
         }
         "index" => {
-            let target = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
-            let index = convert_expr_depth(right as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let target = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            let index = convert_expr_depth(right as usize, arrays, span, depth + 1)?;
             Ok(ast::Expr {
                 kind: ast::ExprKind::Index {
                     target: Box::new(target),
@@ -633,43 +846,308 @@ fn convert_expr_depth(
                 span: span.clone(),
             })
         }
+        "slice" => {
+            // left = target, right = start, extra_start = end, ival = inclusive
+            let target = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            let start = if right > 0 {
+                Some(Box::new(convert_expr_depth(right as usize, arrays, span, depth + 1)?))
+            } else {
+                None
+            };
+            let end = if extra_start > 0 {
+                Some(Box::new(convert_expr_depth(extra_start as usize, arrays, span, depth + 1)?))
+            } else {
+                None
+            };
+            Ok(ast::Expr {
+                kind: ast::ExprKind::Index {
+                    target: Box::new(target),
+                    indices: vec![ast::IndexExpr::Range { start, end }],
+                },
+                span: span.clone(),
+            })
+        }
         "ref" => {
-            let inner = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let inner = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
             Ok(ast::Expr {
                 kind: ast::ExprKind::Ref(Box::new(inner)),
                 span: span.clone(),
             })
         }
+        "mut_ref" => {
+            let inner = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            Ok(ast::Expr {
+                kind: ast::ExprKind::MutRef(Box::new(inner)),
+                span: span.clone(),
+            })
+        }
         "deref" => {
-            let inner = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let inner = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
             Ok(ast::Expr {
                 kind: ast::ExprKind::Deref(Box::new(inner)),
                 span: span.clone(),
             })
         }
+        "move" => {
+            let inner = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            Ok(ast::Expr {
+                kind: ast::ExprKind::Move(Box::new(inner)),
+                span: span.clone(),
+            })
+        }
+        "try_block" => {
+            let inner = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            Ok(ast::Expr {
+                kind: ast::ExprKind::TryBlock(Box::new(inner)),
+                span: span.clone(),
+            })
+        }
         "await" => {
-            let inner = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let inner = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
             Ok(ast::Expr {
                 kind: ast::ExprKind::Await(Box::new(inner)),
                 span: span.clone(),
             })
         }
         "spawn" => {
-            let inner = convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?;
+            let inner = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
             Ok(ast::Expr {
                 kind: ast::ExprKind::Spawn(Box::new(inner)),
                 span: span.clone(),
             })
         }
+        "range" => {
+            // left = start (0 if open-start), right = end (0 if open-end),
+            // ival = 1 if inclusive
+            let start = if left > 0 {
+                Some(Box::new(convert_expr_depth(left as usize, arrays, span, depth + 1)?))
+            } else {
+                None
+            };
+            let end = if right > 0 {
+                Some(Box::new(convert_expr_depth(right as usize, arrays, span, depth + 1)?))
+            } else {
+                None
+            };
+            Ok(ast::Expr {
+                kind: ast::ExprKind::Range {
+                    start,
+                    end,
+                    inclusive: ival != 0,
+                },
+                span: span.clone(),
+            })
+        }
+        "tuple" => {
+            let elems = convert_arg_range(arg_start, arg_count, arrays, span, depth)?;
+            Ok(ast::Expr {
+                kind: ast::ExprKind::Tuple(elems),
+                span: span.clone(),
+            })
+        }
+        "array" => {
+            let elems = convert_arg_range(arg_start, arg_count, arrays, span, depth)?;
+            Ok(ast::Expr {
+                kind: ast::ExprKind::ArrayLiteral(elems),
+                span: span.clone(),
+            })
+        }
+        "tensor" => {
+            // ival = rows, arg_count = total element count (flattened)
+            // Split elements into rows. Each row has total_count / rows elements.
+            let rows = ival.max(1) as usize;
+            let total = arg_count as usize;
+            let row_len = if rows > 0 { total / rows } else { total };
+            let mut all_elems = Vec::new();
+            // Collect all element expressions first
+            let mut flat: Vec<ast::Expr> = Vec::new();
+            if arg_count > 0 {
+                let s = arg_start.max(1) as usize;
+                let e = s + arg_count as usize;
+                for i in s..e {
+                    if i == 0 || i > arrays.expr_nodes.len() { continue; }
+                    // arg nodes: kind="arg", left=actual expr index
+                    let aval = &arrays.expr_nodes[i - 1];
+                    if let Some(af) = clone_struct_fields_opt(aval) {
+                        let aleft = get_field_i64(&af, "left")?;
+                        if aleft > 0 {
+                            flat.push(convert_expr_depth(aleft as usize, arrays, span, depth + 1)?);
+                        }
+                    }
+                }
+            }
+            // Split into rows
+            for r in 0..rows {
+                let start = r * row_len;
+                let end = (start + row_len).min(flat.len());
+                if start < end {
+                    all_elems.push(flat[start..end].to_vec());
+                }
+            }
+            Ok(ast::Expr {
+                kind: ast::ExprKind::TensorLiteral(all_elems),
+                span: span.clone(),
+            })
+        }
+        "closure" => {
+            // left = body, extra_start/extra_count = param ident nodes
+            let body = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            let mut params = Vec::new();
+            if extra_count > 0 {
+                let s = extra_start.max(1) as usize;
+                let e = s + extra_count as usize;
+                for i in s..e {
+                    if i == 0 || i > arrays.expr_nodes.len() { continue; }
+                    let pval = &arrays.expr_nodes[i - 1];
+                    if let Some(pf) = clone_struct_fields_opt(pval) {
+                        let pname = get_field_string(&pf, "sval")?;
+                        params.push((
+                            ast::Ident { name: pname, span: span.clone() },
+                            None,
+                        ));
+                    }
+                }
+            }
+            Ok(ast::Expr {
+                kind: ast::ExprKind::Closure {
+                    params,
+                    body: Box::new(body),
+                },
+                span: span.clone(),
+            })
+        }
+        "struct_literal" => {
+            // name = struct name, arg_start/arg_count = field_init nodes
+            // Each field_init node: sval = field name, left = value expr index
+            let mut fields = Vec::new();
+            if arg_count > 0 {
+                let s = arg_start.max(1) as usize;
+                let e = s + arg_count as usize;
+                for i in s..e {
+                    if i == 0 || i > arrays.expr_nodes.len() { continue; }
+                    let fval = &arrays.expr_nodes[i - 1];
+                    if let Some(ff) = clone_struct_fields_opt(fval) {
+                        let fname = get_field_string(&ff, "sval")?;
+                        let fleft = get_field_i64(&ff, "left")?;
+                        let fexpr = if fleft > 0 {
+                            convert_expr_depth(fleft as usize, arrays, span, depth + 1)?
+                        } else {
+                            ast::Expr {
+                                kind: ast::ExprKind::Literal(ast::Literal::Int(0, BaseType::I32)),
+                                span: span.clone(),
+                            }
+                        };
+                        fields.push((
+                            ast::Ident { name: fname, span: span.clone() },
+                            fexpr,
+                        ));
+                    }
+                }
+            }
+            Ok(ast::Expr {
+                kind: ast::ExprKind::StructLiteral {
+                    name: ast::Ident { name, span: span.clone() },
+                    generics: Vec::new(),
+                    fields,
+                    use_defaults: false,
+                },
+                span: span.clone(),
+            })
+        }
+        "enum_literal" => {
+            // name = enum name, variant = variant name
+            // arg_start/arg_count = tuple-variant positional args
+            let mut fields = Vec::new();
+            if arg_count > 0 {
+                let s = arg_start.max(1) as usize;
+                let e = s + arg_count as usize;
+                for i in s..e {
+                    if i == 0 || i > arrays.expr_nodes.len() { continue; }
+                    let aval = &arrays.expr_nodes[i - 1];
+                    if let Some(af) = clone_struct_fields_opt(aval) {
+                        let aleft = get_field_i64(&af, "left")?;
+                        if aleft > 0 {
+                            let fexpr = convert_expr_depth(aleft as usize, arrays, span, depth + 1)?;
+                            // Use positional index as field name (will be lowered as tuple variant)
+                            fields.push((
+                                ast::Ident { name: format!("_{}", i - s), span: span.clone() },
+                                fexpr,
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(ast::Expr {
+                kind: ast::ExprKind::EnumLiteral {
+                    enum_name: ast::Ident { name, span: span.clone() },
+                    variant: ast::Ident { name: variant, span: span.clone() },
+                    fields,
+                },
+                span: span.clone(),
+            })
+        }
+        "match" => {
+            // left = scrutinee, extra_start/extra_count = arms in match_arms
+            let scrutinee = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            let mut arms = Vec::new();
+            if extra_count > 0 {
+                let s = extra_start.max(1) as usize;
+                let e = s + extra_count as usize;
+                for i in s..e {
+                    if i == 0 || i > arrays.match_arms.len() { continue; }
+                    let amval = &arrays.match_arms[i - 1];
+                    if let Some(af) = clone_struct_fields_opt(amval) {
+                        let pat_kind = get_field_string(&af, "pat_kind")?;
+                        let pat_name = get_field_string(&af, "pat_name")?;
+                        let pat_bind = get_field_string(&af, "pat_bind")?;
+                        let body_expr = get_field_i64(&af, "body_expr")?;
+                        let body = if body_expr > 0 {
+                            convert_expr_depth(body_expr as usize, arrays, span, depth + 1)?
+                        } else {
+                            ast::Expr {
+                                kind: ast::ExprKind::Literal(ast::Literal::Int(0, BaseType::I32)),
+                                span: span.clone(),
+                            }
+                        };
+                        let pattern = parse_match_pattern(&pat_kind, &pat_name, &pat_bind)?;
+                        arms.push(ast::MatchArm {
+                            pattern,
+                            guard: None,
+                            body,
+                        });
+                    }
+                }
+            }
+            Ok(ast::Expr {
+                kind: ast::ExprKind::Match {
+                    scrutinee: Box::new(scrutinee),
+                    arms,
+                },
+                span: span.clone(),
+            })
+        }
         "block" => {
+            // extra_start/extra_count point into block_idxs
             let mut stmts = Vec::new();
             if extra_count > 0 {
-                let s_start = extra_start.max(1) as usize;
-                let s_end = s_start + extra_count as usize - 1;
-                for i in s_start..=s_end {
-                    if i == 0 || i > stmt_nodes.len() { continue; }
-                    let sval = &stmt_nodes[i - 1];
-                    if let Some(stmt) = convert_stmt(sval, expr_nodes, stmt_nodes, span)? {
+                let s = extra_start.max(1) as usize;
+                let e = s + extra_count as usize;
+                for i in s..e {
+                    if i == 0 || i > arrays.block_idxs.len() { continue; }
+                    let stmt_idx = match &arrays.block_idxs[i - 1] {
+                        Value::Int(n, _) => *n as usize,
+                        Value::Shared(rc) => {
+                            let inner = rc.borrow();
+                            match &*inner {
+                                Value::Int(n, _) => *n as usize,
+                                _ => continue,
+                            }
+                        }
+                        _ => continue,
+                    };
+                    if stmt_idx == 0 || stmt_idx > arrays.stmt_nodes.len() { continue; }
+                    let sval = &arrays.stmt_nodes[stmt_idx - 1];
+                    if let Some(stmt) = convert_stmt(sval, arrays, span)? {
                         stmts.push(stmt);
                     }
                 }
@@ -681,7 +1159,7 @@ fn convert_expr_depth(
         }
         "return" => {
             let val_expr = if left > 0 {
-                Some(convert_expr_depth(left as usize, expr_nodes, stmt_nodes, span, depth + 1)?)
+                Some(convert_expr_depth(left as usize, arrays, span, depth + 1)?)
             } else {
                 None
             };
@@ -701,6 +1179,109 @@ fn convert_expr_depth(
                 span: span.clone(),
             })
         }
+    }
+}
+
+/// Convert a range of "arg" reference nodes into actual expressions.
+/// Each arg node has kind="arg" and left=actual expr index.
+fn convert_arg_range(
+    arg_start: i64,
+    arg_count: i64,
+    arrays: &ProgArrays,
+    span: &Span,
+    depth: usize,
+) -> TenthResult<Vec<ast::Expr>> {
+    let mut args = Vec::new();
+    if arg_count > 0 {
+        let s = arg_start.max(1) as usize;
+        let e = s + arg_count as usize;
+        for i in s..e {
+            if i == 0 || i > arrays.expr_nodes.len() { continue; }
+            let aval = &arrays.expr_nodes[i - 1];
+            if let Some(af) = clone_struct_fields_opt(aval) {
+                let aleft = get_field_i64(&af, "left")?;
+                if aleft > 0 {
+                    args.push(convert_expr_depth(aleft as usize, arrays, span, depth + 1)?);
+                }
+            }
+        }
+    }
+    Ok(args)
+}
+
+/// Parse a match pattern from tenthc's pat_kind/pat_name/pat_bind fields.
+fn parse_match_pattern(pat_kind: &str, pat_name: &str, pat_bind: &str) -> TenthResult<ast::Pattern> {
+    match pat_kind {
+        "wildcard" => Ok(ast::Pattern::Wildcard),
+        "binding" => Ok(ast::Pattern::Binding(pat_name.to_string())),
+        "literal" => {
+            // pat_name is the literal value as string
+            if pat_name == "true" {
+                Ok(ast::Pattern::Literal(ast::Literal::Bool(true)))
+            } else if pat_name == "false" {
+                Ok(ast::Pattern::Literal(ast::Literal::Bool(false)))
+            } else if let Ok(n) = pat_name.parse::<i64>() {
+                Ok(ast::Pattern::Literal(ast::Literal::Int(n, BaseType::I32)))
+            } else {
+                // Fallback: treat as binding
+                Ok(ast::Pattern::Binding(pat_name.to_string()))
+            }
+        }
+        "range" => {
+            // pat_bind is "start..end" or "start..=end"
+            let (start, end, inclusive) = if pat_bind.contains("..=") {
+                let parts: Vec<&str> = pat_bind.splitn(2, "..=").collect();
+                if parts.len() == 2 {
+                    (parts[0].parse::<i64>().unwrap_or(0), parts[1].parse::<i64>().unwrap_or(0), true)
+                } else {
+                    (0, 0, true)
+                }
+            } else if pat_bind.contains("..") {
+                let parts: Vec<&str> = pat_bind.splitn(2, "..").collect();
+                if parts.len() == 2 {
+                    (parts[0].parse::<i64>().unwrap_or(0), parts[1].parse::<i64>().unwrap_or(0), false)
+                } else {
+                    (0, 0, false)
+                }
+            } else {
+                (0, 0, false)
+            };
+            Ok(ast::Pattern::Range { start, end, inclusive })
+        }
+        "enum_variant" => {
+            // pat_bind stores "EnumName:field1" or "EnumName" or ":field1"
+            let (enum_name, tuple_fields) = if pat_bind.is_empty() {
+                (String::new(), Vec::new())
+            } else if let Some(colon_pos) = pat_bind.find(':') {
+                let en = pat_bind[..colon_pos].to_string();
+                let rest = &pat_bind[colon_pos + 1..];
+                let tf: Vec<String> = if rest.is_empty() {
+                    Vec::new()
+                } else {
+                    rest.split(',').map(|s| s.trim().to_string()).collect()
+                };
+                (en, tf)
+            } else {
+                (pat_bind.to_string(), Vec::new())
+            };
+            Ok(ast::Pattern::EnumVariant {
+                enum_name,
+                variant: pat_name.to_string(),
+                field_bind: None,
+                tuple_fields,
+            })
+        }
+        "tuple" => {
+            // We don't have detailed tuple pattern info from tenthc parser
+            // (it skips the contents). Return a wildcard as fallback.
+            Ok(ast::Pattern::Wildcard)
+        }
+        "struct" => {
+            // We don't have detailed struct pattern info from tenthc parser
+            // (it skips the contents). Return a wildcard as fallback.
+            Ok(ast::Pattern::Wildcard)
+        }
+        _ => Ok(ast::Pattern::Wildcard),
     }
 }
 

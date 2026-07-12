@@ -233,6 +233,12 @@ mod tenthc_dotdot_eq {
         linker.func_wrap("host", "tensor_from_vec", |_: Caller<()>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
             len as i64
         }).unwrap();
+        linker.func_wrap("host", "host_make_tensor_f16", |_: Caller<()>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
+            len as i64
+        }).unwrap();
+        linker.func_wrap("host", "host_make_tensor_bf16", |_: Caller<()>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
+            len as i64
+        }).unwrap();
 
         // ── `env` module (tenthc wasm.th signatures) ──
         linker.func_wrap("env", "println", |_: Caller<()>, _: i64| {}).unwrap();

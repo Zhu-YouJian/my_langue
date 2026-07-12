@@ -1,15 +1,180 @@
-// Self-hosting Lexer — v0.3.3 (tuple variants, struct defaults, DotDotEq/Shr)
+// Self-hosting Lexer — v0.3.3 (Problem 21 batch 1: full sync with Rust side)
+// Features: BOM skip, hex/oct/bin literals, underscore separators, scientific notation,
+// char literals, string escapes, string interpolation, f16/bf16/f32/f64 suffixes,
+// i8/i16/i32/i64/u8/u16/u32/u64 suffixes, Shl/Caret/QuestionMark operators,
+// 10 new keywords (pub/type/task/shard/node/macro/where/as/in/try)
 struct Lexer { source: str, pos: i64, line: i64, col: i64 }
-fn lexer_new(source: str) -> Lexer { Lexer { source: source, pos: 0, line: 1, col: 1 } }
+fn lexer_new(source: str) -> Lexer {
+    // BOM 跳过：U+FEFF 是非 ASCII 字符，不会出现在合法源码开头
+    // 检测方式：第一个字符若不是合法源码起始字符，则跳过（与 Rust 侧 strip_prefix('\u{FEFF}') 等效）
+    if source.len() > 0 && !is_source_start(source[0]) {
+        source = source[1..source.len()];
+    };
+    Lexer { source: source, pos: 0, line: 1, col: 1 }
+}
 fn is_digit(ch: str) -> bool { (ch >= "0") && (ch <= "9") }
 fn is_alpha(ch: str) -> bool { ((ch >= "a") && (ch <= "z")) || ((ch >= "A") && (ch <= "Z")) || (ch == "_") }
 fn is_alnum(ch: str) -> bool { is_alpha(ch) || is_digit(ch) }
 fn is_ws(ch: str) -> bool { (ch == " ") || (ch == "\n") || (ch == "\t") || (ch == "\r") }
+fn is_hex_digit(ch: str) -> bool { is_digit(ch) || (ch >= "a" && ch <= "f") || (ch >= "A" && ch <= "F") }
+fn is_oct_digit(ch: str) -> bool { ch >= "0" && ch <= "7" }
+fn is_bin_digit(ch: str) -> bool { ch == "0" || ch == "1" }
+// 合法源码起始字符（用于 BOM 检测）：ASCII 字母/数字/下划线/空白/所有运算符和括号
+fn is_source_start(ch: str) -> bool {
+    is_alpha(ch) || is_digit(ch) || is_ws(ch)
+    || ch == "/" || ch == "\"" || ch == "'"
+    || ch == "(" || ch == "[" || ch == "{"
+    || ch == ")" || ch == "]" || ch == "}"
+    || ch == "-" || ch == "+" || ch == "*"
+    || ch == "!" || ch == "&" || ch == "|"
+    || ch == "<" || ch == ">" || ch == "="
+    || ch == "%" || ch == "^" || ch == "?"
+    || ch == ":" || ch == ";" || ch == ","
+    || ch == "." || ch == "\\" || ch == "#"
+    || ch == "@" || ch == "$" || ch == "~"
+    || ch == "`"
+}
 fn lexer_peek(lexer: &Lexer) -> str { if lexer.pos < lexer.source.len() { lexer.source[lexer.pos] } else { "" } }
+fn lexer_peek_at(lexer: &Lexer, offset: i64) -> str { let p = lexer.pos + offset; if p < lexer.source.len() { lexer.source[p] } else { "" } }
 fn lexer_advance(lexer: &mut Lexer) -> str { let ch = lexer_peek(lexer); if ch == "" { return ""; }; lexer.pos = lexer.pos + 1; if ch == "\n" { lexer.line = lexer.line + 1; lexer.col = 1; } else { lexer.col = lexer.col + 1; }; ch }
 fn make_span(line: i64, col: i64) -> Span { Span { line: line, col: col } }
 fn char_to_digit(ch: str) -> i64 { if ch == "0" { 0 } else if ch == "1" { 1 } else if ch == "2" { 2 } else if ch == "3" { 3 } else if ch == "4" { 4 } else if ch == "5" { 5 } else if ch == "6" { 6 } else if ch == "7" { 7 } else if ch == "8" { 8 } else if ch == "9" { 9 } else { 0 } }
+fn hex_digit_value(ch: str) -> i64 {
+    if is_digit(ch) { char_to_digit(ch) }
+    else if ch == "a" || ch == "A" { 10 }
+    else if ch == "b" || ch == "B" { 11 }
+    else if ch == "c" || ch == "C" { 12 }
+    else if ch == "d" || ch == "D" { 13 }
+    else if ch == "e" || ch == "E" { 14 }
+    else if ch == "f" || ch == "F" { 15 }
+    else { -1 }
+}
+// hir.th BaseType 编码：0:I64 1:I32 8:I8 9:I16 10:U8 11:U16 12:U32 13:U64
+// 默认整数字面量为 I32（dtype=1），超出 I32 范围则提升为 I64（dtype=0）
 fn parse_int(s: str) -> i64 { let i64_max: i64 = 9223372036854775807; let mut result: i64 = 0; let mut i: i64 = 0; let len = s.len(); while i < len { let ch = s[i]; let d = char_to_digit(ch); if result > (i64_max - d) / 10 { println("[lexer] integer overflow in parse_int"); return i64_max; }; result = result * 10 + d; i = i + 1; }; result }
+
+// ── 进制字面量解析（hex/oct/bin）──
+// 返回 i64 值；radix=16/8/2；支持下划线分隔
+fn parse_radix_int(lexer: &mut Lexer, radix: i64, span: Span) -> Token {
+    let i64_max: i64 = 9223372036854775807;
+    let mut value: i64 = 0;
+    let mut has_digits = false;
+    let mut ch = lexer_peek(lexer);
+    while ch != "" {
+        let is_valid = if radix == 16 { is_hex_digit(ch) }
+                       else if radix == 8 { is_oct_digit(ch) }
+                       else if radix == 2 { is_bin_digit(ch) }
+                       else { false };
+        if is_valid {
+            let d = if radix == 16 { hex_digit_value(ch) } else { char_to_digit(ch) };
+            if d < 0 { break; };
+            if value > (i64_max - d) / radix {
+                println("[lexer] integer overflow in radix literal");
+                while is_hex_digit(ch) || ch == "_" { lexer_advance(lexer); ch = lexer_peek(lexer); };
+                return Token { kind: TokenKind::IntLiteral(i64_max, 1), span: span, disc: 0, ival: i64_max, dtype: 1, .. };
+            };
+            value = value * radix + d;
+            has_digits = true;
+            lexer_advance(lexer);
+            ch = lexer_peek(lexer);
+        } else if ch == "_" {
+            // 下划线分隔符跳过
+            lexer_advance(lexer);
+            ch = lexer_peek(lexer);
+        } else {
+            break;
+        };
+    };
+    if !has_digits {
+        // 无效进制字面量：前缀后无数字，返回 0
+        return Token { kind: TokenKind::IntLiteral(0, 1), span: span, disc: 0, ival: 0, dtype: 1, .. };
+    };
+    // 进制字面量默认 I32，超范围提升 I64
+    let mut dt: i64 = 1;
+    if value < -2147483648 || value > 2147483647 { dt = 0; };
+    return Token { kind: TokenKind::IntLiteral(value, dt), span: span, disc: 0, ival: value, dtype: dt, .. };
+}
+
+// ── 整数后缀检测：i8/i16/i32/i64/u8/u16/u32/u64 ──
+// 返回 dtype（hir.th 编码），0 表示无后缀
+// hir.th: 0:I64 1:I32 8:I8 9:I16 10:U8 11:U16 12:U32 13:U64
+fn detect_int_suffix(lexer: &mut Lexer) -> i64 {
+    let ch = lexer_peek(lexer);
+    if ch != "i" && ch != "u" { return -1; };
+    let c1 = lexer_peek_at(lexer, 1);
+    let c2 = lexer_peek_at(lexer, 2);
+    let c3 = lexer_peek_at(lexer, 3);
+    // i8/u8（2 字符后缀）
+    if ch == "i" && c1 == "8" && !is_alnum(c2) && c2 != "_" {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return 8;  // I8
+    };
+    if ch == "u" && c1 == "8" && !is_alnum(c2) && c2 != "_" {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return 10;  // U8
+    };
+    // i16/i32/i64/u16/u32/u64（3 字符后缀）
+    if ch == "i" && c1 == "1" && c2 == "6" && !is_alnum(c3) && c3 != "_" {
+        lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+        return 9;  // I16
+    };
+    if ch == "i" && c1 == "3" && c2 == "2" && !is_alnum(c3) && c3 != "_" {
+        lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+        return 1;  // I32
+    };
+    if ch == "i" && c1 == "6" && c2 == "4" && !is_alnum(c3) && c3 != "_" {
+        lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+        return 0;  // I64
+    };
+    if ch == "u" && c1 == "1" && c2 == "6" && !is_alnum(c3) && c3 != "_" {
+        lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+        return 11;  // U16
+    };
+    if ch == "u" && c1 == "3" && c2 == "2" && !is_alnum(c3) && c3 != "_" {
+        lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+        return 12;  // U32
+    };
+    if ch == "u" && c1 == "6" && c2 == "4" && !is_alnum(c3) && c3 != "_" {
+        lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+        return 13;  // U64
+    };
+    return -1;  // 无有效后缀
+}
+
+// ── 浮点后缀检测：f16/bf16/f32/f64 ──
+// 返回 lexer dtype 编码（ival 用）：0=F64, 1=F32, 2=F16, 3=BF16；-1=无后缀
+fn detect_float_suffix(lexer: &mut Lexer) -> i64 {
+    let ch = lexer_peek(lexer);
+    // bf16 后缀：b + f + 1 + 6（必须在 f 检测前）
+    if ch == "b" {
+        let c1 = lexer_peek_at(lexer, 1);
+        let c2 = lexer_peek_at(lexer, 2);
+        let c3 = lexer_peek_at(lexer, 3);
+        let c4 = lexer_peek_at(lexer, 4);
+        if c1 == "f" && c2 == "1" && c3 == "6" && !is_alnum(c4) && c4 != "_" {
+            lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+            return 3;  // BF16
+        };
+    };
+    if ch == "f" {
+        let c1 = lexer_peek_at(lexer, 1);
+        let c2 = lexer_peek_at(lexer, 2);
+        let c3 = lexer_peek_at(lexer, 3);
+        if c1 == "1" && c2 == "6" && !is_alnum(c3) && c3 != "_" {
+            lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+            return 2;  // F16
+        };
+        if c1 == "3" && c2 == "2" && !is_alnum(c3) && c3 != "_" {
+            lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+            return 1;  // F32
+        };
+        if c1 == "6" && c2 == "4" && !is_alnum(c3) && c3 != "_" {
+            lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+            return 0;  // F64
+        };
+    };
+    return -1;  // 无有效后缀
+}
 
 fn lexer_next(lexer: &mut Lexer) -> Token {
     let mut ch = lexer_peek(lexer);
@@ -51,20 +216,45 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         let mut is_float = false;
         let mut frac_val: i64 = 0;
         let mut frac_len: i64 = 0;
-        while is_digit(ch) {
-            let d = char_to_digit(ch);
-            // 溢出检测：ival * 10 + d > i64_max 等价于 ival > (i64_max - d) / 10
-            // 与 Rust 侧 str::parse 自动溢出检测对齐
-            if ival > (i64_max - d) / 10 {
-                println("[lexer] integer overflow detected");
-                // 跳过剩余数字，避免后续字符误解析
-                while is_digit(ch) { lexer_advance(lexer); ch = lexer_peek(lexer); };
-                return Token { kind: TokenKind::IntLiteral(i64_max), span: span, disc: 0, ival: i64_max, .. };
+
+        // ── 进制字面量：0x/0o/0b 前缀 ──
+        // 仅当 first=='0' 且下一个字符是进制前缀时进入此分支
+        if ch == "0" {
+            let prefix = lexer_peek_at(lexer, 1);
+            if prefix == "x" || prefix == "X" {
+                lexer_advance(lexer);  // consume 0
+                lexer_advance(lexer);  // consume x
+                return parse_radix_int(lexer, 16, span);
             };
-            ival = ival * 10 + d;
-            lexer_advance(lexer);
-            ch = lexer_peek(lexer);
-            if !is_digit(ch) { break; };
+            if prefix == "o" || prefix == "O" {
+                lexer_advance(lexer);  // consume 0
+                lexer_advance(lexer);  // consume o
+                return parse_radix_int(lexer, 8, span);
+            };
+            if prefix == "b" || prefix == "B" {
+                lexer_advance(lexer);  // consume 0
+                lexer_advance(lexer);  // consume b
+                return parse_radix_int(lexer, 2, span);
+            };
+        };
+
+        // ── 十进制路径（含 0、0.5、0e1 等）──
+        while is_digit(ch) || ch == "_" {
+            if ch == "_" {
+                // 下划线分隔符跳过
+                lexer_advance(lexer);
+                ch = lexer_peek(lexer);
+            } else {
+                let d = char_to_digit(ch);
+                if ival > (i64_max - d) / 10 {
+                    println("[lexer] integer overflow detected");
+                    while is_digit(ch) || ch == "_" { lexer_advance(lexer); ch = lexer_peek(lexer); };
+                    return Token { kind: TokenKind::IntLiteral(i64_max, 0), span: span, disc: 0, ival: i64_max, dtype: 0, .. };
+                };
+                ival = ival * 10 + d;
+                lexer_advance(lexer);
+                ch = lexer_peek(lexer);
+            };
         };
         // Check for float: only if . is followed by a digit (not .. range or .field)
         if ch == "." {
@@ -73,106 +263,101 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
             let after_dot = lexer_peek(lexer);
             lexer.pos = save_pos;
             if is_digit(after_dot) {
-                is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer); while is_digit(ch) { frac_val = frac_val * 10 + char_to_digit(ch); frac_len = frac_len + 1; ch = lexer_advance(lexer); ch = lexer_peek(lexer); }; let mut div: f64 = 1.0; let mut i: i64 = 0; while i < frac_len { div = div * 10.0; i = i + 1; }; let fv: f64 = ival; let ff: f64 = frac_val;
-                // Phase 5.2 step 2：检测 f32/f64 后缀
-                // f32 → ival=1（lower.th 据此降级为 F32），f64 或无后缀 → ival=0（F64）
-                // Phase 5.2 F1：新增 f16（ival=2）和 bf16（ival=3）后缀
-                // 边界检查：后缀后必须非字母数字（避免 3.14factor 误匹配）
+                is_float = true; ch = lexer_advance(lexer); ch = lexer_peek(lexer);
+                while is_digit(ch) || ch == "_" {
+                    if ch == "_" {
+                        lexer_advance(lexer); ch = lexer_peek(lexer);
+                    } else {
+                        frac_val = frac_val * 10 + char_to_digit(ch); frac_len = frac_len + 1;
+                        ch = lexer_advance(lexer); ch = lexer_peek(lexer);
+                    };
+                };
+                let mut div: f64 = 1.0; let mut i: i64 = 0;
+                while i < frac_len { div = div * 10.0; i = i + 1; };
+                let fv: f64 = ival; let ff: f64 = frac_val;
+                let mut float_val: f64 = fv + (ff / div);
+
+                // ── 科学计数法：1e10, 1.5e-3, 1E10 等 ──
+                if ch == "e" || ch == "E" {
+                    ch = lexer_advance(lexer); ch = lexer_peek(lexer);
+                    let mut exp_sign: f64 = 1.0;
+                    if ch == "+" { ch = lexer_advance(lexer); ch = lexer_peek(lexer); }
+                    else if ch == "-" { exp_sign = -1.0; ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+                    let mut exp_val: i64 = 0;
+                    while is_digit(ch) || ch == "_" {
+                        if ch == "_" {
+                            lexer_advance(lexer); ch = lexer_peek(lexer);
+                        } else {
+                            exp_val = exp_val * 10 + char_to_digit(ch);
+                            ch = lexer_advance(lexer); ch = lexer_peek(lexer);
+                        };
+                    };
+                    let mut exp_f: f64 = exp_sign;
+                    let mut ei: i64 = 0;
+                    while ei < exp_val { exp_f = exp_f * 10.0; ei = ei + 1; };
+                    if exp_sign > 0.0 {
+                        float_val = float_val * exp_f;
+                    } else {
+                        float_val = float_val / exp_f;
+                    };
+                };
+
+                // Phase 5.2 step 2 + F1：检测 f16/bf16/f32/f64 后缀
+                let mut dtype: i64 = 0;  // 默认 F64
+                let fs = detect_float_suffix(lexer);
+                if fs >= 0 { dtype = fs; ch = lexer_peek(lexer); };
+                return Token { kind: TokenKind::FloatLiteral(float_val), span: span, disc: 1, ival: dtype, fval: float_val, .. };
+            };
+        };
+        // ── 科学计数法（整数部分无小数点）：1e10, 2E5 等 ──
+        if ch == "e" || ch == "E" {
+            // 检查是否为有效科学计数法（e 后跟可选符号 + 数字）
+            let save_pos = lexer.pos;
+            let c1 = lexer_peek_at(lexer, 1);
+            if is_digit(c1) || ((c1 == "+" || c1 == "-") && is_digit(lexer_peek_at(lexer, 2))) {
+                is_float = true;
+                ch = lexer_advance(lexer); ch = lexer_peek(lexer);
+                let mut exp_sign: f64 = 1.0;
+                if ch == "+" { ch = lexer_advance(lexer); ch = lexer_peek(lexer); }
+                else if ch == "-" { exp_sign = -1.0; ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
+                let mut exp_val: i64 = 0;
+                while is_digit(ch) || ch == "_" {
+                    if ch == "_" {
+                        lexer_advance(lexer); ch = lexer_peek(lexer);
+                    } else {
+                        exp_val = exp_val * 10 + char_to_digit(ch);
+                        ch = lexer_advance(lexer); ch = lexer_peek(lexer);
+                    };
+                };
+                let mut exp_f: f64 = exp_sign;
+                let mut ei: i64 = 0;
+                while ei < exp_val { exp_f = exp_f * 10.0; ei = ei + 1; };
+                let mut float_val: f64 = ival;
+                if exp_sign > 0.0 { float_val = float_val * exp_f; }
+                else { float_val = float_val / exp_f; };
+                // 检测浮点后缀
                 let mut dtype: i64 = 0;
-                // bf16 后缀检测：b + f + 1 + 6（必须在 f 检测前，否则 b 会被忽略）
-                if ch == "b" {
-                    let pos1 = lexer.pos + 1;
-                    let pos2 = lexer.pos + 2;
-                    let pos3 = lexer.pos + 3;
-                    let pos4 = lexer.pos + 4;
-                    if pos3 < lexer.source.len() && pos4 <= lexer.source.len() {
-                        let c1 = lexer.source[pos1];
-                        let c2 = lexer.source[pos2];
-                        let c3 = lexer.source[pos3];
-                        let c4 = if pos4 < lexer.source.len() { lexer.source[pos4] } else { "" };
-                        if c1 == "f" && c2 == "1" && c3 == "6" && !is_alnum(c4) {
-                            dtype = 3;
-                            lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
-                            ch = lexer_peek(lexer);
-                        };
-                    };
-                };
-                if ch == "f" {
-                    let pos1 = lexer.pos + 1;
-                    let pos2 = lexer.pos + 2;
-                    let pos3 = lexer.pos + 3;
-                    if pos2 < lexer.source.len() && pos3 <= lexer.source.len() {
-                        let c1 = lexer.source[pos1];
-                        let c2 = lexer.source[pos2];
-                        let c3 = if pos3 < lexer.source.len() { lexer.source[pos3] } else { "" };
-                        // f16 后缀：f + 1 + 6（dtype=2）
-                        if c1 == "1" && c2 == "6" && !is_alnum(c3) {
-                            dtype = 2;
-                            lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
-                            ch = lexer_peek(lexer);
-                        } else if c1 == "3" && c2 == "2" && !is_alnum(c3) {
-                            dtype = 1;
-                            lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
-                            ch = lexer_peek(lexer);
-                        } else if c1 == "6" && c2 == "4" && !is_alnum(c3) {
-                            dtype = 0;
-                            lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
-                            ch = lexer_peek(lexer);
-                        };
-                    };
-                };
-                return Token { kind: TokenKind::FloatLiteral(fv + (ff / div)), span: span, disc: 1, ival: dtype, fval: fv + (ff / div), .. };
+                let fs = detect_float_suffix(lexer);
+                if fs >= 0 { dtype = fs; ch = lexer_peek(lexer); };
+                return Token { kind: TokenKind::FloatLiteral(float_val), span: span, disc: 1, ival: dtype, fval: float_val, .. };
             };
+            lexer.pos = save_pos;
+            ch = lexer_peek(lexer);
         };
-        // Phase 5.2 step 2：整数后跟 f32 后缀也变 FloatLiteral（与 Rust 语义一致：3f32 == 3.0f32）
-        // Phase 5.2 F1：新增 f16/bf16 后缀（ival=2/3）
-        // bf16 后缀：b + f + 1 + 6（必须在 f 检测前）
-        if ch == "b" {
-            let pos1 = lexer.pos + 1;
-            let pos2 = lexer.pos + 2;
-            let pos3 = lexer.pos + 3;
-            let pos4 = lexer.pos + 4;
-            if pos3 < lexer.source.len() && pos4 <= lexer.source.len() {
-                let c1 = lexer.source[pos1];
-                let c2 = lexer.source[pos2];
-                let c3 = lexer.source[pos3];
-                let c4 = if pos4 < lexer.source.len() { lexer.source[pos4] } else { "" };
-                if c1 == "f" && c2 == "1" && c3 == "6" && !is_alnum(c4) {
-                    lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
-                    ch = lexer_peek(lexer);
-                    let fv: f64 = ival;
-                    return Token { kind: TokenKind::FloatLiteral(fv), span: span, disc: 1, ival: 3, fval: fv, .. };
-                };
-            };
+        // ── 整数后跟 f32/f16/bf16/f64 后缀也变 FloatLiteral（与 Rust 语义一致：3f32 == 3.0f32）──
+        let fs2 = detect_float_suffix(lexer);
+        if fs2 >= 0 {
+            ch = lexer_peek(lexer);
+            let fv: f64 = ival;
+            return Token { kind: TokenKind::FloatLiteral(fv), span: span, disc: 1, ival: fs2, fval: fv, .. };
         };
-        if ch == "f" {
-            let pos1 = lexer.pos + 1;
-            let pos2 = lexer.pos + 2;
-            let pos3 = lexer.pos + 3;
-            if pos2 < lexer.source.len() && pos3 <= lexer.source.len() {
-                let c1 = lexer.source[pos1];
-                let c2 = lexer.source[pos2];
-                let c3 = if pos3 < lexer.source.len() { lexer.source[pos3] } else { "" };
-                // f16 后缀：f + 1 + 6（ival=2）
-                if c1 == "1" && c2 == "6" && !is_alnum(c3) {
-                    lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
-                    ch = lexer_peek(lexer);
-                    let fv: f64 = ival;
-                    return Token { kind: TokenKind::FloatLiteral(fv), span: span, disc: 1, ival: 2, fval: fv, .. };
-                } else if c1 == "3" && c2 == "2" && !is_alnum(c3) {
-                    lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
-                    ch = lexer_peek(lexer);
-                    let fv: f64 = ival;
-                    return Token { kind: TokenKind::FloatLiteral(fv), span: span, disc: 1, ival: 1, fval: fv, .. };
-                } else if c1 == "6" && c2 == "4" && !is_alnum(c3) {
-                    lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
-                    ch = lexer_peek(lexer);
-                    let fv: f64 = ival;
-                    return Token { kind: TokenKind::FloatLiteral(fv), span: span, disc: 1, ival: 0, fval: fv, .. };
-                };
-            };
-        };
-        return Token { kind: TokenKind::IntLiteral(ival), span: span, disc: 0, ival: ival, .. };
+        // ── 整数 dtype 后缀检测：i8/i16/i32/i64/u8/u16/u32/u64 ──
+        let mut int_dtype: i64 = 1;  // 默认 I32
+        let suffix = detect_int_suffix(lexer);
+        if suffix >= 0 { int_dtype = suffix; ch = lexer_peek(lexer); };
+        // 默认 I32 时，超范围提升为 I64（与 Rust 侧一致）
+        if int_dtype == 1 && (ival < -2147483648 || ival > 2147483647) { int_dtype = 0; };
+        return Token { kind: TokenKind::IntLiteral(ival, int_dtype), span: span, disc: 0, ival: ival, dtype: int_dtype, .. };
     };
 
     // Identifier — source slice (O(1))
@@ -206,19 +391,107 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         if ident == "async" { return Token { kind: TokenKind::Async, span: span, disc: 64, sval: "async", .. }; };
         if ident == "await" { return Token { kind: TokenKind::Await, span: span, disc: 65, sval: "await", .. }; };
         if ident == "spawn" { return Token { kind: TokenKind::Spawn, span: span, disc: 66, sval: "spawn", .. }; };
+        // Problem 21 batch 1：新增关键字（与 Rust 侧 token.rs 对齐）
+        if ident == "try" { return Token { kind: TokenKind::Try, span: span, disc: 69, .. }; };
+        if ident == "pub" { return Token { kind: TokenKind::Pub, span: span, disc: 70, .. }; };
+        if ident == "type" { return Token { kind: TokenKind::Type, span: span, disc: 71, .. }; };
+        if ident == "task" { return Token { kind: TokenKind::Task, span: span, disc: 72, .. }; };
+        if ident == "shard" { return Token { kind: TokenKind::Shard, span: span, disc: 73, .. }; };
+        if ident == "node" { return Token { kind: TokenKind::Node, span: span, disc: 74, .. }; };
+        if ident == "macro" { return Token { kind: TokenKind::Macro, span: span, disc: 75, .. }; };
+        if ident == "where" { return Token { kind: TokenKind::Where, span: span, disc: 76, .. }; };
+        if ident == "as" { return Token { kind: TokenKind::As, span: span, disc: 77, .. }; };
+        if ident == "in" { return Token { kind: TokenKind::In, span: span, disc: 78, .. }; };
         return Token { kind: TokenKind::Identifier(ident), span: span, disc: 3, sval: ident, .. };
     };
 
-    // String literal — source slice (O(1))
+    // Char literal — 'a', '\n', '\t', '\'', '\\', etc.
+    if ch == "'" {
+        lexer_advance(lexer);  // consume opening '
+        let c = lexer_peek(lexer);
+        if c == "" {
+            return Token { kind: TokenKind::CharLiteral(""), span: span, disc: 68, sval: "", .. };
+        };
+        let char_val: str;
+        if c == "\\" {
+            lexer_advance(lexer);  // consume backslash
+            let escaped = lexer_peek(lexer);
+            if escaped == "n" { char_val = "\n"; }
+            else if escaped == "t" { char_val = "\t"; }
+            else if escaped == "r" { char_val = "\r"; }
+            else if escaped == "\\" { char_val = "\\"; }
+            else if escaped == "'" { char_val = "'"; }
+            else if escaped == "\"" { char_val = "\""; }
+            else if escaped == "0" { char_val = "\0"; }
+            else { char_val = escaped; };
+            lexer_advance(lexer);  // consume escaped char
+        } else {
+            char_val = c;
+            lexer_advance(lexer);  // consume char
+        };
+        // 期望闭合的 '
+        if lexer_peek(lexer) == "'" { lexer_advance(lexer); };
+        return Token { kind: TokenKind::CharLiteral(char_val), span: span, disc: 68, sval: char_val, .. };
+    };
+
+    // String literal — with escape processing and interpolation detection
     if ch == "\"" {
-        lexer_advance(lexer); // skip opening quote
-        let start = lexer.pos;
+        lexer_advance(lexer);  // skip opening quote
+        let mut result = "";
+        let mut has_interpolation = false;
         ch = lexer_peek(lexer);
-        while (ch != "") && (ch != "\"") { ch = lexer_advance(lexer); ch = lexer_peek(lexer); };
-        let end_pos = lexer.pos;
-        if ch == "\"" { lexer_advance(lexer); }; // skip closing quote
-        let s = lexer.source[start..end_pos];
-        return Token { kind: TokenKind::StringLiteral(s), span: span, disc: 2, sval: s, .. };
+        while (ch != "") && (ch != "\"") {
+            if ch == "\\" {
+                lexer_advance(lexer);  // consume backslash
+                let escaped = lexer_peek(lexer);
+                if escaped == "n" { result = result + "\n"; }
+                else if escaped == "t" { result = result + "\t"; }
+                else if escaped == "r" { result = result + "\r"; }
+                else if escaped == "\\" { result = result + "\\"; }
+                else if escaped == "\"" { result = result + "\""; }
+                else if escaped == "{" { result = result + "{"; }
+                else if escaped == "}" { result = result + "}"; }
+                else if escaped == "0" { result = result + "\0"; }
+                else if escaped == "'" { result = result + "'"; }
+                else if escaped != "" { result = result + escaped; };
+                if escaped != "" { lexer_advance(lexer); };
+                ch = lexer_peek(lexer);
+            } else if ch == "{" {
+                // 检查是否为插值：{ 后跟字母或 _ 才算插值
+                let next = lexer_peek_at(lexer, 1);
+                if is_alpha(next) {
+                    has_interpolation = true;
+                    result = result + "{";
+                    lexer_advance(lexer);  // consume {
+                    ch = lexer_peek(lexer);
+                    // 读取直到 }
+                    while (ch != "") && (ch != "}") && (ch != "\"") {
+                        result = result + ch;
+                        lexer_advance(lexer);
+                        ch = lexer_peek(lexer);
+                    };
+                    if ch == "}" {
+                        result = result + "}";
+                        lexer_advance(lexer);  // consume }
+                        ch = lexer_peek(lexer);
+                    };
+                } else {
+                    // 非插值 { — 当作字面字符
+                    result = result + "{";
+                    lexer_advance(lexer);
+                    ch = lexer_peek(lexer);
+                };
+            } else {
+                result = result + ch;
+                lexer_advance(lexer);
+                ch = lexer_peek(lexer);
+            };
+        };
+        if ch == "\"" { lexer_advance(lexer); };  // skip closing quote
+        if has_interpolation {
+            return Token { kind: TokenKind::InterpolatedString(result), span: span, disc: 67, sval: result, .. };
+        };
+        return Token { kind: TokenKind::StringLiteral(result), span: span, disc: 2, sval: result, .. };
     };
 
     lexer_advance(lexer);
@@ -238,7 +511,9 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
             if third == "=" { lexer_advance(lexer); return Token { kind: TokenKind::DotDotEq, span: span, disc: 62, .. }; };
             return Token { kind: TokenKind::DotDot, span: span, disc: 57, .. };
         };
-        if next == "=" { lexer_advance(lexer); return Token { kind: TokenKind::DotDotEq, span: span, disc: 62, .. }; };
+        // Bug 修复：. 后跟 = 不是 DotDotEq，而是 Dot 后跟 Assign
+        // Rust 侧合法 token：. (Dot), = (Eq), .. (DotDot), ... (DotDotDot 无), ..= (DotDotEq)
+        // 原代码错误地在这里返回 DotDotEq，现已移除
         return Token { kind: TokenKind::Dot, span: span, disc: 56, .. };
     };
     if ch == ":" { if lexer_peek(lexer) == ":" { lexer_advance(lexer); return Token { kind: TokenKind::ColonColon, span: span, disc: 60, .. }; }; return Token { kind: TokenKind::Colon, span: span, disc: 55, .. }; };
@@ -249,7 +524,12 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
     if ch == "%" { return Token { kind: TokenKind::Percent, span: span, disc: 30, .. }; };
     if ch == "=" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::EqEq, span: span, disc: 31, .. }; }; if lexer_peek(lexer) == ">" { lexer_advance(lexer); return Token { kind: TokenKind::FatArrow, span: span, disc: 59, .. }; }; return Token { kind: TokenKind::Assign, span: span, disc: 42, .. }; };
     if ch == "!" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::NotEq, span: span, disc: 32, .. }; }; return Token { kind: TokenKind::Not, span: span, disc: 39, .. }; };
-    if ch == "<" { if lexer_peek(lexer) == "=" { lexer_advance(lexer); return Token { kind: TokenKind::LtEq, span: span, disc: 35, .. }; }; return Token { kind: TokenKind::Lt, span: span, disc: 33, .. }; };
+    if ch == "<" {
+        let next = lexer_peek(lexer);
+        if next == "=" { lexer_advance(lexer); return Token { kind: TokenKind::LtEq, span: span, disc: 35, .. }; };
+        if next == "<" { lexer_advance(lexer); return Token { kind: TokenKind::Shl, span: span, disc: 80, .. }; };
+        return Token { kind: TokenKind::Lt, span: span, disc: 33, .. };
+    };
     if ch == ">" {
         let next = lexer_peek(lexer);
         if next == ">" { lexer_advance(lexer); return Token { kind: TokenKind::Shr, span: span, disc: 63, .. }; };
@@ -258,6 +538,9 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
     };
     if ch == "&" { if lexer_peek(lexer) == "&" { lexer_advance(lexer); return Token { kind: TokenKind::AndAnd, span: span, disc: 37, .. }; }; return Token { kind: TokenKind::Ampersand, span: span, disc: 40, .. }; };
     if ch == "|" { if lexer_peek(lexer) == "|" { lexer_advance(lexer); return Token { kind: TokenKind::OrOr, span: span, disc: 38, .. }; }; return Token { kind: TokenKind::Pipe, span: span, disc: 41, .. }; };
+    // Problem 21 batch 1：新增运算符 ^ (Caret), ? (QuestionMark)
+    if ch == "^" { return Token { kind: TokenKind::Caret, span: span, disc: 79, .. }; };
+    if ch == "?" { return Token { kind: TokenKind::QuestionMark, span: span, disc: 81, .. }; };
     Token { kind: TokenKind::Identifier(ch), span: span, disc: 3, sval: "", .. }
 }
 

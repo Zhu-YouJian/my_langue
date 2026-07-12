@@ -26,7 +26,7 @@ impl WasmCompiler {
             self.local_count += 1;
         }
         self.param_count = self.local_count; // parameters use correct types
-        let locals: Vec<ValType> = (0..256).map(|_| ValType::I64).collect();
+        let locals: Vec<ValType> = (0..512).map(|_| ValType::I64).collect();
         let mut body = Function::new_with_locals_types(locals);
         self.compile_expr(&mut body, &func.body)?;
         if matches!(&func.return_type, Type::Base(BaseType::Unit)) {
@@ -39,7 +39,7 @@ impl WasmCompiler {
     pub(super) fn compile_main(&mut self, program: &HirProgram) -> TenthResult<Function> {
         self.local_map.clear();
         self.local_count = 0;
-        let locals: Vec<ValType> = (0..256).map(|_| ValType::I64).collect();
+        let locals: Vec<ValType> = (0..512).map(|_| ValType::I64).collect();
         let mut body = Function::new_with_locals_types(locals);
         if let Some(ref expr) = program.main_expr {
             self.compile_expr(&mut body, expr)?;

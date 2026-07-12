@@ -117,6 +117,241 @@ fn check_bmm_shape(recv_dc: i64, recv_d0: i64, recv_d1: i64, recv_d2: i64, arg_d
     ""
 }
 
+// ── Problem 21 批次4: backward shape check helpers ──
+// Helpers for Phase 1 (per-op backward shape check) and Phase 2 (cross-op
+// gradient shape propagation). Mirror Rust side backward_shapes.rs / types.rs.
+
+// Push a compile-time warning (does not abort compilation).
+// Used by memory/FLOPs estimates (护城河 D).
+fn push_warning(p: &mut HirProgram, message: str) {
+    p.warnings.push(HirError { message: message });
+}
+
+// Check if a shape has any static info (dim_count > 0 in tenthc).
+// dim_count=0 means all dims are Any/Symbol (unknown).
+fn has_static_info(dc: i64) -> bool {
+    dc > 0
+}
+
+// Compute static element count (numel) from shape info.
+// Returns -1 if unknown (dim_count=0 or any dim <= 0).
+// Only handles 1D and 2D (tenthc has no dim2 field).
+fn static_numel(dc: i64, d0: i64, d1: i64) -> i64 {
+    if dc == 0 { return -1; };
+    if dc == 1 {
+        if d0 > 0 && d0 < 1000000000 { return d0; };
+        return -1;
+    };
+    if dc == 2 {
+        if d0 > 0 && d1 > 0 && d0 < 1000000000 && d1 < 1000000000 { return d0 * d1; };
+        return -1;
+    };
+    // dc >= 3: tenthc can't compute (no dim2)
+    -1
+}
+
+// Map BaseType discriminant to byte size.
+// Encoding: 0:I64 1:I32 2:F64 3:F32 4:Bool 5:Str 6:Unit 7:Char
+//           8:I8 9:I16 10:U8 11:U16 12:U32 13:U64 14:F16 15:BF16
+fn dtype_size_bytes(sub: i64) -> i64 {
+    // 8 bytes: I64(0), F64(2), U64(13)
+    if sub == 0 || sub == 2 || sub == 13 { return 8; };
+    // 4 bytes: I32(1), F32(3), U32(12)
+    if sub == 1 || sub == 3 || sub == 12 { return 4; };
+    // 2 bytes: I16(9), U16(11), F16(14), BF16(15)
+    if sub == 9 || sub == 11 || sub == 14 || sub == 15 { return 2; };
+    // 1 byte: Bool(4), Char(7), I8(8), U8(10)
+    if sub == 4 || sub == 7 || sub == 8 || sub == 10 { return 1; };
+    // Default (Str/Unit/unknown): 8
+    8
+}
+
+// Compute static byte size of a Tensor type.
+// Returns -1 if not a Tensor or numel unknown.
+fn static_bytes(p: &mut HirProgram, ty_idx: i64) -> i64 {
+    if ty_idx <= 0 || ty_idx > p.type_nodes.len() { return -1; };
+    let t = p.type_nodes[ty_idx - 1];
+    if t.disc != 1 { return -1; };
+    let numel = static_numel(t.dim_count, t.dim0, t.dim1);
+    if numel < 0 { return -1; };
+    numel * dtype_size_bytes(t.sub)
+}
+
+// Format a single dimension value as a string.
+fn fmt_dim(d: i64) -> str {
+    if d > 0 { return int_to_str(d); };
+    ".."
+}
+
+// Format shape (dc, d0, d1) as a human-readable string like "[3, 4]" or "[..]".
+fn fmt_dims(dc: i64, d0: i64, d1: i64) -> str {
+    if dc == 0 { return "[..]"; };
+    if dc == 1 { return "[" + fmt_dim(d0) + "]"; };
+    if dc == 2 { return "[" + fmt_dim(d0) + ", " + fmt_dim(d1) + "]"; };
+    "[..]"
+}
+
+// Check if two Known dims are compatible (equal).
+// In tenthc, all dims with dim_count > 0 are Known (no Symbol tracking).
+fn dims_compatible(a: i64, b: i64) -> bool {
+    a == b
+}
+
+// Check if unbroadcast(grad_shape, target_shape) is feasible.
+// Rules (from-right alignment, target left-padded with Known(1)):
+// - target dim == 1 → ok (can sum)
+// - target dim == grad dim → ok
+// - else → not feasible
+// Conservative: if either shape is unknown (dc=0), return true (skip check).
+fn unbroadcast_feasible(grad_dc: i64, grad_d0: i64, grad_d1: i64, target_dc: i64, target_d0: i64, target_d1: i64) -> bool {
+    if target_dc == 0 { return true; };
+    if grad_dc == 0 { return true; };
+    if grad_dc > 2 || target_dc > 2 { return true; };
+    let pad = grad_dc - target_dc;
+    if pad < 0 { return true; };
+    let mut i: i64 = 0;
+    while i < grad_dc {
+        let g_dim = if i == 0 { grad_d0 } else { grad_d1 };
+        let t_dim = if i < pad {
+            1
+        } else {
+            let tidx = i - pad;
+            if tidx == 0 { target_d0 } else { target_d1 }
+        };
+        if t_dim != 1 && t_dim != g_dim {
+            return false;
+        };
+        i = i + 1;
+    };
+    true
+}
+
+// Check if two shapes have compatible element counts (for reshape).
+// Only checks when both shapes are fully Known.
+fn numel_compatible(a_dc: i64, a_d0: i64, a_d1: i64, b_dc: i64, b_d0: i64, b_d1: i64) -> bool {
+    let a_numel = static_numel(a_dc, a_d0, a_d1);
+    let b_numel = static_numel(b_dc, b_d0, b_d1);
+    if a_numel < 0 || b_numel < 0 { return true; };
+    a_numel == b_numel
+}
+
+// Check if grad_shape is compatible with param_shape (for Phase 2 validation).
+// Bidirectional broadcast: Known(1) on either side is compatible with anything.
+fn shape_compatible(grad_dc: i64, grad_d0: i64, grad_d1: i64, param_dc: i64, param_d0: i64, param_d1: i64) -> bool {
+    if grad_dc != param_dc { return false; };
+    if grad_dc == 0 { return true; };
+    if grad_dc >= 1 {
+        if grad_d0 != 1 && param_d0 != 1 && grad_d0 != param_d0 { return false; };
+    };
+    if grad_dc >= 2 {
+        if grad_d1 != 1 && param_d1 != 1 && grad_d1 != param_d1 { return false; };
+    };
+    true
+}
+
+// ── Problem 21 批次4: Phase 1 backward shape checks ──
+
+// Check backward shape for binary arithmetic (add/sub/mul/div).
+// Both inputs receive grad = output_shape; must unbroadcast back to input shape.
+fn check_binary_backward_shape(p: &mut HirProgram, op: str, l_dc: i64, l_d0: i64, l_d1: i64, r_dc: i64, r_d0: i64, r_d1: i64) {
+    if op != "+" && op != "-" && op != "*" && op != "/" { return; };
+    if l_dc == 0 || r_dc == 0 { return; };
+    if l_dc != r_dc { return; };
+    if l_dc >= 1 && l_d0 != r_d0 && l_d0 != 1 && r_d0 != 1 { return; };
+    if l_dc == 2 && l_d1 != r_d1 && l_d1 != 1 && r_d1 != 1 { return; };
+    // Output shape = broadcast result
+    let out_d0 = if l_dc >= 1 {
+        if l_d0 == r_d0 { l_d0 } else if l_d0 == 1 { r_d0 } else { l_d0 }
+    } else { 0 };
+    let out_d1 = if l_dc == 2 {
+        if l_d1 == r_d1 { l_d1 } else if l_d1 == 1 { r_d1 } else { l_d1 }
+    } else { 0 };
+    if !unbroadcast_feasible(l_dc, out_d0, out_d1, l_dc, l_d0, l_d1) {
+        push_error(p, "编译期反向 shape 验证失败（" + op + "）：梯度 " + fmt_dims(l_dc, out_d0, out_d1) + " 无法 unbroadcast 到左输入 " + fmt_dims(l_dc, l_d0, l_d1));
+    };
+    if !unbroadcast_feasible(l_dc, out_d0, out_d1, r_dc, r_d0, r_d1) {
+        push_error(p, "编译期反向 shape 验证失败（" + op + "）：梯度 " + fmt_dims(l_dc, out_d0, out_d1) + " 无法 unbroadcast 到右输入 " + fmt_dims(r_dc, r_d0, r_d1));
+    };
+}
+
+// Check backward shape for matmul.
+// matmul backward: d_a(M,K), d_b(K,N) — always compatible with input shapes.
+// This function is a no-op (gradient shapes always match input shapes).
+fn check_matmul_backward_shape(p: &mut HirProgram, r_dc: i64, r_d0: i64, r_d1: i64, a_dc: i64, a_d0: i64, a_d1: i64) {
+    return;
+}
+
+// Check cross_entropy target/logits shape compatibility.
+// logits(B,V), target must be [B] or [B,V].
+fn check_cross_entropy_compat(p: &mut HirProgram, logits_expr_idx: i64, target_expr_idx: i64) {
+    let logits_lty = get_expr_ty(p, logits_expr_idx);
+    let target_lty = get_expr_ty(p, target_expr_idx);
+    let l_dc = get_tensor_dim_count(p, logits_lty);
+    let t_dc = get_tensor_dim_count(p, target_lty);
+    if l_dc != 2 { return; };
+    if t_dc == 0 { return; };
+    let l_d0 = get_tensor_dim0(p, logits_lty);
+    let l_d1 = get_tensor_dim1(p, logits_lty);
+    let t_d0 = get_tensor_dim0(p, target_lty);
+    let t_d1 = get_tensor_dim1(p, target_lty);
+    let valid = if t_dc == 1 {
+        dims_compatible(t_d0, l_d0)
+    } else if t_dc == 2 {
+        dims_compatible(t_d0, l_d0) && dims_compatible(t_d1, l_d1)
+    } else {
+        false
+    };
+    if !valid {
+        push_error(p, "cross_entropy target shape " + fmt_dims(t_dc, t_d0, t_d1) + " 与 logits shape " + fmt_dims(l_dc, l_d0, l_d1) + " 不兼容（应为 [" + fmt_dim(l_d0) + "] 或 [" + fmt_dim(l_d0) + ", " + fmt_dim(l_d1) + "]）");
+    };
+}
+
+// ── Problem 21 批次4: 编译期内存/FLOPs 预估（护城河 D）──
+
+// Emit memory estimate warning for large tensor allocation.
+// Threshold: 1 GB (1024*1024*1024 bytes).
+fn emit_memory_estimate(p: &mut HirProgram, ty_idx: i64, context: str) {
+    let bytes = static_bytes(p, ty_idx);
+    if bytes < 0 { return; };
+    let gb = 1024 * 1024 * 1024;
+    if bytes >= gb {
+        let msg = context + " 创建约 " + int_to_str(bytes / gb) + " GB 的 tensor（编译期预估，可能触发 OOM）";
+        push_warning(p, msg);
+    };
+}
+
+// Emit FLOPs estimate for matmul: (M,K)@(K,N) → M*K*N FLOPs.
+// Threshold: 1 GFLOP (10^9).
+fn emit_matmul_flop_estimate(p: &mut HirProgram, recv_lty: i64, arg_lty: i64) {
+    if recv_lty <= 0 || recv_lty > p.type_nodes.len() { return; };
+    if arg_lty <= 0 || arg_lty > p.type_nodes.len() { return; };
+    let rt = p.type_nodes[recv_lty - 1];
+    let at = p.type_nodes[arg_lty - 1];
+    if rt.disc != 1 || at.disc != 1 { return; };
+    if rt.dim_count != 2 || at.dim_count != 2 { return; };
+    let m = rt.dim0;
+    let k1 = rt.dim1;
+    let k2 = at.dim0;
+    let n = at.dim1;
+    if m <= 0 || k1 <= 0 || k2 <= 0 || n <= 0 { return; };
+    if k1 != k2 { return; };
+    if m > 1000000 || k1 > 1000000 || n > 1000000 { return; };
+    let flops = m * k1 * n;
+    let gflop = 1000000000;
+    if flops >= gflop {
+        let msg = "matmul 约 " + int_to_str(flops / gflop) + " GFLOPs（" + int_to_str(m) + "×" + int_to_str(k1) + " @ " + int_to_str(k2) + "×" + int_to_str(n) + "，编译期预估）";
+        push_warning(p, msg);
+    };
+}
+
+// Emit FLOPs estimate for bmm: (B,M,K)@(B,K,N) → B*M*K*N*2 FLOPs.
+// NOTE: tenthc HirType only tracks dim0/dim1 (no dim2 field), so 3D shapes
+// are unavailable. This function is a no-op — defers to runtime.
+// Kept for API parity with Rust side (types.rs:1046-1081).
+fn emit_bmm_flop_estimate(p: &mut HirProgram, recv_lty: i64, arg_lty: i64) {
+    return;
+}
+
 // Check binary broadcast for 1D/2D tensors (NumPy from-right alignment).
 // Returns error message ("" = ok). Only checks when both sides have known dims.
 fn check_binary_broadcast(l_dc: i64, l_d0: i64, l_d1: i64, r_dc: i64, r_d0: i64, r_d1: i64) -> str {
@@ -174,6 +409,9 @@ fn dims_d1_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
 fn parse_type(p: &mut HirProgram, s: str) -> i64 {
     if s == "" { return add_type(p, 11, 0, "", 0, 0, 0); };
     if s == "()" { return add_type(p, 11, 0, "", 0, 0, 0); };
+    // Problem 21 batch 3: Never 类型（发散类型 `!`）—— 标记永不返回的函数
+    // （如 `fn exit() -> !`）。语义：Never 可统一到任何类型 T。
+    if s == "!" { return add_type(p, 12, 0, "", 0, 0, 0); };
     if s == "i64" { return add_type(p, 0, 0, "", 0, 0, 0); };
     if s == "i32" { return add_type(p, 0, 1, "", 0, 0, 0); };
     if s == "f64" { return add_type(p, 0, 2, "", 0, 0, 0); };
@@ -184,6 +422,15 @@ fn parse_type(p: &mut HirProgram, s: str) -> i64 {
     // Stage 7: composite type — Tensor[<dtype>, <dims>]
     let ty = parse_tensor_type(p, s);
     if ty != 0 { return ty; };
+    // Problem 21 batch 2: Array types — "[T; N]" or "[T]"
+    let arr_ty = parse_array_type(p, s);
+    if arr_ty != 0 { return arr_ty; };
+    // Problem 21 batch 2: Function types — "fn(params) -> ret"
+    let fn_ty = parse_fn_type(p, s);
+    if fn_ty != 0 { return fn_ty; };
+    // Problem 21 batch 2: Generic types — "Name<args>"
+    let gen_ty = parse_generic_type(p, s);
+    if gen_ty != 0 { return gen_ty; };
     add_type(p, 4, 0, s, 0, 0, 0)
 }
 
@@ -240,6 +487,189 @@ fn parse_tensor_type(p: &mut HirProgram, s: str) -> i64 {
         return add_tensor_type_param(p, dtype_idx, 0, 0, 0);
     };
     0
+}
+
+// Problem 21 batch 2: Parse "& T" or "& mut T" reference types.
+// Format from parse_type_annotation: "& T" (Ref, disc=6) or "& mut T" (MutRef, disc=7).
+// The inner type T is recursively parsed via parse_type.
+// Returns 0 if s is not a reference type.
+fn parse_ref_type(p: &mut HirProgram, s: str) -> i64 {
+    let slen = str_len(s);
+    if slen < 3 { return 0; };  // minimum: "& T"
+    // Check for "& mut " prefix (6 chars) — MutRef
+    if slen > 6 {
+        let prefix = str_slice(s, 0, 6);
+        if prefix == "& mut " {
+            let inner = str_slice(s, 6, slen);
+            let inner_ty = parse_type(p, inner);
+            return add_type(p, 7, inner_ty, "", 0, 0, 0);  // MutRef (disc=7)
+        };
+    };
+    // Check for "& " prefix (2 chars) — Ref
+    let prefix2 = str_slice(s, 0, 2);
+    if prefix2 == "& " {
+        let inner = str_slice(s, 2, slen);
+        let inner_ty = parse_type(p, inner);
+        return add_type(p, 6, inner_ty, "", 0, 0, 0);  // Ref (disc=6)
+    };
+    0
+}
+
+// Problem 21 batch 2: Parse "[T; N]" or "[T]" array types.
+// Format from parse_type_annotation: "[T;N]" or "[T]" (no spaces inside brackets).
+// The element type T is recursively parsed. The size N is ignored at the HIR
+// level (Rust TypeAnnotation::Array also only stores the element type).
+// Returns 0 if s is not an array type.
+fn parse_array_type(p: &mut HirProgram, s: str) -> i64 {
+    let slen = str_len(s);
+    if slen < 3 { return 0; };  // minimum: "[T]"
+    let first = str_at(s, 0);
+    if first != "[" { return 0; };
+    let last = str_at(s, slen - 1);
+    if last != "]" { return 0; };
+    let inner = str_slice(s, 1, slen - 1);
+    let ilen = str_len(inner);
+    if ilen == 0 { return 0; };
+    // Find ";" to separate element type from size (size is ignored in HIR)
+    let mut semi_idx: i64 = -1;
+    let mut i: i64 = 0;
+    while i < ilen {
+        let ch = str_at(inner, i);
+        if ch == ";" { semi_idx = i; break; };
+        i = i + 1;
+    };
+    let elem_str = if semi_idx >= 0 { str_slice(inner, 0, semi_idx) } else { inner };
+    let elem_ty = parse_type(p, elem_str);
+    add_type(p, 2, elem_ty, "", 0, 0, 0)  // Array (disc=2), sub=elem_ty
+}
+
+// Problem 21 batch 2: Parse "fn(params) -> ret" function types.
+// Format from parse_type_annotation: "fn(p1,p2) -> ret" or "fn() -> ret".
+// Params are recursively parsed and stored in type_args. Return type is stored
+// in ret_ty. Returns 0 if s is not a function type.
+fn parse_fn_type(p: &mut HirProgram, s: str) -> i64 {
+    let slen = str_len(s);
+    if slen < 8 { return 0; };  // minimum: "fn() -> T"
+    // Check prefix "fn(" (3 chars)
+    let prefix = str_slice(s, 0, 3);
+    if prefix != "fn(" { return 0; };
+    // Find matching ")" for the param list, tracking paren depth
+    let mut paren_depth: i64 = 1;
+    let mut close_idx: i64 = -1;
+    let mut i: i64 = 3;
+    while i < slen {
+        let ch = str_at(s, i);
+        if ch == "(" { paren_depth = paren_depth + 1; };
+        if ch == ")" {
+            paren_depth = paren_depth - 1;
+            if paren_depth == 0 { close_idx = i; break; };
+        };
+        i = i + 1;
+    };
+    if close_idx < 0 { return 0; };
+    // Extract param string: s[3..close_idx]
+    let param_str = str_slice(s, 3, close_idx);
+    // Parse params (split by "," and recursively parse each)
+    let params_start = p.type_args.len() + 1;
+    let mut params_count: i64 = 0;
+    if str_len(param_str) > 0 {
+        let mut start: i64 = 0;
+        let plen = str_len(param_str);
+        let mut j: i64 = 0;
+        while j < plen {
+            let ch = str_at(param_str, j);
+            if ch == "," {
+                let pstr = str_slice(param_str, start, j);
+                let pty = parse_type(p, pstr);
+                p.type_args.push(pty);
+                params_count = params_count + 1;
+                start = j + 1;
+            };
+            j = j + 1;
+        };
+        // Last param (or only param if no comma)
+        if start < plen {
+            let pstr = str_slice(param_str, start, plen);
+            if str_len(pstr) > 0 {
+                let pty = parse_type(p, pstr);
+                p.type_args.push(pty);
+                params_count = params_count + 1;
+            };
+        };
+    };
+    // Parse return type: after ")" — expected " -> T"
+    let after_paren = str_slice(s, close_idx + 1, slen);
+    // Strip " -> " prefix (4 chars) if present
+    let ret_str = if str_len(after_paren) >= 4 {
+        let arrow_prefix = str_slice(after_paren, 0, 4);
+        if arrow_prefix == " -> " {
+            str_slice(after_paren, 4, str_len(after_paren))
+        } else {
+            after_paren
+        }
+    } else {
+        after_paren
+    };
+    let ret_ty = parse_type(p, ret_str);
+    add_type(p, 3, 0, "", params_start, params_count, ret_ty)  // FnType (disc=3)
+}
+
+// Problem 21 batch 2: Parse "Name<args>" generic types.
+// Format from parse_type_annotation: "Name<arg1,arg2,...>" (no spaces inside angles).
+// Supports nested generics like "HashMap<K,Vec<V>>" via angle-depth tracking.
+// Returns 0 if s is not a generic type.
+fn parse_generic_type(p: &mut HirProgram, s: str) -> i64 {
+    let slen = str_len(s);
+    if slen < 4 { return 0; };  // minimum: "A<B>"
+    // Find first "<"
+    let mut lt_idx: i64 = -1;
+    let mut i: i64 = 0;
+    while i < slen {
+        let ch = str_at(s, i);
+        if ch == "<" { lt_idx = i; break; };
+        i = i + 1;
+    };
+    if lt_idx < 0 { return 0; };
+    // Check that string ends with ">"
+    let last = str_at(s, slen - 1);
+    if last != ">" { return 0; };
+    // Extract base name: s[0..lt_idx]
+    let base_name = str_slice(s, 0, lt_idx);
+    if str_len(base_name) == 0 { return 0; };
+    // Extract args: s[lt_idx+1..slen-1]
+    let args_str = str_slice(s, lt_idx + 1, slen - 1);
+    // Parse args (split by "," at depth 0, recursively parse each)
+    let params_start = p.type_args.len() + 1;
+    let mut params_count: i64 = 0;
+    if str_len(args_str) > 0 {
+        let mut start: i64 = 0;
+        let alen = str_len(args_str);
+        let mut j: i64 = 0;
+        let mut depth: i64 = 0;
+        while j < alen {
+            let ch = str_at(args_str, j);
+            if ch == "<" { depth = depth + 1; };
+            if ch == ">" { depth = depth - 1; };
+            if ch == "," && depth == 0 {
+                let astr = str_slice(args_str, start, j);
+                let aty = parse_type(p, astr);
+                p.type_args.push(aty);
+                params_count = params_count + 1;
+                start = j + 1;
+            };
+            j = j + 1;
+        };
+        // Last arg (or only arg if no comma)
+        if start < alen {
+            let astr = str_slice(args_str, start, alen);
+            if str_len(astr) > 0 {
+                let aty = parse_type(p, astr);
+                p.type_args.push(aty);
+                params_count = params_count + 1;
+            };
+        };
+    };
+    add_type(p, 5, 0, base_name, params_start, params_count, 0)  // Generic (disc=5)
 }
 
 // Substitute type parameters with concrete types.
@@ -375,18 +805,183 @@ fn check_borrow_mut(p: &mut HirProgram, name: str) -> bool {
 }
 
 // Release all shared and exclusive borrows, resetting them to Owned. Preserves Moved state.
+// P0 #4 (AUDIT-11.1.1/T19 B6): 跳过仍活跃 borrow holder 引用的 borrowed 变量。
 fn release_borrows(p: &mut HirProgram) {
+    // 收集仍活跃 holder 引用的 borrowed 变量名集合
+    // holder 活跃条件：(1) holder 在 var_types 中存在（未离开 scope）
+    //                  (2) holder 的 ownership 状态不是 Moved (3)
+    let mut protected_count: i64 = 0;
     let mut i: i64 = 0;
-    while i < p.ownership.len() {
-        let state = p.ownership[i].state;
-        if state == 2 || state >= 100 {
-            p.ownership[i].state = 0;
+    while i < p.borrow_holders.len() {
+        let holder_name = p.borrow_holders[i].holder;
+        let borrowed_name = p.borrow_holders[i].borrowed;
+        let mut holder_active = false;
+        // 检查 holder 是否在 var_types 中（仍未离开 scope）
+        let mut j: i64 = 0;
+        while j < p.var_types.len() {
+            if p.var_types[j].name == holder_name {
+                holder_active = true;
+                break;
+            };
+            j = j + 1;
+        };
+        if holder_active {
+            // 检查 holder 是否被 Moved
+            let holder_state = lookup_ownership(p, holder_name);
+            if holder_state != 3 {
+                // holder 仍活跃且未 Moved → borrowed 受保护
+                protected_count = protected_count + 1;
+            };
         };
         i = i + 1;
     };
+    // 由于 tenthc 无 HashSet，用线性扫描判断每个 ownership 条目是否受保护
+    let mut k: i64 = 0;
+    while k < p.ownership.len() {
+        let state = p.ownership[k].state;
+        if state == 2 || state >= 100 {
+            let oname = p.ownership[k].name;
+            let mut is_protected = false;
+            let mut m: i64 = 0;
+            while m < p.borrow_holders.len() {
+                let holder_name = p.borrow_holders[m].holder;
+                let borrowed_name = p.borrow_holders[m].borrowed;
+                if borrowed_name == oname {
+                    // 检查 holder 是否活跃
+                    let mut holder_active = false;
+                    let mut j: i64 = 0;
+                    while j < p.var_types.len() {
+                        if p.var_types[j].name == holder_name {
+                            holder_active = true;
+                            break;
+                        };
+                        j = j + 1;
+                    };
+                    if holder_active {
+                        let holder_state = lookup_ownership(p, holder_name);
+                        if holder_state != 3 {
+                            is_protected = true;
+                            break;
+                        };
+                    };
+                };
+                m = m + 1;
+            };
+            if !is_protected {
+                p.ownership[k].state = 0;
+            };
+        };
+        k = k + 1;
+    };
 }
 
-// Returns true if the statement is a `let` with a ref/mut_ref initializer (persistent borrow).
+// ── P0 #4: borrow_holders 机制（AUDIT-11.1.1/T19 B6 + AUDIT-11.1.2/T20 PB2）──
+// 记录持久借用关系：holder 持有 borrowed 的引用。
+// 由 `let r = &x;` / `let m = &mut x;` / `let r = if c { &x } else { &y };` 触发。
+fn record_borrow_holder(p: &mut HirProgram, holder: str, borrowed: str) {
+    if holder == "" { return; };
+    if borrowed == "" { return; };
+    // 去重：若 (holder, borrowed) 已存在则跳过
+    let mut i: i64 = 0;
+    while i < p.borrow_holders.len() {
+        if p.borrow_holders[i].holder == holder && p.borrow_holders[i].borrowed == borrowed {
+            return;
+        };
+        i = i + 1;
+    };
+    p.borrow_holders.push(HirBorrowHolder { holder: holder, borrowed: borrowed });
+}
+
+// 递归判断表达式是否可能产生 Ref/MutRef 类型的最终值。
+// 用于 creates_persistent_borrow 识别 If/Block/Match 中的 Ref 借用。
+// 与 Rust 侧 lower/mod.rs::expr_may_produce_ref 对齐。
+fn expr_may_produce_ref(exprs: Vec<Expr>, idx: i64) -> bool {
+    if idx <= 0 || idx > exprs.len() { return false; };
+    let e = exprs[idx - 1];
+    let kind = e.kind;
+    if kind == "ref" || kind == "mut_ref" { return true; };
+    if kind == "if" {
+        let then_ref = expr_may_produce_ref(exprs, e.right);
+        if then_ref { return true; };
+        if e.extra_start > 0 {
+            return expr_may_produce_ref(exprs, e.extra_start);
+        };
+        return false;
+    };
+    if kind == "block" {
+        // Block 的最终值由最后一个 stmt 决定（若为 Expr stmt）
+        if e.extra_count > 0 {
+            let last_stmt_idx = e.extra_start + e.extra_count - 1;
+            if last_stmt_idx > 0 && last_stmt_idx <= exprs.len() {
+                // 这里简化处理：block_idxs 不可访问，保守返回 false
+                // 真正的 block 最终表达式判断在 collect_persistent_borrowed_idents_into 中
+            };
+        };
+        return false;
+    };
+    if kind == "match" {
+        // 遍历所有 arm 的 body（存储在 match_arms，但此处无 match_arms 参数）
+        // 保守返回 false；真正的检测在 collect_persistent_borrowed_idents 中
+        return false;
+    };
+    if kind == "move" {
+        return expr_may_produce_ref(exprs, e.left);
+    };
+    false
+}
+
+// 收集表达式中所有"作为最终值产出"的 Ref/MutRef 所引用的变量名。
+// 用于 `let r = if c { &x } else { &y };` 类构造，让 r 同时被记录为
+// x 和 y 的 borrow holder——任一分支选中都需保留对应借用状态。
+// 与 Rust 侧 lower/mod.rs::collect_persistent_borrowed_idents 对齐。
+fn collect_persistent_borrowed_idents(exprs: Vec<Expr>, idx: i64) -> Vec<str> {
+    let mut out: Vec<str> = Vec::new();
+    collect_persistent_borrowed_idents_into(exprs, idx, &mut out);
+    out
+}
+
+fn collect_persistent_borrowed_idents_into(exprs: Vec<Expr>, idx: i64, out: &mut Vec<str>) {
+    if idx <= 0 || idx > exprs.len() { return; };
+    let e = exprs[idx - 1];
+    let kind = e.kind;
+    if kind == "ref" || kind == "mut_ref" {
+        // 取被引用的 ident 名
+        let inner_idx = e.left;
+        if inner_idx > 0 && inner_idx <= exprs.len() {
+            let inner = exprs[inner_idx - 1];
+            if inner.kind == "ident" {
+                // 去重
+                let mut found = false;
+                let mut i: i64 = 0;
+                while i < out.len() {
+                    if out[i] == inner.sval { found = true; break; };
+                    i = i + 1;
+                };
+                if !found { out.push(inner.sval); };
+            };
+        };
+        return;
+    };
+    if kind == "if" {
+        collect_persistent_borrowed_idents_into(exprs, e.right, out);
+        if e.extra_start > 0 {
+            collect_persistent_borrowed_idents_into(exprs, e.extra_start, out);
+        };
+        return;
+    };
+    if kind == "match" {
+        // match arms 的 body 在 match_arms 数组中，但此处无法访问。
+        // 简化：不收集 match 中的 ref（保守处理，不会破坏自举）。
+        return;
+    };
+    if kind == "move" {
+        collect_persistent_borrowed_idents_into(exprs, e.left, out);
+        return;
+    };
+}
+
+// 判断 stmt 是否创建持久借用（let r = &x; 类）。
+// 与 Rust 侧 lower/mod.rs::creates_persistent_borrow 对齐。
 fn creates_persistent_borrow(stmts: Vec<Stmt>, exprs: Vec<Expr>, stmt_idx: i64) -> bool {
     if stmt_idx <= 0 || stmt_idx > stmts.len() { return false; };
     let s = stmts[stmt_idx - 1];
@@ -394,7 +989,193 @@ fn creates_persistent_borrow(stmts: Vec<Stmt>, exprs: Vec<Expr>, stmt_idx: i64) 
     if s.expr_idx <= 0 { return false; };
     if s.expr_idx > exprs.len() { return false; };
     let init = exprs[s.expr_idx - 1];
-    init.kind == "ref" || init.kind == "mut_ref"
+    let ikind = init.kind;
+    if ikind == "ref" || ikind == "mut_ref" { return true; };
+    if ikind == "if" { return expr_may_produce_ref(exprs, s.expr_idx); };
+    if ikind == "match" { return expr_may_produce_ref(exprs, s.expr_idx); };
+    if ikind == "move" { return expr_may_produce_ref(exprs, s.expr_idx); };
+    false
+}
+
+// ── P0 #1: 泛型实例化健全性检查（AUDIT-11.1.5 / T18）──
+// type_map 必须覆盖所有声明的泛型参数，且每个替换值不能是 Unknown
+// （tenthc 中 Unknown = disc=10 的 HirType 节点）。
+// 返回错误信息字符串（"" = 通过）。
+// 与 Rust 侧 lower/mod.rs::check_generic_instantiation_soundness 对齐。
+fn check_generic_instantiation_soundness(p: &mut HirProgram, template_generics: Vec<str>, type_map_names: Vec<str>, type_map_tys: Vec<i64>) -> str {
+    let mut gi: i64 = 0;
+    while gi < template_generics.len() {
+        let gen_name = template_generics[gi];
+        let mut found: i64 = 0;
+        let mut mi: i64 = 0;
+        while mi < type_map_names.len() {
+            if type_map_names[mi] == gen_name {
+                let ty_idx = type_map_tys[mi];
+                if ty_idx <= 0 || ty_idx > p.type_nodes.len() {
+                    return "泛型参数 '" + gen_name + "' 被替换为无效类型索引（类型参数数量不足）";
+                };
+                let t = p.type_nodes[ty_idx - 1];
+                if t.disc == 10 {
+                    return "泛型参数 '" + gen_name + "' 被替换为 Unknown（类型参数数量不足）";
+                };
+                found = 1;
+                break;
+            };
+            mi = mi + 1;
+        };
+        if found == 0 {
+            return "泛型参数 '" + gen_name + "' 未被替换（type_map 缺失）";
+        };
+        gi = gi + 1;
+    };
+    ""
+}
+
+// ── P0 #2: 函数返回类型 Unit 检查（Problem 11）──
+// 与 Rust 侧 lower/types.rs::check_and_merge_tensor_shape 非 Tensor 分支对齐：
+// 声明返回类型非 Unit/Unknown 但函数体实际返回 Unit 时报 TypeError。
+// 返回错误信息字符串（"" = 通过）。
+fn check_fn_return_unit(p: &mut HirProgram, declared_ret: i64, actual_ret: i64, fn_name: str) -> str {
+    if declared_ret <= 0 || declared_ret > p.type_nodes.len() { return ""; };
+    let dt = p.type_nodes[declared_ret - 1];
+    // 声明为 Unit 或 Unknown → 跳过检查
+    if dt.disc == 11 { return ""; };  // Unit
+    if dt.disc == 10 { return ""; };  // Unknown
+    if dt.disc == 12 { return ""; };  // Never（发散类型，可统一到任何类型）
+    // 实际返回类型为 Unit → 报错
+    if actual_ret <= 0 || actual_ret > p.type_nodes.len() {
+        // actual 为 0（无返回值表达式）→ 视为 Unit
+        return "函数 '" + fn_name + "' 声明返回 " + type_display_name(p, declared_ret) + " 但函数体未返回值（body 为空或缺少 return 表达式）";
+    };
+    let at = p.type_nodes[actual_ret - 1];
+    if at.disc == 11 {
+        return "函数 '" + fn_name + "' 声明返回 " + type_display_name(p, declared_ret) + " 但函数体未返回值（body 为空或缺少 return 表达式）";
+    };
+    ""
+}
+
+// 返回 HirType 的可读名称（用于错误信息）。
+fn type_display_name(p: &mut HirProgram, ty_idx: i64) -> str {
+    if ty_idx <= 0 || ty_idx > p.type_nodes.len() { return "<unknown>"; };
+    let t = p.type_nodes[ty_idx - 1];
+    if t.disc == 0 {
+        // Base type
+        if t.sub == 0 { return "i64"; };
+        if t.sub == 1 { return "i32"; };
+        if t.sub == 2 { return "f64"; };
+        if t.sub == 3 { return "f32"; };
+        if t.sub == 4 { return "bool"; };
+        if t.sub == 5 { return "str"; };
+        if t.sub == 6 { return "()"; };
+        if t.sub == 7 { return "char"; };
+        return "base";
+    };
+    if t.disc == 1 { return "Tensor"; };
+    if t.disc == 2 { return "Array"; };
+    if t.disc == 3 { return "fn"; };
+    if t.disc == 4 { return t.name; };
+    if t.disc == 5 { return t.name + "<...>"; };
+    if t.disc == 6 { return "&T"; };
+    if t.disc == 7 { return "&mut T"; };
+    if t.disc == 8 { return t.name; };
+    if t.disc == 9 { return t.name; };
+    if t.disc == 10 { return "<unknown>"; };
+    if t.disc == 11 { return "()"; };
+    if t.disc == 12 { return "!"; };
+    if t.disc == 13 { return "(...)"; };
+    if t.disc == 14 { return "Future<...>"; };
+    if t.disc == 15 { return "Range<...>"; };
+    "<unknown>"
+}
+
+// ── P0 #3: match 穷尽性检查（Problem 10）──
+// 对 Type::Enum scrutinee：检查所有变体是否被覆盖（含通配 _ / binding）。
+// 缺变体时报 TypeError（push_error，不中断编译）。
+// 与 Rust 侧 lower/lower_expr.rs 的 match 穷尽性检查对齐。
+// arms_start/arms_count 指向 p.match_arms 的索引区间。
+fn check_match_exhaustiveness(p: &mut HirProgram, scrutinee_ty: i64, arms_start: i64, arms_count: i64) {
+    if scrutinee_ty <= 0 || scrutinee_ty > p.type_nodes.len() { return; };
+    let st = p.type_nodes[scrutinee_ty - 1];
+    // 提取枚举名：Type::Enum (disc=9) 或 Type::Generic{base=Enum} (disc=5 + name)
+    let mut enum_name = "";
+    if st.disc == 9 {
+        enum_name = st.name;
+    } else if st.disc == 5 {
+        // Generic 类型（如 Option<T>）— name 字段存的是 base name
+        enum_name = st.name;
+    } else {
+        // 非枚举类型 → 跳过穷尽性检查
+        return;
+    };
+    if enum_name == "" { return; };
+    // 查找枚举定义
+    let mut eidx: i64 = -1;
+    let mut ei: i64 = 0;
+    while ei < p.enums.len() {
+        if p.enums[ei].name == enum_name { eidx = ei; break; };
+        ei = ei + 1;
+    };
+    if eidx < 0 { return; };
+    let ed = p.enums[eidx];
+    // 收集所有 arm 是否含通配（Wildcard=1 / Binding=4 / Struct=3 / Tuple=6 视为通配）
+    let mut has_wildcard = false;
+    let mut ai: i64 = 0;
+    while ai < arms_count {
+        let arm_idx = arms_start + ai;
+        if arm_idx > 0 && arm_idx <= p.match_arms.len() {
+            let arm = p.match_arms[arm_idx - 1];
+            if arm.pat_disc == 1 || arm.pat_disc == 4 || arm.pat_disc == 3 || arm.pat_disc == 6 {
+                has_wildcard = true;
+                break;
+            };
+        };
+        ai = ai + 1;
+    };
+    if has_wildcard { return; };
+    // 收集所有 EnumVariant arm 覆盖的变体名
+    let mut covered_count: i64 = 0;
+    ai = 0;
+    while ai < arms_count {
+        let arm_idx = arms_start + ai;
+        if arm_idx > 0 && arm_idx <= p.match_arms.len() {
+            let arm = p.match_arms[arm_idx - 1];
+            if arm.pat_disc == 0 && arm.pat_variant != "" {
+                covered_count = covered_count + 1;
+            };
+        };
+        ai = ai + 1;
+    };
+    // 比较覆盖数与定义数（tenthc 无 HashSet，用线性扫描）
+    // 缺失的变体名收集到 missing 字符串
+    let mut missing = "";
+    let mut vi: i64 = 0;
+    while vi < ed.variants.len() {
+        let vname = ed.variants[vi].name;
+        let mut is_covered = false;
+        ai = 0;
+        while ai < arms_count {
+            let arm_idx = arms_start + ai;
+            if arm_idx > 0 && arm_idx <= p.match_arms.len() {
+                let arm = p.match_arms[arm_idx - 1];
+                if arm.pat_disc == 0 && arm.pat_variant == vname {
+                    is_covered = true;
+                    break;
+                };
+            };
+            ai = ai + 1;
+        };
+        if !is_covered {
+            if missing == "" {
+                missing = "'" + vname + "'";
+            } else {
+                missing = missing + ", '" + vname + "'";
+            };
+        };
+        vi = vi + 1;
+    };
+    if missing != "" {
+        push_error(p, "match 不穷尽：枚举 " + enum_name + " 缺少变体 " + missing + "（请添加对应 arm 或通配符 _）");
+    };
 }
 
 // Look up a function's return type index by name
@@ -595,7 +1376,11 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
     let kind = e.kind;
 
     if kind == "int" {
-        let ty = add_type(p, 0, 0, "", 0, 0, 0);
+        // Problem 21 batch 2: 使用 token 的 dtype 字段（Batch 1 已通过 parser 传入）
+        // hir.th BaseType 编码：0:I64 1:I32 8:I8 9:I16 10:U8 11:U16 12:U32 13:U64 7:Char
+        // 默认 lexer 产生 dtype=1 (I32)，超范围提升为 0 (I64)
+        let dt = e.dtype;
+        let ty = add_type(p, 0, dt, "", 0, 0, 0);
         return push_expr(p, 0, e.ival, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ty);
     };
     if kind == "float" {
@@ -761,6 +1546,8 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
                     let r_d1 = get_tensor_dim1(p, r_lty);
                     let err = check_binary_broadcast(l_dc, l_d0, l_d1, r_dc, r_d0, r_d1);
                     if err != "" { push_error(p, err); };
+                    // Problem 21 批次4：Phase 1 backward shape check（护城河 A）
+                    check_binary_backward_shape(p, op, l_dc, l_d0, l_d1, r_dc, r_d0, r_d1);
                     // Result: tensor with broadcast shape (conservative: same shape if equal, else unknown)
                     // Stage 7: propagate dtype from l_lty (preferred) or r_lty (fallback)
                     let dtype_src = if l_dc > 0 { l_lty } else { r_lty };
@@ -836,6 +1623,12 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             let ty_str = if gi < type_arg_names.len() { type_arg_names[gi] } else { "" };
             type_map_tys.push(parse_type(p, ty_str));
         };
+        // P0 #1 (AUDIT-11.1.5 / T18): 泛型实例化健全性检查
+        // type_map 必须覆盖所有声明的泛型参数，且每个替换值不能是 Unknown。
+        let sound_err = check_generic_instantiation_soundness(p, tmpl.generics, type_map_names, type_map_tys);
+        if sound_err != "" {
+            push_error(p, "泛型函数 '" + fn_name + "' 实例化失败：" + sound_err);
+        };
         // 生成 mangled name: fn_name_T1_T2
         let mut mangled = fn_name;
         for gi in 0..type_arg_names.len() {
@@ -856,7 +1649,7 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
                 inst_params.push(HirParam { name: tp.name, ty: inst_ty });
             };
             let inst_ret = substitute_type(p, tmpl.return_type, type_map_names, type_map_tys);
-            let inst_hf = HirFnDef { name: mangled, params: inst_params, return_type: inst_ret, body: tmpl.body, generics: Vec::new(), .. };
+            let inst_hf = HirFnDef { name: mangled, params: inst_params, return_type: inst_ret, body: tmpl.body, generics: Vec::new(), is_async: tmpl.is_async, .. };
             p.fns.push(inst_hf);
         };
         // 生成普通 Call(disc 7) 指向 mangled name
@@ -915,6 +1708,14 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         } else {
             lookup_fn_return_type(p, e.sval)
         };
+        // Problem 21 批次4：cross_entropy backward shape check（护城河 A）
+        if e.sval == "cross_entropy" && count >= 2 {
+            check_cross_entropy_compat(p, lowered_args[0], lowered_args[1]);
+        };
+        // Problem 21 批次4：内存预估（护城河 D）— zeros/ones/rand/randn 大 tensor 警告
+        if e.sval == "zeros" || e.sval == "ones" || e.sval == "rand" || e.sval == "randn" {
+            emit_memory_estimate(p, cty, e.sval);
+        };
         return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, arg_start, count, 0, 0, "", "", "", cty);
     };
 
@@ -969,6 +1770,9 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             let a_d1 = get_tensor_dim1(p, arg_lty);
             let err = check_matmul_shape(r_dc, r_d0, r_d1, a_dc, a_d0, a_d1);
             if err != "" { push_error(p, err); };
+            // Problem 21 批次4：Phase 1 backward shape check + FLOPs 预估（护城河 A/D）
+            check_matmul_backward_shape(p, r_dc, r_d0, r_d1, a_dc, a_d0, a_d1);
+            emit_matmul_flop_estimate(p, recv_lty, arg_lty);
             // Result shape: (M, N) if both 2D and inner K matches
             // Stage 7: propagate dtype from receiver (matches Rust lower behavior)
             let rty = if r_dc == 2 && a_dc == 2 && r_d1 == a_d0 {
@@ -1056,7 +1860,10 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             let new_state = if cur >= 100 { cur + 1 } else { 100 };
             set_ownership(p, inner_name, new_state);
         };
-        return push_expr(p, 18, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+        // Problem 21 batch 3: 类型推断 — &expr 推断为 Type::Ref(inner) (disc=6)
+        let inner_ty = get_expr_ty(p, inner);
+        let ref_ty = add_type(p, 6, inner_ty, "", 0, 0, 0);
+        return push_expr(p, 18, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", ref_ty);
     };
 
     if kind == "mut_ref" {
@@ -1079,12 +1886,22 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         if is_ident {
             set_ownership(p, inner_name, 2);
         };
-        return push_expr(p, 19, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+        // Problem 21 batch 3: 类型推断 — &mut expr 推断为 Type::MutRef(inner) (disc=7)
+        let inner_ty = get_expr_ty(p, inner);
+        let mref_ty = add_type(p, 7, inner_ty, "", 0, 0, 0);
+        return push_expr(p, 19, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", mref_ty);
     };
 
     if kind == "deref" {
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
-        return push_expr(p, 20, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+        // Deref: unwrap Ref/MutRef → inner type. If inner is Ref(disc=6)/MutRef(disc=7),
+        // propagate the inner's inner type (stored in sub field).
+        let inner_ty = get_expr_ty(p, inner);
+        let deref_ty = if inner_ty > 0 && inner_ty <= p.type_nodes.len() {
+            let t = p.type_nodes[inner_ty - 1];
+            if t.disc == 6 || t.disc == 7 { t.sub } else { inner_ty }
+        } else { 0 };
+        return push_expr(p, 20, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", deref_ty);
     };
 
     if kind == "move" {
@@ -1102,21 +1919,31 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         if is_ident {
             set_ownership(p, inner_name, 3);
         };
-        return push_expr(p, 30, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
+        // Problem 21 batch 3: 类型推断 — move expr 保留 inner 类型
+        let inner_ty = get_expr_ty(p, inner);
+        return push_expr(p, 30, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", inner_ty);
     };
 
     if kind == "await" {
-        // Await: unwrap Future<T> 鈫?T. Phase 1 sync: pass inner type through.
+        // Problem 21 batch 3: Await — unwrap Future<T> → T.
+        // 若 inner 类型为 Type::Future (disc=14)，取 sub 字段（inner type）。
+        // 否则保持 inner 类型不变（运行时处理）。
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
-        let inner_ty = if inner > 0 && inner <= p.expr_nodes.len() { p.expr_nodes[inner - 1].ty } else { 0 };
-        return push_expr(p, 32, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", inner_ty);
+        let inner_ty = get_expr_ty(p, inner);
+        let await_ty = if inner_ty > 0 && inner_ty <= p.type_nodes.len() {
+            let t = p.type_nodes[inner_ty - 1];
+            if t.disc == 14 { t.sub } else { inner_ty }
+        } else { inner_ty };
+        return push_expr(p, 32, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", await_ty);
     };
 
     if kind == "spawn" {
-        // Spawn: wrap T 鈫?Future<T>. Phase 1 sync: pass inner type through.
+        // Problem 21 batch 3: Spawn — wrap T → Future<T>.
+        // 构造 Type::Future (disc=14)，sub = inner 类型索引。
         let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
-        let inner_ty = if inner > 0 && inner <= p.expr_nodes.len() { p.expr_nodes[inner - 1].ty } else { 0 };
-        return push_expr(p, 33, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", inner_ty);
+        let inner_ty = get_expr_ty(p, inner);
+        let future_ty = add_type(p, 14, inner_ty, "", 0, 0, 0);
+        return push_expr(p, 33, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", future_ty);
     };
 
     if kind == "if" {
@@ -1130,7 +1957,24 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         release_borrows(p);
         // If type = then-branch type (blocks with only assignments have ty=0 → void)
-        let if_ty = get_expr_ty(p, then_);
+        // Problem 21 batch 3: 若 then 为 Never（block 末尾为 Return），用 else 类型。
+        // 注：tenthc 的 && 不短路（编译为 i32_and），必须用嵌套 if 实现短路求值，
+        // 否则 p.type_nodes[then_ty - 1] 在 then_ty <= 0 时会越界访问。
+        let then_ty = get_expr_ty(p, then_);
+        let then_is_never = if then_ty > 0 {
+            if then_ty <= p.type_nodes.len() {
+                p.type_nodes[then_ty - 1].disc == 12
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        let if_ty = if then_is_never {
+            get_expr_ty(p, else_)
+        } else {
+            then_ty
+        };
         return push_expr(p, 12, 0, 0.0, "", false, 0, 0, cond, then_, else_, 0, 0, 0, 0, "", "", "", if_ty);
     };
 
@@ -1155,12 +1999,18 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         for i in 0..count {
             p.stmt_list.push(local_idxs[i]);
         };
-        // Infer block type: if last stmt is an expr stmt, block produces that value
+        // Infer block type (Problem 21 batch 3: 含 Never 类型，与 Rust 侧对齐):
+        //   - 末尾是 Expr stmt → 用其类型
+        //   - 末尾是 Return → Never（块永不正常返回）
+        //   - 否则 → 0（void/unknown，保持原行为，WASM 后端依赖 ty==0 判定 void）
         let mut block_ty: i64 = 0;
         if count > 0 {
             let last_stmt = p.stmt_nodes[local_idxs[count - 1] - 1];
             if last_stmt.disc == 1 && last_stmt.expr > 0 {
                 block_ty = get_expr_ty(p, last_stmt.expr);
+            } else if last_stmt.disc == 2 {
+                // Return stmt → block never returns normally → Never
+                block_ty = add_type(p, 12, 0, "", 0, 0, 0);
             };
         };
         return push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", block_ty);
@@ -1287,18 +2137,35 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         while ai < e.extra_start + e.extra_count && ai <= match_arms.len() {
             let arm = match_arms[ai - 1];
             let body = lower_expr(p, arm.body_expr, exprs, stmts, match_arms, depth + 1);
-            let pat_disc = if arm.pat_kind == "wildcard" { 1 } else if arm.pat_kind == "enum_variant" { 0 } else { 2 };
+            // Problem 21 batch 3: Pattern 变体同步（pat_disc 0-6）
+            //   0=EnumVariant 1=Wildcard 2=Literal 3=Struct 4=Binding 5=Range 6=Tuple
+            let pat_disc = if arm.pat_kind == "wildcard" { 1 }
+                else if arm.pat_kind == "enum_variant" { 0 }
+                else if arm.pat_kind == "struct" { 3 }
+                else if arm.pat_kind == "binding" { 4 }
+                else if arm.pat_kind == "range" { 5 }
+                else if arm.pat_kind == "tuple" { 6 }
+                else { 2 };  // literal
+            // binding 模式：pat_name 是绑定变量名，存到 pat_bind
+            // struct 模式：pat_name 是结构体名，存到 pat_enum；pat_bind 已含字段串
+            let pat_enum_v = if arm.pat_kind == "struct" { arm.pat_name } else { "" };
+            let pat_variant_v = if arm.pat_kind == "binding" { "" } else { arm.pat_name };
+            let pat_bind_v = if arm.pat_kind == "binding" { arm.pat_name } else { arm.pat_bind };
             let hma = HirMatchArm {
                 pat_disc: pat_disc,
-                pat_enum: "",
-                pat_variant: arm.pat_name,
-                pat_bind: arm.pat_bind,
+                pat_enum: pat_enum_v,
+                pat_variant: pat_variant_v,
+                pat_bind: pat_bind_v,
                 body_expr: body,
             };
             p.match_arms.push(hma);
             arms_count = arms_count + 1;
             ai = ai + 1;
         };
+        // P0 #3 (Problem 10): match 穷尽性检查
+        // 对 Type::Enum scrutinee：检查所有变体是否被覆盖（含通配 _ / binding / struct / tuple）。
+        let scrut_ty = get_expr_ty(p, scrutinee);
+        check_match_exhaustiveness(p, scrut_ty, arms_start, arms_count);
         return push_expr(p, 17, 0, 0.0, "", false, scrutinee, 0, 0, 0, 0, 0, 0, arms_start, arms_count, "", "", "", 0);
     };
 
@@ -1307,7 +2174,64 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         let r = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
         let idx = push_expr(p, 28, 0, 0.0, "", false, l, r, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0);
         p.expr_nodes[idx - 1].range_inclusive = (e.ival != 0);
+        // Problem 21 batch 3: 类型推断 — a..b / a..=b 推断为 Type::Range { inner, inclusive } (disc=15)
+        // inner = 元素类型（通常 i32/i64），从 start 表达式推断
+        // dim0 复用为 inclusive 标志（0=false, 1=true）
+        let inner_ty = get_expr_ty(p, l);
+        let range_ty = if e.ival != 0 {
+            // inclusive: dim0=1
+            let rt = HirType { disc: 15, sub: inner_ty, dim0: 1, .. };
+            p.type_nodes.push(rt);
+            p.type_nodes.len()
+        } else {
+            // exclusive: dim0=0
+            add_type(p, 15, inner_ty, "", 0, 0, 0)
+        };
+        p.expr_nodes[idx - 1].ty = range_ty;
         return idx;
+    };
+
+    // Problem 21 batch 3: Tuple literal — new disc=36 (Tuple) ExprKind.
+    // Parser creates "tuple" kind with arg_start/arg_count pointing to "arg"
+    // wrapper nodes (same as array). Elements are lowered identically.
+    // Type inference: build Type::Tuple (disc=13) with element types stored
+    // in type_args via params_start/params_count. WASM backend treats Tuple
+    // like ArrayLiteral (packs elements) — only the HIR-level type differs.
+    if kind == "tuple" {
+        let mut lowered_args: Vec<i64> = Vec::new();
+        if e.arg_count > 0 {
+            for i in e.arg_start..(e.arg_start + e.arg_count) {
+                let arg_expr = exprs[i - 1];
+                let actual_idx = if arg_expr.kind == "arg" { arg_expr.left } else { i };
+                let lowered = lower_expr(p, actual_idx, exprs, stmts, match_arms, depth + 1);
+                lowered_args.push(lowered);
+            };
+        };
+        let arg_start = p.arg_list.len() + 1;
+        let mut count: i64 = 0;
+        for j in 0..lowered_args.len() {
+            p.arg_list.push(lowered_args[j]);
+            count = count + 1;
+        };
+        // Collect element types into type_args flat array, build Type::Tuple (disc=13)
+        let ty_start = p.type_args.len() + 1;
+        let mut ty_count: i64 = 0;
+        for j in 0..lowered_args.len() {
+            p.type_args.push(get_expr_ty(p, lowered_args[j]));
+            ty_count = ty_count + 1;
+        };
+        let tuple_ty = add_type(p, 13, 0, "", ty_start, ty_count, 0);
+        return push_expr(p, 36, 0, 0.0, "", false, 0, 0, 0, 0, 0, arg_start, count, 0, 0, "", "", "", tuple_ty);
+    };
+
+    // Problem 21 batch 3: Try block — try { ... }. New disc=34 (Try) ExprKind.
+    // The parser stores the inner expression in e.left. Error handling semantics
+    // are deferred to runtime; at the HIR level this is a block wrapper that
+    // unwraps Result/Option — type inference propagates inner's type.
+    if kind == "try_block" {
+        let inner = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
+        let inner_ty = get_expr_ty(p, inner);
+        return push_expr(p, 34, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", inner_ty);
     };
 
     push_expr(p, 0, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", 0)
@@ -1328,7 +2252,53 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         let init_ty = get_expr_ty(p, init);
         p.var_types.push(HirVarType { name: s.name, ty: init_ty });
         set_ownership(p, s.name, 0);
+        // P0 #4 (AUDIT-11.1.1/T19 B6 + AUDIT-11.1.2/T20 PB2): borrow_holders 机制
+        // 若 init 表达式产出 Ref/MutRef 值（如 `let r = &x;` / `let r = if c { &x } else { &y };`），
+        // 收集所有被借用的变量名，记录 holder→borrowed 关系，
+        // 使后续 release_borrows 在 holder 仍活跃时不释放 borrowed 的借用状态。
+        if s.expr_idx > 0 {
+            let borrowed_idents = collect_persistent_borrowed_idents(exprs, s.expr_idx);
+            if borrowed_idents.len() > 0 {
+                let mut bi: i64 = 0;
+                while bi < borrowed_idents.len() {
+                    record_borrow_holder(p, s.name, borrowed_idents[bi]);
+                    bi = bi + 1;
+                };
+            };
+        };
         return push_stmt(p, 0, s.name, 0, 0, 0, 0, init, true);
+    };
+
+    // Problem 21 batch 2: Tuple destructuring — let (a, b, c) = expr.
+    // Parser stores init in expr_idx, variable names as "ident" expr nodes
+    // at else_start..else_start+else_count (using Stmt's else_start/else_count
+    // fields). Each variable name is in the ident node's sval.
+    // Strategy: lower the init expression, register all variable names in the
+    // type system, and create a single Let stmt for the first variable (which
+    // receives the init value). Remaining variables are registered with
+    // Unknown type (ty=0) — their values would require tuple indexing, which
+    // the WASM backend does not yet support. This is consistent with the
+    // known JIT/WASM limitation for tuple destructuring.
+    if kind == "let_tuple" {
+        let mut init: i64 = 0;
+        if s.expr_idx > 0 {
+            init = lower_expr(p, s.expr_idx, exprs, stmts, match_arms, depth + 1);
+        };
+        let init_ty = get_expr_ty(p, init);
+        let mut first_name = "";
+        if s.else_count > 0 {
+            for j in 0..s.else_count {
+                let name_idx = s.else_start + j;
+                if name_idx > 0 && name_idx <= exprs.len() {
+                    let vname = exprs[name_idx - 1].sval;
+                    let vty = if j == 0 { init_ty } else { 0 };
+                    p.var_types.push(HirVarType { name: vname, ty: vty });
+                    set_ownership(p, vname, 0);
+                    if j == 0 { first_name = vname; };
+                };
+            };
+        };
+        return push_stmt(p, 0, first_name, 0, 0, 0, 0, init, true);
     };
 
     if kind == "return" {
@@ -1426,7 +2396,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 }
 
 fn lower_program(program: Program) -> HirProgram {
-    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new(), stmt_list: Vec::new(), body_list: Vec::new(), block_idxs: program.block_idxs, loop_idxs: program.loop_idxs, trait_defs: Vec::new(), trait_impls: Vec::new(), trait_methods: Vec::new(), trait_method_params: Vec::new(), impl_fn_indices: Vec::new(), impl_method_names: Vec::new(), generic_funcs: Vec::new(), ownership: Vec::new(), errors: Vec::new() };
+    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new(), stmt_list: Vec::new(), body_list: Vec::new(), block_idxs: program.block_idxs, loop_idxs: program.loop_idxs, trait_defs: Vec::new(), trait_impls: Vec::new(), trait_methods: Vec::new(), trait_method_params: Vec::new(), impl_fn_indices: Vec::new(), impl_method_names: Vec::new(), generic_funcs: Vec::new(), ownership: Vec::new(), borrow_holders: Vec::new(), errors: Vec::new(), warnings: Vec::new() };
 
     // Lower struct definitions
     for si in 0..program.structs.len() {
@@ -1491,6 +2461,7 @@ fn lower_program(program: Program) -> HirProgram {
             // Lower the method (same as regular fn lowering)
             p.var_types = Vec::new();
             p.ownership = Vec::new();
+            p.borrow_holders = Vec::new();
             let mut params = Vec::new();
             for j in 0..f.params.len() {
                 let param = f.params[j];
@@ -1503,8 +2474,16 @@ fn lower_program(program: Program) -> HirProgram {
                 set_ownership(&mut p, param.name, 0);
             };
             let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
-            let ret_ty = parse_type(&mut p, f.return_type);
-            let hf = HirFnDef { name: mangled, params: params, return_type: ret_ty, body: body_expr, generics: Vec::new(), .. };
+            let declared_ret = parse_type(&mut p, f.return_type);
+            // Problem 21 batch 3: async fn → Future<T> 返回类型
+            // async fn 的 body 返回 T，但函数签名返回 Future<T>。
+            // 对声明类型包一层 Type::Future (disc=14, sub=declared_ret)。
+            let ret_ty = if f.is_async {
+                add_type(&mut p, 14, declared_ret, "", 0, 0, 0)
+            } else {
+                declared_ret
+            };
+            let hf = HirFnDef { name: mangled, params: params, return_type: ret_ty, body: body_expr, generics: Vec::new(), is_async: f.is_async, .. };
             p.fns.push(hf);
             let fn_idx = p.fns.len(); // 1-based
             p.impl_fn_indices.push(fn_idx);
@@ -1519,6 +2498,7 @@ fn lower_program(program: Program) -> HirProgram {
         // Clear var_types and ownership for this function scope
         p.var_types = Vec::new();
         p.ownership = Vec::new();
+        p.borrow_holders = Vec::new();
         // Parse param types first, add to var_types for body type inference
         let mut params = Vec::new();
         for j in 0..f.params.len() {
@@ -1530,8 +2510,25 @@ fn lower_program(program: Program) -> HirProgram {
         };
         // Lower body (var_types now has params for type lookup)
         let body_expr = lower_fn_body(&mut p, f.body_start, f.body_count, program.expr_nodes, program.stmt_nodes, program.match_arms);
-        let ret_ty = parse_type(&mut p, f.return_type);
-        let hf = HirFnDef { name: f.name, params: params, return_type: ret_ty, body: body_expr, generics: f.generics, .. };
+        let declared_ret = parse_type(&mut p, f.return_type);
+        // P0 #2 (Problem 11): 函数返回类型 Unit 检查
+        // 声明返回类型非 Unit/Unknown/Never 但函数体实际返回 Unit 时报 TypeError。
+        // 注：对 async fn 用 declared_ret（未包 Future）做检查——body 返回 T，
+        // 声明也是 T，包 Future 后才是 Future<T>。
+        let actual_ret_ty = get_expr_ty(&mut p, body_expr);
+        let ret_err = check_fn_return_unit(&mut p, declared_ret, actual_ret_ty, f.name);
+        if ret_err != "" {
+            push_error(&mut p, ret_err);
+        };
+        // Problem 21 batch 3: async fn → Future<T> 返回类型
+        // async fn 的 body 返回 T，但函数签名返回 Future<T>。
+        // 对声明类型包一层 Type::Future (disc=14, sub=declared_ret)。
+        let ret_ty = if f.is_async {
+            add_type(&mut p, 14, declared_ret, "", 0, 0, 0)
+        } else {
+            declared_ret
+        };
+        let hf = HirFnDef { name: f.name, params: params, return_type: ret_ty, body: body_expr, generics: f.generics, is_async: f.is_async, .. };
         // 泛型函数（generics 非空）收集到 generic_funcs 模板，不直接输出到 WASM
         if f.generics.len() > 0 {
             p.generic_funcs.push(hf);
@@ -1543,6 +2540,7 @@ fn lower_program(program: Program) -> HirProgram {
     // Clear var_types and ownership for main scope
     p.var_types = Vec::new();
     p.ownership = Vec::new();
+    p.borrow_holders = Vec::new();
     if program.main_stmts_count > 0 {
         // Collect lowered statements locally first, then push to shared stmt_list
         let mut local_idxs: Vec<i64> = Vec::new();
@@ -1562,6 +2560,11 @@ fn lower_program(program: Program) -> HirProgram {
         let ni = push_expr(&mut p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0);
         p.main_expr = ni;
     };
+
+    // Problem 21 批次4：Phase 2 跨算子反向 shape 传播（护城河 A 深化）
+    // 在 lowering 完成后遍历所有函数体，识别 start_grad...backward 区域，
+    // 逆序传播梯度 shape，验证 param 的梯度 shape 与参数本身 shape 兼容。
+    backward_shape_pass(&mut p);
 
     p
 }
@@ -1597,4 +2600,470 @@ fn lower_fn_body(p: &mut HirProgram, body_start: i64, body_count: i64, exprs: Ve
         p.stmt_list.push(local_idxs[i]);
     };
     push_expr(p, 13, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, start, count, "", "", "", 0)
+}
+
+// ── Problem 21 批次4: Phase 2 跨算子反向 shape 传播（护城河 A 深化）──
+// 在 lowering 完成后遍历所有函数体，识别 start_grad...backward 区域，
+// 逆序传播梯度 shape，验证 param 的梯度 shape 与参数本身 shape 兼容。
+// 与 Rust 侧 backward_shape_pass.rs 对齐。
+
+// 判断函数/方法名是否是参与反向 shape 传播的 tensor 算子。
+fn is_tensor_op(name: str) -> bool {
+    if name == "add" || name == "sub" || name == "mul" || name == "div" { return true; };
+    if name == "matmul" || name == "bmm" { return true; };
+    if name == "sum" || name == "mean" { return true; };
+    if name == "cross_entropy" { return true; };
+    if name == "reshape" || name == "view" { return true; };
+    if name == "scatter" || name == "gather" || name == "masked_fill" || name == "select" { return true; };
+    if name == "neg" || name == "relu" || name == "exp" || name == "log" { return true; };
+    if name == "sigmoid" || name == "abs" { return true; };
+    if name == "softmax" || name == "dropout" { return true; };
+    if name == "batch_norm" || name == "layer_norm" || name == "gelu" { return true; };
+    if name == "transpose" || name == "conv2d" { return true; };
+    false
+}
+
+// 从 stmt 提取 expr 索引（Expr stmt / Let init / Return 值）。0=无。
+fn stmt_expr_idx(s: HirStmt) -> i64 {
+    if s.disc == 0 { return s.init; };
+    if s.disc == 1 { return s.expr; };
+    if s.disc == 2 { return s.expr; };
+    0
+}
+
+// 判断 stmt 是否是控制流（While/For/Loop）。
+fn stmt_has_control_flow(s: HirStmt) -> bool {
+    s.disc == 3 || s.disc == 4 || s.disc == 7
+}
+
+// 递归检查 expr 是否含 If (disc=12) 控制流。tenthc 无 Match。
+fn expr_has_control_flow(p: &mut HirProgram, expr_idx: i64) -> bool {
+    if expr_idx <= 0 || expr_idx > p.expr_nodes.len() { return false; };
+    let e = p.expr_nodes[expr_idx - 1];
+    if e.disc == 12 { return true; };
+    if e.disc == 5 { return expr_has_control_flow(p, e.left) || expr_has_control_flow(p, e.right); };
+    if e.disc == 6 { return expr_has_control_flow(p, e.left); };
+    if e.disc == 7 {
+        let mut i = 0;
+        while i < e.args_count {
+            if expr_has_control_flow(p, p.arg_list[(e.args_start - 1) + i]) { return true; };
+            i = i + 1;
+        };
+        return false;
+    };
+    if e.disc == 8 {
+        if expr_has_control_flow(p, e.left) { return true; };
+        let mut i = 0;
+        while i < e.args_count {
+            if expr_has_control_flow(p, p.arg_list[(e.args_start - 1) + i]) { return true; };
+            i = i + 1;
+        };
+        return false;
+    };
+    if e.disc == 13 {
+        let mut i = 0;
+        while i < e.stmts_count {
+            let sidx = p.stmt_list[(e.stmts_start - 1) + i];
+            if sidx > 0 && sidx <= p.stmt_nodes.len() {
+                let s = p.stmt_nodes[sidx - 1];
+                if stmt_has_control_flow(s) { return true; };
+                let se = stmt_expr_idx(s);
+                if se > 0 && expr_has_control_flow(p, se) { return true; };
+            };
+            i = i + 1;
+        };
+        return false;
+    };
+    false
+}
+
+// 在 grad 映射中查找变量名（从后往前找最新条目）。返回 1-based 索引，0=未找到。
+fn lookup_grad_idx(var_names: Vec<str>, name: str) -> i64 {
+    let n = var_names.len();
+    let mut i = n;
+    while i > 0 {
+        i = i - 1;
+        if var_names[i] == name { return i + 1; };
+    };
+    0
+}
+
+// Phase 2 主入口：遍历所有函数体，识别 grad 区域，逆序传播梯度 shape。
+fn backward_shape_pass(p: &mut HirProgram) {
+    let fn_count = p.fns.len();
+    let mut fi = 0;
+    while fi < fn_count {
+        let fd = p.fns[fi];
+        let body_idx = fd.body;
+        if body_idx <= 0 || body_idx > p.expr_nodes.len() { fi = fi + 1; continue; };
+        let body = p.expr_nodes[body_idx - 1];
+        if body.disc != 13 { fi = fi + 1; continue; };
+
+        let mut in_region = false;
+        let mut param_names: Vec<str> = Vec::new();
+        let mut param_dcs: Vec<i64> = Vec::new();
+        let mut param_d0s: Vec<i64> = Vec::new();
+        let mut param_d1s: Vec<i64> = Vec::new();
+        let mut op_out_vars: Vec<str> = Vec::new();
+        let mut op_out_dcs: Vec<i64> = Vec::new();
+        let mut op_out_d0s: Vec<i64> = Vec::new();
+        let mut op_out_d1s: Vec<i64> = Vec::new();
+        let mut op_names: Vec<str> = Vec::new();
+        let mut op_in_vars: Vec<str> = Vec::new();
+        let mut op_in_dcs: Vec<i64> = Vec::new();
+        let mut op_in_d0s: Vec<i64> = Vec::new();
+        let mut op_in_d1s: Vec<i64> = Vec::new();
+        let mut op_in_starts: Vec<i64> = Vec::new();
+        let mut op_in_counts: Vec<i64> = Vec::new();
+        let mut loss_var = "";
+        let mut loss_dc = 0;
+        let mut loss_d0 = 0;
+        let mut loss_d1 = 0;
+
+        let mut si = 0;
+        while si < body.stmts_count {
+            let sidx = p.stmt_list[(body.stmts_start - 1) + si];
+            if sidx <= 0 || sidx > p.stmt_nodes.len() { si = si + 1; continue; };
+            let s = p.stmt_nodes[sidx - 1];
+
+            if in_region {
+                if stmt_has_control_flow(s) {
+                    in_region = false;
+                    si = si + 1;
+                    continue;
+                };
+
+                let se = stmt_expr_idx(s);
+
+                // backward(loss) 调用
+                if se > 0 && se <= p.expr_nodes.len() {
+                    let se_node = p.expr_nodes[se - 1];
+                    if se_node.disc == 7 && se_node.name == "backward" {
+                        if se_node.args_count >= 1 {
+                            let la = p.arg_list[se_node.args_start - 1];
+                            if la > 0 && la <= p.expr_nodes.len() {
+                                let ln = p.expr_nodes[la - 1];
+                                if ln.disc == 4 {
+                                    loss_var = ln.name;
+                                    let lty = ln.ty;
+                                    loss_dc = get_tensor_dim_count(p, lty);
+                                    loss_d0 = get_tensor_dim0(p, lty);
+                                    loss_d1 = get_tensor_dim1(p, lty);
+                                };
+                            };
+                        };
+
+                        if loss_var != "" {
+                            // grad 映射：变量名 → 梯度 shape（push 新条目，查找取最新）
+                            let mut gn: Vec<str> = Vec::new();
+                            let mut gdc: Vec<i64> = Vec::new();
+                            let mut gd0: Vec<i64> = Vec::new();
+                            let mut gd1: Vec<i64> = Vec::new();
+                            gn.push(loss_var);
+                            gdc.push(loss_dc);
+                            gd0.push(loss_d0);
+                            gd1.push(loss_d1);
+
+                            let oc = op_out_vars.len();
+                            let mut oi = oc;
+                            let mut ok = true;
+                            while oi > 0 && ok {
+                                oi = oi - 1;
+                                let out_var = op_out_vars[oi];
+                                let out_dc = op_out_dcs[oi];
+                                let out_d0 = op_out_d0s[oi];
+                                let out_d1 = op_out_d1s[oi];
+                                let opn = op_names[oi];
+                                let gi = lookup_grad_idx(gn, out_var);
+                                if gi == 0 { continue; };
+                                let g_dc = gdc[gi - 1];
+                                let g_d0 = gd0[gi - 1];
+                                let g_d1 = gd1[gi - 1];
+                                let in_start = op_in_starts[oi];
+                                let in_count = op_in_counts[oi];
+                                let mut ii = 0;
+                                while ii < in_count && ok {
+                                    let ivar = op_in_vars[(in_start - 1) + ii];
+                                    let idc = op_in_dcs[(in_start - 1) + ii];
+                                    let id0 = op_in_d0s[(in_start - 1) + ii];
+                                    let id1 = op_in_d1s[(in_start - 1) + ii];
+                                    if ivar == "" { ii = ii + 1; continue; };
+
+                                    let mut ndc = 0;
+                                    let mut nd0 = 0;
+                                    let mut nd1 = 0;
+                                    let mut skip = false;
+
+                                    if opn == "add" || opn == "sub" || opn == "mul" || opn == "div" {
+                                        if !unbroadcast_feasible(g_dc, g_d0, g_d1, idc, id0, id1) {
+                                            push_error(p, "编译期跨算子反向 shape 传播失败（" + opn + "）：梯度 " + fmt_dims(g_dc, g_d0, g_d1) + " 无法 unbroadcast 到输入 " + ivar + " " + fmt_dims(idc, id0, id1));
+                                            ok = false;
+                                        } else {
+                                            ndc = g_dc; nd0 = g_d0; nd1 = g_d1;
+                                        };
+                                    } else if opn == "cross_entropy" {
+                                        if ii == 0 { ndc = idc; nd0 = id0; nd1 = id1; } else { skip = true; };
+                                    } else if opn == "scatter" {
+                                        if ii == 2 { skip = true; } else { ndc = idc; nd0 = id0; nd1 = id1; };
+                                    } else if opn == "gather" {
+                                        if ii == 1 { skip = true; } else { ndc = idc; nd0 = id0; nd1 = id1; };
+                                    } else if opn == "masked_fill" {
+                                        if ii == 1 { skip = true; } else { ndc = idc; nd0 = id0; nd1 = id1; };
+                                    } else if opn == "select" {
+                                        if ii == 0 { skip = true; } else {
+                                            if !unbroadcast_feasible(g_dc, g_d0, g_d1, idc, id0, id1) {
+                                                push_error(p, "编译期跨算子反向 shape 传播失败（select）：梯度无法 unbroadcast 到输入 " + ivar);
+                                                ok = false;
+                                            } else {
+                                                ndc = g_dc; nd0 = g_d0; nd1 = g_d1;
+                                            };
+                                        };
+                                    } else if opn == "reshape" || opn == "view" {
+                                        if !numel_compatible(idc, id0, id1, out_dc, out_d0, out_d1) {
+                                            push_error(p, "编译期跨算子反向 shape 传播失败（" + opn + "）：输入 " + ivar + " numel 与输出不一致");
+                                            ok = false;
+                                        } else {
+                                            ndc = idc; nd0 = id0; nd1 = id1;
+                                        };
+                                    } else {
+                                        ndc = idc; nd0 = id0; nd1 = id1;
+                                    };
+
+                                    if ok && !skip {
+                                        gn.push(ivar);
+                                        gdc.push(ndc);
+                                        gd0.push(nd0);
+                                        gd1.push(nd1);
+                                    };
+                                    ii = ii + 1;
+                                };
+                            };
+
+                            // 验证参数梯度 shape
+                            let pc = param_names.len();
+                            let mut pi = 0;
+                            while pi < pc {
+                                let pn = param_names[pi];
+                                let pdc = param_dcs[pi];
+                                let pd0 = param_d0s[pi];
+                                let pd1 = param_d1s[pi];
+                                let gi = lookup_grad_idx(gn, pn);
+                                if gi > 0 {
+                                    let g_dc = gdc[gi - 1];
+                                    let g_d0 = gd0[gi - 1];
+                                    let g_d1 = gd1[gi - 1];
+                                    if has_static_info(g_dc) && has_static_info(pdc) {
+                                        if !shape_compatible(g_dc, g_d0, g_d1, pdc, pd0, pd1) {
+                                            push_error(p, "编译期跨算子反向 shape 传播：参数 '" + pn + "' 的梯度 shape " + fmt_dims(g_dc, g_d0, g_d1) + " 与参数 shape " + fmt_dims(pdc, pd0, pd1) + " 不兼容");
+                                        };
+                                    };
+                                };
+                                pi = pi + 1;
+                            };
+                        };
+
+                        in_region = false;
+                        si = si + 1;
+                        continue;
+                    };
+                };
+
+                // let w = param(init)
+                if s.disc == 0 && se > 0 && se <= p.expr_nodes.len() {
+                    let init_node = p.expr_nodes[se - 1];
+                    if init_node.disc == 7 && init_node.name == "param" {
+                        param_names.push(s.name);
+                        let pty = init_node.ty;
+                        param_dcs.push(get_tensor_dim_count(p, pty));
+                        param_d0s.push(get_tensor_dim0(p, pty));
+                        param_d1s.push(get_tensor_dim1(p, pty));
+                        si = si + 1;
+                        continue;
+                    };
+                };
+
+                // let x = <tensor_op>
+                if s.disc == 0 && se > 0 && se <= p.expr_nodes.len() {
+                    let init_node = p.expr_nodes[se - 1];
+                    if expr_has_control_flow(p, se) {
+                        in_region = false;
+                        si = si + 1;
+                        continue;
+                    };
+
+                    let mut opn = "";
+                    let mut iv: Vec<str> = Vec::new();
+                    let mut idc: Vec<i64> = Vec::new();
+                    let mut id0: Vec<i64> = Vec::new();
+                    let mut id1: Vec<i64> = Vec::new();
+                    let mut collected = false;
+
+                    if init_node.disc == 7 {
+                        let fname = init_node.name;
+                        if is_tensor_op(fname) {
+                            opn = fname;
+                            collected = true;
+                            let mut ai = 0;
+                            while ai < init_node.args_count && collected {
+                                let aidx = p.arg_list[(init_node.args_start - 1) + ai];
+                                if aidx > 0 && aidx <= p.expr_nodes.len() {
+                                    let an = p.expr_nodes[aidx - 1];
+                                    if an.disc == 4 {
+                                        iv.push(an.name);
+                                        let aty = an.ty;
+                                        idc.push(get_tensor_dim_count(p, aty));
+                                        id0.push(get_tensor_dim0(p, aty));
+                                        id1.push(get_tensor_dim1(p, aty));
+                                    } else {
+                                        collected = false;
+                                    };
+                                } else {
+                                    collected = false;
+                                };
+                                ai = ai + 1;
+                            };
+                        };
+                    } else if init_node.disc == 8 {
+                        let mname = init_node.name;
+                        if is_tensor_op(mname) {
+                            opn = mname;
+                            collected = true;
+                            let ridx = init_node.left;
+                            if ridx > 0 && ridx <= p.expr_nodes.len() {
+                                let rn = p.expr_nodes[ridx - 1];
+                                if rn.disc == 4 {
+                                    iv.push(rn.name);
+                                    let rty = rn.ty;
+                                    idc.push(get_tensor_dim_count(p, rty));
+                                    id0.push(get_tensor_dim0(p, rty));
+                                    id1.push(get_tensor_dim1(p, rty));
+                                } else {
+                                    collected = false;
+                                };
+                            } else {
+                                collected = false;
+                            };
+                            if collected {
+                                let mut ai = 0;
+                                while ai < init_node.args_count && collected {
+                                    let aidx = p.arg_list[(init_node.args_start - 1) + ai];
+                                    if aidx > 0 && aidx <= p.expr_nodes.len() {
+                                        let an = p.expr_nodes[aidx - 1];
+                                        if an.disc == 4 {
+                                            iv.push(an.name);
+                                            let aty = an.ty;
+                                            idc.push(get_tensor_dim_count(p, aty));
+                                            id0.push(get_tensor_dim0(p, aty));
+                                            id1.push(get_tensor_dim1(p, aty));
+                                        } else {
+                                            collected = false;
+                                        };
+                                    } else {
+                                        collected = false;
+                                    };
+                                    ai = ai + 1;
+                                };
+                            };
+                        };
+                    } else if init_node.disc == 5 {
+                        let bop = init_node.op;
+                        if bop == "+" { opn = "add"; collected = true; }
+                        else if bop == "-" { opn = "sub"; collected = true; }
+                        else if bop == "*" { opn = "mul"; collected = true; }
+                        else if bop == "/" { opn = "div"; collected = true; };
+
+                        if collected {
+                            let lidx = init_node.left;
+                            if lidx > 0 && lidx <= p.expr_nodes.len() {
+                                let ln = p.expr_nodes[lidx - 1];
+                                if ln.disc == 4 {
+                                    iv.push(ln.name);
+                                    let lty = ln.ty;
+                                    idc.push(get_tensor_dim_count(p, lty));
+                                    id0.push(get_tensor_dim0(p, lty));
+                                    id1.push(get_tensor_dim1(p, lty));
+                                } else { collected = false; };
+                            } else { collected = false; };
+                            if collected {
+                                let ridx = init_node.right;
+                                if ridx > 0 && ridx <= p.expr_nodes.len() {
+                                    let rn = p.expr_nodes[ridx - 1];
+                                    if rn.disc == 4 {
+                                        iv.push(rn.name);
+                                        let rty = rn.ty;
+                                        idc.push(get_tensor_dim_count(p, rty));
+                                        id0.push(get_tensor_dim0(p, rty));
+                                        id1.push(get_tensor_dim1(p, rty));
+                                    } else { collected = false; };
+                                } else { collected = false; };
+                            };
+                        };
+                    };
+
+                    if collected {
+                        op_out_vars.push(s.name);
+                        let oty = init_node.ty;
+                        op_out_dcs.push(get_tensor_dim_count(p, oty));
+                        op_out_d0s.push(get_tensor_dim0(p, oty));
+                        op_out_d1s.push(get_tensor_dim1(p, oty));
+                        op_names.push(opn);
+                        op_in_starts.push(op_in_vars.len() + 1);
+                        op_in_counts.push(iv.len());
+                        let mut ii = 0;
+                        while ii < iv.len() {
+                            op_in_vars.push(iv[ii]);
+                            op_in_dcs.push(idc[ii]);
+                            op_in_d0s.push(id0[ii]);
+                            op_in_d1s.push(id1[ii]);
+                            ii = ii + 1;
+                        };
+                    };
+                };
+            } else {
+                // 检查 start_grad/new_grad
+                let se = stmt_expr_idx(s);
+                if se > 0 && se <= p.expr_nodes.len() {
+                    let se_node = p.expr_nodes[se - 1];
+                    if se_node.disc == 7 && (se_node.name == "start_grad" || se_node.name == "new_grad") {
+                        in_region = true;
+                        param_names = Vec::new();
+                        param_dcs = Vec::new();
+                        param_d0s = Vec::new();
+                        param_d1s = Vec::new();
+                        op_out_vars = Vec::new();
+                        op_out_dcs = Vec::new();
+                        op_out_d0s = Vec::new();
+                        op_out_d1s = Vec::new();
+                        op_names = Vec::new();
+                        op_in_vars = Vec::new();
+                        op_in_dcs = Vec::new();
+                        op_in_d0s = Vec::new();
+                        op_in_d1s = Vec::new();
+                        op_in_starts = Vec::new();
+                        op_in_counts = Vec::new();
+                        loss_var = "";
+                        loss_dc = 0;
+                        loss_d0 = 0;
+                        loss_d1 = 0;
+
+                        if se_node.args_count >= 1 {
+                            let pa = p.arg_list[se_node.args_start - 1];
+                            if pa > 0 && pa <= p.expr_nodes.len() {
+                                let pn = p.expr_nodes[pa - 1];
+                                if pn.disc == 4 {
+                                    param_names.push(pn.name);
+                                    let pty = pn.ty;
+                                    param_dcs.push(get_tensor_dim_count(p, pty));
+                                    param_d0s.push(get_tensor_dim0(p, pty));
+                                    param_d1s.push(get_tensor_dim1(p, pty));
+                                };
+                            };
+                        };
+                    };
+                };
+            };
+            si = si + 1;
+        };
+        fi = fi + 1;
+    };
 }

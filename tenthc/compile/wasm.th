@@ -554,11 +554,12 @@ fn valtype_for_type(hir: HirProgram, ty_idx: i64) -> i64 {
     if ty_idx <= 0 || ty_idx > hir.type_nodes.len() { return 126; };
     let tn = hir.type_nodes[ty_idx - 1];
     if tn.disc == 0 {
-        // Base type
+        // Base type — 与 Rust wasm/mod.rs to_val_type 对齐
         if tn.sub == 3 { return 125; }; // F32
         if tn.sub == 2 { return 124; }; // F64
         if tn.sub == 6 { return 0; };   // Unit — no result
-        return 126; // 其他 base types → i64
+        if tn.sub == 4 { return 127; }; // Bool → I32 (与 Rust to_val_type 对齐)
+        return 126; // 其他 base types (I64/I32/I8..U64/Str/Char) → i64
     };
     126 // 非 Base 类型（Tensor/Struct 等）→ i64 (指针)
 }
@@ -689,7 +690,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             wasm_i32_wrap_i64(out); // i64 str ptr -> i32
             compile_expr(ctx, out, hir, e.right);
             wasm_i32_wrap_i64(out); // i64 str ptr -> i32
-            wasm_call(out, 7); // str_add(i32, i32) -> i32
+            wasm_call(out, 3); // str_add(i32, i32) -> i32
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
@@ -935,15 +936,16 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             };
         };
         if method == "len" {
-            wasm_call(out, 2); // import 2: env.vec_len
+            wasm_call(out, 9); // import 9: host.Vec_len (i64)->i64
             return;
         };
         if method == "push" {
-            wasm_call(out, 3); // import 3: env.vec_push
+            wasm_call(out, 8); // import 8: host.Vec_push (i64,i64)->i64
+            wasm_drop(out);      // push returns Unit, drop the i64 result
             return;
         };
         if method == "get" {
-            wasm_call(out, 4); // import 4: env.vec_get
+            wasm_call(out, 10); // import 10: host.Vec_get (i64,i64)->i64
             return;
         };
         // Unknown method: drop everything, return 0
@@ -970,7 +972,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             // vec_get: compile target (i64), compile index (i64)
             compile_expr(ctx, out, hir, e.left);
             compile_expr(ctx, out, hir, e.right);
-            wasm_call(out, 4); // vec_get(i64, i64) -> i64
+            wasm_call(out, 10); // vec_get(i64, i64) -> i64
         };
         return;
     };
@@ -1001,10 +1003,17 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         // If — block type determined by e.ty (set in lower.th):
         // ty > 0 means branches produce values → i64 (0x7E=126)
         // ty == 0 means branches don't produce values → void (0x40=64)
+        // Problem 21 batch 3: Never type (disc=12) is divergent — branches
+        // ending in return/break/continue don't produce a value, so treat
+        // Never as void (bt=64) to avoid WASM stack type mismatch.
         compile_expr(ctx, out, hir, e.cond);
         let mut bt: i64 = 64;
         if e.alt > 0 && e.ty > 0 {
-            bt = 126;
+            // Check if ty is Never (disc=12) — if so, use void block type
+            let is_never = e.ty <= hir.type_nodes.len() && hir.type_nodes[e.ty - 1].disc == 12;
+            if !is_never {
+                bt = 126;
+            };
         };
         wasm_if(out, bt);
         // Track if depth inside loops so break/continue emit correct br depth
@@ -1045,31 +1054,35 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
                     compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
+                    wasm_i32_wrap_i64(out); // i64 arg -> i32 (println takes i32)
                 };
             };
-            wasm_call(out, 0); // import 0: env.println
+            wasm_call(out, 0); // import 0: host.println (i32)->()
             return;
         };
         if func_name == "Vec::new" || func_name == "HashMap::new" {
-            wasm_call(out, 1); // import 1: env.vec_new
+            wasm_call(out, 7); // import 7: host.Vec_new ()->i64
             return;
         };
         if func_name == "read_file" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
                     compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
+                    wasm_i32_wrap_i64(out); // i64 arg -> i32 (read_file takes i32)
                 };
             };
-            wasm_call(out, 5); // import 5: env.read_file
+            wasm_call(out, 2); // import 2: host.read_file (i32)->i32
+            wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
-        if func_name == "write_bytes" {
+        if func_name == "write_file" {
             if e.args_count > 0 {
                 for ai in e.args_start..(e.args_start + e.args_count) {
                     compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
+                    wasm_i32_wrap_i64(out); // i64 arg -> i32 (write_file takes i32)
                 };
             };
-            wasm_call(out, 6); // import 6: env.write_bytes
+            wasm_call(out, 1); // import 1: host.write_file (i32,i32)->()
             return;
         };
         if func_name == "str_add" {
@@ -1080,7 +1093,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 compile_expr(ctx, out, hir, hir.arg_list[e.args_start]);
                 wasm_i32_wrap_i64(out);
             };
-            wasm_call(out, 7); // import 7: env.str_add
+            wasm_call(out, 3); // import 3: host.str_add (i32,i32)->i32
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
@@ -1092,7 +1105,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 compile_expr(ctx, out, hir, hir.arg_list[e.args_start]);
                 wasm_i32_wrap_i64(out);
             };
-            wasm_call(out, 8); // import 8: env.str_eq
+            wasm_call(out, 4); // import 4: host.str_eq (i32,i32)->i32
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
@@ -1101,7 +1114,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             if e.args_count > 0 {
                 compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
             };
-            wasm_call(out, 9); // import 9: env.str_int
+            wasm_call(out, 5); // import 5: host.str_int (i64)->i32
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
@@ -1111,7 +1124,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
                 wasm_i32_wrap_i64(out);
             };
-            wasm_call(out, 10); // import 10: env.tenth_alloc
+            wasm_call(out, 6); // import 6: host.tenth_alloc (i32)->i32
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
@@ -1123,7 +1136,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 compile_expr(ctx, out, hir, hir.arg_list[e.args_start]);
                 wasm_i32_wrap_i64(out);
             };
-            wasm_call(out, 11); // import 11: env.compile_host
+            wasm_call(out, 11); // import 11: host.compile_host
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
@@ -1133,7 +1146,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 compile_expr(ctx, out, hir, hir.arg_list[e.args_start - 1]);
                 wasm_i32_wrap_i64(out);
             };
-            wasm_call(out, 12); // import 12: env.str_len
+            wasm_call(out, 12); // import 12: host.str_len
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
@@ -1144,7 +1157,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 wasm_i32_wrap_i64(out);
                 compile_expr(ctx, out, hir, hir.arg_list[e.args_start]);
             };
-            wasm_call(out, 13); // import 13: env.str_at
+            wasm_call(out, 13); // import 13: host.str_at
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
@@ -1158,7 +1171,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 compile_expr(ctx, out, hir, hir.arg_list[e.args_start + 1]);
                 wasm_i32_wrap_i64(out);
             };
-            wasm_call(out, 14); // import 14: env.str_cmp
+            wasm_call(out, 14); // import 14: host.str_cmp
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
@@ -1168,7 +1181,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                     compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
                 };
             };
-            wasm_call(out, 15); // import 15: env.f64_bits
+            wasm_call(out, 15); // import 15: host.f64_bits
             return;
         };
         if func_name == "str_slice" {
@@ -1179,7 +1192,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 compile_expr(ctx, out, hir, hir.arg_list[e.args_start]);
                 compile_expr(ctx, out, hir, hir.arg_list[e.args_start + 1]);
             };
-            wasm_call(out, 16); // import 16: env.str_slice
+            wasm_call(out, 16); // import 16: host.str_slice
             wasm_i64_extend_i32_u(out); // i32 result -> i64
             return;
         };
@@ -1222,10 +1235,10 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             wasm_call_indirect(out, type_idx, 0);
             return;
         };
-        // Regular function call (indices offset by 18 imports)
-        let mut call_idx: i64 = 18;
+        // Regular function call (indices offset by 20 imports)
+        let mut call_idx: i64 = 20;
         for fi in 0..hir.fns.len() {
-            if hir.fns[fi].name == func_name { call_idx = 18 + fi; break; };
+            if hir.fns[fi].name == func_name { call_idx = 20 + fi; break; };
         };
         if e.args_count > 0 {
             for ai in e.args_start..(e.args_start + e.args_count) {
@@ -1244,6 +1257,29 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             };
         };
         wasm_i64_const(out, 0);
+        return;
+    };
+    if d == 36 {
+        // Problem 21 batch 3: Tuple literal — same as ArrayLiteral (disc=22).
+        // WASM backend doesn't support tuple values; compile elements for side
+        // effects and return 0.
+        if e.args_count > 0 {
+            for ai in e.args_start..(e.args_start + e.args_count) {
+                compile_expr(ctx, out, hir, hir.arg_list[ai - 1]);
+                wasm_drop(out);
+            };
+        };
+        wasm_i64_const(out, 0);
+        return;
+    };
+    if d == 34 {
+        // Problem 21 batch 3: Try block — compile inner expression,
+        // leave result on stack (same semantics as Block but single expr).
+        if e.left > 0 {
+            compile_expr(ctx, out, hir, e.left);
+        } else {
+            wasm_i64_const(out, 0);
+        };
         return;
     };
     if d == 17 {
@@ -1336,7 +1372,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
             // Allocate env struct via tenth_alloc (import 10)
             // size = captures_count * 8
             wasm_i32_const(out, captures_count * 8);
-            wasm_call(out, 10); // tenth_alloc -> i32
+            wasm_call(out, 6); // tenth_alloc -> i32
             wasm_i64_extend_i32_u(out); // i32 -> i64 env_ptr
             // Store env_ptr in temp
             wasm_local_set(out, ctx.temp_local);
@@ -1556,7 +1592,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         wasm_i32_const(out, total_count);
         // rank: i32.const rows
         wasm_i32_const(out, rows);
-        // call import 17: env.tensor_from_vec (i32, i32, i32) -> i64
+        // call import 17: host.tensor_from_vec (i32, i32, i32) -> i64
         wasm_call(out, 17);
         // result (i64 tensor_handle) is on stack
         return;
@@ -1586,7 +1622,7 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         // start is i64, already correct
         compile_expr(ctx, out, hir, e.alt);
         // end is i64, already correct
-        wasm_call(out, 16); // import 16: env.str_slice (i32, i64, i64) -> i32
+        wasm_call(out, 16); // import 16: host.str_slice (i32, i64, i64) -> i32
         wasm_i64_extend_i32_u(out); // promote i32 result to i64
         return;
     };
@@ -1724,9 +1760,10 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 ctx.break_offset = saved_break_offset;
                 return;
             };
-            // AUDIT-11.4.5: ArrayLiteral (disc=22) iteration — for x in [a, b, c] { body }
+            // AUDIT-11.4.5: ArrayLiteral (disc=22) / Tuple (disc=36) iteration — for x in [a, b, c] { body }
             // Builds a Vec via vec_new + N × vec_push, then iterates by index.
-            if iter.disc == 22 {
+            // Problem 21 batch 3: also handle Tuple (disc=36) — same iteration logic.
+            if iter.disc == 22 || iter.disc == 36 {
                 // Allocate locals: $vec, $len, $i, $elem
                 let slot_vec = ctx.temp_local + 1 + ctx.local_count;
                 let slot_len = ctx.temp_local + 1 + ctx.local_count + 1;
@@ -1736,21 +1773,22 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 ctx.local_names.push(s.name);
                 ctx.local_indices.push(slot_elem);
 
-                // Build Vec: vec_new() → $vec, then push each element
-                wasm_call(out, 1); // import 1: env.vec_new () -> i64
+                // Build Vec: Vec_new() → $vec, then push each element
+                wasm_call(out, 7); // import 7: host.Vec_new () -> i64
                 wasm_local_set(out, slot_vec);
                 if iter.args_count > 0 {
                     let mut ai: i64 = 0;
                     while ai < iter.args_count {
                         wasm_local_get(out, slot_vec);
                         compile_expr(ctx, out, hir, hir.arg_list[iter.args_start + ai - 1]);
-                        wasm_call(out, 3); // import 3: env.vec_push (i64, i64) -> ()
+                        wasm_call(out, 8); // import 8: host.Vec_push (i64,i64)->i64
+                        wasm_drop(out);      // push returns Unit, drop the i64 result
                         ai = ai + 1;
                     };
                 };
-                // $len = vec_len($vec)
+                // $len = Vec_len($vec)
                 wasm_local_get(out, slot_vec);
-                wasm_call(out, 2); // import 2: env.vec_len (i64) -> i64
+                wasm_call(out, 9); // import 9: host.Vec_len (i64) -> i64
                 wasm_local_set(out, slot_len);
                 // $i = 0
                 wasm_i64_const(out, 0);
@@ -1777,7 +1815,7 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                 // $elem = vec_get($vec, $i)
                 wasm_local_get(out, slot_vec);
                 wasm_local_get(out, slot_i);
-                wasm_call(out, 4); // import 4: env.vec_get (i64, i64) -> i64
+                wasm_call(out, 10); // import 10: host.Vec_get (i64, i64) -> i64
                 wasm_local_set(out, slot_elem);
                 // body (if_depth stays 0; if blocks inside will increment it)
                 if s.body_count > 0 {
@@ -1868,8 +1906,8 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     let num_funcs = hir.fns.len();
     ctx.func_count = num_funcs;
 
-    // Import count
-    let num_imports: i64 = 18;
+    // Import count — 20 imports (与 Rust sections.rs 对齐)
+    let num_imports: i64 = 20;
 
     // ---- Collect closures (D5) ----
     // Scan all expr_nodes for Closure (disc=23) and register them
@@ -1881,9 +1919,9 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
             let cidx = ctx.closure_exprs.len() - 1; // 0-based closure index
             let param_count = hir.expr_nodes[ei].params_count;
             // Function index: 18 (imports) + num_funcs + cidx
-            let func_idx = 18 + num_funcs + cidx;
-            // Type index: 13 (import types) + num_funcs + cidx
-            let type_idx = 13 + num_funcs + cidx;
+            let func_idx = 20 + num_funcs + cidx;
+            // Type index: 14 (import types) + num_funcs + cidx
+            let type_idx = 14 + num_funcs + cidx;
             ctx.closure_func_idxs.push(func_idx);
             ctx.closure_type_idxs.push(type_idx);
             ctx.closure_param_counts.push(param_count);
@@ -1893,76 +1931,81 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     let num_closures = ctx.closure_exprs.len();
 
     // ---- Build type section ----
-    // Import types come first: 13 signatures
-    // Type 0: (i64) -> ()    — println
-    // Type 1: () -> i64      — vec_new
-    // Type 2: (i64) -> i64   — vec_len, read_file
-    // Type 3: (i64,i64) -> () — vec_push
-    // Type 4: (i64,i64) -> i64 — vec_get, write_bytes
-    // Type 5: (i32,i32) -> i32 — str_add, str_eq, compile_host
-    // Type 6: (i64) -> i32    — str_int
-    // Type 7: (i32) -> i32    — tenth_alloc, str_len
-    // Type 8: (i32,i64) -> i32 — str_at
-    // Type 9: (i32,i32,i32) -> i32 — str_cmp
-    // Type 10: (f64) -> i64   — f64_bits
-    // Type 11: (i32,i64,i64) -> i32 — str_slice
-    // Type 12: (i32,i32,i32) -> i64 — tensor_from_vec
+    // Import types come first: 14 signatures (与 Rust sections.rs emit_type_section 对齐)
+    // Type 0:  (i32) -> ()           — println
+    // Type 1:  (i32,i32) -> ()       — write_file
+    // Type 2:  (i32) -> i32          — read_file
+    // Type 3:  (i32,i32) -> i32      — str_add, str_eq, compile_host
+    // Type 4:  (i64) -> i32          — str_int
+    // Type 5:  (i32) -> i32          — tenth_alloc, str_len
+    // Type 6:  () -> i64             — Vec_new
+    // Type 7:  (i64,i64) -> i64      — Vec_push, Vec_get
+    // Type 8:  (i64) -> i64          — Vec_len
+    // Type 9:  (i32,i64) -> i32      — str_at
+    // Type 10: (i32,i32,i32) -> i32  — str_cmp
+    // Type 11: (f64) -> i64          — f64_bits
+    // Type 12: (i32,i64,i64) -> i32  — str_slice
+    // Type 13: (i32,i32,i32) -> i64  — tensor_from_vec, host_make_tensor_f16, host_make_tensor_bf16
     let mut types: Vec<i64> = Vec::new();
-    leb128_u(13 + num_funcs + num_closures, &mut types); // total type count
+    leb128_u(14 + num_funcs + num_closures, &mut types); // total type count
 
-    // Type 0: (i64) -> ()
-    types.push(96); leb128_u(1, &mut types); types.push(126); // params
+    // Type 0: (i32) -> () — println
+    types.push(96); leb128_u(1, &mut types); types.push(127); // params
     leb128_u(0, &mut types); // results
 
-    // Type 1: () -> i64
-    types.push(96); leb128_u(0, &mut types); // params
-    leb128_u(1, &mut types); types.push(126); // results
-
-    // Type 2: (i64) -> i64
-    types.push(96); leb128_u(1, &mut types); types.push(126);
-    leb128_u(1, &mut types); types.push(126);
-
-    // Type 3: (i64,i64) -> ()
-    types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
-    leb128_u(0, &mut types);
-
-    // Type 4: (i64,i64) -> i64
-    types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
-    leb128_u(1, &mut types); types.push(126);
-
-    // Type 5: (i32,i32) -> i32
+    // Type 1: (i32,i32) -> () — write_file
     types.push(96); leb128_u(2, &mut types); types.push(127); types.push(127);
-    leb128_u(1, &mut types); types.push(127);
+    leb128_u(0, &mut types); // results
 
-    // Type 6: (i64) -> i32
-    types.push(96); leb128_u(1, &mut types); types.push(126);
-    leb128_u(1, &mut types); types.push(127);
-
-    // Type 7: (i32) -> i32
+    // Type 2: (i32) -> i32 — read_file
     types.push(96); leb128_u(1, &mut types); types.push(127);
     leb128_u(1, &mut types); types.push(127);
 
-    // Type 8: (i32,i64) -> i32
+    // Type 3: (i32,i32) -> i32 — str_add, str_eq, compile_host
+    types.push(96); leb128_u(2, &mut types); types.push(127); types.push(127);
+    leb128_u(1, &mut types); types.push(127);
+
+    // Type 4: (i64) -> i32 — str_int
+    types.push(96); leb128_u(1, &mut types); types.push(126);
+    leb128_u(1, &mut types); types.push(127);
+
+    // Type 5: (i32) -> i32 — tenth_alloc, str_len
+    types.push(96); leb128_u(1, &mut types); types.push(127);
+    leb128_u(1, &mut types); types.push(127);
+
+    // Type 6: () -> i64 — Vec_new
+    types.push(96); leb128_u(0, &mut types); // params
+    leb128_u(1, &mut types); types.push(126); // results
+
+    // Type 7: (i64,i64) -> i64 — Vec_push, Vec_get
+    types.push(96); leb128_u(2, &mut types); types.push(126); types.push(126);
+    leb128_u(1, &mut types); types.push(126);
+
+    // Type 8: (i64) -> i64 — Vec_len
+    types.push(96); leb128_u(1, &mut types); types.push(126);
+    leb128_u(1, &mut types); types.push(126);
+
+    // Type 9: (i32,i64) -> i32 — str_at
     types.push(96); leb128_u(2, &mut types); types.push(127); types.push(126);
     leb128_u(1, &mut types); types.push(127);
 
-    // Type 9: (i32,i32,i32) -> i32
+    // Type 10: (i32,i32,i32) -> i32 — str_cmp
     types.push(96); leb128_u(3, &mut types); types.push(127); types.push(127); types.push(127);
     leb128_u(1, &mut types); types.push(127);
 
-    // Type 10: (f64) -> i64 — f64_bits
+    // Type 11: (f64) -> i64 — f64_bits
     types.push(96); leb128_u(1, &mut types); types.push(124); // f64 param
     leb128_u(1, &mut types); types.push(126); // i64 result
 
-    // Type 11: (i32,i64,i64) -> i32 — str_slice
+    // Type 12: (i32,i64,i64) -> i32 — str_slice
     types.push(96); leb128_u(3, &mut types); types.push(127); types.push(126); types.push(126);
     leb128_u(1, &mut types); types.push(127);
 
-    // Type 12: (i32,i32,i32) -> i64 — tensor_from_vec
+    // Type 13: (i32,i32,i32) -> i64 — tensor_from_vec, host_make_tensor_f16, host_make_tensor_bf16
     types.push(96); leb128_u(3, &mut types); types.push(127); types.push(127); types.push(127);
     leb128_u(1, &mut types); types.push(126);
 
-    // Function types (type index 13+)
+    // Function types (type index 14+)
     // Phase 5.5：按参数/返回值的实际 dtype 发射 ValType（F32=125, F64=124, I64=126）
     // 与 Rust wasm.rs to_val_type 对齐，消除策略 A 的类型签名偏差。
     for fi in 0..num_funcs {
@@ -1998,112 +2041,116 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
     for ti in 0..types.len() { type_sec.push(types[ti]); };
 
     // ---- Build import section ----
+    // 20 imports, module="host", order aligned with Rust sections.rs emit_import_section
     let mut import_sec: Vec<i64> = Vec::new();
     leb128_u(num_imports, &mut import_sec);
 
-    // Import 0: env.println (type 0)
-    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
-    import_sec.push(7);
-    import_sec.push(112);import_sec.push(114);import_sec.push(105);import_sec.push(110);import_sec.push(116);import_sec.push(108);import_sec.push(110);
-    import_sec.push(0); leb128_u(0, &mut import_sec); // func, type 0
+    // Import 0: host.println (type 0: (i32)->())
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "println");
+    import_sec.push(0); leb128_u(0, &mut import_sec);
 
-    // Import 1: env.vec_new (type 1)
-    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
-    import_sec.push(7);
-    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(110);import_sec.push(101);import_sec.push(119);
+    // Import 1: host.write_file (type 1: (i32,i32)->())
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(10, &mut import_sec); push_str_bytes(&mut import_sec, "write_file");
     import_sec.push(0); leb128_u(1, &mut import_sec);
 
-    // Import 2: env.vec_len (type 2)
-    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
-    import_sec.push(7);
-    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(108);import_sec.push(101);import_sec.push(110);
+    // Import 2: host.read_file (type 2: (i32)->i32)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(9, &mut import_sec); push_str_bytes(&mut import_sec, "read_file");
     import_sec.push(0); leb128_u(2, &mut import_sec);
 
-    // Import 3: env.vec_push (type 3)
-    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
-    import_sec.push(8);
-    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(112);import_sec.push(117);import_sec.push(115);import_sec.push(104);
+    // Import 3: host.str_add (type 3: (i32,i32)->i32)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_add");
     import_sec.push(0); leb128_u(3, &mut import_sec);
 
-    // Import 4: env.vec_get (type 4)
-    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
-    import_sec.push(7);
-    import_sec.push(118);import_sec.push(101);import_sec.push(99);import_sec.push(95);import_sec.push(103);import_sec.push(101);import_sec.push(116);
-    import_sec.push(0); leb128_u(4, &mut import_sec);
-
-    // Import 5: env.read_file (type 2 — same as vec_len: (i64)->i64)
-    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
-    import_sec.push(9);
-    import_sec.push(114);import_sec.push(101);import_sec.push(97);import_sec.push(100);import_sec.push(95);import_sec.push(102);import_sec.push(105);import_sec.push(108);import_sec.push(101);
-    import_sec.push(0); leb128_u(2, &mut import_sec);
-
-    // Import 6: env.write_bytes (type 4 — same as vec_get: (i64,i64)->i64)
-    import_sec.push(3); import_sec.push(101); import_sec.push(110); import_sec.push(118);
-    import_sec.push(11);
-    import_sec.push(119);import_sec.push(114);import_sec.push(105);import_sec.push(116);import_sec.push(101);import_sec.push(95);import_sec.push(98);import_sec.push(121);import_sec.push(116);import_sec.push(101);import_sec.push(115);
-    import_sec.push(0); leb128_u(4, &mut import_sec);
-
-    // Import 7: env.str_add (type 5: (i32,i32)->i32)
-    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
-    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_add");
-    import_sec.push(0); leb128_u(5, &mut import_sec);
-
-    // Import 8: env.str_eq (type 5: (i32,i32)->i32)
-    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
+    // Import 4: host.str_eq (type 3: (i32,i32)->i32)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
     leb128_u(6, &mut import_sec); push_str_bytes(&mut import_sec, "str_eq");
+    import_sec.push(0); leb128_u(3, &mut import_sec);
+
+    // Import 5: host.str_int (type 4: (i64)->i32)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_int");
+    import_sec.push(0); leb128_u(4, &mut import_sec);
+
+    // Import 6: host.tenth_alloc (type 5: (i32)->i32)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(11, &mut import_sec); push_str_bytes(&mut import_sec, "tenth_alloc");
     import_sec.push(0); leb128_u(5, &mut import_sec);
 
-    // Import 9: env.str_int (type 6: (i64)->i32)
-    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
-    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_int");
+    // Import 7: host.Vec_new (type 6: ()->i64)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "Vec_new");
     import_sec.push(0); leb128_u(6, &mut import_sec);
 
-    // Import 10: env.tenth_alloc (type 7: (i32)->i32)
-    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
-    leb128_u(11, &mut import_sec); push_str_bytes(&mut import_sec, "tenth_alloc");
+    // Import 8: host.Vec_push (type 7: (i64,i64)->i64)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(8, &mut import_sec); push_str_bytes(&mut import_sec, "Vec_push");
     import_sec.push(0); leb128_u(7, &mut import_sec);
 
-    // Import 11: env.compile_host (type 5: (i32,i32)->i32)
-    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
-    leb128_u(12, &mut import_sec); push_str_bytes(&mut import_sec, "compile_host");
-    import_sec.push(0); leb128_u(5, &mut import_sec);
-
-    // Import 12: env.str_len (type 7: (i32)->i32)
-    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
-    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_len");
-    import_sec.push(0); leb128_u(7, &mut import_sec);
-
-    // Import 13: env.str_at (type 8: (i32,i64)->i32)
-    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
-    leb128_u(6, &mut import_sec); push_str_bytes(&mut import_sec, "str_at");
+    // Import 9: host.Vec_len (type 8: (i64)->i64)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "Vec_len");
     import_sec.push(0); leb128_u(8, &mut import_sec);
 
-    // Import 14: env.str_cmp (type 9: (i32,i32,i32)->i32)
-    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
-    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_cmp");
+    // Import 10: host.Vec_get (type 7: (i64,i64)->i64)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "Vec_get");
+    import_sec.push(0); leb128_u(7, &mut import_sec);
+
+    // Import 11: host.compile_host (type 3: (i32,i32)->i32)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(12, &mut import_sec); push_str_bytes(&mut import_sec, "compile_host");
+    import_sec.push(0); leb128_u(3, &mut import_sec);
+
+    // Import 12: host.str_len (type 5: (i32)->i32)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_len");
+    import_sec.push(0); leb128_u(5, &mut import_sec);
+
+    // Import 13: host.str_at (type 9: (i32,i64)->i32)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(6, &mut import_sec); push_str_bytes(&mut import_sec, "str_at");
     import_sec.push(0); leb128_u(9, &mut import_sec);
 
-    // Import 15: env.f64_bits (type 10: (f64)->i64)
-    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
-    leb128_u(8, &mut import_sec); push_str_bytes(&mut import_sec, "f64_bits");
+    // Import 14: host.str_cmp (type 10: (i32,i32,i32)->i32)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(7, &mut import_sec); push_str_bytes(&mut import_sec, "str_cmp");
     import_sec.push(0); leb128_u(10, &mut import_sec);
 
-    // Import 16: env.str_slice (type 11: (i32,i64,i64)->i32)
-    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
-    leb128_u(9, &mut import_sec); push_str_bytes(&mut import_sec, "str_slice");
+    // Import 15: host.f64_bits (type 11: (f64)->i64)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(8, &mut import_sec); push_str_bytes(&mut import_sec, "f64_bits");
     import_sec.push(0); leb128_u(11, &mut import_sec);
 
-    // Import 17: env.tensor_from_vec (type 12: (i32,i32,i32)->i64)
-    import_sec.push(3); push_str_bytes(&mut import_sec, "env");
-    leb128_u(15, &mut import_sec); push_str_bytes(&mut import_sec, "tensor_from_vec");
+    // Import 16: host.str_slice (type 12: (i32,i64,i64)->i32)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(9, &mut import_sec); push_str_bytes(&mut import_sec, "str_slice");
     import_sec.push(0); leb128_u(12, &mut import_sec);
+
+    // Import 17: host.tensor_from_vec (type 13: (i32,i32,i32)->i64)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(15, &mut import_sec); push_str_bytes(&mut import_sec, "tensor_from_vec");
+    import_sec.push(0); leb128_u(13, &mut import_sec);
+
+    // Import 18: host.host_make_tensor_f16 (type 13: (i32,i32,i32)->i64)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(20, &mut import_sec); push_str_bytes(&mut import_sec, "host_make_tensor_f16");
+    import_sec.push(0); leb128_u(13, &mut import_sec);
+
+    // Import 19: host.host_make_tensor_bf16 (type 13: (i32,i32,i32)->i64)
+    import_sec.push(4); push_str_bytes(&mut import_sec, "host");
+    leb128_u(21, &mut import_sec); push_str_bytes(&mut import_sec, "host_make_tensor_bf16");
+    import_sec.push(0); leb128_u(13, &mut import_sec);
 
     // ---- Build function section ----
     let mut func_sec: Vec<i64> = Vec::new();
     leb128_u(num_funcs + num_closures, &mut func_sec);
-    for idx in 0..num_funcs { leb128_u(idx + 13, &mut func_sec); };
-    // Closure functions: type index = 13 + num_funcs + ci
-    for ci in 0..num_closures { leb128_u(13 + num_funcs + ci, &mut func_sec); };
+    for idx in 0..num_funcs { leb128_u(idx + 14, &mut func_sec); };
+    // Closure functions: type index = 14 + num_funcs + ci
+    for ci in 0..num_closures { leb128_u(14 + num_funcs + ci, &mut func_sec); };
 
     // ---- Build table section (D5.2) ----
     // Only emit if there are closures (avoid empty section)
@@ -2155,7 +2202,7 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
         // function indices
         leb128_u(num_closures, &mut elem_sec);
         for ci in 0..num_closures {
-            leb128_u(18 + num_funcs + ci, &mut elem_sec);
+            leb128_u(20 + num_funcs + ci, &mut elem_sec);
         };
     };
 
@@ -2181,7 +2228,7 @@ fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
             export_sec.push(char_to_ascii(f.name[ci]));
         };
         export_sec.push(0); // export kind: function
-        leb128_u(fi + 18, &mut export_sec);
+        leb128_u(fi + 20, &mut export_sec);
     };
 
     // ---- Build data section (字符串驻留数据) ----

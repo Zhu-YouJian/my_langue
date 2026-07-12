@@ -1,6 +1,6 @@
-﻿# 项目总览与审计报告
+# 项目总览与审计报告
 
-> 日期：2026-07-11 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 + 异步 Phase 2（协程调度 + async I/O）+ 正则表达式 + 张量修复（f16/bf16 + 序列化 + 优化器修复）| 790+ 项测试通过（55 个测试目标，含 6 个栈溢出崩溃预存问题）
+> 日期：2026-07-12 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 + 异步 Phase 2（协程调度 + async I/O）+ 正则表达式 + 张量修复（f16/bf16 + 序列化 + 优化器修复）+ Problem 21（tenthc 全量追上 Rust 母编译器：Lexer/Parser/HIR/Shape/WASM/bridge 六批次同步）| 1121 项测试通过（63 个测试套件，--release 模式下 0 栈溢出）
 
 ---
 
@@ -24,13 +24,13 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 ## 三、测试矩阵
 
-> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。统计日期：2026-07-11。
+> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。统计日期：2026-07-12（--release 模式）。
 
 ### 基础管线
 
 | 测试文件 | 数量 | 覆盖 |
 |----------|------|------|
-| `lib`（单元测试） | 16/0/0 | HIR/VM/解释器/autodiff 等模块单元 |
+| `lib`（单元测试） | 23/0/0 | HIR/VM/解释器/autodiff 等模块单元 |
 | `lexer_test.rs` | 6/0/0 | 整数/标识符/关键字/字符串/运算符/注释 |
 | `parser_test.rs` | 5/0/0 | 字面量/二元表达式/函数定义/if/tensor |
 | `integration_test.rs` | 14/0/0 | 全管线: 算术/布尔/比较/函数/闭包/while/tensor |
@@ -58,7 +58,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | 测试文件 | 数量 | 覆盖 |
 |----------|------|------|
 | `autodiff_test.rs` | 54/0/0 | 自动微分/闭包/张量/错误位置（21 算子） |
-| `autodiff_shape_test.rs` | 10/0/0 | Autograd 反向 shape 校验（护城河 A） |
+| `autodiff_shape_test.rs` | 15/0/0 | Autograd 反向 shape 校验（护城河 A，含 unbroadcast 数值专项 5 项） |
 | `vm_autodiff_test.rs` | 15/0/0 | 字节码 VM 上的自动微分回归 |
 | `abs_test.rs` | 8/0/0 | abs 算子 |
 | `select_test.rs` | 16/0/0 | select 算子 |
@@ -93,8 +93,8 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | 测试文件 | 数量 | 覆盖 |
 |----------|------|------|
 | `three_stage.rs` | 1/0/2 | 三段式自举（2 项 ignored — wasmi 慢） |
-| `selfhost_frontend.rs` | 栈溢出 | 自举前端验证（lex/parse/lower） |
-| `parity_test.rs` | 栈溢出 | VM vs Interpreter 行为一致（全指令覆盖） |
+| `selfhost_frontend.rs` | 4/0/0 | 自举前端验证（lex/parse/lower，--release 模式通过） |
+| `parity_test.rs` | 129/0/0 | VM vs Interpreter 行为一致（全指令覆盖，--release 模式通过） |
 
 ### 一致性
 
@@ -120,9 +120,9 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试文件 | 数量 | 覆盖 |
 |----------|------|------|
-| `wasm_backend_minimal.rs` | 7/0/0 | WASM 后端最小用例 |
+| `wasm_backend_minimal.rs` | 10/0/0 | WASM 后端最小用例（含 str_eq/str_add/str_int 回归 3 项） |
 | `jit_test.rs` | 10/0/0 | JIT 编译器回归 |
-| `jit_stack_overflow_test.rs` | 栈溢出 | JIT 栈溢出回归 |
+| `jit_stack_overflow_test.rs` | 3/0/0 | JIT 栈溢出回归（--release 模式通过） |
 
 ### 神经网络
 
@@ -143,7 +143,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `io_test.rs` | 4/0/0 | 同步 I/O 原语 |
 | `net_test.rs` | 6/0/0 | 网络 I/O 原语 |
 | `regex_test.rs` | 11/0/0 | 正则表达式（compile/match/find/find_all/replace/split/无效handle/邮箱正则） |
-| `tensor_features_test.rs` | 17/0/0 | 张量修复（序列化 v2 f32/f64/混合/向后兼容 + f16/bf16 构造/运算/序列化 + 优化器 parse + clip_grad_by_norm/adamw_step_w use+泛型调用运行时验证） |
+| `tensor_features_test.rs` | 18/0/0 | 张量修复（序列化 v2 f32/f64/混合/向后兼容 + f16/bf16 构造/运算/序列化 + 优化器 parse + clip_grad_by_norm/adamw_step_w use+泛型调用运行时验证） |
 
 ### 预存失败（已修复）
 
@@ -152,19 +152,20 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | `generic_tensor_test.rs` | 4/0/0 | 泛型张量构造函数 | ✅ 已修复（2026-07-10）：`native_generic_ctor_f32/f64_lowering` 测试期望从 `Tensor[F32, ..]` 改为 `Tensor[F32, 3]`，与 `shape_from_int_args` 把字面量参数算进 shape 的行为对齐（更精确，利于编译期内存预估） |
 | `fixpoint_runtime.rs` | 0/0/1 | fixpoint 端到端编译+执行 | ✅ 已修复（2026-07-10）：`fixpoint_runtime_benchmark` 标记 `#[ignore]`——wasmtime 路径 Vec 写回逻辑问题（tenthc 完整执行但 main 返回 Vec len=0，AUDIT #5），wasmi 路径已通过验证，wasmtime 仅是性能优化路径 |
 
-### 栈溢出崩溃（编译通过运行时栈溢出）
+### 栈溢出崩溃（已修复，--release 模式全部通过）
 
-| 测试文件 | 数量 | 覆盖 |
-|----------|------|------|
-| `tenthc_generic_tensor_test.rs` | 栈溢出 | tenthc 泛型张量测试 |
-| `tenthc_for_loop_test.rs` | 栈溢出 | tenthc for 循环测试 |
-| `tenthc_dotdot_eq_test.rs` | 栈溢出 | tenthc `..=` lexer 测试 |
+| 测试文件 | 数量 | 覆盖 | 状态 |
+|----------|------|------|------|
+| `tenthc_generic_tensor_test.rs` | 5/0/0 | tenthc 泛型张量测试 | ✅ --release 通过 |
+| `tenthc_for_loop_test.rs` | 9/0/0 | tenthc for 循环测试 | ✅ --release 通过 |
+| `tenthc_dotdot_eq_test.rs` | 3/0/0 | tenthc `..=` lexer 测试 | ✅ --release 通过 |
+| `jit_stack_overflow_test.rs` | 3/0/0 | JIT 栈溢出回归 | ✅ --release 通过 |
 
 ### 总计
 
 | 测试目标 | 数量 | 说明 |
 |----------|------|------|
-| **总计** | **905 passed / 0 failed / 14 ignored** | 58 个测试目标（57 文件 + lib），3 个栈溢出崩溃预存问题（Windows debug 模式） |
+| **总计** | **1121 passed / 0 failed / 14 ignored** | 63 个测试套件（--release 模式，0 栈溢出；debug 模式下 6 个文件栈溢出为预存问题） |
 
 > **2026-07-08 张量修复测试状态**：本次张量修复（f16/bf16 Phase 1 + 序列化 v2 + 4 项小修复）的代码改动已通过现有测试套件验证（lib 16 + integration 14 + native_parity 35 + stdlib 114 = 179 passed；autodiff 5 passed；自举通过），**未新增独立测试文件**——`native_parity_test.rs` 的 35 项已含序列化 v2 parity 测试（test_save_load_weights_parity + test_save_load_weights_nonzero_parity）。Wave 3 测试部补测试任务进行中（accumulate_loop 功能测试 / autodiff unbroadcast shape 测试 / AdamW 单值返回版本测试 / clip_grad_by_norm JIT 路径测试 / 序列化 f32 读写测试 / f16/bf16 基本运算测试），完成后由测试部同步 §三 测试矩阵新增 tensor_features_test 行 + 总计数字。
 
@@ -210,11 +211,12 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | 4 | 无 GPU 后端 | `compile/gpu/` 脚手架已就绪，待 CUDA 环境安装 |
 | 5 | three_stage wasmtime 路径运行时失败（host import 已补全但 WASM-B 0 字节） | **2026-07-09 更新**：`wasmtime_host.rs::register_wasmtime_host_functions` 中 17/18 个 host import 已补全真实现（Vec 四件套/String 全家桶均按 WASM 线性内存 + bump allocator 方案实现，与 `compile/wasm/host.rs` 对齐），仅 `tensor_from_vec` 为简化版（与 wasmi 路径一致，自举管线不依赖）。**但运行 `three_stage_selfhost_wasmtime` 仍失败**：tenthc 编译器在 wasmtime 下执行完整流程（tokens_done/parsed/lowered/compiled 日志均输出），但最终 WASM-B 为 0 字节——根因是 tenthc 在 wasmtime 下的 Vec 写回逻辑有问题（main 返回的 Vec 指针指向空数据）。wasmi 路径已通过（WASM-B 460 bytes，add(3,4)=12）。wasmtime 路径保持 `#[ignore]`，深度调试 ROI 不高（wasmi 路径已工作，wasmtime 仅是 JIT 性能优化）。 |
 | 6 | ~~Rust 母编译器 wasm.rs Call 分派缺 str_eq/str_add/str_int 函数调用分支~~ | ✅ 已修复 (2026-07-09)：`tenth/src/compile/wasm/compile.rs` Call 分派补齐 `str_eq`/`str_add`/`str_int` 三个分支，与 `str_len`/`str_at`/`str_cmp`/`str_slice` 对齐。新增 3 项回归测试 `wasm_backend_minimal::test_str_{eq,add,int}_call_compiles` 验证函数调用形式能产出合法 WASM 并被 wasmi 实例化执行。 |
-| 7 | 6 个测试文件栈溢出崩溃 | tenthc_generic_tensor_test / tenthc_for_loop_test / jit_stack_overflow_test / tenthc_dotdot_eq_test / selfhost_frontend / parity_test 编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，需增大栈空间或改用 release 模式。**2026-07-08 更新**：`tenthc_for_loop_test` 的 Vec 迭代测试在设置 `RUST_MIN_STACK=268435456`（256MB）后已通过 3/3（vec_literal_basic / vec_literal_break_continue / vec_literal_empty），但默认栈空间下仍栈溢出，根因是 Windows debug 模式栈空间不足（git stash 验证为预存问题）。 |
+| 7 | ~~6 个测试文件栈溢出崩溃~~ | ✅ --release 模式下全部通过（2026-07-12 验证）：tenthc_generic_tensor_test 5/0/0、tenthc_for_loop_test 9/0/0、jit_stack_overflow_test 3/0/0、tenthc_dotdot_eq_test 3/0/0、selfhost_frontend 4/0/0、parity_test 129/0/0。debug 模式下仍栈溢出（Windows STATUS_STACK_OVERFLOW），根因是 Windows debug 模式栈空间不足。**2026-07-08 更新**：`tenthc_for_loop_test` 的 Vec 迭代测试在设置 `RUST_MIN_STACK=268435456`（256MB）后已通过 3/3（vec_literal_basic / vec_literal_break_continue / vec_literal_empty），但默认栈空间下仍栈溢出，根因是 Windows debug 模式栈空间不足（git stash 验证为预存问题）。 |
 | 8 | spawn 仍为 eager 语义（Phase 2 设计决策） | `runtime/vm.rs::Op::Spawn` 立即求值 inner 表达式并包装为 `Future(Ready(v))`，不制造真并行；真正的"并发"来自 async I/O 返回的 `Pending` Future（子线程工作期间调度器可切换到其他就绪任务）。**影响**：CPU 密集型 spawn 不会真并行执行；如需 CPU 并行需引入工作窃取调度器或绿色线程池（Phase 3 遗留）。**登记性质**：设计决策非缺陷——保持 Phase 1 兼容性 + 零新依赖原则。详见 MEMO.md 2026-07-08 feat 条目。 |
 | 9 | yield 无语法层关键字（Phase 2 已就绪未接入） | VM 已支持 `Op::Yield`(opcode 53) 执行（让出控制权，task 回到 `ready_queue` 尾部），但 lower 阶段没有 `yield` 关键字的 AST→HIR→Op 路径，当前 `Op::Yield` 只能通过手动构造字节码或 native 内部触发。**影响**：用户代码无法直接使用 `yield` 表达式；未来添加 `yield` 关键字时直接接入（lexer + parser + lower 三层）。**登记性质**：能力已就绪未暴露，Phase 3 遗留。详见 MEMO.md 2026-07-08 feat 条目 Phase 3 遗留 (c)。 |
 | 10 | ~~f16/bf16 Phase 1 已实现，Phase 2 待做（2026-07-08 登记）~~ | ✅ Phase 2 已完成 (2026-07-09)：`TensorData` 已含 `F16(ArrayD<f16>)/BF16(ArrayD<bf16>)` 变体（`half = "2"` 依赖），构造器/运算/dtype 提升表/序列化 v2/HIR 白名单/native 双侧注册已完整。**Phase 2 四缺口全部完成**：(a) JIT 路径 `compile/jit/translator.rs:470-478` MakeTensor 已扩展 4 dtype 分发（0=F64/1=F32/2=F16/3=BF16），`hostcalls.rs:470-526` 实现 `host_make_tensor_f16/bf16`；(b) WASM 路径 `bytecode.rs:610-615` dtype_code 扩展为 0-3 编码，`wasm/compile.rs:761-833` 按 dtype 分发到 `HOST_MAKE_TENSOR_F16=18`/`HOST_MAKE_TENSOR_BF16=19`，`wasm/host.rs`+`wasmtime_host.rs` 双侧注册 stub，`wasm/mod.rs` to_val_type F16/BF16→I64；(c) F16/BF16 param 的 autodiff 反向传播已实现（`tensor.rs:307-383` acc_grad 移除 early-return Err，F16/BF16 走 F32 中间累加策略 AMP，避免 F16 溢出 max≈65504；`autodiff.rs:72-85` dispatch_float! F16/BF16 走 f32 路径；种子梯度 F16/BF16 用 F32 ones）；(d) tenthc 自举编译器支持 f16/bf16 字面量（`lexer.th` 扩展 f16(ival=2)/bf16(ival=3) 后缀检测，`lower.th` FloatLiteral 写入 HIR sub=14(F16)/15(BF16)，`wasm.th` is_expr_float 识别）。**影响**：f16/bf16 张量现可在 VM/解释器/JIT/WASM 全路径下使用，也可作为 autodiff param 参与训练（F32 中间累加，支持混合精度训练 AMP）。**验证**：autodiff 54/54、vm_autodiff 15/15、tensor_features 18/18、jit 10/10、wasm_backend_minimal 10/10 均 0 回归；自举 `[OK] Full compiler compiled`。详见 MEMO.md 2026-07-09 feat 条目。 |
-| 11 | ~~use 机制在 cargo run --release 下不工作~~ | ✅ 已修复 (2026-07-09)：4 段路径 use（prelude.th 推荐用法，如 `use std::nn::activations::gelu`、`use std::optim::clip::clip_grad_by_value`）在 `cargo run --release` 下工作正常（验证 `Tenth实例/Transformer示例/transformer_demo.th` 和 `Tenth实例/梯度裁剪与累积/grad_clip_accum.th` 均成功执行）。**原描述"连原版 gelu/adamw_step 都报 undefined variable"已过时**——根因是 `try_import_file` 单符号导入只用 parent_path 调用，对目录型模块失败；方案 B 修复（`lower_stmt.rs` 第 404-443 行）改为先尝试完整 path 作为文件，失败再回退 parent_path 作为模块。3 段路径 use（如 `use std::nn::gelu`）仍不支持，属设计限制（标准库用目录/文件.th 结构，gelu 在 activations.th 中而非 gelu.th）。 |
+| 11 | ~~use 机制在 cargo run --release 下不工作~~ | ✅ 已修复 (2026-07-09)：4 段路径 use（prelude.th 推荐用法，如 `use std::nn::activations::gelu`、`use std::optim::clip::clip_grad_by_value`）在 `cargo run --release` 下工作正常（验证 `Tenth实例/Transformer示例/transformer_demo.th` 和 `Tenth实例/梯度裁剪与累积/grad_clip_accum.th` 均成功执行）。**原描述"连原版 gelu/adamw_step 都报 undefined variable"已过时**——根因是 `try_import_file` 单符号导入只用 parent_path 调用，对目录型模块失败；方案 B 修复（`lower_stmt.rs` 第 404-443 行）改为先尝试完整 path 作为文件，失败再回退 parent_path 作为模块。3 段路径 use（如 `use std::nn::gelu`）仍不支持，属设计限制（标准库用目录/文件.th 结构，gelu 在 activations.th 中而非 gelu.th）。 |
+| 12 | bmm FLOPs 预估为 no-op（返回 0） | tenthc 侧 HirType 缺少 dim2 字段（2D shape 仅存 dim0/dim1），bmm 的 batch×dim0×dim1×dim2×dim3 五维 FLOPs 无法在 tenthc 侧计算。**影响**：bmm 数值计算路径完整，仅编译期 FLOPs 预估缺失。**待修复**：扩展 tenthc HirType 增加 dim2 字段后激活。 |
 
 ---
 
