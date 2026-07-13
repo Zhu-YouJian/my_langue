@@ -100,14 +100,14 @@ fn test_tuple_single_type() {
 fn test_array_type() {
     let hir = lower_code("[1, 2, 3]");
     let ty = main_expr_type(&hir).unwrap();
-    assert_eq!(ty, Type::Array(Box::new(Type::i32())));
+    assert_eq!(ty, Type::Array { inner: Box::new(Type::i32()), size: None });
 }
 
 #[test]
 fn test_array_float_type() {
     let hir = lower_code("[1.0, 2.0]");
     let ty = main_expr_type(&hir).unwrap();
-    assert_eq!(ty, Type::Array(Box::new(Type::f64())));
+    assert_eq!(ty, Type::Array { inner: Box::new(Type::f64()), size: None });
 }
 
 // --- Enum literal type inference ---
