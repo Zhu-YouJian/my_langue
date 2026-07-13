@@ -65,17 +65,23 @@ impl Parser {
             }
             TokenKind::Ampersand => {
                 self.advance();
+                // Check for lifetime: `'a`
+                let lifetime = if matches!(self.peek_kind(), TokenKind::Lifetime(_)) {
+                    if let TokenKind::Lifetime(name) = self.peek().kind.clone() {
+                        self.advance();
+                        Some(name)
+                    } else { None }
+                } else {
+                    None
+                };
                 let is_mut = matches!(self.peek_kind(), TokenKind::Mut);
                 if is_mut { self.advance(); }
                 let inner = self.parse_type()?;
-                let name_str = match &inner {
-                    TypeAnnotation::Named(id) => {
-                        if is_mut { format!("&mut {}", id.name) }
-                        else { format!("&{}", id.name) }
-                    }
-                    _ => if is_mut { "&mut _".to_string() } else { "&_".to_string() },
-                };
-                Ok(TypeAnnotation::Named(Ident { name: name_str, span }))
+                Ok(TypeAnnotation::Ref {
+                    inner: Box::new(inner),
+                    mutable: is_mut,
+                    lifetime,
+                })
             }
             TokenKind::Dyn => {
                 self.advance();

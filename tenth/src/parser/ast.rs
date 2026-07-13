@@ -35,6 +35,8 @@ pub enum TypeAnnotation {
         ret: Box<TypeAnnotation>,
     },
     Unit,
+    /// Reference type: `&T`, `&'a T`, `&mut T`, `&'a mut T`
+    Ref { inner: Box<TypeAnnotation>, mutable: bool, lifetime: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -304,6 +306,10 @@ pub enum ItemKind {
         generics: Vec<GenericParam>,
         methods: Vec<TraitMethod>,
         associated_types: Vec<Ident>,
+    },
+    Union {
+        name: Ident,
+        fields: Vec<StructField>,
     },
 }
 

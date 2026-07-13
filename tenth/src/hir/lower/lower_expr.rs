@@ -528,7 +528,7 @@ impl Lowerer {
                 let t = self.lower_expr(target)?;
                 // Unwrap reference types to get the inner struct type
                 let inner_ty = match &t.ty {
-                    Type::Ref(inner) | Type::MutRef(inner) => inner.as_ref(),
+                    Type::Ref(inner, _) | Type::MutRef(inner, _) => inner.as_ref(),
                     other => other,
                 };
                 let field_ty = match inner_ty {
@@ -536,6 +536,11 @@ impl Lowerer {
                         self.structs.get(name)
                             .and_then(|fields| fields.iter().find(|(n, _)| n == &field.name))
                             .map(|(_, ty)| ty.clone())
+                            .or_else(|| {
+                                self.unions.get(name)
+                                    .and_then(|fields| fields.iter().find(|(n, _)| n == &field.name))
+                                    .map(|(_, ty)| ty.clone())
+                            })
                             .unwrap_or(Type::Unknown)
                     }
                     _ => Type::Unknown,
@@ -1004,7 +1009,7 @@ impl Lowerer {
                     self.scope.check_borrow_shared(&ident.name, &ident.span)?;
                 }
                 let e = self.lower_expr(inner)?;
-                let ty = Type::Ref(Box::new(e.ty.clone()));
+                let ty = Type::Ref(Box::new(e.ty.clone()), None);
                 if let ExprKind::Ident(ident) = &inner.kind {
                     let count = match self.scope.get_ownership(&ident.name) {
                         Some(Ownership::SharedRef(n)) => n + 1,
@@ -1020,7 +1025,7 @@ impl Lowerer {
                     self.scope.check_borrow_mut(&ident.name, &ident.span)?;
                 }
                 let e = self.lower_expr(inner)?;
-                let ty = Type::MutRef(Box::new(e.ty.clone()));
+                let ty = Type::MutRef(Box::new(e.ty.clone()), None);
                 if let ExprKind::Ident(ident) = &inner.kind {
                     self.scope.set_ownership(&ident.name, Ownership::ExclusiveRef);
                 }
@@ -1030,7 +1035,7 @@ impl Lowerer {
             ExprKind::Deref(inner) => {
                 let e = self.lower_expr(inner)?;
                 let inner_ty = match &e.ty {
-                    Type::Ref(t) | Type::MutRef(t) => (**t).clone(),
+                    Type::Ref(t, _) | Type::MutRef(t, _) => (**t).clone(),
                     _ => Type::Unknown,
                 };
                 (HirExprKind::Deref(Box::new(e)), inner_ty)
@@ -1473,7 +1478,7 @@ impl Lowerer {
     fn type_impls_drop(&self, ty: &Type) -> bool {
         match ty {
             Type::Base(_) | Type::Never => false,
-            Type::Ref(_) | Type::MutRef(_) => false, // 引用不 drop
+            Type::Ref(_, _) | Type::MutRef(_, _) => false, // 引用不 drop
             Type::Struct(name) => {
                 self.trait_impls.get("Drop")
                     .and_then(|impls| impls.get(name))

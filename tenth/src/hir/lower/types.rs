@@ -174,6 +174,8 @@ impl Lowerer {
                     Type::Struct(name.clone())
                 } else if self.enums.contains_key(name) {
                     Type::Enum(name.clone())
+                } else if self.unions.contains_key(name) {
+                    Type::Union(name.clone())
                 } else {
                     ty
                 }

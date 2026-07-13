@@ -352,6 +352,7 @@ impl Lexer {
             "impl" => TokenKind::Impl,
             "enum" => TokenKind::Enum,
             "struct" => TokenKind::Struct,
+            "union" => TokenKind::Union,
             "type" => TokenKind::Type,
             "self" => TokenKind::Self_,
             "async" => TokenKind::Async,
@@ -754,6 +755,30 @@ impl Lexer {
         }
 
         if ch == '\'' {
+            // Lifetime: 'ident  — 开引号后跟标识符，且标识符后不是闭引号
+            let next = self.peek_next();
+            if next.map_or(false, |c| c.is_alphabetic() || c == '_') {
+                // 先预读标识符，然后检查后面是不是闭引号
+                let saved_pos = self.pos;
+                self.advance(); // consume '
+                let mut name = String::new();
+                while let Some(c) = self.peek() {
+                    if c.is_alphanumeric() || c == '_' {
+                        name.push(c);
+                        self.advance();
+                    } else { break; }
+                }
+                if self.peek() == Some('\'') {
+                    // 后面紧跟 ' — 这是字符字面量，回退走 read_char 路径
+                    self.pos = saved_pos;
+                    return self.read_char();
+                }
+                // 否则是生命周期标注
+                return Ok(Token {
+                    kind: TokenKind::Lifetime(name),
+                    span,
+                });
+            }
             return self.read_char();
         }
 

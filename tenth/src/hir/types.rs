@@ -41,9 +41,10 @@ pub enum Type {
         base: Box<Type>,
         args: Vec<Type>,
     },
-    Ref(Box<Type>),
-    MutRef(Box<Type>),
+    Ref(Box<Type>, Option<String>),
+    MutRef(Box<Type>, Option<String>),
     Struct(String),
+    Union(String),
     Enum(String),
     Tuple(Vec<Type>),
     Future(Box<Type>),
@@ -133,9 +134,16 @@ impl fmt::Display for Type {
             Type::SharedBox(inner) => write!(f, "Rc<{}>", inner),
             Type::AtomicBox(inner) => write!(f, "Arc<{}>", inner),
             Type::Pin(inner) => write!(f, "Pin<{}>", inner),
-            Type::Ref(inner) => write!(f, "&{}", inner),
-            Type::MutRef(inner) => write!(f, "&mut {}", inner),
+            Type::Ref(inner, lt) => {
+                if let Some(l) = lt { write!(f, "&'{} {}", l, inner) }
+                else { write!(f, "&{}", inner) }
+            }
+            Type::MutRef(inner, lt) => {
+                if let Some(l) = lt { write!(f, "&'{} mut {}", l, inner) }
+                else { write!(f, "&mut {}", inner) }
+            }
             Type::Struct(name) => write!(f, "{}", name),
+            Type::Union(name) => write!(f, "union {}", name),
             Type::Enum(name) => write!(f, "{}", name),
             Type::Dyn(name) => write!(f, "dyn {}", name),
             Type::Tuple(types) => {
@@ -213,14 +221,22 @@ impl Type {
     pub fn from_annotation(ann: &super::super::parser::ast::TypeAnnotation) -> Self {
         use super::super::parser::ast::TypeAnnotation as TA;
         match ann {
+            TA::Ref { inner, mutable, lifetime } => {
+                let inner_ty = Self::from_annotation(inner);
+                if *mutable {
+                    Type::MutRef(Box::new(inner_ty), lifetime.clone())
+                } else {
+                    Type::Ref(Box::new(inner_ty), lifetime.clone())
+                }
+            }
             TA::Named(ident) => {
                 let name = ident.name.as_str();
-                // Handle reference types: &T, &mut T
+                // Handle reference types (string-based fallback for legacy): &T, &mut T
                 if let Some(inner) = name.strip_prefix("&mut ") {
-                    return Type::MutRef(Box::new(Type::TypeParam { name: inner.to_string() }));
+                    return Type::MutRef(Box::new(Type::TypeParam { name: inner.to_string() }), None);
                 }
                 if let Some(inner) = name.strip_prefix("&") {
-                    return Type::Ref(Box::new(Type::TypeParam { name: inner.to_string() }));
+                    return Type::Ref(Box::new(Type::TypeParam { name: inner.to_string() }), None);
                 }
                 // 元组类型注解：parser 把 `(A, B, C)` 折叠成 Named("(A, B, C)")。
                 // 这里反向解析为 Type::Tuple，使函数返回类型 `-> (i64, i64)` 等正确推断。

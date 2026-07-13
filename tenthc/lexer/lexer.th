@@ -407,6 +407,7 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         if ident == "break" { return Token { kind: TokenKind::Break, span: span, disc: 14, .. }; };
         if ident == "continue" { return Token { kind: TokenKind::Continue, span: span, disc: 15, .. }; };
         if ident == "struct" { return Token { kind: TokenKind::Struct, span: span, disc: 16, .. }; };
+        if ident == "union" { return Token { kind: TokenKind::Union, span: span, disc: 87, sval: "union", .. }; };
         if ident == "enum" { return Token { kind: TokenKind::Enum, span: span, disc: 17, .. }; };
         if ident == "impl" { return Token { kind: TokenKind::Impl, span: span, disc: 18, .. }; };
         if ident == "trait" { return Token { kind: TokenKind::Trait, span: span, disc: 19, .. }; };
@@ -434,8 +435,27 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         return Token { kind: TokenKind::Identifier(ident), span: span, disc: 3, sval: ident, .. };
     };
 
-    // Char literal — 'a', '\n', '\t', '\'', '\\', etc.
+    // Lifetime 'ident — 先检查是否是生命周期标注
     if ch == "'" {
+        let next = lexer_peek_at(lexer, 1);
+        if next != "" && is_alpha(next) {
+            // 预读标识符看后面是否有闭引号
+            let save_pos = lexer.pos;
+            lexer_advance(lexer);  // consume '
+            let start = lexer.pos;
+            while (lexer_peek(lexer) != "") && is_alnum(lexer_peek(lexer)) {
+                lexer_advance(lexer);
+            };
+            let name = lexer.source[start..lexer.pos];
+            if lexer_peek(lexer) == "'" {
+                // 后面紧跟 ' — 这是字符字面量，回退
+                lexer.pos = save_pos;
+            } else {
+                // 生命周期标注
+                return Token { kind: TokenKind::Lifetime(name), span: span, disc: 88, sval: name, .. };
+            };
+        };
+        // Char literal — 'a', '\n', '\t', '\'', '\\', etc.
         lexer_advance(lexer);  // consume opening '
         let c = lexer_peek(lexer);
         if c == "" {

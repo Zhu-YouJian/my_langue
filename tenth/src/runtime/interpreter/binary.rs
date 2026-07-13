@@ -385,6 +385,9 @@ impl super::Interpreter {
             Value::Tensor(t) => format!("{:?}", t.borrow().data),
             Value::Closure { .. } => "<closure>".to_string(),
             Value::FnRef { name, .. } => format!("<fn {}>", name),
+            Value::Union { name, active_field, value } => {
+                format!("union {} {{ {}: {} }}", name, active_field, self.value_to_string(value))
+            }
             Value::Struct { name, fields } => {
                 let borrowed = fields.borrow();
                 let items: Vec<String> = borrowed.iter()

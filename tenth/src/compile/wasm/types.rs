@@ -21,6 +21,18 @@ impl WasmCompiler {
             }
             self.struct_layouts.insert(sname.clone(), layout);
         }
+        // Also build layouts for unions: all fields share the same memory (max size)
+        for (uname, fields) in &program.unions {
+            let mut max_size = 0u32;
+            let mut layout = HashMap::new();
+            for (fname, fty) in fields {
+                let (size, vt) = field_size_and_type(fty);
+                // Union 中所有字段起始 offset 为 0（共享同一内存区域）
+                layout.insert(fname.clone(), (0, size, vt));
+                if size > max_size { max_size = size; }
+            }
+            self.struct_layouts.insert(uname.clone(), layout);
+        }
         // Also build layouts for enum variants (keyed as "EnumName::VariantName")
         for (ename, variants) in &program.enums {
             for (vname, vfields) in variants {
@@ -45,9 +57,9 @@ impl WasmCompiler {
 
     pub(super) fn infer_struct_name(&self, ty: &Type) -> String {
         match ty {
-            Type::Struct(name) => name.clone(),
+            Type::Struct(name) | Type::Union(name) => name.clone(),
             Type::TypeParam { name } if self.struct_layouts.contains_key(name) => name.clone(),
-            Type::Ref(inner) | Type::MutRef(inner) => self.infer_struct_name(inner),
+            Type::Ref(inner, _) | Type::MutRef(inner, _) => self.infer_struct_name(inner),
             _ => String::new(),
         }
     }

@@ -138,7 +138,7 @@ impl Scope {
                 let is_copy = self.variables.get(name)
                     .map(|(ty, _)| {
                         // 简化的 Copy 检查：基础类型和引用是 Copy
-                        matches!(ty, Type::Base(_) | Type::Ref(_) | Type::MutRef(_) | Type::Never)
+                        matches!(ty, Type::Base(_) | Type::Ref(_, _) | Type::MutRef(_, _) | Type::Never)
                     })
                     .unwrap_or(false);
                 if !is_copy {

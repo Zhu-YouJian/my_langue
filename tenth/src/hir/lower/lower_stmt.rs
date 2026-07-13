@@ -184,6 +184,12 @@ impl Lowerer {
                         .collect();
                     self.enums.insert(name.name.clone(), variant_list);
                 }
+                ast::ItemKind::Union { name, fields } => {
+                    let field_types: Vec<(String, Type)> = fields.iter()
+                        .map(|f| (f.name.name.clone(), Type::from_annotation(&f.type_ann)))
+                        .collect();
+                    self.unions.insert(name.name.clone(), field_types);
+                }
                 ast::ItemKind::Trait { name, generics, methods, associated_types } => {
                     let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
                     let assoc_type_names: Vec<String> = associated_types.iter().map(|t| t.name.clone()).collect();
@@ -671,6 +677,7 @@ impl Lowerer {
             methods: self.methods.clone(),
             structs: self.structs.clone(),
             generic_structs: self.generic_structs.clone(),
+            unions: self.unions.clone(),
             enums: self.enums.clone(),
             trait_defs: self.trait_defs.clone(),
             trait_impls: self.trait_impls.clone(),

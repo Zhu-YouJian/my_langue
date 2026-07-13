@@ -124,6 +124,12 @@ pub enum Value {
         name: String,
         fields: Rc<RefCell<Vec<(String, Value)>>>,
     },
+    Union {
+        name: String,
+        /// 当前活跃字段名和值
+        active_field: String,
+        value: Box<Value>,
+    },
     Enum {
         enum_name: String,
         variant: String,
@@ -201,11 +207,12 @@ impl Value {
                 }
             }
             Value::Struct { name, .. } => Type::Struct(name.clone()),
+            Value::Union { name, .. } => Type::Union(name.clone()),
             Value::Enum { enum_name, .. } => Type::Enum(enum_name.clone()),
-            Value::Ref(v) => Type::Ref(Box::new(v.borrow().type_of())),
+            Value::Ref(v) => Type::Ref(Box::new(v.borrow().type_of()), None),
             Value::MutRef(v) => {
                 match v.upgrade() {
-                    Some(rc) => Type::MutRef(Box::new(rc.borrow().type_of())),
+                    Some(rc) => Type::MutRef(Box::new(rc.borrow().type_of()), None),
                     None => Type::Unknown,
                 }
             }
@@ -353,6 +360,9 @@ impl fmt::Display for Value {
             }
             Value::FnRef { name, .. } => write!(f, "<fn {}>", name),
             Value::Closure { .. } => write!(f, "<closure>"),
+            Value::Union { name, active_field, value } => {
+                write!(f, "union {} {{ {}: {} }}", name, active_field, value)
+            }
             Value::Struct { name, fields } => {
                 let fields = fields.borrow();
                 write!(f, "{} {{ ", name)?;

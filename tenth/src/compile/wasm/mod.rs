@@ -36,8 +36,8 @@ pub(super) fn to_val_type(ty: &Type) -> Option<ValType> {
             BaseType::F16 | BaseType::BF16 => Some(ValType::I64),
             _ => None,
         },
-        Type::Ref(_) | Type::MutRef(_) => Some(ValType::I64),
-        Type::Struct(_) => Some(ValType::I64),
+        Type::Ref(_, _) | Type::MutRef(_, _) => Some(ValType::I64),
+        Type::Struct(_) | Type::Union(_) => Some(ValType::I64),
         Type::TypeParam { .. } => Some(ValType::I64), // unresolved generic/struct → i64
         Type::Generic { .. } => Some(ValType::I64),   // Vec<T>, etc. → i64 pointer
         Type::Unknown => Some(ValType::I64),
@@ -66,6 +66,7 @@ pub(super) fn field_size_and_type(ty: &Type) -> (u32, ValType) {
             BaseType::F16 | BaseType::BF16 => (8, ValType::I64),
             _ => (8, ValType::I64),
         },
+        Type::Union(_) => (8, ValType::I64),
         _ => (8, ValType::I64),
     }
 }

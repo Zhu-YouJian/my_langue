@@ -23,6 +23,7 @@ pub enum TokenKind {
     CharLiteral(char),
 
     Identifier(String),
+    Lifetime(String),
     Fn,
     Let,
     Mut,
@@ -45,6 +46,7 @@ pub enum TokenKind {
     Impl,
     Enum,
     Struct,
+    Union,
     Type,
     Self_,
     Async,
@@ -143,6 +145,7 @@ impl fmt::Display for TokenKind {
             }
             TokenKind::CharLiteral(c) => write!(f, "'{}'", c),
             TokenKind::Identifier(s) => write!(f, "{}", s),
+            TokenKind::Lifetime(s) => write!(f, "'{}", s),
             TokenKind::Fn => write!(f, "fn"),
             TokenKind::Let => write!(f, "let"),
             TokenKind::Mut => write!(f, "mut"),
@@ -165,6 +168,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Impl => write!(f, "impl"),
             TokenKind::Enum => write!(f, "enum"),
             TokenKind::Struct => write!(f, "struct"),
+            TokenKind::Union => write!(f, "union"),
             TokenKind::Type => write!(f, "type"),
             TokenKind::Self_ => write!(f, "self"),
             TokenKind::Async => write!(f, "async"),

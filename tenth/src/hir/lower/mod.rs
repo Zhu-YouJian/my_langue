@@ -24,6 +24,7 @@ pub struct Lowerer {
     generic_funcs: HashMap<String, HirFnDef>,
     structs: HashMap<String, Vec<(String, Type)>>,
     generic_structs: HashMap<String, HirGenericStruct>,
+    unions: HashMap<String, Vec<(String, Type)>>,
     enums: HashMap<String, Vec<(String, Vec<(String, Type)>)>>,
     methods: HashMap<String, HashMap<String, HirFnDef>>,
     modules: HashMap<String, HirProgram>,
@@ -137,6 +138,7 @@ impl Lowerer {
             generic_funcs: HashMap::new(),
             structs: HashMap::new(),
             generic_structs: HashMap::new(),
+            unions: HashMap::new(),
             enums: HashMap::new(),
             methods: HashMap::new(),
             modules: HashMap::new(),
@@ -247,7 +249,7 @@ pub(super) fn is_copy_type(ty: &Type, structs: &HashMap<String, Vec<(String, Typ
             }
             false
         }
-        Type::Ref(_) | Type::MutRef(_) => true, // 引用总是 Copy
+        Type::Ref(_, _) | Type::MutRef(_, _) => true, // 引用总是 Copy
         Type::Array { inner, .. } => is_copy_type(inner, structs, trait_impls),
         Type::Tuple(types) => types.iter().all(|t| is_copy_type(t, structs, trait_impls)),
         Type::Dyn(_) => false, // trait 对象不可 Copy
@@ -264,8 +266,8 @@ pub(super) fn substitute_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
         Type::TypeParam { name } => {
             map.get(name).cloned().unwrap_or_else(|| ty.clone())
         }
-        Type::Ref(inner) => Type::Ref(Box::new(substitute_type(inner, map))),
-        Type::MutRef(inner) => Type::MutRef(Box::new(substitute_type(inner, map))),
+        Type::Ref(inner, lt) => Type::Ref(Box::new(substitute_type(inner, map)), lt.clone()),
+        Type::MutRef(inner, lt) => Type::MutRef(Box::new(substitute_type(inner, map)), lt.clone()),
         Type::Tensor { dtype, dims } => Type::Tensor {
             dtype: Box::new(substitute_type(dtype, map)),
             dims: dims.clone(),

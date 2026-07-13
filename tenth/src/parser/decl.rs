@@ -197,6 +197,23 @@ impl Parser {
                 self.match_token(TokenKind::Semicolon);
                 Ok(Item { kind: ItemKind::EnumDef { name, variants }, span })
             }
+            TokenKind::Union => {
+                self.advance();
+                let name = self.expect_ident()?;
+                self.expect(TokenKind::LBrace)?;
+                let mut fields = Vec::new();
+                while !matches!(self.peek_kind(), TokenKind::RBrace) {
+                    let field_name = self.expect_ident()?;
+                    self.expect(TokenKind::Colon)?;
+                    let type_ann = self.parse_type()?;
+                    fields.push(StructField { name: field_name, type_ann });
+                    if !matches!(self.peek_kind(), TokenKind::Comma) { break; }
+                    self.advance();
+                }
+                self.expect(TokenKind::RBrace)?;
+                self.match_token(TokenKind::Semicolon);
+                Ok(Item { kind: ItemKind::Union { name, fields }, span })
+            }
             TokenKind::Impl => {
                 self.advance();
                 let first_ident = self.expect_ident()?;
