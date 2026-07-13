@@ -417,6 +417,18 @@ impl super::Interpreter {
                     FutureState::Pending(_) => "Future<Pending>".to_string(),
                 }
             }
+            Value::HeapBox(v) => format!("Box({})", self.value_to_string(v)),
+            Value::SharedBox(v) => format!("Rc({})", self.value_to_string(&v.borrow())),
+            Value::Pin(v) => format!("Pin({})", self.value_to_string(v)),
+            Value::BigInt(s) => format!("{}bi", s),
+            Value::Complex(re, im) => {
+                if *im < 0.0 {
+                    format!("({}{}i)", re, im)
+                } else {
+                    format!("({}+{}i)", re, im)
+                }
+            }
+            Value::Decimal(s) => format!("{}dec", s),
         }
     }
 

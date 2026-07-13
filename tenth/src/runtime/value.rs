@@ -142,6 +142,24 @@ pub enum Value {
     /// Phase 1：spawn 立即包装为 `Ready`，await 立即解包 `Ready`（同步语义）。
     /// Phase 2：将支持 `Pending` 状态与协程调度。
     Future(Rc<RefCell<FutureState>>),
+
+    // ── 问题29：智能指针 ──
+    /// Box<T>：堆分配的所有权指针。
+    HeapBox(Box<Value>),
+    /// Rc<T> / Arc<T>：引用计数共享指针（Arc 暂用 Rc 等价实现）。
+    SharedBox(Rc<RefCell<Value>>),
+    /// Pin<T>：固定不可移动包装（问题31）。
+    Pin(Box<Value>),
+
+    // ── 问题35：BigInt ──
+    BigInt(String),
+
+    // ── 问题36：Complex ──
+    /// Complex(f64, f64)：复数的笛卡尔坐标 (re, im)。
+    Complex(f64, f64),
+
+    // ── 问题37：Decimal ──
+    Decimal(String),
 }
 
 impl Value {
@@ -204,6 +222,12 @@ impl Value {
                     FutureState::Pending(_) => Type::Unknown,
                 }
             }
+            Value::HeapBox(v) => Type::HeapBox(Box::new(v.type_of())),
+            Value::SharedBox(v) => Type::SharedBox(Box::new(v.borrow().type_of())),
+            Value::Pin(v) => Type::Pin(Box::new(v.type_of())),
+            Value::BigInt(_) => Type::Base(BaseType::BigInt),
+            Value::Complex(_, _) => Type::Base(BaseType::C128),
+            Value::Decimal(_) => Type::Base(BaseType::Decimal),
         }
     }
 
@@ -212,6 +236,12 @@ impl Value {
             Value::Float(f) => Some(*f),
             Value::Float32(f) => Some(*f as f64),
             Value::Int(i, _) => Some(*i as f64),
+            Value::Complex(re, _) => Some(*re),
+            Value::BigInt(s) => s.parse::<f64>().ok(),
+            Value::Decimal(s) => s.parse::<f64>().ok(),
+            Value::HeapBox(v) => v.as_float(),
+            Value::SharedBox(v) => v.borrow().as_float(),
+            Value::Pin(v) => v.as_float(),
             _ => None,
         }
     }
@@ -223,6 +253,12 @@ impl Value {
             Value::Float32(f) => Some(*f),
             Value::Float(f) => Some(*f as f32),
             Value::Int(i, _) => Some(*i as f32),
+            Value::Complex(re, _) => Some(*re as f32),
+            Value::BigInt(s) => s.parse::<f32>().ok(),
+            Value::Decimal(s) => s.parse::<f32>().ok(),
+            Value::HeapBox(v) => v.as_f32(),
+            Value::SharedBox(v) => v.borrow().as_f32(),
+            Value::Pin(v) => v.as_f32(),
             _ => None,
         }
     }
@@ -232,6 +268,12 @@ impl Value {
             Value::Int(i, _) => Some(*i),
             Value::Float(f) => Some(*f as i64),
             Value::Float32(f) => Some(*f as i64),
+            Value::Complex(re, _) => Some(*re as i64),
+            Value::BigInt(s) => s.parse::<i64>().ok(),
+            Value::Decimal(s) => s.parse::<i64>().ok(),
+            Value::HeapBox(v) => v.as_int(),
+            Value::SharedBox(v) => v.borrow().as_int(),
+            Value::Pin(v) => v.as_int(),
             _ => None,
         }
     }
@@ -249,6 +291,12 @@ impl Value {
             Value::Vec(v) => !v.borrow().is_empty(),
             Value::Map(m) => !m.borrow().is_empty(),
             Value::String(s) => !s.is_empty(),
+            Value::BigInt(s) => s != "0",
+            Value::Complex(re, im) => *re != 0.0 || *im != 0.0,
+            Value::Decimal(s) => s != "0",
+            Value::HeapBox(v) => v.is_truthy(),
+            Value::SharedBox(v) => v.borrow().is_truthy(),
+            Value::Pin(v) => v.is_truthy(),
             _ => true,
         }
     }
@@ -375,6 +423,18 @@ impl fmt::Display for Value {
                     write!(f, ")")
                 }
             }
+            Value::HeapBox(v) => write!(f, "Box({})", v),
+            Value::SharedBox(v) => write!(f, "Rc({})", v.borrow()),
+            Value::Pin(v) => write!(f, "Pin({})", v),
+            Value::BigInt(s) => write!(f, "{}bi", s),
+            Value::Complex(re, im) => {
+                if *im < 0.0 {
+                    write!(f, "({}{}i)", re, im)
+                } else {
+                    write!(f, "({}+{}i)", re, im)
+                }
+            }
+            Value::Decimal(s) => write!(f, "{}dec", s),
         }
     }
 }

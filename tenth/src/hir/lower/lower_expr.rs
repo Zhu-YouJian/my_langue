@@ -646,16 +646,53 @@ impl Lowerer {
                     Type::unit()
                 };
 
+                // RAII：收集当前作用域中实现了 Drop trait 的变量，在作用域退出时调用 drop()
+                let drop_vars: Vec<String> = self.collect_drop_vars();
+
                 let stmts_without_final: Vec<HirStmt> = if final_expr.is_some() {
                     lowered_stmts[..lowered_stmts.len().saturating_sub(1)].to_vec()
                 } else {
                     lowered_stmts
                 };
 
+                // 构造包含 drop 调用的块
                 let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
                 self.scope = outer_scope;
 
-                (HirExprKind::Block { stmts: stmts_without_final, final_expr: final_expr.map(Box::new) }, ty)
+                if drop_vars.is_empty() {
+                    (HirExprKind::Block { stmts: stmts_without_final, final_expr: final_expr.map(Box::new) }, ty)
+                } else {
+                    // 有需要 drop 的变量：将 final_expr 保存到临时变量，插入 drop 调用，再返回临时变量
+                    let drop_stmt = Self::make_drop_stmt(&drop_vars, span.clone());
+                    let mut new_stmts = stmts_without_final;
+                    if let Some(fe) = final_expr {
+                        // 保存 final_expr 到临时变量
+                        let save_temp = HirStmt {
+                            kind: HirStmtKind::Let {
+                                names: vec!["__drop_tmp__".to_string()],
+                                type_ann: None,
+                                mutable: false,
+                                init: Some(fe),
+                            },
+                            span: span.clone(),
+                        };
+                        new_stmts.push(save_temp);
+                        // 插入 drop 调用
+                        new_stmts.push(drop_stmt);
+                        // 返回临时变量
+                        (HirExprKind::Block {
+                            stmts: new_stmts,
+                            final_expr: Some(Box::new(HirExpr {
+                                kind: HirExprKind::Var("__drop_tmp__".to_string()),
+                                ty: ty.clone(),
+                                span: span.clone(),
+                            })),
+                        }, ty)
+                    } else {
+                        new_stmts.push(drop_stmt);
+                        (HirExprKind::Block { stmts: new_stmts, final_expr: None }, ty)
+                    }
+                }
             }
 
             ExprKind::Closure { params, body } => {
@@ -786,6 +823,21 @@ impl Lowerer {
                                         BaseType::Unit => HirExpr {
                                             kind: HirExprKind::Literal(Literal::Int(0, BaseType::I32)),
                                             ty: Type::unit(),
+                                            span: name.span.clone(),
+                                        },
+                                        BaseType::BigInt => HirExpr {
+                                            kind: HirExprKind::Literal(Literal::String("0".to_string())),
+                                            ty: fty.clone(),
+                                            span: name.span.clone(),
+                                        },
+                                        BaseType::C64 | BaseType::C128 => HirExpr {
+                                            kind: HirExprKind::Literal(Literal::Float(0.0, BaseType::F64)),
+                                            ty: fty.clone(),
+                                            span: name.span.clone(),
+                                        },
+                                        BaseType::Decimal => HirExpr {
+                                            kind: HirExprKind::Literal(Literal::String("0".to_string())),
+                                            ty: fty.clone(),
                                             span: name.span.clone(),
                                         },
                                     },
@@ -988,7 +1040,10 @@ impl Lowerer {
                 let e = self.lower_expr(inner)?;
                 let ty = e.ty.clone();
                 if let ExprKind::Ident(ident) = &inner.kind {
-                    self.scope.set_ownership(&ident.name, Ownership::Moved);
+                    // Copy 类型的值在 move 时不标记为 Moved（值被复制，原变量仍可用）
+                    if !super::is_copy_type(&ty, &self.structs, &self.trait_impls) {
+                        self.scope.set_ownership(&ident.name, Ownership::Moved);
+                    }
                 }
                 (HirExprKind::Move(Box::new(e)), ty)
             }
@@ -1386,7 +1441,7 @@ impl Lowerer {
     /// 通过搜索 trait_impls[trait_name][type_name] 来判断。
     pub(super) fn has_trait_impl_for_type(&self, trait_name: &str, ty: &Type) -> bool {
         let type_name = match ty {
-            Type::Base(b) => return false, // 基础类型的内置运算不在 trait 系统中重载
+            Type::Base(_b) => return false, // 基础类型的内置运算不在 trait 系统中重载
             Type::Struct(name) | Type::Enum(name) => name,
             Type::Generic { base, .. } => match base.as_ref() {
                 Type::Enum(name) | Type::Struct(name) => name,
@@ -1397,5 +1452,93 @@ impl Lowerer {
         self.trait_impls.get(trait_name)
             .and_then(|impls| impls.get(type_name))
             .is_some()
+    }
+
+    /// 收集当前作用域中所有实现了 Drop trait 的变量名。
+    /// 按定义顺序的逆序返回（后定义的先 drop）。
+    fn collect_drop_vars(&self) -> Vec<String> {
+        // 从 scope 中获取所有变量及其类型
+        let mut drop_vars: Vec<String> = Vec::new();
+        self.scope.for_each_var(|name, ty| {
+            if self.type_impls_drop(ty) {
+                drop_vars.push(name.to_string());
+            }
+        });
+        // 逆序：后定义的先 drop
+        drop_vars.reverse();
+        drop_vars
+    }
+
+    /// 检查类型是否实现了 Drop trait。
+    fn type_impls_drop(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Base(_) | Type::Never => false,
+            Type::Ref(_) | Type::MutRef(_) => false, // 引用不 drop
+            Type::Struct(name) => {
+                self.trait_impls.get("Drop")
+                    .and_then(|impls| impls.get(name))
+                    .is_some()
+            }
+            Type::Enum(name) => {
+                self.trait_impls.get("Drop")
+                    .and_then(|impls| impls.get(name))
+                    .is_some()
+            }
+            Type::Dyn(_) => false, // trait 对象不自动 drop（需运行时决定）
+            Type::Array { inner, .. } => self.type_impls_drop(inner),
+            Type::Tuple(types) => types.iter().any(|t| self.type_impls_drop(t)),
+            // HeapBox/Pin/SharedBox/AtomicBox：容器类型，drop 行为由运行时管理，不在编译期自动生成 drop 调用
+            Type::HeapBox(inner) | Type::Pin(inner) => self.type_impls_drop(inner),
+            Type::SharedBox(_) | Type::AtomicBox(_) => false, // RC/Arc 管理自身生命周期
+            _ => false,
+        }
+    }
+
+    /// 为指定的变量列表生成 drop 调用语句。
+    /// 每个变量生成一个 `var.drop()` 方法调用。
+    fn make_drop_stmt(drop_vars: &[String], span: crate::lexer::token::Span) -> HirStmt {
+        // 将所有 drop 调用组合到一个 Expr 语句中
+        // 使用 Block 按顺序执行每个 drop 调用
+        let drop_calls: Vec<HirExpr> = drop_vars.iter().map(|var_name| {
+            HirExpr {
+                kind: HirExprKind::MethodCall {
+                    receiver: Box::new(HirExpr {
+                        kind: HirExprKind::Var(var_name.clone()),
+                        ty: Type::Unknown,
+                        span: span.clone(),
+                    }),
+                    method: "drop".to_string(),
+                    args: vec![],
+                    ret_ty: Type::unit(),
+                },
+                ty: Type::unit(),
+                span: span.clone(),
+            }
+        }).collect();
+
+        // 如果只有一个 drop 调用，直接返回表达式语句
+        if drop_calls.len() == 1 {
+            return HirStmt {
+                kind: HirStmtKind::Expr(drop_calls.into_iter().next().unwrap()),
+                span,
+            };
+        }
+
+        // 多个 drop 调用：用 Block 包装，每个 drop 作为表达式语句
+        let drop_stmts: Vec<HirStmt> = drop_calls.into_iter().map(|expr| {
+            HirStmt {
+                kind: HirStmtKind::Expr(expr),
+                span: span.clone(),
+            }
+        }).collect();
+
+        HirStmt {
+            kind: HirStmtKind::Expr(HirExpr {
+                kind: HirExprKind::Block { stmts: drop_stmts, final_expr: None },
+                ty: Type::unit(),
+                span: span.clone(),
+            }),
+            span,
+        }
     }
 }

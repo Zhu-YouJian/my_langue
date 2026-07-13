@@ -102,7 +102,8 @@ fn test_move_struct() {
 
 #[test]
 fn test_borrow_check_use_after_move() {
-    let src = "{ let x = 42; let y = move x; x }";
+    // Enum is non-Copy by default (no explicit impl Copy required)
+    let src = "enum Foo { A }; { let x = Foo::A; let y = move x; x }";
     let result = lower_code(src);
     assert!(result.is_err(), "expected compile error: use of moved value");
 }

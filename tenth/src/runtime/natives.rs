@@ -2086,5 +2086,376 @@ pub fn register_all_natives(vm: &mut Vm) {
             })
         }
     });
+
+    // ── 问题29：智能指针 Box/Rc/Arc/Pin ──
+    vm.add_native("Box::new".into(), |_vm, args| {
+        if args.is_empty() {
+            return Err(TenthError::RuntimeError { line: None, col: None, message: "Box::new() 需要 1 个参数".into() });
+        }
+        Ok(Value::HeapBox(Box::new(args[0].clone())))
+    });
+    vm.add_native("Rc::new".into(), |_vm, args| {
+        if args.is_empty() {
+            return Err(TenthError::RuntimeError { line: None, col: None, message: "Rc::new() 需要 1 个参数".into() });
+        }
+        Ok(Value::SharedBox(Rc::new(RefCell::new(args[0].clone()))))
+    });
+    vm.add_native("Arc::new".into(), |_vm, args| {
+        // Arc 暂用 Rc 等价实现
+        if args.is_empty() {
+            return Err(TenthError::RuntimeError { line: None, col: None, message: "Arc::new() 需要 1 个参数".into() });
+        }
+        Ok(Value::SharedBox(Rc::new(RefCell::new(args[0].clone()))))
+    });
+    vm.add_native("Pin::new".into(), |_vm, args| {
+        if args.is_empty() {
+            return Err(TenthError::RuntimeError { line: None, col: None, message: "Pin::new() 需要 1 个参数".into() });
+        }
+        Ok(Value::Pin(Box::new(args[0].clone())))
+    });
+
+    // ── 问题35：BigInt 运算 ──
+    vm.add_native("bigint_add".into(), |_vm, args| {
+        if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "bigint_add() 需要 2 个 bigint 参数".into() }); }
+        let a = match &args[0] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+        let b = match &args[1] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+        // 简单十进制字符串加法
+        let result = bigint_add_str(&a, &b);
+        Ok(Value::BigInt(result))
+    });
+    vm.add_native("bigint_sub".into(), |_vm, args| {
+        if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "bigint_sub() 需要 2 个 bigint 参数".into() }); }
+        let a = match &args[0] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+        let b = match &args[1] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+        let result = bigint_sub_str(&a, &b);
+        Ok(Value::BigInt(result))
+    });
+    vm.add_native("bigint_mul".into(), |_vm, args| {
+        if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "bigint_mul() 需要 2 个 bigint 参数".into() }); }
+        let a = match &args[0] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+        let b = match &args[1] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+        let result = bigint_mul_str(&a, &b);
+        Ok(Value::BigInt(result))
+    });
+
+    // ── 问题36：Complex 运算 ──
+    vm.add_native("complex_add".into(), |_vm, args| {
+        if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "complex_add() 需要 2 个 complex 参数".into() }); }
+        let (re1, im1) = match &args[0] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+        let (re2, im2) = match &args[1] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+        Ok(Value::Complex(re1 + re2, im1 + im2))
+    });
+    vm.add_native("complex_sub".into(), |_vm, args| {
+        if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "complex_sub() 需要 2 个 complex 参数".into() }); }
+        let (re1, im1) = match &args[0] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+        let (re2, im2) = match &args[1] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+        Ok(Value::Complex(re1 - re2, im1 - im2))
+    });
+    vm.add_native("complex_mul".into(), |_vm, args| {
+        if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "complex_mul() 需要 2 个 complex 参数".into() }); }
+        let (re1, im1) = match &args[0] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+        let (re2, im2) = match &args[1] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+        Ok(Value::Complex(re1 * re2 - im1 * im2, re1 * im2 + im1 * re2))
+    });
+    vm.add_native("complex_div".into(), |_vm, args| {
+        if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "complex_div() 需要 2 个 complex 参数".into() }); }
+        let (re1, im1) = match &args[0] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+        let (re2, im2) = match &args[1] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+        let denom = re2 * re2 + im2 * im2;
+        if denom == 0.0 {
+            return Err(TenthError::RuntimeError { line: None, col: None, message: "Complex 除法：分母为零".into() });
+        }
+        Ok(Value::Complex((re1 * re2 + im1 * im2) / denom, (im1 * re2 - re1 * im2) / denom))
+    });
+
+    // ── 问题37：Decimal 运算 ──
+    vm.add_native("decimal_add".into(), |_vm, args| {
+        if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "decimal_add() 需要 2 个 decimal 参数".into() }); }
+        let a = match &args[0] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+        let b = match &args[1] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+        Ok(Value::Decimal(decimal_add_str(&a, &b)))
+    });
+    vm.add_native("decimal_sub".into(), |_vm, args| {
+        if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "decimal_sub() 需要 2 个 decimal 参数".into() }); }
+        let a = match &args[0] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+        let b = match &args[1] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+        Ok(Value::Decimal(decimal_sub_str(&a, &b)))
+    });
+    vm.add_native("decimal_mul".into(), |_vm, args| {
+        if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "decimal_mul() 需要 2 个 decimal 参数".into() }); }
+        let a = match &args[0] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+        let b = match &args[1] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+        Ok(Value::Decimal(decimal_mul_str(&a, &b)))
+    });
+    vm.add_native("decimal_div".into(), |_vm, args| {
+        if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "decimal_div() 需要 2 个 decimal 参数".into() }); }
+        let a = match &args[0] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+        let b = match &args[1] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+        Ok(Value::Decimal(decimal_div_str(&a, &b)))
+    });
+}
+
+// ── 问题35：BigInt 字符串算术辅助函数 ──
+/// 大整数加法（字符串十进制，支持负数）
+pub(crate) fn bigint_add_str(a: &str, b: &str) -> String {
+    if a.starts_with('-') && b.starts_with('-') {
+        return format!("-{}", bigint_add_str_unsigned(&a[1..], &b[1..]));
+    }
+    if a.starts_with('-') {
+        return bigint_sub_str_unsigned(&b[1..], a);
+    }
+    if b.starts_with('-') {
+        return bigint_sub_str_unsigned(&a[1..], b);
+    }
+    bigint_add_str_unsigned(a, b)
+}
+
+/// 大整数减法（字符串十进制，支持负数）
+pub(crate) fn bigint_sub_str(a: &str, b: &str) -> String {
+    if a.starts_with('-') && b.starts_with('-') {
+        return bigint_sub_str_unsigned(&b[1..], &a[1..]);
+    }
+    if a.starts_with('-') {
+        return format!("-{}", bigint_add_str_unsigned(&a[1..], b));
+    }
+    if b.starts_with('-') {
+        return bigint_add_str_unsigned(a, &b[1..]);
+    }
+    bigint_sub_str_unsigned(a, b)
+}
+
+/// 大整数乘法（字符串十进制，支持负数）
+pub(crate) fn bigint_mul_str(a: &str, b: &str) -> String {
+    let neg = (a.starts_with('-') && !b.starts_with('-')) || (!a.starts_with('-') && b.starts_with('-'));
+    let a_abs = a.trim_start_matches('-');
+    let b_abs = b.trim_start_matches('-');
+    let result = bigint_mul_str_unsigned(a_abs, b_abs);
+    if neg && result != "0" { format!("-{}", result) } else { result }
+}
+
+/// 无符号大整数加法
+fn bigint_add_str_unsigned(a: &str, b: &str) -> String {
+    let mut result = String::new();
+    let mut carry = 0u8;
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut i = a_chars.len() as isize - 1;
+    let mut j = b_chars.len() as isize - 1;
+    while i >= 0 || j >= 0 || carry > 0 {
+        let digit_a = if i >= 0 { a_chars[i as usize].to_digit(10).unwrap_or(0) as u8 } else { 0 };
+        let digit_b = if j >= 0 { b_chars[j as usize].to_digit(10).unwrap_or(0) as u8 } else { 0 };
+        let sum = digit_a + digit_b + carry;
+        result.push(char::from(b'0' + (sum % 10)));
+        carry = sum / 10;
+        i -= 1;
+        j -= 1;
+    }
+    result.chars().rev().collect()
+}
+
+/// 无符号大整数减法（假设 a >= b）
+fn bigint_sub_str_unsigned(a: &str, b: &str) -> String {
+    // 先处理 a < b 的情况（结果为负）
+    if a.len() < b.len() || (a.len() == b.len() && a < b) {
+        let result = bigint_sub_str_unsigned(b, a);
+        if result == "0" { return result; }
+        return format!("-{}", result);
+    }
+    let mut result = String::new();
+    let mut borrow = 0i8;
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut i = a_chars.len() as isize - 1;
+    let mut j = b_chars.len() as isize - 1;
+    while i >= 0 {
+        let digit_a = a_chars[i as usize].to_digit(10).unwrap_or(0) as i8;
+        let digit_b = if j >= 0 { b_chars[j as usize].to_digit(10).unwrap_or(0) as i8 } else { 0 };
+        let mut diff = digit_a - digit_b - borrow;
+        if diff < 0 {
+            diff += 10;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        result.push(char::from(b'0' + diff as u8));
+        i -= 1;
+        j -= 1;
+    }
+    // 去除前导零
+    let trimmed: String = result.chars().rev().skip_while(|&c| c == '0').collect();
+    if trimmed.is_empty() { "0".to_string() } else { trimmed }
+}
+
+/// 无符号大整数乘法（小学竖式法）
+fn bigint_mul_str_unsigned(a: &str, b: &str) -> String {
+    if a == "0" || b == "0" { return "0".to_string(); }
+    let a_chars: Vec<u8> = a.chars().map(|c| c.to_digit(10).unwrap_or(0) as u8).collect();
+    let b_chars: Vec<u8> = b.chars().map(|c| c.to_digit(10).unwrap_or(0) as u8).collect();
+    let mut result = vec![0u8; a_chars.len() + b_chars.len()];
+    for (i, &digit_a) in a_chars.iter().enumerate().rev() {
+        for (j, &digit_b) in b_chars.iter().enumerate().rev() {
+            let prod = digit_a as u16 * digit_b as u16 + result[i + j + 1] as u16;
+            result[i + j + 1] = (prod % 10) as u8;
+            result[i + j] += (prod / 10) as u8;
+        }
+    }
+    let s: String = result.into_iter().map(|d| char::from(b'0' + d)).collect();
+    s.trim_start_matches('0').to_string()
+}
+
+// ── 问题37：Decimal 字符串算术辅助函数 ──
+/// 十进制加法（精确字符串运算）
+pub(crate) fn decimal_add_str(a: &str, b: &str) -> String {
+    let (a_int, a_frac) = split_decimal(a);
+    let (b_int, b_frac) = split_decimal(b);
+    let max_frac_len = a_frac.len().max(b_frac.len());
+    let a_frac_padded = format!("{:0<width$}", a_frac, width = max_frac_len);
+    let b_frac_padded = format!("{:0<width$}", b_frac, width = max_frac_len);
+    // 将小数部分当作整数相加
+    let frac_sum = bigint_add_str_unsigned(&a_frac_padded, &b_frac_padded);
+    let (frac_result, carry) = if frac_sum.len() > max_frac_len {
+        (frac_sum[frac_sum.len() - max_frac_len..].to_string(), &frac_sum[..frac_sum.len() - max_frac_len])
+    } else {
+        (format!("{:0>width$}", frac_sum, width = max_frac_len), "0")
+    };
+    let int_sum = bigint_add_str_unsigned(a_int, b_int);
+    let int_result = bigint_add_str_unsigned(&int_sum, carry);
+    if frac_result.chars().all(|c| c == '0') {
+        int_result
+    } else {
+        format!("{}.{}", int_result, frac_result.trim_end_matches('0'))
+    }
+}
+
+/// 十进制减法（精确字符串运算）
+pub(crate) fn decimal_sub_str(a: &str, b: &str) -> String {
+    let (a_int, a_frac) = split_decimal(a);
+    let (b_int, b_frac) = split_decimal(b);
+    let max_frac_len = a_frac.len().max(b_frac.len());
+    let a_frac_padded = format!("{:0<width$}", a_frac, width = max_frac_len);
+    let b_frac_padded = format!("{:0<width$}", b_frac, width = max_frac_len);
+    let frac_sub = bigint_sub_str_unsigned(&a_frac_padded, &b_frac_padded);
+    let (frac_result, borrow) = if frac_sub.starts_with('-') {
+        // 需要从整数部分借位
+        let frac_val = bigint_sub_str_unsigned(&b_frac_padded, &a_frac_padded);
+        let power = format!("1{:0<width$}", "", width = max_frac_len);
+        let borrowed = bigint_sub_str_unsigned(&power, &frac_val);
+        let formatted = format!("{:0>width$}", borrowed, width = max_frac_len);
+        (formatted, true)
+    } else {
+        (format!("{:0>width$}", frac_sub, width = max_frac_len), false)
+    };
+    let int_sub = if borrow {
+        bigint_sub_str_unsigned(a_int, &bigint_add_str_unsigned(b_int, "1"))
+    } else {
+        bigint_sub_str_unsigned(a_int, b_int)
+    };
+    if frac_result.chars().all(|c| c == '0') {
+        int_sub
+    } else {
+        format!("{}.{}", int_sub, frac_result.trim_end_matches('0'))
+    }
+}
+
+/// 十进制乘法（精确字符串运算）
+pub(crate) fn decimal_mul_str(a: &str, b: &str) -> String {
+    let neg = (a.starts_with('-') && !b.starts_with('-')) || (!a.starts_with('-') && b.starts_with('-'));
+    let a_abs = a.trim_start_matches('-');
+    let b_abs = b.trim_start_matches('-');
+    let (a_int, a_frac) = split_decimal(a_abs);
+    let (b_int, b_frac) = split_decimal(b_abs);
+    let total_frac_digits = a_frac.len() + b_frac.len();
+    let a_str = format!("{}{}", a_int, a_frac);
+    let b_str = format!("{}{}", b_int, b_frac);
+    let prod = bigint_mul_str_unsigned(&a_str, &b_str);
+    let result = if prod.len() > total_frac_digits {
+        format!("{}.{}", &prod[..prod.len() - total_frac_digits], &prod[prod.len() - total_frac_digits..])
+    } else {
+        format!("0.{:0>width$}", prod, width = total_frac_digits)
+    };
+    let trimmed = result.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() { return "0".to_string(); }
+    if neg && trimmed != "0" { format!("-{}", trimmed) } else { trimmed.to_string() }
+}
+
+/// 十进制除法（近似到 10 位小数）
+pub(crate) fn decimal_div_str(a: &str, b: &str) -> String {
+    if b == "0" || b == "0.0" {
+        return "NaN".to_string();
+    }
+    let neg = (a.starts_with('-') && !b.starts_with('-')) || (!a.starts_with('-') && b.starts_with('-'));
+    let a_abs = a.trim_start_matches('-');
+    let b_abs = b.trim_start_matches('-');
+    let (a_int, a_frac) = split_decimal(a_abs);
+    let (b_int, b_frac) = split_decimal(b_abs);
+    // 将除数、被除数转为整数
+    let max_frac = a_frac.len().max(b_frac.len());
+    let a_padded = format!("{}{:0<width$}", a_int, a_frac, width = max_frac);
+    let b_padded = format!("{}{:0<width$}", b_int, b_frac, width = max_frac);
+    // 长除法：求商到 10 位小数
+    let precision = 10;
+    let mut dividend = bigint_sub_str_unsigned(&a_padded, &"0"); // just clone
+    let divisor = bigint_sub_str_unsigned(&b_padded, &"0");
+    // 简单长除法
+    let dividend_val: String = a_padded.clone();
+    let divisor_val: String = b_padded.clone();
+    let mut quotient = String::new();
+    let mut remainder = String::new();
+    for (i, c) in dividend_val.chars().enumerate() {
+        remainder.push(c);
+        let rem_trimmed = remainder.trim_start_matches('0');
+        if rem_trimmed.is_empty() { remainder = "0".to_string(); }
+        let (q, r) = divide_one_digit(&remainder, &divisor_val);
+        quotient.push(q);
+        remainder = r;
+    }
+    // 小数部分
+    if !quotient.is_empty() {
+        // 已有整数部分
+    } else {
+        quotient = "0".to_string();
+    }
+    let mut frac = String::new();
+    for _ in 0..precision {
+        remainder.push('0');
+        let (q, r) = divide_one_digit(&remainder, &divisor_val);
+        frac.push(q);
+        remainder = r;
+        if remainder == "0" { break; }
+    }
+    let result = if frac.chars().all(|c| c == '0') {
+        quotient.trim_start_matches('0').to_string()
+    } else {
+        format!("{}.{}", quotient.trim_start_matches('0'), frac)
+    };
+    if result.is_empty() || result == "." { return "0".to_string(); }
+    if neg && result != "0" { format!("-{}", result) } else { result }
+}
+
+/// 一次除法迭代：返回商的一位数字和余数
+fn divide_one_digit(dividend: &str, divisor: &str) -> (char, String) {
+    let dividend_trimmed = dividend.trim_start_matches('0');
+    if dividend_trimmed.is_empty() { return ('0', "0".to_string()); }
+    let d = dividend_trimmed.to_string();
+    let dv = divisor.trim_start_matches('0');
+    if dv.is_empty() { return ('9', "0".to_string()); }
+    let d_val: u128 = d.parse().unwrap_or(0);
+    let dv_val: u128 = dv.parse().unwrap_or(1);
+    if dv_val == 0 { return ('0', d); }
+    let q = d_val / dv_val;
+    let r = d_val % dv_val;
+    let q_char = char::from(b'0' + (q.min(9) as u8));
+    (q_char, r.to_string())
+}
+
+/// 将十进制字符串拆分为 (整数部分, 小数部分)
+fn split_decimal(s: &str) -> (&str, &str) {
+    if let Some(dot) = s.find('.') {
+        let int_part = &s[..dot];
+        let frac_part = &s[dot + 1..];
+        (if int_part.is_empty() { "0" } else { int_part }, frac_part)
+    } else {
+        (s, "")
+    }
 }
 

@@ -1967,6 +1967,104 @@ impl super::Interpreter {
                     });
                 }
             }
+            // ── 问题29：智能指针 Box/Rc/Arc/Pin ──
+            "Box::new" => {
+                if args.is_empty() {
+                    return Err(TenthError::RuntimeError { line: None, col: None, message: "Box::new() 需要 1 个参数".into() });
+                }
+                return Ok(Some(Value::HeapBox(Box::new(args[0].clone()))));
+            }
+            "Rc::new" => {
+                if args.is_empty() {
+                    return Err(TenthError::RuntimeError { line: None, col: None, message: "Rc::new() 需要 1 个参数".into() });
+                }
+                return Ok(Some(Value::SharedBox(Rc::new(RefCell::new(args[0].clone())))));
+            }
+            "Arc::new" => {
+                if args.is_empty() {
+                    return Err(TenthError::RuntimeError { line: None, col: None, message: "Arc::new() 需要 1 个参数".into() });
+                }
+                return Ok(Some(Value::SharedBox(Rc::new(RefCell::new(args[0].clone())))));
+            }
+            "Pin::new" => {
+                if args.is_empty() {
+                    return Err(TenthError::RuntimeError { line: None, col: None, message: "Pin::new() 需要 1 个参数".into() });
+                }
+                return Ok(Some(Value::Pin(Box::new(args[0].clone()))));
+            }
+            // ── 问题35：BigInt 运算 ──
+            "bigint_add" => {
+                if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "bigint_add() 需要 2 个 bigint 参数".into() }); }
+                let a = match &args[0] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+                let b = match &args[1] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+                return Ok(Some(Value::BigInt(crate::runtime::natives::bigint_add_str(&a, &b))));
+            }
+            "bigint_sub" => {
+                if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "bigint_sub() 需要 2 个 bigint 参数".into() }); }
+                let a = match &args[0] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+                let b = match &args[1] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+                return Ok(Some(Value::BigInt(crate::runtime::natives::bigint_sub_str(&a, &b))));
+            }
+            "bigint_mul" => {
+                if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "bigint_mul() 需要 2 个 bigint 参数".into() }); }
+                let a = match &args[0] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+                let b = match &args[1] { Value::BigInt(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 BigInt".into() }) };
+                return Ok(Some(Value::BigInt(crate::runtime::natives::bigint_mul_str(&a, &b))));
+            }
+            // ── 问题36：Complex 运算 ──
+            "complex_add" => {
+                if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "complex_add() 需要 2 个 complex 参数".into() }); }
+                let (re1, im1) = match &args[0] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+                let (re2, im2) = match &args[1] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+                return Ok(Some(Value::Complex(re1 + re2, im1 + im2)));
+            }
+            "complex_sub" => {
+                if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "complex_sub() 需要 2 个 complex 参数".into() }); }
+                let (re1, im1) = match &args[0] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+                let (re2, im2) = match &args[1] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+                return Ok(Some(Value::Complex(re1 - re2, im1 - im2)));
+            }
+            "complex_mul" => {
+                if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "complex_mul() 需要 2 个 complex 参数".into() }); }
+                let (re1, im1) = match &args[0] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+                let (re2, im2) = match &args[1] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+                return Ok(Some(Value::Complex(re1 * re2 - im1 * im2, re1 * im2 + im1 * re2)));
+            }
+            "complex_div" => {
+                if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "complex_div() 需要 2 个 complex 参数".into() }); }
+                let (re1, im1) = match &args[0] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+                let (re2, im2) = match &args[1] { Value::Complex(r, i) => (*r, *i), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Complex".into() }) };
+                let denom = re2 * re2 + im2 * im2;
+                if denom == 0.0 {
+                    return Err(TenthError::RuntimeError { line: None, col: None, message: "Complex 除法：分母为零".into() });
+                }
+                return Ok(Some(Value::Complex((re1 * re2 + im1 * im2) / denom, (im1 * re2 - re1 * im2) / denom)));
+            }
+            // ── 问题37：Decimal 运算 ──
+            "decimal_add" => {
+                if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "decimal_add() 需要 2 个 decimal 参数".into() }); }
+                let a = match &args[0] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+                let b = match &args[1] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+                return Ok(Some(Value::Decimal(crate::runtime::natives::decimal_add_str(&a, &b))));
+            }
+            "decimal_sub" => {
+                if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "decimal_sub() 需要 2 个 decimal 参数".into() }); }
+                let a = match &args[0] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+                let b = match &args[1] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+                return Ok(Some(Value::Decimal(crate::runtime::natives::decimal_sub_str(&a, &b))));
+            }
+            "decimal_mul" => {
+                if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "decimal_mul() 需要 2 个 decimal 参数".into() }); }
+                let a = match &args[0] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+                let b = match &args[1] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+                return Ok(Some(Value::Decimal(crate::runtime::natives::decimal_mul_str(&a, &b))));
+            }
+            "decimal_div" => {
+                if args.len() < 2 { return Err(TenthError::RuntimeError { line: None, col: None, message: "decimal_div() 需要 2 个 decimal 参数".into() }); }
+                let a = match &args[0] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+                let b = match &args[1] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
+                return Ok(Some(Value::Decimal(crate::runtime::natives::decimal_div_str(&a, &b))));
+            }
             _ => {}
         }
 

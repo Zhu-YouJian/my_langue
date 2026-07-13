@@ -7,6 +7,14 @@ pub enum BaseType {
     F16, F32, F64, BF16,
     Bool, Char, Str,
     Unit,
+    /// BigInt: 任意精度有符号整数（运行时用 String 存储十进制表示）。
+    BigInt,
+    /// Complex<f64>（C64 = Complex<f32> 的别名，算力预估用）
+    C64,
+    /// Complex<f128>（C128 = Complex<f64> 的别名）
+    C128,
+    /// Decimal: 精确十进制数（运行时用 String 存储）。
+    Decimal,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +51,9 @@ pub enum Type {
     /// 语义：Never 可以统一到任何类型 T（unify 结果为 T）。
     /// 若函数体所有分支都是 Never，则函数返回类型为 Never。
     Never,
+    /// Dyn trait 对象类型：`dyn TraitName`。
+    /// 表示某个实现了指定 trait 的类型的值，通过 vtable 进行动态分发。
+    Dyn(String),
     /// Range 类型（一等类型，问题9）：`1..10` 或 `1..=10`。
     /// inner 为元素类型（通常 i32/i64），inclusive 标记是否含 end。
     /// 可作为函数参数/返回值类型注解，可存储在变量中。
@@ -50,6 +61,18 @@ pub enum Type {
         inner: Box<Type>,
         inclusive: bool,
     },
+    /// Box<T>: 堆分配的所有权指针（问题29）。
+    /// 运行时对应 Value::HeapBox(Box<Value>)。
+    HeapBox(Box<Type>),
+    /// Rc<T>: 引用计数共享指针（问题29）。
+    /// 运行时对应 Value::SharedBox(Rc<RefCell<Value>>)。
+    SharedBox(Box<Type>),
+    /// Arc<T>: 原子引用计数共享指针（问题29）。
+    /// 运行时暂用 Value::SharedBox(Rc<RefCell<Value>>) 等价实现。
+    AtomicBox(Box<Type>),
+    /// Pin<T>: 固定不可移动包装（问题31）。
+    /// 运行时对应 Value::Pin(Box<Value>)。
+    Pin(Box<Type>),
     Unknown,
 }
 
@@ -106,10 +129,15 @@ impl fmt::Display for Type {
                 }
                 write!(f, ">")
             }
+            Type::HeapBox(inner) => write!(f, "Box<{}>", inner),
+            Type::SharedBox(inner) => write!(f, "Rc<{}>", inner),
+            Type::AtomicBox(inner) => write!(f, "Arc<{}>", inner),
+            Type::Pin(inner) => write!(f, "Pin<{}>", inner),
             Type::Ref(inner) => write!(f, "&{}", inner),
             Type::MutRef(inner) => write!(f, "&mut {}", inner),
             Type::Struct(name) => write!(f, "{}", name),
             Type::Enum(name) => write!(f, "{}", name),
+            Type::Dyn(name) => write!(f, "dyn {}", name),
             Type::Tuple(types) => {
                 write!(f, "(")?;
                 for (i, t) in types.iter().enumerate() {
@@ -196,6 +224,12 @@ impl Type {
                 }
                 // 元组类型注解：parser 把 `(A, B, C)` 折叠成 Named("(A, B, C)")。
                 // 这里反向解析为 Type::Tuple，使函数返回类型 `-> (i64, i64)` 等正确推断。
+                // Handle dyn trait types: `dyn TraitName`
+                if let Some(trait_name) = name.strip_prefix("dyn ") {
+                    if !trait_name.is_empty() {
+                        return Type::Dyn(trait_name.to_string());
+                    }
+                }
                 if name.starts_with('(') && name.ends_with(')') && name.len() >= 2 {
                     let inner = &name[1..name.len() - 1];
                     // 至少含一个逗号才视为元组；单个类型名括起来（如 `(i64)`）应解包为该类型
@@ -228,6 +262,10 @@ impl Type {
                     "bool" => Type::Base(BaseType::Bool),
                     "char" => Type::Base(BaseType::Char),
                     "str" => Type::Base(BaseType::Str),
+                    "bigint" => Type::Base(BaseType::BigInt),
+                    "c64" => Type::Base(BaseType::C64),
+                    "c128" => Type::Base(BaseType::C128),
+                    "decimal" => Type::Base(BaseType::Decimal),
                     "!" => Type::Never,
                     "()" => Type::Base(BaseType::Unit),
                     _ => Type::TypeParam { name: ident.name.clone() },

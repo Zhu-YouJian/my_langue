@@ -181,6 +181,25 @@ impl Lowerer {
             }],
             associated_types: vec![],
         });
+        // Copy trait: 空 trait，编译器内部识别，自动派生
+        lowerer.trait_defs.insert("Copy".to_string(), HirTraitDef {
+            name: "Copy".to_string(),
+            generics: vec![],
+            methods: vec![],
+            associated_types: vec![],
+        });
+        // Drop trait: 析构函数 `fn drop(self)`
+        lowerer.trait_defs.insert("Drop".to_string(), HirTraitDef {
+            name: "Drop".to_string(),
+            generics: vec![],
+            methods: vec![HirTraitMethod {
+                name: "drop".to_string(),
+                params: vec![("self".to_string(), Type::Unknown)],
+                return_type: Type::unit(),
+                default_body: None,
+            }],
+            associated_types: vec![],
+        });
 
         // Preload Option enum
         lowerer.enums.insert("Option".to_string(), vec![
@@ -195,6 +214,48 @@ impl Lowerer {
         ]);
 
         lowerer
+    }
+}
+
+/// 检查类型是否实现了 Copy trait。
+/// 基本类型都是 Copy；结构体如果所有字段都是 Copy 则自动 Copy。
+pub(super) fn is_copy_type(ty: &Type, structs: &HashMap<String, Vec<(String, Type)>>,
+                           trait_impls: &HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>) -> bool {
+    match ty {
+        // 基础类型中，BigInt/C64/C128/Decimal 是堆分配字符串，不可 Copy
+        Type::Base(b) => !matches!(b, BaseType::BigInt | BaseType::C64 | BaseType::C128 | BaseType::Decimal),
+        Type::Never => true,
+        Type::Struct(name) => {
+            // 检查是否有显式的 impl Copy for StructName
+            if let Some(impls) = trait_impls.get("Copy") {
+                if impls.contains_key(name) {
+                    return true;
+                }
+            }
+            // 自动派生：检查所有字段是否都是 Copy
+            if let Some(fields) = structs.get(name) {
+                fields.iter().all(|(_, ft)| is_copy_type(ft, structs, trait_impls))
+            } else {
+                false
+            }
+        }
+        Type::Enum(name) => {
+            if let Some(impls) = trait_impls.get("Copy") {
+                if impls.contains_key(name) {
+                    return true;
+                }
+            }
+            false
+        }
+        Type::Ref(_) | Type::MutRef(_) => true, // 引用总是 Copy
+        Type::Array { inner, .. } => is_copy_type(inner, structs, trait_impls),
+        Type::Tuple(types) => types.iter().all(|t| is_copy_type(t, structs, trait_impls)),
+        Type::Dyn(_) => false, // trait 对象不可 Copy
+        // HeapBox/Pin: 所有权指针，不可 Copy
+        Type::HeapBox(_) | Type::Pin(_) => false,
+        // SharedBox/AtomicBox: 共享指针，不可 Copy
+        Type::SharedBox(_) | Type::AtomicBox(_) => false,
+        _ => false, // Function types, Tensor types, etc. are not Copy by default
     }
 }
 

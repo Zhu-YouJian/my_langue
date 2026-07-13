@@ -77,6 +77,22 @@ impl Parser {
                 };
                 Ok(TypeAnnotation::Named(Ident { name: name_str, span }))
             }
+            TokenKind::Dyn => {
+                self.advance();
+                let trait_name = match self.peek_kind() {
+                    TokenKind::Identifier(name) => {
+                        let name = name.clone();
+                        self.advance();
+                        name
+                    }
+                    _ => return Err(TenthError::ParseError {
+                        line: span.line,
+                        col: span.col,
+                        message: "期望 trait 名称".into(),
+                    }),
+                };
+                Ok(TypeAnnotation::Named(Ident { name: format!("dyn {}", trait_name), span }))
+            }
             TokenKind::Identifier(name) => {
                 let name = name.clone();
                 self.advance();

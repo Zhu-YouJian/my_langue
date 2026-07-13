@@ -116,9 +116,38 @@ impl Scope {
         }
     }
 
+    /// 遍历当前作用域（不含父作用域）的所有变量及其类型。
+    pub(super) fn for_each_var<F: FnMut(&str, &Type)>(&self, mut f: F) {
+        for (name, (ty, _)) in &self.variables {
+            f(name, ty);
+        }
+    }
+
     pub(super) fn define_var(&mut self, name: String, ty: Type, mutable: bool) {
         self.variables.insert(name.clone(), (ty, mutable));
         self.ownership.insert(name, Ownership::Owned);
+    }
+
+    /// 尝试 move 一个变量：如果类型是 Copy，不变更所有权状态；否则标记为 Moved。
+    /// 返回 true 表示 move 成功（Copy 总是成功，non-Copy 只能 move 一次）。
+    pub(super) fn try_move(&mut self, name: &str) -> bool {
+        match self.get_ownership(name) {
+            Some(Ownership::Moved) => false,
+            Some(Ownership::Owned) => {
+                // 检查变量类型是否为 Copy
+                let is_copy = self.variables.get(name)
+                    .map(|(ty, _)| {
+                        // 简化的 Copy 检查：基础类型和引用是 Copy
+                        matches!(ty, Type::Base(_) | Type::Ref(_) | Type::MutRef(_) | Type::Never)
+                    })
+                    .unwrap_or(false);
+                if !is_copy {
+                    self.set_ownership(name, Ownership::Moved);
+                }
+                true
+            }
+            _ => true, // References can be used any number of times
+        }
     }
 
     /// Release all shared and exclusive borrows in the current scope.

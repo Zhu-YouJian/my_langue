@@ -621,6 +621,20 @@ impl Lowerer {
             }
         }
 
+        // 自动派生 Copy trait：对于所有字段都是 Copy 类型的结构体，自动注册 impl Copy
+        let copy_auto_types: Vec<String> = self.structs.iter()
+            .filter(|(name, fields)| {
+                !self.trait_impls.get("Copy").map_or(false, |impls| impls.contains_key(*name))
+                    && fields.iter().all(|(_, ft)| super::is_copy_type(ft, &self.structs, &self.trait_impls))
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        for type_name in copy_auto_types {
+            self.trait_impls.entry("Copy".to_string())
+                .or_insert_with(HashMap::new)
+                .insert(type_name, HashMap::new());
+        }
+
         let mut main_expr = None;
         for item in &program.items {
             if let ast::ItemKind::Function { name, body, .. } = &item.kind {
