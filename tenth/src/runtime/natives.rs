@@ -10,10 +10,11 @@
 //! 类型转换（to_float/to_f64/to_f32/to_string/type_name）、字符串格式化等。
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use crate::hir::types::BaseType;
 use std::rc::Rc;
 
-use crate::error::TenthError;
+use crate::error::{TenthError, TenthResult};
 use crate::runtime::async_io::{ASYNC_IO, IoResult};
 use crate::runtime::autodiff::Tape;
 use crate::runtime::interpreter::datetime;
@@ -22,6 +23,10 @@ use crate::runtime::tensor::{Tensor, TensorData};
 use crate::runtime::value::Value;
 use crate::runtime::vm::Vm;
 use crate::http::{http_get_impl, http_post_impl};
+
+// B批：编码工具
+use unicode_normalization::UnicodeNormalization;
+use base64::Engine as _;
 
 /// 构造 Result::Ok(value)
 pub(crate) fn ok_result(value: Value) -> Value {
@@ -38,6 +43,118 @@ pub(crate) fn err_result(msg: impl Into<String>) -> Value {
         enum_name: "Result".to_string(),
         variant: "Err".to_string(),
         fields: Rc::new(RefCell::new(vec![("_0".to_string(), Value::String(msg.into()))])),
+    }
+}
+
+/// 将 Tenth 格式说明符应用到值上，返回格式化后的字符串。
+/// 支持：`>5`（右对齐）、`<5`（左对齐）、`^5`（居中）、`.2f`（小数点精度）
+fn apply_format_spec(value: &str, spec: &str) -> String {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return value.to_string();
+    }
+    if let Some(width_str) = spec.strip_prefix('>') {
+        let width = width_str.parse::<usize>().unwrap_or(0);
+        format!("{:>width$}", value, width = width)
+    } else if let Some(width_str) = spec.strip_prefix('<') {
+        let width = width_str.parse::<usize>().unwrap_or(0);
+        format!("{:<width$}", value, width = width)
+    } else if let Some(width_str) = spec.strip_prefix('^') {
+        let width = width_str.parse::<usize>().unwrap_or(0);
+        format!("{:^width$}", value, width = width)
+    } else if spec.starts_with('.') {
+        let trimmed = spec.trim_end_matches('f');
+        let decimals = trimmed[1..].parse::<usize>().unwrap_or(2);
+        let val: f64 = value.parse().unwrap_or(0.0);
+        format!("{:.decimals$}", val, decimals = decimals)
+    } else {
+        // Unknown specifier - pass through as-is
+        value.to_string()
+    }
+}
+
+/// 扫描模板字符串，统计位置占位符数量并判断是否包含命名占位符。
+/// 位置占位符：`{}`、`{:spec}`、`{0}`、`{0:spec}`
+/// 命名占位符：`{name}`、`{name:spec}`
+fn count_placeholders(template: &str) -> (usize, bool) {
+    let mut pos_count = 0;
+    let mut has_named = false;
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            if chars.peek() == Some(&'{') {
+                chars.next();
+                continue;
+            }
+            let mut content = String::new();
+            let mut found_colon = false;
+            while let Some(pc) = chars.next() {
+                if pc == '}' { break; }
+                if pc == ':' { found_colon = true; }
+                else if !found_colon { content.push(pc); }
+            }
+            if content.is_empty() || content.chars().all(|c| c.is_ascii_digit()) {
+                pos_count += 1;
+            } else {
+                has_named = true;
+            }
+        }
+    }
+    (pos_count, has_named)
+}
+
+/// 格式化单个占位符：解析位置/命名参数并应用格式说明符。
+fn format_placeholder(
+    placeholder: &str,
+    fmt_spec: &str,
+    args: &[Value],
+    named_args: &HashMap<String, Value>,
+    arg_idx: usize,
+    num_positional: usize,
+    _has_named_args: bool,
+) -> TenthResult<String> {
+    let arg_val = if placeholder.is_empty() {
+        // Positional placeholder: take next positional arg (arg_idx)
+        let pos = 1 + arg_idx; // +1 for template at args[0]
+        if pos < args.len() && pos < 1 + num_positional {
+            let val = &args[pos];
+            format!("{}", val)
+        } else {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: format!("format() 位置参数 #{} 越界（共 {} 个位置参数）",
+                    arg_idx, num_positional),
+            });
+        }
+    } else if placeholder.chars().all(|c| c.is_ascii_digit()) {
+        // Explicit numeric index: {0}, {1}
+        let idx: usize = placeholder.parse::<usize>().unwrap_or(0);
+        if idx < num_positional {
+            let val = &args[1 + idx];
+            format!("{}", val)
+        } else {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: format!("format() 索引 #{} 越界（共 {} 个位置参数）", idx, num_positional),
+            });
+        }
+    } else {
+        // Named parameter: {name}
+        match named_args.get(placeholder) {
+            Some(val) => format!("{}", val),
+            None => {
+                return Err(TenthError::RuntimeError { line: None, col: None,
+                    message: format!("format() 未找到命名参数 '{}'", placeholder),
+                });
+            }
+        }
+    };
+
+    // Apply format specifier if present
+    if fmt_spec.is_empty() {
+        Ok(arg_val)
+    } else {
+        // Parse format specifier and apply with Rust's format!
+        let formatted = apply_format_spec(&arg_val, fmt_spec);
+        Ok(formatted)
     }
 }
 
@@ -1970,6 +2087,8 @@ pub fn register_all_natives(vm: &mut Vm) {
         }
     });
     // 15. format(template, args...) — 模板字符串格式化（{}/{{/}}）
+    //     支持命名参数（通过最后一个 Map 参数传递）、格式说明符（{:>5} / {:.2f}）、
+    //     越界返回错误（而非原样输出占位符原文）
     vm.add_native("format".into(), |_vm, args| {
         if args.is_empty() {
             return Err(TenthError::RuntimeError { line: None, col: None,
@@ -1977,8 +2096,31 @@ pub fn register_all_natives(vm: &mut Vm) {
             });
         }
         if let Value::String(template) = &args[0] {
+            // Scan template to count positional placeholders and detect named placeholders.
+            let (pos_count, has_named_placeholders) = count_placeholders(template);
+            let raw_args = &args[1..];
+            let total_available = raw_args.len();
+            let positional_used = pos_count.min(total_available);
+            let excess = total_available - positional_used;
+            let named_pair_count = if has_named_placeholders { excess / 2 } else { 0 };
+            let actual_positional_count = positional_used;
+
+            let mut named_args: HashMap<String, Value> = HashMap::new();
+            if named_pair_count > 0 {
+                let pair_start = actual_positional_count;
+                for i in 0..named_pair_count {
+                    let key_idx = pair_start + i * 2;
+                    let val_idx = pair_start + i * 2 + 1;
+                    if key_idx < raw_args.len() && val_idx < raw_args.len() {
+                        if let Value::String(key) = &raw_args[key_idx] {
+                            named_args.insert(key.clone(), raw_args[val_idx].clone());
+                        }
+                    }
+                }
+            }
+
             let mut result = String::new();
-            let mut arg_idx = 1;
+            let mut arg_idx: usize = 0;
             let mut chars = template.chars().peekable();
             while let Some(c) = chars.next() {
                 if c == '{' {
@@ -1986,20 +2128,29 @@ pub fn register_all_natives(vm: &mut Vm) {
                         chars.next();
                         result.push('{');
                     } else {
+                        // Parse placeholder: read everything up to }
                         let mut placeholder = String::new();
+                        let mut fmt_spec = String::new();
+                        let mut in_spec = false;
                         while let Some(pc) = chars.next() {
                             if pc == '}' {
                                 break;
                             }
-                            placeholder.push(pc);
+                            if pc == ':' && !in_spec {
+                                in_spec = true;
+                            } else if in_spec {
+                                fmt_spec.push(pc);
+                            } else {
+                                placeholder.push(pc);
+                            }
                         }
-                        if arg_idx < args.len() {
-                            result.push_str(&format!("{}", args[arg_idx]));
+                        let formatted = format_placeholder(
+                            &placeholder, &fmt_spec, &args,
+                            &named_args, arg_idx, actual_positional_count, named_pair_count > 0
+                        )?;
+                        result.push_str(&formatted);
+                        if placeholder.is_empty() {
                             arg_idx += 1;
-                        } else {
-                            result.push('{');
-                            result.push_str(&placeholder);
-                            result.push('}');
                         }
                     }
                 } else if c == '}' {
@@ -2192,6 +2343,293 @@ pub fn register_all_natives(vm: &mut Vm) {
         let a = match &args[0] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
         let b = match &args[1] { Value::Decimal(s) => s.clone(), _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "参数必须是 Decimal".into() }) };
         Ok(Value::Decimal(decimal_div_str(&a, &b)))
+    });
+
+    // ── B批：Unicode 规范化 ──
+    vm.add_native("unicode_nfc".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            Ok(Value::String(s.chars().nfc().collect::<String>()))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "_unicode_nfc 需要 1 个 String 参数".into() })
+        }
+    });
+    vm.add_native("unicode_nfd".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            Ok(Value::String(s.chars().nfd().collect::<String>()))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "_unicode_nfd 需要 1 个 String 参数".into() })
+        }
+    });
+
+    // ── B批：UTF-8 ↔ UTF-16 ──
+    vm.add_native("str_to_utf16".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            let encoded: Vec<u16> = s.encode_utf16().collect();
+            let result: Vec<Value> = encoded.into_iter()
+                .map(|c| Value::Int(c as i64, BaseType::I32))
+                .collect();
+            Ok(Value::Vec(Rc::new(RefCell::new(result))))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "_str_to_utf16 需要 1 个 String 参数".into() })
+        }
+    });
+    vm.add_native("utf16_to_str".into(), |_vm, args| {
+        if let Some(Value::Vec(arr)) = args.first() {
+            let code_units: Vec<u16> = arr.borrow().iter()
+                .map(|v| match v {
+                    Value::Int(n, _) => *n as u16,
+                    _ => 0,
+                })
+                .collect();
+            let result = String::from_utf16(&code_units)
+                .unwrap_or_else(|_| {
+                    // 替换无效序列
+                    let mut s = String::new();
+                    let mut i = 0;
+                    while i < code_units.len() {
+                        let c = code_units[i];
+                        if c >= 0xD800 && c <= 0xDBFF && i + 1 < code_units.len() {
+                            let c2 = code_units[i + 1];
+                            if c2 >= 0xDC00 && c2 <= 0xDFFF {
+                                let cp = 0x10000 + ((c as u32 - 0xD800) << 10) + (c2 as u32 - 0xDC00);
+                                if let Some(ch) = char::from_u32(cp) {
+                                    s.push(ch);
+                                } else {
+                                    s.push('\u{FFFD}');
+                                }
+                                i += 2;
+                                continue;
+                            }
+                        } else if c >= 0xDC00 && c <= 0xDFFF {
+                            s.push('\u{FFFD}');
+                            i += 1;
+                            continue;
+                        }
+                        if let Some(ch) = char::from_u32(c as u32) {
+                            s.push(ch);
+                        } else {
+                            s.push('\u{FFFD}');
+                        }
+                        i += 1;
+                    }
+                    s
+                });
+            Ok(Value::String(result))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "_utf16_to_str 需要 1 个 Vec 参数".into() })
+        }
+    });
+
+    // ── B批：UTF-8 ↔ 字节数组 ──
+    vm.add_native("str_to_bytes".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            let bytes: Vec<Value> = s.bytes()
+                .map(|b| Value::Int(b as i64, BaseType::I32))
+                .collect();
+            Ok(Value::Vec(Rc::new(RefCell::new(bytes))))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "_str_to_bytes 需要 1 个 String 参数".into() })
+        }
+    });
+    vm.add_native("bytes_to_str".into(), |_vm, args| {
+        if let Some(Value::Vec(arr)) = args.first() {
+            let bytes: Vec<u8> = arr.borrow().iter()
+                .map(|v| match v {
+                    Value::Int(n, _) => *n as u8,
+                    _ => 0,
+                })
+                .collect();
+            let result = String::from_utf8_lossy(&bytes).to_string();
+            Ok(Value::String(result))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "_bytes_to_str 需要 1 个 Vec 参数".into() })
+        }
+    });
+
+    // ── B批：Base64 ──
+    vm.add_native("base64_encode".into(), |_vm, args| {
+        if let Some(Value::Vec(arr)) = args.first() {
+            let bytes: Vec<u8> = arr.borrow().iter()
+                .map(|v| match v {
+                    Value::Int(n, _) => *n as u8,
+                    _ => 0,
+                })
+                .collect();
+            use base64::engine::general_purpose;
+            Ok(Value::String(general_purpose::STANDARD.encode(&bytes)))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "base64_encode 需要 1 个 Vec 参数".into() })
+        }
+    });
+    vm.add_native("base64_decode".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            use base64::engine::general_purpose;
+            match general_purpose::STANDARD.decode(s) {
+                Ok(bytes) => {
+                    let result: Vec<Value> = bytes.into_iter()
+                        .map(|b| Value::Int(b as i64, BaseType::I32))
+                        .collect();
+                    Ok(ok_result(Value::Vec(Rc::new(RefCell::new(result)))))
+                }
+                Err(e) => Ok(err_result(format!("Base64 解码失败: {e}"))),
+            }
+        } else {
+            Ok(err_result("_base64_decode 需要 1 个 String 参数"))
+        }
+    });
+
+    // ── B批：十六进制 ──
+    vm.add_native("hex_encode".into(), |_vm, args| {
+        if let Some(Value::Vec(arr)) = args.first() {
+            let bytes: Vec<u8> = arr.borrow().iter()
+                .map(|v| match v {
+                    Value::Int(n, _) => *n as u8,
+                    _ => 0,
+                })
+                .collect();
+            Ok(Value::String(bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "hex_encode 需要 1 个 Vec 参数".into() })
+        }
+    });
+    vm.add_native("hex_decode".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            let trimmed = s.trim();
+            if trimmed.len() % 2 != 0 {
+                return Ok(err_result("十六进制字符串长度必须为偶数"));
+            }
+            let bytes: Result<Vec<u8>, _> = (0..trimmed.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&trimmed[i..i+2], 16))
+                .collect();
+            match bytes {
+                Ok(data) => {
+                    let result: Vec<Value> = data.into_iter()
+                        .map(|b| Value::Int(b as i64, BaseType::I32))
+                        .collect();
+                    Ok(ok_result(Value::Vec(Rc::new(RefCell::new(result)))))
+                }
+                Err(e) => Ok(err_result(format!("十六进制解码失败: {e}"))),
+            }
+        } else {
+            Ok(err_result("_hex_decode 需要 1 个 String 参数"))
+        }
+    });
+
+    // ── B批：URL 编解码 ──
+    vm.add_native("url_encode".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+            Ok(Value::String(utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "url_encode 需要 1 个 String 参数".into() })
+        }
+    });
+    vm.add_native("url_decode".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            use percent_encoding::percent_decode;
+            match percent_decode(s.as_bytes()).decode_utf8() {
+                Ok(decoded) => Ok(ok_result(Value::String(decoded.to_string()))),
+                Err(_) => Ok(err_result("URL 解码失败：无效的百分号编码序列")),
+            }
+        } else {
+            Ok(err_result("_url_decode 需要 1 个 String 参数"))
+        }
+    });
+
+    // ── B批：编码转换新 API 别名 ──
+    vm.add_native("to_utf8".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            let bytes: Vec<Value> = s.bytes()
+                .map(|b| Value::Int(b as i64, BaseType::I32))
+                .collect();
+            Ok(Value::Vec(Rc::new(RefCell::new(bytes))))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "_to_utf8 需要 1 个 String 参数".into() })
+        }
+    });
+    vm.add_native("to_utf16".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            let encoded: Vec<u16> = s.encode_utf16().collect();
+            let result: Vec<Value> = encoded.into_iter()
+                .map(|c| Value::Int(c as i64, BaseType::I32))
+                .collect();
+            Ok(Value::Vec(Rc::new(RefCell::new(result))))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "_to_utf16 需要 1 个 String 参数".into() })
+        }
+    });
+    vm.add_native("from_utf16".into(), |_vm, args| {
+        if let Some(Value::Vec(arr)) = args.first() {
+            let code_units: Vec<u16> = arr.borrow().iter()
+                .map(|v| match v {
+                    Value::Int(n, _) => *n as u16,
+                    _ => 0,
+                })
+                .collect();
+            let result = String::from_utf16(&code_units)
+                .unwrap_or_else(|_| {
+                    let mut s = String::new();
+                    let mut i = 0;
+                    while i < code_units.len() {
+                        let c = code_units[i];
+                        if c >= 0xD800 && c <= 0xDBFF && i + 1 < code_units.len() {
+                            let c2 = code_units[i + 1];
+                            if c2 >= 0xDC00 && c2 <= 0xDFFF {
+                                let cp = 0x10000 + ((c as u32 - 0xD800) << 10) + (c2 as u32 - 0xDC00);
+                                if let Some(ch) = char::from_u32(cp) {
+                                    s.push(ch);
+                                } else {
+                                    s.push('\u{FFFD}');
+                                }
+                                i += 2;
+                                continue;
+                            }
+                        } else if c >= 0xDC00 && c <= 0xDFFF {
+                            s.push('\u{FFFD}');
+                            i += 1;
+                            continue;
+                        }
+                        if let Some(ch) = char::from_u32(c as u32) {
+                            s.push(ch);
+                        } else {
+                            s.push('\u{FFFD}');
+                        }
+                        i += 1;
+                    }
+                    s
+                });
+            Ok(Value::String(result))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "_from_utf16 需要 1 个 Vec 参数".into() })
+        }
+    });
+
+    // ── B批：GBK 编码 ──
+    vm.add_native("to_gbk".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            let (bytes, _, _) = encoding_rs::GBK.encode(s);
+            let result: Vec<Value> = bytes.iter()
+                .map(|b| Value::Int(*b as i64, BaseType::I32))
+                .collect();
+            Ok(Value::Vec(Rc::new(RefCell::new(result))))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "_to_gbk 需要 1 个 String 参数".into() })
+        }
+    });
+    vm.add_native("from_gbk".into(), |_vm, args| {
+        if let Some(Value::Vec(arr)) = args.first() {
+            let bytes: Vec<u8> = arr.borrow().iter()
+                .map(|v| match v {
+                    Value::Int(n, _) => *n as u8,
+                    _ => 0,
+                })
+                .collect();
+            let (result, _, _) = encoding_rs::GBK.decode(&bytes);
+            Ok(Value::String(result.to_string()))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "_from_gbk 需要 1 个 Vec 参数".into() })
+        }
     });
 }
 

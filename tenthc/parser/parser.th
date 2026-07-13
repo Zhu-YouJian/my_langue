@@ -167,8 +167,8 @@ fn parse_primary(p: &mut Parser) -> i64 {
         p.expr_nodes[idx - 1].ival = tok.ival;
         return idx;
     };
-    // StringLiteral (2) or InterpolatedString (67) — may be interpolated
-    if d == 2 || d == 67 {
+    // StringLiteral (2), InterpolatedString (67), or FString (89) — may be interpolated
+    if d == 2 || d == 67 || d == 89 {
         let s = tok.sval;
         // Check for interpolation: scan for '{'
         let mut has_brace = false;
@@ -218,7 +218,9 @@ fn parse_primary(p: &mut Parser) -> i64 {
             p.expr_nodes[idx - 1].sval = lit;
             parts_count = parts_count + 1;
         };
-        let idx = add_expr(p, "interp");
+        // d==89 → "fstring"（编译为 format() 调用）；d==67 → "interp"（字符串拼接）
+        let node_kind = if d == 89 { "fstring" } else { "interp" };
+        let idx = add_expr(p, node_kind);
         p.expr_nodes[idx - 1].extra_start = parts_start;
         p.expr_nodes[idx - 1].extra_count = parts_count;
         return idx;

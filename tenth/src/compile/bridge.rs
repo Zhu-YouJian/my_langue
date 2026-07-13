@@ -718,6 +718,31 @@ fn convert_expr_depth(
                 span: span.clone(),
             })
         }
+        "fstring" => {
+            // f"..." 模板字符串：与 interp 结构相同，但产物为 FString
+            let mut parts = Vec::new();
+            if extra_count > 0 {
+                let s = extra_start.max(1) as usize;
+                let e = s + extra_count as usize;
+                for i in s..e {
+                    if i == 0 || i > arrays.expr_nodes.len() { continue; }
+                    let pval = &arrays.expr_nodes[i - 1];
+                    if let Some(pf) = clone_struct_fields_opt(pval) {
+                        let pkind = get_field_string(&pf, "kind")?;
+                        let psval = get_field_string(&pf, "sval")?;
+                        match pkind.as_str() {
+                            "str" => parts.push(ast::InterpPart::Literal(psval)),
+                            "ident" => parts.push(ast::InterpPart::Expr(psval)),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Ok(ast::Expr {
+                kind: ast::ExprKind::FString(parts),
+                span: span.clone(),
+            })
+        }
         "binary" => {
             let left_expr = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
             let right_expr = convert_expr_depth(right as usize, arrays, span, depth + 1)?;

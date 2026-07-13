@@ -20,6 +20,9 @@ pub enum TokenKind {
     RawString(String),
     MultiLineString(String),
     InterpolatedString(Vec<StringPart>),
+    /// f"..." 模板字符串前缀：编译为 format() 调用（与 InterpolatedString 不同，
+    /// 后者在编译期展开为字符串拼接）。
+    FString(Vec<StringPart>),
     CharLiteral(char),
 
     Identifier(String),
@@ -135,6 +138,16 @@ impl fmt::Display for TokenKind {
             TokenKind::MultiLineString(s) => write!(f, "\"\"\"{}\"\"\"", s),
             TokenKind::InterpolatedString(parts) => {
                 write!(f, "\"")?;
+                for p in parts {
+                    match p {
+                        StringPart::Literal(s) => write!(f, "{}", s)?,
+                        StringPart::Expr(e) => write!(f, "{{{}}}", e)?,
+                    }
+                }
+                write!(f, "\"")
+            }
+            TokenKind::FString(parts) => {
+                write!(f, "f\"")?;
                 for p in parts {
                     match p {
                         StringPart::Literal(s) => write!(f, "{}", s)?,

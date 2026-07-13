@@ -209,6 +209,10 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
     let line = lexer.line; let col = lexer.col; let span = make_span(line, col);
     if ch == "" { return Token { kind: TokenKind::Eof, span: span, disc: 61, .. }; };
 
+    // f"..." 模板字符串前缀标记： consume 'f' 后落入普通字符串路径，
+    // 在字符串读取结束时根据此标记返回 FString（disc=89）而非 InterpolatedString。
+    let mut is_fstring = false;
+
     // Number — incremental arithmetic (no string building)
     if is_digit(ch) {
         let i64_max: i64 = 9223372036854775807;
@@ -386,6 +390,13 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         return Token { kind: TokenKind::RawString(content), span: span, disc: 84, sval: content, .. };
     };
 
+    // f"..." 模板字符串：consume 'f'，标记 is_fstring，让后续字符串路径处理
+    if ch == "f" && lexer_peek_at(lexer, 1) == "\"" {
+        lexer_advance(lexer);  // consume f
+        is_fstring = true;
+        ch = lexer_peek(lexer);  // now ch is '"'
+    };
+
     // Identifier — source slice (O(1))
     if is_alpha(ch) {
         let start = lexer.pos;
@@ -559,8 +570,13 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         };
         if ch == "\"" { lexer_advance(lexer); };  // skip closing quote
         if has_interpolation {
+            // f"..." 前缀的插值字符串 → FString（disc=89）
+            if is_fstring {
+                return Token { kind: TokenKind::FString(result), span: span, disc: 89, sval: result, .. };
+            };
             return Token { kind: TokenKind::InterpolatedString(result), span: span, disc: 67, sval: result, .. };
         };
+        // f"..." 无插值时仍为普通 StringLiteral（与 Rust 侧一致：f"hello" == "hello"）
         return Token { kind: TokenKind::StringLiteral(result), span: span, disc: 2, sval: result, .. };
     };
 

@@ -29,6 +29,12 @@ regex = "1"
 # Wave 2：f16/bf16 半精度浮点支持（TensorData::F16/BF16）
 half = "2"
 
+# B批：编码工具（Unicode 规范化、Base64、百分比编码）
+unicode-normalization = "0.1"
+base64 = "0.22"
+percent-encoding = "2"
+encoding_rs = "0.8"
+
 [profile.release]
 # 安全：启用算术溢出检查，让 hostcalls.rs / wasm/wasmtime_host.rs 中的
 # `count * 2` / `rows * cols` 等运算在溢出时 panic 而非静默回绕。

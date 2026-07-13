@@ -108,7 +108,16 @@ impl Lowerer {
                             | "async_sleep_ms" | "async_tcp_read" | "async_tcp_write"
                             // 正则表达式原语（句柄表方案，与 tcp_streams 对齐）
                             | "regex_compile" | "regex_match" | "regex_find" | "regex_find_all"
-                            | "regex_replace" | "regex_split" => {
+                            | "regex_replace" | "regex_split"
+                            // B批：字符串/文本处理 native
+                            | "unicode_nfc" | "unicode_nfd"
+                            | "str_to_utf16" | "utf16_to_str"
+                            | "str_to_bytes" | "bytes_to_str"
+                            | "to_utf8" | "to_utf16" | "from_utf16"
+                            | "to_gbk" | "from_gbk"
+                            | "base64_encode" | "base64_decode"
+                            | "hex_encode" | "hex_decode"
+                            | "url_encode" | "url_decode" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)
                             }
                             _ => {
@@ -1087,6 +1096,46 @@ impl Lowerer {
                 (HirExprKind::InterpolatedString { parts: hir_parts }, Type::str_())
             }
 
+            // f"..." 模板字符串 → 编译为 format("template", arg1, arg2, ...)
+            ExprKind::FString(parts) => {
+                let mut template = String::new();
+                let mut args: Vec<HirExpr> = Vec::new();
+                for p in parts {
+                    match p {
+                        ast::InterpPart::Literal(s) => template.push_str(s),
+                        ast::InterpPart::Expr(var_name) => {
+                            template.push_str("{}");
+                            // Resolve variable by name
+                            let var_expr = HirExpr {
+                                kind: HirExprKind::Var(var_name.clone()),
+                                ty: Type::Unknown,
+                                span: span.clone(),
+                            };
+                            args.push(var_expr);
+                        }
+                    }
+                }
+                // Build template literal
+                let template_lit = HirExpr {
+                    kind: HirExprKind::Literal(Literal::String(template)),
+                    ty: Type::str_(),
+                    span: span.clone(),
+                };
+                // Build Call: format(template, args...)
+                let func_expr = HirExpr {
+                    kind: HirExprKind::Var("format".to_string()),
+                    ty: Type::Unknown,
+                    span: span.clone(),
+                };
+                let mut call_args = vec![template_lit];
+                call_args.extend(args);
+                (HirExprKind::Call {
+                    func: Box::new(func_expr),
+                    args: call_args,
+                    ret_ty: Type::str_(),
+                }, Type::str_())
+            }
+
             ExprKind::Tuple(elems) => {
                 let hir_elems: Vec<HirExpr> = elems.iter().map(|e| self.lower_expr(e)).collect::<Result<_, _>>()?;
                 let elem_types: Vec<Type> = hir_elems.iter().map(|e| e.ty.clone()).collect();
@@ -1374,9 +1423,21 @@ impl Lowerer {
                 }
             } else {
                 // No function definition found (e.g., native function or unknown).
-                // Just lower positional args directly.
+                // Lower positional args, then append named args as key-value pairs.
                 for arg in positional_ast.iter() {
                     hir_result.push(self.lower_expr(arg)?);
+                }
+                // Append named args as interleaved key-value pairs (key_str, value_expr, ...)
+                // so native functions like format() can receive them.
+                for (name, expr) in &named_ast {
+                    // Key: lowered string literal
+                    hir_result.push(HirExpr {
+                        kind: HirExprKind::Literal(Literal::String(name.clone())),
+                        ty: Type::str_(),
+                        span: expr.span.clone(),
+                    });
+                    // Value: lowered expression
+                    hir_result.push(self.lower_expr(expr)?);
                 }
             }
 

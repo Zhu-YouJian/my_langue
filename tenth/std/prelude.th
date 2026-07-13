@@ -125,6 +125,7 @@
 //   std::collections::iter::map, filter, reduce, range, concat, reverse, take, skip, zip, enumerate, any, all, sum, find, count_if
 //   std::collections::collections::flat_map, any, all, find, count_if, partition, sum, product, from_entries, map_values, filter_map
 //   std::string::string::join_lines, join_comma, repeat_sep, indent, word_wrap, is_blank, capitalize, count
+//   std::string::string_builder::new, append, to_string, len, is_empty, clear
 //   std::utils::math::min, max, clamp, abs, fmin, fmax, fclamp, fabs, signum
 //   std::time::time::now, now_ms, date, time_of_day, datetime, sleep_ms, start_timer, elapsed, elapsed_ms
 //   std::random::random::rand_int, rand_float, rand_range, choice, shuffle, rand_bool, sample
@@ -139,6 +140,26 @@
 //   std::json::json::encode, decode, encode_pretty, load, save
 //   std::runtime::run_with_limit, limit_or_default, run_with_timeout, timeout_or_default
 //   (built-in, no import needed) with_step_limit, with_timeout_ms, is_timeout
+//
+// ── B批：字符串/文本处理（built-in native, no import needed） ──
+//   unicode_nfc(s)              — Unicode NFC 规范化（组合形式）
+//   unicode_nfd(s)              — Unicode NFD 规范化（分解形式）
+//   str_to_utf16(s)             — UTF-8 字符串 → UTF-16 码元数组
+//   utf16_to_str(arr)           — UTF-16 码元数组 → UTF-8 字符串
+//   str_to_bytes(s)             — 字符串 → UTF-8 字节数组
+//   bytes_to_str(arr)           — UTF-8 字节数组 → 字符串
+//   to_utf8(s)                  — str_to_bytes 别名
+//   to_utf16(s)                 — str_to_utf16 别名
+//   from_utf16(arr)             — utf16_to_str 别名
+//   to_gbk(s)                   — 字符串 → GBK 字节数组
+//   from_gbk(arr)               — GBK 字节数组 → 字符串
+//   base64_encode(data)         — 字节数组 → Base64 字符串
+//   base64_decode(s)            — Base64 字符串 → Result<Vec>
+//   hex_encode(data)            — 字节数组 → 十六进制字符串
+//   hex_decode(s)               — 十六进制字符串 → Result<Vec>
+//   url_encode(s)               — 字符串 → URL 编码
+//   url_decode(s)               — URL 编码 → Result<String>
+//   f"..."                      — 模板字符串字面量（编译为 format() 调用）
 //
 // ── New in this batch (E批) ──
 //   #3 assert, assert_eq (built-in native function, no import needed)

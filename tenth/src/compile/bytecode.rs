@@ -56,8 +56,12 @@ impl BytecodeCompiler {
         self.tail_call_ok = true;
         self.compile_expr(&func.body)?;
         self.tail_call_ok = false;
-        // Only push Unit for void functions
-        if matches!(func.return_type, crate::hir::types::Type::Base(crate::hir::types::BaseType::Unit)) {
+        // Only push Unit for void functions whose body doesn't already yield a value.
+        // 若函数无返回类型注解（默认 Unit）但 body 推断为非 Unit 类型
+        // （如 `fn main() { f"..." }`），body 已经把值压栈，不能再压 Unit 覆盖。
+        if matches!(func.return_type, crate::hir::types::Type::Base(crate::hir::types::BaseType::Unit))
+            && matches!(&func.body.ty, crate::hir::types::Type::Base(crate::hir::types::BaseType::Unit) | crate::hir::types::Type::Never)
+        {
             self.chunk.emit(Op::PushUnit);
         }
         self.chunk.emit(Op::Ret);
@@ -355,7 +359,10 @@ impl BytecodeCompiler {
             }
 
             ArrayLiteral { elements, .. } => {
-                for e in elements.iter().rev() {
+                // 正向压栈：elements[0] 先压（栈底），elements[n-1] 后压（栈顶）。
+                // MakeVec 会 pop 所有元素后 reverse 一次，恢复原始顺序。
+                // （此前用 iter().rev() 导致双重反转，输出顺序与源码相反。）
+                for e in elements.iter() {
                     self.compile_expr(e)?;
                 }
                 self.chunk.emit(Op::MakeVec(elements.len()));

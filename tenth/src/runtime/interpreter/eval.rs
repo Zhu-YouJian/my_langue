@@ -96,7 +96,16 @@ impl super::Interpreter {
                             // Stage 3+4 TCP/HTTP 原语
                             | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_close" | "tcp_set_timeout"
                             | "http_get" | "http_post"
-                            | "regex_compile" | "regex_match" | "regex_find" | "regex_find_all" | "regex_replace" | "regex_split" => {
+                            | "regex_compile" | "regex_match" | "regex_find" | "regex_find_all" | "regex_replace" | "regex_split"
+                            // B批：字符串/文本处理 native
+                            | "unicode_nfc" | "unicode_nfd"
+                            | "str_to_utf16" | "utf16_to_str"
+                            | "str_to_bytes" | "bytes_to_str"
+                            | "to_utf8" | "to_utf16" | "from_utf16"
+                            | "to_gbk" | "from_gbk"
+                            | "base64_encode" | "base64_decode"
+                            | "hex_encode" | "hex_decode"
+                            | "url_encode" | "url_decode" => {
                                 Some(Value::FnRef {
                                     name: name.clone(),
                                     params: Vec::new(),

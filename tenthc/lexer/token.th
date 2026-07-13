@@ -4,7 +4,9 @@
 //   0:I64 1:I32 2:F64 3:F32 4:Bool 5:Str 6:Unit 7:Char
 //   8:I8 9:I16 10:U8 11:U16 12:U32 13:U64 14:F16 15:BF16
 // InterpolatedString(str): raw string with {expr} markers preserved (escapes processed)
+// FString(str): f"..." template string — same raw format as InterpolatedString, but
+//   compiled to format() call in HIR. disc=89.
 // CharLiteral(str): single character (length 1)
 struct Span { line: i64, col: i64 }
-enum TokenKind { IntLiteral(i64, i64), FloatLiteral(f64), StringLiteral(str), ByteString(str), RawString(str), MultiLineString(str), InterpolatedString(str), CharLiteral(str), Identifier(str), Lifetime(str), Fn, Let, Mut, If, Else, Match, Return, While, Do, Yield, For, Loop, Break, Continue, Try, Use, Mod, Pub, Trait, Impl, Enum, Struct, Union, Type, Self_, Async, Await, Spawn, Task, Shard, Node, Macro, Where, As, In, True, False, Move, Dyn, Plus, Minus, Star, Slash, Percent, EqEq, NotEq, Lt, Gt, LtEq, GtEq, AndAnd, OrOr, Not, Ampersand, Pipe, Caret, Shl, Shr, Assign, PlusAssign, MinusAssign, StarAssign, SlashAssign, LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semicolon, Colon, Dot, DotDot, DotDotEq, Arrow, FatArrow, ColonColon, QuestionMark, Eof }
+enum TokenKind { IntLiteral(i64, i64), FloatLiteral(f64), StringLiteral(str), ByteString(str), RawString(str), MultiLineString(str), InterpolatedString(str), FString(str), CharLiteral(str), Identifier(str), Lifetime(str), Fn, Let, Mut, If, Else, Match, Return, While, Do, Yield, For, Loop, Break, Continue, Try, Use, Mod, Pub, Trait, Impl, Enum, Struct, Union, Type, Self_, Async, Await, Spawn, Task, Shard, Node, Macro, Where, As, In, True, False, Move, Dyn, Plus, Minus, Star, Slash, Percent, EqEq, NotEq, Lt, Gt, LtEq, GtEq, AndAnd, OrOr, Not, Ampersand, Pipe, Caret, Shl, Shr, Assign, PlusAssign, MinusAssign, StarAssign, SlashAssign, LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Semicolon, Colon, Dot, DotDot, DotDotEq, Arrow, FatArrow, ColonColon, QuestionMark, Eof }
 struct Token { kind: TokenKind, span: Span, disc: i64, ival: i64, fval: f64, sval: str, dtype: i64 }

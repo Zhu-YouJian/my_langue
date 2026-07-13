@@ -738,6 +738,18 @@ impl Lexer {
             return self.read_raw_string();
         }
 
+        // f-字符串字面量 `f"..."`（模板字符串 → 编译为 format() 调用）
+        if ch == 'f' && self.peek_next() == Some('"') {
+            self.advance(); // consume 'f'
+            // read_string 已经支持 {expr} 插值，生成 InterpolatedString token
+            // 我们将其包装为 FString token 以便 HIR 层区分
+            let mut token = self.read_string()?;
+            if let TokenKind::InterpolatedString(parts) = token.kind {
+                token.kind = TokenKind::FString(parts);
+            }
+            return Ok(token);
+        }
+
         if ch.is_alphabetic() || ch == '_' {
             self.advance();
             return Ok(self.read_identifier(ch));

@@ -29,6 +29,8 @@ impl Parser {
             TokenKind::True => ExprKind::Literal(Literal::Bool(true)),
             TokenKind::False => ExprKind::Literal(Literal::Bool(false)),
             TokenKind::StringLiteral(s) => ExprKind::Literal(Literal::String(s.clone())),
+            TokenKind::RawString(s) => ExprKind::Literal(Literal::String(s.clone())),
+            TokenKind::MultiLineString(s) => ExprKind::Literal(Literal::String(s.clone())),
             TokenKind::CharLiteral(c) => ExprKind::Literal(Literal::Char(*c)),
             TokenKind::InterpolatedString(parts) => {
                 let interp_parts: Vec<InterpPart> = parts.iter().map(|p| match p {
@@ -36,6 +38,13 @@ impl Parser {
                     crate::lexer::token::StringPart::Expr(e) => InterpPart::Expr(e.clone()),
                 }).collect();
                 ExprKind::InterpolatedString(interp_parts)
+            }
+            TokenKind::FString(parts) => {
+                let interp_parts: Vec<InterpPart> = parts.iter().map(|p| match p {
+                    crate::lexer::token::StringPart::Literal(s) => InterpPart::Literal(s.clone()),
+                    crate::lexer::token::StringPart::Expr(e) => InterpPart::Expr(e.clone()),
+                }).collect();
+                ExprKind::FString(interp_parts)
             }
             TokenKind::Self_ => ExprKind::Ident(Ident { name: "self".to_string(), span }),
             TokenKind::Identifier(name) => {

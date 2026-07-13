@@ -68,6 +68,9 @@ pub enum InterpPart {
 pub enum ExprKind {
     Literal(Literal),
     InterpolatedString(Vec<InterpPart>),
+    /// f"..." 模板字符串：与 InterpolatedString 结构相同但语义不同，
+    /// 在 HIR 层会转换为 format() 调用。
+    FString(Vec<InterpPart>),
     Tuple(Vec<Expr>),
     Ident(Ident),
     Binary {
