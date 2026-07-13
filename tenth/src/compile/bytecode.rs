@@ -102,8 +102,12 @@ impl BytecodeCompiler {
             }
 
             Binary { op, left, right, .. } => {
+                // Children of a binary op are not in tail position
+                let saved_tail = self.tail_call_ok;
+                self.tail_call_ok = false;
                 self.compile_expr(left)?;
                 self.compile_expr(right)?;
+                self.tail_call_ok = saved_tail;
                 use crate::hir::hir::BinOp::*;
                 self.chunk.emit(match op {
                     Add => Op::Add, Sub => Op::Sub, Mul => Op::Mul, Div => Op::Div,
@@ -136,7 +140,10 @@ impl BytecodeCompiler {
             }
 
             Unary { op, expr: inner, .. } => {
+                let saved_tail = self.tail_call_ok;
+                self.tail_call_ok = false;
                 self.compile_expr(inner)?;
+                self.tail_call_ok = saved_tail;
                 use crate::hir::hir::UnaryOp::*;
                 match op {
                     Neg => self.chunk.emit(Op::Neg),
@@ -168,9 +175,13 @@ impl BytecodeCompiler {
 
             Call { func, args, .. } => {
                 // Push args left-to-right; VM pops in reverse into locals
+                // Arguments are not in tail position — only the call itself might be
+                let saved_tail = self.tail_call_ok;
+                self.tail_call_ok = false;
                 for a in args.iter() {
                     self.compile_expr(a)?;
                 }
+                self.tail_call_ok = saved_tail;
                 match &func.kind {
                     Var(name) => {
                         let i = self.chunk.add_string(name);
