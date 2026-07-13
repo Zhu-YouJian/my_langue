@@ -1,5 +1,5 @@
 use tenth::lexer::lexer::Lexer;
-use tenth::parser::ast::ItemKind;
+use tenth::parser::ast::{ItemKind, StructKind};
 use tenth::parser::parser::Parser;
 
 use super::Handler;
@@ -74,25 +74,37 @@ fn item_to_symbol(item: &tenth::parser::ast::Item) -> Option<DocumentSymbol> {
                 children: Vec::new(),
             })
         }
-        ItemKind::StructDef { name, fields, .. } => {
-            let children: Vec<DocumentSymbol> = fields.iter().map(|f| {
-                let fline = f.name.span.line.saturating_sub(1) as u32;
-                let fcol = f.name.span.col.saturating_sub(1) as u32;
-                DocumentSymbol {
-                    name: f.name.name.clone(),
-                    kind: SymbolKind::Field,
-                    range: Range {
-                        start: Position { line: fline, character: fcol },
-                        end: Position { line: fline, character: fcol + f.name.name.len() as u32 },
-                    },
-                    selection_range: Range {
-                        start: Position { line: fline, character: fcol },
-                        end: Position { line: fline, character: fcol + f.name.name.len() as u32 },
-                    },
-                    detail: Some(type_ann_str(&f.type_ann)),
-                    children: Vec::new(),
-                }
-            }).collect();
+        ItemKind::StructDef { name, kind, .. } => {
+            let children: Vec<DocumentSymbol> = match kind {
+                StructKind::Named(fields) => fields.iter().map(|f| {
+                    let fline = f.name.span.line.saturating_sub(1) as u32;
+                    let fcol = f.name.span.col.saturating_sub(1) as u32;
+                    DocumentSymbol {
+                        name: f.name.name.clone(),
+                        kind: SymbolKind::Field,
+                        range: Range {
+                            start: Position { line: fline, character: fcol },
+                            end: Position { line: fline, character: fcol + f.name.name.len() as u32 },
+                        },
+                        selection_range: Range {
+                            start: Position { line: fline, character: fcol },
+                            end: Position { line: fline, character: fcol + f.name.name.len() as u32 },
+                        },
+                        detail: Some(type_ann_str(&f.type_ann)),
+                        children: Vec::new(),
+                    }
+                }).collect(),
+                StructKind::Tuple(types) => types.iter().enumerate().map(|(i, ty)| {
+                    DocumentSymbol {
+                        name: format!("_{}", i),
+                        kind: SymbolKind::Field,
+                        range,
+                        selection_range,
+                        detail: Some(type_ann_str(ty)),
+                        children: Vec::new(),
+                    }
+                }).collect(),
+            };
             Some(DocumentSymbol {
                 name: name.name.clone(),
                 kind: SymbolKind::Struct,

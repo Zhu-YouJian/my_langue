@@ -205,7 +205,7 @@ fn convert_struct_def(val: &Value, span: &Span) -> TenthResult<ast::Item> {
         kind: ast::ItemKind::StructDef {
             name: ast::Ident { name, span: span.clone() },
             generics: Vec::new(),
-            fields: ast_fields,
+            kind: ast::StructKind::Named(ast_fields),
             is_pub: false,
         },
         span: span.clone(),

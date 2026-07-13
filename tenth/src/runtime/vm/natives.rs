@@ -729,13 +729,61 @@ impl Vm {
                 "cos" => Ok(Value::Float32(f.cos())),
                 _ => err(&format!("Float32 没有方法 '{}'", method)),
             },
-            Value::Int(n, _) => match method {
+            Value::Int(n, dtype) => match method {
+                // ── 返回 Int ──
+                "abs" => Ok(Value::Int(n.abs(), dtype)),
+                "signum" => Ok(Value::Int(if n > 0 { 1 } else if n < 0 { -1 } else { 0 }, dtype)),
+                "min" => {
+                    if let Some(Value::Int(other, _)) = args.first() {
+                        Ok(Value::Int(std::cmp::min(n, *other), dtype))
+                    } else {
+                        err("Int.min() 需要整数参数")
+                    }
+                }
+                "max" => {
+                    if let Some(Value::Int(other, _)) = args.first() {
+                        Ok(Value::Int(std::cmp::max(n, *other), dtype))
+                    } else {
+                        err("Int.max() 需要整数参数")
+                    }
+                }
+                "clamp" => {
+                    let lo = match args.first() {
+                        Some(Value::Int(v, _)) => *v,
+                        _ => return err("Int.clamp() 需要整数参数 (lo)"),
+                    };
+                    let hi = match args.get(1) {
+                        Some(Value::Int(v, _)) => *v,
+                        _ => return err("Int.clamp() 需要整数参数 (hi)"),
+                    };
+                    Ok(Value::Int(n.clamp(lo, hi), dtype))
+                }
+                "bit_length" => Ok(Value::Int((64 - n.leading_zeros()) as i64, BaseType::I64)),
+                "count_ones" => Ok(Value::Int(n.count_ones() as i64, BaseType::I64)),
+
+                // ── 返回 Float ──
                 "sqrt" => Ok(Value::Float((n as f64).sqrt())),
-                "abs" => Ok(Value::Int(n.abs(), BaseType::I32)),
                 "exp" => Ok(Value::Float((n as f64).exp())),
                 "log" | "ln" => Ok(Value::Float((n as f64).ln())),
                 "sin" => Ok(Value::Float((n as f64).sin())),
                 "cos" => Ok(Value::Float((n as f64).cos())),
+                "pow" => {
+                    let exp = match args.first() {
+                        Some(Value::Float(f)) => *f,
+                        Some(Value::Int(i, _)) => *i as f64,
+                        _ => return err("Int.pow() 需要数值参数"),
+                    };
+                    Ok(Value::Float((n as f64).powf(exp)))
+                }
+                "to_float" => Ok(Value::Float(n as f64)),
+
+                // ── 返回 Str ──
+                "to_string" => Ok(Value::String(n.to_string())),
+
+                // ── 返回 Bool ──
+                "is_even" => Ok(Value::Bool(n % 2 == 0)),
+                "is_odd" => Ok(Value::Bool(n % 2 != 0)),
+
                 _ => err(&format!("Int 没有方法 '{}'", method)),
             },
             _ => err(&format!("没有方法 '{}'", method)),

@@ -1,0 +1,119 @@
+// Basic statistics functions for scalar lists (Vec of numbers).
+//
+// Operates on Vec containing i64 or f64 values.
+// All results are f64 for precision.
+//
+// Usage:
+//   use std::math::stats::mean
+//   use std::math::stats::stddev
+
+// ── Helpers ──
+
+// Convert a value to f64. Accepts Int or Float values.
+fn to_f64(v) -> f64 {
+    if v is Float { v } else if v is Int { v as f64 } else { 0.0 }
+}
+
+// ── Central tendency ──
+
+// Arithmetic mean of a numeric Vec.
+// Returns 0.0 for empty Vec.
+fn mean(items: Vec) -> f64 {
+    let n = items.len();
+    if n == 0 { return 0.0; };
+    let mut total = 0.0;
+    for i in 0..n {
+        total = total + to_f64(items.get(i));
+    };
+    total / (n as f64)
+}
+
+// Median value of a numeric Vec.
+// For odd-length Vec, returns the middle element.
+// For even-length Vec, returns the average of the two middle elements.
+// Returns 0.0 for empty Vec.
+fn median(items: Vec) -> f64 {
+    let n = items.len();
+    if n == 0 { return 0.0; };
+    // Sort a copy (bubble sort for simplicity — works for small lists)
+    let sorted = sort_copy(items);
+    if n % 2 == 1 {
+        // Odd: middle element
+        to_f64(sorted.get(n / 2))
+    } else {
+        // Even: average of two middle elements
+        let hi = n / 2;
+        let lo = hi - 1;
+        (to_f64(sorted.get(lo)) + to_f64(sorted.get(hi))) / 2.0
+    }
+}
+
+// ── Dispersion ──
+
+// Population variance of a numeric Vec.
+// Uses the formula: E[(X - μ)²] = E[X²] - (E[X])²
+// Returns 0.0 for empty Vec.
+fn variance(items: Vec) -> f64 {
+    let n = items.len();
+    if n == 0 { return 0.0; };
+    let mu = mean(items);
+    let mut total = 0.0;
+    for i in 0..n {
+        let diff = to_f64(items.get(i)) - mu;
+        total = total + diff * diff;
+    };
+    total / (n as f64)
+}
+
+// Population standard deviation.
+// Square root of variance.
+fn stddev(items: Vec) -> f64 {
+    let v = variance(items);
+    let result = v.sqrt();
+    result
+}
+
+// Sample variance (Bessel's correction: divide by n-1).
+// Returns 0.0 for n < 2.
+fn variance_sample(items: Vec) -> f64 {
+    let n = items.len();
+    if n < 2 { return 0.0; };
+    let mu = mean(items);
+    let mut total = 0.0;
+    for i in 0..n {
+        let diff = to_f64(items.get(i)) - mu;
+        total = total + diff * diff;
+    };
+    total / ((n - 1) as f64)
+}
+
+// Sample standard deviation.
+fn stddev_sample(items: Vec) -> f64 {
+    let v = variance_sample(items);
+    let result = v.sqrt();
+    result
+}
+
+// ── Internal: sort a copy of a numeric Vec (ascending) ──
+
+// Bubble sort returning a new sorted Vec.
+fn sort_copy(items: Vec) -> Vec {
+    let n = items.len();
+    let mut result = Vec::new();
+    for j in 0..n {
+        result.push(items.get(j));
+    };
+    // Bubble sort pass
+    for i in 0..n {
+        for j in 0..(n - i - 1) {
+            let a = to_f64(result.get(j));
+            let b = to_f64(result.get(j + 1));
+            if a > b {
+                let tmp = result.get(j);
+                result.set(j, result.get(j + 1));
+                result.set(j + 1, tmp);
+            };
+        };
+    };
+    result
+}

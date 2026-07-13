@@ -120,19 +120,35 @@ impl Parser {
                 self.advance();
                 let name = self.expect_ident()?;
                 let generics = self.parse_generic_params()?;
-                self.expect(TokenKind::LBrace)?;
-                let mut fields = Vec::new();
-                while !matches!(self.peek_kind(), TokenKind::RBrace) {
-                    let field_name = self.expect_ident()?;
-                    self.expect(TokenKind::Colon)?;
-                    let type_ann = self.parse_type()?;
-                    fields.push(StructField { name: field_name, type_ann });
-                    if !matches!(self.peek_kind(), TokenKind::Comma) { break; }
+                let kind = if matches!(self.peek_kind(), TokenKind::LParen) {
+                    // Tuple struct: struct Name(Type) — Newtype pattern
                     self.advance();
-                }
-                self.expect(TokenKind::RBrace)?;
+                    let mut types = Vec::new();
+                    while !matches!(self.peek_kind(), TokenKind::RParen) {
+                        let ty = self.parse_type()?;
+                        types.push(ty);
+                        if !matches!(self.peek_kind(), TokenKind::Comma) { break; }
+                        self.advance();
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    StructKind::Tuple(types)
+                } else {
+                    // Named struct: struct Name { field: Type }
+                    self.expect(TokenKind::LBrace)?;
+                    let mut fields = Vec::new();
+                    while !matches!(self.peek_kind(), TokenKind::RBrace) {
+                        let field_name = self.expect_ident()?;
+                        self.expect(TokenKind::Colon)?;
+                        let type_ann = self.parse_type()?;
+                        fields.push(StructField { name: field_name, type_ann });
+                        if !matches!(self.peek_kind(), TokenKind::Comma) { break; }
+                        self.advance();
+                    }
+                    self.expect(TokenKind::RBrace)?;
+                    StructKind::Named(fields)
+                };
                 self.match_token(TokenKind::Semicolon);
-                Ok(Item { kind: ItemKind::StructDef { name, generics, fields, is_pub }, span })
+                Ok(Item { kind: ItemKind::StructDef { name, generics, kind, is_pub }, span })
             }
             TokenKind::Enum => {
                 self.advance();

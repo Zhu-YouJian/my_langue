@@ -84,9 +84,8 @@ impl super::Interpreter {
             Value::Float(f) => {
                 self.eval_scalar_method(*f, method, args).map(Some)
             }
-            Value::Int(i, _) => {
-                let f = *i as f64;
-                self.eval_scalar_method(f, method, args).map(Some)
+            Value::Int(i, dtype) => {
+                self.eval_int_method(*i, *dtype, method, args).map(Some)
             }
             Value::String(_) | Value::Vec(_) | Value::Map(_) | Value::Range { .. } | Value::Iterator(_) => {
                 self.eval_native_method(recv, method, args)
@@ -1410,6 +1409,75 @@ impl super::Interpreter {
             "log" => Ok(Value::Float(val.ln())),
             _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("标量上未知的方法 '{}'", method),
+            }),
+        }
+    }
+
+    /// Int 方法分派。与 VM 端 `natives.rs` VM natives 的 Value::Int 分支对齐。
+    /// - 返回 Int 的方法：abs, min, max, clamp, signum, bit_length, count_ones
+    /// - 返回 Float 的方法：sqrt, exp, log/ln, sin, cos, pow, to_float
+    /// - 返回 Str 的方法：to_string
+    /// - 返回 Bool 的方法：is_even, is_odd
+    pub(super) fn eval_int_method(&self, n: i64, dtype: BaseType, method: &str, args: &[Value]) -> TenthResult<Value> {
+        match method {
+            // ── 返回 Int ──
+            "abs" => Ok(Value::Int(n.abs(), dtype)),
+            "signum" => Ok(Value::Int(if n > 0 { 1 } else if n < 0 { -1 } else { 0 }, dtype)),
+            "min" => {
+                let other = args.first().and_then(|v| v.as_int())
+                    .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
+                        message: "Int.min() 需要整数参数".to_string(),
+                    })?;
+                Ok(Value::Int(std::cmp::min(n, other), dtype))
+            }
+            "max" => {
+                let other = args.first().and_then(|v| v.as_int())
+                    .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
+                        message: "Int.max() 需要整数参数".to_string(),
+                    })?;
+                Ok(Value::Int(std::cmp::max(n, other), dtype))
+            }
+            "clamp" => {
+                let lo = args.first().and_then(|v| v.as_int())
+                    .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
+                        message: "Int.clamp() 需要整数参数 (lo)".to_string(),
+                    })?;
+                let hi = args.get(1).and_then(|v| v.as_int())
+                    .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
+                        message: "Int.clamp() 需要整数参数 (hi)".to_string(),
+                    })?;
+                Ok(Value::Int(n.clamp(lo, hi), dtype))
+            }
+            "bit_length" => Ok(Value::Int((64 - n.leading_zeros()) as i64, BaseType::I64)),
+            "count_ones" => Ok(Value::Int(n.count_ones() as i64, BaseType::I64)),
+
+            // ── 返回 Float ──
+            "sqrt" => Ok(Value::Float((n as f64).sqrt())),
+            "exp" => Ok(Value::Float((n as f64).exp())),
+            "log" | "ln" => Ok(Value::Float((n as f64).ln())),
+            "sin" => Ok(Value::Float((n as f64).sin())),
+            "cos" => Ok(Value::Float((n as f64).cos())),
+            "pow" => {
+                let exp = args.first().and_then(|v| match v {
+                    Value::Float(f) => Some(*f),
+                    Value::Int(i, _) => Some(*i as f64),
+                    _ => None,
+                }).ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
+                    message: "Int.pow() 需要数值参数".to_string(),
+                })?;
+                Ok(Value::Float((n as f64).powf(exp)))
+            }
+            "to_float" => Ok(Value::Float(n as f64)),
+
+            // ── 返回 Str ──
+            "to_string" => Ok(Value::String(n.to_string())),
+
+            // ── 返回 Bool ──
+            "is_even" => Ok(Value::Bool(n % 2 == 0)),
+            "is_odd" => Ok(Value::Bool(n % 2 != 0)),
+
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: format!("Int 没有方法 '{}'", method),
             }),
         }
     }

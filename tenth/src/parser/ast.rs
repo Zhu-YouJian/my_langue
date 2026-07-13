@@ -282,7 +282,7 @@ pub enum ItemKind {
     StructDef {
         name: Ident,
         generics: Vec<GenericParam>,
-        fields: Vec<StructField>,
+        kind: StructKind,
         is_pub: bool,
     },
     EnumDef {
@@ -325,6 +325,13 @@ pub struct Item {
 pub struct StructField {
     pub name: Ident,
     pub type_ann: TypeAnnotation,
+}
+
+/// 结构体种类：命名结构体 `struct Foo { x: i32 }` 或元组结构体（Newtype）`struct Meters(f64)`
+#[derive(Debug, Clone, PartialEq)]
+pub enum StructKind {
+    Named(Vec<StructField>),
+    Tuple(Vec<TypeAnnotation>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

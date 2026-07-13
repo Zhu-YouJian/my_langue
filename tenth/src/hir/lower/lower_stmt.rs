@@ -143,10 +143,15 @@ impl Lowerer {
     pub fn lower_program(&mut self, program: &ast::Program) -> TenthResult<HirProgram> {
         for item in &program.items {
             match &item.kind {
-                ast::ItemKind::StructDef { name, generics, fields, .. } => {
-                    let field_types: Vec<(String, Type)> = fields.iter()
-                        .map(|f| (f.name.name.clone(), Type::from_annotation(&f.type_ann)))
-                        .collect();
+                ast::ItemKind::StructDef { name, generics, kind, .. } => {
+                    let field_types: Vec<(String, Type)> = match kind {
+                        ast::StructKind::Named(fields) => fields.iter()
+                            .map(|f| (f.name.name.clone(), Type::from_annotation(&f.type_ann)))
+                            .collect(),
+                        ast::StructKind::Tuple(types) => types.iter().enumerate()
+                            .map(|(i, ty)| (format!("_{}", i), Type::from_annotation(ty)))
+                            .collect(),
+                    };
                     if generics.is_empty() {
                         self.structs.insert(name.name.clone(), field_types);
                     } else {
