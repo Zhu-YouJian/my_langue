@@ -138,3 +138,9 @@
 //   std::json::json::encode, decode, encode_pretty, load, save
 //   std::runtime::run_with_limit, limit_or_default, run_with_timeout, timeout_or_default
 //   (built-in, no import needed) with_step_limit, with_timeout_ms, is_timeout
+//
+// ── New in this batch (E批) ──
+//   #3 assert, assert_eq (built-in native function, no import needed)
+//   std::collections::hashset::new, insert, contains, remove, len, is_empty, to_array, clear
+//   std::string::string_builder::new, append, to_string, len, is_empty, clear
+//   std::curry::partial, curry, compose

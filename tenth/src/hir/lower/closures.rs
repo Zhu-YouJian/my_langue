@@ -195,6 +195,10 @@ impl Lowerer {
                 Self::collect_free_vars(cond, vars);
                 Self::collect_free_vars_stmt(body, vars);
             }
+            HirStmtKind::DoWhile { body, cond } => {
+                Self::collect_free_vars_stmt(body, vars);
+                Self::collect_free_vars(cond, vars);
+            }
             HirStmtKind::For { var, iter, body } => {
                 Self::collect_free_vars(iter, vars);
                 let mut inner: HashSet<String> = HashSet::new();
@@ -202,7 +206,7 @@ impl Lowerer {
                 inner.retain(|v| v != var);
                 vars.extend(inner);
             }
-            HirStmtKind::Break | HirStmtKind::Continue => {}
+            HirStmtKind::Break(_) | HirStmtKind::Continue => {}
             HirStmtKind::Loop { body } => {
                 for s in body { Self::collect_free_vars_stmt(s, vars); }
             }

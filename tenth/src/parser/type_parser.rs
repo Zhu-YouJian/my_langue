@@ -138,8 +138,35 @@ impl Parser {
             TokenKind::LBracket => {
                 self.advance();
                 let inner = self.parse_type()?;
+                // Check for `[T; N]` fixed-size array syntax
+                let size = if matches!(self.peek_kind(), TokenKind::Semicolon) {
+                    self.advance(); // consume `;`
+                    match self.peek_kind() {
+                        TokenKind::IntLiteral(n, _) => {
+                            let n = *n;
+                            if n < 0 {
+                                return Err(TenthError::ParseError {
+                                    line: self.peek().span.line,
+                                    col: self.peek().span.col,
+                                    message: "固定数组大小不能为负数".into(),
+                                });
+                            }
+                            self.advance();
+                            Some(n as usize)
+                        }
+                        _ => {
+                            return Err(TenthError::ParseError {
+                                line: self.peek().span.line,
+                                col: self.peek().span.col,
+                                message: "期望固定数组大小整数".into(),
+                            });
+                        }
+                    }
+                } else {
+                    None
+                };
                 self.expect(TokenKind::RBracket)?;
-                Ok(TypeAnnotation::Array(Box::new(inner)))
+                Ok(TypeAnnotation::Array { inner: Box::new(inner), size })
             }
             TokenKind::Fn => {
                 self.advance();

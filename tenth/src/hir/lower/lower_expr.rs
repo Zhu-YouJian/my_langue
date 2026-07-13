@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::error::{TenthError, TenthResult, TenthWarning};
+use crate::lexer::token::Span;
 use crate::parser::ast as ast;
 use crate::hir::hir::*;
 use crate::hir::types::*;
@@ -21,6 +22,7 @@ impl Lowerer {
                     ast::Literal::Float(n, dt) => (Literal::Float(*n, *dt), Type::Base(*dt)),
                     ast::Literal::Bool(b) => (Literal::Bool(*b), Type::bool_()),
                     ast::Literal::String(s) => (Literal::String(s.clone()), Type::str_()),
+                    ast::Literal::Char(c) => (Literal::Char(*c), Type::Base(BaseType::Char)),
                 };
                 (HirExprKind::Literal(hir_lit), ty)
             }
@@ -132,46 +134,90 @@ impl Lowerer {
             ExprKind::Binary { op, left, right } => {
                 let l = self.lower_expr(left)?;
                 let r = self.lower_expr(right)?;
-                // 编译期 shape 检查：两侧 Tensor shape 不兼容时报错
-                Self::check_binary_shape_compat(op, &l.ty, &r.ty, &span)?;
-                let ty = self.infer_binary_type(op, &l.ty, &r.ty);
-                let hir_op = lower_binop(op);
-                (HirExprKind::Binary { op: hir_op, left: Box::new(l), right: Box::new(r), ty: ty.clone() }, ty)
+                // 运算符重载检查：若左侧类型实现了对应运算符 trait，则转为方法调用
+                if let Some((trait_name, method_name)) = self.try_binary_op_overload(op, &l.ty) {
+                    if self.has_trait_impl_for_type(&trait_name, &l.ty) {
+                        let method = method_name.to_string();
+                        let ret_ty = self.resolve_method_type(&l.ty, &method, &[r.clone()]);
+                        let ret_ty2 = ret_ty.clone();
+                        (HirExprKind::MethodCall {
+                            receiver: Box::new(l),
+                            method,
+                            args: vec![r],
+                            ret_ty,
+                        }, ret_ty2)
+                    } else {
+                        // 无特质实现，回退到默认行为
+                        Self::check_binary_shape_compat(op, &l.ty, &r.ty, &span)?;
+                        let ty = self.infer_binary_type(op, &l.ty, &r.ty);
+                        let hir_op = lower_binop(op);
+                        (HirExprKind::Binary { op: hir_op, left: Box::new(l), right: Box::new(r), ty: ty.clone() }, ty)
+                    }
+                } else {
+                    // 编译期 shape 检查：两侧 Tensor shape 不兼容时报错
+                    Self::check_binary_shape_compat(op, &l.ty, &r.ty, &span)?;
+                    let ty = self.infer_binary_type(op, &l.ty, &r.ty);
+                    let hir_op = lower_binop(op);
+                    (HirExprKind::Binary { op: hir_op, left: Box::new(l), right: Box::new(r), ty: ty.clone() }, ty)
+                }
             }
 
             ExprKind::Unary { op, expr: inner } => {
                 let e = self.lower_expr(inner)?;
-                let hir_op = match op {
-                    ast::UnaryOp::Neg => UnaryOp::Neg,
-                    ast::UnaryOp::Not => UnaryOp::Not,
-                    ast::UnaryOp::Try => UnaryOp::Try,
-                };
-                // Try 操作符类型推断：Result<T> → T；其他类型保持不变（运行时处理）
-                let ty = match (&hir_op, &e.ty) {
-                    (UnaryOp::Try, Type::Generic { base, args }) => {
-                        // Result<T, E> 的 Generic 形式：base = Enum("Result"), args = [T, E]
-                        // `?` 提取 Ok 变体的内部类型 T（args[0]）
-                        if let Type::Enum(name) = base.as_ref() {
-                            if name == "Result" {
-                                args.first().cloned().unwrap_or(Type::Unknown)
+                // 一元运算符重载检查：若类型实现了对应 trait，转为方法调用
+                let (kind, ty) = if let Some((trait_name, method_name)) = self.try_unary_op_overload(op) {
+                    if self.has_trait_impl_for_type(&trait_name, &e.ty) {
+                        let method = method_name.to_string();
+                        let ret_ty = self.resolve_method_type(&e.ty, &method, &[]);
+                        let ret_ty2 = ret_ty.clone();
+                        (HirExprKind::MethodCall {
+                            receiver: Box::new(e),
+                            method,
+                            args: vec![],
+                            ret_ty,
+                        }, ret_ty2)
+                    } else {
+                        let hir_op = match op {
+                            ast::UnaryOp::Neg => UnaryOp::Neg,
+                            ast::UnaryOp::Not => UnaryOp::Not,
+                            _ => UnaryOp::Try,
+                        };
+                        let ty = e.ty.clone();
+                        (HirExprKind::Unary { op: hir_op, expr: Box::new(e), ty: ty.clone() }, ty)
+                    }
+                } else {
+                    let hir_op = match op {
+                        ast::UnaryOp::Neg => UnaryOp::Neg,
+                        ast::UnaryOp::Not => UnaryOp::Not,
+                        ast::UnaryOp::Try => UnaryOp::Try,
+                    };
+                    // Try 操作符类型推断：Result<T> → T；其他类型保持不变（运行时处理）
+                    let ty = match (&hir_op, &e.ty) {
+                        (UnaryOp::Try, Type::Generic { base, args }) => {
+                            if let Type::Enum(name) = base.as_ref() {
+                                if name == "Result" {
+                                    args.first().cloned().unwrap_or(Type::Unknown)
+                                } else {
+                                    e.ty.clone()
+                                }
                             } else {
                                 e.ty.clone()
                             }
-                        } else {
-                            e.ty.clone()
                         }
-                    }
-                    (UnaryOp::Try, _) => e.ty.clone(),
-                    _ => e.ty.clone(),
+                        (UnaryOp::Try, _) => e.ty.clone(),
+                        _ => e.ty.clone(),
+                    };
+                    (HirExprKind::Unary { op: hir_op, expr: Box::new(e), ty: ty.clone() }, ty)
                 };
-                (HirExprKind::Unary { op: hir_op, expr: Box::new(e), ty: ty.clone() }, ty)
+                (kind, ty)
             }
 
             ExprKind::Call { func, args } => {
                 let f = self.lower_expr(func)?;
-                let lowered_args: Vec<_> = args.iter()
-                    .map(|a| self.lower_expr(a))
-                    .collect::<TenthResult<_>>()?;
+
+                // Process call arguments: resolve named args, fill defaults, collect variadic
+                let processed_args = self.process_call_args(func, args, &span)?;
+                let lowered_args = processed_args;
 
                 // If the func is an EnumLiteral, merge args as tuple fields
                 if let HirExprKind::EnumLiteral { enum_name, variant, fields } = &f.kind {
@@ -378,11 +424,14 @@ impl Lowerer {
                     let inst_fn = HirFnDef {
                         name: mangled_name.clone(),
                         params: inst_params,
+                        param_defaults: template.param_defaults.clone(),
+                        param_variadic: template.param_variadic.clone(),
                         return_type: inst_ret_ty.clone(),
                         body: inst_body,
                         generics: vec![],
                         generics_bounds: std::collections::HashMap::new(),
                         span: template.span.clone(),
+                        is_test: false,
                     };
                     self.functions.push(inst_fn);
                 }
@@ -515,7 +564,7 @@ impl Lowerer {
                 let elem_ty = lowered.first()
                     .map(|e| e.ty.clone())
                     .unwrap_or(Type::Unknown);
-                let ty = Type::Array(Box::new(elem_ty));
+                let ty = Type::Array { inner: Box::new(elem_ty), size: None };
                 (HirExprKind::ArrayLiteral { elements: lowered, ty: ty.clone() }, ty)
             }
 
@@ -983,6 +1032,20 @@ impl Lowerer {
                 let elem_types: Vec<Type> = hir_elems.iter().map(|e| e.ty.clone()).collect();
                 (HirExprKind::Tuple(hir_elems), Type::Tuple(elem_types))
             }
+
+            // NamedArg should only appear as a direct child of Call/MethodCall args,
+            // where it is handled by process_call_args. If we encounter one here,
+            // it means it somehow reached general expression lowering — error out.
+            ExprKind::NamedArg { name, .. } => {
+                return Err(TenthError::TypeError {
+                    line: span.line,
+                    col: span.col,
+                    message: format!(
+                        "命名参数 '{}' 只能在函数调用参数列表中使用",
+                        name.name
+                    ),
+                });
+            }
         };
 
         Ok(HirExpr { kind, ty, span })
@@ -1018,6 +1081,7 @@ impl Lowerer {
         ast::Literal::Int(n, dt) => Literal::Int(*n, *dt),
                     ast::Literal::Float(n, dt) => Literal::Float(*n, *dt),
                     ast::Literal::Bool(b) => Literal::Bool(*b),
+                    ast::Literal::Char(c) => Literal::Char(*c),
                     ast::Literal::String(s) => Literal::String(s.clone()),
                 };
                 Ok(HirPattern::Literal(hir_lit))
@@ -1099,5 +1163,239 @@ impl Lowerer {
             }
             HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Range { .. } => {}
         }
+    }
+
+    /// Process function call arguments: resolve named args, fill defaults, collect variadic.
+    /// Returns lowered HIR expressions ready for call emission.
+    fn process_call_args(&mut self, func: &ast::Expr, args: &[ast::Expr], span: &Span) -> TenthResult<Vec<HirExpr>> {
+        use ast::ExprKind;
+
+        // Get function name if it's a simple identifier
+        let fn_name = match &func.kind {
+            ExprKind::Ident(ident) => Some(ident.name.clone()),
+            _ => None,
+        };
+
+        // Look up function definition info (clone to avoid borrow conflicts)
+        let fn_param_names: Vec<String> = fn_name.as_ref()
+            .and_then(|name| self.functions.iter().find(|f| f.name == *name)
+                .or_else(|| self.generic_funcs.get(name)))
+            .map(|def| def.params.iter().map(|(n, _)| n.clone()).collect())
+            .unwrap_or_default();
+        let fn_param_defaults: Vec<Option<HirExpr>> = fn_name.as_ref()
+            .and_then(|name| self.functions.iter().find(|f| f.name == *name)
+                .or_else(|| self.generic_funcs.get(name)))
+            .map(|def| def.param_defaults.clone())
+            .unwrap_or_default();
+        let fn_param_variadic: Vec<bool> = fn_name.as_ref()
+            .and_then(|name| self.functions.iter().find(|f| f.name == *name)
+                .or_else(|| self.generic_funcs.get(name)))
+            .map(|def| def.param_variadic.clone())
+            .unwrap_or_default();
+        let has_def = fn_name.as_ref()
+            .map(|name| {
+                self.functions.iter().any(|f| f.name == *name)
+                    || self.generic_funcs.contains_key(name)
+            })
+            .unwrap_or(false);
+
+        // Separate positional args (non-NamedArg) and named args
+        let mut positional_ast: Vec<&ast::Expr> = Vec::new();
+        let mut named_ast: Vec<(String, &ast::Expr)> = Vec::new();
+
+        for arg in args {
+            match &arg.kind {
+                ExprKind::NamedArg { name, value } => {
+                    named_ast.push((name.name.clone(), value.as_ref()));
+                }
+                _ => {
+                    positional_ast.push(arg);
+                }
+            }
+        }
+
+        // If there are named args, we need to resolve them to positions
+        if !named_ast.is_empty() || has_def {
+            // Build the list of AST expressions in parameter order
+            let param_count = if has_def { fn_param_names.len() } else {
+                positional_ast.len() + named_ast.len()
+            };
+
+            let mut resolved: Vec<Option<&ast::Expr>> = vec![None; param_count];
+            let mut used_positional: Vec<bool> = vec![false; param_count];
+
+            // Place positional arguments
+            for (i, arg) in positional_ast.iter().enumerate() {
+                if i < param_count {
+                    resolved[i] = Some(arg);
+                    used_positional[i] = true;
+                }
+            }
+
+            // Place named arguments, ensuring no duplicate
+            for (name, expr) in &named_ast {
+                if has_def {
+                    if let Some(pos) = fn_param_names.iter().position(|n| n == name) {
+                        if used_positional[pos] {
+                            // Position already filled by positional arg
+                            return Err(TenthError::TypeError {
+                                line: span.line,
+                                col: span.col,
+                                message: format!(
+                                    "参数 '{}' 在函数 '{}' 调用中被同时指定为位置参数和命名参数",
+                                    name, fn_name.as_deref().unwrap_or("?")
+                                ),
+                            });
+                        }
+                        resolved[pos] = Some(expr);
+                        used_positional[pos] = true;
+                    } else {
+                        return Err(TenthError::TypeError {
+                            line: span.line,
+                            col: span.col,
+                            message: format!(
+                                "函数 '{}' 没有名为 '{}' 的参数",
+                                fn_name.as_deref().unwrap_or("?"), name
+                            ),
+                        });
+                    }
+                } else {
+                    // Unknown function with named args: just skip position resolution
+                    // Fall through to positional-only
+                }
+            }
+
+            // Collect lowered HIR args, handling defaults and variadic.
+            // We produce HIR expressions directly for each parameter position.
+            let mut hir_result: Vec<HirExpr> = Vec::new();
+            let mut extra_hir_args: Vec<HirExpr> = Vec::new();
+            let mut has_variadic = false;
+
+            if has_def {
+                for (i, slot) in resolved.iter().enumerate() {
+                    if let Some(expr) = slot {
+                        // Normal argument: lower the AST expression
+                        hir_result.push(self.lower_expr(expr)?);
+                    } else if i < fn_param_defaults.len() && fn_param_defaults[i].is_some() {
+                        // Has default value: clone the already-lowered default expression
+                        hir_result.push(fn_param_defaults[i].clone().unwrap());
+                    } else if i < fn_param_variadic.len() && fn_param_variadic[i] {
+                        // Variadic param slot: will be filled from extra args if any
+                        has_variadic = true;
+                        // Temporarily push a placeholder (will be replaced if extra args exist)
+                        let empty_array = HirExpr {
+                            kind: HirExprKind::ArrayLiteral {
+                                elements: Vec::new(),
+                                ty: Type::Array { inner: Box::new(Type::Unknown), size: None },
+                            },
+                            ty: Type::Array { inner: Box::new(Type::Unknown), size: None },
+                            span: span.clone(),
+                        };
+                        hir_result.push(empty_array);
+                    } else {
+                        // Missing required parameter
+                        return Err(TenthError::TypeError {
+                            line: span.line,
+                            col: span.col,
+                            message: format!(
+                                "函数 '{}' 调用缺少必需参数 '{}'",
+                                fn_name.as_deref().unwrap_or("?"),
+                                fn_param_names.get(i).map(|s| s.as_str()).unwrap_or("?")
+                            ),
+                        });
+                    }
+                }
+
+                // Collect extra positional args for variadic parameter
+                if has_variadic && positional_ast.len() > resolved.len() {
+                    for arg in positional_ast.iter().skip(resolved.len()) {
+                        extra_hir_args.push(self.lower_expr(arg)?);
+                    }
+                }
+            } else {
+                // No function definition found (e.g., native function or unknown).
+                // Just lower positional args directly.
+                for arg in positional_ast.iter() {
+                    hir_result.push(self.lower_expr(arg)?);
+                }
+            }
+
+            // If we have extra variadic args, build the array and replace the placeholder
+            if has_variadic && !extra_hir_args.is_empty() {
+                let elem_ty = extra_hir_args.first()
+                    .map(|e| e.ty.clone())
+                    .unwrap_or(Type::Unknown);
+                let elem_ty_clone = elem_ty.clone();
+                let array_lit = HirExpr {
+                    kind: HirExprKind::ArrayLiteral {
+                        elements: extra_hir_args,
+                        ty: Type::Array { inner: Box::new(elem_ty), size: None },
+                    },
+                    ty: Type::Array { inner: Box::new(elem_ty_clone), size: None },
+                    span: span.clone(),
+                };
+                // Replace the variadic slot (last element added for it)
+                if let Some(last) = hir_result.last_mut() {
+                    *last = array_lit;
+                } else {
+                    hir_result.push(array_lit);
+                }
+            }
+
+            return Ok(hir_result);
+        } else {
+            // No named args, no function def lookup needed
+            let mut lowered: Vec<HirExpr> = Vec::new();
+            for arg in positional_ast {
+                lowered.push(self.lower_expr(arg)?);
+            }
+            return Ok(lowered);
+        }
+    }
+
+    /// 运算符重载：二元运算符 → trait 方法名称映射。
+    /// 返回 (trait_name, method_name)，如 ("Add", "add")。
+    pub(super) fn try_binary_op_overload(&self, op: &ast::BinOp, _ty: &Type) -> Option<(&'static str, &'static str)> {
+        use ast::BinOp;
+        match op {
+            BinOp::Add => Some(("Add", "add")),
+            BinOp::Sub => Some(("Sub", "sub")),
+            BinOp::Mul => Some(("Mul", "mul")),
+            BinOp::Div => Some(("Div", "div")),
+            BinOp::Mod => Some(("Rem", "rem")),
+            BinOp::Eq | BinOp::NotEq => Some(("Eq", "eq")),
+            BinOp::Lt => Some(("Ord", "lt")),
+            BinOp::Gt => Some(("Ord", "gt")),
+            BinOp::LtEq => Some(("Ord", "le")),
+            BinOp::GtEq => Some(("Ord", "ge")),
+            BinOp::And | BinOp::Or => None, // 短路逻辑运算符不重载
+        }
+    }
+
+    /// 运算符重载：一元运算符 → trait 方法名称映射。
+    pub(super) fn try_unary_op_overload(&self, op: &ast::UnaryOp) -> Option<(&'static str, &'static str)> {
+        use ast::UnaryOp;
+        match op {
+            UnaryOp::Neg => Some(("Neg", "neg")),
+            UnaryOp::Not => Some(("Not", "not")),
+            UnaryOp::Try => None,
+        }
+    }
+
+    /// 检查指定类型是否实现了指定 trait。
+    /// 通过搜索 trait_impls[trait_name][type_name] 来判断。
+    pub(super) fn has_trait_impl_for_type(&self, trait_name: &str, ty: &Type) -> bool {
+        let type_name = match ty {
+            Type::Base(b) => return false, // 基础类型的内置运算不在 trait 系统中重载
+            Type::Struct(name) | Type::Enum(name) => name,
+            Type::Generic { base, .. } => match base.as_ref() {
+                Type::Enum(name) | Type::Struct(name) => name,
+                _ => return false,
+            },
+            _ => return false,
+        };
+        self.trait_impls.get(trait_name)
+            .and_then(|impls| impls.get(type_name))
+            .is_some()
     }
 }

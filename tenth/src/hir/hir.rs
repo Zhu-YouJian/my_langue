@@ -169,6 +169,7 @@ pub enum Literal {
     Float(f64, BaseType),
     Bool(bool),
     String(String),
+    Char(char),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -207,12 +208,16 @@ pub enum HirStmtKind {
         cond: HirExpr,
         body: Box<HirStmt>,
     },
+    DoWhile {
+        body: Box<HirStmt>,
+        cond: HirExpr,
+    },
     For {
         var: String,
         iter: HirExpr,
         body: Box<HirStmt>,
     },
-    Break,
+    Break(Option<Box<HirExpr>>),
     Continue,
     Loop {
         body: Vec<HirStmt>,
@@ -231,9 +236,15 @@ pub struct HirFnDef {
     pub generics: Vec<String>,
     pub generics_bounds: HashMap<String, Vec<String>>,
     pub params: Vec<(String, Type)>,
+    /// Default values for parameters that have them. `param_defaults[i]` corresponds to `params[i]`.
+    pub param_defaults: Vec<Option<HirExpr>>,
+    /// Whether each parameter is variadic (`...args`). `param_variadic[i]` corresponds to `params[i]`.
+    pub param_variadic: Vec<bool>,
     pub return_type: Type,
     pub body: HirExpr,
     pub span: Span,
+    /// 是否为 #[test] 测试函数
+    pub is_test: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

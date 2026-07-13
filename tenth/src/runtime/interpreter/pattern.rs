@@ -80,6 +80,7 @@ impl super::Interpreter {
                     (Literal::Float(a, _), Value::Float(b)) => (a - b).abs() < 1e-10,
                     (Literal::Float(a, _), Value::Float32(b)) => ((a - *b as f64).abs() as f64) < 1e-6,
                     (Literal::Bool(a), Value::Bool(b)) => a == b,
+                    (Literal::Char(a), Value::Char(b)) => a == b,
                     _ => false,
                 }
             }

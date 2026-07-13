@@ -1924,6 +1924,49 @@ impl super::Interpreter {
                 }
                 return Ok(Some(Value::Unit));
             }
+            // —— 断言原语 ——
+            "assert" => {
+                if args.is_empty() {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: "assert() 需要至少一个参数（布尔条件）".into(),
+                    });
+                }
+                match &args[0] {
+                    Value::Bool(true) => return Ok(Some(Value::Unit)),
+                    Value::Bool(false) => {
+                        let msg = if args.len() >= 2 {
+                            if let Value::String(s) = &args[1] { s.clone() } else { format!("{}", args[1]) }
+                        } else {
+                            "assertion failed".to_string()
+                        };
+                        return Err(TenthError::RuntimeError { line: None, col: None, message: msg });
+                    }
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: "assert() 需要一个布尔值作为第一个参数".into(),
+                    }),
+                }
+            }
+            "assert_eq" => {
+                if args.len() < 2 {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: "assert_eq() 需要至少两个参数（左值，右值）".into(),
+                    });
+                }
+                let left_str = format!("{}", args[0]);
+                let right_str = format!("{}", args[1]);
+                if left_str == right_str {
+                    return Ok(Some(Value::Unit));
+                } else {
+                    let extra = if args.len() >= 3 {
+                        if let Value::String(s) = &args[2] {
+                            if !s.is_empty() { format!(" — {}", s) } else { String::new() }
+                        } else { String::new() }
+                    } else { String::new() };
+                    return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: format!("assertion failed: {} != {}{}", left_str, right_str, extra),
+                    });
+                }
+            }
             _ => {}
         }
 

@@ -1,0 +1,61 @@
+// StringBuilder — 高效的字符串构建器
+//
+// 底层用 Array<Str> 积累片段，to_string() 时一次性拼接。
+// 避免反复拼接大字符串的 O(n²) 开销。
+//
+// Usage:
+//   use std::string::string_builder::*
+//   let sb = StringBuilder::new();
+//   let sb = sb.append("Hello, ");
+//   let sb = sb.append("World!");
+//   sb.to_string()   // "Hello, World!"
+//   sb.len()         // 13
+//   sb.clear();
+//   sb.is_empty()    // true
+
+struct StringBuilder {
+    parts: Vec,
+    total_len: i64,
+}
+
+// 创建一个新的空 StringBuilder。
+fn new() -> StringBuilder {
+    StringBuilder {
+        parts: Vec::new(),
+        total_len: 0,
+    }
+}
+
+// 追加一个字符串片段。
+// 返回 StringBuilder 自身以支持链式调用。
+fn append(sb: StringBuilder, s: Str) -> StringBuilder {
+    sb.parts.push(s.clone());
+    StringBuilder {
+        parts: sb.parts,
+        total_len: sb.total_len + s.len(),
+    }
+}
+
+// 将积累的片段拼接为一个完整的字符串。
+// 使用 join 一次性拼接所有片段。
+fn to_string(sb: StringBuilder) -> Str {
+    sb.parts.join("")
+}
+
+// 返回当前已积累的内容长度（字符数）。
+fn len(sb: StringBuilder) -> i64 {
+    sb.total_len
+}
+
+// 检查 StringBuilder 是否为空（没有任何片段）。
+fn is_empty(sb: StringBuilder) -> bool {
+    sb.total_len == 0
+}
+
+// 清空 StringBuilder，重置为空状态。
+fn clear(sb: StringBuilder) -> StringBuilder {
+    StringBuilder {
+        parts: Vec::new(),
+        total_len: 0,
+    }
+}

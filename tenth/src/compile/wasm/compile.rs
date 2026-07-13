@@ -965,13 +965,33 @@ impl WasmCompiler {
                 body.instruction(&Instruction::End);
                 self.if_depths.pop();
             }
+            HirStmtKind::DoWhile { body: lb, cond } => {
+                // Lowered as: loop { body; if !cond { break; } }
+                self.if_depths.push((0, 0));
+                body.instruction(&Instruction::Block(BlockType::Empty));
+                body.instruction(&Instruction::Loop(BlockType::Empty));
+                self.compile_stmt(body, lb.as_ref())?;
+                self.compile_expr(body, cond)?;
+                body.instruction(&Instruction::I32Eqz);
+                body.instruction(&Instruction::BrIf(1));
+                body.instruction(&Instruction::Br(0));
+                body.instruction(&Instruction::End);
+                body.instruction(&Instruction::End);
+                self.if_depths.pop();
+            }
             HirStmtKind::Return(expr) => {
                 if let Some(e) = expr {
                     self.compile_expr(body, e)?;
                 }
                 body.instruction(&Instruction::Return);
             }
-            HirStmtKind::Break => {
+            HirStmtKind::Break(val) => {
+                // If break has a value, compile it (WASM doesn't support break-with-value,
+                // so just evaluate the expression for side effects)
+                if let Some(e) = val {
+                    self.compile_expr(body, e)?;
+                    body.instruction(&Instruction::Drop);
+                }
                 let &(if_depth, break_offset) = self.if_depths.last().unwrap_or(&(0, 0));
                 let depth = 1 + break_offset + if_depth;
                 body.instruction(&Instruction::Br(depth));
@@ -1064,6 +1084,10 @@ impl WasmCompiler {
                 }
             }
             Literal::Bool(b) => { body.instruction(&Instruction::I32Const(if *b { 1 } else { 0 })); }
+            Literal::Char(c) => {
+                body.instruction(&Instruction::I32Const(*c as i32));
+                body.instruction(&Instruction::I64ExtendI32U);
+            }
             Literal::String(s) => {
                 let off = self.intern_string(s);
                 body.instruction(&Instruction::I32Const(off as i32));

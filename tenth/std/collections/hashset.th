@@ -1,0 +1,61 @@
+// HashSet — 基于 HashMap 的集合（无序不重复元素）
+//
+// Usage:
+//   use std::collections::hashset::*
+//   let set = HashSet::new();
+//   set.contains("hello")   // false
+//   let set = set.insert("hello");
+//   set.contains("hello")   // true
+//   set.len()               // 1
+//   let set = set.remove("hello");
+//   set.is_empty()          // true
+//   set.to_array()          // Vec of keys (strings, order undefined)
+//
+// 底层用 HashMap 实现。键为 String（由 HashMap 自动转换）。
+
+struct HashSet {
+    inner: HashMap,
+}
+
+// 创建一个新的空 HashSet。
+fn new() -> HashSet {
+    HashSet { inner: HashMap::new() }
+}
+
+// 插入一个值。如果值已存在，不做任何事。
+// 返回 HashSet 自身以支持链式调用：set = set.insert(v1).insert(v2)
+fn insert(set: HashSet, value) -> HashSet {
+    set.inner.insert(value, Unit);
+    set
+}
+
+// 检查是否包含某个值。
+fn contains(set: HashSet, value) -> bool {
+    set.inner.contains_key(value)
+}
+
+// 移除一个值（如果存在）。返回更新后的 HashSet。
+fn remove(set: HashSet, value) -> HashSet {
+    set.inner.remove(value);
+    set
+}
+
+// 返回元素数量。
+fn len(set: HashSet) -> i64 {
+    set.inner.len()
+}
+
+// 检查是否为空。
+fn is_empty(set: HashSet) -> bool {
+    set.inner.is_empty()
+}
+
+// 转换为 Array（元素为 String 键，顺序不确定）。
+fn to_array(set: HashSet) -> Vec {
+    set.inner.keys()
+}
+
+// 清空集合。
+fn clear(set: HashSet) -> HashSet {
+    HashSet { inner: HashMap::new() }
+}

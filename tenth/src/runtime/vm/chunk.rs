@@ -48,6 +48,8 @@ impl Chunk {
             TupleGet(_) => 51,
             Try => 52,
             Yield => 53,
+            PushChar(_) => 54,
+            TailCall(..) => 55,
         });
 
         // Emit operands
@@ -56,6 +58,7 @@ impl Chunk {
             PushInt(n) => w!(*n, i64), PushFloat(f) => w!(*f, f64),
             PushFloat32(f) => w!(*f, f32),
             PushBool(b) => self.code.push(if *b {1} else {0}),
+            PushChar(c) => w!(*c, u32),
             PushStr(i) | LoadGlobal(i) | StoreGlobal(i) | Call(i) | LoadField(i) | StoreField(i) => w!(*i, u64),
             CallN(i, n) => { w!(*i, u64); w!(*n, u64); }
             MethodCall(i, n) => { w!(*i, u64); w!(*n, u64); }
@@ -72,6 +75,7 @@ impl Chunk {
             MakeClosure(p, c) => { w!(*p, u64); w!(*c, u64); }
             MakeTuple(n) | IsTuple(n) | TupleGet(n) => w!(*n, u64),
             MoveOp => {}
+            TailCall(i, n) => { w!(*i, u64); w!(*n, u64); }
             _ => {}
         }
     }
@@ -118,6 +122,8 @@ impl Chunk {
             51 => TupleGet(r!(u64) as usize),
             52 => Try,
             53 => Yield,
+            54 => PushChar(r!(u32)),
+            55 => TailCall(r!(u64) as usize, r!(u64) as usize),
             _ => panic!("bad opcode {b}"),
         }
     }

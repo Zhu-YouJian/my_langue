@@ -6,7 +6,7 @@
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Op {
-    PushInt(i64), PushFloat(f64), PushFloat32(f32), PushBool(bool), PushStr(usize), PushUnit,
+    PushInt(i64), PushFloat(f64), PushFloat32(f32), PushBool(bool), PushChar(u32), PushStr(usize), PushUnit,
     Pop, Dup,
     Load(usize), Store(usize),
     LoadGlobal(usize), StoreGlobal(usize),
@@ -33,6 +33,7 @@ pub enum Op {
     TupleGet(usize),            // index — pops Tuple, pushes element at index
     Try,                        // pops Result; Ok(v) → push v; Err(e) → early return TryPropagate(e)
     Yield,                      // 协作式调度：让出控制权，当前 task 回到 ready_queue 尾部
+    TailCall(usize, usize),     // TCO：函数名索引 + 参数数量 — 不压新帧，复用当前帧替换 PC 和 slot
 }
 
 // ── Scheduler internals ─────────────────────────────────────────────────────

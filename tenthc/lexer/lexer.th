@@ -360,6 +360,32 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         return Token { kind: TokenKind::IntLiteral(ival, int_dtype), span: span, disc: 0, ival: ival, dtype: int_dtype, .. };
     };
 
+    // 字节串字面量 `b"..."`
+    if ch == "b" && lexer_peek_at(lexer, 1) == "\"" {
+        lexer_advance(lexer);  // consume b
+        lexer_advance(lexer);  // consume "
+        let start = lexer.pos;
+        while (lexer_peek(lexer) != "") && (lexer_peek(lexer) != "\"") {
+            lexer_advance(lexer);
+        };
+        let content = lexer.source[start..lexer.pos];
+        if lexer_peek(lexer) == "\"" { lexer_advance(lexer); };  // consume closing "
+        return Token { kind: TokenKind::ByteString(content), span: span, disc: 83, sval: content, .. };
+    };
+
+    // 原始字符串字面量 `r"..."`
+    if ch == "r" && lexer_peek_at(lexer, 1) == "\"" {
+        lexer_advance(lexer);  // consume r
+        lexer_advance(lexer);  // consume "
+        let start = lexer.pos;
+        while (lexer_peek(lexer) != "") && (lexer_peek(lexer) != "\"") {
+            lexer_advance(lexer);
+        };
+        let content = lexer.source[start..lexer.pos];
+        if lexer_peek(lexer) == "\"" { lexer_advance(lexer); };  // consume closing "
+        return Token { kind: TokenKind::RawString(content), span: span, disc: 84, sval: content, .. };
+    };
+
     // Identifier — source slice (O(1))
     if is_alpha(ch) {
         let start = lexer.pos;
@@ -374,6 +400,8 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         if ident == "match" { return Token { kind: TokenKind::Match, span: span, disc: 9, .. }; };
         if ident == "return" { return Token { kind: TokenKind::Return, span: span, disc: 10, .. }; };
         if ident == "while" { return Token { kind: TokenKind::While, span: span, disc: 11, .. }; };
+        if ident == "do" { return Token { kind: TokenKind::Do, span: span, disc: 86, .. }; };
+        if ident == "yield" { return Token { kind: TokenKind::Yield, span: span, disc: 82, .. }; };
         if ident == "for" { return Token { kind: TokenKind::For, span: span, disc: 12, .. }; };
         if ident == "loop" { return Token { kind: TokenKind::Loop, span: span, disc: 13, .. }; };
         if ident == "break" { return Token { kind: TokenKind::Break, span: span, disc: 14, .. }; };
@@ -432,6 +460,27 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         // 期望闭合的 '
         if lexer_peek(lexer) == "'" { lexer_advance(lexer); };
         return Token { kind: TokenKind::CharLiteral(char_val), span: span, disc: 68, sval: char_val, .. };
+    };
+
+    // 多行字符串 `"""..."""`
+    if ch == "\"" && lexer_peek_at(lexer, 1) == "\"" && lexer_peek_at(lexer, 2) == "\"" {
+        lexer_advance(lexer);  // consume 1st "
+        lexer_advance(lexer);  // consume 2nd "
+        lexer_advance(lexer);  // consume 3rd "
+        let start = lexer.pos;
+        // 读取直到遇关闭 """
+        while lexer_peek(lexer) != "" {
+            if lexer_peek(lexer) == "\"" && lexer_peek_at(lexer, 1) == "\"" && lexer_peek_at(lexer, 2) == "\"" {
+                let content = lexer.source[start..lexer.pos];
+                lexer_advance(lexer);  // consume 1st "
+                lexer_advance(lexer);  // consume 2nd "
+                lexer_advance(lexer);  // consume 3rd "
+                return Token { kind: TokenKind::MultiLineString(content), span: span, disc: 85, sval: content, .. };
+            };
+            lexer_advance(lexer);
+        };
+        // 未闭合
+        return Token { kind: TokenKind::MultiLineString(lexer.source[start..lexer.pos]), span: span, disc: 85, sval: "", .. };
     };
 
     // String literal — with escape processing and interpolation detection

@@ -31,6 +31,7 @@ impl super::Interpreter {
                         _ => Value::Float(*n),
                     },
                     Literal::Bool(b) => Value::Bool(*b),
+                    Literal::Char(c) => Value::Char(*c),
                     Literal::String(s) => Value::String(s.clone()),
                 }))
             }
@@ -768,7 +769,14 @@ impl super::Interpreter {
                 };
                 Err(TenthError::ReturnValue(val))
             }
-            HirStmtKind::Break => Err(TenthError::BreakSignal),
+            HirStmtKind::Break(val) => {
+                // If break has a value, evaluate it first (result is discarded since
+                // loops in interpreter don't produce values).
+                if let Some(e) = val {
+                    self.eval_expr(e)?;
+                }
+                Err(TenthError::BreakSignal)
+            }
             HirStmtKind::Continue => Err(TenthError::ContinueSignal),
             HirStmtKind::Loop { body } => {
                 loop {
@@ -781,6 +789,23 @@ impl super::Interpreter {
                         }
                     }
                     if should_break { break; }
+                }
+                Ok(())
+            }
+            HirStmtKind::DoWhile { body, cond } => {
+                // do-while: execute body once, then check condition
+                loop {
+                    match self.eval_stmt(body) {
+                        Err(TenthError::BreakSignal) => break,
+                        Err(TenthError::ContinueSignal) => continue,
+                        other => { other?; }
+                    }
+                    let c = self.eval_expr(cond)?.ok_or_else(|| TenthError::RuntimeError { line: Some(stmt.span.line), col: Some(stmt.span.col),
+                        message: "do-while 条件为空值".into(),
+                    })?;
+                    if !c.is_truthy() {
+                        break;
+                    }
                 }
                 Ok(())
             }

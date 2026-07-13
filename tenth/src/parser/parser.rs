@@ -190,6 +190,7 @@ impl Parser {
                     body: Expr { kind: ExprKind::Block(main_expr_stmts), span: span.clone() },
                     is_pub: false,
                     is_async: false,
+                    is_test: false,
                 },
                 span,
             });
@@ -246,6 +247,7 @@ impl Parser {
                     },
                     is_pub: false,
                     is_async: false,
+                    is_test: false,
                 },
                 span,
             });

@@ -16,6 +16,9 @@ pub enum TokenKind {
     /// 浮点字面量。第二字段为 dtype：`3.14f32` → F32，`3.14f64` 或 `3.14` → F64。
     FloatLiteral(f64, BaseType),
     StringLiteral(String),
+    ByteString(Vec<u8>),
+    RawString(String),
+    MultiLineString(String),
     InterpolatedString(Vec<StringPart>),
     CharLiteral(char),
 
@@ -28,6 +31,8 @@ pub enum TokenKind {
     Match,
     For,
     While,
+    Do,
+    Yield,
     Loop,
     Break,
     Continue,
@@ -93,11 +98,13 @@ pub enum TokenKind {
     Dot,
     DotDot,
     DotDotEq,
+    DotDotDot,
     Arrow,
     FatArrow,
     ColonColon,
 
     QuestionMark,
+    Hash,
 
     Eof,
 }
@@ -120,6 +127,9 @@ impl fmt::Display for TokenKind {
             TokenKind::IntLiteral(n, _) => write!(f, "{}", n),
             TokenKind::FloatLiteral(n, _) => write!(f, "{}", n),
             TokenKind::StringLiteral(s) => write!(f, "\"{}\"", s),
+            TokenKind::ByteString(b) => write!(f, "b\"{}\"", String::from_utf8_lossy(b)),
+            TokenKind::RawString(s) => write!(f, "r\"{}\"", s),
+            TokenKind::MultiLineString(s) => write!(f, "\"\"\"{}\"\"\"", s),
             TokenKind::InterpolatedString(parts) => {
                 write!(f, "\"")?;
                 for p in parts {
@@ -140,6 +150,8 @@ impl fmt::Display for TokenKind {
             TokenKind::Match => write!(f, "match"),
             TokenKind::For => write!(f, "for"),
             TokenKind::While => write!(f, "while"),
+            TokenKind::Do => write!(f, "do"),
+            TokenKind::Yield => write!(f, "yield"),
             TokenKind::Loop => write!(f, "loop"),
             TokenKind::Break => write!(f, "break"),
             TokenKind::Continue => write!(f, "continue"),
@@ -202,10 +214,12 @@ impl fmt::Display for TokenKind {
             TokenKind::Dot => write!(f, "."),
             TokenKind::DotDot => write!(f, ".."),
             TokenKind::DotDotEq => write!(f, "..="),
+            TokenKind::DotDotDot => write!(f, "..."),
             TokenKind::Arrow => write!(f, "->"),
             TokenKind::FatArrow => write!(f, "=>"),
             TokenKind::ColonColon => write!(f, "::"),
             TokenKind::QuestionMark => write!(f, "?"),
+            TokenKind::Hash => write!(f, "#"),
             TokenKind::Eof => write!(f, "<EOF>"),
             TokenKind::Shard => write!(f, "shard"),
         }

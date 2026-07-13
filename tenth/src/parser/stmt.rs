@@ -15,6 +15,14 @@ use super::parser::Parser;
 
 impl Parser {
     pub(super) fn parse_param(&mut self) -> TenthResult<Param> {
+        // Check for variadic prefix `...`
+        let variadic = if matches!(self.peek_kind(), TokenKind::DotDotDot) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
         let name = match &self.peek().kind {
             TokenKind::Identifier(name) => Ident {
                 name: name.clone(),
@@ -38,7 +46,7 @@ impl Parser {
                 name: "Self".to_string(),
                 span: name.span.clone(),
             });
-            return Ok(Param { name, type_ann });
+            return Ok(Param { name, type_ann, default_value: None, variadic });
         }
         let type_ann = if matches!(self.peek_kind(), TokenKind::Colon) {
             self.advance();
@@ -50,7 +58,16 @@ impl Parser {
                 span: name.span.clone(),
             })
         };
-        Ok(Param { name, type_ann })
+
+        // Check for default value: `name: Type = expr`
+        let default_value = if matches!(self.peek_kind(), TokenKind::Assign) {
+            self.advance();
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+
+        Ok(Param { name, type_ann, default_value, variadic })
     }
 
     pub(super) fn parse_block_stmts(&mut self) -> TenthResult<Vec<Stmt>> {
@@ -160,9 +177,16 @@ impl Parser {
             }
             TokenKind::Break => {
                 self.advance();
+                let value = if !matches!(self.peek_kind(), TokenKind::Semicolon)
+                    && !matches!(self.peek_kind(), TokenKind::RBrace)
+                {
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
                 self.match_token(TokenKind::Semicolon);
                 Ok(Stmt {
-                    kind: StmtKind::Break,
+                    kind: StmtKind::Break(value),
                     span,
                 })
             }
@@ -181,6 +205,38 @@ impl Parser {
                 self.match_token(TokenKind::Semicolon);
                 Ok(Stmt {
                     kind: StmtKind::Loop { body: stmts },
+                    span,
+                })
+            }
+            TokenKind::Do => {
+                self.advance();
+                // do { body } while (condition);
+                let body = if matches!(self.peek_kind(), TokenKind::LBrace) {
+                    self.advance();
+                    let stmts = self.parse_block_stmts()?;
+                    Stmt {
+                        kind: StmtKind::Expr(Expr {
+                            kind: ExprKind::Block(stmts),
+                            span: self.span(),
+                        }),
+                        span: self.span(),
+                    }
+                } else {
+                    self.parse_stmt()?
+                };
+                self.expect(TokenKind::While)?;
+                // Optional parentheses around condition
+                let has_lparen = self.match_token(TokenKind::LParen);
+                let condition = self.parse_expr()?;
+                if has_lparen {
+                    self.expect(TokenKind::RParen)?;
+                }
+                self.match_token(TokenKind::Semicolon);
+                Ok(Stmt {
+                    kind: StmtKind::DoWhile {
+                        body: Box::new(body),
+                        condition,
+                    },
                     span,
                 })
             }
@@ -300,6 +356,11 @@ impl Parser {
             TokenKind::False => {
                 self.advance();
                 Ok(Pattern::Literal(Literal::Bool(false)))
+            }
+            TokenKind::CharLiteral(c) => {
+                let c = *c;
+                self.advance();
+                Ok(Pattern::Literal(Literal::Char(c)))
             }
             TokenKind::LParen => {
                 // Tuple pattern: (a, b, c)

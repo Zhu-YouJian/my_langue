@@ -29,6 +29,7 @@ impl Parser {
             TokenKind::True => ExprKind::Literal(Literal::Bool(true)),
             TokenKind::False => ExprKind::Literal(Literal::Bool(false)),
             TokenKind::StringLiteral(s) => ExprKind::Literal(Literal::String(s.clone())),
+            TokenKind::CharLiteral(c) => ExprKind::Literal(Literal::Char(*c)),
             TokenKind::InterpolatedString(parts) => {
                 let interp_parts: Vec<InterpPart> = parts.iter().map(|p| match p {
                     crate::lexer::token::StringPart::Literal(s) => InterpPart::Literal(s.clone()),
@@ -897,7 +898,29 @@ impl Parser {
     pub(super) fn parse_arg_list(&mut self) -> TenthResult<Vec<Expr>> {
         let mut args = Vec::new();
         loop {
-            args.push(self.parse_expr()?);
+            // Check for named argument: `name = expr`
+            // We look ahead: if the current token is an Identifier and the
+            // next token is `=` (but not `==`), treat it as a named arg.
+            let is_named = matches!(self.peek_kind(), TokenKind::Identifier(_))
+                && self.tokens.get(self.pos + 1)
+                    .map(|t| matches!(t.kind, TokenKind::Assign))
+                    .unwrap_or(false);
+
+            if is_named {
+                let name = self.expect_ident()?;
+                self.advance(); // consume `=`
+                let value = self.parse_expr()?;
+                args.push(Expr {
+                    kind: ExprKind::NamedArg {
+                        name,
+                        value: Box::new(value),
+                    },
+                    span: self.span(),
+                });
+            } else {
+                args.push(self.parse_expr()?);
+            }
+
             if !matches!(self.peek_kind(), TokenKind::Comma) {
                 break;
             }

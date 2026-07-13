@@ -18,6 +18,32 @@ use super::parser::Parser;
 impl Parser {
     pub(super) fn parse_item(&mut self) -> TenthResult<Item> {
         let span = self.span();
+        // Parse attributes like `#[test]`
+        let mut is_test = false;
+        if matches!(self.peek_kind(), TokenKind::Hash) {
+            let saved_pos = self.pos;
+            self.advance(); // consume `#`
+            if matches!(self.peek_kind(), TokenKind::LBracket) {
+                self.advance(); // consume `[`
+                if let TokenKind::Identifier(name) = self.peek_kind() {
+                    if name == "test" {
+                        self.advance(); // consume "test"
+                        if matches!(self.peek_kind(), TokenKind::RBracket) {
+                            self.advance(); // consume `]`
+                            is_test = true;
+                        } else {
+                            self.pos = saved_pos; // restore
+                        }
+                    } else {
+                        self.pos = saved_pos; // restore
+                    }
+                } else {
+                    self.pos = saved_pos; // restore
+                }
+            } else {
+                self.pos = saved_pos; // restore
+            }
+        }
         // Handle `pub` prefix
         let is_pub = if matches!(self.peek_kind(), TokenKind::Pub) {
             self.advance();
@@ -85,6 +111,7 @@ impl Parser {
                         body,
                         is_pub,
                         is_async,
+                        is_test,
                     },
                     span,
                 })
@@ -264,6 +291,7 @@ impl Parser {
                         body: expr,
                         is_pub: false,
                         is_async: false,
+                        is_test: false,
                     },
                     span,
                 })

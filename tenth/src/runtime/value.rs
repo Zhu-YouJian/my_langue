@@ -105,6 +105,7 @@ pub enum Value {
     /// f32 标量值。与 Float(f64) 区分以保留 dtype 信息到运行时。
     Float32(f32),
     Bool(bool),
+    Char(char),
     String(String),
     Tensor(Rc<RefCell<Tensor>>),
     Unit,
@@ -160,6 +161,7 @@ impl Value {
             Value::Float(_) => Type::Base(BaseType::F64),
             Value::Float32(_) => Type::Base(BaseType::F32),
             Value::Bool(_) => Type::Base(BaseType::Bool),
+            Value::Char(_) => Type::Base(BaseType::Char),
             Value::String(_) => Type::Base(BaseType::Str),
             Value::Tensor(t) => {
                 let t = t.borrow();
@@ -288,6 +290,7 @@ impl fmt::Display for Value {
             Value::Float(n) => write!(f, "{}", format_f64(*n)),
             Value::Float32(n) => write!(f, "{}f32", format_f32(*n)),
             Value::Bool(b) => write!(f, "{}", b),
+            Value::Char(c) => write!(f, "'{}'", c),
             Value::String(s) => write!(f, "{}", s),
             Value::Tensor(t) => write!(f, "{}", t.borrow()),
             Value::Unit => write!(f, "()"),

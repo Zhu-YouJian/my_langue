@@ -221,6 +221,8 @@ impl Vm {
                     51 => TupleGet(r!(u64) as usize),
                     52 => Try,
                     53 => Yield,
+                    54 => PushChar(r!(u32)),
+                    55 => TailCall(r!(u64) as usize, r!(u64) as usize),
                     _ => Ret,
                 }
             };
@@ -229,6 +231,10 @@ impl Vm {
                 Op::PushFloat(f) => self.stack.push(Value::Float(f)),
                 Op::PushFloat32(f) => self.stack.push(Value::Float32(f)),
                 Op::PushBool(b) => self.stack.push(Value::Bool(b)),
+                Op::PushChar(c) => {
+                    let ch = char::from_u32(c).unwrap_or('\0');
+                    self.stack.push(Value::Char(ch));
+                }
                 Op::PushStr(i) => {
                     let s = strings.get(i).cloned().unwrap_or_default();
                     self.stack.push(Value::String(s));
@@ -401,6 +407,47 @@ impl Vm {
                         locals = args;
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
                         base = 0;  // callee 新栈从 0 开始
+                    } else {
+                        return Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) });
+                    }
+                }
+                Op::TailCall(i, num_args) => {
+                    // TCO：复用当前帧，不压新帧
+                    let name = strings.get(i).cloned().unwrap_or_default();
+                    let n = num_args;
+                    let mut args = vec![Value::Unit; n];
+                    for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
+
+                    // 查找函数（同 CallN）
+                    let callee_name = if let Some(Value::FnRef { name: fname, .. }) = self.globals.get(&name) {
+                        fname.clone()
+                    } else {
+                        name.clone()
+                    };
+
+                    if let Some(native_fn) = self.natives.get(&callee_name).copied() {
+                        let result = native_fn(self, &args)?;
+                        self.stack.push(result);
+                    } else if let Some(&callee_idx) = self.functions.get(&callee_name) {
+                        // TCO：不压帧，直接替换当前帧状态
+                        chunk_idx = callee_idx;
+                        code = self.chunks[chunk_idx].code.clone();
+                        strings = self.chunks[chunk_idx].strings.clone();
+                        ip = 0;
+                        locals = args;
+                        locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
+                        // base 不重置 — 当前栈帧继续使用
+                    } else if let Some(native_fn) = self.natives.get(&name).copied() {
+                        let result = native_fn(self, &args)?;
+                        self.stack.push(result);
+                    } else if let Some(&callee_idx) = self.functions.get(&name) {
+                        // TCO：不压帧，直接替换当前帧状态
+                        chunk_idx = callee_idx;
+                        code = self.chunks[chunk_idx].code.clone();
+                        strings = self.chunks[chunk_idx].strings.clone();
+                        ip = 0;
+                        locals = args;
+                        locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
                     } else {
                         return Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) });
                     }
@@ -1178,6 +1225,7 @@ impl Vm {
             (Value::Int(x, _), Value::Float(y)) => ((*x as f64) - y).abs() < 1e-10,
             (Value::Float(x), Value::Int(y, _)) => (x - (*y as f64)).abs() < 1e-10,
             (Value::Bool(x), Value::Bool(y)) => x == y,
+            (Value::Char(x), Value::Char(y)) => x == y,
             (Value::String(x), Value::String(y)) => x == y,
             (Value::Unit, Value::Unit) => true,
             _ => false,

@@ -1,0 +1,50 @@
+// 柯里化 / 部分应用 / 函数组合工具
+//
+// 在 Tenth 中，函数是一等公民。本模块提供：
+// - curry:   绑定第一个参数，返回接收剩余参数的闭包
+// - partial:  部分应用，curry 的别名
+// - compose:  函数组合 f ∘ g：compose(f, g)(x) = f(g(x))
+//
+// 对于多参数函数，可以多次调用 partial 逐步绑定参数。
+//
+// Usage:
+//   use std::curry::*
+//
+//   // 部分应用
+//   fn add(a, b) { a + b }
+//   let add5 = partial(add, 5);
+//   add5(3)     // → 8
+//
+//   // 函数组合
+//   fn double(x) { x * 2 }
+//   fn inc(x) { x + 1 }
+//   let double_then_inc = compose(inc, double);
+//   double_then_inc(3)  // → inc(double(3)) = inc(6) = 7
+
+// 绑定第一个参数，返回一个接收剩余参数的闭包。
+//
+// 示例:
+//   fn add(a, b) { a + b }
+//   let add5 = partial(add, 5);
+//   add5(3)   // → add(5, 3) → 8
+fn partial(f, arg) {
+    |x| { f(arg, x) }
+}
+
+// curry 是 partial 的别名。
+// 语义：curry(f, arg) 绑定第一个参数，返回接收剩余参数的闭包。
+fn curry(f, arg) {
+    |x| { f(arg, x) }
+}
+
+// 函数组合：compose(f, g)(x) = f(g(x))
+// 先应用 g，再应用 f。
+//
+// 示例:
+//   fn double(x) { x * 2 }
+//   fn inc(x) { x + 1 }
+//   let f = compose(inc, double);
+//   f(3)   // → inc(double(3)) → inc(6) → 7
+fn compose(f, g) {
+    |x| { f(g(x)) }
+}

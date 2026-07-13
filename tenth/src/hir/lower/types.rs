@@ -114,7 +114,7 @@ impl Lowerer {
                 }
             }
             // Vec<T> or [T] indexing returns the element type T
-            Type::Array(inner) => self.resolve_struct_type((**inner).clone()),
+            Type::Array { inner, .. } => self.resolve_struct_type((**inner).clone()),
             Type::Generic { base, args } => {
                 // Vec<T> -> T
                 if let Type::TypeParam { name } = base.as_ref() {
@@ -185,33 +185,29 @@ impl Lowerer {
     pub(super) fn resolve_call_type(&self, func: &HirExpr, args: &[HirExpr], span: &Span) -> TenthResult<Type> {
         match &func.kind {
             HirExprKind::Var(name) => {
-                if let Some((params, ret)) = self.scope.lookup_fn(name) {
-                    if params.len() != args.len() {
-                        let expected: Vec<String> = params.iter()
-                            .map(|(n, t)| format!("{}: {}", n, t))
-                            .collect();
-                        let got: Vec<String> = args.iter()
-                            .map(|a| format!("{}", a.ty))
-                            .collect();
-                        return Err(TenthError::TypeError {
-                            line: span.line,
-                            col: span.col,
-                            message: format!(
-                                "函数 '{}' 期望 {} 个参数 [{}]，但传入了 {} 个 [{}]",
-                                name, params.len(), expected.join(", "), args.len(), got.join(", ")
-                            ),
-                        });
+                // 使用函数重载解析：根据实参类型匹配合适的签名
+                let arg_types: Vec<Type> = args.iter().map(|a| a.ty.clone()).collect();
+                match self.scope.resolve_fn_overload(name, &arg_types, span) {
+                    Ok((params, ret)) => {
+                        // 跨函数 shape 求解：若 self.functions 中有更精确的 return_type（body lower 后合并的），用它
+                        let ret = if let Some(fn_def) = self.functions.iter().find(|f| f.name == name.as_str()) {
+                            Self::merge_return_shape(&ret, &fn_def.return_type)
+                        } else {
+                            ret
+                        };
+                        return Ok(self.resolve_struct_type(ret));
                     }
-                    // 跨函数 shape 求解：若 self.functions 中有更精确的 return_type（body lower 后合并的），用它
-                    let ret = if let Some(fn_def) = self.functions.iter().find(|f| f.name == name.as_str()) {
-                        // 合并 scope ret 和 fn_def.return_type 的 shape（fn_def 可能更精确）
-                        Self::merge_return_shape(&ret, &fn_def.return_type)
-                    } else {
-                        ret
-                    };
-                    return Ok(self.resolve_struct_type(ret));
+                    Err(e) => {
+                        // 若 scope 中无匹配，回退到内置函数检查
+                        // 仅当 resolve_fn_overload 报的是"未定义函数"错误时才回退
+                        if let TenthError::TypeError { message, .. } = &e {
+                            if message.starts_with("未定义的函数") {
+                                return self.resolve_builtin(name, args, span);
+                            }
+                        }
+                        return Err(e);
+                    }
                 }
-                self.resolve_builtin(name, args, span)
             }
             _ => Ok(Type::Unknown),
         }
@@ -389,9 +385,9 @@ impl Lowerer {
                             Type::Tensor { dtype: dtype.clone(), dims: dims.clone() }
                         }
                     }
-                    "to_vec" => Type::Array(Box::new(dtype.as_ref().clone())),
+                    "to_vec" => Type::Array { inner: Box::new(dtype.as_ref().clone()), size: None },
                     "len" | "size" | "dim" => Type::Base(BaseType::I64),
-                    "shape" => Type::Array(Box::new(Type::Base(BaseType::I64))),
+                    "shape" => Type::Array { inner: Box::new(Type::Base(BaseType::I64)), size: None },
                     _ => Type::Unknown,
                 }
             }
@@ -399,18 +395,18 @@ impl Lowerer {
                 "len" => Type::Base(BaseType::I64),
                 "contains" | "starts_with" | "ends_with" => Type::bool_(),
                 "trim" | "to_lowercase" | "to_uppercase" => Type::str_(),
-                "split" | "lines" => Type::Array(Box::new(Type::str_())),
+                "split" | "lines" => Type::Array { inner: Box::new(Type::str_()), size: None },
                 "replace" => Type::str_(),
                 "parse_int" | "parse_float" => Type::Enum("Option".to_string()),
-                "chars" => Type::Array(Box::new(Type::Base(BaseType::Char))),
+                "chars" => Type::Array { inner: Box::new(Type::Base(BaseType::Char)), size: None },
                 _ => Type::Unknown,
             },
-            Type::Array(inner) => match method {
+            Type::Array { inner, size } => match method {
                 "len" => Type::Base(BaseType::I64),
                 "push" => Type::unit(),
                 "pop" => Type::Enum("Option".to_string()),
                 "get" => Type::Enum("Option".to_string()),
-                "map" | "filter" => Type::Array(inner.clone()),
+                "map" | "filter" => Type::Array { inner: inner.clone(), size: *size },
                 "is_empty" => Type::bool_(),
                 "iter" => Type::Unknown,
                 _ => Type::Unknown,
@@ -442,7 +438,7 @@ impl Lowerer {
             "regex_compile" => Ok(Type::Enum("Result".to_string())),
             "regex_match" => Ok(Type::Base(BaseType::Bool)),
             "regex_find" | "regex_replace" => Ok(Type::str_()),
-            "regex_find_all" | "regex_split" => Ok(Type::Array(Box::new(Type::Unknown))),
+            "regex_find_all" | "regex_split" => Ok(Type::Array { inner: Box::new(Type::Unknown), size: None }),
             // Tensor 构造函数：dtype 从参数推断（若无 f32 线索则默认 F64）
             "tensor" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),
             "rand" | "randn" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),
@@ -455,7 +451,7 @@ impl Lowerer {
             "read_file" => Ok(Type::str_()),
             "str_at" => Ok(Type::str_()),
             "write_file" | "write_bytes" => Ok(Type::unit()),
-            "Vec::new" => Ok(Type::Array(Box::new(Type::Unknown))),
+            "Vec::new" => Ok(Type::Array { inner: Box::new(Type::Unknown), size: None }),
             "HashMap::new" => Ok(Type::Unknown),
             "compile_host" => Ok(Type::Base(BaseType::I32)),
             "format" => Ok(Type::str_()),
@@ -524,7 +520,7 @@ impl Lowerer {
             "path_join" => Ok(Type::str_()),
             "path_exists" | "path_is_file" | "path_is_dir" => Ok(Type::bool_()),
             "mkdir" => Ok(Type::unit()),
-            "list_dir" => Ok(Type::Array(Box::new(Type::str_()))),
+            "list_dir" => Ok(Type::Array { inner: Box::new(Type::str_()), size: None }),
             "file_size" => Ok(Type::Base(BaseType::I64)),
             "remove_file" | "copy_file" => Ok(Type::unit()),
             "lexer_new" | "lexer_tokenize" | "parse_program" | "lower_program" | "compile_to_wasm" | "compile_program" => Ok(Type::Unknown),

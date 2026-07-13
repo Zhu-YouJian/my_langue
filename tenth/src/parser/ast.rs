@@ -9,6 +9,7 @@ pub enum Literal {
     Float(f64, BaseType),
     Bool(bool),
     String(String),
+    Char(char),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -28,7 +29,7 @@ pub enum TypeAnnotation {
         dtype: Box<TypeAnnotation>,
         dims: Vec<DimSpec>,
     },
-    Array(Box<TypeAnnotation>),
+    Array { inner: Box<TypeAnnotation>, size: Option<usize> },
     FnType {
         params: Vec<TypeAnnotation>,
         ret: Box<TypeAnnotation>,
@@ -146,6 +147,12 @@ pub enum ExprKind {
     TryBlock(Box<Expr>),
     Await(Box<Expr>),
     Spawn(Box<Expr>),
+    /// Named argument in a function call: `f(name = value)`.
+    /// Only valid inside `Call` / `GenericCall` / `MethodCall` args.
+    NamedArg {
+        name: Ident,
+        value: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -204,11 +211,15 @@ pub enum StmtKind {
     },
     Expr(Expr),
     Return(Option<Expr>),
-    Break,
+    Break(Option<Expr>),
     Continue,
     While {
         cond: Expr,
         body: Box<Stmt>,
+    },
+    DoWhile {
+        body: Box<Stmt>,
+        condition: Expr,
     },
     For {
         var: Ident,
@@ -226,10 +237,19 @@ pub struct Stmt {
     pub span: Span,
 }
 
+/// A call argument: either positional (name is None) or named (name is Some).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallArg {
+    pub name: Option<Ident>,
+    pub value: Expr,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: Ident,
     pub type_ann: TypeAnnotation,
+    pub default_value: Option<Expr>,
+    pub variadic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -248,6 +268,7 @@ pub enum ItemKind {
         body: Expr,
         is_pub: bool,
         is_async: bool,
+        is_test: bool,
     },
     Const {
         name: Ident,

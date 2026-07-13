@@ -12,7 +12,9 @@ pub(super) enum Ownership {
 
 pub(super) struct Scope {
     variables: HashMap<String, (Type, bool)>,
-    functions: HashMap<String, (Vec<(String, Type)>, Type)>,
+    /// 函数重载支持：同一个函数名可以对应多个签名。
+    /// key = 函数名，value = Vec<(param_types, return_type)>
+    functions: HashMap<String, Vec<(Vec<(String, Type)>, Type)>>,
     ownership: HashMap<String, Ownership>,
     /// 跨语句借用跟踪：holder_var -> Vec<borrowed_var>。
     /// 当 `let r = &x;` 创建持久借用时，记录 r → [x]，使 release_borrows
@@ -163,13 +165,105 @@ impl Scope {
     }
 
     pub(super) fn define_fn(&mut self, name: String, params: Vec<(String, Type)>, ret: Type) {
-        self.functions.insert(name, (params, ret));
+        let entry = self.functions.entry(name).or_insert_with(Vec::new);
+        // 若已存在完全相同的签名（参数类型完全一致），跳过重复定义
+        if !entry.iter().any(|(existing_params, _)| {
+            existing_params.len() == params.len()
+                && existing_params.iter().zip(params.iter()).all(|(a, b)| a.1 == b.1)
+        }) {
+            entry.push((params, ret));
+        }
     }
 
-    pub(super) fn lookup_fn(&self, name: &str) -> Option<(Vec<(String, Type)>, Type)> {
-        if let Some(f) = self.functions.get(name) {
-            return Some(f.clone());
+    /// 按函数名查找函数签名列表。返回所有同名的重载签名。
+    pub(super) fn lookup_fn_all(&self, name: &str) -> Option<&Vec<(Vec<(String, Type)>, Type)>> {
+        if let Some(fns) = self.functions.get(name) {
+            return Some(fns);
         }
-        self.parent.as_ref().and_then(|p| p.lookup_fn(name))
+        self.parent.as_ref().and_then(|p| p.lookup_fn_all(name))
+    }
+
+    /// 查询函数签名。若有重载，按参数类型匹配最佳签名；若无重载，返回唯一签名。
+    pub(super) fn lookup_fn(&self, name: &str) -> Option<(Vec<(String, Type)>, Type)> {
+        let all = self.lookup_fn_all(name)?;
+        if all.len() == 1 {
+            return Some(all[0].clone());
+        }
+        // 多签名场景：返回第一个（实际调用时由 resolve_call_type 按参数类型匹配合适签名）
+        Some(all[0].clone())
+    }
+
+    /// 按参数类型匹配合适的函数重载签名。
+    /// 返回匹配的 (param_types, return_type)。若无精确匹配，报告歧义。
+    pub(super) fn resolve_fn_overload(
+        &self,
+        name: &str,
+        arg_types: &[Type],
+        span: &crate::lexer::token::Span,
+    ) -> TenthResult<(Vec<(String, Type)>, Type)> {
+        let all = self.lookup_fn_all(name).ok_or_else(|| {
+            TenthError::TypeError {
+                line: span.line, col: span.col,
+                message: format!("未定义的函数 '{}'", name),
+            }
+        })?;
+
+        if all.is_empty() {
+            return Err(TenthError::TypeError {
+                line: span.line, col: span.col,
+                message: format!("未定义的函数 '{}'", name),
+            });
+        }
+
+        if all.len() == 1 {
+            return Ok(all[0].clone());
+        }
+
+        // 多重载：找参数数量匹配且参数类型精确匹配的签名
+        let mut matches: Vec<&(Vec<(String, Type)>, Type)> = all.iter()
+            .filter(|(params, _)| params.len() == arg_types.len())
+            .filter(|(params, _)| {
+                params.iter().zip(arg_types.iter()).all(|((_, pty), aty)| {
+                    pty == aty
+                })
+            })
+            .collect();
+
+        if matches.is_empty() {
+            // 没有精确匹配，尝试兼容匹配（参数类型可统一）
+            let mut compatible: Vec<&(Vec<(String, Type)>, Type)> = all.iter()
+                .filter(|(params, _)| params.len() == arg_types.len())
+                .collect();
+            if compatible.is_empty() {
+                return Err(TenthError::TypeError {
+                    line: span.line, col: span.col,
+                    message: format!(
+                        "函数 '{}' 有 {} 个重载，但参数数量 {} 与任一重载不匹配",
+                        name, all.len(), arg_types.len()
+                    ),
+                });
+            }
+            if compatible.len() == 1 {
+                return Ok(compatible[0].clone());
+            }
+            matches = compatible;
+        }
+
+        if matches.len() == 1 {
+            return Ok(matches[0].clone());
+        }
+
+        // 多个匹配：报告歧义
+        let sigs: Vec<String> = matches.iter().map(|(params, ret)| {
+            let param_str: Vec<String> = params.iter().map(|(_, t)| format!("{}", t)).collect();
+            format!("({}) -> {}", param_str.join(", "), ret)
+        }).collect();
+        Err(TenthError::TypeError {
+            line: span.line, col: span.col,
+            message: format!(
+                "函数 '{}' 调用歧义：匹配到多个重载签名 [{}]",
+                name, sigs.join("; ")
+            ),
+        })
     }
 }

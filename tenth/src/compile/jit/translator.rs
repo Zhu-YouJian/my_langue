@@ -241,6 +241,12 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.call_hostcall_u8("host_make_bool", if b { 1 } else { 0 }, out);
                 self.bump_sp()?;
             }
+            PushChar(c) => {
+                // JIT不支持Char直接作为标量值，使用Int作为fallback
+                let out = self.stack_addr_at_sp();
+                self.call_hostcall_i64("host_make_int", c as i64, out);
+                self.bump_sp()?;
+            }
             PushStr(i) => {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_u64("host_make_str", i as u64, out);
@@ -512,9 +518,9 @@ impl<'a, M: Module> Translator<'a, M> {
                 // Yield（Phase 2 Step 3-4 协作式调度）同样需要调度器支持，JIT 不支持。
                 return Err(format!("JIT: async opcode not supported, fallback to VM"));
             }
-            MakeTuple(_) | IsTuple(_) | TupleGet(_) | Try => {
-                // Tuple / Try opcodes not JIT-compiled; fallback to VM.
-                return Err(format!("JIT: tuple/try opcode not supported, fallback to VM"));
+            MakeTuple(_) | IsTuple(_) | TupleGet(_) | Try | TailCall(..) => {
+                // Tuple / Try / TailCall opcodes not JIT-compiled; fallback to VM.
+                return Err(format!("JIT: tuple/try/tailcall opcode not supported, fallback to VM"));
             }
         }
         Ok(())

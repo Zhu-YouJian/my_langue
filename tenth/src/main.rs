@@ -152,6 +152,17 @@ fn run_file(path: &str, config: MemoryConfig, sandbox: Option<FsSandbox>, timeou
         eprintln!("{}", w.display_with_source(Some(&source)));
     }
 
+    // 检测是否有测试函数：收集所有 is_test=true 的函数
+    let test_fns: Vec<&str> = hir.functions.iter()
+        .filter(|f| f.is_test)
+        .map(|f| f.name.as_str())
+        .collect();
+
+    if !test_fns.is_empty() {
+        // 测试模式：收集并执行所有测试函数，输出 PASS/FAIL 报告
+        return run_tests(&hir, test_fns, &source);
+    }
+
     // Skip VM if TENTH_NO_VM env var is set (for debugging interpreter)
     let skip_vm = std::env::var("TENTH_NO_VM").is_ok();
     if !skip_vm {
@@ -186,6 +197,49 @@ fn run_file(path: &str, config: MemoryConfig, sandbox: Option<FsSandbox>, timeou
         // 问题16修复：与 VM 路径一致，过滤 Unit 值避免输出 "= ()"
         Some(val) if !matches!(val, Value::Unit) => println!("= {}", val),
         _ => {}
+    }
+    Ok(())
+}
+
+/// 执行测试模式：收集所有 #[test] 函数，逐一执行并输出 PASS/FAIL 报告。
+fn run_tests(hir: &tenth::hir::hir::HirProgram, test_fns: Vec<&str>, _source: &str) -> TenthResult<()> {
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    println!("running {} tests", test_fns.len());
+
+    for fn_name in &test_fns {
+        print!("test {} ... ", fn_name);
+
+        // Use the full HirProgram (all functions/modules available)
+        // Execute via interpreter
+        let mut interpreter = Interpreter::new(&hir);
+
+        // Try calling the test function directly
+        match interpreter.execute_fn_test(fn_name) {
+            Ok(_) => {
+                println!("ok");
+                passed += 1;
+            }
+            Err(e) => {
+                println!("FAILED");
+                failed += 1;
+                failures.push(format!("{}: {}", fn_name, e));
+            }
+        }
+    }
+
+    println!();
+    if !failures.is_empty() {
+        for fail in &failures {
+            eprintln!("{}", fail);
+        }
+    }
+    println!("test result: {} passed; {} failed", passed, failed);
+
+    if failed > 0 {
+        std::process::exit(1);
     }
     Ok(())
 }

@@ -23,7 +23,7 @@ pub enum Type {
         dtype: Box<Type>,
         dims: Vec<Dim>,
     },
-    Array(Box<Type>),
+    Array { inner: Box<Type>, size: Option<usize> },
     FnType {
         params: Vec<Type>,
         ret: Box<Type>,
@@ -68,7 +68,13 @@ impl fmt::Display for Type {
                 }
                 write!(f, "]")
             }
-            Type::Array(t) => write!(f, "[{}]", t),
+            Type::Array { inner, size } => {
+                if let Some(n) = size {
+                    write!(f, "[{}; {}]", inner, n)
+                } else {
+                    write!(f, "[{}]", inner)
+                }
+            }
             Type::FnType { params, ret } => {
                 write!(f, "fn(")?;
                 for (i, p) in params.iter().enumerate() {
@@ -244,7 +250,10 @@ impl Type {
                     args: arg_tys,
                 }
             }
-            TA::Array(inner) => Type::Array(Box::new(Self::from_annotation(inner))),
+            TA::Array { inner, size } => Type::Array {
+                inner: Box::new(Self::from_annotation(inner)),
+                size: *size,
+            },
             TA::FnType { params, ret } => Type::FnType {
                 params: params.iter().map(Self::from_annotation).collect(),
                 ret: Box::new(Self::from_annotation(ret)),

@@ -337,6 +337,7 @@ impl super::Interpreter {
             (Value::Float(a), Value::Float32(b)) => ((*a as f32) - b).abs() < 1e-6,
             (Value::Float32(a), Value::Float(b)) => (a - (*b as f32)).abs() < 1e-6,
             (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Char(a), Value::Char(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
             (Value::Tuple(a), Value::Tuple(b)) => {
@@ -353,6 +354,7 @@ impl super::Interpreter {
             Value::Float(f) => f.to_string(),
             Value::Float32(f) => f.to_string(),
             Value::Bool(b) => b.to_string(),
+            Value::Char(c) => c.to_string(),
             Value::String(s) => s.clone(),
             Value::Unit => "()".to_string(),
             Value::Enum { enum_name, variant, fields } => {

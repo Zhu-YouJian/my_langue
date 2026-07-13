@@ -406,6 +406,98 @@ impl Interpreter {
         }
     }
 
+    /// Execute a single #[test] function by name.
+    /// First runs execute_program to initialize state, then calls the test function.
+    pub fn execute_fn_test(&mut self, fn_name: &str) -> TenthResult<Option<Value>> {
+        // Run full program initialization (registers all fn refs, builtins, etc.)
+        // This also runs main/main_expr if present, but for test files they typically don't have one.
+        // For safety, we ignore the program result since we're only interested in the test fn.
+        let _ = self.execute_program_inner()?;
+
+        // Find and evaluate the test function
+        self.call_named_function(fn_name)
+    }
+
+    /// Internal: run initialization without executing main.
+    fn execute_program_inner(&mut self) -> TenthResult<()> {
+        // Register builtins from execute_program
+        self.insert_var("tensor".to_string(), Value::FnRef {
+            name: "tensor".to_string(),
+            params: vec![("data".to_string(), Type::Unknown)],
+            return_type: Type::Unknown,
+        });
+        for name in &["start_grad", "new_grad", "stop_grad", "zero_grad"] {
+            self.insert_var(name.to_string(), Value::FnRef {
+                name: name.to_string(), params: vec![], return_type: Type::unit(),
+            });
+        }
+        self.insert_var("cross_entropy".to_string(), Value::FnRef {
+            name: "cross_entropy".to_string(),
+            params: vec![("logits".to_string(), Type::Unknown), ("target".to_string(), Type::Unknown)],
+            return_type: Type::Unknown,
+        });
+        self.insert_var("select".to_string(), Value::FnRef {
+            name: "select".to_string(),
+            params: vec![("cond".to_string(), Type::Unknown), ("then".to_string(), Type::Unknown), ("else".to_string(), Type::Unknown)],
+            return_type: Type::Unknown,
+        });
+        self.insert_var("scatter".to_string(), Value::FnRef {
+            name: "scatter".to_string(),
+            params: vec![("base".to_string(), Type::Unknown), ("dim".to_string(), Type::Unknown), ("index".to_string(), Type::Unknown), ("src".to_string(), Type::Unknown)],
+            return_type: Type::Unknown,
+        });
+        self.insert_var("gather".to_string(), Value::FnRef {
+            name: "gather".to_string(),
+            params: vec![("base".to_string(), Type::Unknown), ("dim".to_string(), Type::Unknown), ("index".to_string(), Type::Unknown)],
+            return_type: Type::Unknown,
+        });
+        for name in &["abs", "sqrt", "sin", "cos", "ln", "pow"] {
+            self.insert_var(name.to_string(), Value::FnRef {
+                name: name.to_string(), params: vec![("x".to_string(), Type::Unknown)], return_type: Type::Unknown,
+            });
+        }
+        for name in &["zeros", "ones"] {
+            self.insert_var(name.to_string(), Value::FnRef {
+                name: name.to_string(), params: vec![("dims".to_string(), Type::Unknown)], return_type: Type::Unknown,
+            });
+        }
+        // Register all program functions as FnRefs
+        for func in self.functions.clone() {
+            let params = func.params.clone();
+            let ret = func.return_type.clone();
+            self.insert_var(func.name.clone(), Value::FnRef { name: func.name.clone(), params, return_type: ret });
+        }
+        // Register module functions
+        for module in self.modules.clone().values() {
+            for func in &module.functions {
+                let params = func.params.clone();
+                let ret = func.return_type.clone();
+                self.insert_var(func.name.clone(), Value::FnRef { name: func.name.clone(), params, return_type: ret });
+            }
+        }
+        // Reset arena
+        self.arena.reset();
+        Ok(())
+    }
+
+    /// Find a function by name and evaluate its body in a new scope.
+    fn call_named_function(&mut self, fn_name: &str) -> TenthResult<Option<Value>> {
+        let test_fn = self.functions.iter()
+            .find(|f| f.name == fn_name)
+            .cloned()
+            .ok_or_else(|| crate::error::TenthError::RuntimeError {
+                line: None, col: None,
+                message: format!("函数 '{}' 未找到", fn_name),
+            })?;
+        self.push_scope();
+        for (param_name, _) in &test_fn.params {
+            self.insert_var(param_name.clone(), Value::Unit);
+        }
+        let result = self.eval_expr(&test_fn.body);
+        self.pop_scope();
+        match result { Ok(val) => Ok(val), Err(e) => Err(e) }
+    }
+
     pub(super) fn resolve_var(&self, name: &str) -> Option<Value> {
         // AUDIT-11.4.3: 扁平化索引，O(1) lookup。
         match self.vars.get(name).and_then(|s| s.last()) {

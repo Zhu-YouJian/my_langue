@@ -209,7 +209,10 @@ pub(super) fn substitute_type(ty: &Type, map: &HashMap<String, Type>) -> Type {
             dtype: Box::new(substitute_type(dtype, map)),
             dims: dims.clone(),
         },
-        Type::Array(inner) => Type::Array(Box::new(substitute_type(inner, map))),
+        Type::Array { inner, size } => Type::Array {
+            inner: Box::new(substitute_type(inner, map)),
+            size: *size,
+        },
         Type::Generic { base, args } => Type::Generic {
             base: Box::new(substitute_type(base, map)),
             args: args.iter().map(|t| substitute_type(t, map)).collect(),
@@ -415,11 +418,15 @@ fn substitute_stmt_in_place(stmt: &mut HirStmt, map: &HashMap<String, Type>) {
             substitute_expr_in_place(cond, map);
             substitute_stmt_in_place(body, map);
         }
+        HirStmtKind::DoWhile { body, cond } => {
+            substitute_stmt_in_place(body, map);
+            substitute_expr_in_place(cond, map);
+        }
         HirStmtKind::For { iter, body, .. } => {
             substitute_expr_in_place(iter, map);
             substitute_stmt_in_place(body, map);
         }
-        HirStmtKind::Break | HirStmtKind::Continue => {}
+        HirStmtKind::Break(_) | HirStmtKind::Continue => {}
         HirStmtKind::Loop { body } => {
             for s in body.iter_mut() {
                 substitute_stmt_in_place(s, map);

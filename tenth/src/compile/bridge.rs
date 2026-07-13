@@ -84,6 +84,7 @@ pub fn compact_program_to_ast(prog_val: &Value) -> TenthResult<ast::Program> {
                     body: main_body,
                     is_pub: false,
                     is_async: false,
+                    is_test: false,
                 },
                 span: dummy_span.clone(),
             });
@@ -323,6 +324,8 @@ fn convert_fn_def(
         ast_params.push(ast::Param {
             name: ast::Ident { name: pname, span: span.clone() },
             type_ann: parse_type_annotation(&ptype, span),
+            default_value: None,
+            variadic: false,
         });
     }
 
@@ -359,6 +362,7 @@ fn convert_fn_def(
             },
             is_pub: false,
             is_async: false,
+            is_test: false,
         },
         span: span.clone(),
     })
@@ -588,7 +592,7 @@ fn convert_stmt(
         }
         "break" => {
             Ok(Some(ast::Stmt {
-                kind: ast::StmtKind::Break,
+                kind: ast::StmtKind::Break(None),
                 span: span.clone(),
             }))
         }

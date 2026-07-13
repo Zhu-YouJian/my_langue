@@ -67,6 +67,43 @@ impl Lowerer {
                 let b = self.lower_stmt(body)?;
                 HirStmtKind::While { cond: c, body: Box::new(b) }
             }
+            StmtKind::DoWhile { body, condition } => {
+                // Lower do-while to loop { body; if !condition { break; } }
+                let b = self.lower_stmt(body)?;
+                let c = self.lower_expr(condition)?;
+                let neg_cond = HirExpr {
+                    kind: HirExprKind::Unary { op: UnaryOp::Not, expr: Box::new(c), ty: Type::bool_() },
+                    ty: Type::bool_(),
+                    span: span.clone(),
+                };
+                let break_stmt = HirStmt {
+                    kind: HirStmtKind::Break(None),
+                    span: span.clone(),
+                };
+                let if_break = HirExpr {
+                    kind: HirExprKind::If {
+                        cond: Box::new(neg_cond),
+                        then_branch: Box::new(HirExpr {
+                            kind: HirExprKind::Block { stmts: vec![break_stmt], final_expr: None },
+                            ty: Type::unit(),
+                            span: span.clone(),
+                        }),
+                        else_branch: None,
+                        ty: Type::unit(),
+                    },
+                    ty: Type::unit(),
+                    span: span.clone(),
+                };
+                HirStmtKind::Loop {
+                    body: vec![
+                        b,
+                        HirStmt {
+                            kind: HirStmtKind::Expr(if_break),
+                            span: span.clone(),
+                        },
+                    ],
+                }
+            }
             StmtKind::For { var, iter, body } => {
                 let it = self.lower_expr(iter)?;
                 // Release borrows from the iterator expression so the body can reborrow.
@@ -79,7 +116,12 @@ impl Lowerer {
                 self.scope = *self.scope.parent.take().unwrap();
                 HirStmtKind::For { var: var.name.clone(), iter: it, body: Box::new(b) }
             }
-            StmtKind::Break => HirStmtKind::Break,
+            StmtKind::Break(val) => {
+                HirStmtKind::Break(val.as_ref().map(|e| Box::new(self.lower_expr(e).unwrap_or_else(|_| {
+                    // Fallback: if lowering fails, create a unit expression
+                    HirExpr { kind: HirExprKind::Block { stmts: vec![], final_expr: None }, ty: Type::unit(), span: span.clone() }
+                }))))
+            }
             StmtKind::Continue => HirStmtKind::Continue,
             StmtKind::Loop { body } => {
                 let mut lowered_body: Vec<HirStmt> = Vec::new();
@@ -228,9 +270,12 @@ impl Lowerer {
                                     generics: gen_names,
                                     generics_bounds: build_generics_bounds(generics),
                                     params: param_types,
+                                    param_defaults: Vec::new(),
+                                    param_variadic: Vec::new(),
                                     return_type: ret_ty,
                                     body: lowered_body,
                                     span: fn_item.span.clone(),
+                                    is_test: false,
                                 };
                                 method_map.insert(fn_def.name.clone(), fn_def);
                             }
@@ -288,9 +333,12 @@ impl Lowerer {
                                     generics: gen_names,
                                     generics_bounds: build_generics_bounds(generics),
                                     params: param_types,
+                                    param_defaults: Vec::new(),
+                                    param_variadic: Vec::new(),
                                     return_type: ret_ty,
                                     body: lowered_body,
                                     span: fn_item.span.clone(),
+                                    is_test: false,
                                 };
                                 // Also register with mangled name for WASM backend method dispatch
                                 let mangled_name = format!("__{}_{}", type_name.name, fn_def.name);
@@ -503,7 +551,7 @@ impl Lowerer {
                         }
                     }
                 }
-                ast::ItemKind::Function { name, generics, params, return_type, body, .. } => {
+                ast::ItemKind::Function { name, generics, params, return_type, body, is_test, .. } => {
                     if name.name == "<expr>" {
                         continue;
                     }
@@ -534,14 +582,28 @@ impl Lowerer {
                         &ret_ty, &lowered_body.ty, &item.span, "函数返回值"
                     )?;
 
+                    // Lower default parameter values
+                    let mut param_defaults: Vec<Option<HirExpr>> = Vec::new();
+                    for p in params.iter() {
+                        if let Some(dv) = &p.default_value {
+                            let lowered = self.lower_expr(dv)?;
+                            param_defaults.push(Some(lowered));
+                        } else {
+                            param_defaults.push(None);
+                        }
+                    }
+
                     let fn_def = HirFnDef {
                         name: name.name.clone(),
                         generics: gen_names,
                         generics_bounds: build_generics_bounds(generics),
                         params: param_types,
+                        param_defaults,
+                        param_variadic: params.iter().map(|p| p.variadic).collect(),
                         return_type: merged_ret_ty,
                         body: lowered_body,
                         span: item.span.clone(),
+                        is_test: *is_test,
                     };
 
                     if fn_def.generics.is_empty() {

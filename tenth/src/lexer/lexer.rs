@@ -338,6 +338,8 @@ impl Lexer {
             "match" => TokenKind::Match,
             "for" => TokenKind::For,
             "while" => TokenKind::While,
+            "do" => TokenKind::Do,
+            "yield" => TokenKind::Yield,
             "loop" => TokenKind::Loop,
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
@@ -537,6 +539,149 @@ impl Lexer {
         })
     }
 
+    /// 解析字节串字面量：`b"..."`。
+    /// 仅允许 ASCII 字符 + `\xNN` 转义序列。调用前已消费 `b` 和 `"`。
+    fn read_byte_string(&mut self) -> TenthResult<Token> {
+        let span = self.span();
+        // 已消费了 b 和 " — 直接读取内容
+        let mut bytes: Vec<u8> = Vec::new();
+        while let Some(ch) = self.peek() {
+            if ch == '"' {
+                self.advance(); // consume closing "
+                return Ok(Token {
+                    kind: TokenKind::ByteString(bytes),
+                    span,
+                });
+            }
+            if ch == '\\' {
+                self.advance();
+                match self.peek() {
+                    Some('x') => {
+                        // \xNN hex escape
+                        self.advance();
+                        let hi = self.peek().and_then(|c| c.to_digit(16));
+                        self.advance();
+                        let lo = self.peek().and_then(|c| c.to_digit(16));
+                        match (hi, lo) {
+                            (Some(h), Some(l)) => {
+                                self.advance();
+                                bytes.push((h as u8) * 16 + l as u8);
+                            }
+                            _ => {
+                                return Err(TenthError::LexerError {
+                                    line: span.line,
+                                    col: span.col,
+                                    message: "无效的字节串转义序列：\\x 后需要两个十六进制数字".into(),
+                                });
+                            }
+                        }
+                    }
+                    Some('n') => { self.advance(); bytes.push(b'\n'); }
+                    Some('r') => { self.advance(); bytes.push(b'\r'); }
+                    Some('t') => { self.advance(); bytes.push(b'\t'); }
+                    Some('\\') => { self.advance(); bytes.push(b'\\'); }
+                    Some('"') => { self.advance(); bytes.push(b'"'); }
+                    Some(c) => {
+                        self.advance();
+                        return Err(TenthError::LexerError {
+                            line: span.line,
+                            col: span.col,
+                            message: format!("字节串中不支持的转义序列：\\{}", c),
+                        });
+                    }
+                    None => {
+                        return Err(TenthError::LexerError {
+                            line: span.line,
+                            col: span.col,
+                            message: "字节串中不完整的转义序列".into(),
+                        });
+                    }
+                }
+            } else if ch.is_ascii() {
+                let byte = ch as u8;
+                if byte > 0x7F {
+                    return Err(TenthError::LexerError {
+                        line: span.line,
+                        col: span.col,
+                        message: format!("字节串中不允许非 ASCII 字符：'{}'", ch),
+                    });
+                }
+                bytes.push(byte);
+                self.advance();
+            } else {
+                return Err(TenthError::LexerError {
+                    line: span.line,
+                    col: span.col,
+                    message: format!("字节串中不允许非 ASCII 字符：'{}'", ch),
+                });
+            }
+        }
+        Err(TenthError::LexerError {
+            line: span.line,
+            col: span.col,
+            message: "字节串未闭合".into(),
+        })
+    }
+
+    /// 解析原始字符串字面量：`r"..."`。
+    /// 不处理任何转义序列，直接读取到下一个 `"`。
+    /// 调用前已消费 `r` 和 `"`。
+    fn read_raw_string(&mut self) -> TenthResult<Token> {
+        let span = self.span();
+        let mut s = String::new();
+        while let Some(ch) = self.peek() {
+            if ch == '"' {
+                self.advance(); // consume closing "
+                return Ok(Token {
+                    kind: TokenKind::RawString(s),
+                    span,
+                });
+            }
+            s.push(ch);
+            self.advance();
+        }
+        Err(TenthError::LexerError {
+            line: span.line,
+            col: span.col,
+            message: "原始字符串未闭合".into(),
+        })
+    }
+
+    /// 解析多行字符串字面量：`"""..."""`。
+    /// 调用前已消费开头的 `"""`。读取直到遇关闭 `"""`。
+    fn read_multiline_string(&mut self) -> TenthResult<Token> {
+        let span = self.span();
+        let mut s = String::new();
+        // 已消费三个 "，直接读取内容
+        loop {
+            // Check for closing """
+            if self.peek() == Some('"') && self.peek_next() == Some('"')
+                && self.source.get(self.pos + 2).copied() == Some('"')
+            {
+                self.advance(); // consume 1st "
+                self.advance(); // consume 2nd "
+                self.advance(); // consume 3rd "
+                return Ok(Token {
+                    kind: TokenKind::MultiLineString(s),
+                    span,
+                });
+            }
+            match self.peek() {
+                None => {
+                    return Err(TenthError::LexerError {
+                        line: span.line,
+                        col: span.col,
+                        message: "多行字符串未闭合".into(),
+                    });
+                }
+                Some(ch) => {
+                    s.push(ch);
+                    self.advance();
+                }
+            }
+        }
+    }
+
     fn single_char_token(&self, ch: char) -> Option<TokenKind> {
         match ch {
             '(' => Some(TokenKind::LParen),
@@ -552,6 +697,7 @@ impl Lexer {
             '%' => Some(TokenKind::Percent),
             '^' => Some(TokenKind::Caret),
             '?' => Some(TokenKind::QuestionMark),
+            '#' => Some(TokenKind::Hash),
             _ => None,
         }
     }
@@ -576,12 +722,33 @@ impl Lexer {
             return self.read_number(ch);
         }
 
+        // 字节串字面量 `b"..."`
+        if ch == 'b' && self.peek_next() == Some('"') {
+            self.advance(); // consume 'b'
+            self.advance(); // consume '"'
+            return self.read_byte_string();
+        }
+
+        // 原始字符串字面量 `r"..."`
+        if ch == 'r' && self.peek_next() == Some('"') {
+            self.advance(); // consume 'r'
+            self.advance(); // consume '"'
+            return self.read_raw_string();
+        }
+
         if ch.is_alphabetic() || ch == '_' {
             self.advance();
             return Ok(self.read_identifier(ch));
         }
 
         if ch == '"' {
+            // 多行字符串 `"""..."""`
+            if self.peek_next() == Some('"') && self.source.get(self.pos + 2).copied() == Some('"') {
+                self.advance(); // consume 1st "
+                self.advance(); // consume 2nd "
+                self.advance(); // consume 3rd "
+                return self.read_multiline_string();
+            }
             return self.read_string();
         }
 
@@ -680,6 +847,10 @@ impl Lexer {
         if ch == '.' {
             if self.peek() == Some('.') {
                 self.advance();
+                if self.peek() == Some('.') {
+                    self.advance();
+                    return Ok(Token { kind: TokenKind::DotDotDot, span });
+                }
                 if self.peek() == Some('=') {
                     self.advance();
                     return Ok(Token { kind: TokenKind::DotDotEq, span });

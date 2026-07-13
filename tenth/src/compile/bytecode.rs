@@ -22,6 +22,12 @@ pub struct BytecodeCompiler {
     closure_chunks: Vec<(String, Chunk)>,
     /// Counter for generating unique closure names
     closure_counter: usize,
+    /// Stack of try-block catch labels (for intercepting `?` inside try blocks)
+    try_block_stack: Vec<usize>,
+    /// Number of params in current function (for TCO arg-count check)
+    current_fn_args: usize,
+    /// True if the current expression is in tail-call position
+    tail_call_ok: bool,
 }
 
 impl BytecodeCompiler {
@@ -35,15 +41,21 @@ impl BytecodeCompiler {
             loop_stack: Vec::new(),
             closure_chunks: Vec::new(),
             closure_counter: 0,
+            try_block_stack: Vec::new(),
+            current_fn_args: 0,
+            tail_call_ok: false,
         }
     }
 
     pub fn compile(mut self, func: &HirFnDef) -> TenthResult<(Chunk, Vec<(String, Chunk)>)> {
         self.chunk.num_args = func.params.len();
+        self.current_fn_args = func.params.len();
         for (name, _) in &func.params {
             self.locals.push(name.clone());
         }
+        self.tail_call_ok = true;
         self.compile_expr(&func.body)?;
+        self.tail_call_ok = false;
         // Only push Unit for void functions
         if matches!(func.return_type, crate::hir::types::Type::Base(crate::hir::types::BaseType::Unit)) {
             self.chunk.emit(Op::PushUnit);
@@ -72,6 +84,7 @@ impl BytecodeCompiler {
                     _ => self.chunk.emit(Op::PushFloat(*f)),
                 },
                 crate::hir::hir::Literal::Bool(b) => self.chunk.emit(Op::PushBool(*b)),
+                crate::hir::hir::Literal::Char(c) => self.chunk.emit(Op::PushChar(*c as u32)),
                 crate::hir::hir::Literal::String(s) => {
                     let i = self.chunk.add_string(s);
                     self.chunk.emit(Op::PushStr(i));
@@ -125,7 +138,32 @@ impl BytecodeCompiler {
             Unary { op, expr: inner, .. } => {
                 self.compile_expr(inner)?;
                 use crate::hir::hir::UnaryOp::*;
-                self.chunk.emit(match op { Neg => Op::Neg, Not => Op::Not, Try => Op::Try });
+                match op {
+                    Neg => self.chunk.emit(Op::Neg),
+                    Not => self.chunk.emit(Op::Not),
+                    Try => {
+                        if let Some(&catch_label) = self.try_block_stack.last() {
+                            // Inside a try block: check for Result::Err, jump to catch
+                            // Stack: [..., val]
+                            let ok_label = self.new_label();
+                            self.chunk.emit(Op::Dup);
+                            let err_i = self.chunk.add_string("Err");
+                            self.chunk.emit(Op::IsEnumVariant(err_i));
+                            // If not Err → jump to ok unwrap path
+                            self.chunk.emit(Op::JmpFalse(0));
+                            self.patch_jump(ok_label);
+                            // It IS Err: jump to try block catch handler (value stays on stack)
+                            self.chunk.emit(Op::Jump(0));
+                            self.patch_jump(catch_label);
+                            // Ok path: extract inner value from Result::Ok
+                            self.label(ok_label);
+                            let field_i = self.chunk.add_string("_0");
+                            self.chunk.emit(Op::EnumGetField(field_i));
+                        } else {
+                            self.chunk.emit(Op::Try);
+                        }
+                    }
+                }
             }
 
             Call { func, args, .. } => {
@@ -136,7 +174,13 @@ impl BytecodeCompiler {
                 match &func.kind {
                     Var(name) => {
                         let i = self.chunk.add_string(name);
-                        self.chunk.emit(Op::CallN(i, args.len()));
+                        // Tail call optimization: reuse current frame when in tail position
+                        // and arg count matches the current function's param count.
+                        if self.tail_call_ok && args.len() == self.current_fn_args {
+                            self.chunk.emit(Op::TailCall(i, args.len()));
+                        } else {
+                            self.chunk.emit(Op::CallN(i, args.len()));
+                        }
                     }
                     _ => {
                         // Indirect call — compile func as expression, then we'd need CallIndirect
@@ -148,32 +192,46 @@ impl BytecodeCompiler {
             }
 
             If { cond, then_branch, else_branch, .. } => {
+                // Condition is not in tail position
+                let saved_tail = self.tail_call_ok;
+                self.tail_call_ok = false;
                 self.compile_expr(cond)?;
                 let else_label = self.new_label();
                 let end_label = self.new_label();
                 self.chunk.emit(Op::JmpFalse(0));
                 self.patch_jump(else_label);
+                // Then branch inherits tail position
+                self.tail_call_ok = saved_tail;
                 self.compile_expr(then_branch)?;
                 self.chunk.emit(Op::Jump(0));
                 self.patch_jump(end_label);
                 self.label(else_label);
+                // Else branch inherits tail position
+                self.tail_call_ok = saved_tail;
                 if let Some(eb) = else_branch {
                     self.compile_expr(eb)?;
                 } else {
                     self.chunk.emit(Op::PushUnit);
                 }
+                self.tail_call_ok = saved_tail;
                 self.label(end_label);
             }
 
             Block { stmts, final_expr } => {
+                let saved_tail = self.tail_call_ok;
+                // Statements are not in tail position
+                self.tail_call_ok = false;
                 for s in stmts {
                     self.compile_stmt(s)?;
                 }
+                // Only final_expr is in tail position
+                self.tail_call_ok = saved_tail;
                 if let Some(e) = final_expr {
                     self.compile_expr(e)?;
                 } else {
                     self.chunk.emit(Op::PushUnit);
                 }
+                self.tail_call_ok = saved_tail;
             }
 
             Assign { target, value } => {
@@ -401,6 +459,7 @@ impl BytecodeCompiler {
                                     _ => self.chunk.emit(Op::PushFloat(*f)),
                                 },
                                 crate::hir::hir::Literal::Bool(b) => self.chunk.emit(Op::PushBool(*b)),
+                                crate::hir::hir::Literal::Char(c) => self.chunk.emit(Op::PushChar(*c as u32)),
                                 crate::hir::hir::Literal::String(s) => {
                                     let i = self.chunk.add_string(s);
                                     self.chunk.emit(Op::PushStr(i));
@@ -522,8 +581,27 @@ impl BytecodeCompiler {
             HirExprKind::Move { .. } => {
                 self.chunk.emit(Op::MoveOp);
             }
-            HirExprKind::TryBlock { .. } => {
-                // TryBlock not yet supported in bytecode; emit as no-op
+            HirExprKind::TryBlock(inner) => {
+                // `try { body }` — catch ? propagation, wrap as Result::Ok/Err
+                // See interpreter eval.rs:552-574 for reference semantics.
+                let catch_label = self.new_label();
+                let end_label = self.new_label();
+                self.try_block_stack.push(catch_label);
+                self.compile_expr(inner)?;
+                self.try_block_stack.pop();
+
+                // Normal path: wrap value in Result::Ok(val)
+                let ok_field_i = self.chunk.add_string("_0");
+                let result_i = self.chunk.add_string("Result");
+                let ok_i = self.chunk.add_string("Ok");
+                self.chunk.emit(Op::PushStr(ok_field_i));
+                self.chunk.emit(Op::MakeEnum(result_i, ok_i, 1));
+                self.chunk.emit(Op::Jump(0));
+                self.patch_jump(end_label);
+
+                // Catch path: ? encountered Err — Result::Err(val) is on stack, pass through
+                self.label(catch_label);
+                self.label(end_label);
             }
             HirExprKind::Await(inner) => {
                 // await expr: lower inner, emit Await bytecode
@@ -633,12 +711,15 @@ impl BytecodeCompiler {
 
                 // Set up params as locals in the closure chunk
                 closure_compiler.chunk.num_args = params.len();
+                closure_compiler.current_fn_args = params.len();
                 for (name, _) in params {
                     closure_compiler.locals.push(name.clone());
                 }
 
-                // Compile the closure body
+                // Compile the closure body (in tail position for TCO)
+                closure_compiler.tail_call_ok = true;
                 closure_compiler.compile_expr(body)?;
+                closure_compiler.tail_call_ok = false;
                 closure_compiler.chunk.emit(Op::Ret);
                 closure_compiler.resolve_patches();
                 closure_compiler.chunk.num_locals = closure_compiler.locals.len();
@@ -712,6 +793,26 @@ impl BytecodeCompiler {
                     self.chunk.emit(Op::PushUnit);
                 }
                 self.chunk.emit(Op::Ret);
+            }
+            HirStmtKind::DoWhile { body, cond } => {
+                // do-while: execute body first, then check condition
+                let loop_start = self.chunk.code.len();
+                let break_label = self.new_label();
+                let continue_label = self.new_label();
+                self.label(continue_label); // continue jumps to condition check
+                self.loop_stack.push((loop_start, break_label, continue_label));
+                self.compile_stmt(body)?;
+                // Check condition
+                self.compile_expr(cond)?;
+                // If condition is true, jump back to loop_start; else exit
+                self.chunk.emit(Op::JmpFalse(0));
+                let exit_label = self.new_label();
+                self.patch_jump(exit_label);
+                let offset = loop_start as i32 - self.chunk.code.len() as i32 - 5;
+                self.chunk.emit(Op::Jump(offset));
+                self.label(exit_label);
+                self.label(break_label); // break jumps here
+                self.loop_stack.pop();
             }
             HirStmtKind::While { cond, body } => {
                 let loop_start = self.chunk.code.len();
@@ -860,8 +961,12 @@ impl BytecodeCompiler {
                     }
                 }
             }
-            HirStmtKind::Break => {
+            HirStmtKind::Break(val) => {
                 if let Some(&(_, break_label, _)) = self.loop_stack.last() {
+                    // If break has a value, compile it first (pushes value on stack)
+                    if let Some(e) = val {
+                        self.compile_expr(e)?;
+                    }
                     self.chunk.emit(Op::Jump(0));
                     self.patches.push((self.chunk.code.len() - 4, break_label));
                 }
