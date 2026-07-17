@@ -1,0 +1,153 @@
+// Learning rate schedulers
+//
+// 参考 PyTorch CosineAnnealingLR / StepLR / ExponentialLR / LambdaLR 语义，
+// 为训练循环提供按 step 计算当前学习率的工具函数。
+//
+// 所有函数返回 lr 的标量 f64 值，调用方在训练循环中按当前 step 取值后赋给 optimizer：
+//
+//   for step in 0..total_steps {
+//       let lr = cosine_lr(base_lr, step, total_steps);
+//       adamw_step(w, m, v, lr, ...);
+//   }
+//
+// 边界处理：
+//   - step < 0 时按 step = 0 处理
+//   - warmup_steps <= 0 时跳过 warmup，直接返回 base_lr（warmup_lr）或进入衰减分支
+//   - total_steps <= 0 时返回 base_lr（避免除零）
+//   - cosine 衰减的终点步（step >= total_steps）返回 base_lr * LR_EPS
+//     （既接近 0 又避免完全为 0 导致参数不更新）
+//
+// 用法：
+//   use std::optim::lr_schedule::cosine_lr
+//   use std::optim::lr_schedule::step_lr
+//   use std::optim::lr_schedule::exp_lr
+//   use std::optim::lr_schedule::warmup_lr
+//   use std::optim::lr_schedule::warmup_cosine_lr
+//   use std::optim::lr_schedule::warmup_step_lr
+
+// 防止数值异常的极小常数。
+// 在 cosine 衰减终点（step >= total_steps）返回 base_lr * LR_EPS，
+// 既接近 0 又避免完全为 0 导致参数不更新。
+let LR_EPS: f64 = 1e-12;
+
+// 圆周率（避免跨模块依赖，直接用字面量；与 std::math::constants::PI 等价）。
+let LR_PI: f64 = 3.14159265358979323846;
+
+// Cosine annealing scheduler (Loshchilov & Hutter, 2017 SGDR 语义)。
+//
+// 从 base_lr 余弦衰减到 ~0：
+//   lr(step) = base_lr * (1 + cos(π * step / total_steps)) / 2
+//
+// 在 step=0 返回 base_lr；在 step=total_steps 返回 base_lr * LR_EPS（~0）。
+// total_steps <= 0 时直接返回 base_lr（避免除零）。
+fn cosine_lr(base_lr: f64, step: i64, total_steps: i64) -> f64 {
+    if total_steps <= 0 {
+        return base_lr;
+    }
+    let s = if step < 0 { 0 } else { step };
+    if s >= total_steps {
+        return base_lr * LR_EPS;
+    }
+    let s_f = to_f64(s);
+    let t_f = to_f64(total_steps);
+    let progress = s_f / t_f;
+    let cosine = cos(LR_PI * progress);
+    base_lr * (1.0 + cosine) / 2.0
+}
+
+// Step LR scheduler.
+//
+// 每 step_size 步 lr 乘以 gamma：
+//   lr(step) = base_lr * gamma^floor(step / step_size)
+//
+// 在 step=0 返回 base_lr；
+// 在 step ∈ [k*step_size, (k+1)*step_size) 返回 base_lr * gamma^k。
+// step_size <= 0 时直接返回 base_lr（避免除零）。
+fn step_lr(base_lr: f64, step: i64, step_size: i64, gamma: f64) -> f64 {
+    if step_size <= 0 {
+        return base_lr;
+    }
+    let s = if step < 0 { 0 } else { step };
+    let num_decays = s / step_size;  // i64 整数除法
+    base_lr * pow(gamma, to_f64(num_decays))
+}
+
+// Exponential LR scheduler.
+//
+// 每步指数衰减：
+//   lr(step) = base_lr * gamma^step
+fn exp_lr(base_lr: f64, step: i64, gamma: f64) -> f64 {
+    let s = if step < 0 { 0 } else { step };
+    base_lr * pow(gamma, to_f64(s))
+}
+
+// Linear warmup.
+//
+// step < warmup_steps 时返回 base_lr * step / warmup_steps（线性增长）；
+// step >= warmup_steps 时返回 base_lr。
+//
+// warmup_steps <= 0 时直接返回 base_lr（避免除零）。
+fn warmup_lr(base_lr: f64, step: i64, warmup_steps: i64) -> f64 {
+    if warmup_steps <= 0 {
+        return base_lr;
+    }
+    let s = if step < 0 { 0 } else { step };
+    if s >= warmup_steps {
+        return base_lr;
+    }
+    let s_f = to_f64(s);
+    let w_f = to_f64(warmup_steps);
+    base_lr * s_f / w_f
+}
+
+// Warmup + cosine annealing.
+//
+// warmup 阶段（step < warmup_steps）线性增长到 base_lr；
+// 之后从 base_lr 余弦衰减到 ~0（在 step=total_steps 时）。
+//
+// 边界：
+//   - warmup_steps <= 0：跳过 warmup，直接进入 cosine 衰减
+//   - total_steps <= 0：返回 base_lr
+//   - warmup_steps >= total_steps：cosine 阶段 denom <= 0，返回 base_lr * LR_EPS
+fn warmup_cosine_lr(base_lr: f64, step: i64, warmup_steps: i64, total_steps: i64) -> f64 {
+    if total_steps <= 0 {
+        return base_lr;
+    }
+    let s = if step < 0 { 0 } else { step };
+    if warmup_steps > 0 && s < warmup_steps {
+        return warmup_lr(base_lr, s, warmup_steps);
+    }
+    if s >= total_steps {
+        return base_lr * LR_EPS;
+    }
+    // cosine 阶段：把 [warmup_steps, total_steps] 映射到 [0, 1] 的 progress
+    let w_f = to_f64(warmup_steps);
+    let t_f = to_f64(total_steps);
+    let s_f = to_f64(s);
+    let denom = t_f - w_f;
+    if denom <= 0.0 {
+        // warmup_steps >= total_steps：cosine 阶段无意义，进入终点
+        return base_lr * LR_EPS;
+    }
+    let progress = (s_f - w_f) / denom;
+    let cosine = cos(LR_PI * progress);
+    base_lr * (1.0 + cosine) / 2.0
+}
+
+// Warmup + step decay.
+//
+// warmup 阶段（step < warmup_steps）线性增长到 base_lr；
+// 之后每 step_size 步乘以 gamma（从 warmup 结束后开始计数 step decay）。
+//
+// 边界：
+//   - warmup_steps <= 0：跳过 warmup，直接进入 step decay
+//   - step_size <= 0：warmup 后保持 base_lr（透传给 step_lr 的边界处理）
+fn warmup_step_lr(base_lr: f64, step: i64, warmup_steps: i64, step_size: i64, gamma: f64) -> f64 {
+    let s = if step < 0 { 0 } else { step };
+    if warmup_steps > 0 && s < warmup_steps {
+        return warmup_lr(base_lr, s, warmup_steps);
+    }
+    // warmup 之后开始 step decay 计数（从 0 起算）
+    let effective_step = s - warmup_steps;
+    step_lr(base_lr, effective_step, step_size, gamma)
+}

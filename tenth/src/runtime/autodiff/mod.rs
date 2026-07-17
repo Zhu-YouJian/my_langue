@@ -360,6 +360,80 @@ impl Tape {
         id
     }
 
+    /// 将 6 个 pool 参数（kh, kw, sh, sw, ph, pw）编码到单个 usize。
+    /// 每字段 10 bits，共 60 bits（usize 64 bits 足够）。
+    /// 由 MaxPool2D / AvgPool2D 节点的 aux 字段使用。
+    pub(crate) fn encode_pool_params(kh: usize, kw: usize, sh: usize, sw: usize, ph: usize, pw: usize) -> usize {
+        let mask = 0x3FFusize;
+        (kh & mask)
+            | ((kw & mask) << 10)
+            | ((sh & mask) << 20)
+            | ((sw & mask) << 30)
+            | ((ph & mask) << 40)
+            | ((pw & mask) << 50)
+    }
+
+    /// decode_pool_params: `encode_pool_params` 的逆操作。
+    pub(crate) fn decode_pool_params(aux: usize) -> (usize, usize, usize, usize, usize, usize) {
+        let mask = 0x3FFusize;
+        let kh = aux & mask;
+        let kw = (aux >> 10) & mask;
+        let sh = (aux >> 20) & mask;
+        let sw = (aux >> 30) & mask;
+        let ph = (aux >> 40) & mask;
+        let pw = (aux >> 50) & mask;
+        (kh, kw, sh, sw, ph, pw)
+    }
+
+    /// Record a max_pool2d node.
+    /// `input_tensors = [input, result]`（不含 argmax_mask；backward 时重新计算 argmax）。
+    /// 6 个 pool 参数编码到 `aux` 字段（见 `encode_pool_params`）。
+    pub fn max_pool2d(
+        &mut self,
+        input_id: Option<usize>,
+        input: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+        kh: usize, kw: usize, sh: usize, sw: usize, ph: usize, pw: usize,
+    ) -> usize {
+        let iid = input_id.unwrap_or_else(|| self.input(input.clone()));
+        let dtype = result.borrow().dtype;
+        let id = self.next_id();
+        let aux = Self::encode_pool_params(kh, kw, sh, sw, ph, pw);
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::MaxPool2D,
+            inputs: vec![iid],
+            input_tensors: vec![input, result],
+            aux,
+            dtype,
+        });
+        id
+    }
+
+    /// Record an avg_pool2d node.
+    /// `input_tensors = [input, result]`，pool 参数编码到 `aux`。
+    pub fn avg_pool2d(
+        &mut self,
+        input_id: Option<usize>,
+        input: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+        kh: usize, kw: usize, sh: usize, sw: usize, ph: usize, pw: usize,
+    ) -> usize {
+        let iid = input_id.unwrap_or_else(|| self.input(input.clone()));
+        let dtype = result.borrow().dtype;
+        let id = self.next_id();
+        let aux = Self::encode_pool_params(kh, kw, sh, sw, ph, pw);
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::AvgPool2D,
+            inputs: vec![iid],
+            input_tensors: vec![input, result],
+            aux,
+            dtype,
+        });
+        id
+    }
+
     fn next_id(&mut self) -> usize {
         let id = self.counter;
         self.counter += 1;

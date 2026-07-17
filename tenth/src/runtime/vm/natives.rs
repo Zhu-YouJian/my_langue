@@ -517,6 +517,60 @@ impl Vm {
                             err("conv2d: 权重必须是张量")
                         }
                     }
+                    "max_pool2d" => {
+                        // x.max_pool2d(kH, kW, sH, sW, pH, pW) — PyTorch 语义
+                        if args.len() < 6 {
+                            return err("max_pool2d() 需要 6 个参数: kH, kW, sH, sW, pH, pW");
+                        }
+                        let k_h = args[0].as_int().unwrap_or(2) as usize;
+                        let k_w = args[1].as_int().unwrap_or(2) as usize;
+                        let s_h = args[2].as_int().unwrap_or(2) as usize;
+                        let s_w = args[3].as_int().unwrap_or(2) as usize;
+                        let p_h = args[4].as_int().unwrap_or(0) as usize;
+                        let p_w = args[5].as_int().unwrap_or(0) as usize;
+                        let (output, _argmax_mask) = tensor.max_pool2d_with_argmax(k_h, k_w, s_h, s_w, p_h, p_w)
+                            .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
+                        let result = Rc::new(RefCell::new(output));
+                        if self.recording {
+                            if let Some(ref mut tape) = self.tape {
+                                let x_id = t.borrow().tape_id
+                                    .unwrap_or_else(|| tape.input(t.clone()));
+                                let node_id = tape.max_pool2d(
+                                    Some(x_id), t.clone(), result.clone(),
+                                    k_h, k_w, s_h, s_w, p_h, p_w,
+                                );
+                                result.borrow_mut().tape_id = Some(node_id);
+                            }
+                        }
+                        Ok(Value::Tensor(result))
+                    }
+                    "avg_pool2d" => {
+                        // x.avg_pool2d(kH, kW, sH, sW, pH, pW) — count_include_pad=False
+                        if args.len() < 6 {
+                            return err("avg_pool2d() 需要 6 个参数: kH, kW, sH, sW, pH, pW");
+                        }
+                        let k_h = args[0].as_int().unwrap_or(2) as usize;
+                        let k_w = args[1].as_int().unwrap_or(2) as usize;
+                        let s_h = args[2].as_int().unwrap_or(2) as usize;
+                        let s_w = args[3].as_int().unwrap_or(2) as usize;
+                        let p_h = args[4].as_int().unwrap_or(0) as usize;
+                        let p_w = args[5].as_int().unwrap_or(0) as usize;
+                        let output = tensor.avg_pool2d(k_h, k_w, s_h, s_w, p_h, p_w)
+                            .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
+                        let result = Rc::new(RefCell::new(output));
+                        if self.recording {
+                            if let Some(ref mut tape) = self.tape {
+                                let x_id = t.borrow().tape_id
+                                    .unwrap_or_else(|| tape.input(t.clone()));
+                                let node_id = tape.avg_pool2d(
+                                    Some(x_id), t.clone(), result.clone(),
+                                    k_h, k_w, s_h, s_w, p_h, p_w,
+                                );
+                                result.borrow_mut().tape_id = Some(node_id);
+                            }
+                        }
+                        Ok(Value::Tensor(result))
+                    }
                     "batchnorm" => {
                         // x.batchnorm(gamma, beta, eps)
                         if args.len() < 3 {

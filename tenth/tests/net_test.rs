@@ -218,3 +218,74 @@ fn test_http_get_https_rejected() {
         v => panic!("期望 Some(Int(1)) 表示 HTTPS 被拒绝，got {:?}", v),
     }
 }
+
+// ─── Test 7: tcp_listen 成功返回句柄 ──────────────────────────────────────
+
+#[test]
+fn test_tcp_listen_success() {
+    // listen 127.0.0.1:0 让 OS 分配端口，应返回 Ok(handle >= 1)
+    let src = r#"
+        let r = tcp_listen("127.0.0.1:0");
+        match r {
+            Result::Ok(h) => {
+                tcp_listener_close(h);
+                h
+            },
+            Result::Err(_) => -1,
+        }
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(h, _)) if h >= 1 => {}
+        v => panic!("期望 Some(Int(>=1)) 表示监听成功，got {:?}", v),
+    }
+}
+
+// ─── Test 8: tcp_listen 端口被占返回 Err ──────────────────────────────────
+
+#[test]
+fn test_tcp_listen_port_in_use() {
+    // Rust 侧先占端口，Tenth 侧 listen 同端口应返回 Err
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let src = format!(
+        r#"
+        let r = tcp_listen("127.0.0.1:{port}");
+        match r {{
+            Result::Ok(_) => 0,
+            Result::Err(_) => 1,
+        }}
+        "#
+    );
+    let result = run_code(&src).unwrap();
+    match result {
+        Some(Value::Int(1, _)) => {}
+        v => panic!("期望 Some(Int(1)) 表示端口被占返回 Err，got {:?}", v),
+    }
+}
+
+// ─── Test 9: tcp_listener_close 后 accept 返回 Err ────────────────────────
+
+#[test]
+fn test_tcp_listener_close_then_accept() {
+    // listen → close → accept 应返回 Err（监听器已关闭）
+    let src = r#"
+        let r = tcp_listen("127.0.0.1:0");
+        match r {
+            Result::Ok(h) => {
+                tcp_listener_close(h);
+                let acc = tcp_accept(h);
+                match acc {
+                    Result::Ok(_) => 0,
+                    Result::Err(_) => 1,
+                }
+            },
+            Result::Err(_) => -2,
+        }
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Int(1, _)) => {}
+        v => panic!("期望 Some(Int(1)) 表示 close 后 accept 返回 Err，got {:?}", v),
+    }
+}

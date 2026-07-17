@@ -95,6 +95,8 @@ impl super::Interpreter {
                             | "json_encode" | "json_encode_pretty" | "json_decode"
                             // Stage 3+4 TCP/HTTP 原语
                             | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_close" | "tcp_set_timeout"
+                            | "tcp_listen" | "tcp_accept" | "tcp_listener_close"
+                            | "command_new" | "command_arg" | "command_run" | "command_output"
                             | "http_get" | "http_post"
                             | "regex_compile" | "regex_match" | "regex_find" | "regex_find_all" | "regex_replace" | "regex_split"
                             // B批：字符串/文本处理 native

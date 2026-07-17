@@ -1,0 +1,179 @@
+// Learning rate schedulers test
+//
+// Run with: tenth run std/optim/test_lr_schedule.th
+//
+// 验证 lr_schedule.th 中所有调度器的语义正确性与边界处理。
+// 所有断言失败会以 panic 形式终止，运行到末尾的 "All passed" 表示全绿。
+
+use std::optim::lr_schedule::cosine_lr
+use std::optim::lr_schedule::step_lr
+use std::optim::lr_schedule::exp_lr
+use std::optim::lr_schedule::warmup_lr
+use std::optim::lr_schedule::warmup_cosine_lr
+use std::optim::lr_schedule::warmup_step_lr
+
+// 浮点近似相等断言：|a - b| < tol 视为相等。
+fn approx(a: f64, b: f64, tol: f64) -> bool {
+    let d = a - b;
+    let ad = if d < 0.0 { -d } else { d };
+    ad < tol
+}
+
+fn main() {
+    println("=== LR Scheduler Tests ===");
+
+    let base_lr: f64 = 1.0;
+    let tol: f64 = 1e-9;
+
+    // ── cosine_lr ──
+    // step=0 时返回 base_lr
+    let c0 = cosine_lr(base_lr, 0, 100);
+    assert(approx(c0, base_lr, tol), "cosine_lr(0) should be base_lr");
+
+    // step=total 时接近 0
+    let c_end = cosine_lr(base_lr, 100, 100);
+    assert(c_end < 1e-6, "cosine_lr(total) should be ~0");
+
+    // step=total/2 时约为 base_lr/2（cos(π/2)=0）
+    let c_half = cosine_lr(base_lr, 50, 100);
+    assert(approx(c_half, base_lr / 2.0, 1e-6), "cosine_lr(half) should be ~base_lr/2");
+
+    println("cosine_lr tests passed");
+
+    // ── step_lr ──
+    // step=step_size 时返回 base_lr * gamma
+    let s1 = step_lr(base_lr, 10, 10, 0.5);
+    assert(approx(s1, base_lr * 0.5, tol), "step_lr(step_size) should be base_lr*gamma");
+
+    // step=2*step_size 时返回 base_lr * gamma^2
+    let s2 = step_lr(base_lr, 20, 10, 0.5);
+    assert(approx(s2, base_lr * 0.25, tol), "step_lr(2*step_size) should be base_lr*gamma^2");
+
+    // step=0 时返回 base_lr
+    let s0 = step_lr(base_lr, 0, 10, 0.5);
+    assert(approx(s0, base_lr, tol), "step_lr(0) should be base_lr");
+
+    // step < step_size 时仍返回 base_lr（floor(0.x)=0）
+    let s_partial = step_lr(base_lr, 5, 10, 0.5);
+    assert(approx(s_partial, base_lr, tol), "step_lr(<step_size) should be base_lr");
+
+    println("step_lr tests passed");
+
+    // ── exp_lr ──
+    // step=k 时返回 base_lr * gamma^k
+    let e0 = exp_lr(base_lr, 0, 0.9);
+    assert(approx(e0, base_lr, tol), "exp_lr(0) should be base_lr");
+
+    let e3 = exp_lr(base_lr, 3, 0.9);
+    let expected_e3 = base_lr * pow(0.9, 3.0);
+    assert(approx(e3, expected_e3, tol), "exp_lr(3) should be base_lr*gamma^3");
+
+    println("exp_lr tests passed");
+
+    // ── warmup_lr ──
+    // step=0 时返回 0
+    let w0 = warmup_lr(base_lr, 0, 100);
+    assert(approx(w0, 0.0, tol), "warmup_lr(0) should be 0");
+
+    // step=warmup_steps 时返回 base_lr
+    let w_end = warmup_lr(base_lr, 100, 100);
+    assert(approx(w_end, base_lr, tol), "warmup_lr(warmup_steps) should be base_lr");
+
+    // step=warmup_steps/2 时返回 base_lr/2
+    let w_half = warmup_lr(base_lr, 50, 100);
+    assert(approx(w_half, base_lr / 2.0, tol), "warmup_lr(half) should be base_lr/2");
+
+    println("warmup_lr tests passed");
+
+    // ── warmup_cosine_lr ──
+    // warmup 阶段线性
+    let wc_early = warmup_cosine_lr(base_lr, 5, 10, 100);
+    let wc_expected = warmup_lr(base_lr, 5, 10);
+    assert(approx(wc_early, wc_expected, tol), "warmup_cosine_lr in warmup phase should equal warmup_lr");
+
+    // warmup 结束时返回 base_lr（cosine 起点 progress=0 → cos(0)=1 → base_lr）
+    let wc_warmup_end = warmup_cosine_lr(base_lr, 10, 10, 100);
+    assert(approx(wc_warmup_end, base_lr, 1e-9), "warmup_cosine_lr at warmup end should be base_lr");
+
+    // cosine 阶段中点（progress=0.5 → cos(π/2)=0 → base_lr/2）
+    let wc_mid = warmup_cosine_lr(base_lr, 55, 10, 100);
+    assert(approx(wc_mid, base_lr / 2.0, 1e-9), "warmup_cosine_lr mid should be base_lr/2");
+
+    // 终点
+    let wc_end = warmup_cosine_lr(base_lr, 100, 10, 100);
+    assert(wc_end < 1e-6, "warmup_cosine_lr at total should be ~0");
+
+    println("warmup_cosine_lr tests passed");
+
+    // ── warmup_step_lr ──
+    // warmup 阶段线性
+    let ws_early = warmup_step_lr(base_lr, 5, 10, 10, 0.5);
+    let ws_expected = warmup_lr(base_lr, 5, 10);
+    assert(approx(ws_early, ws_expected, tol), "warmup_step_lr in warmup phase should equal warmup_lr");
+
+    // warmup 后第一步（effective_step=0）返回 base_lr
+    let ws_warmup_end = warmup_step_lr(base_lr, 10, 10, 10, 0.5);
+    assert(approx(ws_warmup_end, base_lr, tol), "warmup_step_lr at warmup end should be base_lr");
+
+    // warmup 后 step_size 步（effective_step=step_size）返回 base_lr * gamma
+    let ws_step1 = warmup_step_lr(base_lr, 20, 10, 10, 0.5);
+    assert(approx(ws_step1, base_lr * 0.5, tol), "warmup_step_lr at warmup+step_size should be base_lr*gamma");
+
+    // warmup 后 2*step_size 步返回 base_lr * gamma^2
+    let ws_step2 = warmup_step_lr(base_lr, 30, 10, 10, 0.5);
+    assert(approx(ws_step2, base_lr * 0.25, tol), "warmup_step_lr at warmup+2*step_size should be base_lr*gamma^2");
+
+    println("warmup_step_lr tests passed");
+
+    // ── 边界情况 ──
+    // warmup_steps=0 → 直接返回 base_lr（warmup_lr）
+    let b1 = warmup_lr(base_lr, 5, 0);
+    assert(approx(b1, base_lr, tol), "warmup_lr(warmup_steps=0) should be base_lr");
+
+    // total_steps=0 → 返回 base_lr（cosine_lr）
+    let b2 = cosine_lr(base_lr, 5, 0);
+    assert(approx(b2, base_lr, tol), "cosine_lr(total_steps=0) should be base_lr");
+
+    // step<0 → 按 step=0 处理（cosine_lr）
+    let b3 = cosine_lr(base_lr, -5, 100);
+    assert(approx(b3, base_lr, tol), "cosine_lr(step<0) should equal cosine_lr(0)");
+
+    // step<0 → 按 step=0 处理（warmup_lr，结果为 0）
+    let b4 = warmup_lr(base_lr, -5, 100);
+    assert(approx(b4, 0.0, tol), "warmup_lr(step<0) should equal warmup_lr(0)=0");
+
+    // step<0 → 按 step=0 处理（exp_lr，结果为 base_lr）
+    let b5 = exp_lr(base_lr, -3, 0.9);
+    assert(approx(b5, base_lr, tol), "exp_lr(step<0) should equal exp_lr(0)=base_lr");
+
+    // step<0 → 按 step=0 处理（step_lr，结果为 base_lr）
+    let b5b = step_lr(base_lr, -3, 10, 0.5);
+    assert(approx(b5b, base_lr, tol), "step_lr(step<0) should equal step_lr(0)=base_lr");
+
+    // step_size=0 → step_lr 返回 base_lr
+    let b6 = step_lr(base_lr, 100, 0, 0.5);
+    assert(approx(b6, base_lr, tol), "step_lr(step_size=0) should be base_lr");
+
+    // warmup_steps > total_steps 且 step < warmup_steps：cosine 退化，仅 warmup 阶段
+    let b7 = warmup_cosine_lr(base_lr, 50, 100, 50);
+    // s=50 < warmup_steps=100，走 warmup_lr 分支：base_lr * 50/100 = base_lr/2
+    assert(approx(b7, base_lr / 2.0, tol), "warmup_cosine_lr with warmup>total, step in warmup should be linear");
+
+    // warmup_steps > total_steps 且 step >= total_steps：返回 LR_EPS
+    let b8 = warmup_cosine_lr(base_lr, 60, 100, 50);
+    // s=60 >= total_steps=50 → 走 s >= total_steps 分支 → base_lr * LR_EPS
+    assert(b8 < 1e-6, "warmup_cosine_lr with warmup>total, step>=total should be ~0");
+
+    // warmup_steps=0 在 warmup_step_lr 中：直接进入 step decay
+    let b9 = warmup_step_lr(base_lr, 10, 0, 10, 0.5);
+    assert(approx(b9, base_lr * 0.5, tol), "warmup_step_lr(warmup_steps=0) should equal step_lr");
+
+    // warmup_steps=0 在 warmup_cosine_lr 中：直接进入 cosine decay
+    let b10 = warmup_cosine_lr(base_lr, 0, 0, 100);
+    assert(approx(b10, base_lr, tol), "warmup_cosine_lr(warmup_steps=0, step=0) should be base_lr");
+
+    println("boundary tests passed");
+
+    println("");
+    println("=== All LR scheduler tests passed ===");
+}

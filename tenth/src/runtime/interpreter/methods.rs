@@ -1040,6 +1040,65 @@ impl super::Interpreter {
                             message: "conv2d: 权重必须是张量".into(),
                         });
                     }
+                    "max_pool2d" => {
+                        // x.max_pool2d(kH, kW, sH, sW, pH, pW) — PyTorch 语义
+                        if args.len() < 6 {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
+                                message: "max_pool2d() 需要 6 个参数: kH, kW, sH, sW, pH, pW".into(),
+                            });
+                        }
+                        let k_h = args[0].as_int().unwrap_or(2) as usize;
+                        let k_w = args[1].as_int().unwrap_or(2) as usize;
+                        let s_h = args[2].as_int().unwrap_or(2) as usize;
+                        let s_w = args[3].as_int().unwrap_or(2) as usize;
+                        let p_h = args[4].as_int().unwrap_or(0) as usize;
+                        let p_w = args[5].as_int().unwrap_or(0) as usize;
+                        let (output, _argmax_mask) = tensor.max_pool2d_with_argmax(k_h, k_w, s_h, s_w, p_h, p_w)
+                            .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
+                        let result_rc = Rc::new(RefCell::new(output));
+                        // backward 时从 input 重新计算 argmax，不存储 mask（避免重叠 window 歧义）
+                        if self.recording {
+                            if let Some(ref mut tape) = self.tape {
+                                let x_id = t.borrow().tape_id
+                                    .unwrap_or_else(|| tape.input(t.clone()));
+                                let node_id = tape.max_pool2d(
+                                    Some(x_id), t.clone(), result_rc.clone(),
+                                    k_h, k_w, s_h, s_w, p_h, p_w,
+                                );
+                                result_rc.borrow_mut().tape_id = Some(node_id);
+                            }
+                        }
+                        return Ok(Value::Tensor(result_rc));
+                    }
+                    "avg_pool2d" => {
+                        // x.avg_pool2d(kH, kW, sH, sW, pH, pW)
+                        if args.len() < 6 {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
+                                message: "avg_pool2d() 需要 6 个参数: kH, kW, sH, sW, pH, pW".into(),
+                            });
+                        }
+                        let k_h = args[0].as_int().unwrap_or(1) as usize;
+                        let k_w = args[1].as_int().unwrap_or(1) as usize;
+                        let s_h = args[2].as_int().unwrap_or(1) as usize;
+                        let s_w = args[3].as_int().unwrap_or(1) as usize;
+                        let p_h = args[4].as_int().unwrap_or(0) as usize;
+                        let p_w = args[5].as_int().unwrap_or(0) as usize;
+                        let output = tensor.avg_pool2d(k_h, k_w, s_h, s_w, p_h, p_w)
+                            .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
+                        let result_rc = Rc::new(RefCell::new(output));
+                        if self.recording {
+                            if let Some(ref mut tape) = self.tape {
+                                let x_id = t.borrow().tape_id
+                                    .unwrap_or_else(|| tape.input(t.clone()));
+                                let node_id = tape.avg_pool2d(
+                                    Some(x_id), t.clone(), result_rc.clone(),
+                                    k_h, k_w, s_h, s_w, p_h, p_w,
+                                );
+                                result_rc.borrow_mut().tape_id = Some(node_id);
+                            }
+                        }
+                        return Ok(Value::Tensor(result_rc));
+                    }
                     "batchnorm" => {
                         // x.batchnorm(gamma, beta, eps)
                         // gamma, beta: 1D tensors of shape (C,)

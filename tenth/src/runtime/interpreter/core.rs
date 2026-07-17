@@ -71,9 +71,15 @@ pub struct Interpreter {
     /// TCP 流句柄表（与 vm.rs 的 Vm::tcp_streams 对齐）。
     /// 索引+1 即句柄（1-based，0 表示无效）。`None` 表示已关闭的槽位。
     pub tcp_streams: Vec<Option<std::net::TcpStream>>,
+    /// TCP 监听器句柄表（与 vm.rs 的 Vm::tcp_listeners 对齐）。
+    /// 索引+1 即句柄（1-based，0 表示无效）。`None` 表示已关闭的槽位。
+    pub tcp_listeners: Vec<Option<std::net::TcpListener>>,
     /// 正则表达式句柄表（与 vm.rs 的 Vm::regexes 对齐）。
     /// 索引+1 即句柄（1-based，0 表示无效）。`None` 表示已释放的槽位。
     pub regexes: Vec<Option<regex::Regex>>,
+    /// 子进程 Command 句柄表（与 vm.rs 的 Vm::commands 对齐）。
+    /// 索引+1 即句柄（1-based，0 表示无效）。`None` 表示已释放的槽位。
+    pub commands: Vec<Option<std::process::Command>>,
 }
 
 impl Interpreter {
@@ -97,7 +103,9 @@ impl Interpreter {
             fs_sandbox: None,
             last_explanation: Vec::new(),
             tcp_streams: Vec::new(),
+            tcp_listeners: Vec::new(),
             regexes: Vec::new(),
+            commands: Vec::new(),
         }
     }
 

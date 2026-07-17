@@ -45,6 +45,8 @@ impl Lowerer {
                     | "lower_program" | "compile_to_wasm" | "self"
                     // Stage 3+4 TCP/HTTP 原语
                     | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_close" | "tcp_set_timeout"
+                    | "tcp_listen" | "tcp_accept" | "tcp_listener_close"
+                    | "command_new" | "command_arg" | "command_run" | "command_output"
                     | "http_get" | "http_post"
                     // Phase 2 Step 5：异步 I/O 原语（返回 Future）
                     | "async_sleep_ms" | "async_tcp_read" | "async_tcp_write"

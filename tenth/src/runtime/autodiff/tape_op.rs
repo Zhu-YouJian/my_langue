@@ -188,4 +188,18 @@ pub enum TapeOp {
     /// input_tensors = [input, mask, result]
     /// backward: d_input = grad * (1 - mask)（被覆盖位置不传梯度）
     MaskedFill,
+    /// MaxPool2D: result = input.max_pool2d(kH, kW, sH, sW, pH, pW)。
+    /// input_tensors = [input, result]（不含 argmax_mask；backward 时从 input 重新计算 argmax，
+    /// 避免 mask 在重叠 window 下产生歧义——同一 input 位置可能是多个 window 的 argmax）
+    /// inputs = [input_id]
+    /// aux 编码 6 个 pool 参数（kh, kw, sh, sw, ph, pw，各 10 bits，见 Tape::encode_pool_params）
+    /// backward: 根据 input 数据重新计算 argmax，将 d_output 路由到 argmax 位置
+    MaxPool2D,
+    /// AvgPool2D: result = input.avg_pool2d(kH, kW, sH, sW, pH, pW)。
+    /// input_tensors = [input, result]
+    /// inputs = [input_id]
+    /// aux 编码 6 个 pool 参数（同 MaxPool2D）
+    /// backward: d_input[window 内每个有效位置] += d_output / valid_count（均分到窗口，
+    /// count_include_pad=False 语义，padding 位置不分梯度）
+    AvgPool2D,
 }

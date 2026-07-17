@@ -1011,6 +1011,138 @@ impl Tape {
                         propagate_grad(node, 0, &E::into_tensor_data(g_a), &mut node_grads)?;
                     });
                 }
+                TapeOp::MaxPool2D => {
+                    // input_tensors = [input(4D), result(4D)]
+                    // 重新计算 argmax，将 d_output 路由到 argmax 位置（padding 位置不分梯度）
+                    if node.input_tensors.len() >= 2 {
+                        let (kh, kw, sh, sw, ph, pw) = Self::decode_pool_params(node.aux);
+                        let (in_shape, out_shape, x_data) = {
+                            let in_ref = node.input_tensors[0].borrow();
+                            let out_ref = node.input_tensors[1].borrow();
+                            (in_ref.shape(), out_ref.shape(), in_ref.data.clone())
+                        };
+                        if in_shape.len() == 4 && out_shape.len() == 4 {
+                            let (n, c, h, w) = (in_shape[0], in_shape[1], in_shape[2], in_shape[3]);
+                            let h_out = out_shape[2];
+                            let w_out = out_shape[3];
+                            dispatch_float!(node.dtype, E, {
+                                let x_arr = E::from_tensor_data(&x_data);
+                                let grad_arr = E::from_tensor_data(&grad);
+                                let x_v: Vec<E> = x_arr.iter().copied().collect();
+                                let g_v: Vec<E> = grad_arr.iter().copied().collect();
+                                let mut d_x: Vec<E> = vec![E::from_f64(0.0); n * c * h * w];
+                                let neg_inf = E::from_f64(f64::NEG_INFINITY);
+                                for ni in 0..n {
+                                    for ci in 0..c {
+                                        for ho in 0..h_out {
+                                            for wo in 0..w_out {
+                                                let out_idx = ((ni * c + ci) * h_out + ho) * w_out + wo;
+                                                let dy = g_v[out_idx];
+                                                let mut best_val = neg_inf;
+                                                let mut best_idx: Option<(usize, usize)> = None;
+                                                for kh_i in 0..kh {
+                                                    let ih = ho * sh + kh_i;
+                                                    if ih < ph { continue; }
+                                                    let ih_adj = ih - ph;
+                                                    if ih_adj >= h { continue; }
+                                                    for kw_i in 0..kw {
+                                                        let iw = wo * sw + kw_i;
+                                                        if iw < pw { continue; }
+                                                        let iw_adj = iw - pw;
+                                                        if iw_adj >= w { continue; }
+                                                        let in_idx = ((ni * c + ci) * h + ih_adj) * w + iw_adj;
+                                                        let v = x_v[in_idx];
+                                                        if v > best_val {
+                                                            best_val = v;
+                                                            best_idx = Some((ih_adj, iw_adj));
+                                                        }
+                                                    }
+                                                }
+                                                if let Some((ih_adj, iw_adj)) = best_idx {
+                                                    let in_idx = ((ni * c + ci) * h + ih_adj) * w + iw_adj;
+                                                    d_x[in_idx] += dy;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                let d_x_arr = ArrayD::from_shape_vec(IxDyn(&[n, c, h, w]), d_x)
+                                    .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
+                                        message: "MaxPool2D 反向 d_x reshape 失败".into(),
+                                    })?;
+                                propagate_grad(node, 0, &E::into_tensor_data(d_x_arr), &mut node_grads)?;
+                            });
+                        }
+                    }
+                }
+                TapeOp::AvgPool2D => {
+                    // input_tensors = [input(4D), result(4D)]
+                    // count_include_pad=False: 分母为 valid_count，padding 位置不分梯度
+                    if node.input_tensors.len() >= 2 {
+                        let (kh, kw, sh, sw, ph, pw) = Self::decode_pool_params(node.aux);
+                        let (in_shape, out_shape) = {
+                            let in_ref = node.input_tensors[0].borrow();
+                            let out_ref = node.input_tensors[1].borrow();
+                            (in_ref.shape(), out_ref.shape())
+                        };
+                        if in_shape.len() == 4 && out_shape.len() == 4 {
+                            let (n, c, h, w) = (in_shape[0], in_shape[1], in_shape[2], in_shape[3]);
+                            let h_out = out_shape[2];
+                            let w_out = out_shape[3];
+                            dispatch_float!(node.dtype, E, {
+                                let grad_arr = E::from_tensor_data(&grad);
+                                let g_v: Vec<E> = grad_arr.iter().copied().collect();
+                                let mut d_x: Vec<E> = vec![E::from_f64(0.0); n * c * h * w];
+                                for ni in 0..n {
+                                    for ci in 0..c {
+                                        for ho in 0..h_out {
+                                            for wo in 0..w_out {
+                                                let out_idx = ((ni * c + ci) * h_out + ho) * w_out + wo;
+                                                // 先数 valid_count（window 内非 padding 位置数）
+                                                let mut valid_count: usize = 0;
+                                                for kh_i in 0..kh {
+                                                    let ih = ho * sh + kh_i;
+                                                    if ih < ph { continue; }
+                                                    let ih_adj = ih - ph;
+                                                    if ih_adj >= h { continue; }
+                                                    for kw_i in 0..kw {
+                                                        let iw = wo * sw + kw_i;
+                                                        if iw < pw { continue; }
+                                                        let iw_adj = iw - pw;
+                                                        if iw_adj >= w { continue; }
+                                                        valid_count += 1;
+                                                    }
+                                                }
+                                                if valid_count == 0 { continue; }
+                                                let dy = g_v[out_idx] / E::from_f64(valid_count as f64);
+                                                // 均分到 window 内所有有效位置
+                                                for kh_i in 0..kh {
+                                                    let ih = ho * sh + kh_i;
+                                                    if ih < ph { continue; }
+                                                    let ih_adj = ih - ph;
+                                                    if ih_adj >= h { continue; }
+                                                    for kw_i in 0..kw {
+                                                        let iw = wo * sw + kw_i;
+                                                        if iw < pw { continue; }
+                                                        let iw_adj = iw - pw;
+                                                        if iw_adj >= w { continue; }
+                                                        let in_idx = ((ni * c + ci) * h + ih_adj) * w + iw_adj;
+                                                        d_x[in_idx] += dy;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                let d_x_arr = ArrayD::from_shape_vec(IxDyn(&[n, c, h, w]), d_x)
+                                    .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
+                                        message: "AvgPool2D 反向 d_x reshape 失败".into(),
+                                    })?;
+                                propagate_grad(node, 0, &E::into_tensor_data(d_x_arr), &mut node_grads)?;
+                            });
+                        }
+                    }
+                }
             }
         }
         Ok(())

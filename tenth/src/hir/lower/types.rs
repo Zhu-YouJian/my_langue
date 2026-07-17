@@ -429,8 +429,9 @@ impl Lowerer {
             "env_set" | "exit" => Ok(Type::unit()),
             "read_line" | "env_get" => Ok(Type::Enum("Result".to_string())),
             // Stage 3+4 TCP/HTTP 原语：返回 Unit 的 close/set_timeout 与返回 Result 的其余
-            "tcp_close" | "tcp_set_timeout" => Ok(Type::unit()),
-            "tcp_connect" | "tcp_read" | "tcp_write" | "http_get" | "http_post" => {
+            "tcp_close" | "tcp_set_timeout" | "tcp_listener_close" | "command_arg" => Ok(Type::unit()),
+            "tcp_connect" | "tcp_read" | "tcp_write" | "http_get" | "http_post"
+            | "tcp_listen" | "tcp_accept" | "command_new" | "command_run" | "command_output" => {
                 Ok(Type::Enum("Result".to_string()))
             }
             // Phase 2 Step 5：异步 I/O 原语（返回 Future，类型暂为 Unknown——

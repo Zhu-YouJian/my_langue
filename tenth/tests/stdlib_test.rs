@@ -792,6 +792,7 @@ th_parse_test!(th_parse_optim_sgd, "std/optim/sgd.th");
 th_parse_test!(th_parse_optim_adam, "std/optim/adam.th");
 th_parse_test!(th_parse_optim_adagrad, "std/optim/adagrad.th");
 th_parse_test!(th_parse_optim_rmsprop, "std/optim/rmsprop.th");
+th_parse_test!(th_parse_optim_lr_schedule, "std/optim/lr_schedule.th");
 th_parse_test!(th_parse_init_initializers, "std/init/initializers.th");
 th_parse_test!(th_parse_data_dataloader, "std/data/dataloader.th");
 th_parse_test!(th_parse_utils_serialization, "std/utils/serialization.th");
@@ -806,6 +807,8 @@ th_parse_test!(th_parse_curry, "std/curry.th");
 th_parse_test!(th_parse_fs, "std/fs/fs.th");
 th_parse_test!(th_parse_json, "std/json/json.th");
 th_parse_test!(th_parse_mnist, "std/data/mnist.th");
+th_parse_test!(th_parse_net, "std/net.th");
+th_parse_test!(th_parse_process, "std/process.th");
 
 // Lower tests for core utility files (no tensor dependencies)
 th_lower_test!(th_lower_string, "std/string/string.th");
@@ -1107,4 +1110,182 @@ fn test_cli_args_count() {
         Some(Value::Int(n, _)) => assert!(n >= 1, "cli_args_count should be >= 1, got {}", n),
         v => panic!("expected Int, got {:?}", v),
     }
+}
+
+// ── LR Scheduler Inline Tests ───────────────────────────────────────────
+// 内联 std/optim/lr_schedule.th 中函数的语义（运行时不支持 `use` 加载 .th 模块，
+// 故在此内联验证关键语义；.th 端到端测试见 std/optim/test_lr_schedule.th）。
+// 与 lr_schedule.th 中的实现保持同步。
+
+fn run_f64(src: &str) -> f64 {
+    match run_code(src) {
+        Ok(Some(Value::Float(f))) => f,
+        Ok(other) => panic!("expected Float, got {:?}", other),
+        Err(e) => panic!("run_code error: {}", e),
+    }
+}
+
+#[test]
+fn test_lr_schedule_cosine_at_zero() {
+    // cosine_lr(base, 0, total) = base
+    let src = r#"
+        fn cosine_lr(base_lr: f64, step: i64, total_steps: i64) -> f64 {
+            let lr_pi: f64 = 3.14159265358979323846;
+            if total_steps <= 0 { return base_lr; }
+            let s = if step < 0 { 0 } else { step };
+            if s >= total_steps { return base_lr * 1e-12; }
+            let s_f = to_f64(s);
+            let t_f = to_f64(total_steps);
+            let progress = s_f / t_f;
+            let cosine = cos(lr_pi * progress);
+            base_lr * (1.0 + cosine) / 2.0
+        }
+        cosine_lr(1.0, 0, 100)
+    "#;
+    let v = run_f64(src);
+    assert!((v - 1.0).abs() < 1e-9, "cosine_lr(0) should be base_lr, got {}", v);
+}
+
+#[test]
+fn test_lr_schedule_cosine_at_end() {
+    // cosine_lr(base, total, total) ≈ 0（base * eps）
+    let src = r#"
+        fn cosine_lr(base_lr: f64, step: i64, total_steps: i64) -> f64 {
+            let lr_pi: f64 = 3.14159265358979323846;
+            if total_steps <= 0 { return base_lr; }
+            let s = if step < 0 { 0 } else { step };
+            if s >= total_steps { return base_lr * 1e-12; }
+            let s_f = to_f64(s);
+            let t_f = to_f64(total_steps);
+            let progress = s_f / t_f;
+            let cosine = cos(lr_pi * progress);
+            base_lr * (1.0 + cosine) / 2.0
+        }
+        cosine_lr(1.0, 100, 100)
+    "#;
+    let v = run_f64(src);
+    assert!(v < 1e-6, "cosine_lr(total) should be ~0, got {}", v);
+}
+
+#[test]
+fn test_lr_schedule_step_lr() {
+    // step_lr(base, step_size, step_size, gamma) = base * gamma
+    let src = r#"
+        fn step_lr(base_lr: f64, step: i64, step_size: i64, gamma: f64) -> f64 {
+            if step_size <= 0 { return base_lr; }
+            let s = if step < 0 { 0 } else { step };
+            let num_decays = s / step_size;
+            base_lr * pow(gamma, to_f64(num_decays))
+        }
+        step_lr(1.0, 10, 10, 0.5)
+    "#;
+    let v = run_f64(src);
+    assert!((v - 0.5).abs() < 1e-9, "step_lr(step_size) should be base*gamma, got {}", v);
+}
+
+#[test]
+fn test_lr_schedule_exp_lr() {
+    // exp_lr(base, k, gamma) = base * gamma^k
+    let src = r#"
+        fn exp_lr(base_lr: f64, step: i64, gamma: f64) -> f64 {
+            let s = if step < 0 { 0 } else { step };
+            base_lr * pow(gamma, to_f64(s))
+        }
+        exp_lr(1.0, 3, 0.9)
+    "#;
+    let v = run_f64(src);
+    let expected = 0.9f64.powi(3);
+    assert!((v - expected).abs() < 1e-9, "exp_lr(3, 0.9) should be {}, got {}", expected, v);
+}
+
+#[test]
+fn test_lr_schedule_warmup_lr_bounds() {
+    // warmup_lr(base, 0, N) = 0; warmup_lr(base, N, N) = base
+    let src_zero = r#"
+        fn warmup_lr(base_lr: f64, step: i64, warmup_steps: i64) -> f64 {
+            if warmup_steps <= 0 { return base_lr; }
+            let s = if step < 0 { 0 } else { step };
+            if s >= warmup_steps { return base_lr; }
+            let s_f = to_f64(s);
+            let w_f = to_f64(warmup_steps);
+            base_lr * s_f / w_f
+        }
+        warmup_lr(1.0, 0, 100)
+    "#;
+    let v0 = run_f64(src_zero);
+    assert!(v0.abs() < 1e-9, "warmup_lr(0) should be 0, got {}", v0);
+
+    let src_end = r#"
+        fn warmup_lr(base_lr: f64, step: i64, warmup_steps: i64) -> f64 {
+            if warmup_steps <= 0 { return base_lr; }
+            let s = if step < 0 { 0 } else { step };
+            if s >= warmup_steps { return base_lr; }
+            let s_f = to_f64(s);
+            let w_f = to_f64(warmup_steps);
+            base_lr * s_f / w_f
+        }
+        warmup_lr(1.0, 100, 100)
+    "#;
+    let v_end = run_f64(src_end);
+    assert!((v_end - 1.0).abs() < 1e-9, "warmup_lr(warmup_steps) should be base, got {}", v_end);
+}
+
+#[test]
+fn test_lr_schedule_warmup_steps_zero() {
+    // warmup_steps=0 → 直接返回 base_lr（避免除零）
+    let src = r#"
+        fn warmup_lr(base_lr: f64, step: i64, warmup_steps: i64) -> f64 {
+            if warmup_steps <= 0 { return base_lr; }
+            let s = if step < 0 { 0 } else { step };
+            if s >= warmup_steps { return base_lr; }
+            let s_f = to_f64(s);
+            let w_f = to_f64(warmup_steps);
+            base_lr * s_f / w_f
+        }
+        warmup_lr(1.0, 5, 0)
+    "#;
+    let v = run_f64(src);
+    assert!((v - 1.0).abs() < 1e-9, "warmup_lr(warmup_steps=0) should be base, got {}", v);
+}
+
+#[test]
+fn test_lr_schedule_total_steps_zero() {
+    // total_steps=0 → cosine_lr 返回 base_lr（避免除零）
+    let src = r#"
+        fn cosine_lr(base_lr: f64, step: i64, total_steps: i64) -> f64 {
+            let lr_pi: f64 = 3.14159265358979323846;
+            if total_steps <= 0 { return base_lr; }
+            let s = if step < 0 { 0 } else { step };
+            if s >= total_steps { return base_lr * 1e-12; }
+            let s_f = to_f64(s);
+            let t_f = to_f64(total_steps);
+            let progress = s_f / t_f;
+            let cosine = cos(lr_pi * progress);
+            base_lr * (1.0 + cosine) / 2.0
+        }
+        cosine_lr(1.0, 5, 0)
+    "#;
+    let v = run_f64(src);
+    assert!((v - 1.0).abs() < 1e-9, "cosine_lr(total_steps=0) should be base, got {}", v);
+}
+
+#[test]
+fn test_lr_schedule_negative_step() {
+    // step<0 → 按 step=0 处理
+    let src = r#"
+        fn cosine_lr(base_lr: f64, step: i64, total_steps: i64) -> f64 {
+            let lr_pi: f64 = 3.14159265358979323846;
+            if total_steps <= 0 { return base_lr; }
+            let s = if step < 0 { 0 } else { step };
+            if s >= total_steps { return base_lr * 1e-12; }
+            let s_f = to_f64(s);
+            let t_f = to_f64(total_steps);
+            let progress = s_f / t_f;
+            let cosine = cos(lr_pi * progress);
+            base_lr * (1.0 + cosine) / 2.0
+        }
+        cosine_lr(1.0, -5, 100)
+    "#;
+    let v = run_f64(src);
+    assert!((v - 1.0).abs() < 1e-9, "cosine_lr(step<0) should equal cosine_lr(0)=base, got {}", v);
 }

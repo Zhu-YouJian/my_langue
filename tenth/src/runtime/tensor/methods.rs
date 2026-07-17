@@ -1934,6 +1934,170 @@ impl Tensor {
         }
     }
 
+    // ── pool2d ───────────────────────────────────────────────────────
+
+    /// 池化输出维度计算（PyTorch 语义，向下取整）：
+    /// `H_out = (H + 2*pad - kernel) / stride + 1`
+    fn pool_out_dim(input: usize, kernel: usize, stride: usize, pad: usize) -> usize {
+        (input + 2 * pad).saturating_sub(kernel) / stride + 1
+    }
+
+    /// MaxPool2D 前向 + argmax mask。
+    /// 输入：4D NCHW。返回 `(output, argmax_mask)`：
+    /// - `output` shape = `[N, C, H_out, W_out]`，dtype 与输入一致（F16/BF16 转 f64 计算后按输入 dtype 输出）。
+    /// - `argmax_mask` shape = `[N, C, H, W]`（与输入同 shape），每个 window 的 argmax 位置标 1。
+    ///
+    /// 语义对齐 PyTorch：同值取第一个（row-major 顺序，严格 `>` 才更新 argmax）。
+    /// padding 位置既不参与 max 比较也不参与 argmax（视为 -∞）。
+    pub fn max_pool2d_with_argmax(
+        &self,
+        kernel_h: usize, kernel_w: usize,
+        stride_h: usize, stride_w: usize,
+        padding_h: usize, padding_w: usize,
+    ) -> Result<(Tensor, Tensor), String> {
+        let shape = self.shape();
+        if shape.len() != 4 {
+            return Err(format!("max_pool2d 需要 4D NCHW 输入，得到 {}D", shape.len()));
+        }
+        let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
+        let h_out = Self::pool_out_dim(h, kernel_h, stride_h, padding_h);
+        let w_out = Self::pool_out_dim(w, kernel_w, stride_w, padding_w);
+
+        // 统一转 f64 计算（F16/BF16 Phase 1 简化）
+        let x_f64: Vec<f64> = match &self.data {
+            TensorData::F64(a) => a.iter().copied().collect(),
+            TensorData::F32(a) => a.iter().map(|v| *v as f64).collect(),
+            TensorData::F16(a) => a.iter().map(|v| v.to_f64()).collect(),
+            TensorData::BF16(a) => a.iter().map(|v| v.to_f64()).collect(),
+        };
+        let mut out_f64: Vec<f64> = vec![0.0; n * c * h_out * w_out];
+        let mut mask_f64: Vec<f64> = vec![0.0; n * c * h * w];
+        for ni in 0..n {
+            for ci in 0..c {
+                for ho in 0..h_out {
+                    for wo in 0..w_out {
+                        let mut best_val = f64::NEG_INFINITY;
+                        let mut best_idx: Option<(usize, usize)> = None;
+                        for kh in 0..kernel_h {
+                            let ih = ho * stride_h + kh;
+                            if ih < padding_h { continue; }
+                            let ih_adj = ih - padding_h;
+                            if ih_adj >= h { continue; }
+                            for kw in 0..kernel_w {
+                                let iw = wo * stride_w + kw;
+                                if iw < padding_w { continue; }
+                                let iw_adj = iw - padding_w;
+                                if iw_adj >= w { continue; }
+                                let in_idx = ((ni * c + ci) * h + ih_adj) * w + iw_adj;
+                                let v = x_f64[in_idx];
+                                if v > best_val {
+                                    best_val = v;
+                                    best_idx = Some((ih_adj, iw_adj));
+                                }
+                            }
+                        }
+                        let out_idx = ((ni * c + ci) * h_out + ho) * w_out + wo;
+                        out_f64[out_idx] = best_val;
+                        if let Some((ih_adj, iw_adj)) = best_idx {
+                            let mask_idx = ((ni * c + ci) * h + ih_adj) * w + iw_adj;
+                            mask_f64[mask_idx] = 1.0;
+                        }
+                    }
+                }
+            }
+        }
+        // 按输入 dtype 构造输出（F16/BF16 输入也产出 F64，Phase 1 简化）
+        let out_tensor = match self.dtype {
+            BaseType::F32 => {
+                let data: Vec<f32> = out_f64.iter().map(|v| *v as f32).collect();
+                Tensor::from_vec_f32(data, vec![n, c, h_out, w_out])
+            }
+            _ => Tensor::from_vec(out_f64, vec![n, c, h_out, w_out]),
+        };
+        // mask 统一用 F64（仅供 backward 内部使用，backward 已统一转 f64 路径）
+        let mask_tensor = Tensor::from_vec(mask_f64, vec![n, c, h, w]);
+        Ok((out_tensor, mask_tensor))
+    }
+
+    /// MaxPool2D 前向（仅输出，丢弃 argmax mask）。
+    pub fn max_pool2d(
+        &self,
+        kernel_h: usize, kernel_w: usize,
+        stride_h: usize, stride_w: usize,
+        padding_h: usize, padding_w: usize,
+    ) -> Result<Tensor, String> {
+        let (out, _mask) = self.max_pool2d_with_argmax(
+            kernel_h, kernel_w, stride_h, stride_w, padding_h, padding_w,
+        )?;
+        Ok(out)
+    }
+
+    /// AvgPool2D 前向。
+    /// `count_include_pad=False`：分母为 `valid_count`（window 内非 padding 位置数）。
+    /// padding 位置既不计入分子也不计入分母。
+    /// F16/BF16 转 f64 计算（Phase 1 简化）；结果按输入 dtype 构造。
+    pub fn avg_pool2d(
+        &self,
+        kernel_h: usize, kernel_w: usize,
+        stride_h: usize, stride_w: usize,
+        padding_h: usize, padding_w: usize,
+    ) -> Result<Tensor, String> {
+        let shape = self.shape();
+        if shape.len() != 4 {
+            return Err(format!("avg_pool2d 需要 4D NCHW 输入，得到 {}D", shape.len()));
+        }
+        let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
+        let h_out = Self::pool_out_dim(h, kernel_h, stride_h, padding_h);
+        let w_out = Self::pool_out_dim(w, kernel_w, stride_w, padding_w);
+
+        let x_f64: Vec<f64> = match &self.data {
+            TensorData::F64(a) => a.iter().copied().collect(),
+            TensorData::F32(a) => a.iter().map(|v| *v as f64).collect(),
+            TensorData::F16(a) => a.iter().map(|v| v.to_f64()).collect(),
+            TensorData::BF16(a) => a.iter().map(|v| v.to_f64()).collect(),
+        };
+        let mut out_f64: Vec<f64> = vec![0.0; n * c * h_out * w_out];
+        for ni in 0..n {
+            for ci in 0..c {
+                for ho in 0..h_out {
+                    for wo in 0..w_out {
+                        let mut sum = 0.0f64;
+                        let mut valid_count: usize = 0;
+                        for kh in 0..kernel_h {
+                            let ih = ho * stride_h + kh;
+                            if ih < padding_h { continue; }
+                            let ih_adj = ih - padding_h;
+                            if ih_adj >= h { continue; }
+                            for kw in 0..kernel_w {
+                                let iw = wo * stride_w + kw;
+                                if iw < padding_w { continue; }
+                                let iw_adj = iw - padding_w;
+                                if iw_adj >= w { continue; }
+                                let in_idx = ((ni * c + ci) * h + ih_adj) * w + iw_adj;
+                                sum += x_f64[in_idx];
+                                valid_count += 1;
+                            }
+                        }
+                        let out_idx = ((ni * c + ci) * h_out + ho) * w_out + wo;
+                        out_f64[out_idx] = if valid_count > 0 {
+                            sum / (valid_count as f64)
+                        } else {
+                            0.0
+                        };
+                    }
+                }
+            }
+        }
+        let out_tensor = match self.dtype {
+            BaseType::F32 => {
+                let data: Vec<f32> = out_f64.iter().map(|v| *v as f32).collect();
+                Tensor::from_vec_f32(data, vec![n, c, h_out, w_out])
+            }
+            _ => Tensor::from_vec(out_f64, vec![n, c, h_out, w_out]),
+        };
+        Ok(out_tensor)
+    }
+
     /// In-place element-wise assignment: `self[i..] = src`.
     /// This mutates the underlying ArrayD in-place.
     /// Returns `Err` if shapes are incompatible (neither equal nor broadcastable to self's shape).

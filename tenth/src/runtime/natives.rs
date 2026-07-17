@@ -332,6 +332,126 @@ pub fn register_all_natives(vm: &mut Vm) {
         Ok(Value::Unit)
     });
 
+    // —— TCP 服务端原语（句柄表方案，handle 1-based，0 表示无效）——
+    // 与 std/net.th 的 listen/accept/listener_close wrapper 对齐。
+    // 与 interpreter::natives::call_named_fn 中的实现语义对齐（双侧注册）。
+    vm.add_native("tcp_listen".into(), |vm, args| {
+        if let Some(Value::String(addr)) = args.first() {
+            match std::net::TcpListener::bind(addr) {
+                Ok(listener) => {
+                    vm.tcp_listeners.push(Some(listener));
+                    let handle = vm.tcp_listeners.len() as i64; // 1-based
+                    Ok(ok_result(Value::Int(handle, BaseType::I32)))
+                }
+                Err(e) => Ok(err_result(format!("监听失败: {e}"))),
+            }
+        } else {
+            Ok(err_result("tcp_listen 需要 1 个 String 参数"))
+        }
+    });
+    vm.add_native("tcp_accept".into(), |vm, args| {
+        if let Some(Value::Int(handle, _)) = args.first() {
+            let idx = *handle as usize;
+            if idx == 0 || idx > vm.tcp_listeners.len() {
+                return Ok(err_result("无效的监听器句柄"));
+            }
+            if let Some(ref listener) = vm.tcp_listeners[idx - 1] {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        vm.tcp_streams.push(Some(stream));
+                        let stream_handle = vm.tcp_streams.len() as i64; // 1-based
+                        Ok(ok_result(Value::Int(stream_handle, BaseType::I32)))
+                    }
+                    Err(e) => Ok(err_result(format!("接受连接失败: {e}"))),
+                }
+            } else {
+                Ok(err_result("监听器已关闭"))
+            }
+        } else {
+            Ok(err_result("tcp_accept 需要 1 个 i64 参数"))
+        }
+    });
+    vm.add_native("tcp_listener_close".into(), |vm, args| {
+        if let Some(Value::Int(handle, _)) = args.first() {
+            let idx = *handle as usize;
+            if idx > 0 && idx <= vm.tcp_listeners.len() {
+                vm.tcp_listeners[idx - 1] = None; // drop 自动关闭
+            }
+        }
+        Ok(Value::Unit)
+    });
+
+    // —— 子进程原语（句柄表方案，handle 1-based，0 表示无效）——
+    // 与 std/process.th 的 new/arg/run/output wrapper 对齐。
+    // command_output 消费 Command（mem::take 取出所有权），再次调用返回 Err。
+    vm.add_native("command_new".into(), |vm, args| {
+        if let Some(Value::String(program)) = args.first() {
+            let cmd = std::process::Command::new(program);
+            vm.commands.push(Some(cmd));
+            let handle = vm.commands.len() as i64; // 1-based
+            Ok(ok_result(Value::Int(handle, BaseType::I32)))
+        } else {
+            Ok(err_result("command_new 需要 1 个 String 参数"))
+        }
+    });
+    vm.add_native("command_arg".into(), |vm, args| {
+        if args.len() >= 2 {
+            if let (Value::Int(handle, _), Value::String(arg)) = (&args[0], &args[1]) {
+                let idx = *handle as usize;
+                if idx > 0 && idx <= vm.commands.len() {
+                    if let Some(ref mut cmd) = vm.commands[idx - 1] {
+                        cmd.arg(arg);
+                    }
+                }
+            }
+        }
+        Ok(Value::Unit)
+    });
+    vm.add_native("command_run".into(), |vm, args| {
+        if let Some(Value::Int(handle, _)) = args.first() {
+            let idx = *handle as usize;
+            if idx == 0 || idx > vm.commands.len() {
+                return Ok(err_result("无效的命令句柄"));
+            }
+            if let Some(ref mut cmd) = vm.commands[idx - 1] {
+                match cmd.status() {
+                    Ok(status) => {
+                        let code = status.code().unwrap_or(-1) as i64;
+                        Ok(ok_result(Value::Int(code, BaseType::I32)))
+                    }
+                    Err(e) => Ok(err_result(format!("执行失败: {e}"))),
+                }
+            } else {
+                Ok(err_result("命令已释放"))
+            }
+        } else {
+            Ok(err_result("command_run 需要 1 个 i64 参数"))
+        }
+    });
+    vm.add_native("command_output".into(), |vm, args| {
+        if let Some(Value::Int(handle, _)) = args.first() {
+            let idx = *handle as usize;
+            if idx == 0 || idx > vm.commands.len() {
+                return Ok(err_result("无效的命令句柄"));
+            }
+            // output() 消费 Command 语义：用 mem::take 取出所有权，槽位变 None
+            let cmd_opt = std::mem::take(&mut vm.commands[idx - 1]);
+            if let Some(mut cmd) = cmd_opt {
+                match cmd.output() {
+                    Ok(output) => {
+                        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                        Ok(ok_result(Value::String(stdout)))
+                    }
+                    Err(e) => Ok(err_result(format!("执行失败: {e}"))),
+                }
+            } else {
+                Ok(err_result("命令已释放"))
+            }
+        } else {
+            Ok(err_result("command_output 需要 1 个 i64 参数"))
+        }
+    });
+
     // —— 正则表达式原语（句柄表方案，handle 1-based，0 表示无效）——
     // 与 std/regex.th 对齐：Tenth 层不暴露 Regex 类型，仅用 i64 handle。
     // 与 interpreter::natives::call_named_fn 中的实现语义对齐（双侧注册）。

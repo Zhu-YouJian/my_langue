@@ -22,3 +22,19 @@ fn close(handle: i64) {
 fn set_timeout(handle: i64, ms: i64) {
     tcp_set_timeout(handle, ms)
 }
+
+// TCP 服务端原语（句柄表模式，handle 1-based，0 表示无效）
+// listen 返回 listener handle；accept 返回 stream handle（可用 read/write/close）
+// listener_close 关闭监听器，drop 自动释放资源
+
+fn listen(addr: String) -> Result<i64> {
+    tcp_listen(addr)
+}
+
+fn accept(listener_handle: i64) -> Result<i64> {
+    tcp_accept(listener_handle)
+}
+
+fn listener_close(listener_handle: i64) {
+    tcp_listener_close(listener_handle)
+}

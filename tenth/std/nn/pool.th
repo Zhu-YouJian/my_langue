@@ -1,0 +1,67 @@
+// 2D 池化层（MaxPool2D / AvgPool2D）。
+// Supports autodiff via TapeOp::MaxPool2D / TapeOp::AvgPool2D。
+//
+// Usage:
+//   let y = max_pool2d(x, kernel=2, stride=2, padding=0)        // 方形参数
+//   let y = max_pool2d_explicit(x, 2, 2, 2, 2, 0, 0)            // 显式参数
+//   let y = avg_pool2d(x, kernel=2, stride=2, padding=0)
+//   let y = avg_pool2d_explicit(x, 2, 2, 2, 2, 0, 0)
+//
+// x: (N, C, H, W) — 4D NCHW
+// 输出: (N, C, H_out, W_out)，H_out = (H + 2*pH - kH) / sH + 1（向下取整）
+//
+// 语义对齐 PyTorch：
+// - MaxPool2D: 取 window 内最大值，同值取第一个（row-major 顺序）
+// - AvgPool2D: count_include_pad=False，分母为 window 内非 padding 位置数
+//
+// Implemented via x.max_pool2d(kH, kW, sH, sW, pH, pW) /
+//                x.avg_pool2d(kH, kW, sH, sW, pH, pW) tensor methods.
+// backward：MaxPool2D 重新计算 argmax 路由梯度；AvgPool2D 均分到 window 内有效位置。
+//
+// Phase 3 DRY 清理：泛型化 <T> 支持 f32/f64。
+
+// MaxPool2D — 方形参数版（kernel=kernel_h=kernel_w 等）
+fn max_pool2d<T>(
+    x: Tensor[T, ..],
+    kernel: i64,
+    stride: i64,
+    padding: i64,
+) -> Tensor[T, ..] {
+    x.max_pool2d(kernel, kernel, stride, stride, padding, padding)
+}
+
+// MaxPool2D — 显式参数版（允许非方形 kernel/stride/padding）
+fn max_pool2d_explicit<T>(
+    x: Tensor[T, ..],
+    kh: i64,
+    kw: i64,
+    sh: i64,
+    sw: i64,
+    ph: i64,
+    pw: i64,
+) -> Tensor[T, ..] {
+    x.max_pool2d(kh, kw, sh, sw, ph, pw)
+}
+
+// AvgPool2D — 方形参数版
+fn avg_pool2d<T>(
+    x: Tensor[T, ..],
+    kernel: i64,
+    stride: i64,
+    padding: i64,
+) -> Tensor[T, ..] {
+    x.avg_pool2d(kernel, kernel, stride, stride, padding, padding)
+}
+
+// AvgPool2D — 显式参数版
+fn avg_pool2d_explicit<T>(
+    x: Tensor[T, ..],
+    kh: i64,
+    kw: i64,
+    sh: i64,
+    sw: i64,
+    ph: i64,
+    pw: i64,
+) -> Tensor[T, ..] {
+    x.avg_pool2d(kh, kw, sh, sw, ph, pw)
+}

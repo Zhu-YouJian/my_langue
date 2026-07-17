@@ -87,7 +87,10 @@ pub fn classify_tape_op(op: &TapeOp) -> TapeOpClass {
         | TapeOp::BatchNorm
         | TapeOp::LayerNorm
         | TapeOp::Dropout
-        | TapeOp::Select => TapeOpClass::Construct,
+        | TapeOp::Select
+        // MaxPool2D / AvgPool2D: (N,C,H,W) → (N,C,H_out,W_out)，产生新空间维度
+        | TapeOp::MaxPool2D
+        | TapeOp::AvgPool2D => TapeOpClass::Construct,
 
         // Preserve：shape 不变（元素级运算 + softmax/gelu 等保持输入 shape）
         TapeOp::Add

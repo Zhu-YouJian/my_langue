@@ -71,6 +71,16 @@
 //   tcp_write(handle, data)  — write byte vec -> Result<i64> (bytes written)
 //   tcp_close(handle)        — close connection -> Unit
 //   tcp_set_timeout(handle, ms) — set read/write timeout -> Unit
+//   tcp_listen(addr)         — bind & listen on addr -> Result<i64> (listener handle)
+//   tcp_accept(listener)     — accept a connection -> Result<i64> (stream handle)
+//   tcp_listener_close(listener) — close listener -> Unit
+
+// ── Subprocess (built-in native functions) ──
+//   command_new(program)     — create Command -> Result<i64> (handle)
+//   command_arg(handle, arg) — add argument -> Unit
+//   command_run(handle)      — spawn & wait -> Result<i64> (exit code)
+//   command_output(handle)   — spawn & capture stdout -> Result<String>
+//                              (consumes handle; subsequent calls return Err)
 
 // ── HTTP (built-in native functions) ──
 //   http_get(url)            — HTTP/1.1 GET request -> Result<String>
@@ -99,6 +109,7 @@
 //   std::nn::dropout::dropout<T>                      // 泛型（f64/f32 通吃）
 //   std::nn::batchnorm::batchnorm<T>
 //   std::nn::conv::conv2d<T>
+//   std::nn::pool::max_pool2d<T>, max_pool2d_explicit<T>, avg_pool2d<T>, avg_pool2d_explicit<T>  // 2D 池化（含 autodiff）
 //   std::nn::embedding::embedding<T>
 //   std::nn::attention::scaled_dot_product_attention<T>, scaled_dot_product_attention_batched<T>  // 2D / 3D(bmm) 版本
 //   std::nn::multihead_attention::multihead_attention<T>
@@ -115,6 +126,7 @@
 //   std::optim::clip::clip_grad_by_value<T>, clip_grad_by_norm<T>  // 梯度裁剪（clip_grad_by_norm 已修复 JIT 路径 tensor-float 比较问题）
 //   std::optim::accumulate::accumulate_grad<T>  // 梯度累积辅助
 //   std::optim::accumulate::accumulate_loop<T>  // 梯度累积循环（高阶函数，对多个 micro_batch 自动 forward+backward）
+//   std::optim::lr_schedule::cosine_lr, step_lr, exp_lr, warmup_lr, warmup_cosine_lr, warmup_step_lr  // 学习率调度器（f64 标量，参考 PyTorch 语义）
 //   std::data::dataloader::new, has_next, next_batch, reset, num_batches
 //   std::data::mnist::parse_images, parse_labels, one_hot, normalize_pixel, read_i32_be
 //   std::utils::serialization::save_model, load_model, save_checkpoint
@@ -135,6 +147,8 @@
 //   std::io::io::eprint, eprintln, read_line, read_line_result   // stderr/stdin I/O（包装 eprint/eprintln/read_line native）
 //   std::env::env::get, get_result, get_or_empty, set, exit      // 环境变量与进程退出（包装 env_get/env_set/exit native）
 //   std::net::net::connect, read, write, close, set_timeout      // TCP 客户端（包装 tcp_* native，handle table 模式）
+//   std::net::net::listen, accept, listener_close                // TCP 服务端（包装 tcp_listen/tcp_accept/tcp_listener_close native）
+//   std::process::new, arg, run, output                          // 子进程执行（包装 command_new/command_arg/command_run/command_output native，handle table 模式）
 //   std::http::http::get, post                                    // HTTP/1.1 客户端（手写协议，无 HTTPS）
 //   std::async                                                  // 异步 I/O 文档（async_sleep_ms/async_tcp_read/async_tcp_write 为 built-in native）
 //   std::json::json::encode, decode, encode_pretty, load, save

@@ -1,0 +1,23 @@
+// Subprocess execution primitives
+//
+// Usage:
+//   use std::process
+//
+// 句柄表模式：handle 1-based，0 表示无效。
+// command_output 消费 Command（mem::take 取出所有权），再次调用返回 Err。
+
+fn new(program: String) -> Result<i64> {
+    command_new(program)
+}
+
+fn arg(cmd_handle: i64, arg: String) {
+    command_arg(cmd_handle, arg)
+}
+
+fn run(cmd_handle: i64) -> Result<i64> {
+    command_run(cmd_handle)
+}
+
+fn output(cmd_handle: i64) -> Result<String> {
+    command_output(cmd_handle)
+}

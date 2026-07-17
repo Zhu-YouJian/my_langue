@@ -126,5 +126,7 @@ pub(crate) fn op_name(op: &TapeOp) -> &'static str {
         TapeOp::Gather => "Gather",
         TapeOp::Reshape => "Reshape",
         TapeOp::MaskedFill => "MaskedFill",
+        TapeOp::MaxPool2D => "MaxPool2D",
+        TapeOp::AvgPool2D => "AvgPool2D",
     }
 }
