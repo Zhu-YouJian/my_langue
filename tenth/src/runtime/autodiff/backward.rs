@@ -80,9 +80,9 @@ impl Tape {
                         let sign = E::from_f64(sign_f64);
                         for (i, input_shape) in shapes.iter().enumerate() {
                             let g_i = if i == 0 {
-                                unbroadcast(&grad_arr, input_shape, node.id, op_str)?
+                                unbroadcast(&grad_arr, input_shape, node.id, &op_str)?
                             } else {
-                                unbroadcast(&grad_arr, input_shape, node.id, op_str)?.mapv(|v| v * sign)
+                                unbroadcast(&grad_arr, input_shape, node.id, &op_str)?.mapv(|v| v * sign)
                             };
                             propagate_grad(node, i, &E::into_tensor_data(g_i), &mut node_grads)?;
                         }
@@ -100,8 +100,8 @@ impl Tape {
                         let a_arr = E::from_tensor_data(&a_data);
                         let b_arr = E::from_tensor_data(&b_data);
                         let grad_arr = E::from_tensor_data(&grad);
-                        let ga = unbroadcast(&(&grad_arr * &b_arr), &a_shape, node.id, op_str)?;
-                        let gb = unbroadcast(&(&grad_arr * &a_arr), &b_shape, node.id, op_str)?;
+                        let ga = unbroadcast(&(&grad_arr * &b_arr), &a_shape, node.id, &op_str)?;
+                        let gb = unbroadcast(&(&grad_arr * &a_arr), &b_shape, node.id, &op_str)?;
                         propagate_grad(node, 0, &E::into_tensor_data(ga), &mut node_grads)?;
                         propagate_grad(node, 1, &E::into_tensor_data(gb), &mut node_grads)?;
                     });
@@ -117,8 +117,8 @@ impl Tape {
                         let a_arr = E::from_tensor_data(&a_data);
                         let b_arr = E::from_tensor_data(&b_data);
                         let grad_arr = E::from_tensor_data(&grad);
-                        let ga = unbroadcast(&(&grad_arr / &b_arr), &a_shape, node.id, op_str)?;
-                        let gb = unbroadcast(&(-&grad_arr * &a_arr / (&b_arr * &b_arr)), &b_shape, node.id, op_str)?;
+                        let ga = unbroadcast(&(&grad_arr / &b_arr), &a_shape, node.id, &op_str)?;
+                        let gb = unbroadcast(&(-&grad_arr * &a_arr / (&b_arr * &b_arr)), &b_shape, node.id, &op_str)?;
                         propagate_grad(node, 0, &E::into_tensor_data(ga), &mut node_grads)?;
                         propagate_grad(node, 1, &E::into_tensor_data(gb), &mut node_grads)?;
                     });
@@ -630,10 +630,10 @@ impl Tape {
                             };
                             let one = E::from_f64(1.0);
                             // d_then = unbroadcast(grad * cond_mask, then.shape)
-                            let d_then = unbroadcast(&(&grad_arr * &cond_mask), &then_shape, node.id, op_str)?;
+                            let d_then = unbroadcast(&(&grad_arr * &cond_mask), &then_shape, node.id, &op_str)?;
                             // d_else = unbroadcast(grad * (1 - cond_mask), else.shape)
                             let inv_mask = cond_mask.mapv(|v| one - v);
-                            let d_else = unbroadcast(&(&grad_arr * &inv_mask), &else_shape, node.id, op_str)?;
+                            let d_else = unbroadcast(&(&grad_arr * &inv_mask), &else_shape, node.id, &op_str)?;
 
                             propagate_grad(node, 0, &E::into_tensor_data(d_then), &mut node_grads)?;
                             propagate_grad(node, 1, &E::into_tensor_data(d_else), &mut node_grads)?;
@@ -1141,6 +1141,114 @@ impl Tape {
                                 propagate_grad(node, 0, &E::into_tensor_data(d_x_arr), &mut node_grads)?;
                             });
                         }
+                    }
+                }
+                TapeOp::Custom(op_id) => {
+                    // PROJ-006：自定义可微算子反向传播。
+                    // 通过 self.custom_ops 查找用户的 CustomBackward 实现，调用其 backward 方法。
+                    let op_id = *op_id;
+
+                    // 1. 获取 registry 引用（Ref<CustomOpRegistry>）
+                    let registry_ref = match &self.custom_ops {
+                        Some(rc) => rc.borrow(),
+                        None => {
+                            return Err(crate::error::TenthError::RuntimeError {
+                                line: None,
+                                col: None,
+                                message: format!(
+                                    "Custom#{} 反向传播失败：tape 未设置 custom_ops（请通过 set_custom_ops 设置）",
+                                    op_id
+                                ),
+                            });
+                        }
+                    };
+
+                    // 2. 查找算子
+                    let custom_op = match registry_ref.get(op_id) {
+                        Some(op) => op,
+                        None => {
+                            return Err(crate::error::TenthError::RuntimeError {
+                                line: None,
+                                col: None,
+                                message: format!(
+                                    "Custom#{} 反向传播失败：registry 中未找到 op_id={}",
+                                    op_id, op_id
+                                ),
+                            });
+                        }
+                    };
+
+                    // 3. 构造 inputs（clone 数据以释放 RefCell borrow，避免跨越 user backward 调用）
+                    //    input_tensors = [input1, ..., inputN, result]（最后一个为输出，backward 不需要）
+                    let n_inputs = node.input_tensors.len().saturating_sub(1);
+                    let input_tensors: Vec<Tensor> = (0..n_inputs)
+                        .map(|i| {
+                            Tensor::from_tensor_data(node.input_tensors[i].borrow().data.clone())
+                        })
+                        .collect();
+                    let input_refs: Vec<&Tensor> = input_tensors.iter().collect();
+
+                    // 4. 构造 grad Tensor（从 TensorData 转换）
+                    let grad_tensor = Tensor::from_tensor_data(grad.clone());
+
+                    // 5. 调用用户 backward
+                    let input_grads =
+                        custom_op.backward(&input_refs, &grad_tensor).map_err(|e| {
+                            crate::error::TenthError::RuntimeError {
+                                line: None,
+                                col: None,
+                                message: format!(
+                                    "Custom#{} ({}) backward 失败：{}",
+                                    op_id,
+                                    custom_op.name(),
+                                    e
+                                ),
+                            }
+                        })?;
+
+                    // 6. 校验梯度数量
+                    if input_grads.len() != n_inputs {
+                        return Err(crate::error::TenthError::ShapeMismatch {
+                            context: TapeErrorContext {
+                                tape_node_id: node.id,
+                                op: format!("Custom#{}", op_id),
+                                expected_shape: vec![n_inputs],
+                                actual_shape: vec![input_grads.len()],
+                            },
+                            message: format!(
+                                "Custom#{} ({}) backward 返回梯度数量={} 与输入数量={} 不一致",
+                                op_id,
+                                custom_op.name(),
+                                input_grads.len(),
+                                n_inputs
+                            ),
+                        });
+                    }
+
+                    // 7. 校验每个梯度 shape 并传播（护城河 A 运行时兜底）
+                    for (i, g) in input_grads.iter().enumerate() {
+                        let expected_shape = node.input_tensors[i].borrow().shape();
+                        let actual_shape = g.shape();
+                        if actual_shape != expected_shape {
+                            return Err(crate::error::TenthError::ShapeMismatch {
+                                context: TapeErrorContext {
+                                    tape_node_id: node.id,
+                                    op: format!("Custom#{}", op_id),
+                                    expected_shape: expected_shape.clone(),
+                                    actual_shape: actual_shape.clone(),
+                                },
+                                message: format!(
+                                    "Custom#{} ({}) backward 返回梯度[{}] shape={:?} 与输入[{}] shape={:?} 不一致",
+                                    op_id,
+                                    custom_op.name(),
+                                    i,
+                                    actual_shape,
+                                    i,
+                                    expected_shape
+                                ),
+                            });
+                        }
+                        propagate_grad(node, i, &g.data, &mut node_grads)?;
                     }
                 }
             }

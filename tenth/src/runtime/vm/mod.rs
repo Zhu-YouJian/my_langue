@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use super::value::{Value, FutureState};
-use super::autodiff::Tape;
+use super::autodiff::{Tape, CustomOpRegistry, CustomBackward};
 use super::async_io::ASYNC_IO;
 
 mod chunk;
@@ -96,6 +96,12 @@ pub struct Vm {
     /// 由 `run_until_yield` 在入口/Frame 切换时同步更新；native 函数可读取此值
     /// 以便 Step 5 的 async I/O 能正确注册到当前 task。
     current_task: TaskId,
+    /// 自定义算子注册表（PROJ-006）。
+    ///
+    /// 用 `Rc<RefCell<...>>` 共享——Tape 在 backward 前通过 `set_custom_ops`
+    /// 拿到 Rc 副本，使 backward 能访问用户的 `CustomBackward` 实现。
+    /// register_custom_op 通过 `borrow_mut()` 修改；查询通过 `borrow()`。
+    pub custom_ops: Rc<RefCell<CustomOpRegistry>>,
 }
 
 impl Vm {
@@ -117,7 +123,23 @@ impl Vm {
             task_results: HashMap::new(),
             task_futures: HashMap::new(),
             current_task: 0,
+            custom_ops: Rc::new(RefCell::new(CustomOpRegistry::new())),
         }
+    }
+
+    /// 注册自定义可微算子（PROJ-006）。
+    ///
+    /// 返回 `op_id`（用于 `TapeOp::Custom(op_id)`）。
+    /// 若同名算子已注册，返回 `Err`。
+    pub fn register_custom_op(&mut self, op: Box<dyn CustomBackward>) -> Result<usize, String> {
+        self.custom_ops.borrow_mut().register(op)
+    }
+
+    /// 自定义算子注册表访问器（PROJ-006）。
+    ///
+    /// 返回 `Rc` 副本，供 Tape 在 backward 前通过 `set_custom_ops` 共享。
+    pub fn custom_ops(&self) -> Rc<RefCell<CustomOpRegistry>> {
+        Rc::clone(&self.custom_ops)
     }
 
     // ── JIT accessors ──────────────────────────────────────────────────────

@@ -76,7 +76,7 @@ fn test_tapeop_classify_completeness() {
         (TapeOp::Transpose, TapeOpClass::Expand),
     ];
     for (op, expected) in &cases {
-        assert_eq!(classify_tape_op(op), *expected, "TapeOp::{:?} 分类错误", op);
+        assert_eq!(classify_tape_op(op, None), *expected, "TapeOp::{:?} 分类错误", op);
     }
 }
 
@@ -355,9 +355,9 @@ fn test_shape_mismatch_error_structure() {
 fn classify_tape_op_gather_is_preserve() {
     // Gather：输出 shape == index.shape（从输入张量继承 shape，非新构造）。
     // 按 T7 定理分类为 Preserve（与 Scatter 一致）。
-    assert_eq!(classify_tape_op(&TapeOp::Gather), TapeOpClass::Preserve);
+    assert_eq!(classify_tape_op(&TapeOp::Gather, None), TapeOpClass::Preserve);
     // 顺带验证 Scatter 也为 Preserve（多维扩展后分类不变）
-    assert_eq!(classify_tape_op(&TapeOp::Scatter), TapeOpClass::Preserve);
+    assert_eq!(classify_tape_op(&TapeOp::Scatter, None), TapeOpClass::Preserve);
 }
 
 // ── 11. Phase 1：backward 错误携带真实 v_err（非 loss_id）──────────────

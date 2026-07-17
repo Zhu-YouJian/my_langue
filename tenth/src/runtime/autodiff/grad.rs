@@ -3,6 +3,8 @@
 //! 从 `autodiff.rs` 拆分而来（T3c 架构重构），保持原有可见性与语义不变。
 //! 这些函数原本是模块私有 `fn`，拆分后改为 `pub(super) fn` 以便 `backward.rs` 调用。
 
+use std::borrow::Cow;
+
 use crate::runtime::tensor::TensorData;
 use super::tape_op::{TapeNode, TapeOp};
 
@@ -96,37 +98,45 @@ pub(super) fn propagate_grad(
 ///
 /// 护城河 F：`pub(crate)` 以便 `relation_debugger` 复用，避免重复实现
 ///（原先 `relation_debugger.rs` 有一份同步副本，现已删除）。
-pub(crate) fn op_name(op: &TapeOp) -> &'static str {
+///
+/// PROJ-006：返回类型从 `&'static str` 改为 `Cow<'static, str>`，
+/// 因为 `TapeOp::Custom(op_id)` 需要动态生成名称（`Custom#{op_id}`）。
+/// 调用方通过 `op_name(...).as_ref()` 或 `&op_name(...)` 取 `&str` 视图；
+/// 算子实际名称（如 "square"）需在调用点通过 `CustomOpRegistry::get(op_id).name()` 获取，
+/// 本函数仅返回 `Custom#id` 形式（无法访问 registry）。
+pub(crate) fn op_name(op: &TapeOp) -> Cow<'static, str> {
     match op {
-        TapeOp::Input => "Input",
-        TapeOp::Add => "Add",
-        TapeOp::Sub => "Sub",
-        TapeOp::Mul => "Mul",
-        TapeOp::Div => "Div",
-        TapeOp::Neg => "Neg",
-        TapeOp::ReLU => "ReLU",
-        TapeOp::MatMul => "MatMul",
-        TapeOp::BatchedMatMul => "BatchedMatMul",
-        TapeOp::Transpose => "Transpose",
-        TapeOp::Sum => "Sum",
-        TapeOp::Mean => "Mean",
-        TapeOp::Exp => "Exp",
-        TapeOp::Log => "Log",
-        TapeOp::Sigmoid => "Sigmoid",
-        TapeOp::Softmax => "Softmax",
-        TapeOp::CrossEntropy => "CrossEntropy",
-        TapeOp::Dropout => "Dropout",
-        TapeOp::Conv2D => "Conv2D",
-        TapeOp::BatchNorm => "BatchNorm",
-        TapeOp::LayerNorm => "LayerNorm",
-        TapeOp::Gelu => "Gelu",
-        TapeOp::Select => "Select",
-        TapeOp::Abs => "Abs",
-        TapeOp::Scatter => "Scatter",
-        TapeOp::Gather => "Gather",
-        TapeOp::Reshape => "Reshape",
-        TapeOp::MaskedFill => "MaskedFill",
-        TapeOp::MaxPool2D => "MaxPool2D",
-        TapeOp::AvgPool2D => "AvgPool2D",
+        TapeOp::Input => Cow::Borrowed("Input"),
+        TapeOp::Add => Cow::Borrowed("Add"),
+        TapeOp::Sub => Cow::Borrowed("Sub"),
+        TapeOp::Mul => Cow::Borrowed("Mul"),
+        TapeOp::Div => Cow::Borrowed("Div"),
+        TapeOp::Neg => Cow::Borrowed("Neg"),
+        TapeOp::ReLU => Cow::Borrowed("ReLU"),
+        TapeOp::MatMul => Cow::Borrowed("MatMul"),
+        TapeOp::BatchedMatMul => Cow::Borrowed("BatchedMatMul"),
+        TapeOp::Transpose => Cow::Borrowed("Transpose"),
+        TapeOp::Sum => Cow::Borrowed("Sum"),
+        TapeOp::Mean => Cow::Borrowed("Mean"),
+        TapeOp::Exp => Cow::Borrowed("Exp"),
+        TapeOp::Log => Cow::Borrowed("Log"),
+        TapeOp::Sigmoid => Cow::Borrowed("Sigmoid"),
+        TapeOp::Softmax => Cow::Borrowed("Softmax"),
+        TapeOp::CrossEntropy => Cow::Borrowed("CrossEntropy"),
+        TapeOp::Dropout => Cow::Borrowed("Dropout"),
+        TapeOp::Conv2D => Cow::Borrowed("Conv2D"),
+        TapeOp::BatchNorm => Cow::Borrowed("BatchNorm"),
+        TapeOp::LayerNorm => Cow::Borrowed("LayerNorm"),
+        TapeOp::Gelu => Cow::Borrowed("Gelu"),
+        TapeOp::Select => Cow::Borrowed("Select"),
+        TapeOp::Abs => Cow::Borrowed("Abs"),
+        TapeOp::Scatter => Cow::Borrowed("Scatter"),
+        TapeOp::Gather => Cow::Borrowed("Gather"),
+        TapeOp::Reshape => Cow::Borrowed("Reshape"),
+        TapeOp::MaskedFill => Cow::Borrowed("MaskedFill"),
+        TapeOp::MaxPool2D => Cow::Borrowed("MaxPool2D"),
+        TapeOp::AvgPool2D => Cow::Borrowed("AvgPool2D"),
+        // Custom 算子：返回 Custom#id（实际名称需通过 registry 查询）
+        TapeOp::Custom(op_id) => Cow::Owned(format!("Custom#{}", op_id)),
     }
 }

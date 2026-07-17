@@ -517,6 +517,17 @@ impl Lowerer {
                 };
                 Ok(Type::tensor(base_dtype, index_dims))
             },
+            // PROJ-006：__call_custom_op(op_id, ...inputs)
+            // 编译期无法预知用户算子的 forward_shape（CustomBackward::forward_shape 默认 None），
+            // 保守返回 Tensor[Dim::Any]（dtype 跟随输入张量，护城河 A 走运行时兜底）。
+            "__call_custom_op" => {
+                // 从 args[1..] 推断 dtype（若任一为 F32 则 F32，否则 F64）
+                let dtype = args.iter().skip(1).find_map(|a| match &a.ty {
+                    Type::Tensor { dtype, .. } if matches!(dtype.as_ref(), Type::Base(BaseType::F32)) => Some(BaseType::F32),
+                    _ => None,
+                }).unwrap_or(BaseType::F64);
+                Ok(Type::tensor(dtype, vec![Dim::Any]))
+            },
             // Wave 2 第 4 项：张量比较 native（gt/lt/ge/le/eq/ne）
             // 返回 F64 张量（0.0/1.0 编码 bool）；shape = broadcast(a.shape, b.shape)
             "tensor_gt" | "tensor_lt" | "tensor_ge" | "tensor_le" | "tensor_eq" | "tensor_ne" => {

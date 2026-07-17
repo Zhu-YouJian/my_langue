@@ -77,6 +77,8 @@ impl super::Interpreter {
                             | "select"
                             | "scatter"
                             | "gather"
+                            // PROJ-006：自定义可微算子调用 native（Rust 端 register_custom_op + .th wrapper）
+                            | "__call_custom_op"
                             // Wave 2 第 4 项：张量比较 native（返回 F64 0.0/1.0 张量）
                             | "tensor_gt" | "tensor_lt" | "tensor_ge" | "tensor_le" | "tensor_eq" | "tensor_ne"
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "to_f32" | "to_f64" | "tensor_from_vec"

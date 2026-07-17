@@ -17,6 +17,7 @@
 //   stop_grad, zero_grad     — autodiff control
 //   cross_entropy            — loss function
 //   select                   — conditional select primitive (cond ? then : else)
+//   __call_custom_op         — PROJ-006 自定义可微算子调用 native（Rust 端 register_custom_op 返回的 op_id + 输入张量；推荐通过 std::autograd::call_custom_op1/2/3 wrapper 调用）
 //   tensor_gt, tensor_lt, tensor_ge, tensor_le, tensor_eq, tensor_ne  — tensor comparisons (返回 f64 0.0/1.0 张量)
 //   Vec::new, HashMap::new   — collections
 //   read_file, write_bytes, read_bytes — file I/O
@@ -165,6 +166,7 @@
 //   std::http::http::get, post                                    // HTTP/1.1 客户端（手写协议，无 HTTPS）
 //   std::async                                                  // 异步 I/O 文档（async_sleep_ms/async_tcp_read/async_tcp_write 为 built-in native）
 //   std::json::json::encode, decode, encode_pretty, load, save
+//   std::autograd::call_custom_op1<T>, call_custom_op2<T>, call_custom_op3<T>  // PROJ-006 自定义可微算子（Rust 端 register_custom_op 返回 op_id，.th 端通过此 wrapper 调用）
 //   std::runtime::run_with_limit, limit_or_default, run_with_timeout, timeout_or_default
 //   (built-in, no import needed) with_step_limit, with_timeout_ms, is_timeout
 //

@@ -14,6 +14,8 @@
 //! `eval_stmt` 见 `eval.rs`，自动微分记录见 `autodiff_helpers.rs`。
 
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
 use crate::hir::types::Type;
@@ -21,7 +23,7 @@ use crate::runtime::value::Value;
 use crate::runtime::tensor::Tensor;
 use crate::runtime::limits::RuntimeLimits;
 use crate::runtime::arena::Arena;
-use crate::runtime::autodiff::Tape;
+use crate::runtime::autodiff::{Tape, CustomOpRegistry, CustomBackward};
 
 /// Default arena capacity when no explicit limit is configured.
 const DEFAULT_ARENA_CAPACITY: usize = 64 * 1024; // 64K f64 slots = 512 KB
@@ -80,6 +82,13 @@ pub struct Interpreter {
     /// 子进程 Command 句柄表（与 vm.rs 的 Vm::commands 对齐）。
     /// 索引+1 即句柄（1-based，0 表示无效）。`None` 表示已释放的槽位。
     pub commands: Vec<Option<std::process::Command>>,
+    /// 自定义算子注册表（PROJ-006）。
+    ///
+    /// 用 `Rc<RefCell<...>>` 共享——Tape 在 backward 前通过 `set_custom_ops`
+    /// 拿到 Rc 副本，使 backward 能访问用户的 `CustomBackward` 实现。
+    /// register_custom_op 通过 `borrow_mut()` 修改；查询通过 `borrow()`。
+    /// 与 `vm::Vm::custom_ops` 字段对齐（双重注册一致性）。
+    pub custom_ops: Rc<RefCell<CustomOpRegistry>>,
 }
 
 impl Interpreter {
@@ -106,6 +115,7 @@ impl Interpreter {
             tcp_listeners: Vec::new(),
             regexes: Vec::new(),
             commands: Vec::new(),
+            custom_ops: Rc::new(RefCell::new(CustomOpRegistry::new())),
         }
     }
 
@@ -198,6 +208,21 @@ impl Interpreter {
         interp.limits = Some(limits);
         interp.arena = Arena::new(arena_cap);
         interp
+    }
+
+    /// 注册自定义可微算子（PROJ-006）。
+    ///
+    /// 返回 `op_id`（用于 `TapeOp::Custom(op_id)`）。
+    /// 若同名算子已注册，返回 `Err`。与 `vm::Vm::register_custom_op` 对齐。
+    pub fn register_custom_op(&mut self, op: Box<dyn CustomBackward>) -> Result<usize, String> {
+        self.custom_ops.borrow_mut().register(op)
+    }
+
+    /// 自定义算子注册表访问器（PROJ-006）。
+    ///
+    /// 返回 `Rc` 副本，供 Tape 在 backward 前通过 `set_custom_ops` 共享。
+    pub fn custom_ops(&self) -> Rc<RefCell<CustomOpRegistry>> {
+        Rc::clone(&self.custom_ops)
     }
 
     pub fn execute_program(&mut self, program: &HirProgram) -> TenthResult<Option<Value>> {

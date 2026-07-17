@@ -1160,7 +1160,11 @@ pub fn register_all_natives(vm: &mut Vm) {
     });
     vm.add_native("backward".into(), |vm, args| {
         if let Some(Value::Tensor(t)) = args.first() {
-            if let Some(ref tape) = vm.tape {
+            // PROJ-006：先把 custom_ops Rc 副本交给 tape，使 Custom 节点的
+            // backward 能通过 registry 查到用户实现的 CustomBackward。
+            let custom_ops = vm.custom_ops.clone();
+            if let Some(tape) = &mut vm.tape {
+                tape.set_custom_ops(custom_ops);
                 let loss_id = t.borrow().tape_id
                     .ok_or_else(|| TenthError::RuntimeError { line: None, col: None, message: "backward(): 张量没有 tape_id".into() })?;
                 // 护城河 F：包裹 backward 错误，附加 formal_explain 根因分析
@@ -1344,6 +1348,57 @@ pub fn register_all_natives(vm: &mut Vm) {
             if let Some(ref mut tape) = vm.tape {
                 let base_id = base.borrow().tape_id;
                 let node_id = tape.gather(base_id, base.clone(), index.clone(), result.clone(), dim);
+                result.borrow_mut().tape_id = Some(node_id);
+            }
+        }
+        Ok(Value::Tensor(result))
+    });
+    // ── PROJ-006：自定义可微算子调用 native ──────────────────────────────
+    // __call_custom_op(op_id, ...inputs) — 查 registry 找到 CustomBackward 实现，
+    // 调用其 forward 计算输出；若 recording 则记录 TapeOp::Custom(op_id) 到 tape。
+    // op_id 由 Rust 端 `Vm::register_custom_op` 返回，标准库 wrapper 据此分发。
+    // 兼容 vm.recording 与否：不录制时仅执行 forward，不写 tape 节点（与 select/scatter 模式一致）。
+    vm.add_native("__call_custom_op".into(), |vm, args| {
+        if args.is_empty() {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "__call_custom_op(op_id, ...inputs) 至少需要 op_id 参数".into() });
+        }
+        let op_id = match &args[0] {
+            Value::Int(n, _) => *n as usize,
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "__call_custom_op 第一个参数必须是 op_id (Int)".into() }),
+        };
+        // 收集输入张量（克隆 Rc 副本，避免后续借用冲突）
+        let input_tensors: Vec<Rc<RefCell<Tensor>>> = args[1..]
+            .iter()
+            .map(|v| match v {
+                Value::Tensor(t) => Ok(t.clone()),
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
+                    message: "__call_custom_op 输入参数必须是张量".into() }),
+            })
+            .collect::<TenthResult<_>>()?;
+        // 查 registry 调用 forward（Ref 借用在 forward 返回后释放）
+        let result_tensor = {
+            let registry = vm.custom_ops.borrow();
+            let custom_op = match registry.get(op_id) {
+                Some(op) => op,
+                None => return Err(TenthError::RuntimeError { line: None, col: None,
+                    message: format!("__call_custom_op: op_id={} 未注册", op_id) }),
+            };
+            // 借用所有输入张量
+            let borrowed: Vec<std::cell::Ref<Tensor>> = input_tensors.iter().map(|t| t.borrow()).collect();
+            let input_refs: Vec<&Tensor> = borrowed.iter().map(|r| &**r).collect();
+            custom_op.forward(&input_refs).map_err(|e| TenthError::RuntimeError {
+                line: None, col: None,
+                message: format!("Custom#{} ({}) forward 失败：{}", op_id, custom_op.name(), e),
+            })?
+        };
+        let result = Rc::new(RefCell::new(result_tensor));
+        // 若 recording，记录到 tape（与 select/scatter/gather 一致的模式）
+        if vm.recording {
+            if let Some(tape) = &mut vm.tape {
+                let input_ids: Vec<Option<usize>> = input_tensors.iter().map(|t| t.borrow().tape_id).collect();
+                let node_id = tape.custom_op(op_id, input_ids, input_tensors, result.clone());
                 result.borrow_mut().tape_id = Some(node_id);
             }
         }

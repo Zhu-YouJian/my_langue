@@ -17,8 +17,10 @@ use crate::hir::types::BaseType;
 mod tape_op;
 mod grad;
 mod backward;
+mod custom;
 
 pub use tape_op::{TapeNode, TapeOp};
+pub use custom::{CustomBackward, CustomOpRegistry};
 
 // 护城河 F Phase 1：op_name 去重——re-export 供 relation_debugger 复用。
 // grad 模块本身是私有子模块，通过此 re-export 暴露 op_name 到 crate 内。
@@ -31,11 +33,30 @@ pub struct Tape {
     /// 不变量：node.id == self.nodes 索引（护城河 F：relation_debugger 依赖）。
     pub(super) nodes: Vec<TapeNode>,
     counter: usize,
+    /// 自定义算子注册表（PROJ-006）。
+    ///
+    /// 由 Vm/Interpreter 在 backward 前通过 `set_custom_ops` 设置。
+    /// backward 遇到 `TapeOp::Custom(op_id)` 时通过此字段查找用户的 `CustomBackward` 实现。
+    /// 用 `Rc<RefCell<...>>` 共享——Vm/Interpreter 持有同一 Rc 副本，运行时注册算子可见。
+    /// `Option` 因为旧 tape（无 Custom 节点）不需要；None 时遇到 Custom 节点会报错。
+    pub(super) custom_ops: Option<Rc<RefCell<CustomOpRegistry>>>,
 }
 
 impl Tape {
     pub fn new() -> Self {
-        Tape { nodes: Vec::new(), counter: 0 }
+        Tape {
+            nodes: Vec::new(),
+            counter: 0,
+            custom_ops: None,
+        }
+    }
+
+    /// 设置自定义算子注册表（PROJ-006）。
+    ///
+    /// 由 Vm/Interpreter 在调用 `backward` 前设置，使 backward 能访问用户的 `CustomBackward` 实现。
+    /// 多次调用会覆盖（正常情况下 Vm/Interpreter 传同一 Rc 副本，覆盖无副作用）。
+    pub fn set_custom_ops(&mut self, ops: Rc<RefCell<CustomOpRegistry>>) {
+        self.custom_ops = Some(ops);
     }
 
     /// Number of recorded nodes.
@@ -429,6 +450,47 @@ impl Tape {
             inputs: vec![iid],
             input_tensors: vec![input, result],
             aux,
+            dtype,
+        });
+        id
+    }
+
+    /// Record a custom operation node（PROJ-006 自定义可微算子）。
+    ///
+    /// `op_id`：自定义算子 id（由 `CustomOpRegistry::register` 分配）。
+    /// `input_ids`：各输入张量对应的上游 tape 节点 id（None 表示叶子张量，
+    ///   会自动创建 dummy Input 节点以保证 `node.id == self.nodes 索引` 不变量）。
+    /// `inputs`：输入张量列表（顺序与 forward 调用一致；backward 时按相同顺序读取）。
+    /// `result`：输出张量（forward 计算结果）。
+    ///
+    /// 约定：`input_tensors = [input1, ..., inputN, result]`（最后一个为输出）。
+    /// backward 时通过 `CustomOpRegistry::get(op_id)` 查找用户的 `CustomBackward` 实现，
+    /// 调用其 `backward(&[&input1, ..., &inputN], &grad)` 计算各输入梯度。
+    pub fn custom_op(
+        &mut self,
+        op_id: usize,
+        input_ids: Vec<Option<usize>>,
+        inputs: Vec<Rc<RefCell<Tensor>>>,
+        result: Rc<RefCell<Tensor>>,
+    ) -> usize {
+        // 解析 None 的 input_id 为 dummy Input 节点（与 select/scatter 模式一致）
+        let n_inputs = inputs.len();
+        debug_assert_eq!(input_ids.len(), n_inputs);
+        let mut resolved_ids = Vec::with_capacity(n_inputs);
+        for (i, id_opt) in input_ids.into_iter().enumerate() {
+            let id = id_opt.unwrap_or_else(|| self.input(inputs[i].clone()));
+            resolved_ids.push(id);
+        }
+        let dtype = result.borrow().dtype;
+        let id = self.next_id();
+        let mut all_tensors = inputs;
+        all_tensors.push(result);
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::Custom(op_id),
+            inputs: resolved_ids,
+            input_tensors: all_tensors,
+            aux: 0,
             dtype,
         });
         id

@@ -21,9 +21,10 @@
 //! - `Reduce`：维度减少（Sum / Mean）
 //! - `Expand`：维度增加（MatMul / Transpose）
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use crate::error::ErrorType;
-use crate::runtime::autodiff::{Tape, TapeNode, TapeOp, op_name};
+use crate::runtime::autodiff::{Tape, TapeNode, TapeOp, op_name, CustomOpRegistry};
 
 /// 根因分类（T2 §4.3）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,7 +79,13 @@ pub struct RootCause {
 ///
 /// 该分类是完备且互斥的：每个 TapeOp 变体唯一映射到一个类别。
 /// 用于 FormalExplain 算法的 C2b 判定（节点是否改变 shape 方向）。
-pub fn classify_tape_op(op: &TapeOp) -> TapeOpClass {
+///
+/// PROJ-006：`TapeOp::Custom(op_id)` 的 class 由用户在注册时通过
+/// `CustomBackward::op_class()` 声明。调用方通过 `registry` 参数传入
+/// `CustomOpRegistry`，本函数查 registry 获取用户声明的 class。
+/// 若 `registry` 为 `None`（如单元测试）或未找到 op_id，fallback 到
+/// `Construct`（最保守——视为产生新 shape，C2b 满足，作为根因候选）。
+pub fn classify_tape_op(op: &TapeOp, registry: Option<&CustomOpRegistry>) -> TapeOpClass {
     match op {
         // Construct：产生新 shape（不继承输入的形状语义）
         TapeOp::Input
@@ -121,6 +128,15 @@ pub fn classify_tape_op(op: &TapeOp) -> TapeOpClass {
         | TapeOp::Gather
         // MaskedFill：保留 input shape（仅覆盖部分位置，shape 不变）
         | TapeOp::MaskedFill => TapeOpClass::Preserve,
+
+        // PROJ-006：Custom 算子的 class 由用户声明（T7 完备性保留）。
+        // registry 可用时查 op_class()；不可用时 fallback 到 Construct（保守）。
+        TapeOp::Custom(op_id) => {
+            registry
+                .and_then(|r| r.get(*op_id))
+                .map(|op| op.op_class())
+                .unwrap_or(TapeOpClass::Construct)
+        }
     }
 }
 
@@ -287,7 +303,9 @@ impl Tape {
         // C2b：op 类别为 Construct / Reduce / Expand（非 Preserve）
         // 注意：Input 节点是 Construct，但作为叶子参数它"产生"了 shape，
         // 因此视为根因候选（C2b 满足）。
-        let op_class = classify_tape_op(&node.op);
+        // PROJ-006：Custom 算子的 class 通过 registry 查询用户声明的 op_class()。
+        let registry_ref = self.custom_ops.as_ref().map(|rc| rc.borrow());
+        let op_class = classify_tape_op(&node.op, registry_ref.as_deref());
         let c2b = matches!(
             op_class,
             TapeOpClass::Construct | TapeOpClass::Reduce | TapeOpClass::Expand
@@ -309,7 +327,19 @@ impl Tape {
         actual: &[usize],
         error_type: Option<ErrorType>,
     ) -> String {
-        let op_name = op_name(&node.op);
+        // PROJ-006：Custom 算子优先显示用户声明的 name（如 "square"），
+        // fallback 到 op_name 的 "Custom#id" 形式（registry 不可用或未找到时）。
+        let op_name_str: Cow<'static, str> = match &node.op {
+            TapeOp::Custom(op_id) => {
+                let registry_ref = self.custom_ops.as_ref().map(|rc| rc.borrow());
+                registry_ref
+                    .as_deref()
+                    .and_then(|r| r.get(*op_id))
+                    .map(|op| Cow::Owned(op.name().to_string()))
+                    .unwrap_or_else(|| op_name(&node.op))
+            }
+            _ => op_name(&node.op),
+        };
         let s_out: Vec<usize> = node
             .input_tensors
             .last()
@@ -340,7 +370,7 @@ impl Tape {
 
         format!(
             "节点 #{} ({}) [{}]: 输入 shape={:?}, 输出 shape={:?}；{}{}——{}",
-            node.id, op_name, class_str, s_in, s_out, shape_info, expected_info,
+            node.id, op_name_str, class_str, s_in, s_out, shape_info, expected_info,
             self.root_cause_hint(&node.op, error_type)
         )
     }
@@ -470,6 +500,7 @@ mod tests {
     #[test]
     fn test_classify_tape_op_completeness() {
         // T7 定理：四类互斥完备。每个 TapeOp 变体必须落入恰好一类。
+        // PROJ-006：新增 Custom 变体，class 由用户声明（registry 不可用时 fallback 到 Construct）。
         let all_ops = [
             TapeOp::Input, TapeOp::Add, TapeOp::Sub, TapeOp::Mul, TapeOp::Div,
             TapeOp::Neg, TapeOp::ReLU, TapeOp::MatMul, TapeOp::Transpose,
@@ -477,42 +508,101 @@ mod tests {
             TapeOp::Softmax, TapeOp::CrossEntropy, TapeOp::Dropout, TapeOp::Conv2D,
             TapeOp::BatchNorm, TapeOp::LayerNorm, TapeOp::Gelu, TapeOp::Select,
             TapeOp::Abs, TapeOp::Scatter, TapeOp::Gather, TapeOp::Reshape, TapeOp::MaskedFill,
+            TapeOp::MaxPool2D, TapeOp::AvgPool2D, TapeOp::BatchedMatMul,
+            TapeOp::Custom(0),
         ];
         for op in &all_ops {
-            let _cls = classify_tape_op(op); // 不 panic 即可
+            let _cls = classify_tape_op(op, None); // 不 panic 即可
         }
-        // Construct: 7 个
-        assert_eq!(classify_tape_op(&TapeOp::Input), TapeOpClass::Construct);
-        assert_eq!(classify_tape_op(&TapeOp::CrossEntropy), TapeOpClass::Construct);
-        assert_eq!(classify_tape_op(&TapeOp::Conv2D), TapeOpClass::Construct);
-        assert_eq!(classify_tape_op(&TapeOp::BatchNorm), TapeOpClass::Construct);
-        assert_eq!(classify_tape_op(&TapeOp::LayerNorm), TapeOpClass::Construct);
-        assert_eq!(classify_tape_op(&TapeOp::Dropout), TapeOpClass::Construct);
-        assert_eq!(classify_tape_op(&TapeOp::Select), TapeOpClass::Construct);
+        // Construct: 9 个（含 MaxPool2D / AvgPool2D / Custom fallback）
+        assert_eq!(classify_tape_op(&TapeOp::Input, None), TapeOpClass::Construct);
+        assert_eq!(classify_tape_op(&TapeOp::CrossEntropy, None), TapeOpClass::Construct);
+        assert_eq!(classify_tape_op(&TapeOp::Conv2D, None), TapeOpClass::Construct);
+        assert_eq!(classify_tape_op(&TapeOp::BatchNorm, None), TapeOpClass::Construct);
+        assert_eq!(classify_tape_op(&TapeOp::LayerNorm, None), TapeOpClass::Construct);
+        assert_eq!(classify_tape_op(&TapeOp::Dropout, None), TapeOpClass::Construct);
+        assert_eq!(classify_tape_op(&TapeOp::Select, None), TapeOpClass::Construct);
+        assert_eq!(classify_tape_op(&TapeOp::MaxPool2D, None), TapeOpClass::Construct);
+        assert_eq!(classify_tape_op(&TapeOp::AvgPool2D, None), TapeOpClass::Construct);
+        // Custom 无 registry 时 fallback 到 Construct（保守策略）
+        assert_eq!(classify_tape_op(&TapeOp::Custom(0), None), TapeOpClass::Construct);
         // Preserve: 15 个（含 Scatter / Gather / MaskedFill）
-        assert_eq!(classify_tape_op(&TapeOp::Add), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Sub), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Mul), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Div), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Neg), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::ReLU), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Exp), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Log), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Sigmoid), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Softmax), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Gelu), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Abs), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Scatter), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::Gather), TapeOpClass::Preserve);
-        assert_eq!(classify_tape_op(&TapeOp::MaskedFill), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Add, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Sub, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Mul, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Div, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Neg, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::ReLU, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Exp, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Log, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Sigmoid, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Softmax, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Gelu, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Abs, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Scatter, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::Gather, None), TapeOpClass::Preserve);
+        assert_eq!(classify_tape_op(&TapeOp::MaskedFill, None), TapeOpClass::Preserve);
         // Reduce: 2 个
-        assert_eq!(classify_tape_op(&TapeOp::Sum), TapeOpClass::Reduce);
-        assert_eq!(classify_tape_op(&TapeOp::Mean), TapeOpClass::Reduce);
+        assert_eq!(classify_tape_op(&TapeOp::Sum, None), TapeOpClass::Reduce);
+        assert_eq!(classify_tape_op(&TapeOp::Mean, None), TapeOpClass::Reduce);
         // Expand: 4 个（含 BatchedMatMul / Reshape）
-        assert_eq!(classify_tape_op(&TapeOp::MatMul), TapeOpClass::Expand);
-        assert_eq!(classify_tape_op(&TapeOp::BatchedMatMul), TapeOpClass::Expand);
-        assert_eq!(classify_tape_op(&TapeOp::Transpose), TapeOpClass::Expand);
-        assert_eq!(classify_tape_op(&TapeOp::Reshape), TapeOpClass::Expand);
+        assert_eq!(classify_tape_op(&TapeOp::MatMul, None), TapeOpClass::Expand);
+        assert_eq!(classify_tape_op(&TapeOp::BatchedMatMul, None), TapeOpClass::Expand);
+        assert_eq!(classify_tape_op(&TapeOp::Transpose, None), TapeOpClass::Expand);
+        assert_eq!(classify_tape_op(&TapeOp::Reshape, None), TapeOpClass::Expand);
+    }
+
+    /// PROJ-006：Custom 算子带 registry 时应返回用户声明的 op_class()。
+    #[test]
+    fn test_classify_tape_op_custom_with_registry() {
+        use crate::runtime::autodiff::CustomBackward;
+        use crate::error::TenthError;
+
+        // 声明 Preserve class 的自定义算子
+        #[derive(Debug)]
+        struct PreserveOp;
+        impl CustomBackward for PreserveOp {
+            fn forward(&self, _inputs: &[&Tensor]) -> Result<Tensor, TenthError> {
+                unreachable!()
+            }
+            fn backward(&self, _inputs: &[&Tensor], _grad: &Tensor) -> Result<Vec<Tensor>, TenthError> {
+                unreachable!()
+            }
+            fn op_class(&self) -> TapeOpClass { TapeOpClass::Preserve }
+            fn name(&self) -> &str { "preserve_op" }
+        }
+
+        #[derive(Debug)]
+        struct ReduceOp;
+        impl CustomBackward for ReduceOp {
+            fn forward(&self, _inputs: &[&Tensor]) -> Result<Tensor, TenthError> {
+                unreachable!()
+            }
+            fn backward(&self, _inputs: &[&Tensor], _grad: &Tensor) -> Result<Vec<Tensor>, TenthError> {
+                unreachable!()
+            }
+            fn op_class(&self) -> TapeOpClass { TapeOpClass::Reduce }
+            fn name(&self) -> &str { "reduce_op" }
+        }
+
+        let mut registry = CustomOpRegistry::new();
+        let id0 = registry.register(Box::new(PreserveOp)).unwrap();
+        let id1 = registry.register(Box::new(ReduceOp)).unwrap();
+
+        // 带 registry 时返回用户声明的 class
+        assert_eq!(
+            classify_tape_op(&TapeOp::Custom(id0), Some(&registry)),
+            TapeOpClass::Preserve
+        );
+        assert_eq!(
+            classify_tape_op(&TapeOp::Custom(id1), Some(&registry)),
+            TapeOpClass::Reduce
+        );
+        // 未注册的 op_id fallback 到 Construct
+        assert_eq!(
+            classify_tape_op(&TapeOp::Custom(999), Some(&registry)),
+            TapeOpClass::Construct
+        );
     }
 
     #[test]

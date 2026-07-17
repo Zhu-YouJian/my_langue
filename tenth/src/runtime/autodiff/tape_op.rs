@@ -202,4 +202,18 @@ pub enum TapeOp {
     /// backward: d_input[window 内每个有效位置] += d_output / valid_count（均分到窗口，
     /// count_include_pad=False 语义，padding 位置不分梯度）
     AvgPool2D,
+    /// 自定义可微算子（PROJ-006）。
+    /// `op_id` 是 `CustomOpRegistry::register` 分配的 id，可在 registry 中查到
+    /// 用户的 `CustomBackward` 实现（含 forward/backward/op_class/name）。
+    ///
+    /// 约定：`input_tensors = [input1, ..., inputN, result]`（最后一个为输出）。
+    /// `inputs = [input1_id, ..., inputN_id]`（每个输入对应上游节点 id）。
+    ///
+    /// backward：通过 `CustomOpRegistry::get(op_id)` 查找用户实现，调用
+    /// `backward(&[&input1, ..., &inputN], &grad)` 获取各输入梯度；
+    /// 运行时强制校验梯度数量与 shape（与对应输入一致）。
+    ///
+    /// TapeOpClass 分类由用户在注册时通过 `CustomBackward::op_class()` 声明，
+    /// `classify_tape_op` 通过 registry 查询（论证 4 保证 T7 完备性不破坏）。
+    Custom(usize),
 }

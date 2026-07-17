@@ -1,0 +1,40 @@
+// Tenth Standard Library — Autograd 自定义算子
+//
+// PROJ-006：自定义可微算子（Rust 端注册版）
+//
+// 用户在 Rust 端通过 `Vm::register_custom_op(Box::new(MyOp))` 注册算子，
+// 拿到 `op_id: usize`。在 .th 端用 `call_custom_op1/2/3(op_id, ...inputs)`
+// 调用，VM/Interpreter 查 registry 执行 forward，若 recording 则记录
+// `TapeOp::Custom(op_id)` 到 tape，backward 时通过 `CustomBackward::backward`
+// 计算梯度。
+//
+// 设计原则：
+// - Rust 端 register_custom_op：CustomBackward trait 对象 → op_id
+// - .th 端 call_custom_opN：变参 → 固定参数版本（N=1/2/3 覆盖常见场景）
+// - 双重注册一致性：VM 与 Interpreter 行为对齐（T37 协议）
+// - 护城河 A 兼容：CustomBackward::forward_shape 默认 None，走运行时兜底
+// - 护城河 F 兼容：op_class 由用户声明，classify_tape_op 据此分类
+
+// 调用单输入自定义可微算子。
+//   op_id: Rust 端 register_custom_op 返回的算子 ID
+//   x:     输入张量
+// 返回前向计算结果；若 recording，记录 TapeOp::Custom(op_id) 到 tape。
+fn call_custom_op1<T>(op_id: i64, x: Tensor[T, ..]) -> Tensor[T, ..] {
+    __call_custom_op(op_id, x)
+}
+
+// 调用双输入自定义可微算子。
+//   op_id: Rust 端 register_custom_op 返回的算子 ID
+//   x, y:  输入张量
+// 返回前向计算结果；若 recording，记录 TapeOp::Custom(op_id) 到 tape。
+fn call_custom_op2<T>(op_id: i64, x: Tensor[T, ..], y: Tensor[T, ..]) -> Tensor[T, ..] {
+    __call_custom_op(op_id, x, y)
+}
+
+// 调用三输入自定义可微算子。
+//   op_id: Rust 端 register_custom_op 返回的算子 ID
+//   x, y, z: 输入张量
+// 返回前向计算结果；若 recording，记录 TapeOp::Custom(op_id) 到 tape。
+fn call_custom_op3<T>(op_id: i64, x: Tensor[T, ..], y: Tensor[T, ..], z: Tensor[T, ..]) -> Tensor[T, ..] {
+    __call_custom_op(op_id, x, y, z)
+}
