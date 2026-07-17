@@ -696,6 +696,21 @@ impl Parser {
                     span,
                 })
             }
+            TokenKind::Yield => {
+                // yield [expr]
+                // 无值形式：`yield;` / `yield)` / `yield}` / `yield,` / `yield <EOF>`
+                // 带值形式：`yield expr`（expr 由 parse_unary 解析）
+                self.advance();
+                let inner = match self.peek_kind() {
+                    TokenKind::Semicolon | TokenKind::RParen | TokenKind::RBrace
+                    | TokenKind::Comma | TokenKind::Eof => None,
+                    _ => Some(Box::new(self.parse_unary()?)),
+                };
+                Ok(Expr {
+                    kind: ExprKind::Yield(inner),
+                    span,
+                })
+            }
             TokenKind::Move => {
                 self.advance();
                 let expr = self.parse_unary()?;

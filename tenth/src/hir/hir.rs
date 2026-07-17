@@ -115,6 +115,10 @@ pub enum HirExprKind {
     TryBlock(Box<HirExpr>),
     Await(Box<HirExpr>),
     Spawn(Box<HirExpr>),
+    /// `yield` / `yield expr`：让出控制权给 VM 调度器；恢复后返回 Unit。
+    /// inner 若存在会被求值但结果被丢弃（与 VM Op::Yield 语义一致：不消费栈）。
+    /// 解释器与 WASM 路径不支持。
+    Yield(Option<Box<HirExpr>>),
     InterpolatedString { parts: Vec<InterpPart> },
     Tuple(Vec<HirExpr>),
     FieldAssign {

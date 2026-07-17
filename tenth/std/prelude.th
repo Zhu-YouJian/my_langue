@@ -87,6 +87,14 @@
 //   tcp_accept(listener)     — accept a connection -> Result<i64> (stream handle)
 //   tcp_listener_close(listener) — close listener -> Unit
 
+// ── UDP (built-in native functions, 基本功核查第 69 项) ──
+//   udp_bind(addr)              — bind UDP socket -> Result<i64> (handle)
+//   udp_recv_from(sock, n)      — recv up to n bytes + peer addr -> Result<Tuple<Vec<i64>, String>>
+//   udp_send_to(sock, data, addr) — send bytes to addr -> Result<i64> (bytes sent)
+//   udp_close(sock)             — close socket -> Unit
+//   udp_set_timeout(sock, ms)   — set read timeout -> Unit
+//   (handle table 与 TCP 独立，避免类型混淆；UDP 无连接，无 accept/connect)
+
 // ── Subprocess (built-in native functions) ──
 //   command_new(program)     — create Command -> Result<i64> (handle)
 //   command_arg(handle, arg) — add argument -> Unit
@@ -154,6 +162,7 @@
 //   std::utils::math::min, max, clamp, abs, fmin, fmax, fclamp, fabs, signum
 //   std::time::time::now, now_ms, date, time_of_day, datetime, sleep_ms, start_timer, elapsed, elapsed_ms
 //   std::date::Date, date_new, date_from_days, date_to_days, date_to_string, date_add_days, date_diff, date_weekday, date_eq, date_lt, date_le, date_gt, date_ge, date_ne  // Date 类型（struct 包装，Wave 3 第 8 项 路径 B）
+//   std::duration::Duration, duration_from_secs, duration_from_millis, duration_from_micros, duration_from_nanos, duration_as_secs, duration_as_millis, duration_as_micros, duration_as_nanos, duration_add, duration_sub, duration_mul_scalar, duration_div_scalar, duration_eq, duration_lt, duration_le, duration_gt, duration_ge, duration_ne, duration_to_string, duration_zero, duration_is_zero  // Duration 类型（时间间隔，纳秒精度，基本功核查第 49 项 路径 B 复用 struct 机制）
 //   std::random::random::rand_int, rand_float, rand_range, choice, shuffle, rand_bool, sample
 //   std::cli::cli::args_count, arg, args, args_tail, has_flag, flag_value
 //   std::logging::logging::debug, info, warn, error, set_level, LEVEL_DEBUG, LEVEL_INFO, LEVEL_WARN, LEVEL_ERROR
@@ -162,6 +171,7 @@
 //   std::env::env::get, get_result, get_or_empty, set, exit      // 环境变量与进程退出（包装 env_get/env_set/exit native）
 //   std::net::net::connect, read, write, close, set_timeout      // TCP 客户端（包装 tcp_* native，handle table 模式）
 //   std::net::net::listen, accept, listener_close                // TCP 服务端（包装 tcp_listen/tcp_accept/tcp_listener_close native）
+//   (built-in, no import needed) udp_bind, udp_recv_from, udp_send_to, udp_close, udp_set_timeout  // UDP native（基本功核查第 69 项，直接暴露，无 wrapper）
 //   std::process::new, arg, run, output                          // 子进程执行（包装 command_new/command_arg/command_run/command_output native，handle table 模式）
 //   std::http::http::get, post                                    // HTTP/1.1 客户端（手写协议，无 HTTPS）
 //   std::async                                                  // 异步 I/O 文档（async_sleep_ms/async_tcp_read/async_tcp_write 为 built-in native）

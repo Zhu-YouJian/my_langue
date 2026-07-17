@@ -108,6 +108,8 @@ impl Lowerer {
                             // Stage 3+4 TCP/HTTP 原语
                             | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_close" | "tcp_set_timeout"
                             | "tcp_listen" | "tcp_accept" | "tcp_listener_close"
+                            // UDP 原语（基本功核查第 69 项；handle table 模式，与 tcp_* 同构）
+                            | "udp_bind" | "udp_recv_from" | "udp_send_to" | "udp_close" | "udp_set_timeout"
                             | "command_new" | "command_arg" | "command_run" | "command_output"
                             | "http_get" | "http_post"
                             // Phase 2 Step 5：异步 I/O 原语（返回 Future）
@@ -1095,6 +1097,18 @@ impl Lowerer {
                 // spawn 返回 Future<inner.ty>
                 let spawn_ty = Type::Future(Box::new(e.ty.clone()));
                 (HirExprKind::Spawn(Box::new(e)), spawn_ty)
+            }
+
+            ExprKind::Yield(inner) => {
+                // yield [expr]：让出控制权给 VM 调度器。
+                // 设计决策（与 Op::Yield 语义对齐）：
+                // - inner 若存在会被求值（lower 之，副作用保留），但其值被丢弃
+                // - yield 表达式本身返回 Unit（恢复时调度器不向栈上 push 任何值）
+                let hir_inner = match inner {
+                    Some(e) => Some(Box::new(self.lower_expr(e)?)),
+                    None => None,
+                };
+                (HirExprKind::Yield(hir_inner), Type::unit())
             }
 
             ExprKind::InterpolatedString(parts) => {

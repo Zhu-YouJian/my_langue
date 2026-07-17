@@ -38,3 +38,19 @@ fn accept(listener_handle: i64) -> Result<i64> {
 fn listener_close(listener_handle: i64) {
     tcp_listener_close(listener_handle)
 }
+
+// ── UDP networking primitives（基本功核查第 69 项） ──
+//
+// UDP 无连接：bind 后用 send_to/recv_from 携带对端地址。
+// handle 表与 TCP 独立（避免类型混淆），索引+1 即句柄（1-based，0 表示无效）。
+//
+// 与 TCP 不同，UDP native 直接以 `udp_*` 前缀对外暴露（无简短 wrapper），
+// 因为 `close`/`set_timeout` 与 TCP wrapper 同名会冲突，且 native 名已足够清晰。
+// 用户可直接调用 `udp_bind(addr)` 等，与 tests/udp_test.rs 中的调用方式一致。
+//
+// 返回值约定：
+//   udp_bind(addr)              -> Result<i64>                       — Ok(handle) 或 Err(msg)
+//   udp_recv_from(sock, n)      -> Result<Tuple<Vec<i64>, String>>   — Ok((bytes, peer_addr)) 或 Err(msg)
+//   udp_send_to(sock, data, addr)-> Result<i64>                      — Ok(bytes_sent) 或 Err(msg)
+//   udp_close(sock)             -> Unit
+//   udp_set_timeout(sock, ms)   -> Unit

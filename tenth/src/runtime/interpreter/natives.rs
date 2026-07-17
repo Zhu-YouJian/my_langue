@@ -384,6 +384,110 @@ impl super::Interpreter {
                 }
                 return Ok(Some(Value::Unit));
             }
+            // —— UDP 网络原语（基本功核查第 69 项；句柄表方案，handle 1-based，0 表示无效）——
+            // 与 std/net.th 的 udp_bind/udp_recv_from/udp_send_to/udp_close/udp_set_timeout wrapper 对齐。
+            // 与 runtime::natives 中的实现语义对齐（双侧注册）。
+            // UDP 无连接：bind 后用 send_to/recv_from 携带对端地址；handle 表与 TCP 独立避免类型混淆。
+            "udp_bind" => {
+                if let Some(Value::String(addr)) = args.first() {
+                    match std::net::UdpSocket::bind(addr) {
+                        Ok(sock) => {
+                            self.udp_sockets.push(Some(sock));
+                            let handle = self.udp_sockets.len() as i64; // 1-based
+                            return Ok(Some(ok_result(Value::Int(handle, BaseType::I32))));
+                        }
+                        Err(e) => return Ok(Some(err_result(format!("绑定失败: {e}")))),
+                    }
+                }
+                return Ok(Some(err_result("udp_bind 需要 1 个 String 参数")));
+            }
+            "udp_recv_from" => {
+                if args.len() < 2 {
+                    return Ok(Some(err_result("udp_recv_from 需要 (i64, i64) 参数")));
+                }
+                if let (Value::Int(handle, _), Value::Int(n, _)) = (&args[0], &args[1]) {
+                    let idx = *handle as usize;
+                    if idx == 0 || idx > self.udp_sockets.len() {
+                        return Ok(Some(err_result("无效的句柄")));
+                    }
+                    let max = (*n).max(0).min(65536) as usize;
+                    if let Some(ref mut sock) = self.udp_sockets[idx - 1] {
+                        let mut buf = vec![0u8; max];
+                        match sock.recv_from(&mut buf) {
+                            Ok((read_n, peer)) => {
+                                let bytes: Vec<Value> = buf[..read_n]
+                                    .iter()
+                                    .map(|b| Value::Int(*b as i64, BaseType::I32))
+                                    .collect();
+                                let peer_str = peer.to_string();
+                                // 返回 Tuple(Vec<i64>, String)：字节数组 + 来源地址 "ip:port"
+                                return Ok(Some(ok_result(Value::Tuple(vec![
+                                    Value::Vec(Rc::new(RefCell::new(bytes))),
+                                    Value::String(peer_str),
+                                ]))));
+                            }
+                            Err(e) => return Ok(Some(err_result(format!("接收失败: {e}")))),
+                        }
+                    } else {
+                        return Ok(Some(err_result("socket 已关闭")));
+                    }
+                }
+                return Ok(Some(err_result("udp_recv_from 需要 (i64, i64) 参数")));
+            }
+            "udp_send_to" => {
+                if args.len() < 3 {
+                    return Ok(Some(err_result("udp_send_to 需要 (i64, Vec<i64>, String) 参数")));
+                }
+                if let (Value::Int(handle, _), Value::Vec(data), Value::String(addr)) =
+                    (&args[0], &args[1], &args[2])
+                {
+                    let idx = *handle as usize;
+                    if idx == 0 || idx > self.udp_sockets.len() {
+                        return Ok(Some(err_result("无效的句柄")));
+                    }
+                    let bytes: Vec<u8> = data
+                        .borrow()
+                        .iter()
+                        .map(|x| match x {
+                            Value::Int(b, _) => *b as u8,
+                            _ => 0,
+                        })
+                        .collect();
+                    if let Some(ref mut sock) = self.udp_sockets[idx - 1] {
+                        match sock.send_to(&bytes, addr) {
+                            Ok(n) => return Ok(Some(ok_result(Value::Int(n as i64, BaseType::I32)))),
+                            Err(e) => return Ok(Some(err_result(format!("发送失败: {e}")))),
+                        }
+                    } else {
+                        return Ok(Some(err_result("socket 已关闭")));
+                    }
+                }
+                return Ok(Some(err_result("udp_send_to 需要 (i64, Vec<i64>, String) 参数")));
+            }
+            "udp_close" => {
+                if let Some(Value::Int(handle, _)) = args.first() {
+                    let idx = *handle as usize;
+                    if idx > 0 && idx <= self.udp_sockets.len() {
+                        self.udp_sockets[idx - 1] = None; // drop 自动关闭
+                    }
+                }
+                return Ok(Some(Value::Unit));
+            }
+            "udp_set_timeout" => {
+                if args.len() >= 2 {
+                    if let (Value::Int(handle, _), Value::Int(ms, _)) = (&args[0], &args[1]) {
+                        let idx = *handle as usize;
+                        if idx > 0 && idx <= self.udp_sockets.len() {
+                            if let Some(ref mut sock) = self.udp_sockets[idx - 1] {
+                                let dur = std::time::Duration::from_millis(*ms as u64);
+                                sock.set_read_timeout(Some(dur)).ok();
+                                sock.set_write_timeout(Some(dur)).ok();
+                            }
+                        }
+                    }
+                }
+                return Ok(Some(Value::Unit));
+            }
             // —— 子进程原语（句柄表方案，handle 1-based，0 表示无效）——
             // 与 std/process.th 的 new/arg/run/output wrapper 对齐。
             // command_output 消费 Command（mem::take 取出所有权），再次调用返回 Err。
@@ -2167,36 +2271,31 @@ impl super::Interpreter {
                     message: "date_day_of_week(days) 期望一个整数".into(),
                 });
             }
-            // Random functions
+            // Random functions — 使用 rand crate 的 CSPRNG（thread_rng），
+            // 与 VM 路径（runtime/natives.rs 第 941-963 行）对齐。
+            // 历史 `DefaultHasher` + SystemTime 方案可被攻击者枚举纳秒时刻预测输出。
             "random_int" => {
-                if let (Some(Value::Int(lo, _)), Some(Value::Int(hi, _))) = (args.first(), args.get(1)) {
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_nanos();
-                    let mut hasher = DefaultHasher::new();
-                    now.hash(&mut hasher);
-                    let rand_val = hasher.finish();
-                    let range = (*hi - *lo + 1).max(1);
-                    let result = *lo + ((rand_val % (range as u64)) as i64);
-                    return Ok(Some(Value::Int(result, BaseType::I32)));
-                }
-                return Ok(Some(Value::Int(0, BaseType::I32)));
+                let lo = match args.first() {
+                    Some(Value::Int(n, _)) => *n,
+                    _ => 0,
+                };
+                let hi = match args.get(1) {
+                    Some(Value::Int(n, _)) => *n,
+                    _ => lo,
+                };
+                use rand::Rng;
+                // 处理 lo > hi 的边界：交换而不是 (hi - lo + 1) 为负时回绕
+                let (low, high) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+                // 用 u64 全域取模，避免 i64 范围回绕到负数
+                let range = (high as u64).saturating_sub(low as u64).saturating_add(1).max(1);
+                let r: u64 = rand::thread_rng().r#gen();
+                return Ok(Some(Value::Int(low + (r % range) as i64, BaseType::I32)));
             }
             "random_float" => {
-                use std::collections::hash_map::DefaultHasher;
-                use std::hash::{Hash, Hasher};
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos();
-                let mut hasher = DefaultHasher::new();
-                now.hash(&mut hasher);
-                let rand_val = hasher.finish();
-                let result = (rand_val as f64) / (u64::MAX as f64);
-                return Ok(Some(Value::Float(result)));
+                use rand::Rng;
+                // [0, 1) 半开区间，标准做法
+                let r: f64 = rand::thread_rng().r#gen();
+                return Ok(Some(Value::Float(r)));
             }
             // Math functions
             "math_tan" => {

@@ -434,6 +434,11 @@ impl Lowerer {
             | "tcp_listen" | "tcp_accept" | "command_new" | "command_run" | "command_output" => {
                 Ok(Type::Enum("Result".to_string()))
             }
+            // UDP 原语（基本功核查第 69 项）：close/set_timeout 返回 Unit；bind/recv_from/send_to 返回 Result
+            // recv_from 内部返回 Tuple<Vec<i64>, String>，但 HIR 类型推断保守返回 Result 枚举
+            // （Tuple 内部类型在运行时由 native 填充，与 tcp_read 的 Vec<i64> 同模式）。
+            "udp_close" | "udp_set_timeout" => Ok(Type::unit()),
+            "udp_bind" | "udp_recv_from" | "udp_send_to" => Ok(Type::Enum("Result".to_string())),
             // Phase 2 Step 5：异步 I/O 原语（返回 Future，类型暂为 Unknown——
             // await 解包后才是 Result/Unit，由 Op::Await 在运行时处理）
             "async_sleep_ms" | "async_tcp_read" | "async_tcp_write" => Ok(Type::Unknown),

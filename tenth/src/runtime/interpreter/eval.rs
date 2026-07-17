@@ -100,6 +100,8 @@ impl super::Interpreter {
                             // Stage 3+4 TCP/HTTP 原语
                             | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_close" | "tcp_set_timeout"
                             | "tcp_listen" | "tcp_accept" | "tcp_listener_close"
+                            // UDP 原语（基本功核查第 69 项；handle table 模式，与 tcp_* 同构）
+                            | "udp_bind" | "udp_recv_from" | "udp_send_to" | "udp_close" | "udp_set_timeout"
                             | "command_new" | "command_arg" | "command_run" | "command_output"
                             | "http_get" | "http_post"
                             | "regex_compile" | "regex_match" | "regex_find" | "regex_find_all" | "regex_replace" | "regex_split"
@@ -595,6 +597,11 @@ impl super::Interpreter {
             HirExprKind::Await(_) | HirExprKind::Spawn(_) => {
                 return Err(TenthError::RuntimeError { line: Some(expr.span.line), col: Some(expr.span.col),
                     message: "async/await/spawn 不支持解释器路径，请使用 VM".into(),
+                });
+            }
+            HirExprKind::Yield(_) => {
+                return Err(TenthError::RuntimeError { line: Some(expr.span.line), col: Some(expr.span.col),
+                    message: "yield 不支持解释器路径，请使用 VM".into(),
                 });
             }
             HirExprKind::InterpolatedString { parts } => {

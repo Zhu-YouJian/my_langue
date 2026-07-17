@@ -188,6 +188,9 @@ fn expr_has_control_flow(expr: &HirExpr) -> bool {
         HirExprKind::Ref(e) | HirExprKind::MutRef(e) | HirExprKind::Deref(e)
         | HirExprKind::Move(e) | HirExprKind::TryBlock(e) | HirExprKind::Await(e)
         | HirExprKind::Spawn(e) => expr_has_control_flow(e),
+        HirExprKind::Yield(inner) => {
+            inner.as_ref().map(|e| expr_has_control_flow(e)).unwrap_or(false)
+        }
         HirExprKind::Assign { value, .. } | HirExprKind::AssignOp { value, .. }
         | HirExprKind::FieldAssign { value, .. } => expr_has_control_flow(value),
         HirExprKind::DerefAssign { value, .. } | HirExprKind::DerefAssignOp { value, .. } => {

@@ -1,0 +1,216 @@
+// Duration 类型 — 时间间隔（纳秒精度）（基本功核查第 49 项，路径 B）
+//
+// 设计要点：
+//   - 复用 Type::Struct / Value::Struct / Op::NewStruct，不新增 HIR 类型
+//   - 不触及 tenthc / 自举三路径
+//   - 纯标准库实现，不新增 Rust native 函数（避免与并行 CSPRNG/yield 任务冲突）
+//   - 内部表示：i64 纳秒（i64 范围约 ±292 年，足够覆盖常见场景）
+//   - 函数名统一带 `duration_` 前缀，避免与 built-in native `to_string` 等同名冲突
+//     （与 std/date.th 的 `date_` 前缀策略一致）
+//
+// === i64 字面量 dtype bug 与变通方案 ===
+//
+// Tenth 运行时存在一个 pre-existing bug：整数字面量的 dtype 在解释器
+// (runtime/interpreter/eval.rs:28) 和 VM (runtime/vm/execute.rs:230) 中
+// 都被硬编码为 BaseType::I32，忽略了 lexer 解析出的 i64 后缀 dtype。
+// 直接写 `1000i64 * 1000i64 * 1000i64 * secs` 在运行时仍按 I32 算术执行，
+// 中间结果超过 i32 范围（2_147_483_647）时触发 "整数运算结果溢出 i32 范围" 错误。
+//
+// 变通方案：利用已有的 `date_i64_add_days` native（runtime/interpreter/natives.rs:2141）
+// 返回 I64 标记的值。其实现为 `days.wrapping_add(delta)`，返回
+// Value::Int(_, BaseType::I64)。该值作为 BinOp::Mul 的第一操作数时，
+// 结果 dtype 取自第一操作数（见 runtime/interpreter/binary.rs:144-148
+// BinOp::Mul 分支 `(Int(a, dt), Int(b, _)) => check_int_overflow(a*b, *dt)`），
+// 全程 I64 算术，check_int_overflow 对 I64 范围检查（±9.2e18），不会误报溢出。
+//
+//   date_i64_add_days(0, 1000000000) → Value::Int(1_000_000_000, I64)
+//
+// 该变通方案为纯 .th 层修复，不修改任何 Rust 源码，不与并行任务冲突。
+//
+// 用法：
+//   use std::duration::Duration
+//   use std::duration::duration_from_secs
+//   use std::duration::duration_to_string
+//
+//   let d = duration_from_secs(5);
+//   let s = duration_to_string(d);    // "5s"
+//   let d2 = duration_add(d, duration_from_millis(500));  // 5.5s
+
+// Duration struct：包装单个 i64 字段 nanos（纳秒）。
+// 字段语义：
+//   nanos — 时间间隔的纳秒数；可为负数（表示反向时间差）
+//   i64 范围：±9.2e18 纳秒 ≈ ±292 年
+struct Duration {
+    nanos: i64,
+}
+
+// === 构造 ===
+
+// 从秒构造（1 秒 = 1_000_000_000 纳秒）。
+// 用 date_i64_add_days(0, 1e9) 取得 I64 标记的 1e9 常量，绕过字面量 dtype bug
+// （详见文件头注释）。
+fn duration_from_secs(secs: i64) -> Duration {
+    Duration { nanos: date_i64_add_days(0, 1000000000) * secs }
+}
+
+// 从毫秒构造（1 毫秒 = 1_000_000 纳秒）
+fn duration_from_millis(ms: i64) -> Duration {
+    Duration { nanos: date_i64_add_days(0, 1000000) * ms }
+}
+
+// 从微秒构造（1 微秒 = 1_000 纳秒）
+fn duration_from_micros(us: i64) -> Duration {
+    Duration { nanos: date_i64_add_days(0, 1000) * us }
+}
+
+// 从纳秒构造
+fn duration_from_nanos(ns: i64) -> Duration {
+    Duration { nanos: ns }
+}
+
+// === 访问 ===
+
+// 返回秒部分（整除）。负数 Duration 返回负秒。
+fn duration_as_secs(d: Duration) -> i64 {
+    d.nanos / 1000000000i64
+}
+
+// 返回毫秒部分（整除）。
+fn duration_as_millis(d: Duration) -> i64 {
+    d.nanos / 1000000i64
+}
+
+// 返回微秒部分（整除）。
+fn duration_as_micros(d: Duration) -> i64 {
+    d.nanos / 1000i64
+}
+
+// 返回纳秒（原值）。
+fn duration_as_nanos(d: Duration) -> i64 {
+    d.nanos
+}
+
+// === 算术 ===
+
+// Duration + Duration -> Duration
+fn duration_add(d1: Duration, d2: Duration) -> Duration {
+    Duration { nanos: d1.nanos + d2.nanos }
+}
+
+// Duration - Duration -> Duration（结果可为负）
+fn duration_sub(d1: Duration, d2: Duration) -> Duration {
+    Duration { nanos: d1.nanos - d2.nanos }
+}
+
+// 标量乘法（Duration * i64 -> Duration）
+fn duration_mul_scalar(d: Duration, s: i64) -> Duration {
+    Duration { nanos: d.nanos * s }
+}
+
+// 标量除法（Duration / i64 -> Duration，整数除法）
+fn duration_div_scalar(d: Duration, s: i64) -> Duration {
+    Duration { nanos: d.nanos / s }
+}
+
+// === 比较 ===
+
+fn duration_eq(d1: Duration, d2: Duration) -> bool {
+    d1.nanos == d2.nanos
+}
+
+fn duration_lt(d1: Duration, d2: Duration) -> bool {
+    d1.nanos < d2.nanos
+}
+
+fn duration_le(d1: Duration, d2: Duration) -> bool {
+    d1.nanos <= d2.nanos
+}
+
+fn duration_gt(d1: Duration, d2: Duration) -> bool {
+    d1.nanos > d2.nanos
+}
+
+fn duration_ge(d1: Duration, d2: Duration) -> bool {
+    d1.nanos >= d2.nanos
+}
+
+fn duration_ne(d1: Duration, d2: Duration) -> bool {
+    d1.nanos != d2.nanos
+}
+
+// === 格式化 ===
+
+// 转换为人类可读字符串。
+// 规则：
+//   - 负数前缀 "-"
+//   - 自动选择合适单位（ns/us/ms/s）
+//   - 小于 60 秒且有余数时显示为 "X.Ys"（Y 为毫秒部分）
+//   - 大于等于 60 秒且小于 3600 秒显示为 "Xm Ys"
+//   - 大于等于 3600 秒显示为 "Xh Ym"
+//
+// 例：
+//   duration_from_nanos(42) → "42ns"
+//   duration_from_micros(100) → "100us"
+//   duration_from_millis(500) → "500ms"
+//   duration_from_secs(5) → "5s"
+//   duration_from_secs(125) → "2m5s"   （125 秒 = 2 分 5 秒）
+//   duration_from_secs(-3) → "-3s"
+//   duration_from_secs(3700) → "1h1m"  （3700 秒 = 1 小时 1 分 40 秒，省略秒）
+//
+// 注意：函数名带 `duration_` 前缀，内部仍可调用 built-in native `to_string(i64)`
+//   而不递归（native 与用户函数在不同命名空间查找）。
+fn duration_to_string(d: Duration) -> String {
+    let abs_nanos = if d.nanos < 0 { -d.nanos } else { d.nanos };
+    let sign = if d.nanos < 0 { "-" } else { "" };
+
+    if abs_nanos < 1000i64 {
+        return sign + to_string(abs_nanos) + "ns";
+    } else if abs_nanos < 1000000i64 {
+        let us = abs_nanos / 1000i64;
+        let rem = abs_nanos % 1000i64;
+        if rem == 0 {
+            return sign + to_string(us) + "us";
+        } else {
+            return sign + to_string(abs_nanos) + "ns";
+        }
+    } else if abs_nanos < 1000000000i64 {
+        let ms = abs_nanos / 1000000i64;
+        let rem = abs_nanos % 1000000i64;
+        if rem == 0 {
+            return sign + to_string(ms) + "ms";
+        } else {
+            return sign + to_string(abs_nanos / 1000i64) + "us";
+        }
+    } else {
+        let secs = abs_nanos / 1000000000i64;
+        let rem_nanos = abs_nanos % 1000000000i64;
+        if secs < 60 {
+            if rem_nanos == 0 {
+                return sign + to_string(secs) + "s";
+            } else {
+                let ms = rem_nanos / 1000000i64;
+                return sign + to_string(secs) + "." + to_string(ms) + "s";
+            }
+        } else if secs < 3600 {
+            let m = secs / 60;
+            let s = secs % 60;
+            return sign + to_string(m) + "m" + to_string(s) + "s";
+        } else {
+            let h = secs / 3600;
+            let m = (secs % 3600) / 60;
+            return sign + to_string(h) + "h" + to_string(m) + "m";
+        }
+    }
+}
+
+// === 零值 ===
+
+// 零值 Duration（0 纳秒）
+fn duration_zero() -> Duration {
+    Duration { nanos: 0 }
+}
+
+// 判断是否为零值
+fn duration_is_zero(d: Duration) -> bool {
+    d.nanos == 0
+}

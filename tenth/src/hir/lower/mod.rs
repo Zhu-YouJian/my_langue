@@ -447,6 +447,11 @@ fn substitute_kind_in_place(kind: &mut HirExprKind, map: &HashMap<String, Type>)
         | HirExprKind::Spawn(e) => {
             substitute_expr_in_place(e, map);
         }
+        HirExprKind::Yield(inner) => {
+            if let Some(e) = inner.as_mut() {
+                substitute_expr_in_place(e, map);
+            }
+        }
         HirExprKind::DerefAssign { target, value } => {
             substitute_expr_in_place(target, map);
             substitute_expr_in_place(value, map);

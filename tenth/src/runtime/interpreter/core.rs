@@ -76,6 +76,9 @@ pub struct Interpreter {
     /// TCP 监听器句柄表（与 vm.rs 的 Vm::tcp_listeners 对齐）。
     /// 索引+1 即句柄（1-based，0 表示无效）。`None` 表示已关闭的槽位。
     pub tcp_listeners: Vec<Option<std::net::TcpListener>>,
+    /// UDP socket 句柄表（与 vm.rs 的 Vm::udp_sockets 对齐，基本功核查第 69 项）。
+    /// 索引+1 即句柄（1-based，0 表示无效）。`None` 表示已关闭的槽位。
+    pub udp_sockets: Vec<Option<std::net::UdpSocket>>,
     /// 正则表达式句柄表（与 vm.rs 的 Vm::regexes 对齐）。
     /// 索引+1 即句柄（1-based，0 表示无效）。`None` 表示已释放的槽位。
     pub regexes: Vec<Option<regex::Regex>>,
@@ -113,6 +116,7 @@ impl Interpreter {
             last_explanation: Vec::new(),
             tcp_streams: Vec::new(),
             tcp_listeners: Vec::new(),
+            udp_sockets: Vec::new(),
             regexes: Vec::new(),
             commands: Vec::new(),
             custom_ops: Rc::new(RefCell::new(CustomOpRegistry::new())),

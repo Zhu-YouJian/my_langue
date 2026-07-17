@@ -811,6 +811,7 @@ th_parse_test!(th_parse_mnist, "std/data/mnist.th");
 th_parse_test!(th_parse_net, "std/net.th");
 th_parse_test!(th_parse_process, "std/process.th");
 th_parse_test!(th_parse_date, "std/date.th");  // Wave 3 第 8 项：Date 类型（struct 包装）
+th_parse_test!(th_parse_duration, "std/duration.th");  // 基本功核查第 49 项：Duration 类型（时间间隔，struct 包装）
 
 // Lower tests for core utility files (no tensor dependencies)
 th_lower_test!(th_lower_string, "std/string/string.th");

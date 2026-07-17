@@ -381,6 +381,114 @@ pub fn register_all_natives(vm: &mut Vm) {
         Ok(Value::Unit)
     });
 
+    // —— UDP 网络原语（基本功核查第 69 项；句柄表方案，handle 1-based，0 表示无效）——
+    // 与 std/net.th 的 udp_bind/udp_recv_from/udp_send_to/udp_close/udp_set_timeout wrapper 对齐。
+    // 与 interpreter::natives::call_named_fn 中的实现语义对齐（双侧注册）。
+    // UDP 无连接：bind 后用 send_to/recv_from 携带对端地址；handle 表与 TCP 独立避免类型混淆。
+    vm.add_native("udp_bind".into(), |vm, args| {
+        if let Some(Value::String(addr)) = args.first() {
+            match std::net::UdpSocket::bind(addr) {
+                Ok(sock) => {
+                    vm.udp_sockets.push(Some(sock));
+                    let handle = vm.udp_sockets.len() as i64; // 1-based
+                    Ok(ok_result(Value::Int(handle, BaseType::I32)))
+                }
+                Err(e) => Ok(err_result(format!("绑定失败: {e}"))),
+            }
+        } else {
+            Ok(err_result("udp_bind 需要 1 个 String 参数"))
+        }
+    });
+    vm.add_native("udp_recv_from".into(), |vm, args| {
+        if args.len() < 2 {
+            return Ok(err_result("udp_recv_from 需要 (i64, i64) 参数"));
+        }
+        if let (Value::Int(handle, _), Value::Int(n, _)) = (&args[0], &args[1]) {
+            let idx = *handle as usize;
+            if idx == 0 || idx > vm.udp_sockets.len() {
+                return Ok(err_result("无效的句柄"));
+            }
+            let max = (*n).max(0).min(65536) as usize;
+            if let Some(ref mut sock) = vm.udp_sockets[idx - 1] {
+                let mut buf = vec![0u8; max];
+                match sock.recv_from(&mut buf) {
+                    Ok((read_n, peer)) => {
+                        let bytes: Vec<Value> = buf[..read_n]
+                            .iter()
+                            .map(|b| Value::Int(*b as i64, BaseType::I32))
+                            .collect();
+                        let peer_str = peer.to_string();
+                        // 返回 Tuple(Vec<i64>, String)：字节数组 + 来源地址 "ip:port"
+                        Ok(ok_result(Value::Tuple(vec![
+                            Value::Vec(Rc::new(RefCell::new(bytes))),
+                            Value::String(peer_str),
+                        ])))
+                    }
+                    Err(e) => Ok(err_result(format!("接收失败: {e}"))),
+                }
+            } else {
+                Ok(err_result("socket 已关闭"))
+            }
+        } else {
+            Ok(err_result("udp_recv_from 需要 (i64, i64) 参数"))
+        }
+    });
+    vm.add_native("udp_send_to".into(), |vm, args| {
+        if args.len() < 3 {
+            return Ok(err_result("udp_send_to 需要 (i64, Vec<i64>, String) 参数"));
+        }
+        if let (Value::Int(handle, _), Value::Vec(data), Value::String(addr)) =
+            (&args[0], &args[1], &args[2])
+        {
+            let idx = *handle as usize;
+            if idx == 0 || idx > vm.udp_sockets.len() {
+                return Ok(err_result("无效的句柄"));
+            }
+            let bytes: Vec<u8> = data
+                .borrow()
+                .iter()
+                .map(|x| match x {
+                    Value::Int(b, _) => *b as u8,
+                    _ => 0,
+                })
+                .collect();
+            if let Some(ref mut sock) = vm.udp_sockets[idx - 1] {
+                match sock.send_to(&bytes, addr) {
+                    Ok(n) => Ok(ok_result(Value::Int(n as i64, BaseType::I32))),
+                    Err(e) => Ok(err_result(format!("发送失败: {e}"))),
+                }
+            } else {
+                Ok(err_result("socket 已关闭"))
+            }
+        } else {
+            Ok(err_result("udp_send_to 需要 (i64, Vec<i64>, String) 参数"))
+        }
+    });
+    vm.add_native("udp_close".into(), |vm, args| {
+        if let Some(Value::Int(handle, _)) = args.first() {
+            let idx = *handle as usize;
+            if idx > 0 && idx <= vm.udp_sockets.len() {
+                vm.udp_sockets[idx - 1] = None; // drop 自动关闭
+            }
+        }
+        Ok(Value::Unit)
+    });
+    vm.add_native("udp_set_timeout".into(), |vm, args| {
+        if args.len() >= 2 {
+            if let (Value::Int(handle, _), Value::Int(ms, _)) = (&args[0], &args[1]) {
+                let idx = *handle as usize;
+                if idx > 0 && idx <= vm.udp_sockets.len() {
+                    if let Some(ref mut sock) = vm.udp_sockets[idx - 1] {
+                        let dur = std::time::Duration::from_millis(*ms as u64);
+                        sock.set_read_timeout(Some(dur)).ok();
+                        sock.set_write_timeout(Some(dur)).ok();
+                    }
+                }
+            }
+        }
+        Ok(Value::Unit)
+    });
+
     // —— 子进程原语（句柄表方案，handle 1-based，0 表示无效）——
     // 与 std/process.th 的 new/arg/run/output wrapper 对齐。
     // command_output 消费 Command（mem::take 取出所有权），再次调用返回 Err。

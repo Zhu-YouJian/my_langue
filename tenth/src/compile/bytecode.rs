@@ -631,6 +631,18 @@ impl BytecodeCompiler {
                 self.compile_expr(inner)?;
                 self.chunk.emit(Op::Spawn);
             }
+            HirExprKind::Yield(inner) => {
+                // yield [expr]：让出控制权给 VM 调度器。
+                // 与 Op::Yield 语义对齐：Op::Yield 不消费栈顶，仅保存整个调用栈后让出。
+                // 因此 inner 的值（若存在）必须先 emit Pop 丢弃，避免恢复后栈污染；
+                // 恢复后由 PushUnit 提供 yield 表达式的返回值（Unit）。
+                if let Some(e) = inner {
+                    self.compile_expr(e)?;
+                    self.chunk.emit(Op::Pop);
+                }
+                self.chunk.emit(Op::Yield);
+                self.chunk.emit(Op::PushUnit);
+            }
             HirExprKind::InterpolatedString { parts } => {
                 // Evaluate by concatenating all parts as strings
                 // First, push all parts as strings, then concatenate

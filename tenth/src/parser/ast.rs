@@ -152,6 +152,9 @@ pub enum ExprKind {
     TryBlock(Box<Expr>),
     Await(Box<Expr>),
     Spawn(Box<Expr>),
+    /// `yield`（无值，返回 Unit）或 `yield expr`（带值，expr 求值后丢弃，整体返回 Unit）。
+    /// 让出控制权给 VM 调度器；解释器路径不支持。
+    Yield(Option<Box<Expr>>),
     /// Named argument in a function call: `f(name = value)`.
     /// Only valid inside `Call` / `GenericCall` / `MethodCall` args.
     NamedArg {

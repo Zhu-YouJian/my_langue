@@ -69,6 +69,9 @@ pub struct Vm {
     /// TCP 监听器句柄表。索引+1 即句柄（1-based，0 表示无效）。
     /// `None` 表示已关闭的槽位（可被复用或保留）。
     pub tcp_listeners: Vec<Option<std::net::TcpListener>>,
+    /// UDP socket 句柄表（基本功核查第 69 项）。索引+1 即句柄（1-based，0 表示无效）。
+    /// `None` 表示已关闭的槽位（可被复用或保留）。与 TCP 表独立，避免类型混淆。
+    pub udp_sockets: Vec<Option<std::net::UdpSocket>>,
     /// 正则表达式句柄表。索引+1 即句柄（1-based，0 表示无效）。
     /// `None` 表示已释放的槽位（可被复用或保留）。
     pub regexes: Vec<Option<regex::Regex>>,
@@ -115,6 +118,7 @@ impl Vm {
             jit_ctx: None, last_error: None, current_chunk_idx: 0,
             last_explanation: Vec::new(), tcp_streams: Vec::new(),
             tcp_listeners: Vec::new(),
+            udp_sockets: Vec::new(),
             regexes: Vec::new(),
             commands: Vec::new(),
             next_task_id: 1,

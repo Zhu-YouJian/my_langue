@@ -50,6 +50,8 @@ impl Lowerer {
                     // Stage 3+4 TCP/HTTP 原语
                     | "tcp_connect" | "tcp_read" | "tcp_write" | "tcp_close" | "tcp_set_timeout"
                     | "tcp_listen" | "tcp_accept" | "tcp_listener_close"
+                    // UDP 原语（基本功核查第 69 项；handle table 模式，与 tcp_* 同构）
+                    | "udp_bind" | "udp_recv_from" | "udp_send_to" | "udp_close" | "udp_set_timeout"
                     | "command_new" | "command_arg" | "command_run" | "command_output"
                     | "http_get" | "http_post"
                     // Phase 2 Step 5：异步 I/O 原语（返回 Future）
@@ -167,6 +169,11 @@ impl Lowerer {
             HirExprKind::Move(inner) | HirExprKind::TryBlock(inner)
             | HirExprKind::Await(inner) | HirExprKind::Spawn(inner) => {
                 Self::collect_free_vars(inner, vars);
+            }
+            HirExprKind::Yield(inner) => {
+                if let Some(e) = inner {
+                    Self::collect_free_vars(e, vars);
+                }
             }
             HirExprKind::InterpolatedString { parts } => {
                 for p in parts {
