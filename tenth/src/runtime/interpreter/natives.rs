@@ -1139,6 +1139,32 @@ impl super::Interpreter {
                 }
                 return Ok(Some(Value::Tensor(result)));
             }
+            // ── 张量比较运算（Wave 2 第 4 项）──────────────────────────
+            // 6 个比较 native：gt/lt/ge/le/eq/ne。返回 F64 张量（0.0/1.0 编码 bool）。
+            // 不可微：比较结果是布尔掩码，不进入 tape（与 select 耦合可微，见标准库 where_）。
+            "tensor_gt" | "tensor_lt" | "tensor_ge" | "tensor_le" | "tensor_eq" | "tensor_ne" => {
+                if args.len() < 2 {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: format!("{}(a, b) 期望两个张量参数", name),
+                    });
+                }
+                let (a, b) = match (&args[0], &args[1]) {
+                    (Value::Tensor(x), Value::Tensor(y)) => (x.clone(), y.clone()),
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: format!("{}(a, b) 期望两个张量参数", name),
+                    }),
+                };
+                let r = match name {
+                    "tensor_gt" => a.borrow().gt(&b.borrow()),
+                    "tensor_lt" => a.borrow().lt(&b.borrow()),
+                    "tensor_ge" => a.borrow().ge(&b.borrow()),
+                    "tensor_le" => a.borrow().le(&b.borrow()),
+                    "tensor_eq" => a.borrow().eq(&b.borrow()),
+                    "tensor_ne" => a.borrow().ne(&b.borrow()),
+                    _ => unreachable!(),
+                }.map_err(|m| TenthError::RuntimeError { line: None, col: None, message: m })?;
+                return Ok(Some(Value::Tensor(Rc::new(RefCell::new(r)))));
+            }
             "grad" => {
                 if let Some(Value::Tensor(param)) = args.first() {
                     let p = param.borrow();

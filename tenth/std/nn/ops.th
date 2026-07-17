@@ -1,0 +1,54 @@
+// 张量比较运算 + where_ 条件选择原语。
+//
+// Wave 2 第 4 项（路径 Z）：不引入新的 Bool TensorData 变体——
+// 沿用 f64 0.0/1.0 编码以保持与 select backward 的 `> 0.5` 判定兼容。
+//
+// 6 个比较 wrapper（gt/lt/ge/le/eq/ne）：
+//   - 输入 a/b dtype 任意（f32/f64/f16/bf16）
+//   - 返回 F64 张量（1.0=true / 0.0=false）
+//   - 不可微：比较结果是布尔掩码，不进入 tape
+//   - 与 select 耦合可微（见 where_）
+//
+// where_(cond, then, else_)：
+//   - select 的语义别名（PyTorch torch.where / NumPy np.where 等价物）
+//   - cond 是 f64 张量（>0.5 视为 true）
+//   - 返回 then/else 逐元素选择结果，支持三输入广播
+//   - 可微：d_then = grad*mask, d_else = grad*(1-mask)（mask = cond > 0.5）
+//
+// 命名说明：`where` 与 `else` 是 Tenth 关键字，故用 `where_` / `else_` 后缀避开。
+
+// ── 比较运算（返回 F64 张量）──────────────────────────────────────
+
+fn gt<T>(a: Tensor[T, ..], b: Tensor[T, ..]) -> Tensor[f64, ..] {
+    tensor_gt(a, b)
+}
+
+fn lt<T>(a: Tensor[T, ..], b: Tensor[T, ..]) -> Tensor[f64, ..] {
+    tensor_lt(a, b)
+}
+
+fn ge<T>(a: Tensor[T, ..], b: Tensor[T, ..]) -> Tensor[f64, ..] {
+    tensor_ge(a, b)
+}
+
+fn le<T>(a: Tensor[T, ..], b: Tensor[T, ..]) -> Tensor[f64, ..] {
+    tensor_le(a, b)
+}
+
+fn eq<T>(a: Tensor[T, ..], b: Tensor[T, ..]) -> Tensor[f64, ..] {
+    tensor_eq(a, b)
+}
+
+fn ne<T>(a: Tensor[T, ..], b: Tensor[T, ..]) -> Tensor[f64, ..] {
+    tensor_ne(a, b)
+}
+
+// ── where_ 条件选择（select 别名，可微）──────────────────────────
+
+// where_(cond, then, else_) — select 的语义别名
+// PyTorch torch.where / NumPy np.where 的等价物
+// cond 是 f64 张量（>0.5 视为 true），返回 then/else 逐元素选择结果
+// 可微：d_then = grad*mask, d_else = grad*(1-mask)
+fn where_<T>(cond: Tensor[f64, ..], then: Tensor[T, ..], else_: Tensor[T, ..]) -> Tensor[T, ..] {
+    select(cond, then, else_)
+}

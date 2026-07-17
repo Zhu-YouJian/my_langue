@@ -517,6 +517,26 @@ impl Lowerer {
                 };
                 Ok(Type::tensor(base_dtype, index_dims))
             },
+            // Wave 2 第 4 项：张量比较 native（gt/lt/ge/le/eq/ne）
+            // 返回 F64 张量（0.0/1.0 编码 bool）；shape = broadcast(a.shape, b.shape)
+            "tensor_gt" | "tensor_lt" | "tensor_ge" | "tensor_le" | "tensor_eq" | "tensor_ne" => {
+                // 提取两个输入的 dims（若任一非 Tensor，保守返回 F64 Tensor[..]）
+                let mut input_dims: Vec<&[Dim]> = Vec::new();
+                for a in args.iter().take(2) {
+                    if let Type::Tensor { dims, .. } = &a.ty {
+                        input_dims.push(dims.as_slice());
+                    } else {
+                        return Ok(Type::tensor(BaseType::F64, vec![Dim::Any]));
+                    }
+                }
+                if input_dims.len() < 2 {
+                    return Ok(Type::tensor(BaseType::F64, vec![Dim::Any]));
+                }
+                match broadcast_shapes(input_dims[0], input_dims[1]) {
+                    Some(b) => Ok(Type::tensor(BaseType::F64, b)),
+                    None => Ok(Type::Unknown),
+                }
+            },
             "start_grad" | "new_grad" | "stop_grad" | "param" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
             "backward" => Ok(Type::unit()),
             "grad" | "zero_grad" => Ok(Type::Unknown),

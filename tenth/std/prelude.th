@@ -17,6 +17,7 @@
 //   stop_grad, zero_grad     — autodiff control
 //   cross_entropy            — loss function
 //   select                   — conditional select primitive (cond ? then : else)
+//   tensor_gt, tensor_lt, tensor_ge, tensor_le, tensor_eq, tensor_ne  — tensor comparisons (返回 f64 0.0/1.0 张量)
 //   Vec::new, HashMap::new   — collections
 //   read_file, write_bytes, read_bytes — file I/O
 //   save_weights, load_weights — model serialization
@@ -117,6 +118,7 @@
 //   std::nn::positional_encoding::positional_encoding         // 仍 f64（依赖 randn native）
 //   std::nn::feedforward::feedforward<T>, make_feedforward_params
 //   std::nn::transformer::transformer_encoder_block<T>, make_transformer_block_params
+//   std::nn::ops::gt<T>, lt<T>, ge<T>, le<T>, eq<T>, ne<T>, where_<T>  // 张量比较 + where_（select 别名）；返回 f64 0.0/1.0 掩码（比较）或 then/else dtype（where_）
 //   std::optim::sgd::sgd_step<T>, sgd_momentum<T>, sgd_weight_decay<T>
 //   std::optim::adam::adam_step<T>
 //   std::optim::adamw::adamw_step<T>       // 解耦权重衰减（Transformer 训练推荐）

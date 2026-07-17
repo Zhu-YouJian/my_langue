@@ -83,6 +83,8 @@ impl Lowerer {
                             | "select"
                             | "scatter"
                             | "gather"
+                            // Wave 2 第 4 项：张量比较 native（返回 F64 0.0/1.0 张量）
+                            | "tensor_gt" | "tensor_lt" | "tensor_ge" | "tensor_le" | "tensor_eq" | "tensor_ne"
                             | "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" | "to_float" | "to_f32" | "to_f64" | "tensor_from_vec"
                             | "f64_bits" | "f64_from_bits"
                             | "zeros" | "ones"

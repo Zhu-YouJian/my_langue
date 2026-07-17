@@ -788,6 +788,7 @@ th_parse_test!(th_parse_nn_conv, "std/nn/conv.th");
 th_parse_test!(th_parse_nn_feedforward, "std/nn/feedforward.th");
 th_parse_test!(th_parse_nn_positional_encoding, "std/nn/positional_encoding.th");
 th_parse_test!(th_parse_nn_transformer, "std/nn/transformer.th");
+th_parse_test!(th_parse_nn_ops, "std/nn/ops.th");  // Wave 2 第 4 项：张量比较 + where_
 th_parse_test!(th_parse_optim_sgd, "std/optim/sgd.th");
 th_parse_test!(th_parse_optim_adam, "std/optim/adam.th");
 th_parse_test!(th_parse_optim_adagrad, "std/optim/adagrad.th");

@@ -1427,6 +1427,61 @@ impl Tensor {
         }
     }
 
+    // ── tensor-tensor comparison ops (返回 F64 张量，0.0/1.0 编码 bool) ─────
+    //
+    // Wave 2 第 4 项：张量比较运算。不引入新的 Bool TensorData 变体——
+    // 沿用 f64 0.0/1.0 编码以保持与 select backward 的 `> 0.5` 判定兼容。
+    // 输入 a/b dtype 任意（F32/F64/F16/BF16）；先 cast 到 f64 视图，再广播比较。
+    // 不可微：比较结果是布尔掩码，不参与梯度计算（若需可微掩码，用 select 直接耦合）。
+
+    /// 通用元素级比较（带广播，结果固定 F64 0.0/1.0）。
+    /// `cmp` 接收 f64 返回 bool；结果 1.0/0.0。
+    fn compare_binary(&self, other: &Tensor, cmp: impl Fn(f64, f64) -> bool, op_symbol: &str) -> Result<Tensor, String> {
+        let a_shape = self.data.shape();
+        let b_shape = other.data.shape();
+        let out_shape = Self::broadcast_shape(a_shape, b_shape)
+            .ok_or_else(|| format!("cannot broadcast shapes {:?} {} {:?}", self.shape(), op_symbol, other.shape()))?;
+        let a = self.data.as_f64_view();
+        let b = other.data.as_f64_view();
+        let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
+        let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
+        let mut out: ArrayD<f64> = ArrayD::zeros(IxDyn(&out_shape));
+        out.zip_mut_with(&a_br.to_owned(), |o, &x| { *o = x; });
+        let b_owned = b_br.to_owned();
+        out.zip_mut_with(&b_owned, |o, &y| { *o = if cmp(*o, y) { 1.0 } else { 0.0 }; });
+        Ok(Tensor::from_data(out))
+    }
+
+    /// 逐元素 a > b，返回 F64 张量（1.0/0.0）。
+    pub fn gt(&self, other: &Tensor) -> Result<Tensor, String> {
+        self.compare_binary(other, |a, b| a > b, ">")
+    }
+
+    /// 逐元素 a < b，返回 F64 张量（1.0/0.0）。
+    pub fn lt(&self, other: &Tensor) -> Result<Tensor, String> {
+        self.compare_binary(other, |a, b| a < b, "<")
+    }
+
+    /// 逐元素 a >= b，返回 F64 张量（1.0/0.0）。
+    pub fn ge(&self, other: &Tensor) -> Result<Tensor, String> {
+        self.compare_binary(other, |a, b| a >= b, ">=")
+    }
+
+    /// 逐元素 a <= b，返回 F64 张量（1.0/0.0）。
+    pub fn le(&self, other: &Tensor) -> Result<Tensor, String> {
+        self.compare_binary(other, |a, b| a <= b, "<=")
+    }
+
+    /// 逐元素 a == b，返回 F64 张量（1.0/0.0）。
+    pub fn eq(&self, other: &Tensor) -> Result<Tensor, String> {
+        self.compare_binary(other, |a, b| a == b, "==")
+    }
+
+    /// 逐元素 a != b，返回 F64 张量（1.0/0.0）。
+    pub fn ne(&self, other: &Tensor) -> Result<Tensor, String> {
+        self.compare_binary(other, |a, b| a != b, "!=")
+    }
+
     /// Scatter values from `src` into a copy of `base` at positions given by
     /// `index` along `dim`（PyTorch scatter_ but immutable，支持任意 dim + 多维 index/src）.
     ///   out = base.clone();

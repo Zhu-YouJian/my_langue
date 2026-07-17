@@ -1282,6 +1282,94 @@ pub fn register_all_natives(vm: &mut Vm) {
         }
         Ok(Value::Tensor(result))
     });
+    // ── 张量比较运算（Wave 2 第 4 项）──────────────────────────────────
+    // 6 个比较 native：gt/lt/ge/le/eq/ne。返回 F64 张量（0.0/1.0 编码 bool）。
+    // 输入 dtype 任意（F32/F64/F16/BF16），先 cast f64 视图再广播比较。
+    // 不可微：比较结果是布尔掩码，不进入 tape（与 select 耦合可微，见标准库 where_）。
+    vm.add_native("tensor_gt".into(), |_vm, args| {
+        if args.len() < 2 {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_gt(a, b) 期望两个张量参数".into() });
+        }
+        let (a, b) = match (&args[0], &args[1]) {
+            (Value::Tensor(x), Value::Tensor(y)) => (x.clone(), y.clone()),
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_gt(a, b) 期望两个张量参数".into() }),
+        };
+        let r = a.borrow().gt(&b.borrow())
+            .map_err(|m| TenthError::RuntimeError { line: None, col: None, message: m })?;
+        Ok(Value::Tensor(Rc::new(RefCell::new(r))))
+    });
+    vm.add_native("tensor_lt".into(), |_vm, args| {
+        if args.len() < 2 {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_lt(a, b) 期望两个张量参数".into() });
+        }
+        let (a, b) = match (&args[0], &args[1]) {
+            (Value::Tensor(x), Value::Tensor(y)) => (x.clone(), y.clone()),
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_lt(a, b) 期望两个张量参数".into() }),
+        };
+        let r = a.borrow().lt(&b.borrow())
+            .map_err(|m| TenthError::RuntimeError { line: None, col: None, message: m })?;
+        Ok(Value::Tensor(Rc::new(RefCell::new(r))))
+    });
+    vm.add_native("tensor_ge".into(), |_vm, args| {
+        if args.len() < 2 {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_ge(a, b) 期望两个张量参数".into() });
+        }
+        let (a, b) = match (&args[0], &args[1]) {
+            (Value::Tensor(x), Value::Tensor(y)) => (x.clone(), y.clone()),
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_ge(a, b) 期望两个张量参数".into() }),
+        };
+        let r = a.borrow().ge(&b.borrow())
+            .map_err(|m| TenthError::RuntimeError { line: None, col: None, message: m })?;
+        Ok(Value::Tensor(Rc::new(RefCell::new(r))))
+    });
+    vm.add_native("tensor_le".into(), |_vm, args| {
+        if args.len() < 2 {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_le(a, b) 期望两个张量参数".into() });
+        }
+        let (a, b) = match (&args[0], &args[1]) {
+            (Value::Tensor(x), Value::Tensor(y)) => (x.clone(), y.clone()),
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_le(a, b) 期望两个张量参数".into() }),
+        };
+        let r = a.borrow().le(&b.borrow())
+            .map_err(|m| TenthError::RuntimeError { line: None, col: None, message: m })?;
+        Ok(Value::Tensor(Rc::new(RefCell::new(r))))
+    });
+    vm.add_native("tensor_eq".into(), |_vm, args| {
+        if args.len() < 2 {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_eq(a, b) 期望两个张量参数".into() });
+        }
+        let (a, b) = match (&args[0], &args[1]) {
+            (Value::Tensor(x), Value::Tensor(y)) => (x.clone(), y.clone()),
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_eq(a, b) 期望两个张量参数".into() }),
+        };
+        let r = a.borrow().eq(&b.borrow())
+            .map_err(|m| TenthError::RuntimeError { line: None, col: None, message: m })?;
+        Ok(Value::Tensor(Rc::new(RefCell::new(r))))
+    });
+    vm.add_native("tensor_ne".into(), |_vm, args| {
+        if args.len() < 2 {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_ne(a, b) 期望两个张量参数".into() });
+        }
+        let (a, b) = match (&args[0], &args[1]) {
+            (Value::Tensor(x), Value::Tensor(y)) => (x.clone(), y.clone()),
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "tensor_ne(a, b) 期望两个张量参数".into() }),
+        };
+        let r = a.borrow().ne(&b.borrow())
+            .map_err(|m| TenthError::RuntimeError { line: None, col: None, message: m })?;
+        Ok(Value::Tensor(Rc::new(RefCell::new(r))))
+    });
     vm.add_native("cross_entropy".into(), |vm, args| {
         if args.len() < 2 {
             return Err(TenthError::RuntimeError { line: None, col: None, message: "cross_entropy(logits, target) 期望两个张量".into() });
