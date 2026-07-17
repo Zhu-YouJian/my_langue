@@ -1,0 +1,123 @@
+// Date 类型 — 基于 struct 机制实现（Wave 3 第 8 项，路径 B）
+//
+// 设计要点：
+//   - 复用 Type::Struct / Value::Struct / Op::NewStruct，不新增 HIR 类型
+//   - 不触及 tenthc / 自举三路径
+//   - 算法：Howard Hinnant date_algorithms（工业级，已验证）
+//     · 底层 native `date_to_unix_days` / `date_from_unix_days` 实现 civil_from_days 互逆
+//     · 1970-01-01 = Unix days 0；负数 days 表示 1970 前；负 year 表示公元前（天文年份）
+//   - struct Date { year, month, day } 包装 i64 三元组，提供面向用户的 API
+//
+// 用法：
+//   use std::date::Date
+//   use std::date::date_new
+//   use std::date::date_to_string
+//
+//   let d = date_new(2026, 7, 17);
+//   let s = date_to_string(d);    // "2026-07-17"
+//   let w = date_weekday(d);      // 5 (周五，0=周日)
+//   let d2 = date_add_days(d, 10); // 2026-07-27
+
+// Date struct：包装 (year, month, day) 三个 i64 字段。
+// 字段语义：
+//   year  — 公历年（天文年份：1 BC = 0，2 BC = -1，...）
+//   month — 1..=12
+//   day   — 1..=31（实际范围由月/闰年约束，运行时不强制）
+struct Date {
+    year: i64,
+    month: i64,
+    day: i64,
+}
+
+// 构造一个 Date。不校验 month/day 范围——调用方负责传入合法日期。
+// 若需校验，可在构造后调用 date_is_valid（暂未提供；保持 API 简洁）。
+fn date_new(year: i64, month: i64, day: i64) -> Date {
+    Date { year: year, month: month, day: day }
+}
+
+// 从 Unix days 构造 Date（与 date_to_unix_days 互逆）。
+// days = 0 → 1970-01-01；days < 0 表示 1970 前。
+fn date_from_days(days: i64) -> Date {
+    let (year, month, day) = date_from_unix_days(days);
+    Date { year: year, month: month, day: day }
+}
+
+// 转换为 Unix days（与 date_from_days 互逆）。
+// 调用底层 native date_to_unix_days(year, month, day)。
+fn date_to_days(d: Date) -> i64 {
+    date_to_unix_days(d.year, d.month, d.day)
+}
+
+// 日期加天数：返回新的 Date（不可变语义）。
+// delta 可为负数（减天数）。
+// 注意：直接用 `date_to_days(d) + delta` 算术，不复用同名 native date_add_days——
+// 否则辅助函数会递归调用自身（native 与 helper 同名时 helper 胜出）。
+fn date_add_days(d: Date, delta: i64) -> Date {
+    let new_days = date_to_days(d) + delta;
+    date_from_days(new_days)
+}
+
+// 两个日期相差天数：date1 - date2。
+// 正数表示 date1 在 date2 之后；负数表示之前。
+fn date_diff(d1: Date, d2: Date) -> i64 {
+    date_diff_days(date_to_days(d1), date_to_days(d2))
+}
+
+// 星期几（0=周日, 1=周一, 2=周二, ..., 6=周六）。
+// 算法：Unix days 0 = 1970-01-01 = 周四 = 4；
+//      weekday = ((days + 4) mod 7 + 7) mod 7（处理负数 days）。
+// 调用底层 native date_day_of_week。
+fn date_weekday(d: Date) -> i64 {
+    date_day_of_week(date_to_days(d))
+}
+
+// 比较：相等
+fn date_eq(d1: Date, d2: Date) -> bool {
+    d1.year == d2.year && d1.month == d2.month && d1.day == d2.day
+}
+
+// 比较：小于（d1 早于 d2）
+fn date_lt(d1: Date, d2: Date) -> bool {
+    date_to_days(d1) < date_to_days(d2)
+}
+
+// 比较：小于等于
+fn date_le(d1: Date, d2: Date) -> bool {
+    date_to_days(d1) <= date_to_days(d2)
+}
+
+// 比较：大于
+fn date_gt(d1: Date, d2: Date) -> bool {
+    date_to_days(d1) > date_to_days(d2)
+}
+
+// 比较：大于等于
+fn date_ge(d1: Date, d2: Date) -> bool {
+    date_to_days(d1) >= date_to_days(d2)
+}
+
+// 比较：不等
+fn date_ne(d1: Date, d2: Date) -> bool {
+    !(d1.year == d2.year && d1.month == d2.month && d1.day == d2.day)
+}
+
+// 内部辅助：把 0..99 的非负整数格式化为 2 位字符串（前补零）。
+// 调用方需保证 n >= 0 且 n < 100；否则降级为 to_string(n)。
+fn pad2(n: i64) -> String {
+    if n < 0 {
+        to_string(n)
+    } else if n < 10 {
+        "0" + to_string(n)
+    } else {
+        to_string(n)
+    }
+}
+
+// 格式化为 ISO 8601 字符串 "YYYY-MM-DD"。
+// 月份和日期补零到 2 位；年份不补零（支持负数表示公元前）。
+// 例：date_new(2026, 7, 17) → "2026-07-17"
+//     date_new(2026, 12, 31) → "2026-12-31"
+//     date_new(-1, 1, 1) → "-1-01-01"（公元 2 BC 1 月 1 日）
+fn date_to_string(d: Date) -> String {
+    to_string(d.year) + "-" + pad2(d.month) + "-" + pad2(d.day)
+}

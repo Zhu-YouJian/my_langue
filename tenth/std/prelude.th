@@ -34,6 +34,16 @@
 //   time_datetime()          — current datetime string "YYYY-MM-DD HH:MM:SS"
 //   time_sleep_ms(ms)        — sleep for ms milliseconds
 
+// ── Date (built-in native functions, Wave 3 第 8 项) ──
+//   date_to_unix_days(y, m, d)    — 公历日期 → Unix days (i64，1970-01-01 = 0)
+//   date_from_unix_days(days)     — Unix days → (year, month, day) Tuple<i64,i64,i64>
+//   date_i64_add_days(days, delta)— Unix days + delta → 新 Unix days (i64)
+//   date_diff_days(d1, d2)        — d1 - d2 → 天数差 (i64)
+//   date_day_of_week(days)        — 星期几 (0=周日, 1=周一, ..., 6=周六)
+//
+//   注：native 名带 _i64_ 前缀以避免与 std/date.th 中的 user function
+//   `date_add_days(Date, i64) -> Date` 同名冲突（native 优先匹配会阻止 user function 被调用）。
+
 // ── Random (built-in native functions) ──
 //   random_int(lo, hi)       — random integer in [lo, hi]
 //   random_float()           — random float in [0.0, 1.0)
@@ -142,6 +152,7 @@
 //   std::string::string_builder::new, append, to_string, len, is_empty, clear
 //   std::utils::math::min, max, clamp, abs, fmin, fmax, fclamp, fabs, signum
 //   std::time::time::now, now_ms, date, time_of_day, datetime, sleep_ms, start_timer, elapsed, elapsed_ms
+//   std::date::Date, date_new, date_from_days, date_to_days, date_to_string, date_add_days, date_diff, date_weekday, date_eq, date_lt, date_le, date_gt, date_ge, date_ne  // Date 类型（struct 包装，Wave 3 第 8 项 路径 B）
 //   std::random::random::rand_int, rand_float, rand_range, choice, shuffle, rand_bool, sample
 //   std::cli::cli::args_count, arg, args, args_tail, has_flag, flag_value
 //   std::logging::logging::debug, info, warn, error, set_level, LEVEL_DEBUG, LEVEL_INFO, LEVEL_WARN, LEVEL_ERROR

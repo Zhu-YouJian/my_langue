@@ -1,0 +1,202 @@
+// Date 标准库测试
+//
+// Run with: tenth run std/test_date.th
+//
+// 验证 std/date.th 中所有 Date 函数的语义正确性与边界处理。
+// 覆盖：构造、往返转换、格式化、加减天数、星期、比较、闰年、跨年。
+// 所有断言失败会以 panic 形式终止，运行到末尾的 "All passed" 表示全绿。
+
+use std::date::Date
+use std::date::date_new
+use std::date::date_from_days
+use std::date::date_to_days
+use std::date::date_to_string
+use std::date::date_add_days
+use std::date::date_diff
+use std::date::date_weekday
+use std::date::date_eq
+use std::date::date_lt
+use std::date::date_le
+use std::date::date_gt
+use std::date::date_ge
+use std::date::date_ne
+
+fn main() {
+    println("=== Date Tests ===");
+
+    // ── 构造 + 字段访问 ──
+    let d = date_new(2026, 7, 17);
+    assert(d.year == 2026, "date_new year");
+    assert(d.month == 7, "date_new month");
+    assert(d.day == 17, "date_new day");
+    println("construction tests passed");
+
+    // ── 转换：date_to_days + date_from_days 往返一致性 ──
+    // 2026-07-17 → Unix days → 2026-07-17
+    let days = date_to_days(d);
+    let d_back = date_from_days(days);
+    assert(d_back.year == 2026, "roundtrip year");
+    assert(d_back.month == 7, "roundtrip month");
+    assert(d_back.day == 17, "roundtrip day");
+    // 1970-01-01 是 epoch，days = 0
+    let epoch = date_new(1970, 1, 1);
+    assert(date_to_days(epoch) == 0, "epoch days == 0");
+    println("roundtrip tests passed");
+
+    // ── 格式化 ──
+    assert(date_to_string(date_new(2026, 7, 17)) == "2026-07-17", "format 2026-07-17");
+    assert(date_to_string(date_new(2026, 12, 31)) == "2026-12-31", "format 2026-12-31");
+    assert(date_to_string(date_new(2026, 1, 1)) == "2026-01-01", "format 2026-01-01");
+    assert(date_to_string(date_new(2026, 1, 9)) == "2026-01-09", "format 2026-01-09 (zero-pad day)");
+    assert(date_to_string(date_new(2026, 10, 1)) == "2026-10-01", "format 2026-10-01 (zero-pad month)");
+    println("format tests passed");
+
+    // ── 日期加天数 ──
+    // 2026-07-17 + 10 = 2026-07-27
+    let d2 = date_add_days(date_new(2026, 7, 17), 10);
+    assert(d2.year == 2026, "add 10d year");
+    assert(d2.month == 7, "add 10d month");
+    assert(d2.day == 27, "add 10d day");
+
+    // 跨月：2026-07-31 + 1 = 2026-08-01
+    let d3 = date_add_days(date_new(2026, 7, 31), 1);
+    assert(d3.year == 2026, "cross month year");
+    assert(d3.month == 8, "cross month month");
+    assert(d3.day == 1, "cross month day");
+
+    // 跨年：2026-12-31 + 1 = 2027-01-01
+    let d4 = date_add_days(date_new(2026, 12, 31), 1);
+    assert(d4.year == 2027, "cross year year");
+    assert(d4.month == 1, "cross year month");
+    assert(d4.day == 1, "cross year day");
+
+    // 减天数：2026-01-01 - 1 = 2025-12-31
+    let d5 = date_add_days(date_new(2026, 1, 1), -1);
+    assert(d5.year == 2025, "sub 1d year");
+    assert(d5.month == 12, "sub 1d month");
+    assert(d5.day == 31, "sub 1d day");
+    println("add_days tests passed");
+
+    // ── 闰年 ──
+    // 2024-02-29 (闰日) → days → 2024-02-29
+    let leap = date_new(2024, 2, 29);
+    let leap_days = date_to_days(leap);
+    let leap_back = date_from_days(leap_days);
+    assert(leap_back.year == 2024, "leap year");
+    assert(leap_back.month == 2, "leap month");
+    assert(leap_back.day == 29, "leap day");
+
+    // 2100-02-28（2100 是 400 年边界外的平年：被 100 整除但不被 400 整除）
+    let non_leap = date_new(2100, 2, 28);
+    let non_leap_days = date_to_days(non_leap);
+    let non_leap_back = date_from_days(non_leap_days);
+    assert(non_leap_back.year == 2100, "non-leap 2100 year");
+    assert(non_leap_back.month == 2, "non-leap 2100 month");
+    assert(non_leap_back.day == 28, "non-leap 2100 day");
+
+    // 2000-02-29（2000 是 400 年边界上的闰年：被 400 整除）
+    let y2k_leap = date_new(2000, 2, 29);
+    let y2k_leap_back = date_from_days(date_to_days(y2k_leap));
+    assert(y2k_leap_back.year == 2000, "y2k leap year");
+    assert(y2k_leap_back.month == 2, "y2k leap month");
+    assert(y2k_leap_back.day == 29, "y2k leap day");
+    println("leap year tests passed");
+
+    // ── 日期差 ──
+    // 2026-07-17 - 2026-07-07 = 10 天
+    let diff1 = date_diff(date_new(2026, 7, 17), date_new(2026, 7, 7));
+    assert(diff1 == 10, "diff within month");
+
+    // 2026-12-31 - 2026-01-01 = 364 天
+    let diff2 = date_diff(date_new(2026, 12, 31), date_new(2026, 1, 1));
+    assert(diff2 == 364, "diff across year (2026 non-leap)");
+
+    // 2024-12-31 - 2024-01-01 = 365 天（2024 闰年）
+    let diff3 = date_diff(date_new(2024, 12, 31), date_new(2024, 1, 1));
+    assert(diff3 == 365, "diff across leap year");
+
+    // 反向差：2026-07-07 - 2026-07-17 = -10 天
+    let diff4 = date_diff(date_new(2026, 7, 7), date_new(2026, 7, 17));
+    assert(diff4 == -10, "diff negative");
+    println("diff tests passed");
+
+    // ── 星期几 ──
+    // 2026-07-17 是周五 → 5 (0=周日)
+    assert(date_weekday(date_new(2026, 7, 17)) == 5, "2026-07-17 is Friday (5)");
+    // 1970-01-01 是周四 → 4
+    assert(date_weekday(date_new(1970, 1, 1)) == 4, "1970-01-01 is Thursday (4)");
+    // 2000-01-01 是周六 → 6
+    assert(date_weekday(date_new(2000, 1, 1)) == 6, "2000-01-01 is Saturday (6)");
+    // 1949-10-01 是周六 → 6
+    assert(date_weekday(date_new(1949, 10, 1)) == 6, "1949-10-01 is Saturday (6)");
+    // 2024-02-29 是周四 → 4
+    assert(date_weekday(date_new(2024, 2, 29)) == 4, "2024-02-29 is Thursday (4)");
+    println("weekday tests passed");
+
+    // ── 比较运算 ──
+    let a = date_new(2026, 1, 1);
+    let b = date_new(2026, 7, 17);
+    let c = date_new(2026, 1, 1);
+
+    // eq
+    assert(date_eq(a, c), "eq: same date");
+    assert(!date_eq(a, b), "eq: different dates");
+
+    // ne
+    assert(date_ne(a, b), "ne: different dates");
+    assert(!date_ne(a, c), "ne: same date");
+
+    // lt
+    assert(date_lt(a, b), "lt: a < b");
+    assert(!date_lt(b, a), "lt: not b < a");
+    assert(!date_lt(a, c), "lt: not a < c (equal)");
+
+    // le
+    assert(date_le(a, b), "le: a <= b");
+    assert(date_le(a, c), "le: a <= c (equal)");
+    assert(!date_le(b, a), "le: not b <= a");
+
+    // gt
+    assert(date_gt(b, a), "gt: b > a");
+    assert(!date_gt(a, b), "gt: not a > b");
+    assert(!date_gt(a, c), "gt: not a > c (equal)");
+
+    // ge
+    assert(date_ge(b, a), "ge: b >= a");
+    assert(date_ge(a, c), "ge: a >= c (equal)");
+    assert(!date_ge(a, b), "ge: not a >= b");
+    println("comparison tests passed");
+
+    // ── 边界：1970 前 ──
+    // 1969-12-31 = -1 days
+    let pre_epoch = date_new(1969, 12, 31);
+    assert(date_to_days(pre_epoch) == -1, "1969-12-31 == -1 days");
+
+    // 1900-01-01 = -25567 days
+    let y19 = date_new(1900, 1, 1);
+    assert(date_to_days(y19) == -25567, "1900-01-01 == -25567 days");
+
+    // 往返：1900-01-01 → days → 1900-01-01
+    let y19_back = date_from_days(date_to_days(y19));
+    assert(y19_back.year == 1900, "1900 roundtrip year");
+    assert(y19_back.month == 1, "1900 roundtrip month");
+    assert(y19_back.day == 1, "1900 roundtrip day");
+    println("pre-1970 tests passed");
+
+    // ── 边界：负 delta 加减到 epoch ──
+    // 1970-01-01 - 1 = 1969-12-31
+    let pre = date_add_days(date_new(1970, 1, 1), -1);
+    assert(pre.year == 1969, "epoch -1 year");
+    assert(pre.month == 12, "epoch -1 month");
+    assert(pre.day == 31, "epoch -1 day");
+
+    // 1969-12-31 + 1 = 1970-01-01
+    let post = date_add_days(date_new(1969, 12, 31), 1);
+    assert(post.year == 1970, "epoch +1 year");
+    assert(post.month == 1, "epoch +1 month");
+    assert(post.day == 1, "epoch +1 day");
+    println("epoch boundary tests passed");
+
+    println("");
+    println("=== All Date tests passed ===");
+}

@@ -547,6 +547,19 @@ impl Lowerer {
             "file_size" => Ok(Type::Base(BaseType::I64)),
             "remove_file" | "copy_file" => Ok(Type::unit()),
             "lexer_new" | "lexer_tokenize" | "parse_program" | "lower_program" | "compile_to_wasm" | "compile_program" => Ok(Type::Unknown),
+            // Wave 3 第 8 项：Date native 类型签名
+            // - date_to_unix_days / date_i64_add_days / date_diff_days / date_day_of_week → i64
+            // - date_from_unix_days → (i64, i64, i64) Tuple（标准库 date.th 用 `let (y,m,d) = ...` 解构）
+            "date_to_unix_days" | "date_i64_add_days" | "date_diff_days" | "date_day_of_week" => {
+                Ok(Type::Base(BaseType::I64))
+            }
+            "date_from_unix_days" => {
+                Ok(Type::Tuple(vec![
+                    Type::Base(BaseType::I64),
+                    Type::Base(BaseType::I64),
+                    Type::Base(BaseType::I64),
+                ]))
+            }
             _ => Ok(Type::Unknown),
         }
     }

@@ -113,6 +113,9 @@ impl Lowerer {
                             // 正则表达式原语（句柄表方案，与 tcp_streams 对齐）
                             | "regex_compile" | "regex_match" | "regex_find" | "regex_find_all"
                             | "regex_replace" | "regex_split"
+                            // Wave 3 第 8 项：Date native（路径 B，复用 struct 机制，返回 i64 或 Tuple）
+                            | "date_to_unix_days" | "date_from_unix_days" | "date_i64_add_days"
+                            | "date_diff_days" | "date_day_of_week"
                             // B批：字符串/文本处理 native
                             | "unicode_nfc" | "unicode_nfd"
                             | "str_to_utf16" | "utf16_to_str"

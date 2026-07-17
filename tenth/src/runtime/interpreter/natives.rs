@@ -33,6 +33,7 @@ use crate::runtime::tensor::{Tensor, TensorData};
 use crate::runtime::autodiff::Tape;
 use super::json::{json_encode_value, json_encode_value_pretty, json_decode_string};
 use super::datetime::days_to_date;
+use super::datetime::{date_to_days, days_to_date_i64};
 
 // B批：编码工具
 use unicode_normalization::UnicodeNormalization;
@@ -2055,6 +2056,61 @@ impl super::Interpreter {
                 }
                 return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "time_sleep_ms(ms) 期望一个整数".into(),
+                });
+            }
+            // —— Date native（Wave 3 第 8 项：Date 类型，路径 B 复用 struct 机制）——
+            // 算法：Howard Hinnant date_algorithms（与 days_to_date 同源）。
+            // 不引入新 HIR 类型——返回 i64 或 Tuple<i64,i64,i64>，date.th 用 struct 包装。
+            "date_to_unix_days" => {
+                match (args.first(), args.get(1), args.get(2)) {
+                    (Some(Value::Int(y, _)), Some(Value::Int(m, _)), Some(Value::Int(d, _))) => {
+                        return Ok(Some(Value::Int(date_to_days(*y, *m, *d), BaseType::I64)));
+                    }
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: "date_to_unix_days(year, month, day) 期望三个整数".into(),
+                    }),
+                }
+            }
+            "date_from_unix_days" => {
+                if let Some(Value::Int(days, _)) = args.first() {
+                    let (y, m, d) = days_to_date_i64(*days);
+                    return Ok(Some(Value::Tuple(vec![
+                        Value::Int(y, BaseType::I64),
+                        Value::Int(m, BaseType::I64),
+                        Value::Int(d, BaseType::I64),
+                    ])));
+                }
+                return Err(TenthError::RuntimeError { line: None, col: None,
+                    message: "date_from_unix_days(days) 期望一个整数".into(),
+                });
+            }
+            "date_i64_add_days" => {
+                match (args.first(), args.get(1)) {
+                    (Some(Value::Int(days, _)), Some(Value::Int(delta, _))) => {
+                        return Ok(Some(Value::Int(days.wrapping_add(*delta), BaseType::I64)));
+                    }
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: "date_i64_add_days(days, delta) 期望两个整数".into(),
+                    }),
+                }
+            }
+            "date_diff_days" => {
+                match (args.first(), args.get(1)) {
+                    (Some(Value::Int(d1, _)), Some(Value::Int(d2, _))) => {
+                        return Ok(Some(Value::Int(d1.wrapping_sub(*d2), BaseType::I64)));
+                    }
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: "date_diff_days(days1, days2) 期望两个整数".into(),
+                    }),
+                }
+            }
+            "date_day_of_week" => {
+                if let Some(Value::Int(days, _)) = args.first() {
+                    let w = ((*days + 4) % 7 + 7) % 7;
+                    return Ok(Some(Value::Int(w, BaseType::I64)));
+                }
+                return Err(TenthError::RuntimeError { line: None, col: None,
+                    message: "date_day_of_week(days) 期望一个整数".into(),
                 });
             }
             // Random functions

@@ -747,6 +747,73 @@ pub fn register_all_natives(vm: &mut Vm) {
         }
     });
 
+    // —— Date native（Wave 3 第 8 项：Date 类型，路径 B 复用 struct 机制）——
+    // 算法：Howard Hinnant date_algorithms（与 datetime::days_to_date 同源）。
+    // 不引入新的 HIR 类型——返回 i64 或 Tuple<i64,i64,i64>，标准库 date.th 用 struct 包装。
+    vm.add_native("date_to_unix_days".into(), |_vm, args| {
+        match (args.first(), args.get(1), args.get(2)) {
+            (Some(Value::Int(y, _)), Some(Value::Int(m, _)), Some(Value::Int(d, _))) => {
+                Ok(Value::Int(datetime::date_to_days(*y, *m, *d), BaseType::I64))
+            }
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "date_to_unix_days(year, month, day) 期望三个整数".into(),
+            }),
+        }
+    });
+    vm.add_native("date_from_unix_days".into(), |_vm, args| {
+        if let Some(Value::Int(days, _)) = args.first() {
+            let (y, m, d) = datetime::days_to_date_i64(*days);
+            // 返回 Tuple(year, month, day)；标准库 date.th 用 `let (y,m,d) = ...` 解构。
+            Ok(Value::Tuple(vec![
+                Value::Int(y, BaseType::I64),
+                Value::Int(m, BaseType::I64),
+                Value::Int(d, BaseType::I64),
+            ]))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None,
+                message: "date_from_unix_days(days) 期望一个整数".into(),
+            })
+        }
+    });
+    vm.add_native("date_i64_add_days".into(), |_vm, args| {
+        match (args.first(), args.get(1)) {
+            (Some(Value::Int(days, _)), Some(Value::Int(delta, _))) => {
+                // 直接 i64 加法：Unix days 是线性天数序列，无闰秒/时区问题。
+                // 溢出由 i64 自然回绕（与 i64 加法语义一致）；调用方需自行约束范围。
+                // 注：native 名带 _i64_ 前缀以避免与 std/date.th 中的 helper
+                // `date_add_days(Date, i64) -> Date` 同名冲突（native 优先匹配会
+                // 阻止 user function 被调用）。
+                Ok(Value::Int(days.wrapping_add(*delta), BaseType::I64))
+            }
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "date_i64_add_days(days, delta) 期望两个整数".into(),
+            }),
+        }
+    });
+    vm.add_native("date_diff_days".into(), |_vm, args| {
+        match (args.first(), args.get(1)) {
+            (Some(Value::Int(d1, _)), Some(Value::Int(d2, _))) => {
+                // days1 - days2：正数表示 d1 在 d2 之后。
+                Ok(Value::Int(d1.wrapping_sub(*d2), BaseType::I64))
+            }
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "date_diff_days(days1, days2) 期望两个整数".into(),
+            }),
+        }
+    });
+    vm.add_native("date_day_of_week".into(), |_vm, args| {
+        if let Some(Value::Int(days, _)) = args.first() {
+            // Unix epoch 1970-01-01 是周四（=4）。(days + 4) % 7 给出 0=周日..6=周六。
+            // 用 ((days + 4) % 7 + 7) % 7 处理负数（1970 年前日期）。
+            let w = ((*days + 4) % 7 + 7) % 7;
+            Ok(Value::Int(w, BaseType::I64))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None,
+                message: "date_day_of_week(days) 期望一个整数".into(),
+            })
+        }
+    });
+
     // —— Phase 2 Step 5：异步 I/O native ——
     // 设计：std::thread + mpsc + thread_local。native 创建 Pending Future，
     // 注册到 ASYNC_IO，VM 调度器在 run_scheduler 循环中 poll。
