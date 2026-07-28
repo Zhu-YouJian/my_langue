@@ -35,6 +35,10 @@ base64 = "0.22"
 percent-encoding = "2"
 encoding_rs = "0.8"
 
+# 哈希函数（SHA-256/SHA-512/MD5）
+sha2 = "0.10"
+md-5 = "0.10"
+
 [profile.release]
 # 安全：启用算术溢出检查，让 hostcalls.rs / wasm/wasmtime_host.rs 中的
 # `count * 2` / `rows * cols` 等运算在溢出时 panic 而非静默回绕。

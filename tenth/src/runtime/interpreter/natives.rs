@@ -2764,6 +2764,91 @@ impl super::Interpreter {
                 }
                 return Ok(Some(err_result("_url_decode 需要 1 个 String 参数")));
             }
+            // ── 哈希函数（SHA-256/SHA-512/MD5） ──
+            // 接受 Vec<u8>（Vec<i64>，每个元素 0-255），返回小写 hex 字符串
+            // 注：数组字面量元素在解释器中被包裹为 Value::Shared，需先 deref_wrapped
+            "sha256" => {
+                if let Some(Value::Vec(arr)) = args.first() {
+                    let bytes: Vec<u8> = arr.borrow().iter()
+                        .map(|v| match deref_wrapped(v) {
+                            Value::Int(n, _) => n as u8,
+                            _ => 0,
+                        })
+                        .collect();
+                    use sha2::{Sha256, Digest};
+                    let mut hasher = Sha256::new();
+                    hasher.update(&bytes);
+                    let result = hasher.finalize();
+                    return Ok(Some(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect())));
+                }
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "sha256 需要 1 个 Vec 参数".into() });
+            }
+            "sha512" => {
+                if let Some(Value::Vec(arr)) = args.first() {
+                    let bytes: Vec<u8> = arr.borrow().iter()
+                        .map(|v| match deref_wrapped(v) {
+                            Value::Int(n, _) => n as u8,
+                            _ => 0,
+                        })
+                        .collect();
+                    use sha2::{Sha512, Digest};
+                    let mut hasher = Sha512::new();
+                    hasher.update(&bytes);
+                    let result = hasher.finalize();
+                    return Ok(Some(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect())));
+                }
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "sha512 需要 1 个 Vec 参数".into() });
+            }
+            "md5" => {
+                if let Some(Value::Vec(arr)) = args.first() {
+                    let bytes: Vec<u8> = arr.borrow().iter()
+                        .map(|v| match deref_wrapped(v) {
+                            Value::Int(n, _) => n as u8,
+                            _ => 0,
+                        })
+                        .collect();
+                    use md5::{Md5, Digest};
+                    let mut hasher = Md5::new();
+                    hasher.update(&bytes);
+                    let result = hasher.finalize();
+                    return Ok(Some(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect())));
+                }
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "md5 需要 1 个 Vec 参数".into() });
+            }
+            // 便捷版：接受 String（对 UTF-8 字节哈希），返回 hex 字符串
+            "sha256_str" => {
+                if let Some(Value::String(s)) = args.first() {
+                    let bytes = s.as_bytes();
+                    use sha2::{Sha256, Digest};
+                    let mut hasher = Sha256::new();
+                    hasher.update(bytes);
+                    let result = hasher.finalize();
+                    return Ok(Some(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect())));
+                }
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "sha256_str 需要 1 个 String 参数".into() });
+            }
+            "sha512_str" => {
+                if let Some(Value::String(s)) = args.first() {
+                    let bytes = s.as_bytes();
+                    use sha2::{Sha512, Digest};
+                    let mut hasher = Sha512::new();
+                    hasher.update(bytes);
+                    let result = hasher.finalize();
+                    return Ok(Some(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect())));
+                }
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "sha512_str 需要 1 个 String 参数".into() });
+            }
+            "md5_str" => {
+                if let Some(Value::String(s)) = args.first() {
+                    let bytes = s.as_bytes();
+                    use md5::{Md5, Digest};
+                    let mut hasher = Md5::new();
+                    hasher.update(bytes);
+                    let result = hasher.finalize();
+                    return Ok(Some(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect())));
+                }
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "md5_str 需要 1 个 String 参数".into() });
+            }
             // ── B批：编码转换新 API 别名 ──
             "_to_utf8" => {
                 if let Some(Value::String(s)) = args.first() {

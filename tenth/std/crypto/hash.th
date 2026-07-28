@@ -1,0 +1,36 @@
+// 哈希函数标准库 wrapper — SHA-256/SHA-512/MD5
+//
+// 底层 native（built-in, no import needed）：
+//   sha256(data: Vec) -> String       — Vec<u8> → hex 字符串
+//   sha512(data: Vec) -> String
+//   md5(data: Vec) -> String
+//   sha256_str(s: String) -> String  — 字符串 → hex 字符串（便捷版）
+//   sha512_str(s: String) -> String
+//   md5_str(s: String) -> String
+//
+// 本文件提供 _hex 后缀的语义化别名（Vec 输入），明确表达"输出为 hex"的意图。
+// _str 版本 native 已有便捷命名，直接调用即可，无需 wrapper（避免同名递归）。
+//
+// Usage:
+//   use std::crypto::hash::sha256_hex
+//   use std::crypto::hash::sha512_hex
+//   use std::crypto::hash::md5_hex
+//
+//   let digest = sha256_hex([97, 98, 99]);  // "abc" 的 SHA-256
+//   let s = sha256_str("abc");              // 直接调用 native（无需 import）
+
+// SHA-256：接受 Vec<u8>（字节数组），返回小写 hex 字符串
+fn sha256_hex(data: Vec) -> String {
+    sha256(data)
+}
+
+// SHA-512：接受 Vec<u8>（字节数组），返回小写 hex 字符串
+fn sha512_hex(data: Vec) -> String {
+    sha512(data)
+}
+
+// MD5：接受 Vec<u8>（字节数组），返回小写 hex 字符串
+// 注意：MD5 不安全，仅用于非安全场景如文件校验和
+fn md5_hex(data: Vec) -> String {
+    md5(data)
+}

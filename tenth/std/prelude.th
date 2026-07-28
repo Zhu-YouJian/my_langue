@@ -200,8 +200,17 @@
 //   url_decode(s)               — URL 编码 → Result<String>
 //   f"..."                      — 模板字符串字面量（编译为 format() 调用）
 //
+// ── 哈希函数（built-in native, no import needed） ──
+//   sha256(data)               — SHA-256 哈希（Vec<u8> 输入，hex 字符串输出）
+//   sha512(data)               — SHA-512 哈希
+//   md5(data)                  — MD5 哈希（不安全，仅用于校验和）
+//   sha256_str(s)              — SHA-256 字符串便捷版
+//   sha512_str(s)              — SHA-512 字符串便捷版
+//   md5_str(s)                 — MD5 字符串便捷版
+//
 // ── New in this batch (E批) ──
 //   #3 assert, assert_eq (built-in native function, no import needed)
 //   std::collections::hashset::new, insert, contains, remove, len, is_empty, to_array, clear, from_array, set_union, intersection, difference, is_subset
 //   std::string::string_builder::new, append, to_string, len, is_empty, clear
 //   std::curry::partial, curry, compose
+//   std::crypto::hash::sha256_hex, sha512_hex, md5_hex   // 哈希函数 wrapper（Vec 输入；_str 版本直接调用 native）

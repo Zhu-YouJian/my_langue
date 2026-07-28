@@ -1010,6 +1010,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "md-5"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+dependencies = [
+ "cfg-if",
+ "digest",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1603,12 +1613,14 @@ dependencies = [
  "cranelift-native 0.115.1",
  "encoding_rs",
  "half",
+ "md-5",
  "ndarray",
  "percent-encoding",
  "rand",
  "rand_distr",
  "regex",
  "rustyline",
+ "sha2",
  "thiserror 2.0.18",
  "unicode-normalization",
  "wasm-encoder 0.215.0",

@@ -129,7 +129,10 @@ impl Lowerer {
                             | "to_gbk" | "from_gbk"
                             | "base64_encode" | "base64_decode"
                             | "hex_encode" | "hex_decode"
-                            | "url_encode" | "url_decode" => {
+                            | "url_encode" | "url_decode"
+                            // 哈希函数（SHA-256/SHA-512/MD5）
+                            | "sha256" | "sha512" | "md5"
+                            | "sha256_str" | "sha512_str" | "md5_str" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)
                             }
                             _ => {

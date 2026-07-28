@@ -2975,6 +2975,97 @@ pub fn register_all_natives(vm: &mut Vm) {
         }
     });
 
+    // ── 哈希函数（SHA-256/SHA-512/MD5） ──
+    // 接受 Vec<u8>（Vec<i64>，每个元素 0-255），返回小写 hex 字符串
+    vm.add_native("sha256".into(), |_vm, args| {
+        if let Some(Value::Vec(arr)) = args.first() {
+            let bytes: Vec<u8> = arr.borrow().iter()
+                .map(|v| match v {
+                    Value::Int(n, _) => *n as u8,
+                    _ => 0,
+                })
+                .collect();
+            use sha2::{Sha256, Digest};
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            let result = hasher.finalize();
+            Ok(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect()))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "sha256 需要 1 个 Vec 参数".into() })
+        }
+    });
+    vm.add_native("sha512".into(), |_vm, args| {
+        if let Some(Value::Vec(arr)) = args.first() {
+            let bytes: Vec<u8> = arr.borrow().iter()
+                .map(|v| match v {
+                    Value::Int(n, _) => *n as u8,
+                    _ => 0,
+                })
+                .collect();
+            use sha2::{Sha512, Digest};
+            let mut hasher = Sha512::new();
+            hasher.update(&bytes);
+            let result = hasher.finalize();
+            Ok(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect()))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "sha512 需要 1 个 Vec 参数".into() })
+        }
+    });
+    vm.add_native("md5".into(), |_vm, args| {
+        if let Some(Value::Vec(arr)) = args.first() {
+            let bytes: Vec<u8> = arr.borrow().iter()
+                .map(|v| match v {
+                    Value::Int(n, _) => *n as u8,
+                    _ => 0,
+                })
+                .collect();
+            use md5::{Md5, Digest};
+            let mut hasher = Md5::new();
+            hasher.update(&bytes);
+            let result = hasher.finalize();
+            Ok(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect()))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "md5 需要 1 个 Vec 参数".into() })
+        }
+    });
+    // 便捷版：接受 String（对 UTF-8 字节哈希），返回 hex 字符串
+    vm.add_native("sha256_str".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            let bytes = s.as_bytes();
+            use sha2::{Sha256, Digest};
+            let mut hasher = Sha256::new();
+            hasher.update(bytes);
+            let result = hasher.finalize();
+            Ok(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect()))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "sha256_str 需要 1 个 String 参数".into() })
+        }
+    });
+    vm.add_native("sha512_str".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            let bytes = s.as_bytes();
+            use sha2::{Sha512, Digest};
+            let mut hasher = Sha512::new();
+            hasher.update(bytes);
+            let result = hasher.finalize();
+            Ok(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect()))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "sha512_str 需要 1 个 String 参数".into() })
+        }
+    });
+    vm.add_native("md5_str".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            let bytes = s.as_bytes();
+            use md5::{Md5, Digest};
+            let mut hasher = Md5::new();
+            hasher.update(bytes);
+            let result = hasher.finalize();
+            Ok(Value::String(result.iter().map(|b| format!("{:02x}", b)).collect()))
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None, message: "md5_str 需要 1 个 String 参数".into() })
+        }
+    });
+
     // ── B批：编码转换新 API 别名 ──
     vm.add_native("to_utf8".into(), |_vm, args| {
         if let Some(Value::String(s)) = args.first() {
