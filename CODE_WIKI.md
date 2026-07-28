@@ -395,29 +395,32 @@ pub enum Op {
 - 通过 `wasmi` 解释器执行和验证
 - 支持函数导出和 import
 
-#### GPU 后端（v0.3.3 脚手架）
+#### GPU 后端（v0.3.3 — CUDA C 源代码生成 + 模拟设备，未接 CUDA Runtime）
 
-GPU 后端为 Phase 4 铺路，当前为架构脚手架，尚未接入真实 CUDA 运行时。
+GPU 后端为 Phase 4 铺路。**当前状态**：仅生成 CUDA C 源代码字符串 + 模拟设备抽象，**未接 nvcc / CUDA Runtime API / cuLaunchKernel**，不编译、不加载、不执行任何 kernel。`CudaDevice::is_available()` 永远返回 `true`（注释自承 "Simulated"），`total_memory` 硬编码 24GB。详见 `AUDIT.md` §11.4 AUDIT-11.4.6。
 
 ```rust
 // gpu/mod.rs — GPU 后端核心结构
-pub struct GpuBackend { device: Box<dyn Device> }
-pub struct GpuConfig { device_type: DeviceType, max_threads: usize }
+pub enum GpuBackend { Cpu, Cuda }
+pub struct GpuConfig { backend: GpuBackend, device_id: usize, max_threads_per_block: usize }
 pub struct GpuCompiler { config: GpuConfig }
-pub struct GpuProgram { kernels: Vec<CudaKernel> }
+pub struct GpuProgram { kernels: Vec<CudaKernel>, config: GpuConfig }
+// GpuCompiler::compile_kernel 仅遍历 program.functions 调 CudaKernel::from_hir_function
+// 把每个 HIR 函数转成 CudaKernel 字符串，不调用 nvcc、不生成 .ptx
 
-// gpu/cuda_kernel.rs — CUDA 内核模板
+// gpu/cuda_kernel.rs — CUDA 内核模板（生成 CUDA C 源代码字符串）
 pub struct CudaKernel { name: String, params: Vec<String>, body: String }
-// 内置模板：elementwise_kernel / reduce_kernel
+// to_cuda_code() 返回 String，是 CUDA C 源代码文本，非编译产物
 
-// gpu/device.rs — 设备抽象
+// gpu/device.rs — 设备抽象（模拟设备，非真实 CUDA 设备）
 pub trait Device {
-    fn device_type(&self) -> DeviceType;
-    fn allocate(&self, size: usize) -> DeviceBuffer;
-    fn launch(&self, kernel: &CudaKernel, args: &[DeviceBuffer]);
+    fn name(&self) -> &str;
+    fn device_type(&self) -> GpuBackend;
+    fn memory_limit(&self) -> usize;
+    fn is_available(&self) -> bool;   // CudaDevice 永远返回 true（Simulated）
 }
-pub struct CpuDevice;   // CPU 回退
-pub struct CudaDevice;  // CUDA 设备（预留）
+pub struct CpuDevice { name: String, memory_limit: usize }   // 16 GB simulated
+pub struct CudaDevice { device_id: usize, name: String, total_memory: usize, compute_capability: (u32, u32) }  // 24 GB simulated，is_available() 永远 true
 ```
 
 #### 编译优化 Pass（v0.3.3 脚手架）
