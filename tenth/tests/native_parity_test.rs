@@ -19,6 +19,7 @@ use tenth::compile::bytecode::BytecodeCompiler;
 use std::rc::Rc;
 use std::cell::RefCell;
 use tenth::hir::types::BaseType;
+use tenth::error::TenthWarning;
 
 /// 注册测试所需的 native（复制自 main.rs::register_natives 的相关子集）。
 /// 17 项新 native 必须与 main.rs 完全一致；辅助 native（println/Vec::new 等）
@@ -584,6 +585,17 @@ fn assert_parity(src: &str) -> Value {
     vm_res
 }
 
+/// Lower 源码并返回 HirProgram 的 warnings 列表（用于编译期预估测试）。
+fn lower_warnings(src: &str) -> Vec<TenthWarning> {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().expect("parse");
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    hir.warnings
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // VM 缺失 17 项的 parity 测试
 // ══════════════════════════════════════════════════════════════════════
@@ -894,4 +906,102 @@ fn test_to_f32_from_int_parity() {
 fn test_to_f32_from_float_parity() {
     let v = assert_parity("to_f32(3.14)");
     assert!(matches!(v, Value::Float32(f) if (f - 3.14).abs() < 1e-6));
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// AUDIT #12: bmm FLOPs 预估双侧一致性验证
+// ══════════════════════════════════════════════════════════════════════
+//
+// Rust 母编译器（tenth/src/hir/lower/types.rs::emit_bmm_flop_estimate）
+// 与 tenthc 自举编译器（tenthc/hir/lower.th::emit_bmm_flop_estimate）
+// 语义对齐：两者均在 bmm 两侧 3D Known 且 B/K 匹配时，对 ≥1 GFLOP 的
+// bmm 输出编译期 warning。tenthc 侧原为 no-op（HirType 缺 dim2 字段），
+// 已通过新增 dim2 字段修复。
+//
+// 本测试验证：
+// 1. Rust 母编译器对大 bmm 触发 FLOPs warning（消息格式 + 数值）
+// 2. 小 bmm 不触发 warning（阈值正确）
+// 3. bmm 执行 VM/解释器 parity（结果一致）
+// 4. tenthc 侧源码包含非 no-op 的 emit_bmm_flop_estimate 实现
+
+#[test]
+fn test_bmm_flop_estimate_parity() {
+    // ── 1. 大 bmm 触发 FLOPs warning ──
+    // (4, 1024, 1024) @ (4, 1024, 1024) → B*M*K*N*2 = 4*1024^3*2 ≈ 8.59 GFLOPs
+    let big_src = r#"
+fn big_bmm() -> Tensor[f64, ..] {
+    let a = zeros(4, 1024, 1024);
+    let b = zeros(4, 1024, 1024);
+    a.bmm(b)
+}
+"#;
+    let warnings = lower_warnings(big_src);
+    let bmm_warn = warnings.iter()
+        .find(|w| w.message.contains("bmm") && w.message.contains("GFLOPs"))
+        .unwrap_or_else(|| panic!(
+            "期望 bmm GFLOPs warning，实际 warnings: {:?}",
+            warnings.iter().map(|w| &w.message).collect::<Vec<_>>()
+        ));
+    // Rust 侧格式：{:.2} → "8.59"；tenthc 侧整数除 → "8"。两者均含 "8"。
+    assert!(bmm_warn.message.contains("8"), "GFLOPs 数值应约 8，实际: {}", bmm_warn.message);
+    assert!(bmm_warn.message.contains("1024"), "应包含 shape 1024，实际: {}", bmm_warn.message);
+    assert!(bmm_warn.message.contains("编译期预估"), "应包含'编译期预估'，实际: {}", bmm_warn.message);
+
+    // ── 2. 小 bmm 不触发 warning ──
+    // (2, 3, 4) @ (2, 4, 5) → 2*3*4*5*2 = 240 FLOPs ≪ 1 GFLOP
+    let small_src = r#"
+fn small_bmm() -> Tensor[f64, ..] {
+    let a = zeros(2, 3, 4);
+    let b = zeros(2, 4, 5);
+    a.bmm(b)
+}
+"#;
+    let warnings = lower_warnings(small_src);
+    let has_bmm_flop = warnings.iter()
+        .any(|w| w.message.contains("bmm") && w.message.contains("GFLOPs"));
+    assert!(!has_bmm_flop, "小 bmm (240 FLOPs) 不应触发 GFLOPs warning");
+
+    // ── 3. bmm 执行 parity：VM 与解释器结果一致 ──
+    // (2,3,4)@(2,4,5) → (2,3,5)，sum = 2*3*5*4 = 120
+    let exec_src = r#"
+let a = tensor[[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+               [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]].reshape(2, 3, 4);
+let b = tensor[[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+               [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+               [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+               [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]].reshape(2, 4, 5);
+let c = a.bmm(b);
+c.sum()
+"#;
+    let v = assert_parity(exec_src);
+    assert!(matches!(v, Value::Float(f) if (f - 120.0).abs() < 1e-6),
+        "bmm sum 应为 120.0，实际: {:?}", v);
+
+    // ── 4. tenthc 侧源码验证：emit_bmm_flop_estimate 不再是 no-op ──
+    // 通过检查 tenthc 源码确认 dim2 字段和完整实现已就位。
+    // 运行时 parity 由 selfhost_frontend.rs（源码可 lower）+
+    // three_stage.rs（tenthc 可编译执行）覆盖。
+    let tenthc_lower_src = include_str!("../../tenthc/hir/lower.th");
+    assert!(
+        tenthc_lower_src.contains("fn emit_bmm_flop_estimate"),
+        "tenthc 应包含 emit_bmm_flop_estimate 函数定义"
+    );
+    assert!(
+        tenthc_lower_src.contains("rt.dim_count != 3 || at.dim_count != 3"),
+        "tenthc emit_bmm_flop_estimate 应检查 3D shape（不再是 no-op）"
+    );
+    assert!(
+        tenthc_lower_src.contains("let r_d2 = get_tensor_dim2"),
+        "tenthc bmm 分支应读取 receiver 的 dim2"
+    );
+    assert!(
+        tenthc_lower_src.contains("let a_d2 = get_tensor_dim2"),
+        "tenthc bmm 分支应读取 argument 的 dim2"
+    );
+
+    let tenthc_hir_src = include_str!("../../tenthc/hir/hir.th");
+    assert!(
+        tenthc_hir_src.contains("dim2: i64"),
+        "tenthc HirType 应包含 dim2 字段（AUDIT #12 根因修复）"
+    );
 }

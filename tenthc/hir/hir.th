@@ -27,12 +27,16 @@ struct HirType {
     ret_ty: i64,      // return type index (for FnType)
     // ── Shape info (Phase 4: tenthc shape check) ──
     // For Tensor (disc=1): tracks Known dims for compile-time shape checking.
-    // dim_count=0 → unknown/Any/Symbol (skip check); 1 → 1D (dim0); 2 → 2D (dim0=M, dim1=K/N)
+    // dim_count=0 → unknown/Any/Symbol (skip check);
+    //   1 → 1D (dim0);
+    //   2 → 2D (dim0=M, dim1=K/N);
+    //   3 → 3D (dim0=B, dim1=M, dim2=K/N) — bmm 输入/结果用
     // For Range (disc=15): dim0 复用为 inclusive 标志（0=false, 1=true）。
     // Non-Tensor types: always 0. Uses `..` default for zero-init.
     dim_count: i64,
     dim0: i64,
     dim1: i64,
+    dim2: i64,    // 3D tensor 第三维（bmm 用）。Non-3D 类型为 0。`..` 默认零初始化。
     // ── Stage 7: Tensor dtype as type index ──
     // For Tensor (disc=1): 0 = dtype is BaseType (use `sub` field),
     // non-0 = index into type_nodes (e.g., TypeParam node for generic T).

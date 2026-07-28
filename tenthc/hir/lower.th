@@ -15,8 +15,8 @@ fn add_type(p: &mut HirProgram, disc: i64, sub: i64, name: str, params_start: i6
 
 // Construct a Tensor HirType (disc=1) with shape info, dtype is a BaseType.
 // `dtype_sub` is the BaseType discriminant (e.g., 2=F64). dtype_ty defaults to 0.
-fn add_tensor_type(p: &mut HirProgram, dtype_sub: i64, dim_count: i64, dim0: i64, dim1: i64) -> i64 {
-    let t = HirType { disc: 1, sub: dtype_sub, dim_count: dim_count, dim0: dim0, dim1: dim1, .. };
+fn add_tensor_type(p: &mut HirProgram, dtype_sub: i64, dim_count: i64, dim0: i64, dim1: i64, dim2: i64) -> i64 {
+    let t = HirType { disc: 1, sub: dtype_sub, dim_count: dim_count, dim0: dim0, dim1: dim1, dim2: dim2, .. };
     p.type_nodes.push(t);
     p.type_nodes.len()
 }
@@ -24,8 +24,8 @@ fn add_tensor_type(p: &mut HirProgram, dtype_sub: i64, dim_count: i64, dim0: i64
 // Stage 7: Construct a Tensor HirType (disc=1) whose dtype is a complex type
 // (e.g., TypeParam for `Tensor[T, ..]`). `dtype_ty` is a 1-based index into
 // type_nodes pointing at the dtype type node. sub is set to 0 (unused).
-fn add_tensor_type_param(p: &mut HirProgram, dtype_ty: i64, dim_count: i64, dim0: i64, dim1: i64) -> i64 {
-    let t = HirType { disc: 1, sub: 0, dtype_ty: dtype_ty, dim_count: dim_count, dim0: dim0, dim1: dim1, .. };
+fn add_tensor_type_param(p: &mut HirProgram, dtype_ty: i64, dim_count: i64, dim0: i64, dim1: i64, dim2: i64) -> i64 {
+    let t = HirType { disc: 1, sub: 0, dtype_ty: dtype_ty, dim_count: dim_count, dim0: dim0, dim1: dim1, dim2: dim2, .. };
     p.type_nodes.push(t);
     p.type_nodes.len()
 }
@@ -44,18 +44,18 @@ fn get_tensor_dtype_ty(p: &mut HirProgram, ty_idx: i64) -> i64 {
 // returns add_tensor_type_param; if src is a Tensor with Base dtype,
 // returns add_tensor_type with that Base sub; otherwise falls back to
 // F64 (sub=2) — preserving prior behavior for non-tensor / unknown src.
-fn propagate_tensor_dtype(p: &mut HirProgram, src_ty: i64, dim_count: i64, dim0: i64, dim1: i64) -> i64 {
+fn propagate_tensor_dtype(p: &mut HirProgram, src_ty: i64, dim_count: i64, dim0: i64, dim1: i64, dim2: i64) -> i64 {
     if src_ty <= 0 || src_ty > p.type_nodes.len() {
-        return add_tensor_type(p, 2, dim_count, dim0, dim1);
+        return add_tensor_type(p, 2, dim_count, dim0, dim1, dim2);
     };
     let st = p.type_nodes[src_ty - 1];
     if st.disc != 1 {
-        return add_tensor_type(p, 2, dim_count, dim0, dim1);
+        return add_tensor_type(p, 2, dim_count, dim0, dim1, dim2);
     };
     if st.dtype_ty != 0 {
-        return add_tensor_type_param(p, st.dtype_ty, dim_count, dim0, dim1);
+        return add_tensor_type_param(p, st.dtype_ty, dim_count, dim0, dim1, dim2);
     };
-    add_tensor_type(p, st.sub, dim_count, dim0, dim1)
+    add_tensor_type(p, st.sub, dim_count, dim0, dim1, dim2)
 }
 
 // Read tensor dim_count from a type index. Non-Tensor/invalid → 0.
@@ -83,11 +83,11 @@ fn get_tensor_dim1(p: &mut HirProgram, ty_idx: i64) -> i64 {
 }
 
 // Read tensor dim2 from a type index. Non-Tensor/invalid → 0.
-// NOTE: tenthc HirType currently has no dim2 field (only dim0/dim1).
-// Always returns 0 — bmm 3D shape check is therefore a no-op in tenthc
-// (errors defer to runtime). Kept for API parity with Rust side.
 fn get_tensor_dim2(p: &mut HirProgram, ty_idx: i64) -> i64 {
-    0
+    if ty_idx <= 0 || ty_idx > p.type_nodes.len() { return 0; };
+    let t = p.type_nodes[ty_idx - 1];
+    if t.disc != 1 { return 0; };
+    t.dim2
 }
 
 // Check matmul 2D inner dim: (M,K) @ (K2,N) — K must equal K2.
@@ -102,10 +102,6 @@ fn check_matmul_shape(recv_dc: i64, recv_d0: i64, recv_d1: i64, arg_dc: i64, arg
 
 // Check bmm 3D shape: (B,M,K) @ (B2,K2,N) — B must equal B2, K must equal K2.
 // Returns error message string ("" = ok).
-// NOTE: tenthc HirType currently tracks only dim0/dim1 (no dim2 field).
-// get_tensor_dim2 always returns 0, so recv_dc/a_dc never reach 3 here —
-// this function exists for API parity with the Rust side and is exercised
-// once tenthc HIR gains a dim2 field. Until then it returns "" (no error).
 fn check_bmm_shape(recv_dc: i64, recv_d0: i64, recv_d1: i64, recv_d2: i64, arg_dc: i64, arg_d0: i64, arg_d1: i64, arg_d2: i64) -> str {
     if recv_dc != 3 || arg_dc != 3 { return ""; };
     if recv_d0 != arg_d0 {
@@ -135,8 +131,8 @@ fn has_static_info(dc: i64) -> bool {
 
 // Compute static element count (numel) from shape info.
 // Returns -1 if unknown (dim_count=0 or any dim <= 0).
-// Only handles 1D and 2D (tenthc has no dim2 field).
-fn static_numel(dc: i64, d0: i64, d1: i64) -> i64 {
+// Handles 1D / 2D / 3D. 3D uses overflow-safe stepwise multiply.
+fn static_numel(dc: i64, d0: i64, d1: i64, d2: i64) -> i64 {
     if dc == 0 { return -1; };
     if dc == 1 {
         if d0 > 0 && d0 < 1000000000 { return d0; };
@@ -146,7 +142,17 @@ fn static_numel(dc: i64, d0: i64, d1: i64) -> i64 {
         if d0 > 0 && d1 > 0 && d0 < 1000000000 && d1 < 1000000000 { return d0 * d1; };
         return -1;
     };
-    // dc >= 3: tenthc can't compute (no dim2)
+    if dc == 3 {
+        // 每维 < 10^6 → d0*d1 < 10^12 < i64 max；d01*d2 < 10^18 仍 < i64 max（~9.2×10^18）
+        if d0 > 0 && d1 > 0 && d2 > 0 && d0 < 1000000 && d1 < 1000000 && d2 < 1000000 {
+            let d01 = d0 * d1;
+            if d01 < 1000000000 {
+                return d01 * d2;
+            };
+        };
+        return -1;
+    };
+    // dc > 3: unsupported
     -1
 }
 
@@ -172,7 +178,7 @@ fn static_bytes(p: &mut HirProgram, ty_idx: i64) -> i64 {
     if ty_idx <= 0 || ty_idx > p.type_nodes.len() { return -1; };
     let t = p.type_nodes[ty_idx - 1];
     if t.disc != 1 { return -1; };
-    let numel = static_numel(t.dim_count, t.dim0, t.dim1);
+    let numel = static_numel(t.dim_count, t.dim0, t.dim1, t.dim2);
     if numel < 0 { return -1; };
     numel * dtype_size_bytes(t.sub)
 }
@@ -183,11 +189,12 @@ fn fmt_dim(d: i64) -> str {
     ".."
 }
 
-// Format shape (dc, d0, d1) as a human-readable string like "[3, 4]" or "[..]".
-fn fmt_dims(dc: i64, d0: i64, d1: i64) -> str {
+// Format shape (dc, d0, d1, d2) as a human-readable string like "[3, 4]" or "[..]".
+fn fmt_dims(dc: i64, d0: i64, d1: i64, d2: i64) -> str {
     if dc == 0 { return "[..]"; };
     if dc == 1 { return "[" + fmt_dim(d0) + "]"; };
     if dc == 2 { return "[" + fmt_dim(d0) + ", " + fmt_dim(d1) + "]"; };
+    if dc == 3 { return "[" + fmt_dim(d0) + ", " + fmt_dim(d1) + ", " + fmt_dim(d2) + "]"; };
     "[..]"
 }
 
@@ -228,9 +235,9 @@ fn unbroadcast_feasible(grad_dc: i64, grad_d0: i64, grad_d1: i64, target_dc: i64
 
 // Check if two shapes have compatible element counts (for reshape).
 // Only checks when both shapes are fully Known.
-fn numel_compatible(a_dc: i64, a_d0: i64, a_d1: i64, b_dc: i64, b_d0: i64, b_d1: i64) -> bool {
-    let a_numel = static_numel(a_dc, a_d0, a_d1);
-    let b_numel = static_numel(b_dc, b_d0, b_d1);
+fn numel_compatible(a_dc: i64, a_d0: i64, a_d1: i64, a_d2: i64, b_dc: i64, b_d0: i64, b_d1: i64, b_d2: i64) -> bool {
+    let a_numel = static_numel(a_dc, a_d0, a_d1, a_d2);
+    let b_numel = static_numel(b_dc, b_d0, b_d1, b_d2);
     if a_numel < 0 || b_numel < 0 { return true; };
     a_numel == b_numel
 }
@@ -267,10 +274,10 @@ fn check_binary_backward_shape(p: &mut HirProgram, op: str, l_dc: i64, l_d0: i64
         if l_d1 == r_d1 { l_d1 } else if l_d1 == 1 { r_d1 } else { l_d1 }
     } else { 0 };
     if !unbroadcast_feasible(l_dc, out_d0, out_d1, l_dc, l_d0, l_d1) {
-        push_error(p, "编译期反向 shape 验证失败（" + op + "）：梯度 " + fmt_dims(l_dc, out_d0, out_d1) + " 无法 unbroadcast 到左输入 " + fmt_dims(l_dc, l_d0, l_d1));
+        push_error(p, "编译期反向 shape 验证失败（" + op + "）：梯度 " + fmt_dims(l_dc, out_d0, out_d1, 0) + " 无法 unbroadcast 到左输入 " + fmt_dims(l_dc, l_d0, l_d1, 0));
     };
     if !unbroadcast_feasible(l_dc, out_d0, out_d1, r_dc, r_d0, r_d1) {
-        push_error(p, "编译期反向 shape 验证失败（" + op + "）：梯度 " + fmt_dims(l_dc, out_d0, out_d1) + " 无法 unbroadcast 到右输入 " + fmt_dims(r_dc, r_d0, r_d1));
+        push_error(p, "编译期反向 shape 验证失败（" + op + "）：梯度 " + fmt_dims(l_dc, out_d0, out_d1, 0) + " 无法 unbroadcast 到右输入 " + fmt_dims(r_dc, r_d0, r_d1, 0));
     };
 }
 
@@ -302,7 +309,7 @@ fn check_cross_entropy_compat(p: &mut HirProgram, logits_expr_idx: i64, target_e
         false
     };
     if !valid {
-        push_error(p, "cross_entropy target shape " + fmt_dims(t_dc, t_d0, t_d1) + " 与 logits shape " + fmt_dims(l_dc, l_d0, l_d1) + " 不兼容（应为 [" + fmt_dim(l_d0) + "] 或 [" + fmt_dim(l_d0) + ", " + fmt_dim(l_d1) + "]）");
+        push_error(p, "cross_entropy target shape " + fmt_dims(t_dc, t_d0, t_d1, 0) + " 与 logits shape " + fmt_dims(l_dc, l_d0, l_d1, 0) + " 不兼容（应为 [" + fmt_dim(l_d0) + "] 或 [" + fmt_dim(l_d0) + ", " + fmt_dim(l_d1) + "]）");
     };
 }
 
@@ -345,11 +352,40 @@ fn emit_matmul_flop_estimate(p: &mut HirProgram, recv_lty: i64, arg_lty: i64) {
 }
 
 // Emit FLOPs estimate for bmm: (B,M,K)@(B,K,N) → B*M*K*N*2 FLOPs.
-// NOTE: tenthc HirType only tracks dim0/dim1 (no dim2 field), so 3D shapes
-// are unavailable. This function is a no-op — defers to runtime.
-// Kept for API parity with Rust side (types.rs:1046-1081).
+// Threshold: 1 GFLOP (10^9). Only fires when both sides are 3D Known and
+// B/K match (mirrors Rust side types.rs:1094-1129).
+// 整数溢出保护：tenthc i64 乘法无 saturating arithmetic，故分段检查。
+// 每维 < 10^6；bm < 10^12；bmk < 10^15；mul_add < 10^18；flops < 2×10^18 ≪ i64 max。
 fn emit_bmm_flop_estimate(p: &mut HirProgram, recv_lty: i64, arg_lty: i64) {
-    return;
+    if recv_lty <= 0 || recv_lty > p.type_nodes.len() { return; };
+    if arg_lty <= 0 || arg_lty > p.type_nodes.len() { return; };
+    let rt = p.type_nodes[recv_lty - 1];
+    let at = p.type_nodes[arg_lty - 1];
+    if rt.disc != 1 || at.disc != 1 { return; };
+    if rt.dim_count != 3 || at.dim_count != 3 { return; };
+    let b1 = rt.dim0;
+    let m = rt.dim1;
+    let k1 = rt.dim2;
+    let b2 = at.dim0;
+    let k2 = at.dim1;
+    let n = at.dim2;
+    if b1 <= 0 || m <= 0 || k1 <= 0 || b2 <= 0 || k2 <= 0 || n <= 0 { return; };
+    if b1 > 1000000 || m > 1000000 || k1 > 1000000 || n > 1000000 { return; };
+    if b1 != b2 { return; };
+    if k1 != k2 { return; };
+    // 分段乘法 + 范围检查（防 i64 溢出）
+    let bm = b1 * m;
+    if bm > 1000000000000 { return; };            // 10^12
+    let bmk = bm * k1;
+    if bmk > 1000000000000000 { return; };        // 10^15
+    let mul_add = bmk * n;
+    if mul_add > 1000000000000000000 { return; }; // 10^18
+    let flops = mul_add * 2;
+    let gflop = 1000000000;
+    if flops >= gflop {
+        let msg = "bmm 约 " + int_to_str(flops / gflop) + " GFLOPs（" + int_to_str(b1) + "×" + int_to_str(m) + "×" + int_to_str(k1) + " @ " + int_to_str(b2) + "×" + int_to_str(k2) + "×" + int_to_str(n) + "，编译期预估）";
+        push_warning(p, msg);
+    };
 }
 
 // Check binary broadcast for 1D/2D tensors (NumPy from-right alignment).
@@ -372,11 +408,12 @@ fn check_binary_broadcast(l_dc: i64, l_d0: i64, l_d1: i64, r_dc: i64, r_d0: i64,
 }
 
 // Extract dim_count from lowered call args (all must be int literals).
-// Returns 0 if any arg is non-literal, 0 args, or >2 args.
+// Returns 0 if any arg is non-literal, 0 args, or >3 args.
+// Supports 1D/2D/3D — 3D added for AUDIT #12 (bmm shape inference).
 fn dims_count_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
     let n = lowered_args.len();
     if n == 0 { return 0; };
-    if n > 2 { return 0; };
+    if n > 3 { return 0; };
     let mut ok = true;
     for i in 0..n {
         let ai = lowered_args[i];
@@ -402,6 +439,16 @@ fn dims_d1_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
     let n = lowered_args.len();
     if n < 2 { return 0; };
     let ai = lowered_args[1];
+    if ai <= 0 || ai > p.expr_nodes.len() { return 0; };
+    p.expr_nodes[ai - 1].lit_ival
+}
+
+// Extract dim2 (third arg literal value) from lowered call args.
+// Added for AUDIT #12 (bmm 3D shape inference via zeros(4,1024,1024) etc).
+fn dims_d2_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
+    let n = lowered_args.len();
+    if n < 3 { return 0; };
+    let ai = lowered_args[2];
     if ai <= 0 || ai > p.expr_nodes.len() { return 0; };
     p.expr_nodes[ai - 1].lit_ival
 }
@@ -436,9 +483,13 @@ fn parse_type(p: &mut HirProgram, s: str) -> i64 {
 
 // Stage 7: parse "Tensor[<dtype>, <dims>]" composite type annotation.
 // Format produced by parser.th's parse_type_annotation (no spaces inside brackets):
-//   "Tensor[T,..]"     — TypeParam dtype, wildcard dims
-//   "Tensor[f32,..]"   — Base dtype, wildcard dims
-//   "Tensor[T,2,3]"    — TypeParam dtype, literal dims (dims ignored — tracked via dim_count/dim0/dim1 elsewhere)
+//   "Tensor[T,..]"      — TypeParam dtype, wildcard dims (dim_count=0)
+//   "Tensor[f32,..]"    — Base dtype, wildcard dims (dim_count=0)
+//   "Tensor[f64, 3]"    — Base dtype, 1D literal dim (dim_count=1, dim0=3)
+//   "Tensor[f64, 2, 3]" — Base dtype, 2D literal dims (dim_count=2, dim0=2, dim1=3)
+//   "Tensor[f64, 2, 3, 4]" — Base dtype, 3D literal dims (dim_count=3, dim0=2, dim1=3, dim2=4)
+// 任何无法解析为正整数的 dim 段（含 ".." 通配符、空段、非数字、0）→ 整体 dim_count=0
+// （保守放弃，与原行为一致）。dtype 仍按解析结果构造。
 // Returns 0 if s is not a Tensor[...] composite (caller falls back to TypeParam).
 //
 // Note: uses `==`/`!=` operators on strings (which compile to str_eq host call
@@ -475,16 +526,62 @@ fn parse_tensor_type(p: &mut HirProgram, s: str) -> i64 {
     let dtype_idx = parse_type(p, dtype_str);
     if dtype_idx <= 0 || dtype_idx > p.type_nodes.len() { return 0; };
     let dt = p.type_nodes[dtype_idx - 1];
+    // Parse dims section: dims_str = inner[comma_idx+1..ilen]
+    // Split by comma; each segment must be a positive integer literal.
+    // Any non-conforming segment (including ".." wildcard, empty, non-digit, 0)
+    // → whole shape becomes dim_count=0 (conservative: defer to operand inference).
+    let dims_str = str_slice(inner, comma_idx + 1, ilen);
+    let dlen = str_len(dims_str);
+    let mut dim_count: i64 = 0;
+    let mut dim0: i64 = 0;
+    let mut dim1: i64 = 0;
+    let mut dim2: i64 = 0;
+    let mut seg_count: i64 = 0;
+    let mut seg_start: i64 = 0;
+    let mut ok: bool = true;
+    let mut k: i64 = 0;
+    while k <= dlen {
+        let is_sep = k == dlen || str_at(dims_str, k) == ",";
+        if is_sep {
+            let seg = str_slice(dims_str, seg_start, k);
+            let sl = str_len(seg);
+            if sl == 0 { ok = false; break; };
+            // 检查每字符是否为数字
+            let mut all_digit: bool = true;
+            let mut j: i64 = 0;
+            while j < sl {
+                if !is_digit(str_at(seg, j)) { all_digit = false; break; };
+                j = j + 1;
+            };
+            if !all_digit { ok = false; break; };
+            let dval = parse_int(seg);
+            if dval <= 0 { ok = false; break; };
+            if seg_count == 0 {
+                dim0 = dval;
+            } else if seg_count == 1 {
+                dim1 = dval;
+            } else if seg_count == 2 {
+                dim2 = dval;
+            } else {
+                // >3 段：tenthc 不支持 >3D shape，保守放弃
+                ok = false; break;
+            };
+            seg_count = seg_count + 1;
+            seg_start = k + 1;
+        };
+        k = k + 1;
+    };
+    if ok && seg_count > 0 {
+        dim_count = seg_count;
+    };
     // Construct Tensor type with appropriate dtype carrier.
-    // Dims are not parsed from the annotation — Stage 7 use cases (std/nn, std/optim)
-    // all use `..` wildcard. Concrete dim tracking happens via operand shape inference.
     if dt.disc == 0 {
         // Base type — use add_tensor_type with sub
-        return add_tensor_type(p, dt.sub, 0, 0, 0);
+        return add_tensor_type(p, dt.sub, dim_count, dim0, dim1, dim2);
     };
     if dt.disc == 4 {
         // TypeParam — use add_tensor_type_param with dtype_ty
-        return add_tensor_type_param(p, dtype_idx, 0, 0, 0);
+        return add_tensor_type_param(p, dtype_idx, dim_count, dim0, dim1, dim2);
     };
     0
 }
@@ -696,9 +793,9 @@ fn substitute_type(p: &mut HirProgram, ty_idx: i64, type_map_names: Vec<str>, ty
                 // dtype changed — build a new Tensor node with substituted dtype
                 let dt = p.type_nodes[new_dtype - 1];
                 if dt.disc == 0 {
-                    return add_tensor_type(p, dt.sub, t.dim_count, t.dim0, t.dim1);
+                    return add_tensor_type(p, dt.sub, t.dim_count, t.dim0, t.dim1, t.dim2);
                 };
-                return add_tensor_type_param(p, new_dtype, t.dim_count, t.dim0, t.dim1);
+                return add_tensor_type_param(p, new_dtype, t.dim_count, t.dim0, t.dim1, t.dim2);
             };
         };
         return ty_idx;
@@ -1568,9 +1665,9 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
                     // Stage 7: propagate dtype from l_lty (preferred) or r_lty (fallback)
                     let dtype_src = if l_dc > 0 { l_lty } else { r_lty };
                     let rty = if l_dc == r_dc && l_d0 == r_d0 && l_d1 == r_d1 {
-                        propagate_tensor_dtype(p, dtype_src, l_dc, l_d0, l_d1)
+                        propagate_tensor_dtype(p, dtype_src, l_dc, l_d0, l_d1, 0)
                     } else {
-                        propagate_tensor_dtype(p, dtype_src, 0, 0, 0)
+                        propagate_tensor_dtype(p, dtype_src, 0, 0, 0, 0)
                     };
                     return push_expr(p, 5, 0, 0.0, "", false, l, r, 0, 0, 0, 0, 0, 0, 0, e.sval, "", "", rty);
                 };
@@ -1712,12 +1809,13 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             count = count + 1;
         };
         let cty = if e.sval == "zeros" || e.sval == "ones" || e.sval == "rand" || e.sval == "randn" {
-            // Phase 4: infer Tensor shape from literal int args
+            // Phase 4: infer Tensor shape from literal int args (1D/2D/3D)
             let dc = dims_count_from_args(p, lowered_args);
             if dc > 0 {
                 let d0 = dims_d0_from_args(p, lowered_args);
                 let d1 = dims_d1_from_args(p, lowered_args);
-                add_tensor_type(p, 2, dc, d0, d1)
+                let d2 = dims_d2_from_args(p, lowered_args);
+                add_tensor_type(p, 2, dc, d0, d1, d2)
             } else {
                 lookup_fn_return_type(p, e.sval)
             }
@@ -1792,23 +1890,36 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             // Result shape: (M, N) if both 2D and inner K matches
             // Stage 7: propagate dtype from receiver (matches Rust lower behavior)
             let rty = if r_dc == 2 && a_dc == 2 && r_d1 == a_d0 {
-                propagate_tensor_dtype(p, recv_lty, 2, r_d0, a_d1)
+                propagate_tensor_dtype(p, recv_lty, 2, r_d0, a_d1, 0)
             } else {
-                propagate_tensor_dtype(p, recv_lty, 0, 0, 0)
+                propagate_tensor_dtype(p, recv_lty, 0, 0, 0, 0)
             };
             return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
         };
         if e.sval == "bmm" {
             // Phase 4: bmm 3D shape check & result type inference.
-            // tenthc HirType tracks only dim0/dim1 (no dim2 field), so 3D
-            // Known shape is unavailable — check_bmm_shape is a no-op here
-            // (recv_dc/a_dc never reach 3). Errors defer to runtime.
-            // Branch exists so bmm method calls are recognized as built-in
-            // tensor ops rather than user-defined method lookup misses.
-            // NOTE: keep this branch minimal (few let bindings) to avoid
-            // inflating lower_expr's local count past WASM limits.
-            // Stage 7: propagate dtype from receiver.
-            let rty = propagate_tensor_dtype(p, get_expr_ty(p, recv), 0, 0, 0);
+            // AUDIT #12 修复：tenthc HirType 已加 dim2 字段，3D shape 检查与
+            // FLOPs 预估完整激活（与 Rust types.rs:1094-1129 对齐）。
+            let arg_idx = if lowered_args.len() > 0 { lowered_args[0] } else { 0 };
+            let recv_lty = get_expr_ty(p, recv);
+            let arg_lty = get_expr_ty(p, arg_idx);
+            let r_dc = get_tensor_dim_count(p, recv_lty);
+            let a_dc = get_tensor_dim_count(p, arg_lty);
+            let r_d0 = get_tensor_dim0(p, recv_lty);
+            let r_d1 = get_tensor_dim1(p, recv_lty);
+            let r_d2 = get_tensor_dim2(p, recv_lty);
+            let a_d0 = get_tensor_dim0(p, arg_lty);
+            let a_d1 = get_tensor_dim1(p, arg_lty);
+            let a_d2 = get_tensor_dim2(p, arg_lty);
+            let err = check_bmm_shape(r_dc, r_d0, r_d1, r_d2, a_dc, a_d0, a_d1, a_d2);
+            if err != "" { push_error(p, err); };
+            emit_bmm_flop_estimate(p, recv_lty, arg_lty);
+            // Result shape: (B, M, N) if both 3D and B/K match (r_d0=B, r_d2=K, a_d1=K, a_d2=N)
+            let rty = if r_dc == 3 && a_dc == 3 && r_d0 == a_d0 && r_d2 == a_d1 {
+                propagate_tensor_dtype(p, recv_lty, 3, r_d0, r_d1, a_d2)
+            } else {
+                propagate_tensor_dtype(p, recv_lty, 0, 0, 0, 0)
+            };
             return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
         };
         if e.sval == "transpose" {
@@ -1819,9 +1930,9 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             // 2D transpose: swap dims
             // Stage 7: propagate dtype from receiver.
             let rty = if r_dc == 2 {
-                propagate_tensor_dtype(p, recv_lty, 2, r_d1, r_d0)
+                propagate_tensor_dtype(p, recv_lty, 2, r_d1, r_d0, 0)
             } else {
-                propagate_tensor_dtype(p, recv_lty, 0, 0, 0)
+                propagate_tensor_dtype(p, recv_lty, 0, 0, 0, 0)
             };
             return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
         };
@@ -1829,14 +1940,15 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             let recv_lty = get_expr_ty(p, recv);
             let out_d0 = dims_d0_from_args(p, lowered_args);
             let out_d1 = dims_d1_from_args(p, lowered_args);
-            // tenthc 只支持 1D/2D，更高维 dim_count 设 0（unknown）
+            // tenthc reshape 至多 2D 输出；更高维 dim_count 设 0（unknown）
             let out_dc = if lowered_args.len() <= 2 { lowered_args.len() } else { 0 };
             // Phase 1 numel_compatible 检查（与 Rust types.rs:917-921 / backward_shapes.rs:113 对齐）
             // 仅在两侧 shape 全 Known 时检查；含 Any/非字面量参数时跳过（保守）
-            if !numel_compatible(get_tensor_dim_count(p, recv_lty), get_tensor_dim0(p, recv_lty), get_tensor_dim1(p, recv_lty), out_dc, out_d0, out_d1) {
+            // out_d2=0：reshape 输出至多 2D，第三维恒为 0
+            if !numel_compatible(get_tensor_dim_count(p, recv_lty), get_tensor_dim0(p, recv_lty), get_tensor_dim1(p, recv_lty), get_tensor_dim2(p, recv_lty), out_dc, out_d0, out_d1, 0) {
                 push_error(p, "reshape 反向 shape 不兼容：输入与输出 numel 不一致");
             };
-            let rty = propagate_tensor_dtype(p, recv_lty, out_dc, out_d0, out_d1);
+            let rty = propagate_tensor_dtype(p, recv_lty, out_dc, out_d0, out_d1, 0);
             return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
         };
         return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", 0);
@@ -2866,7 +2978,7 @@ fn backward_shape_pass(p: &mut HirProgram) {
 
                                     if opn == "add" || opn == "sub" || opn == "mul" || opn == "div" {
                                         if !unbroadcast_feasible(g_dc, g_d0, g_d1, idc, id0, id1) {
-                                            push_error(p, "编译期跨算子反向 shape 传播失败（" + opn + "）：梯度 " + fmt_dims(g_dc, g_d0, g_d1) + " 无法 unbroadcast 到输入 " + ivar + " " + fmt_dims(idc, id0, id1));
+                                            push_error(p, "编译期跨算子反向 shape 传播失败（" + opn + "）：梯度 " + fmt_dims(g_dc, g_d0, g_d1, 0) + " 无法 unbroadcast 到输入 " + ivar + " " + fmt_dims(idc, id0, id1, 0));
                                             ok = false;
                                         } else {
                                             ndc = g_dc; nd0 = g_d0; nd1 = g_d1;
@@ -2889,7 +3001,7 @@ fn backward_shape_pass(p: &mut HirProgram) {
                                             };
                                         };
                                     } else if opn == "reshape" || opn == "view" {
-                                        if !numel_compatible(idc, id0, id1, out_dc, out_d0, out_d1) {
+                                        if !numel_compatible(idc, id0, id1, 0, out_dc, out_d0, out_d1, 0) {
                                             push_error(p, "编译期跨算子反向 shape 传播失败（" + opn + "）：输入 " + ivar + " numel 与输出不一致");
                                             ok = false;
                                         } else {
@@ -2924,7 +3036,7 @@ fn backward_shape_pass(p: &mut HirProgram) {
                                     let g_d1 = gd1[gi - 1];
                                     if has_static_info(g_dc) && has_static_info(pdc) {
                                         if !shape_compatible(g_dc, g_d0, g_d1, pdc, pd0, pd1) {
-                                            push_error(p, "编译期跨算子反向 shape 传播：参数 '" + pn + "' 的梯度 shape " + fmt_dims(g_dc, g_d0, g_d1) + " 与参数 shape " + fmt_dims(pdc, pd0, pd1) + " 不兼容");
+                                            push_error(p, "编译期跨算子反向 shape 传播：参数 '" + pn + "' 的梯度 shape " + fmt_dims(g_dc, g_d0, g_d1, 0) + " 与参数 shape " + fmt_dims(pdc, pd0, pd1, 0) + " 不兼容");
                                         };
                                     };
                                 };
