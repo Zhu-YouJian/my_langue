@@ -24,8 +24,6 @@ fn feedforward<T>(
     b2: Tensor[T, D],
 ) -> Tensor[T, S, D] {
     let hidden = x.matmul(w1) + b1;
-    // TODO: requires interpreter support for x.gelu()
-    // Fallback: use .relu() if .gelu() is not yet available
     let activated = hidden.gelu();
     activated.matmul(w2) + b2
 }

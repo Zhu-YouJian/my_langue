@@ -8,7 +8,6 @@ fn layer_norm<T>(
     beta: Tensor[T, ..],
     eps: T,
 ) -> Tensor[T, ..] {
-    // TODO: requires interpreter support for x.layer_norm(gamma, beta, eps)
     x.layer_norm(gamma, beta, eps)
 }
 
