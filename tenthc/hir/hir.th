@@ -58,13 +58,14 @@ struct HirType {
 //  28: Range       29: TensorLiteral 30: Move
 //  31: Slice       32: Await         33: Spawn
 // Problem 21 batch 3 新增（追加 disc，不改已有值）:
-//  34: Try         35: As           36: Tuple
+//  34: Try         35: As           36: Tuple         37: Yield
 //
 // 字段复用约定：
 //   Try (disc=34): left = inner expr；ty = inner 的类型（Try 解包 Result/Option，类似 ?）
 //   As  (disc=35): left = inner expr；ty = 目标类型索引（expr as T 中的 T）
 //   Tuple (disc=36): args_start/args_count 指向 arg_list 中的元素 expr 索引；
 //                    ty 为 Tuple 类型索引（disc=13）
+//   Yield (disc=37): left = inner expr (0 if None)；ty = Unit
 //   注：parser 当前对 tuple 字面量产出 kind="tuple"，原 lower.th 复用 disc=22
 //   (ArrayLiteral) 编码。本批次新增 disc=36 以区分语义（Tuple vs Array），
 //   但 wasm 后端处理仍与 ArrayLiteral 一致（逐元素 lower 后打包）。

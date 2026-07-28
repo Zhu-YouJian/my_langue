@@ -1620,6 +1620,18 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         // Spawn 鈥?Phase 1 sync: pass through (wrap inner -> Future, but WASM has no Future type)
         compile_expr(ctx, out, hir, e.left);
         return;
+    };
+    if d == 37 {
+        // Yield — Phase 1 sync: pass through (compile inner if exists, yield is no-op in WASM)
+        // WASM 无调度器，yield 本身是 no-op；inner 若存在则编译以保留副作用，
+        // 但 inner 的值必须被 drop（yield 语义：inner 值被丢弃，yield 返回 Unit，
+        // 在 WASM 栈上不产生值）。与 await/spawn 的 pass-through 不同：
+        // await/spawn 的 inner 值就是表达式值（不 drop），yield 的 inner 值被丢弃。
+        if e.left > 0 {
+            compile_expr(ctx, out, hir, e.left);
+            wasm_drop(out);
+        };
+        return;
     };    if d == 31 {
         // Slice s[a..b] — str_slice(target: i32, start: i64, end: i64) -> i32
         // target: str pointer — always i64 (unified stack), needs wrap to i32

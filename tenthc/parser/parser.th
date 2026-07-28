@@ -568,6 +568,19 @@ fn parse_primary(p: &mut Parser) -> i64 {
         p.expr_nodes[idx - 1].left = inner;
         return idx;
     };
+    // Yield (82) — yield expression (optional inner)
+    // 无值形式：`yield;` / `yield)` / `yield}` / `yield,` / `yield <EOF>`
+    // 带值形式：`yield expr`（expr 由 parse_unary 解析）
+    // 与 Rust 侧 expr.rs:699-712 语义对齐。
+    if d == 82 {
+        let next = parser_peek(p);
+        // 54=; 48=) 50=} 53=, 61=Eof → 无值形式
+        let no_value = next.disc == 54 || next.disc == 48 || next.disc == 50 || next.disc == 53 || next.disc == 61;
+        let inner: i64 = if no_value { 0 } else { parse_unary(p) };
+        let idx = add_expr(p, "yield");
+        p.expr_nodes[idx - 1].left = inner;
+        return idx;
+    };
     // Try (69) — try block: try { ... }
     if d == 69 {
         let inner = parse_expr(p);

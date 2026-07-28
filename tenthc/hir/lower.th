@@ -2113,6 +2113,17 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         return push_expr(p, 33, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", future_ty);
     };
 
+    if kind == "yield" {
+        // Yield — 让出控制权给 VM 调度器（与 Rust 侧 lower_expr.rs:1102-1112 对齐）。
+        // inner 若存在会被求值（lower 之，副作用保留），但其值被丢弃。
+        // yield 表达式本身返回 Unit（恢复时调度器不向栈上 push 任何值）。
+        let inner: i64 = if e.left > 0 {
+            lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1)
+        } else { 0 };
+        let unit_ty = add_type(p, 11, 0, "", 0, 0, 0);
+        return push_expr(p, 37, 0, 0.0, "", false, inner, 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", unit_ty);
+    };
+
     if kind == "if" {
         let cond = lower_expr(p, e.left, exprs, stmts, match_arms, depth + 1);
         release_borrows(p);
