@@ -7,13 +7,6 @@
 //   use std::math::stats::mean
 //   use std::math::stats::stddev
 
-// ── Helpers ──
-
-// Convert a value to f64. Accepts Int or Float values.
-fn to_f64(v) -> f64 {
-    if v is Float { v } else if v is Int { v as f64 } else { 0.0 }
-}
-
 // ── Central tendency ──
 
 // Arithmetic mean of a numeric Vec.
@@ -25,7 +18,7 @@ fn mean(items: Vec) -> f64 {
     for i in 0..n {
         total = total + to_f64(items.get(i));
     };
-    total / (n as f64)
+    total / to_f64(n)
 }
 
 // Median value of a numeric Vec.
@@ -62,7 +55,7 @@ fn variance(items: Vec) -> f64 {
         let diff = to_f64(items.get(i)) - mu;
         total = total + diff * diff;
     };
-    total / (n as f64)
+    total / to_f64(n)
 }
 
 // Population standard deviation.
@@ -84,7 +77,7 @@ fn variance_sample(items: Vec) -> f64 {
         let diff = to_f64(items.get(i)) - mu;
         total = total + diff * diff;
     };
-    total / ((n - 1) as f64)
+    total / to_f64(n - 1)
 }
 
 // Sample standard deviation.
@@ -116,4 +109,85 @@ fn sort_copy(items: Vec) -> Vec {
         };
     };
     result
+}
+
+// ── Extrema ──
+
+// Minimum value of a numeric Vec.
+// Returns 0.0 for empty Vec.
+fn min(items: Vec) -> f64 {
+    let n = items.len();
+    if n == 0 { return 0.0; };
+    let mut m = to_f64(items.get(0));
+    for i in 1..n {
+        let v = to_f64(items.get(i));
+        if v < m { m = v; };
+    };
+    m
+}
+
+// Maximum value of a numeric Vec.
+// Returns 0.0 for empty Vec.
+fn max(items: Vec) -> f64 {
+    let n = items.len();
+    if n == 0 { return 0.0; };
+    let mut m = to_f64(items.get(0));
+    for i in 1..n {
+        let v = to_f64(items.get(i));
+        if v > m { m = v; };
+    };
+    m
+}
+
+// Range (max - min) of a numeric Vec.
+// Returns 0.0 for empty Vec.
+fn range(items: Vec) -> f64 {
+    let n = items.len();
+    if n == 0 { return 0.0; };
+    max(items) - min(items)
+}
+
+// ── Aggregation ──
+
+// Sum of a numeric Vec.
+// Returns 0.0 for empty Vec.
+fn sum(items: Vec) -> f64 {
+    let n = items.len();
+    let mut total = 0.0;
+    for i in 0..n {
+        total = total + to_f64(items.get(i));
+    };
+    total
+}
+
+// Product of a numeric Vec.
+// Returns 1.0 (multiplicative identity) for empty Vec.
+fn product(items: Vec) -> f64 {
+    let n = items.len();
+    let mut total = 1.0;
+    for i in 0..n {
+        total = total * to_f64(items.get(i));
+    };
+    total
+}
+
+// ── Quantile ──
+
+// Percentile of a numeric Vec using linear interpolation
+// (consistent with numpy.percentile default).
+// p is in [0, 100]; p=50 is equivalent to median.
+// Returns 0.0 for empty Vec or p out of [0, 100].
+fn percentile(items: Vec, p: f64) -> f64 {
+    let n = items.len();
+    if n == 0 { return 0.0; };
+    if p < 0.0 || p > 100.0 { return 0.0; };
+    let sorted = sort_copy(items);
+    if n == 1 { return to_f64(sorted.get(0)); };
+    let rank = (p / 100.0) * to_f64(n - 1);
+    let lo_f = math_floor(rank);
+    let hi_f = math_ceil(rank);
+    // Vec.get() 在运行时通过 as_int() 接受 f64 索引
+    let lo_val = to_f64(sorted.get(lo_f));
+    let hi_val = to_f64(sorted.get(hi_f));
+    lo_val + (rank - lo_f) * (hi_val - lo_val)
 }

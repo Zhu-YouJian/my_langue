@@ -25,7 +25,7 @@ fn new() -> HashSet {
 // 插入一个值。如果值已存在，不做任何事。
 // 返回 HashSet 自身以支持链式调用：set = set.insert(v1).insert(v2)
 fn insert(set: HashSet, value) -> HashSet {
-    set.inner.insert(value, Unit);
+    set.inner.insert(value, ());
     set
 }
 
@@ -58,4 +58,74 @@ fn to_array(set: HashSet) -> Vec {
 // 清空集合。
 fn clear(set: HashSet) -> HashSet {
     HashSet { inner: HashMap::new() }
+}
+
+// ── 集合运算（返回新 HashSet，不修改输入） ──
+
+// 从 Vec 创建 HashSet（自动去重）。
+fn from_array(arr: Vec) -> HashSet {
+    let n = arr.len();
+    let mut set = new();
+    for i in 0..n {
+        set = insert(set, arr.get(i));
+    };
+    set
+}
+
+// 并集（a ∪ b）。返回新 HashSet。
+// 注：Tenth 中 `union` 是保留关键字，故使用 `set_union`。
+fn set_union(a: HashSet, b: HashSet) -> HashSet {
+    let arr_a = to_array(a);
+    let arr_b = to_array(b);
+    let mut result = new();
+    let na = arr_a.len();
+    for i in 0..na {
+        result = insert(result, arr_a.get(i));
+    };
+    let nb = arr_b.len();
+    for i in 0..nb {
+        result = insert(result, arr_b.get(i));
+    };
+    result
+}
+
+// 交集（a ∩ b）。返回新 HashSet。
+fn intersection(a: HashSet, b: HashSet) -> HashSet {
+    let arr_a = to_array(a);
+    let na = arr_a.len();
+    let mut result = new();
+    for i in 0..na {
+        let v = arr_a.get(i);
+        if contains(b, v) {
+            result = insert(result, v);
+        };
+    };
+    result
+}
+
+// 差集（a - b）。返回新 HashSet。
+fn difference(a: HashSet, b: HashSet) -> HashSet {
+    let arr_a = to_array(a);
+    let na = arr_a.len();
+    let mut result = new();
+    for i in 0..na {
+        let v = arr_a.get(i);
+        if !contains(b, v) {
+            result = insert(result, v);
+        };
+    };
+    result
+}
+
+// 子集判断（a ⊆ b）。
+fn is_subset(a: HashSet, b: HashSet) -> bool {
+    let arr_a = to_array(a);
+    let na = arr_a.len();
+    let mut all_in = true;
+    for i in 0..na {
+        if !contains(b, arr_a.get(i)) {
+            all_in = false;
+        };
+    };
+    all_in
 }

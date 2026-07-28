@@ -87,6 +87,7 @@ impl super::Interpreter {
                             | "save_weights" | "load_weights"
                             | "format" | "parse_int" | "parse_float"
                             | "to_string" | "type_name"
+                            | "assert" | "assert_eq"
                             | "with_step_limit" | "with_timeout_ms" | "is_timeout"
                             | "path_join" | "path_exists" | "path_is_file" | "path_is_dir"
                             | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file" | "rename_file"

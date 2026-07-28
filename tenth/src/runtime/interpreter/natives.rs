@@ -48,6 +48,42 @@ fn ok_result(value: Value) -> Value {
     }
 }
 
+/// 自动解引用 Shared/Ref/MutRef 包裹的值，返回一个 clone 后的内部 Value。
+/// 用于原生数值函数（to_f64/to_float/to_f32 等）接收 Vec.get() 返回值时
+/// 自动剥壳——解释器路径下 Vec.push 会用 Shared 包裹元素（便于索引赋值变更），
+/// 而 to_f64 等仅识别 Int/Float/Float32/Tensor，需要此处解壳以对齐 VM 行为。
+/// 非包裹类型原样 clone 返回。
+fn deref_wrapped(v: &Value) -> Value {
+    match v {
+        Value::Shared(rc) => {
+            let inner = rc.borrow();
+            let inner_val = inner.clone();
+            // 递归一层，防止 Shared<Shared<T>> 之类的双重包裹
+            match &inner_val {
+                Value::Shared(_) | Value::Ref(_) | Value::MutRef(_) => deref_wrapped(&inner_val),
+                _ => inner_val,
+            }
+        }
+        Value::Ref(rc) => {
+            let inner = rc.borrow();
+            let inner_val = inner.clone();
+            match &inner_val {
+                Value::Shared(_) | Value::Ref(_) | Value::MutRef(_) => deref_wrapped(&inner_val),
+                _ => inner_val,
+            }
+        }
+        Value::MutRef(weak) => {
+            if let Some(rc) = weak.upgrade() {
+                let inner = rc.borrow();
+                inner.clone()
+            } else {
+                Value::Unit
+            }
+        }
+        other => other.clone(),
+    }
+}
+
 /// 构造 Result::Err(message)
 fn err_result(msg: impl Into<String>) -> Value {
     Value::Enum {
@@ -899,7 +935,8 @@ impl super::Interpreter {
             }
             "abs" => {
                 if let Some(arg) = args.first() {
-                    return Ok(Some(match arg {
+                    let arg = deref_wrapped(arg);
+                    return Ok(Some(match &arg {
                         Value::Int(n, _) => Value::Int(n.abs(), BaseType::I32),
                         Value::Float(n) => Value::Float(n.abs()),
                         _ => return Err(TenthError::RuntimeError { line: None, col: None,
@@ -924,7 +961,8 @@ impl super::Interpreter {
             }
             "to_float" => {
                 if let Some(arg) = args.first() {
-                    return Ok(Some(match arg {
+                    let arg = deref_wrapped(arg);
+                    return Ok(Some(match &arg {
                         Value::Int(n, _) => Value::Float(*n as f64),
                         Value::Float(f) => Value::Float(*f),
                         Value::Float32(f) => Value::Float(*f as f64),
@@ -956,7 +994,8 @@ impl super::Interpreter {
             // to_f64 — 与 to_float 同语义（VM 侧 main.rs:1112 已注册，这里补齐解释器对齐）
             "to_f64" => {
                 if let Some(arg) = args.first() {
-                    return Ok(Some(match arg {
+                    let arg = deref_wrapped(arg);
+                    return Ok(Some(match &arg {
                         Value::Int(n, _) => Value::Float(*n as f64),
                         Value::Float(f) => Value::Float(*f),
                         Value::Float32(f) => Value::Float(*f as f64),
@@ -988,7 +1027,8 @@ impl super::Interpreter {
             // to_f32 — 转 f32（VM 侧 main.rs:1120 已注册）
             "to_f32" => {
                 if let Some(arg) = args.first() {
-                    return Ok(Some(match arg {
+                    let arg = deref_wrapped(arg);
+                    return Ok(Some(match &arg {
                         Value::Int(n, _) => Value::Float32(*n as f32),
                         Value::Float(f) => Value::Float32(*f as f32),
                         Value::Float32(f) => Value::Float32(*f),

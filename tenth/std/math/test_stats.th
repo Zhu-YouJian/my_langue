@@ -1,0 +1,149 @@
+// Statistics functions test
+//
+// Run with: tenth run std/math/test_stats.th
+//
+// 验证 stats.th 中所有统计函数的语义正确性与边界处理。
+// 所有断言失败会以 RuntimeError 形式终止，运行到末尾的 "All passed" 表示全绿。
+
+use std::math::stats::mean
+use std::math::stats::median
+use std::math::stats::variance
+use std::math::stats::stddev
+use std::math::stats::min
+use std::math::stats::max
+use std::math::stats::range
+use std::math::stats::sum
+use std::math::stats::product
+use std::math::stats::percentile
+
+// 浮点近似相等断言：|a - b| < tol 视为相等。
+fn approx(a: f64, b: f64, tol: f64) -> bool {
+    let d = a - b;
+    let ad = if d < 0.0 { -d } else { d };
+    if ad < tol { true } else { false }
+}
+
+// 构造一个 5 元素 Vec：[1, 2, 3, 4, 5]
+fn make_vec_5() -> Vec {
+    let v = Vec::new();
+    v.push(1);
+    v.push(2);
+    v.push(3);
+    v.push(4);
+    v.push(5);
+    v
+}
+
+// 构造一个 8 元素 Vec：[3, 1, 4, 1, 5, 9, 2, 6]
+fn make_vec_8() -> Vec {
+    let v = Vec::new();
+    v.push(3);
+    v.push(1);
+    v.push(4);
+    v.push(1);
+    v.push(5);
+    v.push(9);
+    v.push(2);
+    v.push(6);
+    v
+}
+
+// 构造空 Vec
+fn make_vec_empty() -> Vec {
+    Vec::new()
+}
+
+// 构造 4 元素 Vec：[1, 2, 3, 4]
+fn make_vec_4() -> Vec {
+    let v = Vec::new();
+    v.push(1);
+    v.push(2);
+    v.push(3);
+    v.push(4);
+    v
+}
+
+// 构造单元素 Vec：[42]
+fn make_vec_single() -> Vec {
+    let v = Vec::new();
+    v.push(42);
+    v
+}
+
+fn main() {
+    println("=== Stats Function Tests ===");
+    let tol: f64 = 1e-9;
+
+    // ── mean ──
+    let v5 = make_vec_5();
+    assert(approx(mean(v5), 3.0, tol), "mean([1,2,3,4,5]) == 3.0");
+    assert(approx(mean(make_vec_empty()), 0.0, tol), "mean([]) == 0.0");
+
+    println("mean tests passed");
+
+    // ── median ──
+    assert(approx(median(make_vec_5()), 3.0, tol), "median([1,2,3,4,5]) == 3.0");
+    assert(approx(median(make_vec_4()), 2.5, tol), "median([1,2,3,4]) == 2.5");
+    assert(approx(median(make_vec_empty()), 0.0, tol), "median([]) == 0.0");
+
+    println("median tests passed");
+
+    // ── variance / stddev ──
+    // variance([1,2,3,4,5]) = 2.0 (population)
+    assert(approx(variance(make_vec_5()), 2.0, tol), "variance([1,2,3,4,5]) == 2.0");
+    // stddev([1,2,3,4,5]) = sqrt(2) ≈ 1.41421356
+    assert(approx(stddev(make_vec_5()), 1.4142135623730951, 1e-6), "stddev([1,2,3,4,5]) ≈ 1.4142");
+
+    println("variance/stddev tests passed");
+
+    // ── min / max / range ──
+    let v8 = make_vec_8();
+    assert(approx(min(v8), 1.0, tol), "min([3,1,4,1,5,9,2,6]) == 1.0");
+    assert(approx(max(v8), 9.0, tol), "max([3,1,4,1,5,9,2,6]) == 9.0");
+    assert(approx(range(v8), 8.0, tol), "range([3,1,4,1,5,9,2,6]) == 8.0");
+    assert(approx(min(make_vec_empty()), 0.0, tol), "min([]) == 0.0");
+    assert(approx(max(make_vec_empty()), 0.0, tol), "max([]) == 0.0");
+    assert(approx(range(make_vec_empty()), 0.0, tol), "range([]) == 0.0");
+
+    println("min/max/range tests passed");
+
+    // ── sum / product ──
+    assert(approx(sum(make_vec_5()), 15.0, tol), "sum([1,2,3,4,5]) == 15.0");
+    assert(approx(product(make_vec_5()), 120.0, tol), "product([1,2,3,4,5]) == 120.0");
+    assert(approx(sum(make_vec_empty()), 0.0, tol), "sum([]) == 0.0");
+    assert(approx(product(make_vec_empty()), 1.0, tol), "product([]) == 1.0 (multiplicative identity)");
+
+    println("sum/product tests passed");
+
+    // ── percentile ──
+    // percentile([1,2,3,4,5], 50) == 3.0 (== median)
+    assert(approx(percentile(make_vec_5(), 50.0), 3.0, tol), "percentile([1,2,3,4,5], 50) == 3.0");
+    // percentile([1,2,3,4,5], 0) == 1.0 (min)
+    assert(approx(percentile(make_vec_5(), 0.0), 1.0, tol), "percentile([1,2,3,4,5], 0) == 1.0");
+    // percentile([1,2,3,4,5], 100) == 5.0 (max)
+    assert(approx(percentile(make_vec_5(), 100.0), 5.0, tol), "percentile([1,2,3,4,5], 100) == 5.0");
+    // percentile([1,2,3,4,5], 25) == 2.0 (linear interpolation: rank=1.0, lo=1, hi=1)
+    assert(approx(percentile(make_vec_5(), 25.0), 2.0, tol), "percentile([1,2,3,4,5], 25) == 2.0");
+    // percentile([1,2,3,4,5], 75) == 4.0
+    assert(approx(percentile(make_vec_5(), 75.0), 4.0, tol), "percentile([1,2,3,4,5], 75) == 4.0");
+    // 空Vec
+    assert(approx(percentile(make_vec_empty(), 50.0), 0.0, tol), "percentile([], 50) == 0.0");
+    // 越界
+    assert(approx(percentile(make_vec_5(), -10.0), 0.0, tol), "percentile(p<0) == 0.0");
+    assert(approx(percentile(make_vec_5(), 150.0), 0.0, tol), "percentile(p>100) == 0.0");
+
+    println("percentile tests passed");
+
+    // ── 边界：单元素 Vec ──
+    // 使用辅助函数构造，与 VM 路径下的 Vec 移动语义保持一致
+    assert(approx(mean(make_vec_single()), 42.0, tol), "mean([42]) == 42.0");
+    assert(approx(min(make_vec_single()), 42.0, tol), "min([42]) == 42.0");
+    assert(approx(max(make_vec_single()), 42.0, tol), "max([42]) == 42.0");
+    assert(approx(percentile(make_vec_single(), 50.0), 42.0, tol), "percentile([42], 50) == 42.0");
+    assert(approx(variance(make_vec_single()), 0.0, tol), "variance([42]) == 0.0");
+
+    println("single-element tests passed");
+
+    println("");
+    println("=== All stats function tests passed ===");
+}
