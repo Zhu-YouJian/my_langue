@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt;
 use super::tensor::Tensor;
 use crate::hir::types::{Type, BaseType, Dim};
-use crate::error::TenthResult;
+use crate::error::{TenthResult, TenthError};
 
 /// 格式化 f64，确保整数值显示 `.0` 后缀（如 `2.0` 而非 `2`）。
 /// NaN/Inf 保持原样；已有小数点或科学记数法的值不变。
@@ -335,6 +335,120 @@ pub fn check_int_overflow(result: i64, dtype: BaseType) -> TenthResult<()> {
         })
     } else {
         Ok(())
+    }
+}
+
+/// 将 Value::Array 递归转换为 Value::Tensor。
+/// 用于 `tensor<f64>([1.0, 2.0, 3.0])` 等构造函数——当 HIR 把
+/// `tensor<>()` 编译成 `Call("tensor", [ArrayLiteral])` 时，
+/// native 函数需要将 Value::Array 转为 Value::Tensor 才能参与张量运算。
+/// 支持嵌套数组（如 `[[1.0, 2.0], [3.0, 4.0]]` → 2D tensor）。
+pub fn array_to_tensor(val: &Value) -> TenthResult<Value> {
+    match val {
+        Value::Tensor(_) => Ok(val.clone()),
+        Value::Array(arr) => {
+            let borrowed = arr.borrow();
+            let (shape, data) = flatten_values(&borrowed)?;
+            if data.is_empty() {
+                return Err(TenthError::RuntimeError {
+                    line: None, col: None,
+                    message: "tensor() 构造函数收到空数组".into(),
+                });
+            }
+            let tensor = Tensor::from_vec(data, shape);
+            Ok(Value::Tensor(Rc::new(RefCell::new(tensor))))
+        }
+        Value::Vec(arr) => {
+            let borrowed = arr.borrow();
+            let (shape, data) = flatten_values(&borrowed)?;
+            if data.is_empty() {
+                return Err(TenthError::RuntimeError {
+                    line: None, col: None,
+                    message: "tensor() 构造函数收到空数组".into(),
+                });
+            }
+            let tensor = Tensor::from_vec(data, shape);
+            Ok(Value::Tensor(Rc::new(RefCell::new(tensor))))
+        }
+        _ => Ok(val.clone()),
+    }
+}
+
+/// 递归展平 Value 切片，返回 (shape, flat_data)。
+/// 支持 Value::Shared 包装（ArrayLiteral 元素被 Shared 包裹）。
+fn flatten_values(arr: &[Value]) -> TenthResult<(Vec<usize>, Vec<f64>)> {
+    if arr.is_empty() {
+        return Ok((vec![0], vec![]));
+    }
+    // 解包 Shared 获取第一个元素的实际类型
+    let first = unpack_shared(arr.first().unwrap());
+    match first {
+        Value::Array(_) | Value::Vec(_) => {
+            // 嵌套数组：递归展平
+            let mut shape = vec![arr.len()];
+            let mut data = Vec::new();
+            let mut sub_shape: Option<Vec<usize>> = None;
+            for v in arr {
+                let unwrapped = unpack_shared(v);
+                let (ss, mut sd) = match &unwrapped {
+                    Value::Array(sub_arr) => {
+                        let borrowed = sub_arr.borrow();
+                        flatten_values(&borrowed)?
+                    }
+                    Value::Vec(sub_arr) => {
+                        let borrowed = sub_arr.borrow();
+                        flatten_values(&borrowed)?
+                    }
+                    _ => return Err(TenthError::RuntimeError {
+                        line: None, col: None,
+                        message: "张量构造：嵌套数组中混合了非数组元素".into(),
+                    }),
+                };
+                if let Some(ref expected) = sub_shape {
+                    if ss != *expected {
+                        return Err(TenthError::RuntimeError {
+                            line: None, col: None,
+                            message: format!("张量形状不一致：{:?} vs {:?}", ss, expected),
+                        });
+                    }
+                } else {
+                    sub_shape = Some(ss);
+                }
+                data.append(&mut sd);
+            }
+            if let Some(ss) = sub_shape {
+                shape.extend(ss);
+            }
+            Ok((shape, data))
+        }
+        _ => {
+            // 叶子层：提取数值
+            let data: Vec<f64> = arr.iter()
+                .map(|v| {
+                    let unwrapped = unpack_shared(v);
+                    match unwrapped {
+                        Value::Float(f) => f,
+                        Value::Int(i, _) => i as f64,
+                        Value::Float32(f) => f as f64,
+                        Value::Bool(b) => if b { 1.0 } else { 0.0 },
+                        _ => 0.0,
+                    }
+                })
+                .collect();
+            Ok((vec![arr.len()], data))
+        }
+    }
+}
+
+/// 解包 Value::Shared / Value::SharedBox，返回内部值的 owned 副本。
+/// 返回 owned Value 是因为 `RefCell::borrow()` 返回 `Ref<'_, Value>`，
+/// 无法直接转为 `&Value`；调用方拿到 owned Value 后可按值 match（Copy 字段
+/// 如 f64/i64/bool 直接 by-value 绑定，无需额外解引用）。
+fn unpack_shared(v: &Value) -> Value {
+    match v {
+        Value::Shared(inner) => inner.borrow().clone(),
+        Value::SharedBox(inner) => inner.borrow().clone(),
+        _ => v.clone(),
     }
 }
 

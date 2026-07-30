@@ -355,6 +355,38 @@ fn substitute_kind_in_place(kind: &mut HirExprKind, map: &HashMap<String, Type>)
             for a in args.iter_mut() {
                 substitute_expr_in_place(a, map);
             }
+            // AUDIT-11.1.5 / 泛型函数运行时不可用修复：
+            // 泛型函数体内 `randn<T>(...)` 等 native 构造在 lower 阶段保留了
+            // 原始 func_name（如 "randn"），ret_ty.dtype 保留为 TypeParam。
+            // substitute_expr 将 TypeParam 替换为具体 BaseType 后，需根据 dtype
+            // 修正 func_name（F32 → randn_f32 / zeros_f32 / ones_f32 / rand_f32，
+            // F16 → zeros_f16 / ones_f16，BF16 → zeros_bf16 / ones_bf16），
+            // 否则运行时会调用 F64 版本，导致 dtype 语义偏移。
+            if let HirExprKind::Var(name) = &func.kind {
+                const NATIVE_GENERIC_CTORS: &[&str] = &[
+                    "randn", "zeros", "ones", "rand",
+                ];
+                if NATIVE_GENERIC_CTORS.contains(&name.as_str()) {
+                    if let Type::Tensor { dtype, .. } = &ret_ty {
+                        if let Type::Base(b) = dtype.as_ref() {
+                            let new_name = match (name.as_str(), *b) {
+                                ("randn", crate::hir::types::BaseType::F32) => "randn_f32",
+                                ("zeros", crate::hir::types::BaseType::F32) => "zeros_f32",
+                                ("ones", crate::hir::types::BaseType::F32) => "ones_f32",
+                                ("rand", crate::hir::types::BaseType::F32) => "rand_f32",
+                                ("zeros", crate::hir::types::BaseType::F16) => "zeros_f16",
+                                ("ones", crate::hir::types::BaseType::F16) => "ones_f16",
+                                ("zeros", crate::hir::types::BaseType::BF16) => "zeros_bf16",
+                                ("ones", crate::hir::types::BaseType::BF16) => "ones_bf16",
+                                _ => "",
+                            };
+                            if !new_name.is_empty() && new_name != *name {
+                                func.kind = HirExprKind::Var(new_name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
         }
         HirExprKind::GenericCall { func, generics, args, ret_ty } => {
             *ret_ty = substitute_type(ret_ty, map);

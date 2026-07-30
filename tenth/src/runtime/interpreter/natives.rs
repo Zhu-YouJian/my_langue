@@ -826,7 +826,7 @@ impl super::Interpreter {
             }
             "tensor" => {
                 if let Some(arg) = args.first() {
-                    return Ok(Some(arg.clone()));
+                    return Ok(Some(crate::runtime::value::array_to_tensor(arg)?));
                 }
                 return Ok(Some(Value::Unit));
             }

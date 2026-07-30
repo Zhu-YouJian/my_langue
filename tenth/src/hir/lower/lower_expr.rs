@@ -337,7 +337,12 @@ impl Lowerer {
                     "randn", "zeros", "ones", "rand", "tensor", "tensor_from_vec",
                 ];
                 if NATIVE_GENERIC_CTORS.contains(&func_name.as_str()) {
-                    // 类型参数必须是具体 BaseType（native 不支持 TypeParam 嵌套）
+                    // 类型参数可以是具体 BaseType（直接确定 runtime_name），
+                    // 也可以是 TypeParam（出现在泛型函数体内，如 `randn<T>(...)`）。
+                    // TypeParam 场景：保留原始 func_name，ret_ty 的 dtype 保留为 TypeParam，
+                    // 等实例化时 substitute_expr 替换 T 为具体 BaseType 后，
+                    // 由 substitute_kind_in_place 中的 native dtype 修正逻辑改写 func_name
+                    // （如 F32 → randn_f32）。
                     let type_args: Vec<Type> = generics.iter()
                         .map(|ta| Type::from_annotation(ta))
                         .collect();
@@ -351,37 +356,48 @@ impl Lowerer {
                             ),
                         });
                     }
-                    let dtype = match &type_args[0] {
-                        Type::Base(b) => *b,
+                    let lowered_args: Vec<HirExpr> = args.iter()
+                        .map(|a| self.lower_expr(a))
+                        .collect::<TenthResult<_>>()?;
+                    let shape = Self::shape_from_int_args(&lowered_args);
+                    let (runtime_name, ret_ty) = match &type_args[0] {
+                        Type::Base(dtype) => {
+                            // 运行时按名字分发：f32 dtype 映射到 randn_f32/zeros_f32/ones_f32/rand_f32
+                            // Wave 2: f16/bf16 dtype 映射到 zeros_f16/ones_f16/zeros_bf16/ones_bf16
+                            // （tensor/tensor_from_vec 不需要后缀，运行时按参数 dtype 构造）
+                            let name = match (func_name.as_str(), *dtype) {
+                                ("randn", BaseType::F32) => "randn_f32".to_string(),
+                                ("zeros", BaseType::F32) => "zeros_f32".to_string(),
+                                ("ones", BaseType::F32) => "ones_f32".to_string(),
+                                ("rand", BaseType::F32) => "rand_f32".to_string(),
+                                ("zeros", BaseType::F16) => "zeros_f16".to_string(),
+                                ("ones", BaseType::F16) => "ones_f16".to_string(),
+                                ("zeros", BaseType::BF16) => "zeros_bf16".to_string(),
+                                ("ones", BaseType::BF16) => "ones_bf16".to_string(),
+                                _ => func_name.clone(),
+                            };
+                            (name, Type::tensor(*dtype, shape))
+                        }
+                        Type::TypeParam { name } => {
+                            // 泛型函数体内的 native 构造：T 未实例化，
+                            // 保留原始 func_name，ret_ty.dtype 保留 TypeParam。
+                            // 实例化时 substitute_expr 会替换 T，并修正 func_name。
+                            let ty = Type::Tensor {
+                                dtype: Box::new(Type::TypeParam { name: name.clone() }),
+                                dims: shape,
+                            };
+                            (func_name.clone(), ty)
+                        }
                         _ => {
                             return Err(TenthError::TypeError {
                                 line: span.line,
                                 col: span.col,
                                 message: format!(
-                                    "native 构造函数 '{}' 的类型参数必须是具体 BaseType，得到 {:?}",
+                                    "native 构造函数 '{}' 的类型参数必须是具体 BaseType 或 TypeParam，得到 {:?}",
                                     func_name, type_args[0]
                                 ),
                             });
                         }
-                    };
-                    let lowered_args: Vec<HirExpr> = args.iter()
-                        .map(|a| self.lower_expr(a))
-                        .collect::<TenthResult<_>>()?;
-                    // shape 推断：字面量参数（如 randn<f32>(3, 4)）→ [Known(3), Known(4)]
-                    let ret_ty = Type::tensor(dtype, Self::shape_from_int_args(&lowered_args));
-                    // 运行时按名字分发：f32 dtype 映射到 randn_f32/zeros_f32/ones_f32/rand_f32
-                    // Wave 2: f16/bf16 dtype 映射到 zeros_f16/ones_f16/zeros_bf16/ones_bf16
-                    // （tensor/tensor_from_vec 不需要后缀，运行时按参数 dtype 构造）
-                    let runtime_name = match (func_name.as_str(), dtype) {
-                        ("randn", BaseType::F32) => "randn_f32".to_string(),
-                        ("zeros", BaseType::F32) => "zeros_f32".to_string(),
-                        ("ones", BaseType::F32) => "ones_f32".to_string(),
-                        ("rand", BaseType::F32) => "rand_f32".to_string(),
-                        ("zeros", BaseType::F16) => "zeros_f16".to_string(),
-                        ("ones", BaseType::F16) => "ones_f16".to_string(),
-                        ("zeros", BaseType::BF16) => "zeros_bf16".to_string(),
-                        ("ones", BaseType::BF16) => "ones_bf16".to_string(),
-                        _ => func_name.clone(),
                     };
                     // 编译期内存预估：泛型构造函数返回大 tensor 时发 warning
                     self.emit_memory_estimate(&ret_ty, &span, &format!("泛型构造函数 {}", func_name));

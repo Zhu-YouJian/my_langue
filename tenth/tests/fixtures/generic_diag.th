@@ -1,0 +1,20 @@
+// 诊断脚本：泛型函数运行时可用性验证
+// 覆盖两个场景：
+//   1. tensor<f64>([...]) 创建张量后加法（Array→Tensor 转换）
+//   2. 泛型函数体内调用 randn<T>(...)（TypeParam 实例化后改写为 randn_f32）
+
+fn make_noise<T>(n: i32) -> Tensor[T, 1] {
+    randn<T>(n)
+}
+
+fn main() {
+    // 场景 1：tensor<f64>([...]) + tensor<f64>([...])
+    let t1 = tensor<f64>([1.0, 2.0, 3.0]);
+    let t2 = tensor<f64>([10.0, 20.0, 30.0]);
+    let r = t1 + t2;
+    println("r = {}", r);
+
+    // 场景 2：泛型函数体内 randn<T> 实例化为 f32
+    let z = make_noise<f32>(4);
+    println("z = {}", z);
+}

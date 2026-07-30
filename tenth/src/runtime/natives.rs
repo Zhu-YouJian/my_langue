@@ -730,9 +730,11 @@ pub fn register_all_natives(vm: &mut Vm) {
     vm.add_native("tensor".into(), |_vm, args| {
         // tensor() constructor: when called as tensor[[...]], the bytecode
         // compiler handles TensorLiteral via Op::MakeTensor directly.
-        // This native handles the rare case where tensor() is called as a function.
+        // This native handles tensor<f64>([1.0, 2.0, 3.0]) 语法——
+        // HIR 将其编译为 Call("tensor", [ArrayLiteral])，需要将
+        // Value::Array 转换为 Value::Tensor 才能参与张量运算。
         if args.len() == 1 {
-            Ok(args[0].clone())
+            crate::runtime::value::array_to_tensor(&args[0])
         } else {
             Err(TenthError::RuntimeError { line: None, col: None, message: "tensor() 参数异常".into() })
         }
