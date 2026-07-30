@@ -20,17 +20,23 @@
 //   - 梯度可从输出完整回传到 w_q/w_k/w_v/w_o 与输入 x，无阻断
 //   - reshape 的 backward = grad.reshape(input.shape())
 //   - masked_fill 的 backward = grad * (1 - mask)，mask 不可微
+//
+// 符号维度标注（Phase 2 短期规划方向 3）：
+//   x: [S, D]            输入（seq_len, d_model）
+//   w_q/w_k/w_v/w_o: [D, D]   四个投影矩阵（d_model, d_model）
+//   mask: [..]           灵活 shape（通常 [n_heads, S, S] 或 [S, S]）
+//   返回: [S, D]         与 x 同 shape
 
 fn multihead_attention<T>(
-    x: Tensor[T, ..],       // (seq_len, d_model)
-    w_q: Tensor[T, ..],     // (d_model, d_model)
-    w_k: Tensor[T, ..],     // (d_model, d_model)
-    w_v: Tensor[T, ..],     // (d_model, d_model)
-    w_o: Tensor[T, ..],     // (d_model, d_model)
+    x: Tensor[T, S, D],
+    w_q: Tensor[T, D, D],
+    w_k: Tensor[T, D, D],
+    w_v: Tensor[T, D, D],
+    w_o: Tensor[T, D, D],
     mask: Tensor[f64, ..],  // mask is metadata (indices/boolean), kept as f64
     n_heads: i64,
     dropout_p: T,
-) -> Tensor[T, ..] {
+) -> Tensor[T, S, D] {
     let seq_len = shape(x)[0];
     let d_model = shape(x)[1];
     let d_k = d_model / n_heads;

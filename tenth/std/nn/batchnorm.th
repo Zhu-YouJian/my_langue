@@ -7,14 +7,21 @@
 //
 // x: (N, C, H, W) or (N, C, L)
 // gamma, beta: (C,) learnable scale and shift
+//
+// 符号维度标注（Phase 2 短期规划方向 3）：
+//   x: [N, C, H, W]    输入（batch, channels, height, width）
+//                       注：也支持 3D [N, C, L]（序列场景），签名以 4D NCHW 为例
+//   gamma: [C]          可学习缩放（per-channel）
+//   beta: [C]           可学习偏移（per-channel）
+//   返回: [N, C, H, W]  与 x 同 shape（归一化是 elementwise-after-stats）
 
 // BatchNorm forward: normalize then scale/shift.
 // gamma and beta are (C,) vectors; eps prevents division by zero.
 fn batchnorm<T>(
-    x: Tensor[T, ..],
-    gamma: Tensor[T, ..],
-    beta: Tensor[T, ..],
+    x: Tensor[T, N, C, H, W],
+    gamma: Tensor[T, C],
+    beta: Tensor[T, C],
     eps: T,
-) -> Tensor[T, ..] {
+) -> Tensor[T, N, C, H, W] {
     x.batchnorm(gamma, beta, eps)
 }

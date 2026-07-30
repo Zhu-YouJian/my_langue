@@ -4,24 +4,35 @@
 //
 // Uses pre-norm (LayerNorm before each sub-layer) which is more stable
 // for training deep Transformers.
+//
+// 符号维度标注（Phase 2 短期规划方向 3）：
+//   x: [S, D]                输入（seq_len, d_model）
+//   w_q/w_k/w_v/w_o: [D, D]   MHA 投影矩阵（d_model, d_model）
+//   ln1_gamma/ln1_beta: [D]    第一层 LayerNorm 参数（d_model,）
+//   w1: [D, D_ff]             FFN 第一层权重（d_model, d_ff）
+//   b1: [D_ff]                FFN 第一层偏置
+//   w2: [D_ff, D]             FFN 第二层权重（d_ff, d_model）
+//   b2: [D]                   FFN 第二层偏置
+//   ln2_gamma/ln2_beta: [D]    第二层 LayerNorm 参数
+//   返回: [S, D]               与 x 同 shape（residual 保持）
 
 fn transformer_encoder_block<T>(
-    x: Tensor[T, ..],       // (seq_len, d_model)
-    w_q: Tensor[T, ..],
-    w_k: Tensor[T, ..],
-    w_v: Tensor[T, ..],
-    w_o: Tensor[T, ..],
-    ln1_gamma: Tensor[T, ..],
-    ln1_beta: Tensor[T, ..],
-    w1: Tensor[T, ..],
-    b1: Tensor[T, ..],
-    w2: Tensor[T, ..],
-    b2: Tensor[T, ..],
-    ln2_gamma: Tensor[T, ..],
-    ln2_beta: Tensor[T, ..],
+    x: Tensor[T, S, D],
+    w_q: Tensor[T, D, D],
+    w_k: Tensor[T, D, D],
+    w_v: Tensor[T, D, D],
+    w_o: Tensor[T, D, D],
+    ln1_gamma: Tensor[T, D],
+    ln1_beta: Tensor[T, D],
+    w1: Tensor[T, D, D_ff],
+    b1: Tensor[T, D_ff],
+    w2: Tensor[T, D_ff, D],
+    b2: Tensor[T, D],
+    ln2_gamma: Tensor[T, D],
+    ln2_beta: Tensor[T, D],
     n_heads: i64,
     dropout_p: T,
-) -> Tensor[T, ..] {
+) -> Tensor[T, S, D] {
     // Pre-norm: LayerNorm before attention
     let x_norm = layer_norm<T>(x, ln1_gamma, ln1_beta, 1e-5);
     let mask = zeros(1);  // no mask for encoder (mask is metadata, kept as f64)
@@ -36,11 +47,16 @@ fn transformer_encoder_block<T>(
 
 // Convenience: initialize all parameters for a Transformer encoder block
 // 泛型版：make_transformer_block_params<f32>(...) 返回 f32 张量。
+//
+// 返回 shape 与 transformer_encoder_block 签名对应：
+//   w_q/w_k/w_v/w_o: [D, D]
+//   ln1_gamma/ln1_beta/ln2_gamma/ln2_beta/b2: [D]
+//   w1: [D, D_ff], b1: [D_ff], w2: [D_ff, D]
 fn make_transformer_block_params<T>(d_model: i64, n_heads: i64, d_ff: i64) -> (
-    Tensor[T, ..], Tensor[T, ..], Tensor[T, ..], Tensor[T, ..],  // w_q, w_k, w_v, w_o
-    Tensor[T, ..], Tensor[T, ..],  // ln1_gamma, ln1_beta
-    Tensor[T, ..], Tensor[T, ..], Tensor[T, ..], Tensor[T, ..],  // w1, b1, w2, b2
-    Tensor[T, ..], Tensor[T, ..],  // ln2_gamma, ln2_beta
+    Tensor[T, D, D], Tensor[T, D, D], Tensor[T, D, D], Tensor[T, D, D],  // w_q, w_k, w_v, w_o
+    Tensor[T, D], Tensor[T, D],  // ln1_gamma, ln1_beta
+    Tensor[T, D, D_ff], Tensor[T, D_ff], Tensor[T, D_ff, D], Tensor[T, D],  // w1, b1, w2, b2
+    Tensor[T, D], Tensor[T, D],  // ln2_gamma, ln2_beta
 ) {
     let scale = sqrt(2.0 / d_model);
     let w_q = randn<T>(d_model, d_model) * scale;

@@ -4,6 +4,14 @@
 //
 // Phase 3 DRY 清理：所有激活函数已泛型化（f32/f64 通吃）。
 // _default 变体因硬编码 0.01 字面量保留 f64（调用方需 f32 默认斜率时直接传 0.01f32）。
+//
+// 符号维度说明（Phase 2 短期规划方向 3）：
+//   所有激活函数（relu/sigmoid/tanh/softmax/exp/log/gelu/leaky_relu/leaky_relu_select）
+//   是 elementwise 运算（softmax 例外，沿最后一维归一化但 shape 保持）：
+//     x: [..]   任意 shape
+//     返回: [..] 与 x 同 shape（dtype 与 x 一致）
+//   leaky_relu / leaky_relu_select 的 slope 是标量 T。
+//   保留 `..` 因为 elementwise 函数对任意 rank 都成立，无法用具体符号维度表达"输出 = 输入"。
 
 fn relu<T>(x: Tensor[T, ..]) -> Tensor[T, ..] { x.relu() }
 fn sigmoid<T>(x: Tensor[T, ..]) -> Tensor[T, ..] { x.sigmoid() }

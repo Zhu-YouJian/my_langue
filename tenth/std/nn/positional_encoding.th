@@ -19,7 +19,12 @@
 //
 // 泛型版：positional_encoding<f32>(...) 返回 f32 张量，<f64>(...) 返回 f64。
 // 必须显式指定类型参数（函数仅接受 i64 参数，无法从入参推断 T）。
-fn positional_encoding<T>(seq_len: i64, d_model: i64) -> Tensor[T, ..] {
+//
+// 符号维度标注（Phase 2 短期规划方向 3）：
+//   seq_len: i64   序列长度 S
+//   d_model: i64   模型维度 D
+//   返回: [S, D]   位置编码矩阵（seq_len, d_model），与 embedding 输出相加
+fn positional_encoding<T>(seq_len: i64, d_model: i64) -> Tensor[T, S, D] {
     // Placeholder: random init with small variance
     // Replace with sinusoidal encoding once element-wise ops are supported
     randn<T>(seq_len, d_model) * 0.01

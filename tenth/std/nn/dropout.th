@@ -1,4 +1,11 @@
 // Dropout layer wrapper
+//
+// 符号维度说明（Phase 2 短期规划方向 3）：
+//   dropout 是 elementwise 运算（按位置随机置零）：
+//     x: [..]   任意 shape
+//     rate: T   标量 dropout 概率（0.0 ~ 1.0）
+//     返回: [..] 与 x 同 shape（dtype 与 x 一致）
+//   保留 `..` 因为 elementwise 函数对任意 rank 都成立。
 fn dropout<T>(x: Tensor[T, ..], rate: T) -> Tensor[T, ..] {
     x.dropout(rate)
 }

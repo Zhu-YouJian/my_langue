@@ -1,6 +1,15 @@
 // Layer Normalization
 // Normalizes across the last dimension.
 // Supports autodiff via TapeOp::LayerNorm (once interpreter adds support).
+//
+// 符号维度说明（Phase 2 短期规划方向 3）：
+//   保留 `..` 因为 layer_norm 接受任意 rank（1D/2D/3D…）。
+//   shape 规则（elementwise-after-stats）：
+//     x:     [.., D]   —— 最后一维 D 是归一化轴
+//     gamma: [D]       —— 必须与 x 的最后一维相等
+//     beta:  [D]       —— 必须与 x 的最后一维相等
+//     返回:  [.., D]   —— 与 x 同 shape
+//   注：Tenth 当前类型注解不支持"`..` 在中间"的精确表达，故用 `..` 表示任意 rank。
 
 fn layer_norm<T>(
     x: Tensor[T, ..],
@@ -14,6 +23,8 @@ fn layer_norm<T>(
 // Convenience: create learnable layer norm parameters
 // gamma initialized to ones, beta initialized to zeros.
 // 泛型版：make_layer_norm<f32>(dim) 返回 f32 张量，make_layer_norm<f64>(dim) 返回 f64。
+//
+// 返回 shape：gamma=[D], beta=[D]，D = dim。
 fn make_layer_norm<T>(dim: i64) -> (Tensor[T, ..], Tensor[T, ..]) {
     let gamma = ones<T>(dim);
     let beta = zeros<T>(dim);

@@ -58,14 +58,21 @@ fn scaled_dot_product_attention<T>(
 // 使用场景：
 //   - True Multi-Head Attention（multihead_attention.th 内部计算 per-head attention）
 //   - batched 推理（多条序列并行）
+//
+// 符号维度标注（Phase 2 短期规划方向 3）：
+//   q: [B, S_q, D_k]   query  (batch, seq_q, d_k)
+//   k: [B, S_k, D_k]   key    (batch, seq_k, d_k)  —— S_k 可与 S_q 不同
+//   v: [B, S_k, D_v]   value  (batch, seq_k, d_v)  —— D_v 可与 D_k 不同
+//   mask: [..]          灵活 shape（通常 [B, S_q, S_k] 或 [S_q, S_k]）
+//   返回: [B, S_q, D_v]
 
 fn scaled_dot_product_attention_batched<T>(
-    q: Tensor[T, ..],       // (B, S_q, D_k)
-    k: Tensor[T, ..],       // (B, S_k, D_k)
-    v: Tensor[T, ..],       // (B, S_k, D_v)
+    q: Tensor[T, B, S_q, D_k],
+    k: Tensor[T, B, S_k, D_k],
+    v: Tensor[T, B, S_k, D_v],
     mask: Tensor[f64, ..],  // mask 沿最后一维应用，shape 通常 (B, S_q, S_k) 或 (S_q, S_k)
     dropout_p: T,
-) -> Tensor[T, ..] {
+) -> Tensor[T, B, S_q, D_v] {
     let d_k = shape(q)[2];
     let scale = 1.0 / sqrt(d_k);
     // scores = Q @ K^T * scale  →  (B, S_q, S_k)

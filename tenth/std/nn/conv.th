@@ -10,18 +10,26 @@
 //
 // Implemented via x.conv2d(w, kH, kW, stride, pad) tensor method.
 // Bias broadcasting requires manual reshape for now.
+//
+// 符号维度标注（Phase 2 短期规划方向 3）：
+//   x: [N, C_in, H, W]       输入（batch, in_channels, height, width）
+//   w: [C_out, C_in, kH, kW] 卷积核（out_channels, in_channels, kernel_h, kernel_w）
+//   b: [C_out]                偏置（out_channels）—— 广播到 (1, C_out, 1, 1)
+//   返回: [N, C_out, H_out, W_out]
+//        H_out = (H + 2*pad - kH) / stride + 1（向下取整）
+//        W_out = (W + 2*pad - kW) / stride + 1
 
 // Conv2D forward: y = conv2d(x, w) + b
 // stride and pad default to 1 and 0 respectively.
 //
 // Phase 3 DRY 清理：泛型化 <T> 支持 f32/f64。
 fn conv2d<T>(
-    x: Tensor[T, ..],
-    w: Tensor[T, ..],
-    b: Tensor[T, ..],
+    x: Tensor[T, N, C_in, H, W],
+    w: Tensor[T, C_out, C_in, kH, kW],
+    b: Tensor[T, C_out],
     stride: i64,
     pad: i64,
-) -> Tensor[T, ..] {
+) -> Tensor[T, N, C_out, H_out, W_out] {
     let kH = shape(w)[2];
     let kW = shape(w)[3];
     let out = x.conv2d(w, kH, kW, stride, pad);

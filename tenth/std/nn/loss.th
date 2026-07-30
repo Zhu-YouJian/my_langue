@@ -2,6 +2,14 @@
 //
 // Phase 3 DRY 清理：mse/mse_loss/l1_loss/huber_loss/huber_loss_train 已泛型化 <T>。
 // binary_cross_entropy 保留 f64（标量函数，无 trait bound；按任务要求保留）。
+//
+// 符号维度说明（Phase 2 短期规划方向 3）：
+//   所有 loss 函数的 shape 规则：
+//     pred   : [..]   任意 shape（与 target 同 shape）
+//     target : [..]   任意 shape（与 pred 同 shape）
+//     返回    : 标量 T（mse / huber_loss）或与 pred 同 shape（mse_loss / l1_loss / huber_loss_train）
+//   注：Tenth 类型注解无法表达"两参数同 shape"约束，保留 `..` 并通过 pred - target
+//   的运行时广播检查捕获 shape 不匹配。
 
 // Mean Squared Error (returns scalar)
 fn mse<T>(pred: Tensor[T, ..], target: Tensor[T, ..]) -> T {

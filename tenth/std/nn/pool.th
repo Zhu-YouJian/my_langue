@@ -19,49 +19,55 @@
 // backward：MaxPool2D 重新计算 argmax 路由梯度；AvgPool2D 均分到 window 内有效位置。
 //
 // Phase 3 DRY 清理：泛型化 <T> 支持 f32/f64。
+//
+// 符号维度标注（Phase 2 短期规划方向 3）：
+//   x: [N, C, H, W]                输入（batch, channels, height, width）
+//   返回: [N, C, H_out, W_out]      通道数与 batch 不变，空间维度按公式缩减
+//        H_out = (H + 2*pH - kH) / sH + 1（向下取整）
+//        W_out = (W + 2*pW - kW) / sW + 1
 
 // MaxPool2D — 方形参数版（kernel=kernel_h=kernel_w 等）
 fn max_pool2d<T>(
-    x: Tensor[T, ..],
+    x: Tensor[T, N, C, H, W],
     kernel: i64,
     stride: i64,
     padding: i64,
-) -> Tensor[T, ..] {
+) -> Tensor[T, N, C, H_out, W_out] {
     x.max_pool2d(kernel, kernel, stride, stride, padding, padding)
 }
 
 // MaxPool2D — 显式参数版（允许非方形 kernel/stride/padding）
 fn max_pool2d_explicit<T>(
-    x: Tensor[T, ..],
+    x: Tensor[T, N, C, H, W],
     kh: i64,
     kw: i64,
     sh: i64,
     sw: i64,
     ph: i64,
     pw: i64,
-) -> Tensor[T, ..] {
+) -> Tensor[T, N, C, H_out, W_out] {
     x.max_pool2d(kh, kw, sh, sw, ph, pw)
 }
 
 // AvgPool2D — 方形参数版
 fn avg_pool2d<T>(
-    x: Tensor[T, ..],
+    x: Tensor[T, N, C, H, W],
     kernel: i64,
     stride: i64,
     padding: i64,
-) -> Tensor[T, ..] {
+) -> Tensor[T, N, C, H_out, W_out] {
     x.avg_pool2d(kernel, kernel, stride, stride, padding, padding)
 }
 
 // AvgPool2D — 显式参数版
 fn avg_pool2d_explicit<T>(
-    x: Tensor[T, ..],
+    x: Tensor[T, N, C, H, W],
     kh: i64,
     kw: i64,
     sh: i64,
     sw: i64,
     ph: i64,
     pw: i64,
-) -> Tensor[T, ..] {
+) -> Tensor[T, N, C, H_out, W_out] {
     x.avg_pool2d(kh, kw, sh, sw, ph, pw)
 }

@@ -16,6 +16,18 @@
 //   - 可微：d_then = grad*mask, d_else = grad*(1-mask)（mask = cond > 0.5）
 //
 // 命名说明：`where` 与 `else` 是 Tenth 关键字，故用 `where_` / `else_` 后缀避开。
+//
+// 符号维度说明（Phase 2 短期规划方向 3）：
+//   比较运算（gt/lt/ge/le/eq/ne）shape 规则：
+//     a: [..]   任意 shape
+//     b: [..]   任意 shape（与 a 广播兼容）
+//     返回: [..]  广播后的 shape（dtype 固定 f64）
+//   where_ shape 规则：
+//     cond:  [..]   任意 shape（f64，>0.5 视为 true）
+//     then:  [..]   任意 shape（与 cond/else_ 三向广播兼容）
+//     else_: [..]   任意 shape
+//     返回:  [..]   三向广播后的 shape（dtype 与 then/else_ 一致）
+//   注：广播语义下 shape 不固定，保留 `..` 表示任意 shape。
 
 // ── 比较运算（返回 F64 张量）──────────────────────────────────────
 
