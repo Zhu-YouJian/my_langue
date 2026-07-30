@@ -37,6 +37,11 @@ pub struct Lowerer {
     imported_files: HashSet<String>,
     /// 编译期收集的警告（内存/算力预估等，非致命）
     pub(super) warnings: Vec<TenthWarning>,
+    /// 当前正在 lower 的函数体中所有 return 语句的 shape（用于跨函数 shape 求解的多 return join）。
+    /// 每次 lower 函数体前清空，lower 过程中遇到 Return 语句时 push 其 expr 的 dims。
+    /// lower 完函数体后，join 所有 return shapes，与 lowered_body.ty 一起参与
+    /// check_and_merge_tensor_shape，让调用方能拿到更精确的返回 shape。
+    pub(super) current_fn_return_shapes: Vec<Vec<Dim>>,
 }
 
 impl Lowerer {
@@ -148,6 +153,7 @@ impl Lowerer {
             search_paths: Vec::new(),
             imported_files: HashSet::new(),
             warnings: Vec::new(),
+            current_fn_return_shapes: Vec::new(),
         };
 
         lowerer.trait_defs.insert("Display".to_string(), HirTraitDef {

@@ -669,6 +669,55 @@ impl Lowerer {
         }
     }
 
+    /// 跨函数 shape 求解：多 return 路径的 shape join。
+    ///
+    /// 收集函数体中所有 return 语句的 shape（以及函数体末尾表达式的 shape），
+    /// join 成一个统一的 shape，用于推断函数的精确返回 shape。
+    ///
+    /// join 规则（逐维）：
+    /// - `Any` 与任意 → 取另一侧（Any 不约束）
+    /// - `Known(a)` 与 `Known(b)`：a == b → `Known(a)`；a ≠ b → `Any`（不同 Known 降为 Any）
+    /// - `Symbol(s)` 与 `Symbol(t)`：s == t → `Symbol(s)`；s ≠ t → `Any`（不同 Symbol 降为 Any）
+    /// - `Known` 与 `Symbol` → `Any`（保守降级，不假设 unify）
+    ///
+    /// 维度数不一致 → 返回 Err（明确的逻辑错误，应报错）。
+    pub(super) fn join_return_dims(shapes: &[Vec<Dim>]) -> Result<Vec<Dim>, String> {
+        if shapes.is_empty() {
+            return Ok(vec![]);
+        }
+        let first = &shapes[0];
+        // 维度数必须一致
+        for s in &shapes[1..] {
+            if s.len() != first.len() {
+                return Err(format!(
+                    "维度数不匹配：{} vs {}（无法 join）",
+                    first.len(), s.len()
+                ));
+            }
+        }
+        // 逐维 join
+        let mut result: Vec<Dim> = Vec::with_capacity(first.len());
+        for i in 0..first.len() {
+            let mut joined: Dim = first[i].clone();
+            for s in &shapes[1..] {
+                joined = match (&joined, &s[i]) {
+                    // Any 与任意 → 取另一侧
+                    (Dim::Any, d) | (d, Dim::Any) => d.clone(),
+                    // Known 与 Known：相等保留，不等降为 Any
+                    (Dim::Known(a), Dim::Known(b)) if a == b => Dim::Known(*a),
+                    (Dim::Known(_), Dim::Known(_)) => Dim::Any,
+                    // Symbol 与 Symbol：同名保留，不同名降为 Any
+                    (Dim::Symbol(a), Dim::Symbol(b)) if a == b => Dim::Symbol(a.clone()),
+                    (Dim::Symbol(_), Dim::Symbol(_)) => Dim::Any,
+                    // Known 与 Symbol 混合 → 保守 Any（不假设 unify）
+                    (Dim::Known(_), Dim::Symbol(_)) | (Dim::Symbol(_), Dim::Known(_)) => Dim::Any,
+                };
+            }
+            result.push(joined);
+        }
+        Ok(result)
+    }
+
     /// 检查类型注解与实际推断类型是否兼容，并返回合并后的类型。
     ///
     /// 用于：
