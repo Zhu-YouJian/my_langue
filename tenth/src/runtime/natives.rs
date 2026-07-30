@@ -1616,13 +1616,21 @@ pub fn register_all_natives(vm: &mut Vm) {
             let tgt_flat = target_data.data.as_standard_layout().to_owned();
             let sm_slice = sm_data.as_slice().unwrap_or(&[]);
             let tgt_slice = tgt_flat.as_slice().unwrap_or(&[]);
-            let n = sm_slice.len() as f64;
+            // 标准 CE 的 mean reduction 应除以 B（batch size），而非 B*V（元素总数）。
+            // B = softmax 张量除最后一维外所有前导维度的乘积（softmax 与 logits 同 shape）。
+            // 1D [V] 视为单样本 B=1；2D [B,V] 取 B；更高维取所有前导维度乘积。
+            let sm_shape = sm.shape();
+            let b_size = if sm_shape.is_empty() {
+                1.0f64
+            } else {
+                sm_shape[..sm_shape.len() - 1].iter().product::<usize>() as f64
+            };
             let mut loss_val = 0.0f64;
             for i in 0..sm_slice.len().min(tgt_slice.len()) {
                 let p = sm_slice[i].max(eps);
                 loss_val -= tgt_slice[i] * p.ln();
             }
-            loss_val /= n.max(1.0);
+            loss_val /= b_size.max(1.0);
             // 按 logits dtype 构造对应 loss tensor
             let loss_tensor = if is_f32 {
                 Tensor::from_vec_f32(vec![loss_val as f32], vec![1])

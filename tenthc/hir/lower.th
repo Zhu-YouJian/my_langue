@@ -30,6 +30,16 @@ fn add_tensor_type_param(p: &mut HirProgram, dtype_ty: i64, dim_count: i64, dim0
     p.type_nodes.len()
 }
 
+// P1 层级一：构造含 Symbol 维度的 Tensor HirType（disc=1）。
+// 与 add_tensor_type 相同，但额外接收 symbol_dims 字符串（分号分隔的 Var 名字）。
+// dim0/dim1/dim2 = -1 表示该维度是 Symbol，名字从 symbol_dims 按 dim 顺序取出。
+// 与 Rust 侧 Dim::Symbol(String) 对齐（types.rs:22-25）。
+fn add_tensor_type_with_symbols(p: &mut HirProgram, dtype_sub: i64, dim_count: i64, dim0: i64, dim1: i64, dim2: i64, symbol_dims: str) -> i64 {
+    let t = HirType { disc: 1, sub: dtype_sub, dim_count: dim_count, dim0: dim0, dim1: dim1, dim2: dim2, symbol_dims: symbol_dims, .. };
+    p.type_nodes.push(t);
+    p.type_nodes.len()
+}
+
 // Stage 7: Read Tensor dtype as a type index (TypeParam case).
 // Returns 0 if dtype is a BaseType (use sub field instead) or non-Tensor.
 fn get_tensor_dtype_ty(p: &mut HirProgram, ty_idx: i64) -> i64 {
@@ -94,6 +104,8 @@ fn get_tensor_dim2(p: &mut HirProgram, ty_idx: i64) -> i64 {
 // Returns error message string ("" = ok).
 fn check_matmul_shape(recv_dc: i64, recv_d0: i64, recv_d1: i64, arg_dc: i64, arg_d0: i64, arg_d1: i64) -> str {
     if recv_dc != 2 || arg_dc != 2 { return ""; };
+    // P1 层级一：-1 表示 Symbol 维度，无法静态比较 → 保守跳过
+    if recv_d0 < 0 || recv_d1 < 0 || arg_d0 < 0 || arg_d1 < 0 { return ""; };
     if recv_d1 != arg_d0 {
         return "matmul shape 不兼容：内侧维度不匹配";
     };
@@ -104,6 +116,8 @@ fn check_matmul_shape(recv_dc: i64, recv_d0: i64, recv_d1: i64, arg_dc: i64, arg
 // Returns error message string ("" = ok).
 fn check_bmm_shape(recv_dc: i64, recv_d0: i64, recv_d1: i64, recv_d2: i64, arg_dc: i64, arg_d0: i64, arg_d1: i64, arg_d2: i64) -> str {
     if recv_dc != 3 || arg_dc != 3 { return ""; };
+    // P1 层级一：-1 表示 Symbol 维度，无法静态比较 → 保守跳过
+    if recv_d0 < 0 || recv_d1 < 0 || recv_d2 < 0 || arg_d0 < 0 || arg_d1 < 0 || arg_d2 < 0 { return ""; };
     if recv_d0 != arg_d0 {
         return "bmm shape 不兼容：batch 维度不匹配";
     };
@@ -201,6 +215,8 @@ fn fmt_dims(dc: i64, d0: i64, d1: i64, d2: i64) -> str {
 // Check if two Known dims are compatible (equal).
 // In tenthc, all dims with dim_count > 0 are Known (no Symbol tracking).
 fn dims_compatible(a: i64, b: i64) -> bool {
+    // P1 层级一：-1 表示 Symbol 维度，无法静态比较 → 保守认为兼容
+    if a < 0 || b < 0 { return true; };
     a == b
 }
 
@@ -247,6 +263,8 @@ fn numel_compatible(a_dc: i64, a_d0: i64, a_d1: i64, a_d2: i64, b_dc: i64, b_d0:
 fn shape_compatible(grad_dc: i64, grad_d0: i64, grad_d1: i64, param_dc: i64, param_d0: i64, param_d1: i64) -> bool {
     if grad_dc != param_dc { return false; };
     if grad_dc == 0 { return true; };
+    // P1 层级一：-1 表示 Symbol 维度，无法静态比较 → 保守认为兼容
+    if grad_d0 < 0 || grad_d1 < 0 || param_d0 < 0 || param_d1 < 0 { return true; };
     if grad_dc >= 1 {
         if grad_d0 != 1 && param_d0 != 1 && grad_d0 != param_d0 { return false; };
     };
@@ -264,6 +282,8 @@ fn check_binary_backward_shape(p: &mut HirProgram, op: str, l_dc: i64, l_d0: i64
     if op != "+" && op != "-" && op != "*" && op != "/" { return; };
     if l_dc == 0 || r_dc == 0 { return; };
     if l_dc != r_dc { return; };
+    // P1 层级一：-1 表示 Symbol 维度，无法静态比较 → 保守跳过
+    if l_d0 < 0 || l_d1 < 0 || r_d0 < 0 || r_d1 < 0 { return; };
     if l_dc >= 1 && l_d0 != r_d0 && l_d0 != 1 && r_d0 != 1 { return; };
     if l_dc == 2 && l_d1 != r_d1 && l_d1 != 1 && r_d1 != 1 { return; };
     // Output shape = broadcast result
@@ -392,6 +412,8 @@ fn emit_bmm_flop_estimate(p: &mut HirProgram, recv_lty: i64, arg_lty: i64) {
 // Returns error message ("" = ok). Only checks when both sides have known dims.
 fn check_binary_broadcast(l_dc: i64, l_d0: i64, l_d1: i64, r_dc: i64, r_d0: i64, r_d1: i64) -> str {
     if l_dc == 0 || r_dc == 0 { return ""; };
+    // P1 层级一：-1 表示 Symbol 维度，无法静态比较 → 保守跳过
+    if l_d0 < 0 || l_d1 < 0 || r_d0 < 0 || r_d1 < 0 { return ""; };
     // Align from right: check last dim
     let l_last = if l_dc >= 2 { l_d1 } else { l_d0 };
     let r_last = if r_dc >= 2 { r_d1 } else { r_d0 };
@@ -407,8 +429,9 @@ fn check_binary_broadcast(l_dc: i64, l_d0: i64, l_d1: i64, r_dc: i64, r_d0: i64,
     ""
 }
 
-// Extract dim_count from lowered call args (all must be int literals).
-// Returns 0 if any arg is non-literal, 0 args, or >3 args.
+// Extract dim_count from lowered call args (int literals or simple Var).
+// P1 层级一：Var 参数（disc=4）提升为 Symbol 维度，与 Rust 侧 shape_from_int_args 对齐。
+// 返回 0 if any arg is non-literal/non-Var, 0 args, or >3 args.
 // Supports 1D/2D/3D — 3D added for AUDIT #12 (bmm shape inference).
 fn dims_count_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
     let n = lowered_args.len();
@@ -419,38 +442,67 @@ fn dims_count_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
         let ai = lowered_args[i];
         if ai <= 0 || ai > p.expr_nodes.len() { ok = false; break; };
         let ae = p.expr_nodes[ai - 1];
-        if ae.disc != 0 { ok = false; break; };
+        // disc=0: IntLiteral (Known), disc=4: Var (Symbol). 其他 → 无法静态推断。
+        if ae.disc != 0 && ae.disc != 4 { ok = false; break; };
     };
     if !ok { return 0; };
     n
 }
 
-// Extract dim0 (first arg literal value) from lowered call args.
+// Extract dim0 (first arg literal value, or -1 if Var) from lowered call args.
+// Var 参数返回 -1 表示 Symbol 维度（名字从 dims_symbol_names_from_args 取）。
 fn dims_d0_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
     let n = lowered_args.len();
     if n == 0 { return 0; };
     let ai = lowered_args[0];
     if ai <= 0 || ai > p.expr_nodes.len() { return 0; };
-    p.expr_nodes[ai - 1].lit_ival
+    let ae = p.expr_nodes[ai - 1];
+    if ae.disc == 4 { return -1; };  // Var → Symbol
+    ae.lit_ival
 }
 
-// Extract dim1 (second arg literal value) from lowered call args.
+// Extract dim1 (second arg literal value, or -1 if Var) from lowered call args.
 fn dims_d1_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
     let n = lowered_args.len();
     if n < 2 { return 0; };
     let ai = lowered_args[1];
     if ai <= 0 || ai > p.expr_nodes.len() { return 0; };
-    p.expr_nodes[ai - 1].lit_ival
+    let ae = p.expr_nodes[ai - 1];
+    if ae.disc == 4 { return -1; };  // Var → Symbol
+    ae.lit_ival
 }
 
-// Extract dim2 (third arg literal value) from lowered call args.
+// Extract dim2 (third arg literal value, or -1 if Var) from lowered call args.
 // Added for AUDIT #12 (bmm 3D shape inference via zeros(4,1024,1024) etc).
 fn dims_d2_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> i64 {
     let n = lowered_args.len();
     if n < 3 { return 0; };
     let ai = lowered_args[2];
     if ai <= 0 || ai > p.expr_nodes.len() { return 0; };
-    p.expr_nodes[ai - 1].lit_ival
+    let ae = p.expr_nodes[ai - 1];
+    if ae.disc == 4 { return -1; };  // Var → Symbol
+    ae.lit_ival
+}
+
+// P1 层级一：收集 Var 参数的名字，用分号分隔（按 dim 顺序，仅含 Symbol 维度）。
+// 例如 randn(n) → "n"；randn(2, m, n) → "m;n"；randn(3, 4) → ""。
+// 与 HirType.symbol_dims 字段对齐，供 add_tensor_type_with_symbols 使用。
+fn dims_symbol_names_from_args(p: &mut HirProgram, lowered_args: Vec<i64>) -> str {
+    let n = lowered_args.len();
+    if n == 0 { return ""; };
+    let mut names = "";
+    let mut first = true;
+    for i in 0..n {
+        let ai = lowered_args[i];
+        if ai <= 0 || ai > p.expr_nodes.len() { continue; };
+        let ae = p.expr_nodes[ai - 1];
+        if ae.disc == 4 {
+            if !first { names = names + ";"; };
+            names = names + ae.name;
+            first = false;
+        };
+    };
+    names
 }
 
 fn parse_type(p: &mut HirProgram, s: str) -> i64 {
@@ -1663,8 +1715,9 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
                     check_binary_backward_shape(p, op, l_dc, l_d0, l_d1, r_dc, r_d0, r_d1);
                     // Result: tensor with broadcast shape (conservative: same shape if equal, else unknown)
                     // Stage 7: propagate dtype from l_lty (preferred) or r_lty (fallback)
+                    // P1 层级一：含 Symbol 维度（-1）时结果 shape 退化为 unknown（保守）
                     let dtype_src = if l_dc > 0 { l_lty } else { r_lty };
-                    let rty = if l_dc == r_dc && l_d0 == r_d0 && l_d1 == r_d1 {
+                    let rty = if l_dc == r_dc && l_d0 == r_d0 && l_d1 == r_d1 && l_d0 >= 0 && l_d1 >= 0 {
                         propagate_tensor_dtype(p, dtype_src, l_dc, l_d0, l_d1, 0)
                     } else {
                         propagate_tensor_dtype(p, dtype_src, 0, 0, 0, 0)
@@ -1810,12 +1863,14 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         };
         let cty = if e.sval == "zeros" || e.sval == "ones" || e.sval == "rand" || e.sval == "randn" {
             // Phase 4: infer Tensor shape from literal int args (1D/2D/3D)
+            // P1 层级一：Var 参数提升为 Symbol 维度（dim=-1，名字存 symbol_dims）
             let dc = dims_count_from_args(p, lowered_args);
             if dc > 0 {
                 let d0 = dims_d0_from_args(p, lowered_args);
                 let d1 = dims_d1_from_args(p, lowered_args);
                 let d2 = dims_d2_from_args(p, lowered_args);
-                add_tensor_type(p, 2, dc, d0, d1, d2)
+                let sym_dims = dims_symbol_names_from_args(p, lowered_args);
+                add_tensor_type_with_symbols(p, 2, dc, d0, d1, d2, sym_dims)
             } else {
                 lookup_fn_return_type(p, e.sval)
             }
@@ -1889,7 +1944,8 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             emit_matmul_flop_estimate(p, recv_lty, arg_lty);
             // Result shape: (M, N) if both 2D and inner K matches
             // Stage 7: propagate dtype from receiver (matches Rust lower behavior)
-            let rty = if r_dc == 2 && a_dc == 2 && r_d1 == a_d0 {
+            // P1 层级一：含 Symbol 维度（-1）时结果 shape 退化为 unknown（保守）
+            let rty = if r_dc == 2 && a_dc == 2 && r_d1 == a_d0 && r_d0 >= 0 && r_d1 >= 0 && a_d0 >= 0 && a_d1 >= 0 {
                 propagate_tensor_dtype(p, recv_lty, 2, r_d0, a_d1, 0)
             } else {
                 propagate_tensor_dtype(p, recv_lty, 0, 0, 0, 0)
@@ -1915,7 +1971,8 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             if err != "" { push_error(p, err); };
             emit_bmm_flop_estimate(p, recv_lty, arg_lty);
             // Result shape: (B, M, N) if both 3D and B/K match (r_d0=B, r_d2=K, a_d1=K, a_d2=N)
-            let rty = if r_dc == 3 && a_dc == 3 && r_d0 == a_d0 && r_d2 == a_d1 {
+            // P1 层级一：含 Symbol 维度（-1）时结果 shape 退化为 unknown（保守）
+            let rty = if r_dc == 3 && a_dc == 3 && r_d0 == a_d0 && r_d2 == a_d1 && r_d0 >= 0 && r_d1 >= 0 && r_d2 >= 0 && a_d0 >= 0 && a_d1 >= 0 && a_d2 >= 0 {
                 propagate_tensor_dtype(p, recv_lty, 3, r_d0, r_d1, a_d2)
             } else {
                 propagate_tensor_dtype(p, recv_lty, 0, 0, 0, 0)
@@ -1943,12 +2000,17 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
             // tenthc reshape 至多 2D 输出；更高维 dim_count 设 0（unknown）
             let out_dc = if lowered_args.len() <= 2 { lowered_args.len() } else { 0 };
             // Phase 1 numel_compatible 检查（与 Rust types.rs:917-921 / backward_shapes.rs:113 对齐）
-            // 仅在两侧 shape 全 Known 时检查；含 Any/非字面量参数时跳过（保守）
+            // 仅在两侧 shape 全 Known 时检查；含 Any/Symbol/非字面量参数时跳过（保守）
             // out_d2=0：reshape 输出至多 2D，第三维恒为 0
             if !numel_compatible(get_tensor_dim_count(p, recv_lty), get_tensor_dim0(p, recv_lty), get_tensor_dim1(p, recv_lty), get_tensor_dim2(p, recv_lty), out_dc, out_d0, out_d1, 0) {
                 push_error(p, "reshape 反向 shape 不兼容：输入与输出 numel 不一致");
             };
             let rty = propagate_tensor_dtype(p, recv_lty, out_dc, out_d0, out_d1, 0);
+            // P1 层级一：若输出 shape 含 Var 参数，记录 Symbol 名字到 symbol_dims
+            if rty > 0 && rty <= p.type_nodes.len() {
+                let sym_dims = dims_symbol_names_from_args(p, lowered_args);
+                p.type_nodes[rty - 1].symbol_dims = sym_dims;
+            };
             return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", rty);
         };
         return push_expr(p, 8, 0, 0.0, "", false, recv, 0, 0, 0, 0, arg_start, count, 0, 0, "", e.sval, "", 0);

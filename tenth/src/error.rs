@@ -319,3 +319,25 @@ pub fn format_multiple_errors(errors: &[TenthError], source: Option<&str>) -> St
     }
     output
 }
+
+/// 读取 .th 源文件并规范化：
+///   1. strip UTF-8 BOM（PowerShell 等编辑器默认添加，会污染第一行首字符）
+///   2. CRLF → LF（Windows 行尾与 `str::lines()` 剥离 \r 的行为不一致，
+///      会让 build_caret 按字符遍历时每行多计 1 列，导致 caret 列偏移）
+///
+/// 规范化后的 source 应同时用于 Lexer 和 `display_with_source`，
+/// 这样错误显示取到的行与 Lexer 看到的字符严格对齐，caret 不会偏移。
+///
+/// 注意：`lexer.rs::Lexer::new` 内部仍保留 BOM strip 作为防御性代码，
+/// 此函数是入口处的统一规范化，二者不冲突。
+pub fn read_source(path: impl AsRef<std::path::Path>) -> TenthResult<String> {
+    let path = path.as_ref();
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| TenthError::RuntimeError {
+            line: None,
+            col: None,
+            message: format!("无法读取 {}：{}", path.display(), e),
+        })?;
+    let s = raw.strip_prefix('\u{FEFF}').unwrap_or(&raw);
+    Ok(s.replace("\r\n", "\n"))
+}

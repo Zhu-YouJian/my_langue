@@ -16,6 +16,16 @@ use tenth::cli;
 use tenth::runtime::natives;
 
 fn main() {
+    // Windows 中文终端默认代码页 936（GBK），UTF-8 输出会乱码。
+    // 在任何输出之前把控制台输出代码页设为 UTF-8 (65001)。
+    // 只影响输出代码页，不影响 rustyline 输入处理，REPL 安全。
+    #[cfg(windows)]
+    unsafe {
+        unsafe extern "C" {
+            fn SetConsoleOutputCP(code_page: u32) -> i32;
+        }
+        SetConsoleOutputCP(65001);
+    }
     if let Err(e) = run_main() {
         // Errors from lexer/parser/runtime are already formatted by run_file.
         // For other errors (e.g. file-not-found), print a plain message.
@@ -135,10 +145,7 @@ fn source_to_hir(source: &str) -> TenthResult<tenth::hir::hir::HirProgram> {
 
 /// Run a .th source file — try VM first, fall back to tree-walk interpreter.
 fn run_file(path: &str, config: MemoryConfig, sandbox: Option<FsSandbox>, timeout_ms: Option<u128>) -> TenthResult<()> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| tenth::error::TenthError::RuntimeError { line: None, col: None,
-            message: format!("无法读取 {}：{}", path, e),
-        })?;
+    let source = tenth::error::read_source(path)?;
     let hir = match source_to_hir(&source) {
         Ok(hir) => hir,
         Err(e) => {
@@ -299,10 +306,7 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram, sandbox: Option<FsSandbox>, tim
 
 /// Compile a .th file to a .wasm binary.
 fn build_wasm(path: &str) -> TenthResult<()> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| tenth::error::TenthError::RuntimeError { line: None, col: None,
-            message: format!("无法读取 {}：{}", path, e),
-        })?;
+    let source = tenth::error::read_source(path)?;
     let hir = source_to_hir(&source)?;
     let wasm_bytes = compile::compile_to_wasm(&hir)?;
 
@@ -317,10 +321,7 @@ fn build_wasm(path: &str) -> TenthResult<()> {
 
 /// Compile a .th file to WASM and execute it via wasmi.
 fn run_wasm(path: &str) -> TenthResult<()> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| tenth::error::TenthError::RuntimeError { line: None, col: None,
-            message: format!("无法读取 {}：{}", path, e),
-        })?;
+    let source = tenth::error::read_source(path)?;
     let hir = source_to_hir(&source)?;
     compile::run_wasm(&hir)
 }
@@ -328,10 +329,7 @@ fn run_wasm(path: &str) -> TenthResult<()> {
 /// Compile a .th file to bytecode and execute via the stack VM.
 #[allow(dead_code)]
 fn vm_run(path: &str) -> TenthResult<()> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| tenth::error::TenthError::RuntimeError { line: None, col: None,
-            message: format!("无法读取 {}：{}", path, e),
-        })?;
+    let source = tenth::error::read_source(path)?;
     let hir = source_to_hir(&source)?;
     let mut vm = Vm::new();
 

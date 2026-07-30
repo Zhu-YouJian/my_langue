@@ -22,11 +22,12 @@ fn layer_norm<T>(
 
 // Convenience: create learnable layer norm parameters
 // gamma initialized to ones, beta initialized to zeros.
-// 泛型版：make_layer_norm<f32>(dim) 返回 f32 张量，make_layer_norm<f64>(dim) 返回 f64。
+// 保留 f64：内部依赖 ones/zeros native（native 构造函数不支持泛型实例化，
+// 见 hir/lower/lower_expr.rs native 泛型限制 + docs/f32-f64-parity-roadmap.md）。
 //
 // 返回 shape：gamma=[D], beta=[D]，D = dim。
-fn make_layer_norm<T>(dim: i64) -> (Tensor[T, ..], Tensor[T, ..]) {
-    let gamma = ones<T>(dim);
-    let beta = zeros<T>(dim);
+fn make_layer_norm(dim: i64) -> (Tensor[f64, ..], Tensor[f64, ..]) {
+    let gamma = ones(dim);
+    let beta = zeros(dim);
     (gamma, beta)
 }

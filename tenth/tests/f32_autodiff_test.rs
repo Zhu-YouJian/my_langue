@@ -1,4 +1,4 @@
-﻿// f32 自动微分专项测试 — Phase 4
+// f32 自动微分专项测试 — Phase 4
 // 验证方案 B（前向 f32 + 反向 f64 + 梯度按参数 dtype 写回）正确性。
 //
 // 核心路径：
@@ -131,12 +131,17 @@ fn run_vm_autodiff(src: &str) -> Result<Value, String> {
             let sm_slice = sm_data.as_slice().unwrap_or(&[]);
             let tgt_slice = tgt_flat.as_slice().unwrap_or(&[]);
             let mut loss_val = 0.0f64;
-            let n = sm_slice.len() as f64;
+            let sm_shape = sm.shape();
+            let b_size = if sm_shape.is_empty() {
+                1.0f64
+            } else {
+                sm_shape[..sm_shape.len() - 1].iter().product::<usize>() as f64
+            };
             for i in 0..sm_slice.len().min(tgt_slice.len()) {
                 let p = sm_slice[i].max(eps);
                 loss_val -= tgt_slice[i] * p.ln();
             }
-            loss_val /= n.max(1.0);
+            loss_val /= b_size.max(1.0);
             // 按 logits dtype 构造 loss tensor
             let is_f32 = logits_data.is_f32();
             let loss_tensor = if is_f32 {

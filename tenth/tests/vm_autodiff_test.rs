@@ -1,4 +1,4 @@
-﻿use tenth::lexer::lexer::Lexer;
+use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::hir::lower::Lowerer;
 use tenth::runtime::vm::Vm;
@@ -120,12 +120,17 @@ fn run_vm_autodiff(src: &str) -> Result<Value, String> {
             let sm_slice = sm_data.as_slice().unwrap_or(&[]);
             let tgt_slice = tgt_flat.as_slice().unwrap_or(&[]);
             let mut loss_val = 0.0f64;
-            let n = sm_slice.len() as f64;
+            let sm_shape = sm.shape();
+            let b_size = if sm_shape.is_empty() {
+                1.0f64
+            } else {
+                sm_shape[..sm_shape.len() - 1].iter().product::<usize>() as f64
+            };
             for i in 0..sm_slice.len().min(tgt_slice.len()) {
                 let p = sm_slice[i].max(eps);
                 loss_val -= tgt_slice[i] * p.ln();
             }
-            loss_val /= n.max(1.0);
+            loss_val /= b_size.max(1.0);
             let loss_tensor = Tensor::from_vec(vec![loss_val], vec![1]);
             let result = Rc::new(RefCell::new(loss_tensor));
             if vm.recording {
@@ -477,4 +482,80 @@ fn test_vm_autodiff_two_param_model() {
     let total_grad = as_f64(&result).expect("expected numeric value");
     // Both gradients should be non-zero
     assert!(total_grad.abs() > 0.01, "expected non-zero total gradient, got {}", total_grad);
+}
+
+// ── cross_entropy B>1 batch normalization ───────────────────────────────
+//
+// 盲点修复：此前 cross_entropy 只有 B=1 测试（f32_autodiff_test.rs:338），
+// 无法验证 B>1 时 loss 和梯度的归一化是否正确（应除以 B 而非 B*V 或 1）。
+//
+// 公式（与 backward.rs:985-1009 CrossEntropy 反向一致）：
+//   前向：loss = -sum_i(target[i] * log(softmax(logits)[i])) / B
+//   反向：grad = (softmax(logits) - target) / B
+//   其中 B = batch size = product(leading dims)（非 B*V）
+//
+// 测试输入：logits shape [2,3]（B=2, V=3），target shape [2,3]
+//   logits = [[2.0, 1.0, 0.5], [0.0, 0.0, 0.0]]
+//   target = [[1.0, 1.0, 0.0], [0.0, 0.0, 1.0]]  (非 one-hot，使 grad sum ≠ 0)
+//
+// 手算（softmax 沿最后一维）：
+//   row0 softmax = [0.628532, 0.231224, 0.140245]
+//   row1 softmax = [0.333333, 0.333333, 0.333333]
+//   loss = -((1*log(0.628532)+1*log(0.231224)+0) + (0+0+1*log(0.333333))) / 2
+//        = -((-0.464369-1.464369) + (-1.098612)) / 2
+//        = 3.027350 / 2 = 1.513675
+//   grad = (softmax - target) / 2
+//   sum(grad) = ((1-1) + (1-1) + (1-1)) → 每行 sum(softmax)=1
+//            row0: sum(softmax-target) = 1 - 2 = -1（target 行和=2）
+//            row1: sum(softmax-target) = 1 - 1 = 0（target 行和=1）
+//            total = -1，/B=2 → -0.5
+//
+// 区分度：
+//   B=2 归一化：loss ≈ 1.5137, grad sum ≈ -0.5  ✓ 期望
+//   B*V=6 归一化：loss ≈ 0.5046, grad sum ≈ -0.1667
+//   B=1（无归一化）：loss ≈ 3.0274, grad sum ≈ -1.0
+
+#[test]
+fn test_cross_entropy_batch_norm_loss_b2() {
+    // 验证 B>1 时 loss 值符合 /B 归一化（而非 /B*V 或 /1）
+    let src = r#"
+        new_grad();
+        let logits = param(tensor[[2.0, 1.0, 0.5], [0.0, 0.0, 0.0]]);
+        let target = tensor[[1.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let loss = cross_entropy(logits, target);
+        loss.sum()
+    "#;
+    let result = run_vm_autodiff(src).unwrap();
+    let loss = as_f64(&result).expect("expected loss value");
+    // B=2: loss ≈ 1.5137
+    // B*V=6: loss ≈ 0.5046（排除）
+    // B=1: loss ≈ 3.0274（排除）
+    assert!(
+        (loss - 1.5137).abs() < 0.01,
+        "B=2 归一化 loss 应 ≈ 1.5137, got {} (B*V=6 会是 ~0.5046, B=1 会是 ~3.0274)", loss
+    );
+}
+
+#[test]
+fn test_cross_entropy_batch_norm_grad_b2() {
+    // 验证 B>1 时梯度尺度符合 /B 归一化
+    // grad = (softmax - target) / B，sum(grad) = -0.5（B=2）
+    let src = r#"
+        new_grad();
+        let logits = param(tensor[[2.0, 1.0, 0.5], [0.0, 0.0, 0.0]]);
+        let target = tensor[[1.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let loss = cross_entropy(logits, target);
+        backward(loss);
+        stop_grad();
+        grad(logits).sum()
+    "#;
+    let result = run_vm_autodiff(src).unwrap();
+    let g = as_f64(&result).expect("expected grad sum");
+    // B=2: grad sum ≈ -0.5
+    // B*V=6: grad sum ≈ -0.1667（排除）
+    // B=1: grad sum ≈ -1.0（排除）
+    assert!(
+        (g - (-0.5)).abs() < 0.01,
+        "B=2 归一化 grad sum 应 ≈ -0.5, got {} (B*V=6 会是 ~-0.1667, B=1 会是 ~-1.0)", g
+    );
 }

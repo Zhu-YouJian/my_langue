@@ -179,7 +179,7 @@ T23 [论文 T23](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴�
 | `dropout` | （由 `dropout` 方法） | `TapeOp::Dropout` | [autodiff.rs:712](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L712 |
 | `softmax` | [tensor.rs:1153](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L1153 | `TapeOp::Softmax` | [autodiff.rs:735](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L735 |
 | `masked_fill` | [tensor.rs:1086](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L1086 | （非 TapeOp，作为辅助） | N/A |
-| `embedding_lookup` | （由 `embedding_lookup` 方法） | （由 Tape 记录） | 间接 |
+| `embedding_lookup` | （**未实现为张量方法**，2026-07-30 修正） | — | — | nn::embedding 模块改用 `gather(weight, 0, indices)` native 实现，详见 [embedding.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/embedding.th) |
 
 **上层组合层**（[tenth/std/nn/](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/)）：13 个 `.th` 文件，每个文件是命名空间化的薄组合函数。典型例子：
 
@@ -267,12 +267,12 @@ fn scaled_dot_product_attention<T>(
 
 **(5) Embedding**：
 
-- P1：tensor 方法 `embedding_lookup`。✓
-- P2：autodiff 通过 tape 记录（注释 [embedding.th:13](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/embedding.th) L13 "gradient flows back to the weight matrix"）。⚠️ 当前未在 autodiff.rs grep 到独立 `TapeOp::EmbeddingLookup` 节点，可能通过 `MatMul` 等组合实现，故 P2 部分满足。
-- P3：[embedding.th:17-22](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/embedding.th) L17-22 类型化。✓
+- P1：tensor 方法 `embedding_lookup`。❌ **未实现为张量方法**（2026-07-30 修正）。nn::embedding 模块改用 `gather(weight, 0, indices)` native 实现（[embedding.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/embedding.th)）。**已知限制**：`gather` 要求 `weight` 与 `indices` 的 ndim 匹配，`weight[V, D]` + `indices[S]` 会因 ndim 不匹配运行时报错；完整解决需新增 `index_select` native 或 broadcast 支持（推后到 P1 后续）。
+- P2：autodiff 通过 `TapeOp::Gather` 记录（[autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `Gather` 分支：`d_base = scatter_add(grad, dim, index)`，2026-07-06 接入）。✓ P2 满足（通过 Gather 原语反向）。
+- P3：[embedding.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/embedding.th) 类型化。✓
 - P4：不可重定义。✓
 
-结论：Embedding 是弱原语（P2 部分满足）。
+结论：Embedding 是弱原语（P1 改为 gather 组合实现，P2 通过 Gather 原语满足）。
 
 **(6) Scaled Dot-Product Attention**（`scaled_dot_product_attention`）：
 
@@ -540,7 +540,7 @@ Tenth 在 $\mathcal{D}_P=3$ 上领先 PyTorch（0）与 JAX+Flax（0），在 $\
 | `batchnorm.th` | 薄组合 | `x.batchnorm(gamma, beta, eps)` | 低（1 行） | `TapeOp::BatchNorm` |
 | `dropout.th` | 薄组合 | `x.dropout(rate)` | 低（1 行） | `TapeOp::Dropout` |
 | `conv.th` | 薄组合+辅助 | `x.conv2d(w, kH, kW, stride, pad)`, `out + b` | 低（2 行） | `TapeOp::Conv2D` |
-| `embedding.th` | 薄组合 | `weight.embedding_lookup(indices)` | 低（1 行） | 间接（tape 记录） |
+| `embedding.th` | 薄组合 | `gather(weight, 0, indices)` | 低（1 行） | 通过 `TapeOp::Gather`（d_base=scatter_add(grad, dim, index)，index 不可微）；**已知限制**：gather 要求 ndim 匹配，`weight[V,D]`+`indices[S]` 运行时报错 |
 | `loss.th` | 非原语组合 | `pred - target`, `diff * diff`, `diff.abs()`, `pred.log()` | 中 | 通过算术原语 |
 | `positional_encoding.th` | 占位（非原语） | `randn<T>(seq_len, d_model) * 0.01` | 低（1 行占位） | 无（占位） |
 | `attention.th` | 多原语组合 | `matmul`, `transpose`, `*`, `masked_fill`, `softmax`, `dropout` | 中（6 步） | 通过多个 TapeOp |
@@ -715,8 +715,8 @@ Tenth 在 $\mathcal{D}_P=3$ 上领先 PyTorch（0）与 JAX+Flax（0），在 $\
 
 **架构性质**：
 
-- **薄组合**：`fn embedding(weight, indices) { weight.embedding_lookup(indices) }`。
-- **autodiff**：注释标注 "gradient flows back to the weight matrix"（[embedding.th:13](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/embedding.th) L13），但未在 autodiff.rs grep 到独立 `TapeOp::EmbeddingLookup` 节点。**局限 L4**：可能通过 `MatMul` 等组合实现，sparse gradient 不支持。
+- **薄组合**：`fn embedding(weight, indices) { gather(weight, 0, indices) }`（2026-07-30 修正：原 `weight.embedding_lookup(indices)` 已不存在，nn::embedding 改用 `gather` native 实现）。
+- **autodiff**：通过 `TapeOp::Gather` 反向（[autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) Gather 分支：`d_base = scatter_add(grad, dim, index)`，index 不可微，2026-07-06 接入 autodiff）。**已知限制 L4**：`gather` 要求 `weight` 与 `indices` 的 ndim 匹配——`weight[V, D]` + `indices[S]` 会因 ndim 不匹配运行时报错；完整解决需新增 `index_select` native 或 broadcast 支持（推后到 P1 后续）。
 - **符号维度**：⚠️ 使用 `..` 通配符。
 
 ### 7.12 `loss.th`（损失函数）

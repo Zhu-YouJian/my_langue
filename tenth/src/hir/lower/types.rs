@@ -379,10 +379,16 @@ impl Lowerer {
                     }
                     // argmax/argmin：返回 i64 标量（当前运行时仅支持全张量归约，无 axis 参数）
                     "argmax" | "argmin" => Type::Base(BaseType::I64),
-                    // transpose：2D 时反转两维；其他情况保持原 shape（运行时按行列互换）
+                    // transpose：交换最后两维（与运行时 tensor::methods.rs:1057-1063 对齐）
                     "transpose" => {
-                        if dims.len() == 2 {
-                            Type::Tensor { dtype: dtype.clone(), dims: vec![dims[1].clone(), dims[0].clone()] }
+                        // transpose() 交换最后两维（与运行时 tensor::methods.rs:1057-1063 对齐）
+                        // 2D: (M, K) → (K, M)；3D: (B, M, K) → (B, K, M)；其他维度数 ≥ 2 同理
+                        if dims.len() >= 2 {
+                            let n = dims.len();
+                            let mut new_dims = dims.clone();
+                            new_dims[n - 1] = dims[n - 2].clone();
+                            new_dims[n - 2] = dims[n - 1].clone();
+                            Type::Tensor { dtype: dtype.clone(), dims: new_dims }
                         } else {
                             Type::Tensor { dtype: dtype.clone(), dims: dims.clone() }
                         }
@@ -593,9 +599,10 @@ impl Lowerer {
         BaseType::F64
     }
 
-    /// 从构造函数的字面量参数推断 shape。
-    /// 若所有参数都是 IntLiteral（如 `zeros(3, 4)`），返回 `[Known(3), Known(4)]`；
-    /// 任一参数非字面量（如 `zeros(n)`），返回 `[Any]`（运行时才能确定）。
+    /// 从构造函数的参数推断 shape。
+    /// - 整数字面量（如 `zeros(3, 4)`）→ `[Known(3), Known(4)]`
+    /// - 简单变量（如 `randn(n)`）→ `[Symbol("n")]`（P1 层级一：变量提升为 Symbol）
+    /// - 其他形式（表达式、函数调用等，如 `zeros(n*2)`）→ `[Any]`（运行时才能确定）
     pub(super) fn shape_from_int_args(args: &[HirExpr]) -> Vec<Dim> {
         if args.is_empty() {
             return vec![Dim::Any];
@@ -604,6 +611,7 @@ impl Lowerer {
         for a in args {
             match &a.kind {
                 HirExprKind::Literal(Literal::Int(n, _)) => dims.push(Dim::Known(*n)),
+                HirExprKind::Var(name) => dims.push(Dim::Symbol(name.clone())),
                 _ => return vec![Dim::Any],
             }
         }

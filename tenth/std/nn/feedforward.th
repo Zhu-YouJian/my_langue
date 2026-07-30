@@ -29,12 +29,14 @@ fn feedforward<T>(
 }
 
 // Convenience: initialize FFN parameters with He initialization.
-// 泛型版：make_feedforward_params<f32>(...) 返回 f32 张量。
+// 保留 f64：内部依赖 randn/zeros native（native 构造函数不支持泛型实例化，
+// 见 hir/lower/lower_expr.rs native 泛型限制 + docs/f32-f64-parity-roadmap.md）。
 // 返回 shape 与 feedforward 签名对应：w1:[D, D_ff], b1:[D_ff], w2:[D_ff, D], b2:[D]
-fn make_feedforward_params<T>(d_model: i64, d_ff: i64) -> (Tensor[T, D, D_ff], Tensor[T, D_ff], Tensor[T, D_ff, D], Tensor[T, D]) {
-    let w1 = randn<T>(d_model, d_ff) * sqrt(2.0 / d_model);
-    let b1 = zeros<T>(d_ff);
-    let w2 = randn<T>(d_ff, d_model) * sqrt(2.0 / d_ff);
-    let b2 = zeros<T>(d_model);
+// 注：d_model/d_ff 是运行时参数，类型层面用 `..` 通配维度。
+fn make_feedforward_params(d_model: i64, d_ff: i64) -> (Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..]) {
+    let w1 = randn(d_model, d_ff) * sqrt(2.0 / d_model);
+    let b1 = zeros(d_ff);
+    let w2 = randn(d_ff, d_model) * sqrt(2.0 / d_ff);
+    let b2 = zeros(d_model);
     (w1, b1, w2, b2)
 }

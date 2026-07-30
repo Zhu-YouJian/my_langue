@@ -30,13 +30,15 @@ fn transformer_encoder_block<T>(
     b2: Tensor[T, D],
     ln2_gamma: Tensor[T, D],
     ln2_beta: Tensor[T, D],
+    seq_len: i64,
+    d_model: i64,
     n_heads: i64,
     dropout_p: T,
 ) -> Tensor[T, S, D] {
     // Pre-norm: LayerNorm before attention
     let x_norm = layer_norm<T>(x, ln1_gamma, ln1_beta, 1e-5);
     let mask = zeros(1);  // no mask for encoder (mask is metadata, kept as f64)
-    let attn = multihead_attention<T>(x_norm, w_q, w_k, w_v, w_o, mask, n_heads, dropout_p);
+    let attn = multihead_attention<T>(x_norm, w_q, w_k, w_v, w_o, mask, seq_len, d_model, n_heads, dropout_p);
     let x = x + attn;  // residual connection
 
     // Pre-norm: LayerNorm before feed-forward
@@ -46,25 +48,27 @@ fn transformer_encoder_block<T>(
 }
 
 // Convenience: initialize all parameters for a Transformer encoder block
-// 泛型版：make_transformer_block_params<f32>(...) 返回 f32 张量。
+// 保留 f64：内部依赖 randn native + make_layer_norm/make_feedforward_params（均 f64），
+// native 构造函数不支持泛型实例化（见 hir/lower/lower_expr.rs + docs/f32-f64-parity-roadmap.md）。
 //
 // 返回 shape 与 transformer_encoder_block 签名对应：
 //   w_q/w_k/w_v/w_o: [D, D]
 //   ln1_gamma/ln1_beta/ln2_gamma/ln2_beta/b2: [D]
 //   w1: [D, D_ff], b1: [D_ff], w2: [D_ff, D]
-fn make_transformer_block_params<T>(d_model: i64, n_heads: i64, d_ff: i64) -> (
-    Tensor[T, D, D], Tensor[T, D, D], Tensor[T, D, D], Tensor[T, D, D],  // w_q, w_k, w_v, w_o
-    Tensor[T, D], Tensor[T, D],  // ln1_gamma, ln1_beta
-    Tensor[T, D, D_ff], Tensor[T, D_ff], Tensor[T, D_ff, D], Tensor[T, D],  // w1, b1, w2, b2
-    Tensor[T, D], Tensor[T, D],  // ln2_gamma, ln2_beta
+// 注：d_model/d_ff 是运行时参数，类型层面用 `..` 通配维度。
+fn make_transformer_block_params(d_model: i64, n_heads: i64, d_ff: i64) -> (
+    Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..],  // w_q, w_k, w_v, w_o
+    Tensor[f64, ..], Tensor[f64, ..],  // ln1_gamma, ln1_beta
+    Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..], Tensor[f64, ..],  // w1, b1, w2, b2
+    Tensor[f64, ..], Tensor[f64, ..],  // ln2_gamma, ln2_beta
 ) {
     let scale = sqrt(2.0 / d_model);
-    let w_q = randn<T>(d_model, d_model) * scale;
-    let w_k = randn<T>(d_model, d_model) * scale;
-    let w_v = randn<T>(d_model, d_model) * scale;
-    let w_o = randn<T>(d_model, d_model) * scale;
-    let (ln1_gamma, ln1_beta) = make_layer_norm<T>(d_model);
-    let (w1, b1, w2, b2) = make_feedforward_params<T>(d_model, d_ff);
-    let (ln2_gamma, ln2_beta) = make_layer_norm<T>(d_model);
+    let w_q = randn(d_model, d_model) * scale;
+    let w_k = randn(d_model, d_model) * scale;
+    let w_v = randn(d_model, d_model) * scale;
+    let w_o = randn(d_model, d_model) * scale;
+    let (ln1_gamma, ln1_beta) = make_layer_norm(d_model);
+    let (w1, b1, w2, b2) = make_feedforward_params(d_model, d_ff);
+    let (ln2_gamma, ln2_beta) = make_layer_norm(d_model);
     (w_q, w_k, w_v, w_o, ln1_gamma, ln1_beta, w1, b1, w2, b2, ln2_gamma, ln2_beta)
 }

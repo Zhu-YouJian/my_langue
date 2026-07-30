@@ -44,6 +44,14 @@ struct HirType {
     // Rust side `Type::Tensor.dtype: Box<Type>` (types.rs:22-25).
     // Non-Tensor types: always 0. Uses `..` default for zero-init.
     dtype_ty: i64,
+    // ── P1 层级一: Symbol 维度（变量参数）──
+    // For Tensor (disc=1): 分号分隔的 Symbol 维度名字（按 dim 顺序，仅含 Symbol 维度）。
+    // 例如 randn(n) → symbol_dims="n", dim_count=1, dim0=-1；
+    //      randn(2, n) → symbol_dims="n", dim_count=2, dim0=2, dim1=-1。
+    // dim0/dim1/dim2 = -1 表示该维度是 Symbol，名字从 symbol_dims 按 dim 顺序取出。
+    // 空字符串表示无 Symbol 维度（纯 Known 或 Any）。Non-Tensor types: always ""。
+    // 与 Rust 侧 Dim::Symbol(String) 对齐（types.rs:22-25）。
+    symbol_dims: str,
 }
 
 // ── HirExpr node (flat, all fields) ──

@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use crate::error::{TenthError, TenthResult};
@@ -445,10 +445,7 @@ fn load_file(
     limits: &RuntimeLimits,
     def_count: &mut usize,
 ) -> TenthResult<()> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| TenthError::RuntimeError { line: None, col: None,
-            message: format!("cannot read {}: {}", path, e),
-        })?;
+    let source = crate::error::read_source(path)?;
 
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize()?;

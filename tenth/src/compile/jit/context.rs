@@ -5,6 +5,7 @@ use crate::hir::types::BaseType;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 use std::collections::HashMap;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::runtime::vm::Chunk;
 
@@ -39,7 +40,27 @@ impl JitContext {
             return Ok(*f);
         }
 
-        let fn_id = super::translator::translate(&mut self.module, chunk_idx, chunk)?;
+        // 短期方案：用 catch_unwind 包裹 translate，捕获 Cranelift 内部
+        // 断言失败（如循环回边触发的 is_sealed panic），转为 Err 触发既有
+        // fallback 路径（mod.rs:62-65 降级到 VM 解释执行）。
+        // 长期方案见 P2 任务：根本修复循环 JIT 的 leader block 密封策略。
+        let translate_result = catch_unwind(AssertUnwindSafe(|| {
+            super::translator::translate(&mut self.module, chunk_idx, chunk)
+        }));
+        let fn_id = match translate_result {
+            Ok(Ok(id)) => id,
+            Ok(Err(e)) => return Err(e),
+            Err(panic_payload) => {
+                let msg = if let Some(s) = panic_payload.downcast_ref::<String>() {
+                    s.clone()
+                } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                    s.to_string()
+                } else {
+                    "JIT 编译期间发生 panic（可能是 Cranelift 内部断言失败，如循环回边触发的 is_sealed）".to_string()
+                };
+                return Err(format!("JIT translate panic: {}", msg));
+            }
+        };
         self.module.finalize_definitions();
         let raw_ptr = self.module.get_finalized_function(fn_id);
         // SAFETY: `get_finalized_function` 返回 `*const u8`，我们将其 transmute

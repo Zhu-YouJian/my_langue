@@ -820,6 +820,59 @@ th_lower_test!(th_lower_string, "std/string/string.th");
 th_lower_test!(th_lower_iter, "std/collections/iter.th");
 th_lower_test!(th_lower_math_utils, "std/utils/math.th");
 
+// Lower tests for nn/ modules — 验证 HIR 降低成功（不验证运行时数值）
+// 盲点修复：此前 th_parse_test! 只走 lexer+parser，nn 模块从未经过 lower，
+// 导致 native 泛型构造函数的 TypeError 长期未暴露。这些测试确保 nn/*.th
+// 文件能通过 lower 阶段（f64 去泛型后不再触发 TypeError）。
+th_lower_test!(th_lower_nn_positional_encoding, "std/nn/positional_encoding.th");
+th_lower_test!(th_lower_nn_feedforward, "std/nn/feedforward.th");
+th_lower_test!(th_lower_nn_layer_norm, "std/nn/layer_norm.th");
+th_lower_test!(th_lower_nn_multihead_attention, "std/nn/multihead_attention.th");
+
+// embedding.th 的 lower 受 gather ndim 限制：weight[V,D]+indices[S] 维度数
+// 不匹配，lower 阶段 shape 检查报 "维度数 2 ≠ 1"。这是已知的运行时 ndim
+// 限制在 lower 阶段的体现（见 embedding.th 注释）。此测试验证 lower 失败
+// 的原因是 shape 维度不匹配（而非 native 泛型构造函数 TypeError），证明
+// 第一波修复已消除 native 泛型 TypeError，gather ndim 是独立遗留问题。
+#[test]
+fn th_lower_nn_embedding_ndim_limitation() {
+    let err = lower_th_file("std/nn/embedding.th").unwrap_err();
+    // 预期：shape 维度数不匹配（gather ndim 限制），而非 native 泛型 TypeError
+    assert!(
+        err.contains("维度数") || err.contains("dimension") || err.contains("shape"),
+        "embedding lower 失败应为 shape 维度不匹配（gather ndim 限制），实际: {}",
+        err
+    );
+    // 确保不是 native 泛型构造函数的 TypeError（第一波修复目标）
+    assert!(
+        !err.contains("native") || !err.contains("泛型"),
+        "embedding lower 不应再触发 native 泛型构造函数 TypeError，实际: {}",
+        err
+    );
+}
+
+// transformer.th 的 lower 受跨文件泛型函数解析限制：transformer.th 调用
+// layer_norm<T>/multihead_attention<T>/feedforward<T>（定义在其他 .th 文件），
+// 单文件 lower 无法解析跨文件泛型函数，报 "未定义的泛型函数"。这是单文件
+// lower 测试的固有限制（非 native 泛型 TypeError）。此测试验证失败原因是
+// 跨文件解析问题，证明第一波修复已消除 native 泛型 TypeError。
+#[test]
+fn th_lower_nn_transformer_cross_file_limitation() {
+    let err = lower_th_file("std/nn/transformer.th").unwrap_err();
+    // 预期：未定义的泛型函数（跨文件解析限制）
+    assert!(
+        err.contains("未定义") || err.contains("undefined") || err.contains("layer_norm"),
+        "transformer lower 失败应为跨文件泛型函数未定义，实际: {}",
+        err
+    );
+    // 确保不是 native 泛型构造函数的 TypeError（第一波修复目标）
+    assert!(
+        !err.contains("native") || !err.contains("泛型构造"),
+        "transformer lower 不应再触发 native 泛型构造函数 TypeError，实际: {}",
+        err
+    );
+}
+
 // ── File I/O Tests ──────────────────────────────────────────────────────
 
 #[test]

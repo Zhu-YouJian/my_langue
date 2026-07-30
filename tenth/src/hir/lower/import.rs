@@ -1,4 +1,4 @@
-use crate::error::{TenthError, TenthResult};
+use crate::error::TenthResult;
 use crate::hir::hir::HirProgram;
 use super::Lowerer;
 
@@ -44,10 +44,7 @@ impl Lowerer {
     }
 
     pub(super) fn load_and_compile_file(&mut self, path: &std::path::Path, canonical_key: &str) -> TenthResult<Option<HirProgram>> {
-        let source = std::fs::read_to_string(path)
-            .map_err(|e| TenthError::RuntimeError { line: None, col: None,
-                message: format!("无法读取导入 '{}': {}", path.display(), e),
-            })?;
+        let source = crate::error::read_source(path)?;
 
         self.imported_files.insert(canonical_key.to_string());
 

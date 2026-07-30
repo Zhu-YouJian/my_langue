@@ -196,7 +196,31 @@ fn make() -> Tensor[f64, ..] {
 
 #[test]
 fn dynamic_shape_arg_returns_any() {
-    // zeros(n) — 参数非字面量，shape 应为 [Any]
+    // zeros(n*2) — 参数是表达式（非字面量、非简单变量），shape 应为 [Any]
+    // P1 层级一：仅简单变量提升为 Symbol，表达式仍退化为 Any
+    let src = r#"
+fn make(n: i64) -> Tensor[f64, ..] {
+    zeros(n*2)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let make = hir.functions.iter().find(|f| f.name == "make").unwrap();
+    let body_str = format!("{:?}", make.body.kind);
+    // 应包含 Any，不应包含 Known(n) 或 Symbol
+    assert!(
+        body_str.contains("Any"),
+        "zeros(n*2) 应返回 [Any]（表达式参数，动态 shape），body: {}", body_str
+    );
+}
+
+#[test]
+fn test_variable_arg_returns_symbol() {
+    // P1 层级一：zeros(n) — 简单变量参数应提升为 Symbol("n")，而非 Any
     let src = r#"
 fn make(n: i64) -> Tensor[f64, ..] {
     zeros(n)
@@ -210,10 +234,67 @@ fn make(n: i64) -> Tensor[f64, ..] {
     let hir = lowerer.lower_program(&program).expect("lower");
     let make = hir.functions.iter().find(|f| f.name == "make").unwrap();
     let body_str = format!("{:?}", make.body.kind);
-    // 应包含 Any，不应包含 Known(n)
+    // 应包含 Symbol("n")，不应包含 Any
     assert!(
-        body_str.contains("Any"),
-        "zeros(n) 应返回 [Any]（动态 shape），body: {}", body_str
+        body_str.contains("Symbol(\"n\")"),
+        "zeros(n) 应返回 [Symbol(\"n\")]（变量参数提升为 Symbol），body: {}", body_str
+    );
+    assert!(
+        !body_str.contains("Any"),
+        "zeros(n) 不应返回 [Any]（变量参数应提升为 Symbol），body: {}", body_str
+    );
+}
+
+#[test]
+fn test_variable_arg_returns_symbol_randn() {
+    // P1 层级一：randn(n) — 简单变量参数应提升为 Symbol("n")
+    // 验证 randn 也支持变量参数（用户反馈的核心痛点）
+    let src = r#"
+fn make(n: i64) -> Tensor[f64, ..] {
+    randn(n)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let make = hir.functions.iter().find(|f| f.name == "make").unwrap();
+    let body_str = format!("{:?}", make.body.kind);
+    assert!(
+        body_str.contains("Symbol(\"n\")"),
+        "randn(n) 应返回 [Symbol(\"n\")]（变量参数提升为 Symbol），body: {}", body_str
+    );
+    assert!(
+        !body_str.contains("Any"),
+        "randn(n) 不应返回 [Any]（变量参数应提升为 Symbol），body: {}", body_str
+    );
+}
+
+#[test]
+fn test_mixed_literal_variable_args() {
+    // P1 层级一：randn(2, n) — 混合参数，第 0 维 Known(2)，第 1 维 Symbol("n")
+    let src = r#"
+fn make(n: i64) -> Tensor[f64, ..] {
+    randn(2, n)
+}
+"#;
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().unwrap();
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().unwrap();
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).expect("lower");
+    let make = hir.functions.iter().find(|f| f.name == "make").unwrap();
+    let body_str = format!("{:?}", make.body.kind);
+    assert!(
+        body_str.contains("Known(2)") && body_str.contains("Symbol(\"n\")"),
+        "randn(2, n) 应返回 [Known(2), Symbol(\"n\")]（混合参数），body: {}", body_str
+    );
+    assert!(
+        !body_str.contains("Any"),
+        "randn(2, n) 不应返回 [Any]（混合参数应保留 Known+Symbol），body: {}", body_str
     );
 }
 
@@ -459,11 +540,12 @@ fn reshape_fn() -> Tensor[f64, ..] {
 
 #[test]
 fn reshape_dynamic_arg_returns_any() {
-    // x.reshape(n, m) — 参数非字面量，shape 应为 [Any]
+    // x.reshape(n*2, m*2) — 参数是表达式（非字面量、非简单变量），shape 应为 [Any]
+    // P1 层级一：仅简单变量提升为 Symbol，表达式仍退化为 Any
     let src = r#"
 fn reshape_fn(n: i64, m: i64) -> Tensor[f64, ..] {
     let a = zeros(2, 6);
-    a.reshape(n, m)
+    a.reshape(n*2, m*2)
 }
 "#;
     let mut lexer = Lexer::new(src);
@@ -476,7 +558,7 @@ fn reshape_fn(n: i64, m: i64) -> Tensor[f64, ..] {
     let ty_str = format!("{:?}", reshape_fn.body.ty);
     assert!(
         ty_str.contains("Any"),
-        "reshape(n, m) 应返回 [Any]（动态 shape），ty: {}", ty_str
+        "reshape(n*2, m*2) 应返回 [Any]（表达式参数，动态 shape），ty: {}", ty_str
     );
 }
 
@@ -743,10 +825,12 @@ fn good() -> Tensor[f64, ..] {
 
 #[test]
 fn let_annotation_with_dynamic_init_preserves_annotation() {
-    // let x: Tensor[f64, 3, 4] = zeros(n) — actual [Any]，保留 annotation [3, 4]
+    // let x: Tensor[f64, 3, 4] = zeros(n*2) — actual [Any]（表达式参数），保留 annotation [3, 4]
+    // P1 层级一：简单变量 n 提升为 Symbol（维度数已知），无法匹配 2D 注解；
+    //   用表达式 n*2 让 actual 退化为 [Any]（维度数未知），保留注解。
     let src = r#"
 fn good(n: i64) -> Tensor[f64, ..] {
-    let x: Tensor[f64, 3, 4] = zeros(n);
+    let x: Tensor[f64, 3, 4] = zeros(n*2);
     x
 }
 "#;
@@ -804,10 +888,13 @@ fn bad() -> Tensor[f64, ..] {
 
 #[test]
 fn let_annotation_correct_enables_matmul_check() {
-    // let x: Tensor[f64, 3, 4] = zeros(n) — annotation [3,4] 保留，x.matmul(zeros(5,6)) 应报 K 不匹配
+    // let x: Tensor[f64, 3, 4] = zeros(n*2) — actual [Any]（表达式参数），annotation [3,4] 保留，
+    //   x.matmul(zeros(5,6)) 应报 K 不匹配
+    // P1 层级一：简单变量 n 提升为 Symbol（1D），无法匹配 2D 注解；
+    //   用表达式 n*2 让 actual 退化为 [Any]，保留注解 [3,4] 以触发 matmul 检查。
     let src = r#"
 fn bad(n: i64) -> Tensor[f64, ..] {
-    let x: Tensor[f64, 3, 4] = zeros(n);
+    let x: Tensor[f64, 3, 4] = zeros(n*2);
     let b = zeros(5, 6);
     x.matmul(b)
 }

@@ -17,15 +17,16 @@
 // Until per-element tensor indexing/assignment is available, this returns
 // a small random initialization as a placeholder.
 //
-// 泛型版：positional_encoding<f32>(...) 返回 f32 张量，<f64>(...) 返回 f64。
-// 必须显式指定类型参数（函数仅接受 i64 参数，无法从入参推断 T）。
+// 保留 f64：内部依赖 randn native（native 构造函数不支持泛型实例化，
+// 见 hir/lower/lower_expr.rs native 泛型限制 + docs/f32-f64-parity-roadmap.md）。
 //
 // 符号维度标注（Phase 2 短期规划方向 3）：
 //   seq_len: i64   序列长度 S
 //   d_model: i64   模型维度 D
 //   返回: [S, D]   位置编码矩阵（seq_len, d_model），与 embedding 输出相加
-fn positional_encoding<T>(seq_len: i64, d_model: i64) -> Tensor[T, S, D] {
+//   注：seq_len/d_model 是运行时参数，类型层面用 `..` 通配维度。
+fn positional_encoding(seq_len: i64, d_model: i64) -> Tensor[f64, ..] {
     // Placeholder: random init with small variance
     // Replace with sinusoidal encoding once element-wise ops are supported
-    randn<T>(seq_len, d_model) * 0.01
+    randn(seq_len, d_model) * 0.01
 }

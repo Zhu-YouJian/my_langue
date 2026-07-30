@@ -1,4 +1,4 @@
-﻿//! 反向传播实现：`impl Tape::backward` + 专用辅助函数。
+//! 反向传播实现：`impl Tape::backward` + 专用辅助函数。
 //!
 //! 从 `autodiff.rs` 拆分而来（T3c 架构重构），保持原有可见性与语义不变。
 //! `backward` 方法原本是 `impl Tape` 的 `pub fn`，拆分后保持 `pub` 不变。
@@ -983,18 +983,26 @@ impl Tape {
                     }
                 }
                 TapeOp::CrossEntropy => {
-                    // d(CE)/d(logits) = softmax - target
+                    // d(CE)/d(logits) = (softmax - target) / B
+                    // 其中 B = batch size（softmax 张量除最后一维外所有前导维度乘积），
+                    // 与前向的 mean reduction 一致（前向除以 B 而非 B*V）。
                     // input_tensors = [logits, softmax_output, target]
                     if node.input_tensors.len() >= 3 {
-                        let (sm_data, tgt_data) = {
+                        let (sm_data, tgt_data, sm_shape) = {
                             let sm_ref = node.input_tensors[1].borrow();
                             let tgt_ref = node.input_tensors[2].borrow();
-                            (sm_ref.data.clone(), tgt_ref.data.clone())
+                            (sm_ref.data.clone(), tgt_ref.data.clone(), sm_ref.shape())
+                        };
+                        let b_size = if sm_shape.is_empty() {
+                            1.0f64
+                        } else {
+                            sm_shape[..sm_shape.len() - 1].iter().product::<usize>() as f64
                         };
                         dispatch_float!(node.dtype, E, {
                             let sm = E::from_tensor_data(&sm_data);
                             let tgt = E::from_tensor_data(&tgt_data);
-                            let g_a = &sm - &tgt;
+                            // 1/B 因子与前向 mean reduction 配对，保持梯度尺度一致
+                            let g_a = (&sm - &tgt) / E::from_f64(b_size);
                             propagate_grad(node, 0, &E::into_tensor_data(g_a), &mut node_grads)?;
                         });
                     }
