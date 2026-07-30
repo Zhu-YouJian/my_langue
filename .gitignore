@@ -3,6 +3,7 @@ target/
 *.exe
 *.wasm
 *.thw
+*.log
 dbg_out.txt
 test_out.txt
 test_output.txt
