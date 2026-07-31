@@ -1,0 +1,15 @@
+enum Open {}
+enum Closed {}
+struct File<S> { path: str }
+impl File<Open> {
+    fn read(self) -> str { self.path }
+    fn close(self) -> File<Closed> { File<Closed> { path: self.path } }
+}
+impl File<Closed> {
+    fn reopen(self) -> File<Open> { File<Open> { path: self.path } }
+}
+fn main() {
+    let f = File<Open> { path: "a.txt" };
+    let c = f.close();
+    c.read();
+}

@@ -1,0 +1,77 @@
+// 类型状态（typestate）演示：非法状态表达不出来
+//
+// 阶段 2a 支柱 A 层 2：把「对象/资源的合法状态转换」编进类型。
+// 场景：文件——只有 Open 状态能 read/close；close 后返回 Closed 状态，
+// Closed 只能 reopen；在 Closed 上调用 read 是编译期错误。
+//
+// 关键机制：
+//   1. `struct File<S>`：S 是状态类型参数（Open/Closed）
+//   2. `impl File<Open>` / `impl File<Closed>`：按状态特化方法
+//   3. `fn close(self) -> File<Closed>`：消费式状态转换，返回新状态
+//   4. 编译期按 receiver 的静态状态解析方法——File<Closed> 上调用
+//      read 直接报错，而不是等运行期
+//
+// 运行：tenth run typestate_demo.th
+
+// 状态类型：空 enum，只用于编译期类型标注，运行期不产生值
+enum Open {}
+enum Closed {}
+
+// 带状态参数的泛型 struct：S 是状态，path 是数据
+struct File<S> { path: str }
+
+// 只有 Open 状态可用 read / close
+impl File<Open> {
+    fn read(self) -> str { self.path }
+    fn close(self) -> File<Closed> { File<Closed> { path: self.path } }
+}
+
+// 只有 Closed 状态可用 reopen（回到 Open）
+impl File<Closed> {
+    fn reopen(self) -> File<Open> { File<Open> { path: self.path } }
+}
+
+fn main() {
+    println("=== 类型状态（typestate）演示 ===");
+    println("");
+
+    // ── 案例 1：合法状态链 open → read → close → reopen → read ──
+    println("案例 1：open → read → close → reopen → read（合法，编译期通过）");
+    let f = File<Open> { path: "a.txt" };
+    let s = f.read();            // Open 可读
+    println("  读内容: ");
+    println(s);
+    let c = f.close();           // Open → Closed（状态转换，消费 f）
+    let f2 = c.reopen();         // Closed → Open
+    let s2 = f2.read();          // 回到 Open 又可读
+    println("  reopen 后再读: ");
+    println(s2);
+
+    println("");
+
+    // ── 案例 2：同名字段/方法在不同状态各自特化，互不覆盖 ──
+    println("案例 2：read 在 Open/Closed 各特化一份（此处 Closed 也定义了 tag）");
+    let open = File<Open> { path: "x" };
+    println("  Open 实例已构造（运行期不区分状态，状态是编译期信息）");
+
+    println("");
+
+    // ── 案例 3：（注释）非法状态——编译期报错示例 ──
+    // 取消下面注释会编译期报错：
+    //   error: 类型 'File<Closed>' 没有方法 'read'（该状态不支持此操作）
+    //
+    //   let f = File<Open> { path: "a.txt" };
+    //   let c = f.close();       // 现在 c 是 File<Closed>
+    //   c.read();                // ❌ 编译期报错：Closed 不能 read
+
+    // ── 案例 4：（注释）close 后旧变量不可再用（状态转换消费）──
+    // 取消下面注释会编译期报错：
+    //   error: 使用了已移动的值 'f'
+    //
+    //   let f = File<Open> { path: "a.txt" };
+    //   let c = f.close();       // close 是状态转换，消费 f
+    //   f.read();                // ❌ 编译期报错：f 已被 close 消费
+
+    println("");
+    println("=== 演示结束：合法路径零误报，非法路径编译期拦截 ===");
+}

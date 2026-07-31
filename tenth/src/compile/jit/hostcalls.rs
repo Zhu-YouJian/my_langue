@@ -313,12 +313,19 @@ unsafe extern "C" fn host_new_struct(
     } else {
         std::slice::from_raw_parts(args_ptr, flat_len)
     };
+    // 字节码约定：StructLiteral 对每个字段压 [value, name]（name 在顶），
+    // 与 VM 的 NewStruct（先 pop name 再 pop value）一致。flat 布局为
+    // [v_N, n_N, v_{N-1}, n_{N-1}, ..., v_1, n_1]（N=字段数，1=源码首个字段）。
+    // 因此从 flat 末尾向前每 2 个一组取 (n, v)，得到的即是源码声明顺序。
+    // 修复前按 [name, value] 正向配对，导致字段名与值整体颠倒
+    // （如 ("hello", "path")），JIT 路径构造带字段 struct 时字段访问全错。
     let mut fields = Vec::with_capacity(field_count as usize);
-    let mut i = 0;
-    while i + 1 < flat.len() {
-        let fname = match &flat[i] { Value::String(s) => s.clone(), _ => format!("f{}", i / 2) };
-        fields.push((fname, flat[i + 1].clone()));
-        i += 2;
+    let mut i = flat.len();
+    while i >= 2 {
+        let fname = match &flat[i - 1] { Value::String(s) => s.clone(), _ => format!("f{}", (i - 2) / 2) };
+        let val = flat[i - 2].clone();
+        fields.push((fname, val));
+        i -= 2;
     }
     std::ptr::write(out, Value::Struct { name, fields: Rc::new(RefCell::new(fields)) });
 }

@@ -329,6 +329,91 @@ pub(super) fn check_generic_instantiation_soundness(
     Ok(())
 }
 
+// ── 阶段2a M2（G2/G3）：用户类型方法表键与 mangled 命名 ──────────────────────
+//
+// 方法表 `Lowerer.methods` 从「裸类型名」键升级为「类型名 + 状态实参」键：
+// - 裸 impl（`impl File`）→ 键 `File`，对所有状态可用（既有行为）
+// - 特化 impl（`impl File<Open>`）→ 键 `File<Open>`，仅对应状态可用
+// 键由 Type 的叶子名构造，注册端（从 impl generics）与调用端（从 receiver 类型）
+// 使用同一套归一化，保证两侧一致（TypeParam("Open") 与 Struct("Open") 都归一为 "Open"）。
+
+/// 用户类型的 base 名：`File` / `File<Open>` → "File"。非用户类型返回 None。
+pub(super) fn type_base_name(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Struct(name) | Type::TypeParam { name } => Some(name.clone()),
+        Type::Generic { base, .. } => match base.as_ref() {
+            Type::Struct(name) | Type::TypeParam { name } => Some(name.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// 类型实参的叶子名（归一化：`TypeParam("Open")` / `Struct("Open")` / `Enum("Open")` → "Open"）。
+pub(super) fn type_leaf_name(t: &Type) -> String {
+    match t {
+        Type::Struct(name) | Type::TypeParam { name } | Type::Enum(name) | Type::Union(name) => name.clone(),
+        Type::Base(b) => format!("{:?}", b),
+        other => mangle_type_ident(other),
+    }
+}
+
+/// 方法表键：`File`（裸名）或 `File<Open>`（带状态实参）。非用户类型返回 None。
+pub(super) fn type_method_key(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Struct(name) | Type::TypeParam { name } => Some(name.clone()),
+        Type::Generic { base, args } => {
+            let base_name = match base.as_ref() {
+                Type::Struct(name) | Type::TypeParam { name } => name.clone(),
+                _ => return None,
+            };
+            let args_str: Vec<String> = args.iter().map(type_leaf_name).collect();
+            Some(format!("{}<{}>", base_name, args_str.join(", ")))
+        }
+        _ => None,
+    }
+}
+
+/// mangled 前缀：`File` → "File"；`File<Open>` → "File_Open"（非字母数字清洗为 `_`）。
+pub(super) fn type_mangle_prefix(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Struct(name) | Type::TypeParam { name } => Some(name.clone()),
+        Type::Generic { base, args } => {
+            let base_name = match base.as_ref() {
+                Type::Struct(name) | Type::TypeParam { name } => name.clone(),
+                _ => return None,
+            };
+            let args_str: Vec<String> = args.iter().map(type_leaf_name).collect();
+            Some(format!("{}_{}", base_name, args_str.join("_")))
+        }
+        _ => None,
+    }
+}
+
+/// 类型显示形式清洗为字母数字/下划线（用于 mangled 函数名）。
+fn mangle_type_ident(t: &Type) -> String {
+    format!("{}", t)
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
+/// 该类型是否为泛型 struct 实例（base 在 generic_structs 中，即带状态实参的
+/// `File<Open>` 这类）。用于 typestate 的「非法状态方法调用 → 编译期报错」判定。
+/// Vec/Option/Result 等内置泛型不在 generic_structs 中，不会被误判。
+pub(super) fn is_generic_struct_instance(
+    ty: &Type,
+    generic_structs: &HashMap<String, HirGenericStruct>,
+) -> bool {
+    match ty {
+        Type::Generic { base, .. } => match base.as_ref() {
+            Type::Struct(name) | Type::TypeParam { name } => generic_structs.contains_key(name),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 /// 递归替换 HirExpr 中所有 Type 字段（包括子表达式的 ty、ret_ty、params 等）。
 /// AUDIT-11.1.5 / T18 修复：泛型函数实例化时 body 不能直接 clone，
 /// 必须将 body 中所有 TypeParam 替换为 type_map 中的具体类型，

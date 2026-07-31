@@ -1838,6 +1838,15 @@ fn parse_impl_block(p: &mut Parser) -> ImplBlock {
         let type_tok = parser_advance(p);
         type_name = type_tok.sval;
     };
+    // 阶段2a M2（G1 同步）：目标类型可带类型实参——`impl File<Open>` 的
+    // `<Open>` 是状态实参而非 impl 泛型参数。tenthc 语义上不按状态特化
+    // （与 Rust 侧 M2 前一致），但解析必须跳过 `<...>` 使语法不崩。
+    // 简单类型实参（Open/Closed 等 ident）由 parse_generic_params 跳过；
+    // 嵌套类型实参不在自举范围，不额外支持。
+    let t_after_type = parser_peek(p);
+    if t_after_type.disc == 33 { // `<`
+        parse_generic_params(p);
+    };
     parser_advance(p); // skip {
     let mut fns = Vec::new();
     loop {

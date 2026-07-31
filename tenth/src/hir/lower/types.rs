@@ -419,12 +419,22 @@ impl Lowerer {
                 "iter" => Type::Unknown,
                 _ => Type::Unknown,
             },
-            _ => match method {
-                "len" => Type::Base(BaseType::I64),
-                "push" => Type::unit(),
-                "get" => Type::Unknown,
-                _ => Type::Unknown,
-            },
+            _ => {
+                // 阶段2a M2（G3）：用户自定义方法——查方法表返回真实返回类型。
+                // 状态传播的关键：`close(self) -> File<Closed>` 的返回类型在此取出，
+                // 使 `let c = f.close()` 后 c 的类型为 File<Closed>，后续方法解析
+                // 按 Closed 状态过滤。Vec/Option 等内置泛型不在方法表中，返回 None
+                // 落到下方原生方法兜底，保持既有行为。
+                if let Some(def) = self.find_inherent_method(receiver, method) {
+                    return def.return_type.clone();
+                }
+                match method {
+                    "len" => Type::Base(BaseType::I64),
+                    "push" => Type::unit(),
+                    "get" => Type::Unknown,
+                    _ => Type::Unknown,
+                }
+            }
         }
     }
 

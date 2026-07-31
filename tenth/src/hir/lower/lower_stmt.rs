@@ -307,7 +307,7 @@ impl Lowerer {
 
         for item in &program.items {
             match &item.kind {
-                ast::ItemKind::Impl { type_name, trait_name, functions, .. } => {
+                ast::ItemKind::Impl { type_name, trait_name, generics, functions } => {
                     if let Some(trait_name) = trait_name {
                         let trait_name_str = trait_name.name.clone();
                         let type_name_str = type_name.name.clone();
@@ -374,6 +374,30 @@ impl Lowerer {
                             }
                         }
                     } else {
+                        // 阶段2a M2（G2）：impl 按类型实参特化注册。
+                        //
+                        // `impl File<Open>` 的 `<Open>` 被 parse_generic_params 解析进
+                        // `generics`。对 inherent impl，这些是目标类型实参（状态类型），
+                        // 不是 impl 泛型参数——Tenth 目前不解析 `impl<T> ...`（`<` 不能
+                        // 紧跟 impl 关键字），因此无歧义。用它们构造方法表键 `File<Open>`
+                        // 与 mangled 前缀 `File_Open`，使 `impl File<Open>` 与
+                        // `impl File<Closed>` 的方法互不覆盖；裸 `impl File` 键为 `File`，
+                        // 作为所有状态的通用回退（保持既有行为）。
+                        let type_args: Vec<Type> = generics.iter()
+                            .map(|g| Type::from_annotation(&ast::TypeAnnotation::Named(g.name.clone())))
+                            .collect();
+                        let method_key = if type_args.is_empty() {
+                            type_name.name.clone()
+                        } else {
+                            let args_str: Vec<String> = type_args.iter().map(super::type_leaf_name).collect();
+                            format!("{}<{}>", type_name.name, args_str.join(", "))
+                        };
+                        let mangled_prefix = if type_args.is_empty() {
+                            type_name.name.clone()
+                        } else {
+                            let args_str: Vec<String> = type_args.iter().map(super::type_leaf_name).collect();
+                            format!("{}_{}", type_name.name, args_str.join("_"))
+                        };
                         let mut method_map = HashMap::new();
                         for fn_item in functions {
                             if let ast::ItemKind::Function { name, generics, params, return_type, body, .. } = &fn_item.kind {
@@ -410,14 +434,14 @@ impl Lowerer {
                                     is_test: false,
                                 };
                                 // Also register with mangled name for WASM backend method dispatch
-                                let mangled_name = format!("__{}_{}", type_name.name, fn_def.name);
+                                let mangled_name = format!("__{}_{}", mangled_prefix, fn_def.name);
                                 let mut mangled_fn = fn_def.clone();
                                 mangled_fn.name = mangled_name;
                                 self.functions.push(mangled_fn);
                                 method_map.insert(fn_def.name.clone(), fn_def);
                             }
                         }
-                        self.methods.insert(type_name.name.clone(), method_map);
+                        self.methods.insert(method_key, method_map);
                     }
                 }
                 ast::ItemKind::Mod { name, items } => {

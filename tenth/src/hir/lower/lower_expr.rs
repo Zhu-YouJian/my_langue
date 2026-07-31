@@ -526,15 +526,46 @@ impl Lowerer {
                     _ => None,
                 };
                 if let Some(type_name) = recv_type_name {
-                    let mangled = format!("__{}_{}", type_name, method.name);
-                    if self.functions.iter().any(|f| f.name == mangled) {
+                    // 阶段2a M2（G3）：候选 mangled 名按 receiver 状态解析——
+                    // 特化 impl（`impl File<Open>` → `__File_Open_read`）优先；
+                    // 裸 impl（`impl File` → `__File_read`）回退，对所有状态可用
+                    // （保持既有 Generic receiver 行为：G5 测试等）。
+                    let mut candidates: Vec<String> = Vec::new();
+                    if let Some(prefix) = super::type_mangle_prefix(&recv.ty) {
+                        candidates.push(format!("__{}_{}", prefix, method.name));
+                    }
+                    if let Some(key) = super::type_method_key(&recv.ty) {
+                        if key != type_name {
+                            candidates.push(format!("__{}_{}", type_name, method.name));
+                        }
+                    }
+                    if let Some(mangled) = candidates.iter().find(|m| {
+                        self.functions.iter().any(|f| f.name == **m)
+                    }) {
                         let mut all_args = vec![recv.clone()];
                         all_args.extend(lowered_args.clone());
                         let ret_ty = self.resolve_method_type(&recv.ty, &method.name, &all_args);
                         // 编译期 shape 检查（如 matmul 的内侧维度）
                         Self::check_method_shape(&recv.ty, &method.name, &all_args, &span)?;
+                        // 阶段2a M2（G4）：状态转换消费式 self——若方法返回的泛型状态
+                        // 与 receiver 状态不同（如 `close(self) -> File<Closed>` 之于
+                        // `File<Open>`），receiver 变量按值消费，标记为 Moved，
+                        // 后续使用报「使用了已移动的值」。仅当 receiver 是变量、
+                        // 方法是 inherent 用户方法、且确实发生状态转换时触发——
+                        // `read(self) -> str`（状态不变）不消费，保证 `f.read(); f.close()`
+                        // 模式可用。不依赖运行时移动语义，属「状态参数检查」层面。
+                        if let HirExprKind::Var(recv_var) = &recv.kind {
+                            if let Some(def) = self.find_inherent_method(&recv.ty, &method.name) {
+                                let self_by_value = def.params.first()
+                                    .map(|(n, t)| n == "self" && !matches!(t, Type::Ref(..) | Type::MutRef(..)))
+                                    .unwrap_or(false);
+                                if self_by_value && Self::is_state_transition(&recv.ty, &def.return_type) {
+                                    self.scope.try_move(recv_var);
+                                }
+                            }
+                        }
                         let func = HirExpr {
-                            kind: HirExprKind::Var(mangled),
+                            kind: HirExprKind::Var(mangled.clone()),
                             ty: Type::Unknown,
                             span: expr.span.clone(),
                         };
@@ -546,6 +577,20 @@ impl Lowerer {
                             },
                             ty: ret_ty,
                             span: expr.span.clone(),
+                        });
+                    }
+                    // 阶段2a M2（G3）：泛型 struct 实例（如 `File<Closed>`）上调用
+                    // 该方法不存在（特化与裸 impl 都没有）→ 编译期报错——
+                    // 「非法状态表达不出来」（typestate 核心）。非泛型类型保持
+                    // 既有行为（落到 MethodCall，运行时报错），防误报。
+                    if super::is_generic_struct_instance(&recv.ty, &self.generic_structs) {
+                        return Err(TenthError::TypeError {
+                            line: span.line,
+                            col: span.col,
+                            message: format!(
+                                "类型 '{}' 没有方法 '{}'（该状态不支持此操作）",
+                                recv.ty, method.name
+                            ),
                         });
                     }
                 }
@@ -857,7 +902,7 @@ impl Lowerer {
                 }
             }
 
-            ExprKind::StructLiteral { name, generics: _, fields, use_defaults } => {
+            ExprKind::StructLiteral { name, generics, fields, use_defaults } => {
                 let mut lowered_fields: Vec<(String, HirExpr)> = fields.iter()
                     .map(|(id, e)| {
                         let lowered = self.lower_expr(e)?;
@@ -932,7 +977,22 @@ impl Lowerer {
                     }
                 }
 
-                let struct_ty = Type::from_annotation(&ast::TypeAnnotation::Named(ast::Ident { name: name.name.clone(), span: name.span.clone() }));
+                // 阶段2a M2（G1）：泛型 struct 字面量保留类型实参（状态）。
+                // 此前 `File<Open> { ... }` 的 `generics` 被直接丢弃，字面量类型
+                // 固定为 TypeParam("File")，状态无法传播。现在构造
+                // `Type::Generic { base: TypeParam("File"), args: [TypeParam("Open")] }`，
+                // 使方法解析（G3）与返回类型传播（close 的 File<Closed>）可用。
+                let struct_ty = if generics.is_empty() {
+                    Type::from_annotation(&ast::TypeAnnotation::Named(ast::Ident { name: name.name.clone(), span: name.span.clone() }))
+                } else {
+                    let arg_tys: Vec<Type> = generics.iter()
+                        .map(|g| Type::from_annotation(g))
+                        .collect();
+                    Type::Generic {
+                        base: Box::new(Type::TypeParam { name: name.name.clone() }),
+                        args: arg_tys,
+                    }
+                };
                 (HirExprKind::StructLiteral {
                     name: name.name.clone(),
                     fields: lowered_fields,
@@ -1692,5 +1752,54 @@ impl Lowerer {
             }),
             span,
         }
+    }
+
+    /// 阶段2a M2（G3）：按 receiver 类型查找 inherent 用户方法定义。
+    ///
+    /// 查找顺序（与编译期改写候选一致）：
+    /// 1. 特化键（`File<Open>` → `impl File<Open>` 的方法）
+    /// 2. 裸名回退（`File` → `impl File` 的方法，对所有状态可用）
+    /// 3. 模块/import 场景兜底：methods 表不随 use 合并进父 lowerer，
+    ///    改从 `self.functions` 中找 `__File_Open_method` mangled 函数取签名。
+    ///
+    /// 返回方法的 HirFnDef，使 `resolve_method_type` 能取到真实返回类型
+    /// （状态传播的关键：`close(self) -> File<Closed>` 的返回类型在此取出）。
+    pub(super) fn find_inherent_method(&self, receiver: &Type, method: &str) -> Option<HirFnDef> {
+        if let Some(key) = super::type_method_key(receiver) {
+            if let Some(def) = self.methods.get(&key).and_then(|m| m.get(method)) {
+                return Some(def.clone());
+            }
+            if let Some(base) = super::type_base_name(receiver) {
+                if base != key {
+                    if let Some(def) = self.methods.get(&base).and_then(|m| m.get(method)) {
+                        return Some(def.clone());
+                    }
+                }
+            }
+            if let Some(prefix) = super::type_mangle_prefix(receiver) {
+                let mangled = format!("__{}_{}", prefix, method);
+                if let Some(f) = self.functions.iter().find(|f| f.name == mangled) {
+                    return Some(f.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// 阶段2a M2（G4）：判断方法是否「状态转换」——receiver 与返回类型都是
+    /// 同一泛型 struct 的不同状态实参（如 `File<Open>` → `File<Closed>`）。
+    /// 仅此类方法消费 receiver（标记 Moved）；状态不变的方法（如 `read -> str`、
+    /// `touch -> File<Open>`）不消费。
+    pub(super) fn is_state_transition(receiver: &Type, ret_ty: &Type) -> bool {
+        let recv_key = match super::type_method_key(receiver) {
+            Some(k) => k,
+            None => return false,
+        };
+        let ret_key = match super::type_method_key(ret_ty) {
+            Some(k) => k,
+            None => return false,
+        };
+        // 只有 Generic（带实参）才可能发生状态转换；键不同即转换
+        matches!(receiver, Type::Generic { .. }) && recv_key != ret_key
     }
 }
