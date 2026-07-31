@@ -59,17 +59,9 @@ impl Lowerer {
             }
             StmtKind::Return(e) => {
                 let lowered = e.as_ref().map(|e| self.lower_expr(e)).transpose()?;
-                // 跨函数 shape 求解：收集 return 语句的 expr shape（若是 Tensor）
-                // 用于函数体 lower 完后做多 return 路径 join。
-                // 只收集含静态信息的 shape（跳过全 Any 的签名 shape，如递归调用的返回值），
-                // 避免递归函数因签名 shape 维度数不匹配而误报错。
-                if let Some(ret_expr) = &lowered {
-                    if let Type::Tensor { dims, .. } = &ret_expr.ty {
-                        if dims.iter().any(|d| !matches!(d, Dim::Any)) {
-                            self.current_fn_return_shapes.push(dims.clone());
-                        }
-                    }
-                }
+                // 跨函数 shape 求解已函子化（阶段 0）：return 路径 shape 不再在此手工收集，
+                // 而是在函数体 lower 完后由 `collect_return_tensor_dims` 对已 lower 的 HIR
+                // 做纯递归推导（Φ 的构造性定义，见 types.rs）。
                 HirStmtKind::Return(lowered)
             }
             StmtKind::While { cond, body } => {
@@ -593,21 +585,20 @@ impl Lowerer {
                         self.scope.define_var(n.clone(), t.clone(), false);
                     }
 
-                    // 跨函数 shape 求解：lower 函数体前清空 return shapes 收集器
-                    self.current_fn_return_shapes.clear();
                     let lowered_body = self.lower_expr(body)?;
 
                     let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
                     self.scope = outer_scope;
 
-                    // 跨函数 shape 求解：合并 body 推断的 shape 到 return_type
+                    // 跨函数 shape 求解（函子化，阶段 0）：合并 body 推断的 shape 到 return_type
                     // 让调用方能拿到更精确的返回 shape（如 `fn make() -> Tensor[f64, ..] { zeros(3,4) }` → [3,4]）
                     //
-                    // 多 return 路径 join：收集所有 return 语句的 shape + lowered_body.ty 的 shape
-                    // （若 body 末尾是表达式而非 return，lowered_body.ty 是该表达式的类型）。
+                    // 多 return 路径 join：由 `collect_return_tensor_dims` 对已 lower 的 HIR 做
+                    // 纯递归推导——收集所有 return 语句的 shape + Block 末表达式的 shape
+                    // （若 body 末尾是表达式而非 return）。不再依赖全局可变收集器。
                     // join 规则：相同 Known 保留、不同 Known 降为 Any、Symbol 相同保留、不同 Symbol 降为 Any。
                     // 维度数不同则报错（明确的逻辑错误）。
-                    let mut all_shapes: Vec<Vec<Dim>> = std::mem::take(&mut self.current_fn_return_shapes);
+                    let mut all_shapes: Vec<Vec<Dim>> = Self::collect_return_tensor_dims(&lowered_body);
                     if let Type::Tensor { dims, .. } = &lowered_body.ty {
                         if !matches!(lowered_body.ty, Type::Never) && dims.iter().any(|d| !matches!(d, Dim::Any)) {
                             all_shapes.push(dims.clone());

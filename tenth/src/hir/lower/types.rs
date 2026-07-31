@@ -677,6 +677,228 @@ impl Lowerer {
         }
     }
 
+    /// 函子化 shape 分析核心：对已 lower 的 HIR 做结构递归，收集表达式树中
+    /// 所有"return 路径"的 Tensor shape（含隐式末表达式路径）。
+    ///
+    /// 这是映射 Φ: 程序片段 → shape 空间 的**构造性定义**：
+    /// 每个 IR 构造的组合规则直接给出，组合性由构造保证，
+    /// 不依赖任何全局可变收集器（旧的 `current_fn_return_shapes` 字段已移除）：
+    /// - `Block`：所有 stmt 的 return 路径 ∪ `final_expr` 的 shape（隐式返回）
+    /// - `If`：then ∪ else 两分支
+    /// - `Match`：所有 arm body
+    /// - 循环体（While/DoWhile/For/Loop）：体内的 return 路径
+    /// - 调用节点（Call/MethodCall/GenericCall）：其 `ret_ty` 已经编码了 Φ(callee)
+    ///   在调用点的结果——`Φ(f∘g) = Φ(f)∘Φ(g)` 在此自动成立
+    /// - `Closure`：**不下降**（闭包是独立函数体，其 return 属于闭包自身；
+    ///   旧收集器因 lowering 时共享 Lowerer 状态会把闭包 return 误算进外围函数，
+    ///   纯递归版本天然修复此缺陷）
+    ///
+    /// 语义等价于旧的"在 Return 语句处 push"的手工收集器，但：
+    /// 1) 是纯函数——不依赖 Lowerer 的任何可变状态；
+    /// 2) 顺序无关——join 结果与遍历顺序无关（join 是交换的）；
+    /// 3) 不下钻闭包体——如上所述，修复潜在缺陷。
+    pub(super) fn collect_return_tensor_dims(expr: &HirExpr) -> Vec<Vec<Dim>> {
+        let mut out = Vec::new();
+        Self::collect_return_dims_expr(expr, &mut out);
+        out
+    }
+
+    fn collect_return_dims_expr(expr: &HirExpr, out: &mut Vec<Vec<Dim>>) {
+        match &expr.kind {
+            HirExprKind::Block { stmts, final_expr } => {
+                for s in stmts {
+                    Self::collect_return_dims_stmt(s, out);
+                }
+                // 注意：嵌套 Block 的 final_expr 不是 return 路径——其值向上流动，
+                // 由顶层 lowered_body.ty 捕获（见 lower_stmt.rs）。这里只递归
+                // 查找 final_expr 内部嵌套的 return 语句。
+                if let Some(fe) = final_expr {
+                    Self::collect_return_dims_expr(fe, out);
+                }
+            }
+            HirExprKind::If { cond, then_branch, else_branch, .. } => {
+                Self::collect_return_dims_expr(cond, out);
+                Self::collect_return_dims_expr(then_branch, out);
+                if let Some(eb) = else_branch {
+                    Self::collect_return_dims_expr(eb, out);
+                }
+            }
+            HirExprKind::Match { scrutinee, arms, .. } => {
+                Self::collect_return_dims_expr(scrutinee, out);
+                for arm in arms {
+                    if let Some(g) = &arm.guard {
+                        Self::collect_return_dims_expr(g, out);
+                    }
+                    Self::collect_return_dims_expr(&arm.body, out);
+                }
+            }
+            // Closure：闭包体是独立函数，其 return 属于闭包自身，不下钻。
+            HirExprKind::Closure { .. } => {}
+            // 其余表达式节点：return 是语句，只出现在 Block/If/Match/循环体的
+            // 子位置；但子表达式本身可能是 Block（如调用参数、二元操作数），
+            // 因此仍需下降以找到嵌套的 return。逐个枚举所有子表达式。
+            HirExprKind::Binary { left, right, .. } => {
+                Self::collect_return_dims_expr(left, out);
+                Self::collect_return_dims_expr(right, out);
+            }
+            HirExprKind::Unary { expr: inner, .. } => {
+                Self::collect_return_dims_expr(inner, out);
+            }
+            HirExprKind::Call { func, args, .. } => {
+                Self::collect_return_dims_expr(func, out);
+                for a in args {
+                    Self::collect_return_dims_expr(a, out);
+                }
+            }
+            HirExprKind::GenericCall { func, args, .. } => {
+                Self::collect_return_dims_expr(func, out);
+                for a in args {
+                    Self::collect_return_dims_expr(a, out);
+                }
+            }
+            HirExprKind::MethodCall { receiver, args, .. } => {
+                Self::collect_return_dims_expr(receiver, out);
+                for a in args {
+                    Self::collect_return_dims_expr(a, out);
+                }
+            }
+            HirExprKind::Index { target, indices } => {
+                Self::collect_return_dims_expr(target, out);
+                for idx in indices {
+                    match idx {
+                        Index::Single(e) => Self::collect_return_dims_expr(e, out),
+                        Index::Range { start, end, .. } => {
+                            if let Some(s) = start {
+                                Self::collect_return_dims_expr(s, out);
+                            }
+                            if let Some(e) = end {
+                                Self::collect_return_dims_expr(e, out);
+                            }
+                        }
+                        Index::Colon => {}
+                    }
+                }
+            }
+            HirExprKind::Field { target, .. } => {
+                Self::collect_return_dims_expr(target, out);
+            }
+            HirExprKind::TensorLiteral { data, .. } => {
+                for row in data {
+                    for e in row {
+                        Self::collect_return_dims_expr(e, out);
+                    }
+                }
+            }
+            HirExprKind::ArrayLiteral { elements, .. } => {
+                for e in elements {
+                    Self::collect_return_dims_expr(e, out);
+                }
+            }
+            HirExprKind::Range { start, end, .. } => {
+                if let Some(s) = start {
+                    Self::collect_return_dims_expr(s, out);
+                }
+                if let Some(e) = end {
+                    Self::collect_return_dims_expr(e, out);
+                }
+            }
+            HirExprKind::Assign { value, .. } => {
+                Self::collect_return_dims_expr(value, out);
+            }
+            HirExprKind::AssignOp { value, .. } => {
+                Self::collect_return_dims_expr(value, out);
+            }
+            HirExprKind::StructLiteral { fields, .. } => {
+                for (_, e) in fields {
+                    Self::collect_return_dims_expr(e, out);
+                }
+            }
+            HirExprKind::EnumLiteral { fields, .. } => {
+                for (_, e) in fields {
+                    Self::collect_return_dims_expr(e, out);
+                }
+            }
+            HirExprKind::Ref(inner)
+            | HirExprKind::MutRef(inner)
+            | HirExprKind::Deref(inner)
+            | HirExprKind::Move(inner)
+            | HirExprKind::TryBlock(inner)
+            | HirExprKind::Await(inner)
+            | HirExprKind::Spawn(inner) => {
+                Self::collect_return_dims_expr(inner, out);
+            }
+            HirExprKind::DerefAssign { target, value } => {
+                Self::collect_return_dims_expr(target, out);
+                Self::collect_return_dims_expr(value, out);
+            }
+            HirExprKind::DerefAssignOp { target, value, .. } => {
+                Self::collect_return_dims_expr(target, out);
+                Self::collect_return_dims_expr(value, out);
+            }
+            HirExprKind::Yield(inner) => {
+                if let Some(e) = inner {
+                    Self::collect_return_dims_expr(e, out);
+                }
+            }
+            HirExprKind::Tuple(elements) => {
+                for e in elements {
+                    Self::collect_return_dims_expr(e, out);
+                }
+            }
+            HirExprKind::FieldAssign { target, value, .. } => {
+                Self::collect_return_dims_expr(target, out);
+                Self::collect_return_dims_expr(value, out);
+            }
+            // 叶子节点：无子表达式
+            HirExprKind::Literal(_)
+            | HirExprKind::Var(_)
+            | HirExprKind::InterpolatedString { .. } => {}
+        }
+    }
+
+    fn collect_return_dims_stmt(stmt: &HirStmt, out: &mut Vec<Vec<Dim>>) {
+        match &stmt.kind {
+            HirStmtKind::Return(Some(e)) => {
+                Self::push_tensor_dims(&e.ty, out);
+            }
+            HirStmtKind::Return(None) => {}
+            HirStmtKind::Expr(e) => Self::collect_return_dims_expr(e, out),
+            HirStmtKind::Let { init: Some(e), .. } => Self::collect_return_dims_expr(e, out),
+            HirStmtKind::Let { init: None, .. } => {}
+            HirStmtKind::While { cond, body } => {
+                Self::collect_return_dims_expr(cond, out);
+                Self::collect_return_dims_stmt(body, out);
+            }
+            HirStmtKind::DoWhile { body, cond } => {
+                Self::collect_return_dims_stmt(body, out);
+                Self::collect_return_dims_expr(cond, out);
+            }
+            HirStmtKind::For { iter, body, .. } => {
+                Self::collect_return_dims_expr(iter, out);
+                Self::collect_return_dims_stmt(body, out);
+            }
+            HirStmtKind::Loop { body } => {
+                for s in body {
+                    Self::collect_return_dims_stmt(s, out);
+                }
+            }
+            // Break 的值表达式理论上不可能含 return 语句（return 是语句）；
+            // 保守起见仍下降以与旧收集器行为对齐。
+            HirStmtKind::Break(Some(e)) => Self::collect_return_dims_expr(e, out),
+            HirStmtKind::Break(None) | HirStmtKind::Continue => {}
+        }
+    }
+
+    /// 若类型是含静态信息的 Tensor（任一维度非 Any），push 其 dims。
+    /// 过滤条件与旧 `current_fn_return_shapes` 收集器完全一致。
+    fn push_tensor_dims(ty: &Type, out: &mut Vec<Vec<Dim>>) {
+        if let Type::Tensor { dims, .. } = ty {
+            if dims.iter().any(|d| !matches!(d, Dim::Any)) {
+                out.push(dims.clone());
+            }
+        }
+    }
+
     /// 跨函数 shape 求解：多 return 路径的 shape join。
     ///
     /// 收集函数体中所有 return 语句的 shape（以及函数体末尾表达式的 shape），

@@ -1407,6 +1407,150 @@ fn caller() -> Tensor[f64, ..] {
     lower(src).expect("linear + 跨函数参数应编译通过");
 }
 
+// ── 阶段 0：函子化 shape 分析验证 ───────────────────────────────────────────
+//
+// 验证命题：Φ(f∘g) = Φ(f)∘Φ(g) 自动成立。
+// 重构后 return shape 由 `collect_return_tensor_dims` 对已 lower 的 HIR 做
+// 纯递归推导（无全局可变收集器），跨函数组合无需手工维护。
+
+#[test]
+fn functor_three_level_nesting_auto_composes() {
+    // h() -> [3,4], g() = h(), f() = g()。
+    // Φ(f) = Φ(g) = Φ(h) = [3,4] 应由 IR 结构自动涌现，无需任何手工收集。
+    let src = r#"
+fn h() -> Tensor[f64, ..] {
+    zeros(3, 4)
+}
+
+fn g() -> Tensor[f64, ..] {
+    h()
+}
+
+fn f() -> Tensor[f64, ..] {
+    g()
+}
+"#;
+    for name in ["h", "g", "f"] {
+        let def = lower_fn(src, name);
+        let ret_str = format!("{:?}", def.return_type);
+        assert!(
+            ret_str.contains("Known(3)") && ret_str.contains("Known(4)"),
+            "Φ({}) 应自动组合为 [3,4]，实际: {}",
+            name, ret_str
+        );
+    }
+}
+
+#[test]
+fn functor_three_level_nesting_mismatch_reports_error() {
+    // f() -> [3,4]（经 h → g → f 三层组合），@ zeros(5,6) K=4≠5 应编译期拦截。
+    let src = r#"
+fn h() -> Tensor[f64, ..] {
+    zeros(3, 4)
+}
+
+fn g() -> Tensor[f64, ..] {
+    h()
+}
+
+fn f() -> Tensor[f64, ..] {
+    g()
+}
+
+fn bad() -> Tensor[f64, ..] {
+    let x = f();
+    let b = zeros(5, 6);
+    x.matmul(b)
+}
+"#;
+    assert_compile_error(src, "matmul shape 不兼容");
+}
+
+#[test]
+fn functor_three_level_nesting_correct_compiles() {
+    // f() -> [3,4]，@ zeros(4,5) K=4 匹配，应编译通过。
+    let src = r#"
+fn h() -> Tensor[f64, ..] {
+    zeros(3, 4)
+}
+
+fn g() -> Tensor[f64, ..] {
+    h()
+}
+
+fn f() -> Tensor[f64, ..] {
+    g()
+}
+
+fn good() -> Tensor[f64, ..] {
+    let x = f();
+    let b = zeros(4, 5);
+    x.matmul(b)
+}
+"#;
+    lower(src).expect("三层嵌套跨函数 shape 组合应编译通过");
+}
+
+#[test]
+fn functor_generic_instantiation_shape_flow() {
+    // 泛型实例化后 shape 流不破坏：模板 lowering 已把 return shape 精化为 [3,4]，
+    // 实例化 make_t<f64>() 应继承该 shape，@ zeros(5,6) 应在编译期被拦截。
+    let src = r#"
+fn make_t<T>() -> Tensor[f64, ..] {
+    zeros(3, 4)
+}
+
+fn bad() -> Tensor[f64, ..] {
+    let x = make_t<f64>();
+    let b = zeros(5, 6);
+    x.matmul(b)
+}
+"#;
+    assert_compile_error(src, "matmul shape 不兼容");
+}
+
+#[test]
+fn functor_generic_instantiation_correct_compiles() {
+    // 泛型实例化 shape 流：make_t<f64>() -> [3,4]，@ zeros(4,5) 应通过。
+    let src = r#"
+fn make_t<T>() -> Tensor[f64, ..] {
+    zeros(3, 4)
+}
+
+fn good() -> Tensor[f64, ..] {
+    let x = make_t<f64>();
+    let b = zeros(4, 5);
+    x.matmul(b)
+}
+"#;
+    lower(src).expect("泛型实例化后的 shape 流应编译通过");
+}
+
+#[test]
+fn functor_closure_return_not_leaked_to_outer_fn() {
+    // 闭包是独立函数体：闭包内 `return zeros(3,4)` 不应污染外围函数 outer 的
+    // 返回 shape（旧收集器因共享 Lowerer 状态会把闭包 return 误算进外围函数，
+    // 导致 outer 的签名从 [5,6] 被降级为 [Any, Any]）。纯递归推导不下钻闭包。
+    let src = r#"
+fn outer() -> Tensor[f64, ..] {
+    let f = |x: i64| { return zeros(3, 4); };
+    zeros(5, 6)
+}
+"#;
+    let outer = lower_fn(src, "outer");
+    let ret_str = format!("{:?}", outer.return_type);
+    assert!(
+        ret_str.contains("Known(5)") && ret_str.contains("Known(6)"),
+        "outer 返回 shape 应为 [5,6]（闭包 return 不应泄漏），实际: {}",
+        ret_str
+    );
+    assert!(
+        !ret_str.contains("Any"),
+        "outer 返回 shape 不应被闭包 return 降级为 Any，实际: {}",
+        ret_str
+    );
+}
+
 // ── Phase 4: bmm (3D batched matmul) shape 检查 ──────────────────────────────
 //
 // bmm: (B, M, K) @ (B, K, N) → (B, M, N)
