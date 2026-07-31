@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use crate::error::{TenthError, TenthResult};
+use crate::error::{TenthError, TenthResult, TenthWarning};
+use crate::lexer::token::Span;
 use crate::parser::ast as ast;
 use crate::hir::hir::*;
 use crate::hir::types::*;
@@ -8,6 +9,53 @@ use super::build_generics_bounds;
 use super::Lowerer;
 
 impl Lowerer {
+    /// 阶段1-静默失败（层1）：检查表达式是否"静默丢弃"了 Result/Option 值。
+    ///
+    /// 触发条件：表达式类型是 Result/Option（`Type::Generic` base 名为
+    /// `Result`/`Option`——注意注解 `Result<i64, str>` 解析出的 base 是
+    /// `TypeParam("Result")` 而非 `Type::Enum`，两者都要匹配；或 `Type::Enum`
+    /// 同名）且其值被丢弃。
+    ///
+    /// 不算丢弃（不触发）：
+    /// - 被 `?` 消费（`HirExprKind::Unary { op: UnaryOp::Try }`）——即使静态类型
+    ///   因 read_line 等注册为 `Type::Enum("Result")` 而非 Generic 而仍是 Result，
+    ///   也显式排除（`?` 是显式传播）
+    /// - 被 `or_die` / `assume_ok` 消费（这些 native 返回内部值类型，非 Result，
+    ///   由类型检查自然排除）
+    /// - 被 match 消费（match 的类型是 arm 类型，非 Result，由类型检查自然排除）
+    ///
+    /// 注意：函数最后一个表达式作为返回值不算丢弃（那是"使用"），由调用方
+    /// （Block lowering）保证不把 final_expr 传入本函数。
+    pub(super) fn check_silent_failure_discard(&mut self, expr: &HirExpr, span: &Span) {
+        // 类型检查：Result/Option（Generic base 名 或 Enum 同名）
+        let type_name = match &expr.ty {
+            Type::Generic { base, .. } => {
+                let name = match base.as_ref() {
+                    Type::Enum(name) | Type::TypeParam { name } => name,
+                    _ => return,
+                };
+                if name != "Result" && name != "Option" {
+                    return;
+                }
+                name
+            }
+            Type::Enum(name) if name == "Result" || name == "Option" => name,
+            _ => return,
+        };
+        // `x?` 显式传播：不算丢弃
+        if let HirExprKind::Unary { op: UnaryOp::Try, .. } = &expr.kind {
+            return;
+        }
+        self.warnings.push(TenthWarning::new(
+            span.line,
+            span.col,
+            format!(
+                "{} 被忽略，可能静默失败——用 or_die(值, \"消息\") 或 ? 显式处理",
+                type_name
+            ),
+        ));
+    }
+
     pub(super) fn lower_stmt(&mut self, stmt: &ast::Stmt) -> TenthResult<HirStmt> {
         use ast::StmtKind;
 
@@ -131,6 +179,12 @@ impl Lowerer {
                 let mut lowered_body: Vec<HirStmt> = Vec::new();
                 for s in body {
                     let lowered = self.lower_stmt(s)?;
+                    // 阶段1-静默失败：loop 体内所有表达式语句的值都会被丢弃
+                    // （loop 体没有"末表达式作为返回值"的语义），若产出
+                    // Result/Option 则 emit warning。
+                    if let HirStmtKind::Expr(e) = &lowered.kind {
+                        self.check_silent_failure_discard(e, &lowered.span);
+                    }
                     if !Self::creates_persistent_borrow(s) {
                         self.scope.release_borrows();
                     }

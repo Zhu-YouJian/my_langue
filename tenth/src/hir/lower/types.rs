@@ -434,6 +434,31 @@ impl Lowerer {
             // Stage 1+2 I/O 原语
             "env_set" | "exit" => Ok(Type::unit()),
             "read_line" | "env_get" => Ok(Type::Enum("Result".to_string())),
+            // 阶段1-静默失败：or_die(x, msg) / assume_ok(x) 自由函数 native。
+            // 返回类型 = Result/Option 的内部值类型（提取泛型参数 args[0]）。
+            // - Result<T, E> → T；Option<T> → T
+            // - base 名匹配：注解 `Result<i64, str>` 解析出的 base 是
+            //   TypeParam("Result")（from_annotation 的 Generic base 走 Named），
+            //   EnumLiteral 构造的 Result 是 Type::Enum("Result")——两者都匹配。
+            // - 无泛型参数（如 read_line 保守注册为 Type::Enum("Result")）→ Unknown
+            //   此时运行时仍正确解包，仅静态类型信息缺失。
+            "or_die" | "assume_ok" => {
+                let inner = match args.first().map(|a| &a.ty) {
+                    Some(Type::Generic { base, args: gen_args }) => {
+                        let base_name = match base.as_ref() {
+                            Type::Enum(name) | Type::TypeParam { name } => name,
+                            _ => "",
+                        };
+                        if base_name == "Result" || base_name == "Option" {
+                            gen_args.first().cloned().unwrap_or(Type::Unknown)
+                        } else {
+                            Type::Unknown
+                        }
+                    }
+                    _ => Type::Unknown,
+                };
+                Ok(inner)
+            }
             // Stage 3+4 TCP/HTTP 原语：返回 Unit 的 close/set_timeout 与返回 Result 的其余
             "tcp_close" | "tcp_set_timeout" | "tcp_listener_close" | "command_arg" => Ok(Type::unit()),
             "tcp_connect" | "tcp_read" | "tcp_write" | "http_get" | "http_post"

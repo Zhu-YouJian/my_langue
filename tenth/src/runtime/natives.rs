@@ -224,6 +224,58 @@ pub fn register_all_natives(vm: &mut Vm) {
         std::process::exit(code as i32);
     });
 
+    // —— 阶段1-静默失败：Result/Option 显式解包原语 ——
+    // or_die(x, msg)：x 是 Result/Option。Ok/Some → 取出内部值；Err/None → panic（RuntimeError，消息含 msg）。
+    // 与解释器侧 `call_named_fn` 的 "or_die" 分支语义保持一致（双重注册硬要求）。
+    vm.add_native("or_die".into(), |_vm, args| {
+        if args.is_empty() {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "or_die 需要至少 1 个参数（值, 可选消息）".into(),
+            });
+        }
+        match &args[0] {
+            Value::Enum { enum_name, variant, fields } => {
+                let is_ok = (enum_name == "Result" && variant == "Ok")
+                    || (enum_name == "Option" && variant == "Some");
+                if is_ok {
+                    // Ok/Some：取出内部值（_0 字段）
+                    let borrowed = fields.borrow();
+                    let inner = borrowed.first().map(|(_, v)| v.clone()).unwrap_or(Value::Unit);
+                    Ok(inner)
+                } else {
+                    // Err/None：panic（Tenth 运行时错误机制）
+                    let msg = if args.len() >= 2 {
+                        match &args[1] {
+                            Value::String(s) => s.clone(),
+                            v => format!("{}", v),
+                        }
+                    } else {
+                        "值失败".to_string()
+                    };
+                    Err(TenthError::RuntimeError { line: None, col: None,
+                        message: format!("or_die: {}", msg),
+                    })
+                }
+            }
+            // 非 Result/Option：原样透传（不 panic，保持宽容）
+            v => Ok(v.clone()),
+        }
+    });
+    // assume_ok(x)：不做检查直接取内部值（声明"我保证成功"，用户负责）。
+    // 对 Ok/Some 取 _0；对 Err/None 也取 _0（Err 的 _0 是错误消息）或 Unit。
+    vm.add_native("assume_ok".into(), |_vm, args| {
+        match args.first() {
+            Some(Value::Enum { fields, .. }) => {
+                let borrowed = fields.borrow();
+                let inner = borrowed.first().map(|(_, v)| v.clone()).unwrap_or(Value::Unit);
+                Ok(inner)
+            }
+            // 非 Result/Option：原样透传
+            Some(v) => Ok(v.clone()),
+            None => Ok(Value::Unit),
+        }
+    });
+
     // —— TCP 网络原语（句柄表方案，handle 1-based，0 表示无效）——
     vm.add_native("tcp_connect".into(), |vm, args| {
         if args.len() < 2 {

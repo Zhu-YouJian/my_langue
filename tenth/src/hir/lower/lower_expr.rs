@@ -73,6 +73,8 @@ impl Lowerer {
                             | "zeros_f16" | "ones_f16" | "zeros_bf16" | "ones_bf16"
                             | "read_file" | "write_file" | "write_bytes" | "read_bytes"
                             | "read_line" | "env_get" | "env_set" | "exit"
+                            // 阶段1-静默失败：Result/Option 显式解包原语（自由函数 native，非枚举方法）
+                            | "or_die" | "assume_ok"
                             | "str_at" | "str_len" | "str_cmp" | "str_slice" | "str_add" | "str_eq" | "str_int"
                             | "Vec::new" | "HashMap::new"
                             | "compile_host" | "compile_program"
@@ -690,6 +692,20 @@ impl Lowerer {
                 } else {
                     Type::unit()
                 };
+
+                // 阶段1-静默失败（层1）：除 final_expr（块返回值，处于"使用"中）外，
+                // 所有被丢弃的表达式语句若产出 Result/Option 值则 emit TenthWarning。
+                // 例：`read_line();` 作为语句被丢弃 → warning（应写 or_die(值,"消息") 或 ?）。
+                let discard_check_len = if final_expr.is_some() {
+                    lowered_stmts.len().saturating_sub(1)
+                } else {
+                    lowered_stmts.len()
+                };
+                for s in lowered_stmts.iter().take(discard_check_len) {
+                    if let HirStmtKind::Expr(e) = &s.kind {
+                        self.check_silent_failure_discard(e, &s.span);
+                    }
+                }
 
                 // RAII：收集当前作用域中实现了 Drop trait 的变量，在作用域退出时调用 drop()
                 let drop_vars: Vec<String> = self.collect_drop_vars();

@@ -77,6 +77,15 @@
 //   env_set(name, value)     — set environment variable -> Unit
 //   exit(code)               — terminate process with exit code (never returns)
 
+// ── 阶段1-静默失败：Result/Option 显式解包（built-in native 函数）──
+//   or_die(x, msg?)          — x 是 Result/Option。Ok/Some → 取出内部值；
+//                              Err/None → panic（运行时错误，消息含 msg）。
+//                              用于"失败即报错退出"的显式处理。
+//   assume_ok(x)             — 不做检查直接取内部值（声明"我保证成功"，用户负责）。
+//                              Ok/Some → 取 _0；Err/None 也取 _0（或 Unit）。
+//   对应规则：Result/Option 值被静默丢弃（作为语句）会触发编译期 warning
+//   —— 用 or_die / ? / assume_ok 显式处理即可消除。
+
 // ── TCP (built-in native functions) ──
 //   tcp_connect(host, port)  — connect to host:port -> Result<i64> (handle)
 //   tcp_read(handle, n)      — read up to n bytes -> Result<Vec<i64>>
