@@ -23,7 +23,12 @@
 //! 2. **PossibleOverflow**：浮点字面量组合溢出（`1e308 + 1e308` → inf，当前静默）。
 //!    整数组合溢出由既有 lexer 字面量范围检查 + 运行时 `check_int_overflow` 兜底，
 //!    不重复实现（设计文档 §3）。
-//! 3. **PossibleNaN**：字面量零除数已在 lowering 报硬错误（M1 spike），本分析不再出现。
+//! 3. **PossibleNaN**：除数的静态判定已完整（M3 与 shape/常量信息协同）：
+//!    静态零除数（字面量零 / 张量字面量全零 / `zeros*` 构造）已在 lowering 报硬错误
+//!    （M1 spike），不会到达此处；静态非零除数（非零字面量 / 张量字面量全非零 /
+//!    `ones*` 构造）→ 精确豁免不标（M3 正向）；值未知（变量除数 / shape 已知但值未知）
+//!    → 不 speculate（防误报）。故默认严格度下 PossibleNaN 无触发源，层保留为
+//!    机制完整性与未来 speculative 告警的豁免接口。
 
 use std::collections::{HashMap, HashSet};
 use crate::error::TenthError;
@@ -37,9 +42,10 @@ use crate::hir::types::{BaseType, Type};
 pub enum Lossiness {
     Exact,
     PossibleOverflow,
-    /// 静态可判定的 PossibleNaN 来源（字面量零除数）已在 lowering 报硬错误
-    /// （M1 spike），因此本分析不会构造该层——保留为格的一层，供机制完整性
-    /// 与未来工具链（如告警）使用。
+    /// 除数的静态判定已完整（M3 与 shape/常量信息协同）：静态零除数已在 lowering
+    /// 报硬错误（M1 spike），静态非零除数精确豁免（M3），值未知不 speculate
+    /// （防误报）——因此本分析不会构造该层，保留为格的一层，供机制完整性
+    /// 与未来 speculative 告警（静态豁免接口）使用。
     #[allow(dead_code)]
     PossibleNaN,
     Lossy,
@@ -121,6 +127,19 @@ fn op_effect(op: &BinOp, left: &HirExpr, right: &HirExpr) -> Lossiness {
     // PossibleOverflow：浮点字面量组合溢出（如 1e308 + 1e308 → inf，当前静默）
     if float_literal_comb_overflow(op, left, right) {
         e = e.join(Lossiness::PossibleOverflow);
+    }
+    // PossibleNaN：除法/取模的除数静态效应（M3：与 shape/常量信息协同）。
+    // 除数的静态判定已完整（M1 硬错误 + M3 正向豁免）：
+    // - 除数**静态为零**（字面量零 / 张量字面量全零 / `zeros*` 构造）→ 已在
+    //   lowering 报硬错误（M1 spike `check_binary_static_divzero`），不会到达此处；
+    // - 除数**静态非零**（非零字面量 / 张量字面量全非零 / `ones*` 构造，shape
+    //   已知与否不影响）→ 精确：不标 PossibleNaN（M3 正向豁免，防误报）；
+    // - 除数值未知（变量除数 / shape 已知但值未知的张量）→ 不 speculate
+    //   （保持现状，防误报底线：宁可漏报，不可误报）。
+    // 因此 PossibleNaN 在默认严格度下无触发源——保留为格的一层（机制完整性），
+    // 并作为未来 speculative 告警的静态豁免接口。
+    if matches!(op, BinOp::Div | BinOp::Mod) && super::Lowerer::is_statically_nonzero(right) {
+        // 静态非零除数：明确豁免 PossibleNaN（无操作——精确化的落点）。
     }
     e
 }

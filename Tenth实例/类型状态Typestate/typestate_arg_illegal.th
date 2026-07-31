@@ -1,0 +1,27 @@
+// G6 演示：调用点参数类型检查 —— 非法状态实参在编译期拦截
+//
+// 阶段2a G6（2026-08-01）：函数调用时校验实参与形参类型兼容，
+// 不匹配 → 编译期 TypeError（带行/列）。
+// 本文件演示 typestate 的最终保障：`File<Closed>` 实参传给
+// `File<Open>` 形参 → 编译期报「类型不兼容」，而非运行时才炸或静默错误。
+//
+// 运行：tenth run Tenth实例/类型状态Typestate/typestate_arg_illegal.th
+// 期望：编译期报错（第 20 行附近）——「函数 'is_open' 的第 1 个实参（f）类型
+// 不兼容：期望 'File<Open>'，实参为 'File<Closed>'」
+
+enum Open {}
+enum Closed {}
+struct File<S> { path: str }
+
+// 只接受 Open 状态的文件
+fn is_open(f: File<Open>) -> bool { true }
+
+fn main() {
+    // 合法：Open 状态实参 → Open 形参
+    let a = File<Open> { path: "a.txt" };
+    println(is_open(a));
+
+    // 非法：Closed 状态实参传给 Open 形参 —— G6 编译期拦截
+    let c = File<Closed> { path: "c.txt" };
+    is_open(c);
+}

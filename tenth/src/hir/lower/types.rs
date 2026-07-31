@@ -191,6 +191,16 @@ impl Lowerer {
                 let arg_types: Vec<Type> = args.iter().map(|a| a.ty.clone()).collect();
                 match self.scope.resolve_fn_overload(name, &arg_types, span) {
                     Ok((params, ret)) => {
+                        // G6（审计缺口）：调用点参数类型检查——单签名函数也校验实参类型。
+                        // 仅对单签名执行严格检查：多重载的解析（精确匹配/兼容回退）与
+                        // 歧义报告已由 resolve_fn_overload 处理，此处不叠加，避免改变
+                        // 既有重载行为。typestate 场景（`File<Closed>` 传 `File<Open>`）
+                        // 由此拦截，实现"非法状态表达不出来"的最终保障。
+                        if let Some(all) = self.scope.lookup_fn_all(name) {
+                            if all.len() == 1 {
+                                self.check_call_arg_types(name, &params, args, span)?;
+                            }
+                        }
                         // 跨函数 shape 求解：若 self.functions 中有更精确的 return_type（body lower 后合并的），用它
                         let ret = if let Some(fn_def) = self.functions.iter().find(|f| f.name == name.as_str()) {
                             Self::merge_return_shape(&ret, &fn_def.return_type)
@@ -213,6 +223,207 @@ impl Lowerer {
             }
             _ => Ok(Type::Unknown),
         }
+    }
+
+    // ── G6（审计缺口）：调用点参数类型检查 ──────────────────────────────────
+    //
+    // 设计原则：**只对"确定不兼容"报错**，任何不确定性一律放行（防误报是底线）：
+    // - Unknown（未推断）/ Never（发散）→ 放行
+    // - 未声明的 TypeParam（泛型变量 `T`、未标注参数、`Self`）→ 放行
+    // - 数值类型（整型/浮点/bigint/complex/decimal）互相兼容——与运行时值语义一致：
+    //   所有整型都是 Value::Int、所有浮点都是 Value::Float/Float32，且算术对
+    //   Int/Float 混合完全多态（Int + Float → Float，见 interpreter/binary.rs），
+    //   i32 字面量传 i64 形参、f64 传 f32 形参、int 传 float 形参均能运行
+    // - 名义用户类型（struct/enum/union/泛型 struct 名，含 TypeParam 归一）：
+    //   同名 → 兼容；异名 → 不兼容（typestate 状态实参拦截的关键）
+    // - Generic vs Generic：base 兼容 + 实参逐项兼容（File<Open> vs File<Closed>
+    //   的 base 同名但状态实参异名 → 不兼容）
+    // - Generic vs 其他：base 是名义用户类型 → 与对方名义名比对；否则
+    //   （Vec/Option/Result 等内置泛型）保守放行
+    // - Tensor：dtype 兼容 + 维度宽松（Known 精确、Symbol 精确、Any 通配、
+    //   Known vs Symbol 放行——沿用 broadcast_shapes 的宽松约定）
+    // - Ref/MutRef：inner 兼容（&T 与 &mut T 相互视为可借）
+    // - Array/Tuple/FnType：结构逐项
+    // - 其余未覆盖类型：放行
+
+    /// 名义用户类型名：`Struct/Enum/Union` 直接取；`TypeParam` 在命中已声明
+    /// struct/enum/union/泛型 struct 时视为名义类型（`Open`/`Closed` 声明为 enum
+    /// 后即名义）；`Generic` 取其 base 的名义名。未声明的 TypeParam（泛型变量）
+    /// 返回 None。
+    fn nominal_type_name(&self, t: &Type) -> Option<String> {
+        match t {
+            Type::Struct(n) | Type::Enum(n) | Type::Union(n) => Some(n.clone()),
+            Type::TypeParam { name } => {
+                if self.structs.contains_key(name)
+                    || self.enums.contains_key(name)
+                    || self.unions.contains_key(name)
+                    || self.generic_structs.contains_key(name)
+                {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            }
+            Type::Generic { base, .. } => self.nominal_type_name(base),
+            _ => None,
+        }
+    }
+
+    /// 数值基类型：整型/浮点/bigint/complex/decimal 互相兼容（运行时值语义宽松）。
+    fn is_numeric_base(b: BaseType) -> bool {
+        use BaseType::*;
+        matches!(
+            b,
+            I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F16 | F32 | F64 | BF16 | BigInt | C64 | C128 | Decimal
+        )
+    }
+
+    /// 维度兼容：Any 通配；Known/Symbol 精确；Known vs Symbol 保守放行
+    /// （与 broadcast_shapes 的宽松约定一致，避免符号维度误报）。
+    fn dims_compatible(p: &Dim, a: &Dim) -> bool {
+        match (p, a) {
+            (Dim::Any, _) | (_, Dim::Any) => true,
+            (Dim::Known(x), Dim::Known(y)) => x == y,
+            (Dim::Symbol(x), Dim::Symbol(y)) => x == y,
+            (Dim::Known(_), Dim::Symbol(_)) | (Dim::Symbol(_), Dim::Known(_)) => true,
+        }
+    }
+
+    /// Tensor 维度列表兼容：**单个 `[Any]`（`Tensor[T, ..]`）是任意秩通配**，
+    /// 与任意维度列表兼容；否则要求秩相同且逐维兼容。
+    fn tensor_dims_compatible(p: &[Dim], a: &[Dim]) -> bool {
+        if p.len() == 1 && matches!(p[0], Dim::Any) {
+            return true;
+        }
+        if a.len() == 1 && matches!(a[0], Dim::Any) {
+            return true;
+        }
+        p.len() == a.len() && p.iter().zip(a.iter()).all(|(x, y)| Self::dims_compatible(x, y))
+    }
+
+    /// 判断形参类型能否接受实参类型（保守兼容检查，防误报优先）。
+    pub(super) fn types_compatible(&self, param: &Type, arg: &Type) -> bool {
+        // 结构等价（最快路径，覆盖绝大多数精确匹配）
+        if param == arg {
+            return true;
+        }
+        // Unknown / Never：放行（无法/无需静态检查）
+        if matches!(param, Type::Unknown) || matches!(arg, Type::Unknown) {
+            return true;
+        }
+        if matches!(param, Type::Never) || matches!(arg, Type::Never) {
+            return true;
+        }
+
+        // Generic vs Generic：base 与实参逐项比较。必须在名义捷径之前——
+        // `File<Open>` 与 `File<Closed>` 的 base 同名（名义名都是 "File"），
+        // 若先走名义捷径会错误短路放行，typestate 状态差异就无法拦截。
+        if let (Type::Generic { base: pb, args: pa }, Type::Generic { base: ab, args: aa }) = (param, arg)
+        {
+            if pa.len() != aa.len() {
+                return false;
+            }
+            return self.types_compatible(pb, ab)
+                && pa.iter().zip(aa.iter()).all(|(p, a)| self.types_compatible(p, a));
+        }
+
+        // 名义用户类型：两侧都是已声明用户类型时——同名兼容、异名不兼容
+        // （typestate 状态实参 `Open` vs `Closed` 在此拦截；同时
+        //  `TypeParam("Point")` 形参 vs `Struct("Point")` 实参在此归一放行）
+        if let (Some(p), Some(a)) = (self.nominal_type_name(param), self.nominal_type_name(arg)) {
+            return p == a;
+        }
+
+        // TypeParam 形参：**名义用户类型**（已声明的 struct/enum/union/泛型
+        // struct 名）→ 实参必须是同名名义类型（如 `other: Point` 拒收 `42`）；
+        // 未声明的 TypeParam（泛型变量 `T` / 未标注参数 / `Self`）→ 放行。
+        if let Type::TypeParam { name } = param {
+            if self.structs.contains_key(name)
+                || self.enums.contains_key(name)
+                || self.unions.contains_key(name)
+                || self.generic_structs.contains_key(name)
+            {
+                return self.nominal_type_name(arg).as_deref() == Some(name.as_str());
+            }
+            return true;
+        }
+        // TypeParam 实参（泛型变量）：形参是具体类型时无法静态确认 → 放行
+        if matches!(arg, Type::TypeParam { .. }) {
+            return true;
+        }
+
+        match (param, arg) {
+            (Type::Base(a), Type::Base(b)) => Self::is_numeric_base(*a) && Self::is_numeric_base(*b),
+            // Generic 与具体类型：base 是名义用户类型且对方无同名名义 → 不兼容；
+            // 否则（Vec/Option/Result 等内置泛型与数组/标量的交互）保守放行
+            (Type::Generic { base, .. }, other) | (other, Type::Generic { base, .. }) => {
+                match self.nominal_type_name(base) {
+                    Some(b) => self.nominal_type_name(other) == Some(b),
+                    None => true,
+                }
+            }
+            (Type::Array { inner: pi, size: ps }, Type::Array { inner: ai, size: as_ }) => {
+                let size_ok = match (ps, as_) {
+                    (Some(p), Some(a)) => p == a,
+                    _ => true,
+                };
+                size_ok && self.types_compatible(pi, ai)
+            }
+            (Type::Tuple(ps), Type::Tuple(as_)) => {
+                ps.len() == as_.len()
+                    && ps.iter().zip(as_.iter()).all(|(p, a)| self.types_compatible(p, a))
+            }
+            (
+                Type::Tensor { dtype: pd, dims: pdims },
+                Type::Tensor { dtype: ad, dims: adims },
+            ) => {
+                self.types_compatible(pd, ad) && Self::tensor_dims_compatible(pdims, adims)
+            }
+            (Type::Ref(pi, _), Type::Ref(ai, _))
+            | (Type::Ref(pi, _), Type::MutRef(ai, _))
+            | (Type::MutRef(pi, _), Type::Ref(ai, _))
+            | (Type::MutRef(pi, _), Type::MutRef(ai, _)) => self.types_compatible(pi, ai),
+            (Type::FnType { params: pp, ret: pr }, Type::FnType { params: ap, ret: ar }) => {
+                pp.len() == ap.len()
+                    && pp.iter().zip(ap.iter()).all(|(p, a)| self.types_compatible(p, a))
+                    && self.types_compatible(pr, ar)
+            }
+            // 其余未覆盖类型（Range/HeapBox/SharedBox/Pin/Future/Dyn 等）：
+            // 保守放行，避免规则不全导致误报
+            _ => true,
+        }
+    }
+
+    /// 校验调用点实参类型与形参类型兼容（只对确定不兼容报错，带行/列）。
+    /// 尊重变参/默认参数：只检查两侧都存在的参数位置（min 长度），
+    /// 多余实参（变参）与缺失实参（默认值）都不触发。
+    pub(super) fn check_call_arg_types(
+        &self,
+        func_name: &str,
+        params: &[(String, Type)],
+        args: &[HirExpr],
+        span: &Span,
+    ) -> TenthResult<()> {
+        let n = params.len().min(args.len());
+        for i in 0..n {
+            let (pname, pty) = &params[i];
+            let aty = &args[i].ty;
+            if !self.types_compatible(pty, aty) {
+                return Err(TenthError::TypeError {
+                    line: span.line,
+                    col: span.col,
+                    message: format!(
+                        "函数 '{}' 的第 {} 个实参（{}）类型不兼容：期望 '{}'，实参为 '{}'",
+                        func_name,
+                        i + 1,
+                        pname,
+                        pty,
+                        aty
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn resolve_method_type(&self, receiver: &Type, method: &str, _args: &[HirExpr]) -> Type {
@@ -1140,17 +1351,83 @@ impl Lowerer {
         Ok(())
     }
 
-    /// 判断 HirExpr 是否静态可判定为零（lossy lattice M1 spike）。
+    /// 判断 HirExpr 是否静态可判定为零（lossy lattice M1 spike + M3 shape 协同）。
     ///
-    /// 防误报原则（宁可漏报，不可误报）：只认**直接字面量零**与**一元负号包裹的零字面量**
-    /// （`-0` / `-0.0`，作为除数同样产生 ±inf/NaN，且静态可判定）。
-    /// 变量、函数调用、算术表达式一律不判定——例如 `let y = 0.0; x / y` 不报
-    /// （可能被后续赋值改变；即便当前字面量是 0，也只算"运行时值"，不是编译期常量）。
+    /// 防误报原则（宁可漏报，不可误报）：只认**编译期可静态确定**的零：
+    /// - 直接字面量零与一元负号包裹的零字面量（`-0` / `-0.0`，作为除数同样产生
+    ///   ±inf/NaN，且静态可判定）（M1）
+    /// - **张量字面量全零**（`[[0.0, 0.0], [0.0, 0.0]]`）：所有元素静态零
+    ///   → 张量级判零（M3，shape/值均静态已知）
+    /// - **`zeros`/`zeros_f32`/`zeros_f16`/`zeros_bf16` 构造**：内置全零张量构造
+    ///   （shape 已知与否不影响——`zeros` 语义确定返回全零）（M3）
+    ///
+    /// 变量、非 zeros 的函数调用、算术表达式一律不判定——例如 `let y = 0.0; x / y`
+    /// 不报（可能被后续赋值改变；即便当前字面量是 0，也只算"运行时值"，不是编译期常量）。
+    /// **部分零张量**（如 `[[0.0, 1.0]]`）不判定（逐元素粒度过度，先做张量级粒度，
+    /// 漏报接受——设计文档阶段 2b §6 M3）。
     fn is_statically_zero(expr: &HirExpr) -> bool {
         match &expr.kind {
             HirExprKind::Literal(Literal::Int(n, _)) => *n == 0,
             HirExprKind::Literal(Literal::Float(n, _)) => *n == 0.0,
             HirExprKind::Unary { op: UnaryOp::Neg, expr: inner, .. } => Self::is_statically_zero(inner),
+            // M3：张量字面量全零 → 张量级静态零
+            HirExprKind::TensorLiteral { data, .. } => {
+                !data.is_empty()
+                    && data.iter().all(|row| row.iter().all(|el| Self::is_statically_zero(el)))
+            }
+            // M3：内置全零张量构造（zeros/zeros_f32/zeros_f16/zeros_bf16），
+            // 以及 `tensor[[...]]` 字面量调用（参数是张量字面量 → 递归判定全零）
+            HirExprKind::Call { func, args, .. } | HirExprKind::GenericCall { func, args, .. } => {
+                if let HirExprKind::Var(name) = &func.kind {
+                    match name.as_str() {
+                        "zeros" | "zeros_f32" | "zeros_f16" | "zeros_bf16" => true,
+                        // `tensor[[0.0, 0.0], ...]`：parser 解析为 tensor 调用 + 张量字面量参数
+                        "tensor" => args.iter().any(|a| Self::is_statically_zero(a)),
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// 判断 HirExpr 是否静态可判定为**非零**（lossy lattice M3：除零精确化的正向豁免）。
+    ///
+    /// 用途：污点分析（`taint.rs` `op_effect`）中，除法/取模的除数**静态非零** →
+    /// 精确地**不标 PossibleNaN**。与 M1 的"静态零 → 硬错误"互补后，除数的静态
+    /// 判定完整：静态零 → 硬错误；静态非零 → 无污点；值未知 → 不 speculate。
+    ///
+    /// 只认编译期可静态确定的非零：
+    /// - 非零字面量（`2.0` / `1e3` / `-3.0`）与一元负号包裹的非零
+    /// - 张量字面量**所有元素**非零（`[[1.0, 2.0], [3.0, 4.0]]`）
+    /// - `ones`/`ones_f32`/`ones_f16`/`ones_bf16` 构造（内置全一张量构造）
+    ///
+    /// 防误报：本判定只用于**豁免** PossibleNaN（不引入任何新报错），即便误判
+    /// （把可能为零者当非零）也只漏掉污点标记，不产生误报。变量、shape 已知但
+    /// 值未知的张量（如 `Tensor[f64, M, K]` 参数）一律不判定（不 speculate）。
+    pub(super) fn is_statically_nonzero(expr: &HirExpr) -> bool {
+        match &expr.kind {
+            HirExprKind::Literal(Literal::Int(n, _)) => *n != 0,
+            HirExprKind::Literal(Literal::Float(n, _)) => *n != 0.0,
+            HirExprKind::Unary { op: UnaryOp::Neg, expr: inner, .. } => Self::is_statically_nonzero(inner),
+            HirExprKind::TensorLiteral { data, .. } => {
+                !data.is_empty()
+                    && data.iter().all(|row| row.iter().all(|el| Self::is_statically_nonzero(el)))
+            }
+            HirExprKind::Call { func, args, .. } | HirExprKind::GenericCall { func, args, .. } => {
+                if let HirExprKind::Var(name) = &func.kind {
+                    match name.as_str() {
+                        "ones" | "ones_f32" | "ones_f16" | "ones_bf16" => true,
+                        // `tensor[[1.0, 2.0], ...]`：parser 解析为 tensor 调用 + 张量字面量参数
+                        "tensor" => args.iter().any(|a| Self::is_statically_nonzero(a)),
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
     }

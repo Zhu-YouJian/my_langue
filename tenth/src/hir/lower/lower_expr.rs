@@ -462,11 +462,18 @@ impl Lowerer {
                 // 记录泛型实例化函数名：层 3 lossy 污点分析跳过其 body（防误报，
                 // 见 Lowerer.generic_instantiations 注释）。
                 self.generic_instantiations.insert(mangled_name.clone());
+
+                // G6：泛型实例化后的形参（type_map 已代入具体类型），供实例化注册
+                // 与调用点实参检查共用（必须在 already_instantiated 分支之前计算，
+                // 否则已实例化的函数调用点无法拿到形参类型）。
+                let inst_params: Vec<(String, Type)> = template.params.iter()
+                    .map(|(n, t)| (n.clone(), substitute_type(t, &type_map)))
+                    .collect();
+                // G6：泛型实例化调用点参数类型检查（如 `foo<i64>("x")` 的 "x" 不匹配）
+                self.check_call_arg_types(&mangled_name, &inst_params, &lowered_args, &span)?;
+
                 let already_instantiated = self.functions.iter().any(|f| f.name == mangled_name);
                 if !already_instantiated {
-                    let inst_params: Vec<(String, Type)> = template.params.iter()
-                        .map(|(n, t)| (n.clone(), substitute_type(t, &type_map)))
-                        .collect();
                     // AUDIT-11.1.5 / T18 修复：body 不能直接 clone，
                     // 必须递归替换 body 中所有 TypeParam，确保实例化后无残留类型变量。
                     let inst_body = substitute_expr(&template.body, &type_map);
@@ -544,6 +551,13 @@ impl Lowerer {
                     }) {
                         let mut all_args = vec![recv.clone()];
                         all_args.extend(lowered_args.clone());
+                        // G6：用户方法调用点参数类型检查（含 receiver 自身）。
+                        // self 形参类型为 TypeParam("Self")（未声明）→ 自动放行；
+                        // 其余实参按形参类型逐项校验。仅 inherent 用户方法走此路径，
+                        // tensor/原生方法不经过（无 __ 改写），不引入新误报面。
+                        if let Some(def) = self.find_inherent_method(&recv.ty, &method.name) {
+                            self.check_call_arg_types(mangled, &def.params, &all_args, &span)?;
+                        }
                         let ret_ty = self.resolve_method_type(&recv.ty, &method.name, &all_args);
                         // 编译期 shape 检查（如 matmul 的内侧维度）
                         Self::check_method_shape(&recv.ty, &method.name, &all_args, &span)?;
