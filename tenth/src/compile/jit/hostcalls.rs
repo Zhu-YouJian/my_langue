@@ -379,12 +379,36 @@ unsafe extern "C" fn host_make_enum(
     let vm = &mut *vm;
     let enum_name = vm.string_at(name_idx as usize).unwrap_or_default();
     let variant = vm.string_at(variant_idx as usize).unwrap_or_default();
-    // 安全：field_count 经 safe_slice 校验上限
-    let fields_vec: Vec<Value> = safe_slice(args_ptr, field_count).to_vec();
-    let fields: Vec<(String, Value)> = fields_vec.into_iter()
-        .enumerate()
-        .map(|(i, v)| (format!("_{}", i), v))
-        .collect();
+    // 安全：field_count * 2 用 checked_mul，上限同 host_new_struct
+    let flat_len = match (field_count as usize).checked_mul(2) {
+        Some(n) if n <= MAX_HOSTCALL_ARGS * 2 => n,
+        _ => {
+            vm.set_last_error("make_enum: field_count 过大".into());
+            std::ptr::write(out, Value::Unit);
+            return;
+        }
+    };
+    let flat = if args_ptr.is_null() || flat_len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(args_ptr, flat_len)
+    };
+    // 字节码约定：EnumLiteral 对每个字段压 [value, name]（name 在顶），
+    // 与 VM 的 MakeEnum（先 pop name 再 pop value）一致。flat 布局为
+    // [v_N, n_N, v_{N-1}, n_{N-1}, ..., v_1, n_1]（N=字段数，1=源码首个字段）。
+    // 因此从 flat 末尾向前每 2 个一组取 (n, v)，得到的即是源码声明顺序。
+    // 修复前：translator 只弹 field_count 个槽（实际压了 2×field_count），
+    // 且本函数按位置赋名 _0.. 忽略压入的字段名，导致字段名/值错位
+    // （如 Result::Ok(42) 的 _0 字段值被取成字符串 "_0"）。
+    // 与已修复的 host_new_struct 字段序 bug（typestate 阶段）同源。
+    let mut fields = Vec::with_capacity(field_count as usize);
+    let mut i = flat.len();
+    while i >= 2 {
+        let fname = match &flat[i - 1] { Value::String(s) => s.clone(), _ => format!("_{}", fields.len()) };
+        let val = flat[i - 2].clone();
+        fields.push((fname, val));
+        i -= 2;
+    }
     std::ptr::write(out, Value::Enum { enum_name, variant, fields: Rc::new(RefCell::new(fields)) });
 }
 

@@ -463,7 +463,12 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.bump_sp()?;
             }
             MakeEnum(name_i, variant_i, field_count) => {
-                self.sp -= (field_count as i32) * (VALUE_SIZE as i32);
+                // 字节码 EnumLiteral 对每个字段压 [value, name] 两值（name 在顶），
+                // 共 2×field_count 个栈槽——与 NewStruct 的 field_count*2 一致。
+                // 修复前只减 field_count，导致 args_addr 指向 name 槽，
+                // host_make_enum 把字段名当值（or_die(Result::Ok(42)) → "_0"）。
+                let total = field_count * 2;
+                self.sp -= (total as i32) * (VALUE_SIZE as i32);
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_make_enum("host_make_enum", name_i as u64, variant_i as u64, field_count as u64, args_addr, out);

@@ -611,7 +611,11 @@ impl Vm {
                         let val = self.stack.pop().unwrap_or(Value::Unit);
                         fields.push((fname, val));
                     }
-                    fields.reverse();
+                    // 不 reverse：bytecode 按逆序压 [value,name] 对，循环 pop 后
+                    // fields 已按源码声明顺序排列（f0 在首）。reverse 会使字段序
+                    // 变为反源码序，与解释器/JIT（host_make_enum）不一致，导致
+                    // or_die/assume_ok 的 .first() 与 Display 顺序错位
+                    // （2026-08-01 JIT enum 字段颠倒 bug 修复时统一）。
                     self.stack.push(Value::Enum {
                         enum_name,
                         variant,
