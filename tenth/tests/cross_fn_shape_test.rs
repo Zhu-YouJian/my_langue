@@ -378,3 +378,132 @@ fn make() -> Tensor[f64, ..] {
     assert_eq!(dims, vec![Dim::Known(3), Dim::Known(4)],
         "注解 [..] + body [3,4] → 用推断 shape [3, 4]");
 }
+
+// ── 8. 断点 4.1：符号维度 unify（调用点实参代换）──────────────────────────
+// 见 docs/程序代数架构设计.md §4.1。
+// `zeros(a,b)`（变量参数构造器）跨函数后是 [Symbol(a), Symbol(b)]；
+// 调用点 `make(3,4)` 时实参为字面量，应把 Symbol(a)/Symbol(b) 代换为
+// Known(3)/Known(4)，使 matmul/广播检查在编译期生效（不再漏到运行时）。
+
+#[test]
+fn test_variable_arg_ctor_cross_fn_literal_mismatch_reports_error() {
+    // 验收场景（对应 05_cross_fn_shape.th）：
+    // make(3,4) → [3,4]，@ zeros(5,6) 内侧 4≠5 应编译期报错
+    let src = r#"
+fn make(a: i64, b: i64) -> Tensor[f64, ..] {
+    zeros(a, b)
+}
+fn caller() -> Tensor[f64, ..] {
+    let m = make(3, 4);
+    let n = zeros(5, 6);
+    m.matmul(n)
+}
+"#;
+    assert_compile_error(src, "matmul shape 不兼容");
+}
+
+#[test]
+fn test_variable_arg_ctor_cross_fn_literal_correct_compiles() {
+    // make(3,4) → [3,4]，@ zeros(4,5) 内侧 4==4 应编译通过
+    let src = r#"
+fn make(a: i64, b: i64) -> Tensor[f64, ..] {
+    zeros(a, b)
+}
+fn caller() -> Tensor[f64, ..] {
+    let m = make(3, 4);
+    let n = zeros(4, 5);
+    m.matmul(n)
+}
+"#;
+    lower(src).expect("make(3,4) @ zeros(4,5) 应编译通过（unify 后 4==4）");
+}
+
+#[test]
+fn test_variable_arg_ctor_cross_fn_binary_op_mismatch_reports_error() {
+    // 二元广播路径同样受益：make(3,4) + zeros(5,6) 无法广播 → 编译期报错
+    let src = r#"
+fn make(a: i64, b: i64) -> Tensor[f64, ..] {
+    zeros(a, b)
+}
+fn caller() -> Tensor[f64, ..] {
+    make(3, 4) + zeros(5, 6)
+}
+"#;
+    assert_compile_error(src, "shape 不兼容");
+}
+
+#[test]
+fn test_variable_arg_ctor_cross_fn_variable_args_no_false_positive() {
+    // 保守场景：实参也是变量时保持 Symbol（代换为 Symbol 重命名），不误报。
+    // rows/cols 与 zeros(4,5) 的内侧比较走 Symbol vs Known 保守放行。
+    let src = r#"
+fn make(a: i64, b: i64) -> Tensor[f64, ..] {
+    zeros(a, b)
+}
+fn caller() -> Tensor[f64, ..] {
+    let rows = 3;
+    let cols = 4;
+    let m = make(rows, cols);
+    let n = zeros(4, 5);
+    m.matmul(n)
+}
+"#;
+    lower(src).expect("实参为变量：保持 Symbol 保守放行，不应误报");
+}
+
+#[test]
+fn test_variable_arg_ctor_call_site_result_shape_known_in_hir() {
+    // 验证调用点代换真实生效：caller 中 make(3,4) 的结果类型应为 [Known(3), Known(4)]，
+    // 而非 [Symbol(a), Symbol(b)]（若 body 中看不到 Known 说明代换未生效）。
+    let src = r#"
+fn make(a: i64, b: i64) -> Tensor[f64, ..] {
+    zeros(a, b)
+}
+fn caller() -> Tensor[f64, ..] {
+    let m = make(3, 4);
+    m
+}
+"#;
+    let hir = lower_to_hir(src);
+    let caller = hir.functions.iter().find(|f| f.name == "caller").expect("find caller");
+    let body_str = format!("{:?}", caller.body.kind);
+    assert!(
+        body_str.contains("Known(3)") && body_str.contains("Known(4)"),
+        "make(3,4) 调用点结果应为 [Known(3), Known(4)]（实参代换生效），body: {}",
+        body_str
+    );
+}
+
+#[test]
+fn test_symbol_dim_same_name_cross_fn_compiles() {
+    // 07_symbol_dims 场景保持：同名符号维度跨函数仍兼容（不破坏）
+    let src = r#"
+fn scale(a: Tensor[f64, M, K], b: Tensor[f64, K, N]) -> Tensor[f64, M, N] {
+    a.matmul(b)
+}
+fn caller() -> Tensor[f64, ..] {
+    let a = zeros(3, 4);
+    let b = zeros(4, 5);
+    let c = scale(a, b);
+    c.matmul(zeros(4, 5))
+}
+"#;
+    lower(src).expect("同名符号维度跨函数应兼容（07 场景不破坏）");
+}
+
+#[test]
+fn test_symbol_dim_different_name_cross_fn_reports_error() {
+    // 不同名符号维度跨函数仍报错（与 matmul_symbol_dims_different_names_reports_error 对齐）
+    let src = r#"
+fn scale(a: Tensor[f64, M, K], b: Tensor[f64, P, N]) -> Tensor[f64, ..] {
+    a.matmul(b)
+}
+fn caller() -> Tensor[f64, ..] {
+    let a = zeros(3, 4);
+    let b = zeros(4, 5);
+    let c = scale(a, b);
+    c
+}
+"#;
+    assert_compile_error(src, "matmul shape 不兼容");
+}

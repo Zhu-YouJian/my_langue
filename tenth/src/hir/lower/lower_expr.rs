@@ -456,6 +456,18 @@ impl Lowerer {
                     .map(|a| self.lower_expr(a))
                     .collect::<TenthResult<_>>()?;
 
+                // 断点 4.1（符号维度 unify）：泛型实例化调用点实参代换——
+                // 把实例化返回 shape 中的 `Dim::Symbol(形参名)` 代换为调用点
+                // 实参推导的维度（与 resolve_call_type 的普通调用路径一致）。
+                // 只代换形参名对应的 Symbol，保持保守（防误报）。
+                let inst_ret_ty = {
+                    let mut dim_map: HashMap<String, Dim> = HashMap::new();
+                    for ((pname, _pty), arg) in template.params.iter().zip(lowered_args.iter()) {
+                        dim_map.insert(pname.clone(), Self::dim_from_expr(arg));
+                    }
+                    Self::substitute_dims_in_type(&inst_ret_ty, &dim_map)
+                };
+
                 // Generate mangled name and instantiate if not already done
                 let mangled_name: String = type_args.iter()
                     .fold(func_name.clone(), |acc, ty| format!("{}_{}", acc, ty));

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::error::{TenthError, TenthResult, TenthWarning};
 use crate::hir::types::BaseType;
 use crate::lexer::token::Span;
@@ -206,6 +207,20 @@ impl Lowerer {
                             Self::merge_return_shape(&ret, &fn_def.return_type)
                         } else {
                             ret
+                        };
+                        // 断点 4.1（符号维度 unify）：调用点实参代换。
+                        // 把被调函数返回 shape 中的 `Dim::Symbol(形参名)` 代换为
+                        // 调用点实参推导的维度（字面量→Known、简单变量→Symbol、其他→Any）。
+                        // 这是「类型携带参数」的调用点代换（复用 substitute_type 的
+                        // 思路，但作用于 Dim::Symbol→Dim）。只代换形参名对应的 Symbol——
+                        // Symbol 名不在形参列表（来自局部变量/其他来源）时不代换，
+                        // 保持保守（防误报）。见 docs/程序代数架构设计.md §4.1。
+                        let ret = {
+                            let mut dim_map: HashMap<String, Dim> = HashMap::new();
+                            for ((pname, _pty), arg) in params.iter().zip(args.iter()) {
+                                dim_map.insert(pname.clone(), Self::dim_from_expr(arg));
+                            }
+                            Self::substitute_dims_in_type(&ret, &dim_map)
                         };
                         return Ok(self.resolve_struct_type(ret));
                     }
@@ -862,6 +877,51 @@ impl Lowerer {
             }
         }
         dims
+    }
+
+    /// 从单个实参表达式推导维度（断点 4.1 调用点实参代换用）。
+    /// 与 `shape_from_int_args` 的逐参数语义一致：
+    /// - 整数字面量 → `Known(n)`
+    /// - 简单变量 → `Symbol(name)`
+    /// - 其他形式（表达式、函数调用等）→ `Any`（运行时才能确定，保守）
+    pub(super) fn dim_from_expr(expr: &HirExpr) -> Dim {
+        match &expr.kind {
+            HirExprKind::Literal(Literal::Int(n, _)) => Dim::Known(*n),
+            HirExprKind::Var(name) => Dim::Symbol(name.clone()),
+            _ => Dim::Any,
+        }
+    }
+
+    /// 断点 4.1（符号维度 unify）：把类型中 Tensor 维度的 `Dim::Symbol(name)`
+    /// 代换为调用点实参推导的维度（map）。递归下降所有子类型（dtype/Array/
+    /// Tuple/Generic/Ref/MutRef），形态与 `substitute_type`（`mod.rs:278`，
+    /// TypeParam→Type）一致，但作用对象是 Dim::Symbol→Dim。
+    /// map 中不存在的 Symbol 保持原样（保守，不猜测）。
+    pub(super) fn substitute_dims_in_type(ty: &Type, map: &HashMap<String, Dim>) -> Type {
+        match ty {
+            Type::Tensor { dtype, dims } => {
+                let new_dims: Vec<Dim> = dims.iter().map(|d| match d {
+                    Dim::Symbol(name) => map.get(name).cloned().unwrap_or_else(|| d.clone()),
+                    other => other.clone(),
+                }).collect();
+                Type::Tensor {
+                    dtype: Box::new(Self::substitute_dims_in_type(dtype, map)),
+                    dims: new_dims,
+                }
+            }
+            Type::Array { inner, size } => Type::Array {
+                inner: Box::new(Self::substitute_dims_in_type(inner, map)),
+                size: *size,
+            },
+            Type::Tuple(types) => Type::Tuple(types.iter().map(|t| Self::substitute_dims_in_type(t, map)).collect()),
+            Type::Generic { base, args } => Type::Generic {
+                base: Box::new(Self::substitute_dims_in_type(base, map)),
+                args: args.iter().map(|t| Self::substitute_dims_in_type(t, map)).collect(),
+            },
+            Type::Ref(inner, lt) => Type::Ref(Box::new(Self::substitute_dims_in_type(inner, map)), lt.clone()),
+            Type::MutRef(inner, lt) => Type::MutRef(Box::new(Self::substitute_dims_in_type(inner, map)), lt.clone()),
+            _ => ty.clone(),
+        }
     }
 
     /// 标量函数 dtype 推断：若输入为 F32 则返回 F32，否则返回默认（fallback）。
