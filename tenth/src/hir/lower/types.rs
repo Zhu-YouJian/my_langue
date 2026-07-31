@@ -1126,6 +1126,50 @@ impl Lowerer {
         Ok(())
     }
 
+    /// 判断 HirExpr 是否静态可判定为零（lossy lattice M1 spike）。
+    ///
+    /// 防误报原则（宁可漏报，不可误报）：只认**直接字面量零**与**一元负号包裹的零字面量**
+    /// （`-0` / `-0.0`，作为除数同样产生 ±inf/NaN，且静态可判定）。
+    /// 变量、函数调用、算术表达式一律不判定——例如 `let y = 0.0; x / y` 不报
+    /// （可能被后续赋值改变；即便当前字面量是 0，也只算"运行时值"，不是编译期常量）。
+    fn is_statically_zero(expr: &HirExpr) -> bool {
+        match &expr.kind {
+            HirExprKind::Literal(Literal::Int(n, _)) => *n == 0,
+            HirExprKind::Literal(Literal::Float(n, _)) => *n == 0.0,
+            HirExprKind::Unary { op: UnaryOp::Neg, expr: inner, .. } => Self::is_statically_zero(inner),
+            _ => false,
+        }
+    }
+
+    /// 编译期零除数检测（lossy lattice M1 spike，最小落地样例）。
+    ///
+    /// 当 `/` 或 `%` 的右操作数**静态可判定为零**时编译期报错，比现状提前：
+    /// - 现状（基线已实测）：浮点 `1.0 / 0.0` → **静默产生 inf**（静默算错）；
+    ///   整数 `10 / 0` → 运行时"整数除零"错误。
+    /// - 改进后：两类都在 lower 阶段报 `TypeError`，带行列号。
+    ///
+    /// 触发条件（严格限定，防误报）：op ∈ {Div, Mod} 且右操作数是字面量零
+    /// （含 `-0` / `-0.0`）。不覆盖变量除数、函数调用返回值——那些属于
+    /// PossibleNaN 传播（M2），而非本 spike 的静态确定范围。
+    pub(super) fn check_binary_static_divzero(
+        op: &ast::BinOp,
+        right: &HirExpr,
+        span: &Span,
+    ) -> TenthResult<()> {
+        use ast::BinOp;
+        if matches!(op, BinOp::Div | BinOp::Mod) && Self::is_statically_zero(right) {
+            return Err(TenthError::TypeError {
+                line: span.line,
+                col: span.col,
+                message: format!(
+                    "编译期检测到除数为零（右操作数为字面量/静态可判定零）：{} 0 的结果是 inf/NaN（浮点）或触发运行时除零错误（整数），无法作为确定正确的值使用。若确需此语义，请显式检查除数（如 if y == 0.0 则分支处理）；lossy 放行属 M2 规划",
+                    binop_name(op)
+                ),
+            });
+        }
+        Ok(())
+    }
+
     /// 编译期 shape 检查：二元运算（+、-、*、/、%）两侧 Tensor shape 是否兼容。
     ///
     /// 仅在两侧 shape 都含静态信息（Known 或 Symbol，非全 Any）时才检查；

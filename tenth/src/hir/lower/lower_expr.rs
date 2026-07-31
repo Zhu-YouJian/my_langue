@@ -175,6 +175,8 @@ impl Lowerer {
                     } else {
                         // 无特质实现，回退到默认行为
                         Self::check_binary_shape_compat(op, &l.ty, &r.ty, &span)?;
+                        // lossy lattice M1 spike：字面量/静态可判定零除数 → 编译期报错
+                        Self::check_binary_static_divzero(op, &r, &span)?;
                         let ty = self.infer_binary_type(op, &l.ty, &r.ty);
                         let hir_op = lower_binop(op);
                         (HirExprKind::Binary { op: hir_op, left: Box::new(l), right: Box::new(r), ty: ty.clone() }, ty)
@@ -182,6 +184,8 @@ impl Lowerer {
                 } else {
                     // 编译期 shape 检查：两侧 Tensor shape 不兼容时报错
                     Self::check_binary_shape_compat(op, &l.ty, &r.ty, &span)?;
+                    // lossy lattice M1 spike：字面量/静态可判定零除数 → 编译期报错
+                    Self::check_binary_static_divzero(op, &r, &span)?;
                     let ty = self.infer_binary_type(op, &l.ty, &r.ty);
                     let hir_op = lower_binop(op);
                     (HirExprKind::Binary { op: hir_op, left: Box::new(l), right: Box::new(r), ty: ty.clone() }, ty)
