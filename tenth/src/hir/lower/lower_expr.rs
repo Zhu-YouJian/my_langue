@@ -512,6 +512,17 @@ impl Lowerer {
                 // WASM backend can compile it without special method support.
                 let recv_type_name = match &recv.ty {
                     Type::Struct(name) | Type::TypeParam { name } => Some(name.clone()),
+                    // G5 修复（阶段2a M2）：Generic receiver（如 `make() -> File<Open>`
+                    // 的返回类型 `Type::Generic { base: TypeParam("File"), .. }`）上的
+                    // 方法调用也应触发编译期改写。此前该分支缺失导致 Generic receiver
+                    // 仅解释器（按运行时值名查方法表）可用，VM 路径不改写、又无运行时
+                    // 查表兜底，报「没有方法」——两条路径不一致。改写条件
+                    // （`__Type_method` 存在）保证只对 inherent impl 方法生效，与普通
+                    // struct 行为一致；trait 方法不注册 `__` 前缀函数，天然不会命中。
+                    Type::Generic { base, .. } => match base.as_ref() {
+                        Type::Struct(name) | Type::TypeParam { name } => Some(name.clone()),
+                        _ => None,
+                    },
                     _ => None,
                 };
                 if let Some(type_name) = recv_type_name {
