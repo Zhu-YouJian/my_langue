@@ -1,5 +1,6 @@
 target/
 .reasonix/
+.vscode/
 *.exe
 *.wasm
 *.thw
