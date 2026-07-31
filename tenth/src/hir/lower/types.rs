@@ -769,6 +769,10 @@ impl Lowerer {
             HirExprKind::Unary { expr: inner, .. } => {
                 Self::collect_return_dims_expr(inner, out);
             }
+            // lossy 是编译期包装（运行时 no-op）：内层表达式的 return 仍需下钻
+            HirExprKind::Lossy(inner) => {
+                Self::collect_return_dims_expr(inner, out);
+            }
             HirExprKind::Call { func, args, .. } => {
                 Self::collect_return_dims_expr(func, out);
                 for a in args {

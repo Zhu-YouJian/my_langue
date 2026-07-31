@@ -719,6 +719,16 @@ impl Parser {
                     span,
                 })
             }
+            TokenKind::Lossy => {
+                // `lossy expr`：编译期标记"我确认这里可能算错，接受该污点"；
+                // 运行时求值 inner（no-op）。`lossy(expr)` 同样成立（括号是普通分组）。
+                self.advance();
+                let expr = self.parse_unary()?;
+                Ok(Expr {
+                    kind: ExprKind::Lossy(Box::new(expr)),
+                    span,
+                })
+            }
             TokenKind::Star => {
                 self.advance();
                 let expr = self.parse_unary()?;

@@ -112,6 +112,9 @@ pub enum HirExprKind {
         value: Box<HirExpr>,
     },
     Move(Box<HirExpr>),
+    /// `lossy expr`：编译期显式接受可能算错的值（污点归零）；运行时求值 inner（no-op）。
+    /// bytecode/wasm 编译为 inner 表达式本身，无附加指令。
+    Lossy(Box<HirExpr>),
     TryBlock(Box<HirExpr>),
     Await(Box<HirExpr>),
     Spawn(Box<HirExpr>),

@@ -576,6 +576,11 @@ impl super::Interpreter {
                 Ok(Some(val))
             }
 
+            HirExprKind::Lossy(inner) => {
+                // `lossy` 是纯编译期构造（污点归零），运行时 no-op：直接求值 inner
+                self.eval_expr(inner)
+            }
+
             HirExprKind::TryBlock(inner) => {
                 // `try { block }` — catch TryPropagate and wrap as Result::Err
                 match self.eval_expr(inner) {

@@ -667,7 +667,8 @@ impl WasmCompiler {
             HirExprKind::Ref(inner)
             | HirExprKind::MutRef(inner)
             | HirExprKind::Deref(inner)
-            | HirExprKind::TryBlock(inner) => {
+            | HirExprKind::TryBlock(inner)
+            | HirExprKind::Lossy(inner) => {
                 self.compile_expr(body, inner)?;
             }
 

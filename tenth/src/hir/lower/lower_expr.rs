@@ -459,6 +459,9 @@ impl Lowerer {
                 // Generate mangled name and instantiate if not already done
                 let mangled_name: String = type_args.iter()
                     .fold(func_name.clone(), |acc, ty| format!("{}_{}", acc, ty));
+                // 记录泛型实例化函数名：层 3 lossy 污点分析跳过其 body（防误报，
+                // 见 Lowerer.generic_instantiations 注释）。
+                self.generic_instantiations.insert(mangled_name.clone());
                 let already_instantiated = self.functions.iter().any(|f| f.name == mangled_name);
                 if !already_instantiated {
                     let inst_params: Vec<(String, Type)> = template.params.iter()
@@ -1111,6 +1114,15 @@ impl Lowerer {
                     }
                 }
                 (HirExprKind::Move(Box::new(e)), ty)
+            }
+
+            ExprKind::Lossy(inner) => {
+                // `lossy expr`：编译期构造，运行时 no-op——lower 为 HirExprKind::Lossy(inner)，
+                // 各后端（bytecode/wasm）将其编译为 inner 本身。污点归零由 taint.rs 旁路分析
+                // 在 lowering 完成后处理（方案 C，Type/HIR 数据结构零侵入）。
+                let e = self.lower_expr(inner)?;
+                let ty = e.ty.clone();
+                (HirExprKind::Lossy(Box::new(e)), ty)
             }
 
             ExprKind::TryBlock(inner) => {

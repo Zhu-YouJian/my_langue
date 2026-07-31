@@ -762,6 +762,21 @@ impl Lowerer {
             return Err(first_err);
         }
 
+        // 层 3 lossy lattice M2：污点旁路分析（方案 C）
+        // 对已 lower 的完整程序做结构递归污点传播（含跨函数，函子组合性）与使用点检查。
+        // `lossy` 为纯编译期构造（bytecode/wasm 编译为 inner，运行时 no-op），
+        // 本 pass 在 lowering 完成后统一执行，Type/HIR 数据结构零侵入。
+        let taint_errors = super::taint::analyze_program(
+            &self.functions,
+            &self.generic_funcs,
+            &self.methods,
+            &self.generic_instantiations,
+            &main_expr,
+        );
+        if let Some(first_err) = taint_errors.into_iter().next() {
+            return Err(first_err);
+        }
+
         Ok(HirProgram {
             functions: self.functions.clone(),
             generic_funcs: self.generic_funcs.values().cloned().collect(),

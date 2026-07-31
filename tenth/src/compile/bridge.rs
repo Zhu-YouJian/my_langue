@@ -924,6 +924,15 @@ fn convert_expr_depth(
                 span: span.clone(),
             })
         }
+        "lossy" => {
+            // 路径 B（Tenth 前端 → Rust 后端）：lossy 是编译期包装，转换回 ast 节点
+            // 由 Rust lowerer 继续处理（污点归零在 taint.rs 完成）。
+            let inner = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
+            Ok(ast::Expr {
+                kind: ast::ExprKind::Lossy(Box::new(inner)),
+                span: span.clone(),
+            })
+        }
         "try_block" => {
             let inner = convert_expr_depth(left as usize, arrays, span, depth + 1)?;
             Ok(ast::Expr {

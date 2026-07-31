@@ -367,6 +367,7 @@ impl Lexer {
             "in" => TokenKind::In,
             "move" => TokenKind::Move,
             "dyn" => TokenKind::Dyn,
+            "lossy" => TokenKind::Lossy,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             _ => TokenKind::Identifier(s),

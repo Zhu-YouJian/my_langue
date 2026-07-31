@@ -14,6 +14,8 @@ mod types;
 mod closures;
 mod backward_shapes;
 mod backward_shape_pass;
+/// 层 3 lossy lattice 污点旁路分析（方案 C，M2）：`lossy` 关键字 + 污点传播 + 使用点检查。
+mod taint;
 
 use self::scope::Scope;
 use self::scope::Ownership;
@@ -35,6 +37,11 @@ pub struct Lowerer {
     search_paths: Vec<String>,
     /// Set of files already imported (to prevent circular imports)
     imported_files: HashSet<String>,
+    /// 泛型实例化产生的 mangled 函数名（如 `scale_Tensor[f16, ..]`）。
+    /// 层 3 lossy 污点分析跳过这些函数体——泛型实例化是模板的机械展开，
+    /// 按「类型不确定（泛型）时不报」的防误报原则，不参与污点判定
+    /// （实例化体类型虽已具体化，但标准库大量泛型化，参与会导致大面积新报错）。
+    pub(super) generic_instantiations: HashSet<String>,
     /// 编译期收集的警告（内存/算力预估等，非致命）
     pub(super) warnings: Vec<TenthWarning>,
     // 注意：跨函数 shape 求解已函子化（阶段 0）——不再使用全局可变收集器
@@ -84,6 +91,8 @@ impl Lowerer {
             }
             // 直接 Ref/MutRef 在外层包装（如 Move(&x)）也视为持久借用源
             ExprKind::Move(inner) => Self::expr_may_produce_ref(inner),
+            // lossy(&x)：同样视为持久借用源（lossy 是编译期包装，借用语义不变）
+            ExprKind::Lossy(inner) => Self::expr_may_produce_ref(inner),
             _ => false,
         }
     }
@@ -151,6 +160,7 @@ impl Lowerer {
             trait_impls: HashMap::new(),
             search_paths: Vec::new(),
             imported_files: HashSet::new(),
+            generic_instantiations: HashSet::new(),
             warnings: Vec::new(),
         };
 
@@ -337,8 +347,7 @@ fn substitute_expr_in_place(expr: &mut HirExpr, map: &HashMap<String, Type>) {
 fn substitute_kind_in_place(kind: &mut HirExprKind, map: &HashMap<String, Type>) {
     use crate::hir::hir::Index as HirIndex;
     match kind {
-        HirExprKind::Literal(_) | HirExprKind::Var(_) | HirExprKind::InterpolatedString { .. } => {}
-        HirExprKind::Binary { left, right, ty, .. } => {
+        HirExprKind::Literal(_) | HirExprKind::Var(_) | HirExprKind::InterpolatedString { .. } => {}        HirExprKind::Binary { left, right, ty, .. } => {
             *ty = substitute_type(ty, map);
             substitute_expr_in_place(left, map);
             substitute_expr_in_place(right, map);
@@ -346,6 +355,10 @@ fn substitute_kind_in_place(kind: &mut HirExprKind, map: &HashMap<String, Type>)
         HirExprKind::Unary { expr, ty, .. } => {
             *ty = substitute_type(ty, map);
             substitute_expr_in_place(expr, map);
+        }
+        HirExprKind::Lossy(inner) => {
+            // lossy 是编译期包装：内层表达式的类型仍需替换
+            substitute_expr_in_place(inner, map);
         }
         HirExprKind::Call { func, args, ret_ty } => {
             *ret_ty = substitute_type(ret_ty, map);

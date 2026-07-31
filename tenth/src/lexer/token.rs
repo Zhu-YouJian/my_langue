@@ -66,6 +66,9 @@ pub enum TokenKind {
     False,
     Move,
     Dyn,
+    /// `lossy expr`：显式接受可能算错的值（编译期污点归零，运行时 no-op）。
+    /// 对应 Rust 的 `unsafe`："我知道这里可能算错，我负责"。
+    Lossy,
 
     Plus,
     Minus,
@@ -197,6 +200,7 @@ impl fmt::Display for TokenKind {
             TokenKind::False => write!(f, "false"),
             TokenKind::Move => write!(f, "move"),
             TokenKind::Dyn => write!(f, "dyn"),
+            TokenKind::Lossy => write!(f, "lossy"),
             TokenKind::Plus => write!(f, "+"),
             TokenKind::Minus => write!(f, "-"),
             TokenKind::Star => write!(f, "*"),

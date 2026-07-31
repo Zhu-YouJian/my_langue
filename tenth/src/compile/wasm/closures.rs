@@ -82,7 +82,8 @@ impl WasmCompiler {
                 }
             }
             HirExprKind::Ref(inner) | HirExprKind::MutRef(inner)
-            | HirExprKind::Deref(inner) | HirExprKind::TryBlock(inner) => {
+            | HirExprKind::Deref(inner) | HirExprKind::TryBlock(inner)
+            | HirExprKind::Lossy(inner) => {
                 self.ccb_expr(codes, inner)?;
             }
             HirExprKind::TensorLiteral { data, .. } => {
@@ -315,7 +316,8 @@ impl WasmCompiler {
                 }
             }
             HirExprKind::Ref(inner) | HirExprKind::MutRef(inner)
-            | HirExprKind::Deref(inner) | HirExprKind::TryBlock(inner) => {
+            | HirExprKind::Deref(inner) | HirExprKind::TryBlock(inner)
+            | HirExprKind::Lossy(inner) => {
                 self.cc_expr(inner, num_user_funcs);
             }
             HirExprKind::TensorLiteral { data, .. } => {

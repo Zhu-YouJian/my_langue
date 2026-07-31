@@ -169,7 +169,8 @@ impl Lowerer {
                 Self::collect_free_vars(inner, vars);
             }
             HirExprKind::Move(inner) | HirExprKind::TryBlock(inner)
-            | HirExprKind::Await(inner) | HirExprKind::Spawn(inner) => {
+            | HirExprKind::Await(inner) | HirExprKind::Spawn(inner)
+            | HirExprKind::Lossy(inner) => {
                 Self::collect_free_vars(inner, vars);
             }
             HirExprKind::Yield(inner) => {

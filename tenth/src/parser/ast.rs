@@ -149,6 +149,9 @@ pub enum ExprKind {
     MutRef(Box<Expr>),
     Deref(Box<Expr>),
     Move(Box<Expr>),
+    /// `lossy expr`：编译期显式接受可能算错的值（污点归零）；运行时求值 inner（no-op）。
+    /// 对应 Rust 的 `unsafe`。
+    Lossy(Box<Expr>),
     TryBlock(Box<Expr>),
     Await(Box<Expr>),
     Spawn(Box<Expr>),

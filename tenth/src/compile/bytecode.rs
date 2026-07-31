@@ -599,6 +599,10 @@ impl BytecodeCompiler {
             HirExprKind::Move { .. } => {
                 self.chunk.emit(Op::MoveOp);
             }
+            HirExprKind::Lossy(inner) => {
+                // `lossy` 是纯编译期构造：编译为 inner 本身（运行时 no-op，无附加指令）
+                self.compile_expr(inner)?;
+            }
             HirExprKind::TryBlock(inner) => {
                 // `try { body }` — catch ? propagation, wrap as Result::Ok/Err
                 // See interpreter eval.rs:552-574 for reference semantics.
