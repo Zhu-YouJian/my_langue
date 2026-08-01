@@ -6,8 +6,9 @@
 // Usage:
 //   use std::random::random
 //
-// ⚠️ 已知不完整（L2.3b 勘误标注）：`shuffle` 实现不完整（未真正交换元素，待修）；
-// `choice` 返回随机**索引**（取元素用 `sample`）。
+// ⚠️ 已知不完整（L2.3b 勘误标注）：`shuffle` 实现不完整（未真正交换元素，待修）。
+// L2.5 修复：`choice` 改为返回随机**元素**（与注释/教程一致）；返回随机索引
+// 的行为改名为 `choice_index`。
 
 /// Generate a random integer in [lo, hi] (inclusive)
 fn rand_int(lo: i32, hi: i32) -> i32 {
@@ -24,12 +25,23 @@ fn rand_range(lo: f64, hi: f64) -> f64 {
     lo + random_float() * (hi - lo)
 }
 
-/// 返回随机索引（0-based，含端点）；空 Vec 返回 -1。
-/// L2.3b 勘误：此前注释误写 "Pick a random element from a Vec"，实际返回的是
-/// 随机**索引**而非元素——取随机元素请用 `sample`。
+/// 返回随机**元素**（0-based 索引对应）；空 Vec 返回 -1（哨兵）。
+/// L2.5 修复：此前实现返回随机索引而非元素（与注释/教程语义不符），
+/// 现返回 `v.get(idx)`；返回索引的行为已改名为 `choice_index`。
 /// L2.2 修复：旧语法 `fn choice(v: Vec) i32`（无 `->`）改为 `-> i32`，
 /// 整模块恢复编译（其余 6 个函数连带可用）。
 fn choice(v: Vec) -> i32 {
+    let len = v.len();
+    if len == 0 {
+        return -1;
+    }
+    let idx = random_int(0, len - 1);
+    v.get(idx)
+}
+
+/// 返回随机**索引**（0-based，含端点）；空 Vec 返回 -1。
+/// L2.5 新增：承接原 `choice` 的“返回索引”行为，供 `sample` 等内部使用。
+fn choice_index(v: Vec) -> i32 {
     let len = v.len();
     if len == 0 {
         return -1;
@@ -61,11 +73,12 @@ fn rand_bool() -> bool {
 }
 
 /// Sample n elements from a Vec with replacement
+/// L2.5：改用 `choice_index`（`choice` 已改为返回元素）。
 fn sample(v: Vec, n: i32) -> Vec {
     let mut result = Vec::new();
     let mut i = 0;
     while i < n {
-        let idx = choice(v);
+        let idx = choice_index(v);
         result.push(v.get(idx));
         i = i + 1;
     }

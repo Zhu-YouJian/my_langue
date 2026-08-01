@@ -1072,6 +1072,143 @@ fn test_random_int() {
     }
 }
 
+// ── LeakyReLU / Random choice 语义测试（L2.5 修复验证）──────────────
+// 运行时不支持 `use` 加载 .th 模块，故内联验证与 std/random/random.th、
+// std/nn/activations.th 中实现保持同步的语义。
+
+#[test]
+fn test_leaky_relu_negative_slope_semantics() {
+    // 标准 leaky_relu：f(x) = x if x > 0 else slope * x（负半轴取负值）。
+    // L2.5 修复：旧实现 `relu(x) + slope * relu(-x)` 在 x<0 得 +slope*|x|（符号错误），
+    // 现为 `x.relu() - slope * (-x).relu()`（与 activations.th 同步）。
+    // x = [-2,-1,0,1,2], slope=0.1 → [-0.2,-0.1,0,1,2]，sum = 2.7
+    // （旧 buggy 实现得 [0.2,0.1,0,1,2]，sum = 3.3）
+    let src = r#"
+        let x = tensor[[-2.0, -1.0, 0.0, 1.0, 2.0]];
+        let y = x.relu() - 0.1 * (-x).relu();
+        y.sum()
+    "#;
+    let got = run_f64(src);
+    assert!((got - 2.7).abs() < 1e-9, "leaky_relu sum 应为 2.7，got {}", got);
+}
+
+#[test]
+fn test_leaky_relu_positive_values() {
+    // x > 0 保持 x 不变，x = 0 → 0
+    let src = r#"
+        let x = tensor[[0.0, 1.0, 2.0]];
+        let y = x.relu() - 0.1 * (-x).relu();
+        y.sum()
+    "#;
+    let got = run_f64(src);
+    assert!((got - 3.0).abs() < 1e-9, "leaky_relu 正半轴 sum 应为 3.0，got {}", got);
+}
+
+#[test]
+fn test_random_choice_returns_element() {
+    // L2.5 修复：choice 返回随机**元素**（此前返回随机索引）。
+    // 与 std/random/random.th 实现保持同步。
+    let src = r#"
+        fn choice(v: Vec) -> i32 {
+            let len = v.len();
+            if len == 0 {
+                return -1;
+            }
+            let idx = random_int(0, len - 1);
+            v.get(idx)
+        }
+        choice([7])
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Shared(rc)) => match &*rc.borrow() {
+            Value::Int(n, _) => assert_eq!(*n, 7, "choice([7]) 应返回元素 7，got {}", n),
+            v => panic!("expected Int, got {:?}", v),
+        },
+        Some(Value::Int(n, _)) => assert_eq!(n, 7, "choice([7]) 应返回元素 7，got {}", n),
+        v => panic!("expected Int, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_random_choice_element_membership() {
+    // choice 应返回输入 Vec 的某个元素
+    let src = r#"
+        fn choice(v: Vec) -> i32 {
+            let len = v.len();
+            if len == 0 {
+                return -1;
+            }
+            let idx = random_int(0, len - 1);
+            v.get(idx)
+        }
+        choice([10, 20, 30])
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Shared(rc)) => match &*rc.borrow() {
+            Value::Int(n, _) => {
+                assert!(*n == 10 || *n == 20 || *n == 30, "choice([10,20,30]) 应返回其一，got {}", n);
+            }
+            v => panic!("expected Int, got {:?}", v),
+        },
+        Some(Value::Int(n, _)) => {
+            assert!(n == 10 || n == 20 || n == 30, "choice([10,20,30]) 应返回其一，got {}", n);
+        }
+        v => panic!("expected Int, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_random_choice_empty_sentinel() {
+    // 空 Vec 返回 -1（哨兵）
+    let src = r#"
+        fn choice(v: Vec) -> i32 {
+            let len = v.len();
+            if len == 0 {
+                return -1;
+            }
+            let idx = random_int(0, len - 1);
+            v.get(idx)
+        }
+        choice(Vec::new())
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Shared(rc)) => match &*rc.borrow() {
+            Value::Int(n, _) => assert_eq!(*n, -1, "choice([]) 应返回 -1，got {}", n),
+            v => panic!("expected Int, got {:?}", v),
+        },
+        Some(Value::Int(n, _)) => assert_eq!(n, -1, "choice([]) 应返回 -1，got {}", n),
+        v => panic!("expected Int, got {:?}", v),
+    }
+}
+
+#[test]
+fn test_random_choice_index() {
+    // L2.5 新增：choice_index 返回随机索引（承接原 choice 的索引行为）
+    let src = r#"
+        fn choice_index(v: Vec) -> i32 {
+            let len = v.len();
+            if len == 0 {
+                return -1;
+            }
+            let idx = random_int(0, len - 1);
+            idx
+        }
+        choice_index([7])
+    "#;
+    let result = run_code(src).unwrap();
+    match result {
+        Some(Value::Shared(rc)) => match &*rc.borrow() {
+            Value::Int(n, _) => assert_eq!(*n, 0, "choice_index([7]) 应返回索引 0，got {}", n),
+            v => panic!("expected Int, got {:?}", v),
+        },
+        Some(Value::Int(n, _)) => assert_eq!(n, 0, "choice_index([7]) 应返回索引 0，got {}", n),
+        v => panic!("expected Int, got {:?}", v),
+    }
+}
+
 // ── JSON Function Tests ──────────────────────────────────────────────────
 
 #[test]

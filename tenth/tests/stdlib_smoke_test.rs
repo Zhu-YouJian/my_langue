@@ -117,9 +117,13 @@ let lr = leaky_relu<f64>(x, 0.1);
 let lrd = leaky_relu_default(x);
 let g = gelu<f64>(x);
 let e = exp<f64>(x);
-// 注：leaky_relu 值断言只做 shape（当前实现符号有误，见盘点文档标注）
+// L2.5：leaky_relu 已修符号（负半轴取 slope*x 负值），断言数值：
+//   lr  = leaky_relu([-2,-1,0,1,2], 0.1) = [-0.2,-0.1,0,1,2] → sum = 2.7
+//   lrd = leaky_relu_default([-2,-1,0,1,2])（slope=0.01）= [-0.02,-0.01,0,1,2] → sum = 2.97
 r.sum() == 3.0 && s.mean() > 0.0 && s.mean() < 1.0 && sm.sum() > 0.99 && sm.sum() < 1.01 &&
-lr.numel() == 5 && lrd.numel() == 5 && g.numel() == 5 && e.sum() > 0.0
+lr.numel() == 5 && lr.sum() > 2.69 && lr.sum() < 2.71 &&
+lrd.numel() == 5 && lrd.sum() > 2.96 && lrd.sum() < 2.98 &&
+g.numel() == 5 && e.sum() > 0.0
 "#;
 
 const M04_NN_LINEAR: &str = r#"
@@ -489,9 +493,13 @@ md5_hex([97, 98, 99]) == "900150983cd24fb0d6963f7d28e17f72" && sha512_hex([97, 9
 const M37_RANDOM: &str = r#"
 use std::random::random::*
 
-// 注：choice 当前返回随机索引而非元素（盘点文档已标注），只断言空向量分支
+// L2.5：choice 已修为返回元素（空 Vec 哨兵 -1）；choice_index 返回索引
 rand_int(5, 5) == 5 && rand_float() >= 0.0 && rand_float() < 1.0 && rand_range(10.0, 10.0) == 10.0 &&
-choice([]) == -1 && sample([1, 2, 3], 2).len() == 2
+choice([]) == -1 && choice([7]) == 7 &&
+choice([10, 20, 30]) >= 10 && choice([10, 20, 30]) <= 30 &&
+choice_index([]) == -1 && choice_index([7]) == 0 &&
+choice_index([10, 20, 30]) >= 0 && choice_index([10, 20, 30]) <= 2 &&
+sample([1, 2, 3], 2).len() == 2
 "#;
 
 const M38_TIME: &str = r#"

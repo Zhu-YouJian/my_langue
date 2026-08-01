@@ -24,16 +24,16 @@ fn log<T>(x: Tensor[T, ..]) -> Tensor[T, ..] { x.log() }
 // Transformer 标配激活函数。底层 tensor.gelu() 方法已支持 autodiff。
 fn gelu<T>(x: Tensor[T, ..]) -> Tensor[T, ..] { x.gelu() }
 
-// LeakyReLU：f(x) = x if x > 0 else slope * x
-// 用 max(x, slope*x) 实现（Tenth 无 tensor 条件运算，用算术等价）：
-//   leaky_relu(x) = max(x, slope * x)
-// 但 Tenth tensor 无 max(tensor, tensor)，用 0.5*(x + |x|) 类技巧不可行（slope≠1）。
-// 改用 relu 近似（slope=0 时等价）：
-//   leaky_relu(x, slope) = relu(x) + slope * relu(-x)
+// LeakyReLU（标准语义）：f(x) = x if x > 0 else slope * x（负半轴取 slope*x 负值）
+// 算术等价（Tenth 无 tensor 条件运算）：
+//   leaky_relu(x, slope) = relu(x) - slope * relu(-x)
 //   当 x>0: relu(x)=x, relu(-x)=0 → x ✓
-//   当 x<0: relu(x)=0, relu(-x)=-x → -slope*x ✓
+//   当 x<0: relu(x)=0, relu(-x)=-x → -slope*(-x) = slope*x ✓
+//   当 x=0: 0 ✓
+// （L2.5 修复：旧实现 `relu(x) + slope * relu(-x)` 在 x<0 得 +slope*|x|（正值），
+//   符号错误；见 docs/stdlib-可用性盘点.md §四(b) 与 docs/论文/T47 §10.1）
 fn leaky_relu<T>(x: Tensor[T, ..], slope: T) -> Tensor[T, ..] {
-    x.relu() + slope * (-x).relu()
+    x.relu() - slope * (-x).relu()
 }
 
 // LeakyReLU 默认 slope=0.01

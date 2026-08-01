@@ -95,7 +95,7 @@
 | `optim/sgd.th` | 3 | ✅ | `sgd_step`/`sgd_weight_decay`/`sgd_momentum`（tuple）可用 |
 | `prelude.th` | 0 | 空壳 | 索引/文档文件（`use std::prelude::*` 本就不支持） |
 | `process.th` | 4 | ✅ | `new/arg/run/output` 可用（`new` 返回 Result 需 `or_die`） |
-| `random/random.th` | 7 | ❌ | **`choice` 用旧语法 `fn choice(v: Vec) i32`（无 `->`）**（b）：整模块编译失败，其余 6 个函数连带不可用。修复：`-> i32` |
+| `random/random.th` | 7 | ✅ | **L2.2 修复**旧语法 `fn choice(v: Vec) i32`（无 `->`）→ `-> i32`，整模块恢复编译；**L2.5 修复** `choice` 语义（返回元素）并新增 `choice_index`，`sample` 同步；`shuffle` 实现不完整（待修） |
 | `regex.th` | 6 | ✅ | `compile/match_/find/find_all/replace/split` 可用（`compile` 返回 Result 需 `or_die`） |
 | `runtime.th` | 4 | ✅ | `run_with_limit/limit_or_default/run_with_timeout/timeout_or_default` 双路径可用（走 native `with_*`） |
 | `string/string.th` | 8 | ✅ | `join_lines/join_comma/repeat_sep/indent/word_wrap/is_blank/capitalize/count` 可用 |
@@ -142,8 +142,8 @@
 | `nn/embedding.th` | 返回注解与实际 `gather` 结果 shape 不符 | 需要 runtime 提供 `index_select`，或改注解/实现 |
 | `data/dataloader.th` | `next_batch` 不推进 cursor，无法迭代 | 返回新 DataLoader 或加 cursor 推进 |
 | `optim/lr_schedule.th` | `warmup_cosine_lr` warmup>total 边界语义与测试预期不符（轻微） | 统一分支顺序（先判 `step>=total`）或改测试预期 |
-| `nn/activations.th` | **`leaky_relu` 符号错误（L2.4 smoke 发现）**：实现 `x.relu() + slope * (-x).relu()`，x<0 时得 +slope*|x|（应为 -slope*|x|）。实测 `leaky_relu([-2,-1,0,1,2], 0.1)` 得 [0.2,0.1,0,1,2]（正确 [-0.2,-0.1,0,1,2]）；`leaky_relu_default` 同病 | `x.relu() - slope * (-x).relu()`（或 `max(x, slope*x)`） |
-| `random/random.th` | **`choice` 返回随机索引而非元素（L2.4 smoke 发现）**：实现 `let idx = random_int(0, len-1); idx`，应返回 `v.get(idx)`。实测 `choice([7])` 返回 0 | 改为 `v.get(idx)` |
+| `nn/activations.th` | **`leaky_relu` 符号错误（L2.4 smoke 发现）**：实现 `x.relu() + slope * (-x).relu()`，x<0 时得 +slope*|x|（应为 -slope*|x|）。实测 `leaky_relu([-2,-1,0,1,2], 0.1)` 得 [0.2,0.1,0,1,2]（正确 [-0.2,-0.1,0,1,2]）；`leaky_relu_default` 同病 | **✅ 已修复（L2.5）**：改 `x.relu() - slope * (-x).relu()`，实测 `leaky_relu([-2,-1,0,1,2],0.1)` = [-0.2,-0.1,0,1,2]（sum=2.7）；smoke（M03）+ stdlib_test 已加数值断言 |
+| `random/random.th` | **`choice` 返回随机索引而非元素（L2.4 smoke 发现）**：实现 `let idx = random_int(0, len-1); idx`，应返回 `v.get(idx)`。实测 `choice([7])` 返回 0 | **✅ 已修复（L2.5）**：`choice` 改为返回随机**元素**（`v.get(idx)`，空 Vec 哨兵 -1）；新增 `choice_index` 承接“返回随机索引”行为；`sample` 改用 `choice_index`。smoke（M37）+ stdlib_test 已加断言 |
 
 ### (c) 文档失实清单
 
@@ -219,10 +219,11 @@
 | `http`/`net` | 127.0.0.1:1（本机拒绝连接） | 不触网验证 Result 路径（get/connect 返回 Err 不崩溃） |
 | `data/mnist` | 仅基础函数 | `parse_images/parse_labels` 需真实 MNIST 数据文件（条件） |
 | `async`、`math/functions`、`prelude` | 跳过 | 空壳（0 公开项）/索引文件 |
-| `random::choice`、`nn::activations::leaky_relu` | 值断言受限 | 当前实现有缺陷（见 §四 b），smoke 只做 shape/空向量分支断言 |
+| `random::choice`、`nn::activations::leaky_relu` | 值断言受限 | **✅ L2.5 已修复**：smoke 现直接断言数值（leaky_relu 负半轴 sum、`choice` 返回元素/`choice_index` 返回索引） |
 
 ### 7.4 验证结果
 
 - 单文件：`cargo test --release --test stdlib_smoke_test` → **56 passed，0 failed**（~2.5s）
 - 全量：`cargo test --release -j 4` → **1902 passed，0 failed，0 回归**（基线 1846 + 56 新增）
 - 未修改任何标准库代码；临时探针在 `.trae/tmp/smoke_probe/`（不入库）。
+- **L2.5 更新（2026-08-02）**：`leaky_relu` 符号、`choice` 语义两缺陷已修复（见 §四 b）；smoke 断言已加强（M03 leaky_relu 数值 sum、M37 choice 返回元素/`choice_index` 返回索引）；`stdlib_test` 新增 6 项语义测试；全量 **1908 passed，0 failed**（基线 1902 + 6 新增），自举 `tenthc/main.th` exit 0。
