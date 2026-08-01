@@ -7,21 +7,21 @@
 //
 // 运行：tenth run generic_enum.th（默认 VM/JIT 路径即可）
 //
-// 注：VM 对"同一函数内两个泛型枚举 match"有既有缺陷（AUDIT #18），
-// 因此两种不同实例化的解构演示放在独立函数中。
+// 注：AUDIT #18（同一函数内两个泛型枚举 match 的槽污染）已于 2026-08-02
+// 修复，i64 与 str 两种实例化的解构合并到同一函数（demo_both）验证。
 
 enum Maybe<T> { Just(T), Nothing }
 
-fn demo_int() {
+fn demo_both() {
+    // 1) Maybe<i64>：绑定 i64
     let mb = Maybe<i64>::Just(42);
     let v = match mb {
         Maybe::Just(x) => x,
         Maybe::Nothing => -1,
     };
     println("  Maybe<i64>::Just(42) 解构 = ", v);
-}
 
-fn demo_str() {
+    // 2) Maybe<str>：绑定 str（同一函数、同绑定名 x —— 原缺陷场景）
     let ms = Maybe<str>::Just("hi");
     let vs = match ms {
         Maybe::Just(x) => x,
@@ -32,7 +32,6 @@ fn demo_str() {
 
 fn main() {
     println("=== 泛型枚举 <T> ===\n");
-    demo_int();
-    demo_str();
+    demo_both();
     println("");
 }

@@ -1,0 +1,3329 @@
+﻿cargo.exe :    Compiling tenth v0.3.3 (D:\鍙茶拏澶玕Desktop\AI寮€鍙戞柊璇█锛氬ご鑴戦鏆翠笌璇勪及\t
+enth)
+所在位置 行:1 字符: 1
++ & "C:\Users\史蒂夫\.cargo\bin\cargo.exe" run --release --manifest-path t ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling te...戦鏆翠笌璇勪及\tenth) 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: unnecessary parentheses around match arm expression
+   --> src\lexer\lexer.rs:282:33
+    |
+282 |                 BaseType::I8 => (n >= -128 && n <= 127),
+    |                                 ^                     ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+282 -                 BaseType::I8 => (n >= -128 && n <= 127),
+282 +                 BaseType::I8 => n >= -128 && n <= 127 ,
+    |
+
+warning: unnecessary parentheses around match arm expression
+   --> src\lexer\lexer.rs:283:34
+    |
+283 |                 BaseType::I16 => (n >= -32768 && n <= 32767),
+    |                                  ^                         ^
+    |
+help: remove these parentheses
+    |
+283 -                 BaseType::I16 => (n >= -32768 && n <= 32767),
+283 +                 BaseType::I16 => n >= -32768 && n <= 32767 ,
+    |
+
+warning: unnecessary parentheses around match arm expression
+   --> src\lexer\lexer.rs:284:34
+    |
+284 |                 BaseType::I32 => (n >= -2147483648 && n <= 2147483647),
+    |                                  ^                                   ^
+    |
+help: remove these parentheses
+    |
+284 -                 BaseType::I32 => (n >= -2147483648 && n <= 2147483647),
+284 +                 BaseType::I32 => n >= -2147483648 && n <= 2147483647 ,
+    |
+
+warning: unnecessary parentheses around match arm expression
+   --> src\lexer\lexer.rs:286:33
+    |
+286 |                 BaseType::U8 => (n >= 0 && n <= 255),
+    |                                 ^                  ^
+    |
+help: remove these parentheses
+    |
+286 -                 BaseType::U8 => (n >= 0 && n <= 255),
+286 +                 BaseType::U8 => n >= 0 && n <= 255 ,
+    |
+
+warning: unnecessary parentheses around match arm expression
+   --> src\lexer\lexer.rs:287:34
+    |
+287 |                 BaseType::U16 => (n >= 0 && n <= 65535),
+    |                                  ^                    ^
+    |
+help: remove these parentheses
+    |
+287 -                 BaseType::U16 => (n >= 0 && n <= 65535),
+287 +                 BaseType::U16 => n >= 0 && n <= 65535 ,
+    |
+
+warning: unnecessary parentheses around match arm expression
+   --> src\lexer\lexer.rs:288:34
+    |
+288 |                 BaseType::U32 => (n >= 0 && n <= 4294967295),
+    |                                  ^                         ^
+    |
+help: remove these parentheses
+    |
+288 -                 BaseType::U32 => (n >= 0 && n <= 4294967295),
+288 +                 BaseType::U32 => n >= 0 && n <= 4294967295 ,
+    |
+
+warning: unnecessary parentheses around match arm expression
+   --> src\lexer\lexer.rs:289:34
+    |
+289 |                 BaseType::U64 => (n >= 0),
+    |                                  ^      ^
+    |
+help: remove these parentheses
+    |
+289 -                 BaseType::U64 => (n >= 0),
+289 +                 BaseType::U64 => n >= 0 ,
+    |
+
+warning: unused import: `crate::hir::types::BaseType`
+  --> src\parser\expr.rs:15:5
+   |
+15 | use crate::hir::types::BaseType;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Token`
+  --> src\parser\expr.rs:16:33
+   |
+16 | use crate::lexer::token::{Span, Token, TokenKind};
+   |                                 ^^^^^
+
+warning: unused imports: `Span` and `Token`
+  --> src\parser\stmt.rs:12:27
+   |
+12 | use crate::lexer::token::{Span, Token, TokenKind};
+   |                           ^^^^  ^^^^^
+
+warning: unused import: `crate::hir::types::BaseType`
+  --> src\parser\decl.rs:13:5
+   |
+13 | use crate::hir::types::BaseType;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Span` and `Token`
+  --> src\parser\decl.rs:14:27
+   |
+14 | use crate::lexer::token::{Span, Token, TokenKind};
+   |                           ^^^^  ^^^^^
+
+warning: unused import: `crate::hir::types::BaseType`
+ --> src\parser\type_parser.rs:8:5
+  |
+8 | use crate::hir::types::BaseType;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Span` and `Token`
+ --> src\parser\type_parser.rs:9:27
+  |
+9 | use crate::lexer::token::{Span, Token, TokenKind};
+  |                           ^^^^  ^^^^^
+
+warning: unused import: `BaseType`
+  --> src\hir\lower\backward_shape_pass.rs:26:36
+   |
+26 | use crate::hir::types::{Dim, Type, BaseType};
+   |                                    ^^^^^^^^
+
+warning: unused import: `crate::hir::types::BaseType`
+  --> src\runtime\autodiff\mod.rs:15:5
+   |
+15 | use crate::hir::types::BaseType;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::async_io::ASYNC_IO`
+  --> src\runtime\vm\mod.rs:18:5
+   |
+18 | use super::async_io::ASYNC_IO;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::hir::types::BaseType`
+ --> src\compile\jit\context.rs:4:5
+  |
+4 | use crate::hir::types::BaseType;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Linkage` and `Module`
+ --> src\compile\jit\context.rs:6:24
+  |
+6 | use cranelift_module::{Linkage, Module};
+  |                        ^^^^^^^  ^^^^^^
+
+warning: unused import: `crate::hir::types::BaseType`
+  --> src\compile\jit\translator.rs:16:5
+   |
+16 | use crate::hir::types::BaseType;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src\hir\lower\scope.rs:263:17
+    |
+263 |             let mut compatible: Vec<&(Vec<(String, Type)>, Type)> = all.i
+ter()
+    |                 ----^^^^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `args`
+   --> src\hir\lower\backward_shape_pass.rs:306:42
+    |
+306 |         if let HirExprKind::Call { func, args, .. } = &init_expr.kind {
+    |                                          ^^^^ help: try ignoring the fiel
+d: `args: _`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by defau
+lt
+
+warning: variable does not need to be mutable
+    --> src\runtime\natives.rs:3504:9
+     |
+3504 |     let mut dividend = bigint_sub_str_unsigned(&a_padded, &"0"); // just
+ clone
+     |         ----^^^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: unused variable: `dividend`
+    --> src\runtime\natives.rs:3504:9
+     |
+3504 |     let mut dividend = bigint_sub_str_unsigned(&a_padded, &"0"); // just
+ clone
+     |         ^^^^^^^^^^^^ help: if this is intentional, prefix it with an und
+erscore: `_dividend`
+
+warning: unused variable: `divisor`
+    --> src\runtime\natives.rs:3505:9
+     |
+3505 |     let divisor = bigint_sub_str_unsigned(&b_padded, &"0");
+     |         ^^^^^^^ help: if this is intentional, prefix it with an undersco
+re: `_divisor`
+
+warning: unused variable: `i`
+    --> src\runtime\natives.rs:3511:10
+     |
+3511 |     for (i, c) in dividend_val.chars().enumerate() {
+     |          ^ help: if this is intentional, prefix it with an underscore: `
+_i`
+
+warning: unused variable: `left_is_f64`
+   --> src\compile\wasm\compile.rs:216:25
+    |
+216 |                     let left_is_f64 = matches!(&left.ty, Type::Base(BaseT
+ype::F64));
+    |                         ^^^^^^^^^^^ help: if this is intentional, prefix 
+it with an underscore: `_left_is_f64`
+
+warning: unreachable pattern
+    --> src\compile\wasm\compile.rs:1121:13
+     |
+1121 |             _ => return Err(TenthError::RuntimeError { line: None, col: 
+None,
+     |             ^ no value can reach this
+     |
+note: multiple earlier patterns match some of the same values
+    --> src\compile\wasm\compile.rs:1121:13
+     |
+ 929 |             HirStmtKind::Expr(e) => {
+     |             -------------------- matches some of the same values
+...
+ 935 |             HirStmtKind::Let { names, type_ann, init, .. } => {
+     |             ---------------------------------------------- matches some 
+of the same values
+...
+ 983 |             HirStmtKind::Loop { body: lb, .. } => {
+     |             ---------------------------------- matches some of the same 
+values
+...
+ 993 |             HirStmtKind::While { cond, body: lb, .. } => {
+     |             ----------------------------------------- matches some of th
+e same values
+...
+1121 |             _ => return Err(TenthError::RuntimeError { line: None, col: 
+None,
+     |             ^ ...and 5 other patterns collectively make this unreachable
+     = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by 
+default
+
+warning: variable does not need to be mutable
+  --> src\compile\jit\translator.rs:74:13
+   |
+74 |         let mut t = Translator {
+   |             ----^
+   |             |
+   |             help: remove this `mut`
+
+warning[E0133]: call to unsafe function is unsafe and requires unsafe block
+  --> src\compile\jit\hostcalls.rs:43:9
+   |
+43 |         fn_ptr(vm, args.as_ptr(), args.len(), out as *mut Value)
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to u
+nsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid
+ undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+  --> src\compile\jit\hostcalls.rs:34:1
+   |
+34 | / pub unsafe fn invoke_jit(
+35 | |     fn_ptr: unsafe extern "C" fn(*mut Vm, *const Value, usize, *mut Valu
+e) -> bool,
+36 | |     vm: *mut Vm,
+37 | |     args: &[Value],
+38 | |     out: &mut Value,
+39 | | ) -> bool {
+   | |_________^
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/r
+ust-2024/unsafe-op-in-unsafe-fn.html>
+   = note: `#[warn(unsafe_op_in_unsafe_fn)]` (part of `#[warn(rust_2024_compati
+bility)]`) on by default
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+  --> src\compile\jit\hostcalls.rs:57:17
+   |
+57 |                 (*vm).set_last_error(format!("JIT panic: {}", msg));
+   |                 ^^^^^ dereference of raw pointer
+   |
+   = note: raw pointers may be null, dangling or unaligned; they can violate al
+iasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+  --> src\compile\jit\hostcalls.rs:34:1
+   |
+34 | / pub unsafe fn invoke_jit(
+35 | |     fn_ptr: unsafe extern "C" fn(*mut Vm, *const Value, usize, *mut Valu
+e) -> bool,
+36 | |     vm: *mut Vm,
+37 | |     args: &[Value],
+38 | |     out: &mut Value,
+39 | | ) -> bool {
+   | |_________^
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/r
+ust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+  --> src\compile\jit\hostcalls.rs:59:13
+   |
+59 |             std::ptr::write(out, Value::Unit);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid
+ undefined behavior
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/r
+ust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::slice::from_raw_parts` is unsafe 
+and requires unsafe block
+  --> src\compile\jit\hostcalls.rs:78:5
+   |
+78 |     std::slice::from_raw_parts(ptr, n)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid
+ undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+  --> src\compile\jit\hostcalls.rs:69:1
+   |
+69 | unsafe fn safe_slice<'a>(ptr: *const Value, count: u64) -> &'a [Value] {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/r
+ust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+  --> src\compile\jit\hostcalls.rs:84:5
+   |
+84 |     std::ptr::write(out, Value::Int(n, BaseType::I32));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe func
+tion
+   |
+   = note: consult the function's documentation for information on how to avoid
+ undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+  --> src\compile\jit\hostcalls.rs:83:1
+   |
+83 | unsafe extern "C" fn host_make_int(_vm: *mut Vm, n: i64, out: *mut Value) 
+{
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/r
+ust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+  --> src\compile\jit\hostcalls.rs:88:5
+   |
+88 |     std::ptr::write(out, Value::Float(f));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid
+ undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+  --> src\compile\jit\hostcalls.rs:87:1
+   |
+87 | unsafe extern "C" fn host_make_float(_vm: *mut Vm, f: f64, out: *mut Value
+) {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/r
+ust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+  --> src\compile\jit\hostcalls.rs:94:5
+   |
+94 |     std::ptr::write(out, Value::Float32(f));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid
+ undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+  --> src\compile\jit\hostcalls.rs:93:1
+   |
+93 | unsafe extern "C" fn host_make_float32(_vm: *mut Vm, f: f32, out: *mut Val
+ue) {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/r
+ust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+  --> src\compile\jit\hostcalls.rs:98:5
+   |
+98 |     std::ptr::write(out, Value::Bool(b != 0));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid
+ undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+  --> src\compile\jit\hostcalls.rs:97:1
+   |
+97 | unsafe extern "C" fn host_make_bool(_vm: *mut Vm, b: u8, out: *mut Value) 
+{
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: for more information, see <https://doc.rust-lang.org/edition-guide/r
+ust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:102:19
+    |
+102 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:101:1
+    |
+101 | unsafe extern "C" fn host_make_str(vm: *mut Vm, idx: u64, out: *mut Value
+) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:104:5
+    |
+104 |     std::ptr::write(out, Value::String(s));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:108:5
+    |
+108 |     std::ptr::write(out, Value::Unit);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:107:1
+    |
+107 | unsafe extern "C" fn host_make_unit(_vm: *mut Vm, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:113:14
+    |
+113 |     let v = &*v;
+    |              ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:112:1
+    |
+112 | unsafe extern "C" fn host_truthy(_vm: *mut Vm, v: *const Value) -> u8 {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:127:19
+    |
+127 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:126:1
+    |
+126 | unsafe extern "C" fn host_add(vm: *mut Vm, a: *const Value, b: *const Val
+ue, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:128:19
+    |
+128 |     match vm.add(&*a, &*b) {
+    |                   ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:128:24
+    |
+128 |     match vm.add(&*a, &*b) {
+    |                        ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:129:18
+    |
+129 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:130:55
+    |
+130 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:135:19
+    |
+135 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:134:1
+    |
+134 | unsafe extern "C" fn host_sub(vm: *mut Vm, a: *const Value, b: *const Val
+ue, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:136:19
+    |
+136 |     match vm.sub(&*a, &*b) {
+    |                   ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:136:24
+    |
+136 |     match vm.sub(&*a, &*b) {
+    |                        ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:137:18
+    |
+137 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:138:55
+    |
+138 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:143:19
+    |
+143 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:142:1
+    |
+142 | unsafe extern "C" fn host_mul(vm: *mut Vm, a: *const Value, b: *const Val
+ue, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:144:19
+    |
+144 |     match vm.mul(&*a, &*b) {
+    |                   ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:144:24
+    |
+144 |     match vm.mul(&*a, &*b) {
+    |                        ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:145:18
+    |
+145 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:146:55
+    |
+146 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:151:19
+    |
+151 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:150:1
+    |
+150 | unsafe extern "C" fn host_div(vm: *mut Vm, a: *const Value, b: *const Val
+ue, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:152:19
+    |
+152 |     match vm.div(&*a, &*b) {
+    |                   ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:152:24
+    |
+152 |     match vm.div(&*a, &*b) {
+    |                        ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:153:18
+    |
+153 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:154:55
+    |
+154 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:159:19
+    |
+159 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:158:1
+    |
+158 | unsafe extern "C" fn host_mod(vm: *mut Vm, a: *const Value, b: *const Val
+ue, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:160:19
+    |
+160 |     match vm.rem(&*a, &*b) {
+    |                   ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:160:24
+    |
+160 |     match vm.rem(&*a, &*b) {
+    |                        ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:161:18
+    |
+161 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:162:55
+    |
+162 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:167:19
+    |
+167 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:166:1
+    |
+166 | unsafe extern "C" fn host_neg(vm: *mut Vm, a: *const Value, out: *mut Val
+ue) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:168:19
+    |
+168 |     match vm.neg(&*a) {
+    |                   ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:169:18
+    |
+169 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:170:55
+    |
+170 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:175:19
+    |
+175 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:174:1
+    |
+174 | unsafe extern "C" fn host_not(vm: *mut Vm, a: *const Value, out: *mut Val
+ue) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:176:19
+    |
+176 |     match vm.not(&*a) {
+    |                   ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:177:18
+    |
+177 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:178:55
+    |
+178 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:185:19
+    |
+185 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:184:1
+    |
+184 | unsafe extern "C" fn host_eq(vm: *mut Vm, a: *const Value, b: *const Valu
+e, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:186:18
+    |
+186 |     match vm.eq(&*a, &*b) {
+    |                  ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:186:23
+    |
+186 |     match vm.eq(&*a, &*b) {
+    |                       ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:187:18
+    |
+187 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:188:55
+    |
+188 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:193:19
+    |
+193 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:192:1
+    |
+192 | unsafe extern "C" fn host_neq(vm: *mut Vm, a: *const Value, b: *const Val
+ue, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:194:19
+    |
+194 |     match vm.neq(&*a, &*b) {
+    |                   ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:194:24
+    |
+194 |     match vm.neq(&*a, &*b) {
+    |                        ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:195:18
+    |
+195 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:196:55
+    |
+196 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:201:19
+    |
+201 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:200:1
+    |
+200 | unsafe extern "C" fn host_lt(vm: *mut Vm, a: *const Value, b: *const Valu
+e, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:202:18
+    |
+202 |     match vm.lt(&*a, &*b) {
+    |                  ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:202:23
+    |
+202 |     match vm.lt(&*a, &*b) {
+    |                       ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:203:18
+    |
+203 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:204:55
+    |
+204 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:209:19
+    |
+209 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:208:1
+    |
+208 | unsafe extern "C" fn host_gt(vm: *mut Vm, a: *const Value, b: *const Valu
+e, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:210:18
+    |
+210 |     match vm.gt(&*a, &*b) {
+    |                  ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:210:23
+    |
+210 |     match vm.gt(&*a, &*b) {
+    |                       ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:211:18
+    |
+211 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:212:55
+    |
+212 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:217:19
+    |
+217 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:216:1
+    |
+216 | unsafe extern "C" fn host_lte(vm: *mut Vm, a: *const Value, b: *const Val
+ue, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:218:19
+    |
+218 |     match vm.lte(&*a, &*b) {
+    |                   ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:218:24
+    |
+218 |     match vm.lte(&*a, &*b) {
+    |                        ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:219:18
+    |
+219 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:220:55
+    |
+220 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:225:19
+    |
+225 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:224:1
+    |
+224 | unsafe extern "C" fn host_gte(vm: *mut Vm, a: *const Value, b: *const Val
+ue, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:226:19
+    |
+226 |     match vm.gte(&*a, &*b) {
+    |                   ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:226:24
+    |
+226 |     match vm.gte(&*a, &*b) {
+    |                        ^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:227:18
+    |
+227 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:228:55
+    |
+228 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:237:19
+    |
+237 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:234:1
+    |
+234 | / unsafe extern "C" fn host_call(
+235 | |     vm: *mut Vm, name_idx: u64, arg_count: u64, args_ptr: *const Value,
+ out: *mut Value,
+236 | | ) {
+    | |_^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `compile::jit::hostcalls::safe_slice` i
+s unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:239:16
+    |
+239 |     let args = safe_slice(args_ptr, arg_count);
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:241:18
+    |
+241 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:242:55
+    |
+242 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:249:19
+    |
+249 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:246:1
+    |
+246 | / unsafe extern "C" fn host_method_call(
+247 | |     vm: *mut Vm, name_idx: u64, arg_count: u64, args_ptr: *const Value,
+ out: *mut Value,
+248 | | ) {
+    | |_^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `compile::jit::hostcalls::safe_slice` i
+s unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:251:15
+    |
+251 |     let all = safe_slice(args_ptr, arg_count);
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:254:9
+    |
+254 |         std::ptr::write(out, Value::Unit);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:260:18
+    |
+260 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:261:55
+    |
+261 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `compile::jit::hostcalls::safe_slice` i
+s unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:268:17
+    |
+268 |     let items = safe_slice(args_ptr, count).to_vec();
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:267:1
+    |
+267 | unsafe extern "C" fn host_make_vec(_vm: *mut Vm, count: u64, args_ptr: *c
+onst Value, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:269:5
+    |
+269 |     std::ptr::write(out, Value::Vec(Rc::new(RefCell::new(items))));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call t
+o unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:277:13
+    |
+277 |             std::ptr::write(out, Value::Map(Rc::new(RefCell::new(std::col
+lections::HashMap::new()))));
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:272:1
+    |
+272 | unsafe extern "C" fn host_make_map(_vm: *mut Vm, count: u64, args_ptr: *c
+onst Value, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::slice::from_raw_parts` is unsafe 
+and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:284:9
+    |
+284 |         std::slice::from_raw_parts(args_ptr, pair_count)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe f
+unction
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:294:5
+    |
+294 |     std::ptr::write(out, Value::Map(Rc::new(RefCell::new(map))));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to 
+unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:300:19
+    |
+300 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:297:1
+    |
+297 | / unsafe extern "C" fn host_new_struct(
+298 | |     vm: *mut Vm, name_idx: u64, field_count: u64, args_ptr: *const Valu
+e, out: *mut Value,
+299 | | ) {
+    | |_^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:307:13
+    |
+307 |             std::ptr::write(out, Value::Unit);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::slice::from_raw_parts` is unsafe 
+and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:314:9
+    |
+314 |         std::slice::from_raw_parts(args_ptr, flat_len)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe fun
+ction
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:330:5
+    |
+330 |     std::ptr::write(out, Value::Struct { name, fields: Rc::new(RefCell::n
+ew(fields)) });
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:338:19
+    |
+338 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:335:1
+    |
+335 | / unsafe extern "C" fn host_new_union(
+336 | |     vm: *mut Vm, name_idx: u64, field_idx: u64, val_ptr: *const Value, 
+out: *mut Value,
+337 | | ) {
+    | |_^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:341:17
+    |
+341 |     let value = (*val_ptr).clone();
+    |                 ^^^^^^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:342:5
+    |
+342 |     std::ptr::write(out, Value::Union { name, active_field, value: Box::n
+ew(value) });
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:346:19
+    |
+346 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:345:1
+    |
+345 | unsafe extern "C" fn host_load_field(vm: *mut Vm, field_idx: u64, recv: *
+const Value, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:348:12
+    |
+348 |     match &*recv {
+    |            ^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:351:13
+    |
+351 | /             std::ptr::write(out, fields.iter()
+352 | |                 .find(|(n, _)| n == &fname)
+353 | |                 .map(|(_, v)| v.clone())
+354 | |                 .unwrap_or(Value::Unit));
+    | |________________________________________^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:359:17
+    |
+359 |                 std::ptr::write(out, (**value).clone());
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe fu
+nction
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:361:17
+    |
+361 |                 std::ptr::write(out, Value::Unit);
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:364:14
+    |
+364 |         _ => std::ptr::write(out, Value::Unit),
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:369:19
+    |
+369 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:368:1
+    |
+368 | unsafe extern "C" fn host_store_field(vm: *mut Vm, field_idx: u64, recv: 
+*mut Value, val: *const Value, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:371:12
+    |
+371 |     match &*recv {
+    |            ^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:375:26
+    |
+375 |                 slot.1 = (*val).clone();
+    |                          ^^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:377:13
+    |
+377 |             std::ptr::write(out, (*recv).clone());
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:377:34
+    |
+377 |             std::ptr::write(out, (*recv).clone());
+    |                                  ^^^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:383:17
+    |
+383 | /                 std::ptr::write(out, Value::Union {
+384 | |                     name: name.clone(),
+385 | |                     active_field: active_field.clone(),
+386 | |                     value: Box::new((*val).clone()),
+387 | |                 });
+    | |__________________^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:386:37
+    |
+386 |                     value: Box::new((*val).clone()),
+    |                                     ^^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:389:17
+    |
+389 |                 std::ptr::write(out, (*recv).clone());
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe func
+tion
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:389:38
+    |
+389 |                 std::ptr::write(out, (*recv).clone());
+    |                                      ^^^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:392:14
+    |
+392 |         _ => std::ptr::write(out, (*recv).clone()),
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe functio
+n
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:392:35
+    |
+392 |         _ => std::ptr::write(out, (*recv).clone()),
+    |                                   ^^^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:397:19
+    |
+397 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:396:1
+    |
+396 | unsafe extern "C" fn host_index_get(vm: *mut Vm, target: *const Value, id
+x: *const Value, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:398:25
+    |
+398 |     match vm.index_get(&*target, &*idx) {
+    |                         ^^^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:398:35
+    |
+398 |     match vm.index_get(&*target, &*idx) {
+    |                                   ^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:399:18
+    |
+399 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:400:55
+    |
+400 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:405:19
+    |
+405 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:404:1
+    |
+404 | unsafe extern "C" fn host_slice_str(vm: *mut Vm, target: *const Value, st
+art: *const Value, end: *const Value, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:406:25
+    |
+406 |     match vm.slice_str(&*target, &*start, &*end) {
+    |                         ^^^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:406:35
+    |
+406 |     match vm.slice_str(&*target, &*start, &*end) {
+    |                                   ^^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:406:44
+    |
+406 |     match vm.slice_str(&*target, &*start, &*end) {
+    |                                            ^^^^ dereference of raw pointe
+r
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:407:18
+    |
+407 |         Ok(v) => std::ptr::write(out, v),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:408:55
+    |
+408 |         Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out
+, Value::Unit); }
+    |                                                       ^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:415:19
+    |
+415 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:412:1
+    |
+412 | / unsafe extern "C" fn host_make_enum(
+413 | |     vm: *mut Vm, name_idx: u64, variant_idx: u64, field_count: u64, arg
+s_ptr: *const Value, out: *mut Value,
+414 | | ) {
+    | |_^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:423:13
+    |
+423 |             std::ptr::write(out, Value::Unit);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::slice::from_raw_parts` is unsafe 
+and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:430:9
+    |
+430 |         std::slice::from_raw_parts(args_ptr, flat_len)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe fun
+ction
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:448:5
+    |
+448 |     std::ptr::write(out, Value::Enum { enum_name, variant, fields: Rc::ne
+w(RefCell::new(fields)) });
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:452:19
+    |
+452 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:451:1
+    |
+451 | unsafe extern "C" fn host_is_enum_variant(vm: *mut Vm, variant_idx: u64, 
+recv: *const Value, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:454:12
+    |
+454 |     match &*recv {
+    |            ^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:455:40
+    |
+455 |         Value::Enum { variant, .. } => std::ptr::write(out, Value::Bool(v
+ariant == &target)),
+    |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:456:14
+    |
+456 |         _ => std::ptr::write(out, Value::Bool(false)),
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe func
+tion
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:461:19
+    |
+461 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:460:1
+    |
+460 | unsafe extern "C" fn host_enum_get_field(vm: *mut Vm, field_idx: u64, rec
+v: *const Value, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:463:12
+    |
+463 |     match &*recv {
+    |            ^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:466:13
+    |
+466 | /             std::ptr::write(out, fields.iter()
+467 | |                 .find(|(n, _)| n == &fname)
+468 | |                 .map(|(_, v)| v.clone())
+469 | |                 .unwrap_or_else(|| fields.get(0).map(|(_, v)| v.clone()
+).unwrap_or(Value::Unit)));
+    | |________________________________________________________________________
+_________________________^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:471:14
+    |
+471 |         _ => std::ptr::write(out, Value::Unit),
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:476:5
+    |
+476 |     std::ptr::write(out, Value::Range { start, end, inclusive: inclusive 
+!= 0 });
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:475:1
+    |
+475 | unsafe extern "C" fn host_push_range(_vm: *mut Vm, start: i64, end: i64, 
+inclusive: u8, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:486:13
+    |
+486 |             std::ptr::write(out, Value::Unit);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:479:1
+    |
+479 | / unsafe extern "C" fn host_make_tensor(
+480 | |     _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *m
+ut Value,
+481 | | ) {
+    | |_^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::slice::from_raw_parts` is unsafe 
+and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:493:9
+    |
+493 |         std::slice::from_raw_parts(args_ptr, count)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe functi
+on
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:503:5
+    |
+503 |     std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_
+vec(data, shape)))));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:515:13
+    |
+515 |             std::ptr::write(out, Value::Unit);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:508:1
+    |
+508 | / unsafe extern "C" fn host_make_tensor_f32(
+509 | |     _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *m
+ut Value,
+510 | | ) {
+    | |_^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::slice::from_raw_parts` is unsafe 
+and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:522:9
+    |
+522 |         std::slice::from_raw_parts(args_ptr, count)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe functi
+on
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:532:5
+    |
+532 |     std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_
+vec_f32(data, shape)))));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:545:13
+    |
+545 |             std::ptr::write(out, Value::Unit);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:538:1
+    |
+538 | / unsafe extern "C" fn host_make_tensor_f16(
+539 | |     _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *m
+ut Value,
+540 | | ) {
+    | |_^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::slice::from_raw_parts` is unsafe 
+and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:552:9
+    |
+552 |         std::slice::from_raw_parts(args_ptr, count)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe functi
+on
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:563:5
+    |
+563 |     std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_
+vec_f16(data, shape)))));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:575:13
+    |
+575 |             std::ptr::write(out, Value::Unit);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:568:1
+    |
+568 | / unsafe extern "C" fn host_make_tensor_bf16(
+569 | |     _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *m
+ut Value,
+570 | | ) {
+    | |_^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::slice::from_raw_parts` is unsafe 
+and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:582:9
+    |
+582 |         std::slice::from_raw_parts(args_ptr, count)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe functi
+on
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:593:5
+    |
+593 |     std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_
+vec_bf16(data, shape)))));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:599:19
+    |
+599 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:596:1
+    |
+596 | / unsafe extern "C" fn host_make_closure(
+597 | |     vm: *mut Vm, _params: u64, chunk_idx: u64, out: *mut Value,
+598 | | ) {
+    | |_^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:601:5
+    |
+601 |     std::ptr::write(out, Value::FnRef { name, params: vec![], return_type
+: crate::hir::types::Type::Base(crate::hir::types::BaseType::Unit) });
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to u
+nsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:605:19
+    |
+605 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:604:1
+    |
+604 | unsafe extern "C" fn host_load_global(vm: *mut Vm, name_idx: u64, out: *m
+ut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:607:5
+    |
+607 |     std::ptr::write(out, vm.get_global(&name).unwrap_or(Value::Unit));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cal
+l to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:611:19
+    |
+611 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:610:1
+    |
+610 | unsafe extern "C" fn host_store_global(vm: *mut Vm, name_idx: u64, val: *
+const Value, out: *mut Value) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:613:13
+    |
+613 |     let v = (*val).clone();
+    |             ^^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: call to unsafe function `std::ptr::write` is unsafe and require
+s unsafe block
+   --> src\compile\jit\hostcalls.rs:615:5
+    |
+615 |     std::ptr::write(out, v);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: consult the function's documentation for information on how to avoi
+d undefined behavior
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> src\compile\jit\hostcalls.rs:622:19
+    |
+622 |     let vm = &mut *vm;
+    |                   ^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be null, dangling or unaligned; they can violate a
+liasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> src\compile\jit\hostcalls.rs:621:1
+    |
+621 | unsafe extern "C" fn host_check_error(vm: *mut Vm) -> u8 {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/
+rust-2024/unsafe-op-in-unsafe-fn.html>
+
+warning: method `record_error_and_recover` is never used
+   --> src\parser\parser.rs:145:8
+    |
+ 44 | impl Parser {
+    | ----------- method in this implementation
+...
+145 |     fn record_error_and_recover(&mut self, err: TenthError) -> Option<Ite
+m> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: multiple methods are never used
+   --> src\runtime\tensor\methods.rs:424:8
+    |
+  6 | impl Tensor {
+    | ----------- methods in this implementation
+...
+424 |     fn map_f32(&self, f: impl Fn(f32) -> f32) -> Tensor {
+    |        ^^^^^^^
+...
+430 |     fn map_f64(&self, f: impl Fn(f64) -> f64) -> Tensor {
+    |        ^^^^^^^
+...
+437 |     fn map_f16(&self, f: impl Fn(f32) -> f32) -> Tensor {
+    |        ^^^^^^^
+...
+445 |     fn map_bf16(&self, f: impl Fn(f32) -> f32) -> Tensor {
+    |        ^^^^^^^^
+...
+452 |     fn zip_f32(&self, other: &Tensor, f: impl Fn(f32, f32) -> f32) -> Res
+ult<Tensor, String> {
+    |        ^^^^^^^
+...
+467 |     fn zip_f64(&self, other: &Tensor, f: impl Fn(f64, f64) -> f64) -> Res
+ult<Tensor, String> {
+    |        ^^^^^^^
+...
+483 |     fn zip_f16(&self, other: &Tensor, f: impl Fn(f32, f32) -> f32) -> Res
+ult<Tensor, String> {
+    |        ^^^^^^^
+...
+499 |     fn zip_bf16(&self, other: &Tensor, f: impl Fn(f32, f32) -> f32) -> Re
+sult<Tensor, String> {
+    |        ^^^^^^^^
+
+warning: method `remove_var` is never used
+   --> src\runtime\interpreter\core.rs:168:19
+    |
+ 97 | impl Interpreter {
+    | ---------------- method in this implementation
+...
+168 |     pub(super) fn remove_var(&mut self, name: &str) -> Option<Value> {
+    |                   ^^^^^^^^^^
+
+warning: method `unbind_pattern` is never used
+   --> src\runtime\interpreter\pattern.rs:197:19
+    |
+ 13 | impl super::Interpreter {
+    | ----------------------- method in this implementation
+...
+197 |     pub(super) fn unbind_pattern(&mut self, pattern: &HirPattern) {
+    |                   ^^^^^^^^^^^^^^
+
+warning: methods `to_f64` and `sqrt_` are never used
+  --> src\runtime\autodiff\tape_op.rs:24:8
+   |
+15 | pub(super) trait FloatElem: 'static + Copy + Send + Sync +
+   |                  --------- methods in this trait
+...
+24 |     fn to_f64(self) -> f64;
+   |        ^^^^^^
+25 |     fn sqrt_(self) -> Self;
+   |        ^^^^^
+
+warning: field `next_task_id` is never read
+  --> src\runtime\vm\mod.rs:83:5
+   |
+36 | pub struct Vm {
+   |            -- field in this struct
+...
+83 |     next_task_id: TaskId,
+   |     ^^^^^^^^^^^^
+
+warning: method `bfs_reverse_reachable` is never used
+   --> src\runtime\relation_debugger.rs:236:8
+    |
+143 | impl Tape {
+    | --------- method in this implementation
+...
+236 |     fn bfs_reverse_reachable(&self, v_err: usize) -> HashSet<usize> {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `emit_if` is never used
+    --> src\compile\wasm\compile.rs:1216:19
+     |
+  17 | impl WasmCompiler {
+     | ----------------- method in this implementation
+...
+1216 |     pub(super) fn emit_if(&self, body: &mut Function, cond: bool, then_i
+: Instruction<'_>, else_i: Instruction<'_>) {
+     |                   ^^^^^^^
+
+warning: unused `std::result::Result` that must be used
+  --> src\compile\jit\context.rs:64:9
+   |
+64 |         self.module.finalize_definitions();
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this `Result` may be an `Err` variant, which should be handled
+   = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+   |
+64 |         let _ = self.module.finalize_definitions();
+   |         +++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:630:41
+    |
+630 |         ("host_make_int", host_make_int as usize),
+    |                                         ^^^^^^^^
+    |
+    = note: `#[warn(function_casts_as_integer)]` on by default
+help: first cast to a pointer `as *const ()`
+    |
+630 |         ("host_make_int", host_make_int as *const () as usize),
+    |                                         ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:631:45
+    |
+631 |         ("host_make_float", host_make_float as usize),
+    |                                             ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+631 |         ("host_make_float", host_make_float as *const () as usize),
+    |                                             ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:632:49
+    |
+632 |         ("host_make_float32", host_make_float32 as usize),
+    |                                                 ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+632 |         ("host_make_float32", host_make_float32 as *const () as usize),
+    |                                                 ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:633:43
+    |
+633 |         ("host_make_bool", host_make_bool as usize),
+    |                                           ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+633 |         ("host_make_bool", host_make_bool as *const () as usize),
+    |                                           ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:634:41
+    |
+634 |         ("host_make_str", host_make_str as usize),
+    |                                         ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+634 |         ("host_make_str", host_make_str as *const () as usize),
+    |                                         ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:635:43
+    |
+635 |         ("host_make_unit", host_make_unit as usize),
+    |                                           ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+635 |         ("host_make_unit", host_make_unit as *const () as usize),
+    |                                           ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:636:37
+    |
+636 |         ("host_truthy", host_truthy as usize),
+    |                                     ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+636 |         ("host_truthy", host_truthy as *const () as usize),
+    |                                     ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:637:31
+    |
+637 |         ("host_add", host_add as usize),
+    |                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+637 |         ("host_add", host_add as *const () as usize),
+    |                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:638:31
+    |
+638 |         ("host_sub", host_sub as usize),
+    |                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+638 |         ("host_sub", host_sub as *const () as usize),
+    |                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:639:31
+    |
+639 |         ("host_mul", host_mul as usize),
+    |                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+639 |         ("host_mul", host_mul as *const () as usize),
+    |                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:640:31
+    |
+640 |         ("host_div", host_div as usize),
+    |                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+640 |         ("host_div", host_div as *const () as usize),
+    |                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:641:31
+    |
+641 |         ("host_mod", host_mod as usize),
+    |                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+641 |         ("host_mod", host_mod as *const () as usize),
+    |                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:642:31
+    |
+642 |         ("host_neg", host_neg as usize),
+    |                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+642 |         ("host_neg", host_neg as *const () as usize),
+    |                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:643:31
+    |
+643 |         ("host_not", host_not as usize),
+    |                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+643 |         ("host_not", host_not as *const () as usize),
+    |                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:644:29
+    |
+644 |         ("host_eq", host_eq as usize),
+    |                             ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+644 |         ("host_eq", host_eq as *const () as usize),
+    |                             ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:645:31
+    |
+645 |         ("host_neq", host_neq as usize),
+    |                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+645 |         ("host_neq", host_neq as *const () as usize),
+    |                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:646:29
+    |
+646 |         ("host_lt", host_lt as usize),
+    |                             ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+646 |         ("host_lt", host_lt as *const () as usize),
+    |                             ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:647:29
+    |
+647 |         ("host_gt", host_gt as usize),
+    |                             ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+647 |         ("host_gt", host_gt as *const () as usize),
+    |                             ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:648:31
+    |
+648 |         ("host_lte", host_lte as usize),
+    |                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+648 |         ("host_lte", host_lte as *const () as usize),
+    |                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:649:31
+    |
+649 |         ("host_gte", host_gte as usize),
+    |                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+649 |         ("host_gte", host_gte as *const () as usize),
+    |                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:650:33
+    |
+650 |         ("host_call", host_call as usize),
+    |                                 ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+650 |         ("host_call", host_call as *const () as usize),
+    |                                 ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:651:47
+    |
+651 |         ("host_method_call", host_method_call as usize),
+    |                                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+651 |         ("host_method_call", host_method_call as *const () as usize),
+    |                                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:652:41
+    |
+652 |         ("host_make_vec", host_make_vec as usize),
+    |                                         ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+652 |         ("host_make_vec", host_make_vec as *const () as usize),
+    |                                         ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:653:41
+    |
+653 |         ("host_make_map", host_make_map as usize),
+    |                                         ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+653 |         ("host_make_map", host_make_map as *const () as usize),
+    |                                         ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:654:45
+    |
+654 |         ("host_new_struct", host_new_struct as usize),
+    |                                             ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+654 |         ("host_new_struct", host_new_struct as *const () as usize),
+    |                                             ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:655:43
+    |
+655 |         ("host_new_union", host_new_union as usize),
+    |                                           ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+655 |         ("host_new_union", host_new_union as *const () as usize),
+    |                                           ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:656:45
+    |
+656 |         ("host_load_field", host_load_field as usize),
+    |                                             ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+656 |         ("host_load_field", host_load_field as *const () as usize),
+    |                                             ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:657:47
+    |
+657 |         ("host_store_field", host_store_field as usize),
+    |                                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+657 |         ("host_store_field", host_store_field as *const () as usize),
+    |                                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:658:43
+    |
+658 |         ("host_index_get", host_index_get as usize),
+    |                                           ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+658 |         ("host_index_get", host_index_get as *const () as usize),
+    |                                           ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:659:43
+    |
+659 |         ("host_slice_str", host_slice_str as usize),
+    |                                           ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+659 |         ("host_slice_str", host_slice_str as *const () as usize),
+    |                                           ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:660:43
+    |
+660 |         ("host_make_enum", host_make_enum as usize),
+    |                                           ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+660 |         ("host_make_enum", host_make_enum as *const () as usize),
+    |                                           ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:661:55
+    |
+661 |         ("host_is_enum_variant", host_is_enum_variant as usize),
+    |                                                       ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+661 |         ("host_is_enum_variant", host_is_enum_variant as *const () as usi
+ze),
+    |                                                       ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:662:53
+    |
+662 |         ("host_enum_get_field", host_enum_get_field as usize),
+    |                                                     ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+662 |         ("host_enum_get_field", host_enum_get_field as *const () as usize
+),
+    |                                                     ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:663:45
+    |
+663 |         ("host_push_range", host_push_range as usize),
+    |                                             ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+663 |         ("host_push_range", host_push_range as *const () as usize),
+    |                                             ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:664:47
+    |
+664 |         ("host_make_tensor", host_make_tensor as usize),
+    |                                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+664 |         ("host_make_tensor", host_make_tensor as *const () as usize),
+    |                                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:665:55
+    |
+665 |         ("host_make_tensor_f32", host_make_tensor_f32 as usize),
+    |                                                       ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+665 |         ("host_make_tensor_f32", host_make_tensor_f32 as *const () as usi
+ze),
+    |                                                       ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:666:55
+    |
+666 |         ("host_make_tensor_f16", host_make_tensor_f16 as usize),
+    |                                                       ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+666 |         ("host_make_tensor_f16", host_make_tensor_f16 as *const () as usi
+ze),
+    |                                                       ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:667:57
+    |
+667 |         ("host_make_tensor_bf16", host_make_tensor_bf16 as usize),
+    |                                                         ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+667 |         ("host_make_tensor_bf16", host_make_tensor_bf16 as *const () as u
+size),
+    |                                                         ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:668:49
+    |
+668 |         ("host_make_closure", host_make_closure as usize),
+    |                                                 ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+668 |         ("host_make_closure", host_make_closure as *const () as usize),
+    |                                                 ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:669:47
+    |
+669 |         ("host_load_global", host_load_global as usize),
+    |                                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+669 |         ("host_load_global", host_load_global as *const () as usize),
+    |                                               ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:670:49
+    |
+670 |         ("host_store_global", host_store_global as usize),
+    |                                                 ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+670 |         ("host_store_global", host_store_global as *const () as usize),
+    |                                                 ++++++++++++
+
+warning: direct cast of function item into an integer
+   --> src\compile\jit\hostcalls.rs:671:47
+    |
+671 |         ("host_check_error", host_check_error as usize),
+    |                                               ^^^^^^^^
+    |
+help: first cast to a pointer `as *const ()`
+    |
+671 |         ("host_check_error", host_check_error as *const () as usize),
+    |                                               ++++++++++++
+
+For more information about this error, try `rustc --explain E0133`.
+warning: `tenth` (lib) generated 237 warnings (run `cargo fix --lib -p tenth` t
+o apply 115 suggestions)
+    Finished `release` profile [optimized] target(s) in 34.57s
+     Running `tenth\target\release\tenth.exe run tenthc/main.th`
+=== Tenth Self-Hosting Bootstrap ===
+[WASM] compile lexer_new
+[WASM] compile is_digit
+[WASM] compile is_alpha
+[WASM] compile is_alnum
+[WASM] compile is_ws
+[WASM] compile is_hex_digit
+[WASM] compile is_oct_digit
+[WASM] compile is_bin_digit
+[WASM] compile is_source_start
+[WASM] compile lexer_peek
+[WASM] compile lexer_peek_at
+[WASM] compile lexer_advance
+[WASM] compile make_span
+[WASM] compile char_to_digit
+[WASM] compile hex_digit_value
+[WASM] compile parse_int
+[WASM] compile parse_radix_int
+[WASM] compile detect_int_suffix
+[WASM] compile detect_float_suffix
+[WASM] compile lexer_next
+[WASM] compile lexer_tokenize
+[WASM] compile parser_new
+[WASM] compile parser_peek
+[WASM] compile parser_at_eof
+[WASM] compile parser_advance
+[WASM] compile expect_gt
+[WASM] compile is_sync_token
+[WASM] compile synchronize
+[WASM] compile record_error_and_recover
+[WASM] compile is_expr_start_token
+[WASM] compile add_expr
+[WASM] compile add_stmt
+[WASM] compile parse_primary
+[WASM] compile parse_unary
+[WASM] compile looks_like_generic_call
+[WASM] compile parse_postfix
+[WASM] compile is_custom_op_str
+[WASM] compile binop_prec
+[WASM] compile token_to_binop_str
+[WASM] compile is_binop
+[WASM] compile parse_binary
+[WASM] compile parse_expr
+[WASM] compile parse_block_expr
+[WASM] compile parse_if_expr
+[WASM] compile int_to_str
+[WASM] compile parse_match_expr
+[WASM] compile parse_stmt
+[WASM] compile token_type_str
+[WASM] compile parse_type_annotation
+[WASM] compile parse_generic_params
+[WASM] compile parse_fn
+[WASM] compile parse_operator_def
+[WASM] compile parse_struct_def
+[WASM] compile parse_enum_def
+[WASM] compile parse_trait_def
+[WASM] compile parse_impl_block
+[WASM] compile is_end_of_block
+[WASM] compile is_end_of_paren
+[WASM] compile is_stmt_end
+[WASM] compile parse_program
+[WASM] compile add_type
+[WASM] compile add_tensor_type
+[WASM] compile add_tensor_type_param
+[WASM] compile add_tensor_type_with_symbols
+[WASM] compile get_tensor_dtype_ty
+[WASM] compile propagate_tensor_dtype
+[WASM] compile get_tensor_dim_count
+[WASM] compile get_tensor_dim0
+[WASM] compile get_tensor_dim1
+[WASM] compile get_tensor_dim2
+[WASM] compile check_matmul_shape
+[WASM] compile check_bmm_shape
+[WASM] compile push_warning
+[WASM] compile has_static_info
+[WASM] compile static_numel
+[WASM] compile dtype_size_bytes
+[WASM] compile static_bytes
+[WASM] compile fmt_dim
+[WASM] compile fmt_dims
+[WASM] compile dims_compatible
+[WASM] compile unbroadcast_feasible
+[WASM] compile numel_compatible
+[WASM] compile shape_compatible
+[WASM] compile check_binary_backward_shape
+[WASM] compile check_matmul_backward_shape
+[WASM] compile check_cross_entropy_compat
+[WASM] compile emit_memory_estimate
+[WASM] compile emit_matmul_flop_estimate
+[WASM] compile emit_bmm_flop_estimate
+[WASM] compile check_binary_broadcast
+[WASM] compile dims_count_from_args
+[WASM] compile dims_d0_from_args
+[WASM] compile dims_d1_from_args
+[WASM] compile dims_d2_from_args
+[WASM] compile dims_symbol_names_from_args
+[WASM] compile parse_type
+[WASM] compile parse_tensor_type
+[WASM] compile parse_ref_type
+[WASM] compile parse_array_type
+[WASM] compile parse_fn_type
+[WASM] compile parse_generic_type
+[WASM] compile substitute_type
+[WASM] compile push_expr
+[WASM] compile push_stmt
+[WASM] compile lookup_var_type
+[WASM] compile lookup_ownership
+[WASM] compile set_ownership
+[WASM] compile push_error
+[WASM] compile check_use
+[WASM] compile check_borrow_shared
+[WASM] compile check_borrow_mut
+[WASM] compile release_borrows
+[WASM] compile record_borrow_holder
+[WASM] compile expr_may_produce_ref
+[WASM] compile collect_persistent_borrowed_idents
+[WASM] compile collect_persistent_borrowed_idents_into
+[WASM] compile creates_persistent_borrow
+[WASM] compile check_generic_instantiation_soundness
+[WASM] compile check_fn_return_unit
+[WASM] compile type_display_name
+[WASM] compile check_match_exhaustiveness
+[WASM] compile lookup_fn_return_type
+[WASM] compile is_type_f64
+[WASM] compile is_type_f32
+[WASM] compile is_type_float
+[WASM] compile is_type_str
+[WASM] compile get_expr_ty
+[WASM] compile is_builtin_name
+[WASM] compile collect_free_vars
+[WASM] compile free_vars_in
+[WASM] compile lower_expr
+[WASM] compile lower_stmt
+[WASM] compile lower_program
+[WASM] compile resolve_user_method
+[WASM] compile lower_fn_body
+[WASM] compile is_tensor_op
+[WASM] compile stmt_expr_idx
+[WASM] compile stmt_has_control_flow
+[WASM] compile expr_has_control_flow
+[WASM] compile lookup_grad_idx
+[WASM] compile backward_shape_pass
+[WASM] compile leb128_u
+[WASM] compile leb128_s
+[WASM] compile emit_section
+[WASM] compile wasm_unreachable
+[WASM] compile wasm_nop
+[WASM] compile wasm_end
+[WASM] compile wasm_return
+[WASM] compile wasm_local_get
+[WASM] compile wasm_local_set
+[WASM] compile wasm_i64_const
+[WASM] compile wasm_i64_add
+[WASM] compile wasm_i64_sub
+[WASM] compile wasm_i64_mul
+[WASM] compile wasm_i64_div_s
+[WASM] compile wasm_i64_rem_s
+[WASM] compile wasm_i64_and
+[WASM] compile wasm_i64_or
+[WASM] compile wasm_i32_and
+[WASM] compile wasm_i32_or
+[WASM] compile wasm_i64_eq
+[WASM] compile wasm_i64_ne
+[WASM] compile wasm_i64_lt_s
+[WASM] compile wasm_i64_gt_s
+[WASM] compile wasm_i64_le_s
+[WASM] compile wasm_i64_ge_s
+[WASM] compile wasm_call
+[WASM] compile wasm_block
+[WASM] compile wasm_loop
+[WASM] compile wasm_if
+[WASM] compile wasm_else
+[WASM] compile wasm_br
+[WASM] compile wasm_br_if
+[WASM] compile wasm_i32_eqz
+[WASM] compile wasm_i64_eqz
+[WASM] compile wasm_i32_wrap_i64
+[WASM] compile wasm_i32_const
+[WASM] compile wasm_i32_add
+[WASM] compile wasm_i64_load
+[WASM] compile wasm_i64_store
+[WASM] compile wasm_i32_load
+[WASM] compile wasm_i32_store
+[WASM] compile wasm_f64_store
+[WASM] compile wasm_i64_extend_i32_u
+[WASM] compile wasm_drop
+[WASM] compile wasm_local_tee
+[WASM] compile wasm_global_get
+[WASM] compile wasm_global_set
+[WASM] compile wasm_i64_shr_u
+[WASM] compile wasm_call_indirect
+[WASM] compile wasm_f64_const
+[WASM] compile wasm_f64_add
+[WASM] compile wasm_f64_sub
+[WASM] compile wasm_f64_mul
+[WASM] compile wasm_f64_div
+[WASM] compile wasm_f64_eq
+[WASM] compile wasm_f64_ne
+[WASM] compile wasm_f64_lt
+[WASM] compile wasm_f64_gt
+[WASM] compile wasm_f64_le
+[WASM] compile wasm_f64_ge
+[WASM] compile wasm_f64_neg
+[WASM] compile wasm_f32_const_from_f64
+[WASM] compile wasm_f32_add
+[WASM] compile wasm_f32_sub
+[WASM] compile wasm_f32_mul
+[WASM] compile wasm_f32_div
+[WASM] compile wasm_f32_eq
+[WASM] compile wasm_f32_ne
+[WASM] compile wasm_f32_lt
+[WASM] compile wasm_f32_gt
+[WASM] compile wasm_f32_le
+[WASM] compile wasm_f32_ge
+[WASM] compile wasm_f32_neg
+[WASM] compile wasm_f32_store
+[WASM] compile wasm_f32_load
+[WASM] compile wasm_f32_demote_f64
+[WASM] compile wasm_f64_promote_f32
+[WASM] compile wasm_f32_convert_i64_s
+[WASM] compile wasm_f64_convert_i64_s
+[WASM] compile wasm_i64_reinterpret_f64
+[WASM] compile wasm_f64_reinterpret_i64
+[WASM] compile wasm_i32_trunc_f32_s
+[WASM] compile wasm_i32_trunc_f64_s
+[WASM] compile ctx_new
+[WASM] compile intern_string
+[WASM] compile find_closure_idx
+[WASM] compile is_closure_var
+[WASM] compile compile_closure_body
+[OK] Full compiler compiled to tenthc_full.wasm
+[WASM] compile compile_fn_body
+[WASM] compile type_struct_name
+[WASM] compile struct_field_offset
+[WASM] compile char_to_ascii
+[WASM] compile push_str_bytes
+[WASM] compile is_expr_float
+[WASM] compile is_expr_f32
+[WASM] compile is_expr_f64
+[WASM] compile is_non_param_local
+[WASM] compile valtype_for_type
+[WASM] compile is_expr_str
+[WASM] compile compile_expr
+[WASM] compile compile_stmt
+[WASM] compile compile_to_wasm

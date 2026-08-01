@@ -11,8 +11,8 @@
 // 既有局限（非本特性引入），详见 tenth/tests/custom_operator_test.rs 的
 // test_coexist_with_builtin_overload 注释。
 //
-// 另注：运算符重载的降级仅支持单层 `a + b`；链式 `a + b + c` 的降级
-// 在解释器路径也有缺口（运行时"加法类型不匹配"），本文件已避免。
+// 另注：AUDIT #19（链式重载断链）已于 2026-08-02 修复——`(a + b) + c`
+// 的复合 receiver 类型现能正确传播，链式运算在解释器路径可用。
 
 struct Point { x: f64 }
 trait Add { fn add(self, other: Point) -> Point; }
@@ -28,10 +28,16 @@ fn main() {
     let b = Point { x: 2.5 };
     let c = a + b;                        // 降级为 a.add(b)
     println("  Point{1.5} + Point{2.5} = Point{", c.x, "}");
-    println("");
 
-    // 与新建 struct 直接相加（单层重载；链式 a+b+c 的降级有缺口，已避免）
+    // 与新建 struct 直接相加（单层重载）
     let e = a + Point { x: 1.0 };
     println("  (1.5 + 1.0).x = ", e.x);
+
+    // 链式重载（AUDIT #19 修复）：(a + b) + c 现可连续降级
+    let f = (a + b) + Point { x: 1.0 };   // 1.5 + 2.5 + 1.0 = 5.0
+    println("  (1.5 + 2.5) + 1.0 = Point{", f.x, "}（期望 5.0）");
+
+    let g = a + b + Point { x: 2.0 };     // 左结合：1.5 + 2.5 + 2.0 = 6.0
+    println("  1.5 + 2.5 + 2.0 = Point{", g.x, "}（期望 6.0）");
     println("");
 }

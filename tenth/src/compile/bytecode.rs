@@ -21,6 +21,12 @@ pub struct BytecodeCompiler {
     /// M2.3：`label` 为该循环的 `'outer:` 标签（None 表示无标签），
     /// `break 'outer` / `continue 'outer` 在栈中从顶向下搜索匹配标签取跳转目标。
     loop_stack: Vec<(Option<String>, usize, usize, usize)>,
+    /// 编译期作用域栈：记录每层作用域入口处的 `locals.len()`。
+    /// `pop_scope` 时 `locals.truncate(start)` —— 纯编译期槽位表操作（不发射字节码），
+    /// 使作用域内绑定的变量（如 match 臂绑定）在作用域结束后不再被 rposition 找到。
+    /// 修复 AUDIT #18 族：match 臂绑定 x 遮蔽外层 x 后，臂结束应恢复外层绑定；
+    /// 此前扁平 locals 无作用域跟踪，臂绑定残留为"最近绑定"污染外层同名变量。
+    scope_stack: Vec<usize>,
     /// Additional chunks compiled from closures (name, chunk)
     closure_chunks: Vec<(String, Chunk)>,
     /// Counter for generating unique closure names
@@ -42,6 +48,7 @@ impl BytecodeCompiler {
             labels: HashMap::new(),
             next_label: 0,
             loop_stack: Vec::new(),
+            scope_stack: Vec::new(),
             closure_chunks: Vec::new(),
             closure_counter: 0,
             try_block_stack: Vec::new(),
@@ -434,6 +441,9 @@ impl BytecodeCompiler {
                             self.chunk.emit(Op::JmpFalse(0));
                             self.patch_jump(next_label);
                             // IsEnumVariant consumed the dup; scrutinee remains
+                            // 臂绑定进入子作用域：臂结束后 pop_scope 移除绑定，
+                            // 避免遮蔽/污染外层同名变量（AUDIT #18 族）。
+                            self.push_scope();
                             // If there's a guard, keep an extra copy so the next arm
                             // can retry if the guard fails.
                             if has_guard {
@@ -469,6 +479,8 @@ impl BytecodeCompiler {
                             self.compile_expr(&arm.body)?;
                             self.chunk.emit(Op::Jump(0));
                             self.patch_jump(end_label);
+                            // 臂结束：移除本臂绑定（守卫失败路径也在 next_label 前汇聚）
+                            self.pop_scope();
                             self.label(next_label);
                         }
                         HirPattern::Wildcard => {
@@ -488,6 +500,7 @@ impl BytecodeCompiler {
                         HirPattern::Binding(name) => {
                             // `x` or `x if guard => body`: bind scrutinee to x, then
                             // optionally check guard.
+                            self.push_scope(); // 臂绑定子作用域（AUDIT #18 族）
                             self.chunk.emit(Op::Dup); // [scrut, scrut]
                             let pos = self.locals.len();
                             self.locals.push(name.clone());
@@ -501,6 +514,7 @@ impl BytecodeCompiler {
                             self.compile_expr(&arm.body)?;
                             self.chunk.emit(Op::Jump(0));
                             self.patch_jump(end_label);
+                            self.pop_scope(); // 臂结束：移除绑定
                             self.label(next_label);
                         }
                         HirPattern::Literal(lit) => {
@@ -541,6 +555,8 @@ impl BytecodeCompiler {
                             self.chunk.emit(Op::JmpFalse(0));
                             self.patch_jump(next_label);
                             // IsStruct consumed the dup; scrutinee remains.
+                            // 臂绑定子作用域（AUDIT #18 族）
+                            self.push_scope();
                             // If there's a guard, keep an extra copy for the next arm retry.
                             if has_guard {
                                 self.chunk.emit(Op::Dup);
@@ -565,6 +581,7 @@ impl BytecodeCompiler {
                             self.compile_expr(&arm.body)?;
                             self.chunk.emit(Op::Jump(0));
                             self.patch_jump(end_label);
+                            self.pop_scope(); // 臂结束：移除字段绑定
                             self.label(next_label);
                         }
                         HirPattern::Tuple(patterns) => {
@@ -583,6 +600,7 @@ impl BytecodeCompiler {
                                 self.chunk.emit(Op::IsTuple(patterns.len())); // [scrut, bool]
                                 self.chunk.emit(Op::JmpFalse(0));
                                 self.patch_jump(next_label); // [scrut]
+                                self.push_scope(); // 臂绑定子作用域（AUDIT #18 族）
                                 // Bind each sub-pattern
                                 for (i, sub_pat) in patterns.iter().enumerate() {
                                     if let HirPattern::Binding(name) = sub_pat {
@@ -604,6 +622,7 @@ impl BytecodeCompiler {
                                 self.compile_expr(&arm.body)?;
                                 self.chunk.emit(Op::Jump(0));
                                 self.patch_jump(end_label);
+                                self.pop_scope(); // 臂结束：移除绑定
                                 self.label(next_label);
                             }
                         }
@@ -1092,6 +1111,21 @@ impl BytecodeCompiler {
         let id = self.next_label;
         self.next_label += 1;
         id
+    }
+
+    /// 进入编译期作用域：记录 locals.len()，此后绑定的变量（match 臂绑定等）
+    /// 在 pop_scope 时被从槽位表移除，不再污染外层同名变量。
+    fn push_scope(&mut self) {
+        self.scope_stack.push(self.locals.len());
+    }
+
+    /// 退出编译期作用域：截断 locals 到作用域入口长度。
+    /// 纯编译期操作（不发射任何字节码）——运行时栈不受影响，仅影响后续
+    /// 代码的 rposition 变量解析。
+    fn pop_scope(&mut self) {
+        if let Some(start) = self.scope_stack.pop() {
+            self.locals.truncate(start);
+        }
     }
 
     fn label(&mut self, id: usize) {

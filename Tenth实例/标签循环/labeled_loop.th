@@ -7,11 +7,11 @@
 //
 // 运行：tenth run labeled_loop.th（默认 VM/JIT 路径即可）
 //
-// 注：VM 对"同一函数内多个标签循环"有既有缺陷（AUDIT #17），
-// 因此 break 与 continue 的演示放在独立函数中。
+// 注：AUDIT #17（同一函数内多个标签循环的字节码槽污染）已于 2026-08-02
+// 修复，break 与 continue 的演示合并到同一函数（demo_labeled）验证。
 
-fn demo_break() {
-    // 内层 j == 3 时，直接跳出两层循环
+fn demo_labeled() {
+    // 1) break 'outer：内层 j == 3 时，直接跳出两层循环
     let mut s = 0;
     'outer: while true {
         let mut j = 0;
@@ -22,26 +22,24 @@ fn demo_break() {
         }
     }
     println("  break 'outer 后 s = ", s, "（期望 3）");
-}
 
-fn demo_continue() {
-    // 偶数 k 时跳过外层循环体的剩余部分
-    let mut s = 0;
+    // 2) continue 'outer：偶数 k 时跳过外层循环体的剩余部分
+    //    （与上面同一函数、同名标签、共用变量名 j —— 原缺陷场景）
+    let mut s2 = 0;
     'outer: for k in 0..5 {
         let mut j = 0;
         while j < 3 {
             j = j + 1;
             if k % 2 == 0 { continue 'outer; }
-            s = s + 1;
+            s2 = s2 + 1;
         }
-        s = s + 10;
+        s2 = s2 + 10;
     }
-    println("  continue 'outer 后 s = ", s, "（期望 26）");
+    println("  continue 'outer 后 s2 = ", s2, "（期望 26）");
 }
 
 fn main() {
     println("=== 标签循环 ===\n");
-    demo_break();
-    demo_continue();
+    demo_labeled();
     println("");
 }

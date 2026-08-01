@@ -720,7 +720,12 @@ impl super::Interpreter {
 
                 for arm in arms {
                     if self.pattern_matches(&arm.pattern, &val) {
-                        // Bind variables from the matched pattern (needed for guard evaluation)
+                        // 臂绑定进入子作用域：模式绑定/guard/body 内的同名变量只是
+                        // 遮蔽外层（AUDIT #18 族修复）。此前直接在函数作用域插入，
+                        // 同名绑定会覆盖外层变量，臂结束后 remove_var 把外层变量
+                        // 一并删除（"未定义变量 x"）或残留臂值。push_scope/pop_scope
+                        // 保证 pop 只清理本臂绑定，外层同名变量不受影响。
+                        self.push_scope();
                         self.bind_pattern(&arm.pattern, &val);
                         // Check guard if present
                         if let Some(guard) = &arm.guard {
@@ -731,14 +736,14 @@ impl super::Interpreter {
                                 _ => false,
                             };
                             if !guard_bool {
-                                // Clean up bindings and try next arm
-                                self.unbind_pattern(&arm.pattern);
+                                // Clean up this arm's scope and try next arm
+                                self.pop_scope();
                                 continue;
                             }
                         }
                         let result = self.eval_expr(&arm.body);
-                        // Clean up bound variables
-                        self.unbind_pattern(&arm.pattern);
+                        // Clean up this arm's scope
+                        self.pop_scope();
                         return result;
                     }
                 }

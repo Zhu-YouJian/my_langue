@@ -180,7 +180,15 @@ impl Lowerer {
                 if let Some((trait_name, method_name)) = self.try_binary_op_overload(op, &l.ty) {
                     if self.has_trait_impl_for_type(&trait_name, &l.ty) {
                         let method = method_name.to_string();
-                        let ret_ty = self.resolve_method_type(&l.ty, &method, &[r.clone()]);
+                        // AUDIT #19：trait 方法（`impl Add for Point` 的 `add`）不在
+                        // inherent 方法表（methods）中，resolve_method_type 查不到会
+                        // 回退 Unknown —— 单层 `a + b` 可用，但链式 `(a + b) + c` 的
+                        // 复合 receiver 类型丢失为 Unknown，外层降级检查
+                        // has_trait_impl_for_type("Add", Unknown) 为 false → 断链，
+                        // 运行时"加法类型不匹配"。改为优先从 trait impl 方法定义
+                        // 取真实返回类型（链式 receiver 保持为 Point）。
+                        let ret_ty = self.trait_impl_method_ret_type(&trait_name, &l.ty, &method)
+                            .unwrap_or_else(|| self.resolve_method_type(&l.ty, &method, &[r.clone()]));
                         let ret_ty2 = ret_ty.clone();
                         (HirExprKind::MethodCall {
                             receiver: Box::new(l),
@@ -244,7 +252,10 @@ impl Lowerer {
                 let (kind, ty) = if let Some((trait_name, method_name)) = self.try_unary_op_overload(op) {
                     if self.has_trait_impl_for_type(&trait_name, &e.ty) {
                         let method = method_name.to_string();
-                        let ret_ty = self.resolve_method_type(&e.ty, &method, &[]);
+                        // AUDIT #19：与二元重载同因——trait 方法返回类型从 trait
+                        // impl 定义取，避免回退 Unknown 使外层链式断链。
+                        let ret_ty = self.trait_impl_method_ret_type(&trait_name, &e.ty, &method)
+                            .unwrap_or_else(|| self.resolve_method_type(&e.ty, &method, &[]));
                         let ret_ty2 = ret_ty.clone();
                         (HirExprKind::MethodCall {
                             receiver: Box::new(e),
@@ -703,6 +714,20 @@ impl Lowerer {
                     }
                 }
 
+                // AUDIT-11.4.12：张量 `.shape()` 是类型系统误标——运行时无该
+                // native（`x.shape()` 类型检查曾能通过但运行时崩溃），正确路径是
+                // `.shape_tensor()`（返回 `Tensor[f64, ndim]`）。编译期直接报错
+                // 引导用户，避免"类型检查通过、运行时崩溃"。仅对 Tensor receiver
+                // 生效；用户 struct/trait 自定义 `shape` 方法不受影响。
+                if matches!(&recv.ty, Type::Tensor { .. }) && method.name == "shape" {
+                    return Err(TenthError::TypeError {
+                        line: span.line,
+                        col: span.col,
+                        message: format!(
+                            "张量没有方法 'shape()'——取形状请用 'shape_tensor()'（返回 Tensor[f64, ndim]）"
+                        ),
+                    });
+                }
                 let ret_ty = self.resolve_method_type(&recv.ty, &method.name, &lowered_args);
                 // 编译期 shape 检查（如 matmul 的内侧维度）
                 Self::check_method_shape(&recv.ty, &method.name, &lowered_args, &span)?;
@@ -1925,6 +1950,28 @@ impl Lowerer {
         self.trait_impls.get(trait_name)
             .and_then(|impls| impls.get(type_name))
             .is_some()
+    }
+
+    /// 从 trait impl 方法定义取返回类型（运算符重载降级用）。
+    /// trait 方法（`impl Add for Point` 的 `add`）不在 inherent 方法表
+    /// （methods）中，`resolve_method_type` 查不到会回退 `Unknown`；
+    /// 从 `trait_impls[trait][type][method].return_type` 取真实签名，
+    /// 使链式重载 `(a + b) + c` / `-a + b` 的复合 receiver 类型保持为
+    /// 具体类型，外层降级检查不断链（AUDIT #19）。
+    pub(super) fn trait_impl_method_ret_type(&self, trait_name: &str, ty: &Type, method: &str) -> Option<Type> {
+        let type_name = match ty {
+            Type::Struct(name) | Type::Enum(name) => name,
+            Type::TypeParam { name } => name,
+            Type::Generic { base, .. } => match base.as_ref() {
+                Type::Enum(name) | Type::Struct(name) | Type::TypeParam { name } => name,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        self.trait_impls.get(trait_name)
+            .and_then(|impls| impls.get(type_name))
+            .and_then(|methods| methods.get(method))
+            .map(|def| def.return_type.clone())
     }
 
     /// 收集当前作用域中所有实现了 Drop trait 的变量。
