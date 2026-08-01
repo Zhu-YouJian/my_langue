@@ -259,8 +259,12 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram, sandbox: Option<FsSandbox>, tim
     vm.deadline_ms = timeout_ms;
     natives::register_all_natives(&mut vm);
 
+    // M3.5：程序级全局名集合（供 bytecode 的 shadow 判定）
+    let global_names: std::collections::HashSet<String> =
+        hir.globals.iter().map(|g| g.name.clone()).collect();
+
     for func in &hir.functions {
-        let compiler = BytecodeCompiler::new();
+        let compiler = BytecodeCompiler::new_with_globals(global_names.clone());
         if let Ok((chunk, closures)) = compiler.compile(func) {
             vm.add_fn(func.name.clone(), chunk);
             for (name, closure_chunk) in closures {
@@ -278,10 +282,29 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram, sandbox: Option<FsSandbox>, tim
         }
     }
 
+    // M3.5：程序级顶层 let 全局初始化（在 main 之前）。
+    // 编译失败 → VmCompileFailed（解释器回退）；运行时失败 → 硬失败。
+    if !hir.globals.is_empty() {
+        let gcompiler = BytecodeCompiler::new();
+        let (gchunk, gclosures) = match gcompiler.compile_globals(&hir.globals) {
+            Ok(x) => x,
+            Err(_) => {
+                return Err(tenth::error::TenthError::VmCompileFailed {
+                    message: "全局初始化编译失败".into(),
+                });
+            }
+        };
+        vm.add_fn("__global_init".into(), gchunk);
+        for (name, closure_chunk) in gclosures {
+            vm.add_fn(name, closure_chunk);
+        }
+        vm.call("__global_init")?;
+    }
+
     if vm.has_fn("main") {
         jit::run_jit(&mut vm, "main")
     } else if let Some(ref expr) = hir.main_expr {
-        let compiler = BytecodeCompiler::new();
+        let compiler = BytecodeCompiler::new_with_globals(global_names.clone());
         if let Ok((chunk, closures)) = compiler.compile_main(expr) {
             vm.add_fn("main".into(), chunk);
             for (name, closure_chunk) in closures {
@@ -333,6 +356,10 @@ fn vm_run(path: &str) -> TenthResult<()> {
     let hir = source_to_hir(&source)?;
     let mut vm = Vm::new();
 
+    // M3.5：程序级全局名集合（供 bytecode 的 shadow 判定）
+    let global_names: std::collections::HashSet<String> =
+        hir.globals.iter().map(|g| g.name.clone()).collect();
+
     // Register native functions (delegate to central register_all_natives)
     natives::register_all_natives(&mut vm);
     vm.add_native("Vec::new".into(), |_vm, _args| {
@@ -370,7 +397,7 @@ fn vm_run(path: &str) -> TenthResult<()> {
 
     // Compile each function to bytecode
     for func in &hir.functions {
-        let compiler = BytecodeCompiler::new();
+        let compiler = BytecodeCompiler::new_with_globals(global_names.clone());
         match compiler.compile(func) {
             Ok((chunk, closures)) => {
                 vm.add_fn(func.name.clone(), chunk);
@@ -387,6 +414,18 @@ fn vm_run(path: &str) -> TenthResult<()> {
             Err(_) => {
                 // Fallback to tree-walk if compilation fails
             }
+        }
+    }
+
+    // M3.5：程序级顶层 let 全局初始化（在 main 之前）
+    if !hir.globals.is_empty() {
+        let gcompiler = BytecodeCompiler::new_with_globals(global_names.clone());
+        if let Ok((gchunk, gclosures)) = gcompiler.compile_globals(&hir.globals) {
+            vm.add_fn("__global_init".into(), gchunk);
+            for (name, closure_chunk) in gclosures {
+                vm.add_fn(name, closure_chunk);
+            }
+            vm.call("__global_init")?;
         }
     }
 

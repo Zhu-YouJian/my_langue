@@ -337,6 +337,26 @@ impl Value {
     }
 }
 
+/// 整数类型名称（用于溢出错误消息）。
+pub fn int_dtype_name(dtype: BaseType) -> &'static str {
+    match dtype {
+        BaseType::I8 => "i8", BaseType::I16 => "i16", BaseType::I32 => "i32", BaseType::I64 => "i64",
+        BaseType::U8 => "u8", BaseType::U16 => "u16", BaseType::U32 => "u32", BaseType::U64 => "u64",
+        _ => "unknown",
+    }
+}
+
+/// 整数算术在 i64 层溢出（如 `i64::MAX + 1`、`i64::MIN / -1`）的错误。
+/// 与 `check_int_overflow` 的窄 dtype 范围检查互补：checked_* 先拦截 i64 层溢出，
+/// 再交给 `check_int_overflow` 做窄 dtype 范围检查。AUDIT-11.4.17。
+pub fn int_overflow_err(dtype: BaseType) -> TenthError {
+    use crate::error::TenthError;
+    TenthError::RuntimeError {
+        line: None, col: None,
+        message: format!("整数运算结果溢出 {} 范围", int_dtype_name(dtype)),
+    }
+}
+
 /// 检查整数运算结果是否在 dtype 范围内。溢出时返回 Err。
 pub fn check_int_overflow(result: i64, dtype: BaseType) -> TenthResult<()> {
     use crate::error::TenthError;
@@ -352,14 +372,9 @@ pub fn check_int_overflow(result: i64, dtype: BaseType) -> TenthResult<()> {
         _ => true,
     };
     if !ok {
-        let name = match dtype {
-            BaseType::I8 => "i8", BaseType::I16 => "i16", BaseType::I32 => "i32", BaseType::I64 => "i64",
-            BaseType::U8 => "u8", BaseType::U16 => "u16", BaseType::U32 => "u32", BaseType::U64 => "u64",
-            _ => "unknown",
-        };
         Err(TenthError::RuntimeError {
             line: None, col: None,
-            message: format!("整数运算结果 {} 溢出 {} 范围", result, name),
+            message: format!("整数运算结果 {} 溢出 {} 范围", result, int_dtype_name(dtype)),
         })
     } else {
         Ok(())

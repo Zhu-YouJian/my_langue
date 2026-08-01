@@ -41,6 +41,47 @@ impl WasmCompiler {
         self.local_count = 0;
         let locals: Vec<ValType> = (0..512).map(|_| ValType::I64).collect();
         let mut body = Function::new_with_locals_types(locals);
+        // M3.5：程序级顶层 let 全局初始化（main 之前）。
+        // 每个全局分配一个 main 局部槽（i64），init 求值后 reinterpret 存储；
+        // `Var(global)` 经 local_map 命中（与普通 let 一致）。
+        for g in &program.globals {
+            // 仅初始化带 init 的全局（init == None 的全局由 main_expr 原位初始化）
+            if g.name.is_empty() || g.init.is_none() {
+                continue;
+            }
+            match &g.init {
+                Some(e) => {
+                    self.compile_expr(&mut body, e)?;
+                    // Phase 5：按 dtype 分支（与 compile_stmt 的 Let 一致）
+                    let target_f32 = matches!(&g.ty, Type::Base(BaseType::F32));
+                    let target_f64 = matches!(&g.ty, Type::Base(BaseType::F64));
+                    let expr_f32 = matches!(&e.ty, Type::Base(BaseType::F32));
+                    let expr_f64 = matches!(&e.ty, Type::Base(BaseType::F64));
+                    let expr_bool = matches!(&e.ty, Type::Base(BaseType::Bool));
+                    if target_f32 && !expr_f32 && !expr_f64 {
+                        body.instruction(&Instruction::F32ConvertI64S);
+                        body.instruction(&Instruction::F64PromoteF32);
+                        body.instruction(&Instruction::I64ReinterpretF64);
+                    } else if target_f64 && !expr_f32 && !expr_f64 {
+                        body.instruction(&Instruction::F64ConvertI64S);
+                        body.instruction(&Instruction::I64ReinterpretF64);
+                    } else if expr_f32 {
+                        body.instruction(&Instruction::F64PromoteF32);
+                        body.instruction(&Instruction::I64ReinterpretF64);
+                    } else if expr_f64 {
+                        body.instruction(&Instruction::I64ReinterpretF64);
+                    } else if expr_bool {
+                        body.instruction(&Instruction::I64ExtendI32U);
+                    }
+                }
+                None => {
+                    body.instruction(&Instruction::I64Const(0));
+                }
+            }
+            self.local_map.insert(g.name.clone(), self.local_count);
+            body.instruction(&Instruction::LocalSet(self.local_count));
+            self.local_count += 1;
+        }
         if let Some(ref expr) = program.main_expr {
             self.compile_expr(&mut body, expr)?;
             self.wrap_to_i32(&mut body, &expr.ty);

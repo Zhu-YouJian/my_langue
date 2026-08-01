@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use crate::error::{TenthError, TenthResult, TenthWarning};
 use crate::lexer::token::Span;
 use crate::parser::ast as ast;
@@ -248,6 +249,431 @@ impl Lowerer {
         Ok(HirStmt { kind, span })
     }
 
+    /// M3.5：把被函数引用的顶层 `let` 提升为程序级全局。
+    ///
+    /// 语义（v2，2026-08-02）：
+    /// - **仅**被函数（含方法/trait 默认体）引用的顶层单名 `let` 提升为全局
+    ///   （`HirProgram.globals`，带 init），并在顶层作用域注册符号——函数体
+    ///   作用域的父链包含顶层作用域，故同文件函数可解析全局名。
+    /// - 未被函数引用的顶层 `let`（如 autodiff 测试中与 `new_grad()`/`backward()`
+    ///   交错的一次性计算）**保留在 main_expr 原位**，保持执行顺序，不提升。
+    /// - 传递引用：若某全局的 init 引用了另一个顶层 let，后者也一并提升
+    ///   （直到不动点），保证全局初始化顺序依赖完整。
+    /// - 被提升的 let 从 `<expr>` 体移除；运行时由各后端在 main 之前统一初始化。
+    /// - 多名绑定（元组解构）始终保持在 main_expr，不提升。
+    fn collect_toplevel_globals(&mut self, items: &mut Vec<ast::Item>) -> TenthResult<()> {
+        // ① 收集所有函数体中的**自由引用**标识符（排除函数参数与局部绑定名）。
+        //    只有自由引用的名字才可能是对顶层 let 全局的引用——否则函数内
+        //    同名参数/局部变量（如 hashset 助手函数的参数 `a`/`b`）会造成
+        //    误提取：顶层 `let a = ...` 被提升为全局，而 init 依赖 main_expr
+        //    局部变量 → 顺序错乱。
+        let mut fn_refs: HashSet<String> = HashSet::new();
+        for item in items.iter() {
+            let mut params: Vec<String> = Vec::new();
+            let mut body_expr: Option<&ast::Expr> = None;
+            match &item.kind {
+                ast::ItemKind::Function { name, params: ps, body, .. } => {
+                    if name.name != "<expr>" {
+                        params = ps.iter().map(|p| p.name.name.clone()).collect();
+                        body_expr = Some(body);
+                    }
+                }
+                ast::ItemKind::Impl { functions, .. } => {
+                    for f in functions {
+                        if let ast::ItemKind::Function { name, params: ps, body, .. } = &f.kind {
+                            let _ = name;
+                            let mut r = HashSet::new();
+                            let mut b: HashSet<String> = ps.iter().map(|p| p.name.name.clone()).collect();
+                            Self::collect_refs_and_bindings(body, &mut r, &mut b);
+                            for n in r {
+                                if !b.contains(&n) {
+                                    fn_refs.insert(n);
+                                }
+                            }
+                        }
+                    }
+                }
+                ast::ItemKind::Trait { methods, .. } => {
+                    for m in methods {
+                        if let Some(body) = &m.body {
+                            let mut r = HashSet::new();
+                            let mut b: HashSet<String> =
+                                m.params.iter().map(|p| p.name.name.clone()).collect();
+                            Self::collect_refs_and_bindings(body, &mut r, &mut b);
+                            for n in r {
+                                if !b.contains(&n) {
+                                    fn_refs.insert(n);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if let Some(body) = body_expr {
+                let mut r = HashSet::new();
+                let mut b: HashSet<String> = params.into_iter().collect();
+                Self::collect_refs_and_bindings(body, &mut r, &mut b);
+                for n in r {
+                    if !b.contains(&n) {
+                        fn_refs.insert(n);
+                    }
+                }
+            }
+        }
+
+        // ② 定位 <expr> 体，两阶段标记（含传递引用）待提升的顶层 let
+        let mut extract: HashSet<String> = HashSet::new();
+        let toplevel_lets: Vec<(String, bool)> = {
+            let mut v = Vec::new();
+            for item in items.iter() {
+                if let ast::ItemKind::Function { name, body, .. } = &item.kind {
+                    if name.name != "<expr>" {
+                        continue;
+                    }
+                    if let ast::ExprKind::Block(stmts) = &body.kind {
+                        for stmt in stmts {
+                            if let ast::StmtKind::Let { names, init, .. } = &stmt.kind {
+                                if names.len() == 1 {
+                                    v.push((names[0].name.clone(), init.is_some()));
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+            v
+        };
+        // 直接引用
+        for (name, _) in &toplevel_lets {
+            if fn_refs.contains(name) {
+                extract.insert(name.clone());
+            }
+        }
+        // M3.5 模块模式：提取全部顶层单名 let（模块 main_expr 导入时不执行，
+        // 顺序无关；导入方需要模块的全部顶层 let 可解析）。
+        if self.is_module {
+            for (name, _) in &toplevel_lets {
+                extract.insert(name.clone());
+            }
+        }
+        // 传递引用直到不动点：已提取全局的 init 引用的顶层 let 一并提取。
+        // （TOTAL 被函数引用 → 提取；TOTAL 的 init 引用 BASE → BASE 也提取）
+        let all_toplevel: HashSet<String> = toplevel_lets.iter().map(|(n, _)| n.clone()).collect();
+        loop {
+            let mut changed = false;
+            for item in items.iter() {
+                if let ast::ItemKind::Function { name, body, .. } = &item.kind {
+                    if name.name != "<expr>" {
+                        continue;
+                    }
+                    if let ast::ExprKind::Block(stmts) = &body.kind {
+                        for stmt in stmts {
+                            if let ast::StmtKind::Let { names, init, .. } = &stmt.kind {
+                                if names.len() != 1 || !extract.contains(&names[0].name) {
+                                    continue;
+                                }
+                                if let Some(init_expr) = init {
+                                    let mut refs = HashSet::new();
+                                    Self::collect_ident_names_expr(init_expr, &mut refs);
+                                    for r in refs {
+                                        if all_toplevel.contains(&r) && !extract.contains(&r) {
+                                            extract.insert(r);
+                                            changed = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        // ③ 遍历 <expr> 体：被标记的 let 提升为全局，其余保留原位
+        for item in items.iter_mut() {
+            match &mut item.kind {
+                ast::ItemKind::Function { name, body, .. } if name.name == "<expr>" => {
+                    if let ast::ExprKind::Block(stmts) = &mut body.kind {
+                        let mut keep: Vec<ast::Stmt> = Vec::new();
+                        let mut gs: Vec<HirGlobal> = Vec::new();
+                        for stmt in stmts.drain(..) {
+                            let span = stmt.span.clone();
+                            match stmt.kind {
+                                ast::StmtKind::Let { names, type_ann, mutable, init } => {
+                                    if names.len() != 1 || !extract.contains(&names[0].name) {
+                                        keep.push(ast::Stmt {
+                                            kind: ast::StmtKind::Let { names, type_ann, mutable, init },
+                                            span,
+                                        });
+                                        continue;
+                                    }
+                                    let name = names[0].name.clone();
+                                    let mut lowered_init =
+                                        init.as_ref().map(|i| self.lower_expr(i)).transpose()?;
+                                    // 类型注解强制化（shape 检查，与 lower_stmt 的 let 一致）
+                                    let ty = match (type_ann.as_ref(), lowered_init.as_ref()) {
+                                        (Some(ann), Some(init_expr)) => {
+                                            let ann_ty = self.annotation_type(ann);
+                                            Self::check_and_merge_tensor_shape(
+                                                &ann_ty, &init_expr.ty, &span, "顶层 let 注解",
+                                            )?
+                                        }
+                                        (Some(ann), None) => self.annotation_type(ann),
+                                        (None, Some(init_expr)) => init_expr.ty.clone(),
+                                        (None, None) => Type::Unknown,
+                                    };
+                                    // M1.3：dyn 类型注解驱动的隐式升级（与 lower_stmt 的 let 一致）
+                                    if let Type::Dyn(trait_name) = &ty {
+                                        if let Some(init_expr) = lowered_init {
+                                            self.check_dyn_upgrade(trait_name, &init_expr.ty, &span)?;
+                                            let call = self.make_into_dyn_call(init_expr, trait_name, &span);
+                                            lowered_init = Some(call);
+                                        }
+                                    }
+                                    self.scope.define_var(name.clone(), ty.clone(), mutable);
+                                    gs.push(HirGlobal { name, ty, mutable, init: lowered_init });
+                                }
+                                _ => {
+                                    keep.push(stmt);
+                                }
+                            }
+                        }
+                        *stmts = keep;
+                        self.globals.extend(gs);
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// AST 递归收集表达式中的标识符：`refs` = 出现的引用名（含绑定名），
+    /// `bindings` = 绑定名（let 名 / 闭包参数 / for 变量 / 模式绑定等）。
+    /// 调用方用「refs − bindings」得到自由引用（对顶层 let 全局的潜在引用）。
+    fn collect_ident_names_expr(expr: &ast::Expr, refs: &mut HashSet<String>) {
+        let mut _b = HashSet::new();
+        Self::collect_refs_and_bindings(expr, refs, &mut _b);
+    }
+
+    fn collect_refs_and_bindings(expr: &ast::Expr, refs: &mut HashSet<String>, bindings: &mut HashSet<String>) {
+        use ast::ExprKind;
+        match &expr.kind {
+            ExprKind::Literal(_) | ExprKind::InterpolatedString(_) | ExprKind::FString(_) => {}
+            ExprKind::Tuple(es) => {
+                for e in es {
+                    Self::collect_refs_and_bindings(e, refs, bindings);
+                }
+            }
+            ExprKind::Ident(id) => {
+                refs.insert(id.name.clone());
+            }
+            ExprKind::Binary { left, right, .. } => {
+                Self::collect_refs_and_bindings(left, refs, bindings);
+                Self::collect_refs_and_bindings(right, refs, bindings);
+            }
+            ExprKind::CustomBinary { left, right, .. } => {
+                Self::collect_refs_and_bindings(left, refs, bindings);
+                Self::collect_refs_and_bindings(right, refs, bindings);
+            }
+            ExprKind::Unary { expr: e, .. } => Self::collect_refs_and_bindings(e, refs, bindings),
+            ExprKind::Call { func, args } => {
+                Self::collect_refs_and_bindings(func, refs, bindings);
+                for a in args {
+                    Self::collect_refs_and_bindings(a, refs, bindings);
+                }
+            }
+            ExprKind::GenericCall { func, args, .. } => {
+                Self::collect_refs_and_bindings(func, refs, bindings);
+                for a in args {
+                    Self::collect_refs_and_bindings(a, refs, bindings);
+                }
+            }
+            ExprKind::MethodCall { receiver, args, .. } => {
+                Self::collect_refs_and_bindings(receiver, refs, bindings);
+                for a in args {
+                    Self::collect_refs_and_bindings(a, refs, bindings);
+                }
+            }
+            ExprKind::Index { target, indices } => {
+                Self::collect_refs_and_bindings(target, refs, bindings);
+                for i in indices {
+                    if let ast::IndexExpr::Single(e) = i {
+                        Self::collect_refs_and_bindings(e, refs, bindings);
+                    }
+                }
+            }
+            ExprKind::Field { target, .. } => Self::collect_refs_and_bindings(target, refs, bindings),
+            ExprKind::TensorLiteral(rows) => {
+                for row in rows {
+                    for e in row {
+                        Self::collect_refs_and_bindings(e, refs, bindings);
+                    }
+                }
+            }
+            ExprKind::ArrayLiteral(es) => {
+                for e in es {
+                    Self::collect_refs_and_bindings(e, refs, bindings);
+                }
+            }
+            ExprKind::Range { start, end, .. } => {
+                if let Some(s) = start {
+                    Self::collect_refs_and_bindings(s, refs, bindings);
+                }
+                if let Some(e) = end {
+                    Self::collect_refs_and_bindings(e, refs, bindings);
+                }
+            }
+            ExprKind::If { cond, then_branch, else_branch } => {
+                Self::collect_refs_and_bindings(cond, refs, bindings);
+                Self::collect_refs_and_bindings(then_branch, refs, bindings);
+                if let Some(e) = else_branch {
+                    Self::collect_refs_and_bindings(e, refs, bindings);
+                }
+            }
+            ExprKind::Block(stmts) => {
+                for s in stmts {
+                    Self::collect_refs_and_bindings_stmt(s, refs, bindings);
+                }
+            }
+            ExprKind::Closure { params, body } => {
+                for (p, _) in params {
+                    bindings.insert(p.name.clone());
+                }
+                Self::collect_refs_and_bindings(body, refs, bindings);
+            }
+            ExprKind::Assign { target, value } => {
+                Self::collect_refs_and_bindings(target, refs, bindings);
+                Self::collect_refs_and_bindings(value, refs, bindings);
+            }
+            ExprKind::AssignOp { target, value, .. } => {
+                Self::collect_refs_and_bindings(target, refs, bindings);
+                Self::collect_refs_and_bindings(value, refs, bindings);
+            }
+            ExprKind::StructLiteral { fields, .. } => {
+                for (_, e) in fields {
+                    Self::collect_refs_and_bindings(e, refs, bindings);
+                }
+            }
+            ExprKind::EnumLiteral { fields, .. } => {
+                for (_, e) in fields {
+                    Self::collect_refs_and_bindings(e, refs, bindings);
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                Self::collect_refs_and_bindings(scrutinee, refs, bindings);
+                for arm in arms {
+                    if let Some(g) = &arm.guard {
+                        Self::collect_refs_and_bindings(g, refs, bindings);
+                    }
+                    Self::collect_pattern_bindings(&arm.pattern, bindings);
+                    Self::collect_refs_and_bindings(&arm.body, refs, bindings);
+                }
+            }
+            ExprKind::Ref(e)
+            | ExprKind::MutRef(e)
+            | ExprKind::Deref(e)
+            | ExprKind::Move(e)
+            | ExprKind::Lossy(e)
+            | ExprKind::TryBlock(e)
+            | ExprKind::Await(e)
+            | ExprKind::Spawn(e) => Self::collect_refs_and_bindings(e, refs, bindings),
+            ExprKind::Yield(Some(e)) => Self::collect_refs_and_bindings(e, refs, bindings),
+            ExprKind::Yield(None) => {}
+            ExprKind::NamedArg { value, .. } => Self::collect_refs_and_bindings(value, refs, bindings),
+        }
+    }
+
+    fn collect_refs_and_bindings_stmt(stmt: &ast::Stmt, refs: &mut HashSet<String>, bindings: &mut HashSet<String>) {
+        use ast::StmtKind;
+        match &stmt.kind {
+            StmtKind::Let { names, init, .. } => {
+                for n in names {
+                    bindings.insert(n.name.clone());
+                }
+                if let Some(i) = init {
+                    Self::collect_refs_and_bindings(i, refs, bindings);
+                }
+            }
+            StmtKind::Expr(e) => Self::collect_refs_and_bindings(e, refs, bindings),
+            StmtKind::Return(Some(e)) => Self::collect_refs_and_bindings(e, refs, bindings),
+            StmtKind::Return(None) => {}
+            StmtKind::Break { value: Some(e), .. } => Self::collect_refs_and_bindings(e, refs, bindings),
+            StmtKind::Break { .. } => {}
+            StmtKind::Continue { .. } => {}
+            StmtKind::While { cond, body, .. } => {
+                Self::collect_refs_and_bindings(cond, refs, bindings);
+                Self::collect_refs_and_bindings_stmt(body, refs, bindings);
+            }
+            StmtKind::DoWhile { body, condition, .. } => {
+                Self::collect_refs_and_bindings_stmt(body, refs, bindings);
+                Self::collect_refs_and_bindings(condition, refs, bindings);
+            }
+            StmtKind::For { var, iter, body, .. } => {
+                bindings.insert(var.name.clone());
+                Self::collect_refs_and_bindings(iter, refs, bindings);
+                Self::collect_refs_and_bindings_stmt(body, refs, bindings);
+            }
+            StmtKind::Loop { body, .. } => {
+                for s in body {
+                    Self::collect_refs_and_bindings_stmt(s, refs, bindings);
+                }
+            }
+        }
+    }
+
+    /// 收集 match 模式中的绑定名（Binding / Struct 字段绑定 / EnumVariant 绑定 / Tuple 子模式）。
+    fn collect_pattern_bindings(pattern: &ast::Pattern, bindings: &mut HashSet<String>) {
+        match pattern {
+            ast::Pattern::Binding(name) => {
+                bindings.insert(name.clone());
+            }
+            ast::Pattern::Struct { fields, .. } => {
+                for (_, bind_name) in fields {
+                    bindings.insert(bind_name.clone());
+                }
+            }
+            ast::Pattern::EnumVariant { field_bind, tuple_fields, .. } => {
+                if let Some((_, bind_name)) = field_bind {
+                    bindings.insert(bind_name.clone());
+                }
+                for t in tuple_fields {
+                    bindings.insert(t.clone());
+                }
+            }
+            ast::Pattern::Tuple(sub) => {
+                for p in sub {
+                    Self::collect_pattern_bindings(p, bindings);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// M3.5：把被导入模块的顶层 let 全局合并进当前程序（符号注册 + 全局列表）。
+    ///
+    /// 常量与可变状态均随 `use` 导入带入；同名冲突时先注册者胜（本地定义优先）。
+    /// 运行时由 harness 在 main 之前统一初始化 `self.globals`（含导入的全局）。
+    ///
+    /// 入参为独立 clone 的全局切片（不借用 self），调用点负责先 clone 模块
+    /// 的 globals 再传入，避免与 `self.modules` 的不可变借用冲突。
+    fn merge_module_globals(&mut self, globals: &[HirGlobal]) {
+        for g in globals {
+            if self.globals.iter().any(|x| x.name == g.name) {
+                continue;
+            }
+            self.scope.define_var(g.name.clone(), g.ty.clone(), g.mutable);
+            self.globals.push(g.clone());
+        }
+    }
+
     pub fn lower_program(&mut self, program: &ast::Program) -> TenthResult<HirProgram> {
         // M3.1：自定义运算符展开。`operator <op> = fn(...)` 在 AST 中表示为
         // ItemKind::Operator，其绑定函数（合成名 `__custom_op_<op>`）在此
@@ -407,6 +833,12 @@ impl Lowerer {
                 _ => {}
             }
         }
+
+        // M3.5：提取顶层 `let` 为程序级全局（在函数体 lower 之前）。
+        // 把 `<expr>` 体中的单名顶层 let 提升为 `self.globals` 并在顶层作用域
+        // 注册符号——函数体作用域的父链包含顶层作用域，故同文件函数可解析全局名。
+        // 被提取的 let 从 `<expr>` 体移除，运行时由各后端在 main 之前统一初始化。
+        self.collect_toplevel_globals(&mut items)?;
 
         for item in &items {
             match &item.kind {
@@ -613,6 +1045,9 @@ impl Lowerer {
                                 self.scope.define_fn(fn_def.name.clone(), param_types, ret_ty);
                                 self.generic_funcs.insert(fn_def.name.clone(), fn_def.clone());
                             }
+                            // M3.5：模块顶层 let 全局随 use 导入合并（常量/状态）
+                            let module_globals = module.globals.clone();
+                            self.merge_module_globals(&module_globals);
                         } else {
                             // Fall back to nested module navigation (for inline mod blocks)
                             let mod_name = &path_strs[0];
@@ -645,6 +1080,9 @@ impl Lowerer {
                                     self.scope.define_fn(fn_def.name.clone(), param_types, ret_ty);
                                     self.generic_funcs.insert(fn_def.name.clone(), fn_def.clone());
                                 }
+                                // M3.5：模块顶层 let 全局随 use 导入合并（常量/状态）
+                                let module_globals = module.globals.clone();
+                                self.merge_module_globals(&module_globals);
                             }
                         }
                     } else if path_strs.len() >= 2 {
@@ -695,6 +1133,9 @@ impl Lowerer {
                         }
 
                         if let Some(module) = loaded_module {
+                            // 先 clone 为拥有值：避免 module（借自 self.modules）
+                            // 的不可变借用与下方 self.merge_module_globals 的可变借用冲突。
+                            let module = module.clone();
                             // Add ALL functions from the module so that the
                             // imported function can call its helpers
                             // (e.g., parse calls _parse_value)
@@ -707,6 +1148,8 @@ impl Lowerer {
                             for fn_def in &module.generic_funcs {
                                 self.generic_funcs.insert(fn_def.name.clone(), fn_def.clone());
                             }
+                            // M3.5：模块顶层 let 全局随 use 导入合并（常量/状态）
+                            self.merge_module_globals(&module.globals);
                             // Define the specifically requested function in scope.
                             // 目标函数可能在 functions（非泛型）或 generic_funcs（泛型）中。
                             let found = module.functions.iter().find(|f| &f.name == fn_name)
@@ -738,6 +1181,11 @@ impl Lowerer {
                             };
 
                             if let Some(module) = module {
+                                // 先 clone 为拥有值：避免 module（借自 self.modules）
+                                // 的不可变借用与下方 self.merge_module_globals 的可变借用冲突。
+                                let module = module.clone();
+                                // M3.5：模块顶层 let 全局随 use 导入合并（常量/状态）
+                                self.merge_module_globals(&module.globals);
                                 // 目标函数可能在 functions 或 generic_funcs 中
                                 let found = module.functions.iter().find(|f| &f.name == fn_name)
                                     .or_else(|| module.generic_funcs.iter().find(|f| &f.name == fn_name));
@@ -917,6 +1365,7 @@ impl Lowerer {
         Ok(HirProgram {
             functions: self.functions.clone(),
             generic_funcs: self.generic_funcs.values().cloned().collect(),
+            globals: self.globals.clone(),
             main_expr,
             modules: self.modules.clone(),
             uses: self.uses.clone(),

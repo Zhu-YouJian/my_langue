@@ -37,6 +37,13 @@ pub struct BytecodeCompiler {
     current_fn_args: usize,
     /// True if the current expression is in tail-call position
     tail_call_ok: bool,
+    /// M3.5：是否编译顶层（main/globals）chunk。
+    /// 顶层 `let` 写全局表（成为程序全局）；函数/闭包内 `let` 若名字是程序
+    /// 全局（global_names 命中）则为 shadow，不写全局（避免覆盖），
+    /// 非全局名保持旧行为（StoreGlobal 供 VM 按名调用闭包）。
+    is_main: bool,
+    /// M3.5：程序级全局名集合（顶层 let / use 导入）。
+    global_names: std::collections::HashSet<String>,
 }
 
 impl BytecodeCompiler {
@@ -54,10 +61,20 @@ impl BytecodeCompiler {
             try_block_stack: Vec::new(),
             current_fn_args: 0,
             tail_call_ok: false,
+            is_main: false,
+            global_names: std::collections::HashSet::new(),
         }
     }
 
+    /// M3.5：构造带程序全局名集合的编译器（顶层 let / use 导入的全局名）。
+    pub fn new_with_globals(global_names: std::collections::HashSet<String>) -> Self {
+        let mut c = BytecodeCompiler::new();
+        c.global_names = global_names;
+        c
+    }
+
     pub fn compile(mut self, func: &HirFnDef) -> TenthResult<(Chunk, Vec<(String, Chunk)>)> {
+        self.is_main = false;
         self.chunk.num_args = func.params.len();
         self.current_fn_args = func.params.len();
         for (name, _) in &func.params {
@@ -81,7 +98,47 @@ impl BytecodeCompiler {
     }
 
     pub fn compile_main(mut self, expr: &HirExpr) -> TenthResult<(Chunk, Vec<(String, Chunk)>)> {
+        self.is_main = true;
         self.compile_expr(expr)?;
+        self.chunk.emit(Op::Ret);
+        self.resolve_patches();
+        self.chunk.num_locals = self.locals.len();
+        Ok((self.chunk, self.closure_chunks))
+    }
+
+    /// M3.5：把程序级顶层 `let` 全局编译为一段初始化 chunk。
+    /// 每个全局按声明顺序求值 init 后 StoreGlobal（复用 HirStmtKind::Let 编译，
+    /// 与普通 let 一致：同时写 local 槽 + global 表）。main 之前执行。
+    pub fn compile_globals(mut self, globals: &[HirGlobal]) -> TenthResult<(Chunk, Vec<(String, Chunk)>)> {
+        use crate::hir::hir::HirStmtKind;
+        use crate::lexer::token::Span;
+        self.is_main = true;
+        // 全局名集合（供 StoreGlobal 判定；全局本身必然命中）
+        for g in globals {
+            self.global_names.insert(g.name.clone());
+        }
+        let mut stmts = Vec::new();
+        for g in globals {
+            // 仅编译带 init 的全局（init == None 的全局由 main_expr 原位初始化）
+            if g.name.is_empty() || g.init.is_none() {
+                continue;
+            }
+            stmts.push(HirStmt {
+                kind: HirStmtKind::Let {
+                    names: vec![g.name.clone()],
+                    type_ann: Some(g.ty.clone()),
+                    mutable: g.mutable,
+                    init: g.init.clone(),
+                },
+                span: Span { line: 0, col: 0 },
+            });
+        }
+        let body = HirExpr {
+            kind: HirExprKind::Block { stmts, final_expr: None },
+            ty: Type::unit(),
+            span: Span { line: 0, col: 0 },
+        };
+        self.compile_expr(&body)?;
         self.chunk.emit(Op::Ret);
         self.resolve_patches();
         self.chunk.num_locals = self.locals.len();
@@ -271,21 +328,32 @@ impl BytecodeCompiler {
                 self.compile_expr(value)?;
                 self.chunk.emit(Op::Dup);
                 // rposition：写最近绑定的槽位（同名重绑定/循环变量场景）
-                if let Some(pos) = self.locals.iter().rposition(|n| n == target) {
+                let is_local = if let Some(pos) = self.locals.iter().rposition(|n| n == target) {
                     self.chunk.emit(Op::Store(pos));
+                    true
                 } else {
                     // New local
                     let pos = self.locals.len();
                     self.locals.push(target.clone());
                     self.chunk.emit(Op::Store(pos));
-                }
+                    false
+                };
+                // M3.5：若目标是「函数内 shadow 全局的局部」则不再写全局表
+                // （否则 `fn f() { let x = 1; x = 2; }` 会覆盖全局 x）。
+                // 其余情况保持旧行为（写全局供 closure FnRef 按名调用，
+                // 以及顶层/真实全局写入）。
                 // Also store as global so closure FnRef values can be called by name.
                 // Dup again so the assigned value remains on the stack (Assign is an
                 // expression and must produce a value — needed for block expressions
                 // like `{ x = 5; x }` and `let y = { x = 5; x }`).
+                let shadow_of_global = !self.is_main && is_local && self.global_names.contains(target);
                 self.chunk.emit(Op::Dup);
-                let gi = self.chunk.add_string(target);
-                self.chunk.emit(Op::StoreGlobal(gi));
+                if shadow_of_global {
+                    self.chunk.emit(Op::Pop);
+                } else {
+                    let gi = self.chunk.add_string(target);
+                    self.chunk.emit(Op::StoreGlobal(gi));
+                }
             }
 
             AssignOp { target, op, value } => {
@@ -803,6 +871,8 @@ impl BytecodeCompiler {
 
                 let mut closure_compiler = BytecodeCompiler::new();
                 closure_compiler.closure_counter = self.closure_counter;
+                // M3.5：闭包编译器共享全局名集合（shadow 判定一致）
+                closure_compiler.global_names = self.global_names.clone();
 
                 // Set up params as locals in the closure chunk
                 closure_compiler.chunk.num_args = params.len();
@@ -857,14 +927,23 @@ impl BytecodeCompiler {
                     self.locals.push(names[0].clone());
                     self.chunk.emit(Op::Dup);
                     self.chunk.emit(Op::Store(pos));
-                    let gi = self.chunk.add_string(&names[0]);
-                    self.chunk.emit(Op::StoreGlobal(gi));
+                    // M3.5：写全局表的判定：
+                    // - 顶层（main/globals chunk）：总是写全局（顶层 let 成为全局）
+                    // - 函数/闭包内：仅当名字是程序全局时为 shadow，不写全局
+                    //   （避免函数内 `let PI = 99` 覆盖全局 PI）；
+                    //   非全局名保持旧行为（StoreGlobal 供 VM 按名调用闭包）。
+                    if self.is_main || !self.global_names.contains(&names[0]) {
+                        let gi = self.chunk.add_string(&names[0]);
+                        self.chunk.emit(Op::StoreGlobal(gi));
+                    } else {
+                        self.chunk.emit(Op::Pop);
+                    }
                 } else {
                     // Tuple destructuring: extract each element via TupleGet.
                     // Stack discipline: init pushes the tuple; each iteration dups
-                    // the tuple, extracts element i, then dups the element so both
-                    // Store (local) and StoreGlobal (global) can pop without
-                    // consuming the tuple. Final Pop drops the tuple.
+                    // the tuple, extracts element i, then dups the element so
+                    // Store (local) 与 StoreGlobal/Pop 各消费一个，不消耗 tuple。
+                    // Final Pop drops the tuple.
                     for (i, name) in names.iter().enumerate() {
                         self.chunk.emit(Op::Dup);          // [Tuple, Tuple]
                         self.chunk.emit(Op::TupleGet(i));  // [Tuple, elem]
@@ -872,8 +951,13 @@ impl BytecodeCompiler {
                         let pos = self.locals.len();
                         self.locals.push(name.clone());
                         self.chunk.emit(Op::Store(pos));   // [Tuple, elem]
-                        let gi = self.chunk.add_string(name);
-                        self.chunk.emit(Op::StoreGlobal(gi)); // [Tuple]
+                        // M3.5：与单名一致——顶层写全局；函数内 shadow 全局不写
+                        if self.is_main || !self.global_names.contains(name) {
+                            let gi = self.chunk.add_string(name);
+                            self.chunk.emit(Op::StoreGlobal(gi)); // [Tuple]
+                        } else {
+                            self.chunk.emit(Op::Pop);      // [Tuple]
+                        }
                     }
                     self.chunk.emit(Op::Pop); // [] drop tuple
                 }

@@ -2,15 +2,11 @@
 //
 // Provides simple logging with levels: DEBUG, INFO, WARN, ERROR
 //
-// ⚠️ 已知限制（2026-08-02 记录）：本模块依赖顶层 `let` 绑定（LEVEL_* 常量与
-// 可变 log_level 状态），而当前语言中**顶层 let 对函数不可见**（含同文件内），
-// 且模块级状态不随 `use` 导入带入——因此本模块的 debug/info/warn/error/set_level
-// 当前无法被调用（编译期报“未定义变量 LEVEL_*”）。
-// 待语言层修复（顶层 let 作用域 + 模块状态导入）后本模块即可使用；
-// 在此之前请参考 `Tenth实例/日志系统/logging_demo.th` 的无状态显式级别实现。
-//
 // Usage:
-//   use std::logging::logging
+//   use std::logging::logging::*
+//
+// 顶层 `let` 模块级全局（LEVEL_* 常量与可变 log_level 状态）随 use 导入
+// 合并为导入方全局（M3.5，2026-08-02），本模块可直接调用。
 
 /// Log levels
 let LEVEL_DEBUG: i32 = 0;

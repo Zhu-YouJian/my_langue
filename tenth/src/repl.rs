@@ -25,6 +25,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
     let mut accumulated_program = HirProgram {
         functions: Vec::new(),
         generic_funcs: Vec::new(),
+        globals: Vec::new(),
         main_expr: None,
         modules: HashMap::new(),
         uses: Vec::new(),
@@ -160,6 +161,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                     accumulated_program = HirProgram {
                         functions: Vec::new(),
                         generic_funcs: Vec::new(),
+                        globals: Vec::new(),
                         main_expr: None,
                         modules: HashMap::new(),
                         uses: Vec::new(),
@@ -468,6 +470,10 @@ fn load_file(
     let mut parser = Parser::new(tokens);
     let program = parser.parse_program()?;
     let mut lowerer = Lowerer::new();
+    // M3.5：模块模式——REPL 顶层 let 全部提升为全局（跨行可见、持久）
+    lowerer.set_module_mode();
+    // M3.5：跨行可见——把已累积的程序级全局注入本行 lower 作用域
+    lowerer.seed_globals(&accumulated_program.globals);
     let hir_program = lowerer.lower_program(&program)?;
 
     let new_defs = hir_program.functions.len()
@@ -485,6 +491,12 @@ fn load_file(
     // Merge definitions
     accumulated_program.functions.extend(hir_program.functions.clone());
     accumulated_program.generic_funcs.extend(hir_program.generic_funcs.clone());
+    // M3.5：去重合并全局（seed 会使 hir_program.globals 含已累积项）
+    for g in &hir_program.globals {
+        if !accumulated_program.globals.iter().any(|x| x.name == g.name) {
+            accumulated_program.globals.push(g.clone());
+        }
+    }
     accumulated_program.modules.extend(hir_program.modules.clone());
     accumulated_program.uses.extend(hir_program.uses.clone());
     accumulated_program.methods.extend(hir_program.methods.clone());
@@ -525,6 +537,10 @@ fn execute_line_with_limits(
     let program = parser.parse_program()?;
 
     let mut lowerer = Lowerer::new();
+    // M3.5：模块模式——REPL 顶层 let 全部提升为全局（跨行可见、持久）
+    lowerer.set_module_mode();
+    // M3.5：跨行可见——把已累积的程序级全局注入本行 lower 作用域
+    lowerer.seed_globals(&accumulated_program.globals);
     let hir_program = lowerer.lower_program(&program)?;
 
     // Track new definitions
@@ -544,6 +560,12 @@ fn execute_line_with_limits(
 
     accumulated_program.functions.extend(hir_program.functions.clone());
     accumulated_program.generic_funcs.extend(hir_program.generic_funcs.clone());
+    // M3.5：去重合并全局（seed 会使 hir_program.globals 含已累积项）
+    for g in &hir_program.globals {
+        if !accumulated_program.globals.iter().any(|x| x.name == g.name) {
+            accumulated_program.globals.push(g.clone());
+        }
+    }
     accumulated_program.modules.extend(hir_program.modules.clone());
     accumulated_program.uses.extend(hir_program.uses.clone());
     accumulated_program.methods.extend(hir_program.methods.clone());

@@ -290,10 +290,29 @@ pub struct HirGenericEnum {
     pub variants: Vec<(String, Vec<(String, Type)>)>,
 }
 
+/// M3.5：模块级顶层 `let`（程序级全局常量/状态）。
+///
+/// 语义：顶层 `let name = expr;` 提升为程序级全局——同文件内所有函数可见；
+/// `use path::*` / `use path::name` 导入模块时，其顶层 let 随模块合并进导入方
+/// （`HirProgram.globals`），由运行时在 main 之前统一初始化。
+///
+/// 可变全局（`let mut x = ..`）：同文件内函数可读写；跨模块导入后成为导入方
+/// 的全局（共享同一份状态），同名冲突时先注册者胜（本地定义优先）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct HirGlobal {
+    pub name: String,
+    pub ty: Type,
+    pub mutable: bool,
+    /// 初始化表达式（已 lower）。`None` 表示无初始化（运行时置为 Unit）。
+    pub init: Option<HirExpr>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct HirProgram {
     pub functions: Vec<HirFnDef>,
     pub generic_funcs: Vec<HirFnDef>,
+    /// M3.5：程序级顶层 `let` 全局（常量与可变状态）。运行时在 main 之前初始化。
+    pub globals: Vec<HirGlobal>,
     pub main_expr: Option<HirExpr>,
     pub modules: HashMap<String, HirProgram>,
     pub uses: Vec<(Vec<String>, String)>,

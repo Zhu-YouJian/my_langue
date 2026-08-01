@@ -834,6 +834,26 @@ impl<'a, M: Module> Translator<'a, M> {
 
     // ── Binop / unop ───────────────────────────────────────────────────────
 
+    /// hostcall 报错检查：若 `host_check_error` 非零，立即返回 ok=0（run_jit 读取
+    /// last_error 触发 fallback）。与 MethodCall 分支的 B2 模式一致——避免 binop
+    /// 报错（如整数溢出）后继续执行、错误被后续操作覆盖。AUDIT-11.4.17。
+    fn emit_err_check_abort(&mut self) {
+        let err_flag = self.call_hostcall_vm_ret_u8("host_check_error");
+        let has_err = self.builder.ins().icmp_imm(IntCC::NotEqual, err_flag, 0);
+        let err_blk = self.builder.create_block();
+        let cont_blk = self.builder.create_block();
+        self.builder.ins().brif(has_err, err_blk, &[], cont_blk, &[]);
+        // 错误路径：返回 ok=0（run_jit 会 take_last_error 并返回 Err）
+        self.builder.switch_to_block(err_blk);
+        self.builder.seal_block(err_blk);
+        let ok_false = self.builder.ins().iconst(types::I8, 0);
+        self.builder.ins().return_(&[ok_false]);
+        // 继续路径
+        self.builder.switch_to_block(cont_blk);
+        self.builder.seal_block(cont_blk);
+        self.terminated = false;
+    }
+
     fn emit_binop(&mut self, name: &str) -> Result<(), String> {
         // Stack: [..., a, b]. Pop b, then a. Out at a's position.
         self.sp -= VALUE_SIZE as i32;
@@ -845,6 +865,7 @@ impl<'a, M: Module> Translator<'a, M> {
         let out = a_addr; // result overwrites a's slot
         self.call_hostcall_2_val(name, a_addr, b_addr, out);
         self.bump_sp()?;
+        self.emit_err_check_abort();
         Ok(())
     }
 
@@ -856,6 +877,7 @@ impl<'a, M: Module> Translator<'a, M> {
         let sig = self.import_sig(&[self.ptr, self.ptr], None);
         self.builder.ins().call_indirect(sig, callee, &[self.vm, a_addr, out]);
         self.bump_sp()?;
+        self.emit_err_check_abort();
         Ok(())
     }
 }

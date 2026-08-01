@@ -7,7 +7,7 @@ use crate::hir::types::BaseType;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
-use crate::runtime::value::{Value, FutureState, check_int_overflow};
+use crate::runtime::value::{Value, FutureState, check_int_overflow, int_overflow_err};
 use crate::runtime::autodiff::TapeOp;
 use crate::runtime::tensor::Tensor;
 use crate::runtime::async_io::ASYNC_IO;
@@ -276,15 +276,19 @@ impl Vm {
                     if b == 0 {
                         return err("整数取模除零");
                     }
-                    self.stack.push(Value::Int(a % b, BaseType::I32));
+                    // AUDIT-11.4.17：checked_rem 拦截 i64::MIN % -1 等溢出（overflow-checks=true 下直接 % 会 panic）
+                    let r = a.checked_rem(b).ok_or_else(|| int_overflow_err(BaseType::I32))?;
+                    self.stack.push(Value::Int(r, BaseType::I32));
                     // 注：Mod 指令通过 pop_int 获取值，丢失 dtype，默认 I32
                 }
                 Op::Neg => {
                     let v = self.stack.pop().unwrap_or(Value::Unit);
                     match v {
                         Value::Int(n, dt) => {
-                            check_int_overflow(-n, dt)?;
-                            self.stack.push(Value::Int(-n, dt));
+                            // AUDIT-11.4.17：checked_neg 拦截 i64::MIN 取负溢出
+                            let r = n.checked_neg().ok_or_else(|| int_overflow_err(dt))?;
+                            check_int_overflow(r, dt)?;
+                            self.stack.push(Value::Int(r, dt));
                         }
                         Value::Float(n) => self.stack.push(Value::Float(-n)),
                         Value::Float32(n) => self.stack.push(Value::Float32(-n)),
@@ -953,7 +957,12 @@ impl Vm {
 
     pub(super) fn add_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
-            (Value::Int(x, dt), Value::Int(y, _)) => { check_int_overflow(x + y, *dt)?; Value::Int(x + y, *dt) },
+            // AUDIT-11.4.17：checked_add 拦截 i64 层溢出（overflow-checks=true 下直接 + 会 panic）
+            (Value::Int(x, dt), Value::Int(y, _)) => {
+                let r = x.checked_add(*y).ok_or_else(|| int_overflow_err(*dt))?;
+                check_int_overflow(r, *dt)?;
+                Value::Int(r, *dt)
+            },
             (Value::Float(x), Value::Float(y)) => Value::Float(x + y),
             (Value::Int(x, _), Value::Float(y)) => Value::Float(*x as f64 + y),
             (Value::Float(x), Value::Int(y, _)) => Value::Float(x + *y as f64),
@@ -1010,7 +1019,12 @@ impl Vm {
 
     pub(super) fn sub_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
-            (Value::Int(x, dt), Value::Int(y, _)) => { check_int_overflow(x - y, *dt)?; Value::Int(x - y, *dt) },
+            // AUDIT-11.4.17：checked_sub 拦截 i64 层溢出
+            (Value::Int(x, dt), Value::Int(y, _)) => {
+                let r = x.checked_sub(*y).ok_or_else(|| int_overflow_err(*dt))?;
+                check_int_overflow(r, *dt)?;
+                Value::Int(r, *dt)
+            },
             (Value::Float(x), Value::Float(y)) => Value::Float(x - y),
             (Value::Int(x, _), Value::Float(y)) => Value::Float(*x as f64 - y),
             (Value::Float(x), Value::Int(y, _)) => Value::Float(x - *y as f64),
@@ -1068,7 +1082,12 @@ impl Vm {
 
     pub(super) fn mul_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         Ok(match (a, b) {
-            (Value::Int(x, dt), Value::Int(y, _)) => { check_int_overflow(x * y, *dt)?; Value::Int(x * y, *dt) },
+            // AUDIT-11.4.17：checked_mul 拦截 i64 层溢出
+            (Value::Int(x, dt), Value::Int(y, _)) => {
+                let r = x.checked_mul(*y).ok_or_else(|| int_overflow_err(*dt))?;
+                check_int_overflow(r, *dt)?;
+                Value::Int(r, *dt)
+            },
             (Value::Float(x), Value::Float(y)) => Value::Float(x * y),
             (Value::Int(x, _), Value::Float(y)) => Value::Float(*x as f64 * y),
             (Value::Float(x), Value::Int(y, _)) => Value::Float(x * *y as f64),
@@ -1130,7 +1149,10 @@ impl Vm {
                 if *y == 0 {
                     return err("整数除零");
                 }
-                { check_int_overflow(x / y, *dt)?; Value::Int(x / y, *dt) }
+                // AUDIT-11.4.17：checked_div 拦截 i64::MIN / -1 等溢出
+                let r = x.checked_div(*y).ok_or_else(|| int_overflow_err(*dt))?;
+                check_int_overflow(r, *dt)?;
+                Value::Int(r, *dt)
             }
             (Value::Float(x), Value::Float(y)) => Value::Float(x / y),
             (Value::Int(x, _), Value::Float(y)) => Value::Float(*x as f64 / y),

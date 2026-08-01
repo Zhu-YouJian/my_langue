@@ -37,6 +37,8 @@ pub struct Lowerer {
     methods: HashMap<String, HashMap<String, HirFnDef>>,
     modules: HashMap<String, HirProgram>,
     uses: Vec<(Vec<String>, String)>,
+    /// M3.5：程序级顶层 `let` 全局（常量与可变状态）。
+    globals: Vec<HirGlobal>,
     trait_defs: HashMap<String, HirTraitDef>,
     trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
     /// Directories to search for imported .th files
@@ -57,6 +59,11 @@ pub struct Lowerer {
     /// lower_program 第一遍注册，表达式降级为对绑定函数（合成名
     /// `__custom_op_<op>`）的普通调用。
     pub(super) custom_ops: HashMap<String, String>,
+    /// M3.5：模块模式——提取**全部**顶层单名 `let` 为全局。
+    /// 模块（use 导入的文件）与 REPL 行使用：模块 main_expr 在导入时不执行，
+    /// 顺序无关；导入方需要模块的全部顶层 let 可解析（含未被模块自身函数
+    /// 引用的）。顶层文件保持"仅提取被函数引用者"（保护执行顺序）。
+    is_module: bool,
     /// 编译期收集的警告（内存/算力预估等，非致命）
     pub(super) warnings: Vec<TenthWarning>,
     // 注意：跨函数 shape 求解已函子化（阶段 0）——不再使用全局可变收集器
@@ -267,6 +274,25 @@ impl Lowerer {
         }
     }
 
+    /// M3.5：把已累积的程序级全局注册进 lower 作用域（REPL 跨行可见）。
+    /// 只做符号注册（scope + globals 列表），不负责运行时初始化——
+    /// 由解释器/VM 在 main 之前统一初始化 `HirProgram.globals`。
+    pub fn seed_globals(&mut self, globals: &[HirGlobal]) {
+        for g in globals {
+            if self.globals.iter().any(|x| x.name == g.name) {
+                continue;
+            }
+            self.scope.define_var(g.name.clone(), g.ty.clone(), g.mutable);
+            self.globals.push(g.clone());
+        }
+    }
+
+    /// M3.5：模块模式——提取全部顶层单名 `let` 为全局。
+    /// 用于 use 导入的模块文件与 REPL 行（跨行/跨模块需要全部顶层 let 可解析）。
+    pub fn set_module_mode(&mut self) {
+        self.is_module = true;
+    }
+
     pub fn new() -> Self {
         let mut scope = Scope::new();
         scope.define_fn(
@@ -287,6 +313,7 @@ impl Lowerer {
             methods: HashMap::new(),
             modules: HashMap::new(),
             uses: Vec::new(),
+            globals: Vec::new(),
             trait_defs: HashMap::new(),
             trait_impls: HashMap::new(),
             search_paths: Vec::new(),
@@ -295,6 +322,7 @@ impl Lowerer {
             warnings: Vec::new(),
             loop_labels: Vec::new(),
             custom_ops: HashMap::new(),
+            is_module: false,
         };
 
         lowerer.trait_defs.insert("Display".to_string(), HirTraitDef {

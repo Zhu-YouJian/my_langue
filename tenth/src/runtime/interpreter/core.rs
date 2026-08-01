@@ -41,6 +41,8 @@ pub struct Interpreter {
     // 因此标 `pub(super)`（对 interpreter 模块及其子模块可见）。
     pub(super) functions: Vec<HirFnDef>,
     pub(super) generic_funcs: HashMap<String, HirFnDef>,
+    /// M3.5：程序级顶层 `let` 全局（常量与可变状态）。在 main 之前于 depth 0 初始化。
+    pub(super) globals: Vec<HirGlobal>,
     pub(super) methods: HashMap<String, HashMap<String, HirFnDef>>,
     pub(super) modules: HashMap<String, HirProgram>,
     pub(super) trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
@@ -102,6 +104,7 @@ impl Interpreter {
             scope_vars: vec![Vec::new()],
             functions: program.functions.clone(),
             generic_funcs: HashMap::new(),
+            globals: program.globals.clone(),
             methods: program.methods.clone(),
             modules: program.modules.clone(),
             trait_impls: program.trait_impls.clone(),
@@ -188,6 +191,29 @@ impl Interpreter {
         for (name, val) in vars {
             self.insert_var(name, val);
         }
+    }
+
+    /// M3.5：初始化程序级顶层 `let` 全局（在 depth 0，main 之前）。
+    ///
+    /// - 仅初始化带 init 的全局（`init == None` 的全局由 main_expr 原位初始化，
+    ///   保持执行顺序，如 autodiff 测试中的交错计算）。
+    /// - 若变量已存在于 vars（REPL 经 extend_globals 持久化的值），跳过——
+    ///   避免每条 REPL 行重置可变全局状态。
+    /// - 按声明顺序求值（可能引用更早声明的全局）。
+    pub(super) fn init_program_globals(&mut self) -> TenthResult<()> {
+        let globals = self.globals.clone();
+        for g in &globals {
+            if g.name.is_empty() {
+                continue;
+            }
+            let Some(e) = &g.init else { continue };
+            if self.vars.contains_key(&g.name) {
+                continue;
+            }
+            let val = self.eval_expr(e)?.unwrap_or(Value::Unit);
+            self.insert_var(g.name.clone(), val);
+        }
+        Ok(())
     }
 
     /// AUDIT-11.4.3: REPL 提取全局变量（depth==0 的条目）。
@@ -433,9 +459,23 @@ impl Interpreter {
         // Any temporary allocations from previous evaluations are freed.
         self.arena.reset();
 
+        // M3.5：初始化程序级顶层 let 全局（depth 0，main 之前）。
+        // 同文件与 use 导入的全局均在此求值；test 路径经 execute_program_inner。
+        self.init_program_globals()?;
+
         if let Some(ref expr) = program.main_expr {
-            Self::unwrap_return(self.eval_expr(expr))
-        } else if let Some(main_fn) = self.functions.iter().find(|f| f.name == "main") {
+            // M3.5：顶层全部是 let（已提升为全局）时，`<expr>` 为空块。
+            // 此时若存在 `fn main` 应执行 main（与 VM 路径一致），而非空块。
+            let is_empty_block = matches!(
+                &expr.kind,
+                HirExprKind::Block { stmts, final_expr }
+                    if stmts.is_empty() && final_expr.is_none()
+            );
+            if !is_empty_block {
+                return Self::unwrap_return(self.eval_expr(expr));
+            }
+        }
+        if let Some(main_fn) = self.functions.iter().find(|f| f.name == "main") {
             let body = main_fn.body.clone();
             Self::unwrap_return(self.eval_expr(&body))
         } else {
@@ -512,6 +552,8 @@ impl Interpreter {
                 self.insert_var(func.name.clone(), Value::FnRef { name: func.name.clone(), params, return_type: ret });
             }
         }
+        // M3.5：初始化程序级顶层 let 全局（test 路径也能读取全局常量/状态）
+        self.init_program_globals()?;
         // Reset arena
         self.arena.reset();
         Ok(())

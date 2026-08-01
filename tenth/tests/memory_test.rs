@@ -165,6 +165,7 @@ mod interpreter_limits_tests {
         HirProgram {
             functions: vec![],
             generic_funcs: vec![],
+            globals: vec![],
             main_expr: None,
             modules: HashMap::new(),
             uses: vec![],

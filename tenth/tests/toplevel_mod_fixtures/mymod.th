@@ -1,0 +1,18 @@
+// M3.5 测试夹具：模块级顶层 let（常量 + 可变状态），供 toplevel_let_test.rs 的 use 导入测试使用。
+
+/// 模块级常量
+let GX: f64 = 3.5;
+
+/// 模块级可变全局
+let mut GCOUNT: i32 = 7;
+
+/// 读取模块常量（验证同模块内函数可见性）
+fn get_gx() -> f64 {
+    GX
+}
+
+/// 读写模块可变全局
+fn bump() -> i32 {
+    GCOUNT = GCOUNT + 1;
+    GCOUNT
+}

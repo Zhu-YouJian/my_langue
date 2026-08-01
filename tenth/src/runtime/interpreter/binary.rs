@@ -10,7 +10,7 @@ use crate::hir::types::BaseType;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
-use crate::runtime::value::{Value, FutureState, check_int_overflow};
+use crate::runtime::value::{Value, FutureState, check_int_overflow, int_overflow_err};
 use crate::runtime::tensor::Tensor;
 use crate::runtime::autodiff::TapeOp;
 
@@ -19,8 +19,10 @@ impl super::Interpreter {
         match op {
             BinOp::Add => match (l, r) {
                 (Value::Int(a, dt), Value::Int(b, _)) => {
-                    check_int_overflow(a + b, *dt)?;
-                    Ok(Value::Int(a + b, *dt))
+                    // AUDIT-11.4.17：checked_add 拦截 i64 层溢出
+                    let s = a.checked_add(*b).ok_or_else(|| int_overflow_err(*dt))?;
+                    check_int_overflow(s, *dt)?;
+                    Ok(Value::Int(s, *dt))
                 }
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
                 (Value::Int(a, _), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
@@ -81,7 +83,12 @@ impl super::Interpreter {
                 }),
             },
             BinOp::Sub => match (l, r) {
-                (Value::Int(a, _), Value::Int(b, _)) => Ok(Value::Int(a - b, BaseType::I32)),
+                // AUDIT-11.4.17：与 VM sub_priv 对齐——保留左操作数 dtype + 范围检查
+                (Value::Int(a, dt), Value::Int(b, _)) => {
+                    let s = a.checked_sub(*b).ok_or_else(|| int_overflow_err(*dt))?;
+                    check_int_overflow(s, *dt)?;
+                    Ok(Value::Int(s, *dt))
+                }
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
                 (Value::Int(a, _), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
                 (Value::Float(a), Value::Int(b, _)) => Ok(Value::Float(a - *b as f64)),
@@ -143,8 +150,10 @@ impl super::Interpreter {
             },
             BinOp::Mul => match (l, r) {
                 (Value::Int(a, dt), Value::Int(b, _)) => {
-                    check_int_overflow(a * b, *dt)?;
-                    Ok(Value::Int(a * b, *dt))
+                    // AUDIT-11.4.17：checked_mul 拦截 i64 层溢出
+                    let s = a.checked_mul(*b).ok_or_else(|| int_overflow_err(*dt))?;
+                    check_int_overflow(s, *dt)?;
+                    Ok(Value::Int(s, *dt))
                 }
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
                 (Value::Int(a, _), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
@@ -210,8 +219,10 @@ impl super::Interpreter {
                             message: "整数除零".into(),
                         });
                     }
-                    check_int_overflow(a / b, *dt)?;
-                    Ok(Value::Int(a / b, *dt))
+                    // AUDIT-11.4.17：checked_div 拦截 i64::MIN / -1 等溢出
+                    let s = a.checked_div(*b).ok_or_else(|| int_overflow_err(*dt))?;
+                    check_int_overflow(s, *dt)?;
+                    Ok(Value::Int(s, *dt))
                 }
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
                 (Value::Int(a, _), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
@@ -269,8 +280,10 @@ impl super::Interpreter {
                             message: "整数取模除零".into(),
                         });
                     }
-                    check_int_overflow(a % b, *dt)?;
-                    Ok(Value::Int(a % b, *dt))
+                    // AUDIT-11.4.17：checked_rem 拦截 i64::MIN % -1 等溢出
+                    let s = a.checked_rem(*b).ok_or_else(|| int_overflow_err(*dt))?;
+                    check_int_overflow(s, *dt)?;
+                    Ok(Value::Int(s, *dt))
                 }
                 _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: "取模仅支持整数".into(),
@@ -449,8 +462,10 @@ impl super::Interpreter {
         match op {
             UnaryOp::Neg => match val {
                 Value::Int(n, dt) => {
-                    check_int_overflow(-n, *dt)?;
-                    Ok(Value::Int(-n, *dt))
+                    // AUDIT-11.4.17：checked_neg 拦截 i64::MIN 取负溢出
+                    let s = n.checked_neg().ok_or_else(|| int_overflow_err(*dt))?;
+                    check_int_overflow(s, *dt)?;
+                    Ok(Value::Int(s, *dt))
                 }
                 Value::Float(n) => Ok(Value::Float(-n)),
                 Value::Tensor(t) => {

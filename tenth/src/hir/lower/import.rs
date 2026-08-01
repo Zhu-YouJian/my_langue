@@ -56,6 +56,9 @@ impl Lowerer {
         // Create a sub-lowerer with the same search paths but fresh scope
         let mut sub_lowerer = Lowerer::with_search_paths(self.search_paths.clone());
         sub_lowerer.imported_files = self.imported_files.clone();
+        // M3.5：模块模式——提取全部顶层 let 为全局（模块 main_expr 导入时
+        // 不执行，顺序无关；导入方需要模块全部顶层 let 可解析）。
+        sub_lowerer.is_module = true;
         let hir = sub_lowerer.lower_program(&program)?;
         self.imported_files = sub_lowerer.imported_files;
 

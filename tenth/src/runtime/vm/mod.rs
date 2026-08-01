@@ -13,7 +13,7 @@ use crate::hir::types::BaseType;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
-use super::value::{Value, FutureState};
+use super::value::{Value, FutureState, check_int_overflow};
 use super::autodiff::{Tape, CustomOpRegistry, CustomBackward};
 use super::async_io::ASYNC_IO;
 
@@ -190,16 +190,24 @@ impl Vm {
     pub fn div(&mut self, a: &Value, b: &Value) -> TenthResult<Value> { self.div_priv(a, b) }
     pub fn rem(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         match (a, b) {
-            (Value::Int(x, _), Value::Int(y, _)) => {
+            (Value::Int(x, dt), Value::Int(y, _)) => {
                 if *y == 0 { return Err(TenthError::RuntimeError { line: None, col: None, message: "整数取模除零".into() }); }
-                Ok(Value::Int(x % y, BaseType::I32))
+                // AUDIT-11.4.17：checked_rem 拦截 i64::MIN % -1 等溢出（overflow-checks=true 下直接 % 会 panic）
+                let r = x.checked_rem(*y).ok_or_else(|| super::value::int_overflow_err(*dt))?;
+                check_int_overflow(r, *dt)?;
+                Ok(Value::Int(r, BaseType::I32))
             }
             _ => Err(TenthError::RuntimeError { line: None, col: None, message: "% 需要整数".into() }),
         }
     }
     pub fn neg(&mut self, a: &Value) -> TenthResult<Value> {
         match a {
-            Value::Int(n, _) => Ok(Value::Int(-n, BaseType::I32)),
+            // AUDIT-11.4.17：checked_neg 拦截 i64::MIN 取负溢出；check_int_overflow 与 VM Op::Neg 一致做 dtype 范围检查
+            Value::Int(n, dt) => {
+                let r = n.checked_neg().ok_or_else(|| super::value::int_overflow_err(*dt))?;
+                check_int_overflow(r, *dt)?;
+                Ok(Value::Int(r, BaseType::I32))
+            }
             Value::Float(n) => Ok(Value::Float(-n)),
             Value::Float32(n) => Ok(Value::Float32(-n)),
             Value::Tensor(t) => Ok(Value::Tensor(Rc::new(RefCell::new(t.borrow().neg())))),
