@@ -206,6 +206,36 @@ impl Lowerer {
                 }
             }
 
+            ExprKind::CustomBinary { op, left, right } => {
+                // M3.1：自定义运算符 `a <op> b` → 对绑定函数的普通调用。
+                // 绑定在 lower_program 第一遍注册到 custom_ops（声明先于使用），
+                // 未声明即使用在此报编译期 TypeError。
+                let l = self.lower_expr(left)?;
+                let r = self.lower_expr(right)?;
+                let fn_name = self.custom_ops.get(op).cloned().ok_or_else(|| {
+                    TenthError::TypeError {
+                        line: span.line,
+                        col: span.col,
+                        message: format!(
+                            "未声明的运算符 '{}'（需先用 `operator {} = fn(...)` 声明）",
+                            op, op
+                        ),
+                    }
+                })?;
+                let func = HirExpr {
+                    kind: HirExprKind::Var(fn_name),
+                    ty: Type::Unknown,
+                    span: span.clone(),
+                };
+                let ret_ty = self.resolve_call_type(&func, &[l.clone(), r.clone()], &span)?;
+                let ret_ty2 = ret_ty.clone();
+                (HirExprKind::Call {
+                    func: Box::new(func),
+                    args: vec![l, r],
+                    ret_ty,
+                }, ret_ty2)
+            }
+
             ExprKind::Unary { op, expr: inner } => {
                 let e = self.lower_expr(inner)?;
                 // 一元运算符重载检查：若类型实现了对应 trait，转为方法调用
@@ -1880,8 +1910,12 @@ impl Lowerer {
         let type_name = match ty {
             Type::Base(_b) => return false, // 基础类型的内置运算不在 trait 系统中重载
             Type::Struct(name) | Type::Enum(name) => name,
+            // TypeParam：用户命名类型（struct/enum 字面量、类型注解）在 Type 系统
+            // 中表示为 TypeParam（见 types.rs::from_annotation），与 Struct/Enum
+            // 一视同仁，否则 `a + b`（a/b 为用户 struct）永远不会触发运算符重载。
+            Type::TypeParam { name } => name,
             Type::Generic { base, .. } => match base.as_ref() {
-                Type::Enum(name) | Type::Struct(name) => name,
+                Type::Enum(name) | Type::Struct(name) | Type::TypeParam { name } => name,
                 _ => return false,
             },
             _ => return false,

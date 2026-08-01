@@ -1690,6 +1690,22 @@ fn lower_expr(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
         let r = lower_expr(p, e.right, exprs, stmts, match_arms, depth + 1);
         // Infer result type
         let op = e.sval;
+        // M3.1：自定义运算符 → 降级为对 `__custom_op_<op>` 的普通函数调用。
+        // 与 Rust 侧 lower_expr.rs 的 CustomBinary 降级对齐；绑定函数已在
+        // program.fns（合成名），此处仅需构造 Call（disc 7）节点。
+        let mut is_custom = false;
+        for oi in 0..p.custom_ops.len() {
+            if p.custom_ops[oi] == op { is_custom = true; };
+        };
+        if is_custom {
+            let fn_name = "__custom_op_" + op;
+            let func_ni = push_expr(p, 4, 0, 0.0, "", false, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", fn_name, "", 0);
+            let arg_start = p.arg_list.len() + 1;
+            p.arg_list.push(l);
+            p.arg_list.push(r);
+            let cty = lookup_fn_return_type(p, fn_name);
+            return push_expr(p, 7, 0, 0.0, "", false, func_ni, 0, 0, 0, 0, arg_start, 2, 0, 0, "", "", "", cty);
+        };
         let mut bty: i64 = 0;
         if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" || op == "&&" || op == "||" {
             // Comparison / logical → bool
@@ -2642,7 +2658,12 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 }
 
 fn lower_program(program: Program) -> HirProgram {
-    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new(), stmt_list: Vec::new(), body_list: Vec::new(), block_idxs: program.block_idxs, loop_idxs: program.loop_idxs, trait_defs: Vec::new(), trait_impls: Vec::new(), trait_methods: Vec::new(), trait_method_params: Vec::new(), impl_fn_indices: Vec::new(), impl_method_names: Vec::new(), generic_funcs: Vec::new(), ownership: Vec::new(), borrow_holders: Vec::new(), errors: Vec::new(), warnings: Vec::new() };
+    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new(), stmt_list: Vec::new(), body_list: Vec::new(), block_idxs: program.block_idxs, loop_idxs: program.loop_idxs, trait_defs: Vec::new(), trait_impls: Vec::new(), trait_methods: Vec::new(), trait_method_params: Vec::new(), impl_fn_indices: Vec::new(), impl_method_names: Vec::new(), generic_funcs: Vec::new(), ownership: Vec::new(), borrow_holders: Vec::new(), errors: Vec::new(), warnings: Vec::new(), custom_ops: Vec::new() };
+
+    // M3.1：注册自定义运算符（绑定函数为 `__custom_op_<op>`，已在 program.fns 中）
+    for oi in 0..program.operator_ops.len() {
+        p.custom_ops.push(program.operator_ops[oi]);
+    };
 
     // Lower struct definitions
     for si in 0..program.structs.len() {

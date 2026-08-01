@@ -73,45 +73,36 @@ impl Parser {
                     });
                 };
                 self.advance();
-                let generics = self.parse_generic_params()?;
-                self.expect(TokenKind::LParen)?;
-                let mut params = Vec::new();
-                if !matches!(self.peek_kind(), TokenKind::RParen) {
-                    loop {
-                        params.push(self.parse_param()?);
-                        if !matches!(self.peek_kind(), TokenKind::Comma) {
-                            break;
-                        }
-                        self.advance();
-                        // Trailing comma: if RParen follows the comma, stop
-                        if matches!(self.peek_kind(), TokenKind::RParen) {
-                            break;
-                        }
+                self.parse_fn_after_name(name, is_pub, is_async, is_test)
+            }
+            // M3.1：自定义运算符声明 `operator <op> = fn(params) -> T { body }`。
+            // <op> 是 `@`/`$`/`~` 组合的 CustomOperator token（如 `@@`）。
+            // 绑定函数以合成名 `__custom_op_<op>` 注册为普通函数，lower 阶段
+            // 将 `a <op> b` 降级为对该函数的调用。
+            TokenKind::Operator => {
+                self.advance();
+                let op = match &self.peek().kind {
+                    TokenKind::CustomOperator(name) => name.clone(),
+                    _ => {
+                        return Err(TenthError::ParseError {
+                            line: self.peek().span.line,
+                            col: self.peek().span.col,
+                            message: "operator 声明后需跟自定义运算符（由 @/$/~ 组成，如 @@）".into(),
+                        });
                     }
-                }
-                self.expect(TokenKind::RParen)?;
-
-                let return_type = if matches!(self.peek_kind(), TokenKind::Arrow) {
-                    self.advance();
-                    Some(self.parse_type()?)
-                } else {
-                    None
                 };
-
-                let body = self.parse_block_or_expr()?;
-
-                self.match_token(TokenKind::Semicolon);
-
+                self.advance();
+                self.expect(TokenKind::Assign)?;
+                self.expect(TokenKind::Fn)?;
+                let name = Ident {
+                    name: format!("__custom_op_{}", op),
+                    span: span.clone(),
+                };
+                let func = self.parse_fn_after_name(name, false, false, false)?;
                 Ok(Item {
-                    kind: ItemKind::Function {
-                        name,
-                        generics,
-                        params,
-                        return_type,
-                        body,
-                        is_pub,
-                        is_async,
-                        is_test,
+                    kind: ItemKind::Operator {
+                        op,
+                        func: Box::new(func),
                     },
                     span,
                 })
@@ -332,5 +323,59 @@ impl Parser {
                 })
             }
         }
+    }
+
+    /// 解析函数签名剩余部分（泛型/参数/返回类型/函数体），构造 Function item。
+    /// 供 `fn` 声明与 `operator <op> = fn(...)` 绑定共用（M3.1）。
+    pub(super) fn parse_fn_after_name(
+        &mut self,
+        name: Ident,
+        is_pub: bool,
+        is_async: bool,
+        is_test: bool,
+    ) -> TenthResult<Item> {
+        let span = name.span.clone();
+        let generics = self.parse_generic_params()?;
+        self.expect(TokenKind::LParen)?;
+        let mut params = Vec::new();
+        if !matches!(self.peek_kind(), TokenKind::RParen) {
+            loop {
+                params.push(self.parse_param()?);
+                if !matches!(self.peek_kind(), TokenKind::Comma) {
+                    break;
+                }
+                self.advance();
+                // Trailing comma: if RParen follows the comma, stop
+                if matches!(self.peek_kind(), TokenKind::RParen) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+
+        let return_type = if matches!(self.peek_kind(), TokenKind::Arrow) {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        let body = self.parse_block_or_expr()?;
+
+        self.match_token(TokenKind::Semicolon);
+
+        Ok(Item {
+            kind: ItemKind::Function {
+                name,
+                generics,
+                params,
+                return_type,
+                body,
+                is_pub,
+                is_async,
+                is_test,
+            },
+            span,
+        })
     }
 }

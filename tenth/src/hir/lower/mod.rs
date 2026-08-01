@@ -53,6 +53,10 @@ pub struct Lowerer {
     /// 是否指向某个外层循环（未定义标签 / 标签在循环外 → 编译期 TypeError）。
     /// 注意：闭包体 lower 时会清空（闭包是独立函数体，不能跳出外层循环）。
     loop_labels: Vec<Option<String>>,
+    /// M3.1：自定义运算符 → 绑定函数名映射（`operator <op> = fn(...)`）。
+    /// lower_program 第一遍注册，表达式降级为对绑定函数（合成名
+    /// `__custom_op_<op>`）的普通调用。
+    pub(super) custom_ops: HashMap<String, String>,
     /// 编译期收集的警告（内存/算力预估等，非致命）
     pub(super) warnings: Vec<TenthWarning>,
     // 注意：跨函数 shape 求解已函子化（阶段 0）——不再使用全局可变收集器
@@ -286,6 +290,7 @@ impl Lowerer {
             generic_instantiations: HashSet::new(),
             warnings: Vec::new(),
             loop_labels: Vec::new(),
+            custom_ops: HashMap::new(),
         };
 
         lowerer.trait_defs.insert("Display".to_string(), HirTraitDef {

@@ -206,7 +206,8 @@ impl Parser {
         while !self.at_eof() {
             match self.peek_kind() {
                 TokenKind::Async | TokenKind::Fn | TokenKind::Struct | TokenKind::Enum | TokenKind::Union
-                | TokenKind::Impl | TokenKind::Mod | TokenKind::Use | TokenKind::Trait => {
+                | TokenKind::Impl | TokenKind::Mod | TokenKind::Use | TokenKind::Trait
+                | TokenKind::Operator => {
                     items.push(self.parse_item()?);
                 }
                 _ => {

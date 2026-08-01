@@ -249,7 +249,40 @@ impl Lowerer {
     }
 
     pub fn lower_program(&mut self, program: &ast::Program) -> TenthResult<HirProgram> {
+        // M3.1：自定义运算符展开。`operator <op> = fn(...)` 在 AST 中表示为
+        // ItemKind::Operator，其绑定函数（合成名 `__custom_op_<op>`）在此
+        // 展开为普通 Function 项，使后续两遍（注册 + body lowering）统一处理；
+        // 同时注册 `op → 函数名` 映射供表达式降级使用。
+        let mut items: Vec<ast::Item> = Vec::with_capacity(program.items.len());
         for item in &program.items {
+            match &item.kind {
+                ast::ItemKind::Operator { op, func } => {
+                    let fn_name = match &func.kind {
+                        ast::ItemKind::Function { name, .. } => name.name.clone(),
+                        _ => {
+                            return Err(TenthError::TypeError {
+                                line: item.span.line,
+                                col: item.span.col,
+                                message: format!("运算符 '{}' 绑定必须是函数", op),
+                            });
+                        }
+                    };
+                    // 重复声明同一运算符 → 编译期报错（防静默覆盖）。
+                    if self.custom_ops.contains_key(op) {
+                        return Err(TenthError::TypeError {
+                            line: item.span.line,
+                            col: item.span.col,
+                            message: format!("运算符 '{}' 重复声明", op),
+                        });
+                    }
+                    self.custom_ops.insert(op.clone(), fn_name);
+                    items.push(func.as_ref().clone());
+                }
+                _ => items.push(item.clone()),
+            }
+        }
+
+        for item in &items {
             match &item.kind {
                 ast::ItemKind::StructDef { name, generics, kind, .. } => {
                     let field_types: Vec<(String, Type)> = match kind {
@@ -375,7 +408,7 @@ impl Lowerer {
             }
         }
 
-        for item in &program.items {
+        for item in &items {
             match &item.kind {
                 ast::ItemKind::Impl { type_name, trait_name, generics, functions } => {
                     if let Some(trait_name) = trait_name {
@@ -840,7 +873,7 @@ impl Lowerer {
         }
 
         let mut main_expr = None;
-        for item in &program.items {
+        for item in &items {
             if let ast::ItemKind::Function { name, body, .. } = &item.kind {
                 if name.name == "<expr>" {
                     let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));

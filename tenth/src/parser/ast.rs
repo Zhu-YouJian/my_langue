@@ -78,6 +78,13 @@ pub enum ExprKind {
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    /// M3.1：自定义运算符中缀表达式 `a <op> b`。
+    /// `op` 为运算符名（如 `@@`），lower 时降级为对绑定函数的调用。
+    CustomBinary {
+        op: String,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
@@ -335,6 +342,12 @@ pub enum ItemKind {
     Union {
         name: Ident,
         fields: Vec<StructField>,
+    },
+    /// M3.1：自定义运算符声明 `operator <op> = fn(...)`。
+    /// `op` 为运算符名（如 `@@`），`func` 为绑定函数（合成名 `__custom_op_<op>`）。
+    Operator {
+        op: String,
+        func: Box<Item>,
     },
 }
 

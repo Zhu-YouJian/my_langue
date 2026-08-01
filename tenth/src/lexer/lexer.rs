@@ -368,6 +368,7 @@ impl Lexer {
             "move" => TokenKind::Move,
             "dyn" => TokenKind::Dyn,
             "lossy" => TokenKind::Lossy,
+            "operator" => TokenKind::Operator,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             _ => TokenKind::Identifier(s),
@@ -904,6 +905,26 @@ impl Lexer {
                 return Ok(Token { kind: TokenKind::ColonColon, span });
             }
             return Ok(Token { kind: TokenKind::Colon, span });
+        }
+
+        // M3.1：自定义运算符。`@`/`$`/`~` 三个字符的连续组合
+        // （如 `@@`、`@~`、`$@$`）。这三个字符此前在 lexer 中无任何
+        // 用途（会报"意外字符"），因此与全部内置 token 零冲突。
+        if matches!(ch, '@' | '$' | '~') {
+            let mut s = String::new();
+            s.push(ch);
+            while let Some(c) = self.peek() {
+                if matches!(c, '@' | '$' | '~') {
+                    s.push(c);
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            return Ok(Token {
+                kind: TokenKind::CustomOperator(s),
+                span,
+            });
         }
 
         if let Some(kind) = self.single_char_token(ch) {

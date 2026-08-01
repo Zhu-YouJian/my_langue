@@ -431,6 +431,8 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
         // lossy 关键字（阶段2b M2）：与 Rust 侧 token.rs 对齐（disc 90 空闲）
         // 自举源码不使用 lossy（纯编译期构造），仅注册为保留字避免误 lex。
         if ident == "lossy" { return Token { kind: TokenKind::Lossy, span: span, disc: 90, sval: "lossy", .. }; };
+        // M3.1：`operator` 关键字（disc=91）——自定义运算符声明，与 Rust 侧对齐。
+        if ident == "operator" { return Token { kind: TokenKind::Operator, span: span, disc: 91, sval: "operator", .. }; };
         if ident == "self" { return Token { kind: TokenKind::Self_, span: span, disc: 25, sval: "self", .. }; };
         if ident == "async" { return Token { kind: TokenKind::Async, span: span, disc: 64, sval: "async", .. }; };
         if ident == "await" { return Token { kind: TokenKind::Await, span: span, disc: 65, sval: "await", .. }; };
@@ -630,6 +632,18 @@ fn lexer_next(lexer: &mut Lexer) -> Token {
     // Problem 21 batch 1：新增运算符 ^ (Caret), ? (QuestionMark)
     if ch == "^" { return Token { kind: TokenKind::Caret, span: span, disc: 79, .. }; };
     if ch == "?" { return Token { kind: TokenKind::QuestionMark, span: span, disc: 81, .. }; };
+    // M3.1：自定义运算符——`@`/`$`/`~` 三个字符的连续组合（如 `@@`、`@~`）。
+    // 与 Rust 侧一致：仅此三字符进入此分支，与全部内置 token 零冲突。
+    if ch == "@" || ch == "$" || ch == "~" {
+        let mut s = ch;
+        let mut c = lexer_peek(lexer);
+        while c == "@" || c == "$" || c == "~" {
+            s = s + c;
+            lexer_advance(lexer);
+            c = lexer_peek(lexer);
+        };
+        return Token { kind: TokenKind::CustomOp(s), span: span, disc: 92, sval: s, .. };
+    };
     Token { kind: TokenKind::Identifier(ch), span: span, disc: 3, sval: "", .. }
 }
 

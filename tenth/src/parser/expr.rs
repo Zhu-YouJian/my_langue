@@ -816,6 +816,9 @@ impl Parser {
             TokenKind::AndAnd => 1,
             TokenKind::OrOr => 0,
             TokenKind::DotDot | TokenKind::DotDotEq => 0,  // range operator: lowest precedence
+            // M3.1：自定义运算符统一默认优先级 4（与 `+`/`-` 同级，左结合）。
+            // 最小版本不提供 per-operator 优先级声明，文档标注。
+            TokenKind::CustomOperator(_) => 4,
             TokenKind::Assign
             | TokenKind::PlusAssign
             | TokenKind::MinusAssign
@@ -925,6 +928,25 @@ impl Parser {
             }
 
             let op_kind = self.peek_kind().clone();
+            // M3.1：自定义运算符中缀表达式。
+            // 声明见 `operator <op> = fn(...)`；此处把 `a <op> b` 解析为
+            // ExprKind::CustomBinary，lower 阶段降级为对绑定函数的调用。
+            // 未声明的运算符在 lower 时报错（"未声明的运算符"）。
+            if let TokenKind::CustomOperator(op) = &op_kind {
+                let op = op.clone();
+                self.advance();
+                let right = self.parse_binary(prec + 1)?;
+                let left_span = left.span.clone();
+                left = Expr {
+                    kind: ExprKind::CustomBinary {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    span: left_span,
+                };
+                continue;
+            }
             self.advance();
             let op = Self::token_to_binop(&op_kind).unwrap();
             let right = self.parse_binary(prec + 1)?;

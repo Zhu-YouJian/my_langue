@@ -13,7 +13,7 @@ struct TraitMethodSig { name: str, params: Vec<Param>, return_type: str }
 struct TraitDef { name: str, methods: Vec<TraitMethodSig> }
 struct ImplBlock { trait_name: str, type_name: str, fns: Vec<FnDef> }
 struct MatchArm { pat_kind: str, pat_name: str, pat_bind: str, body_expr: i64 }
-struct Program { structs: Vec<StructDef>, enums: Vec<EnumDef>, fns: Vec<FnDef>, trait_defs: Vec<TraitDef>, impls: Vec<ImplBlock>, main_stmts_start: i64, main_stmts_count: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, block_idxs: Vec<i64>, loop_idxs: Vec<i64> }
+struct Program { structs: Vec<StructDef>, enums: Vec<EnumDef>, fns: Vec<FnDef>, trait_defs: Vec<TraitDef>, impls: Vec<ImplBlock>, main_stmts_start: i64, main_stmts_count: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, block_idxs: Vec<i64>, loop_idxs: Vec<i64>, operator_ops: Vec<str> }
 
 struct Parser { tokens: Vec<Token>, pos: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, no_struct_literal: bool, block_idxs: Vec<i64>, loop_idxs: Vec<i64>, errors: Vec<str> }
 
@@ -93,7 +93,7 @@ fn expect_gt(p: &mut Parser) -> bool {
 // We skip to these after a parse error to resume parsing.
 
 fn is_sync_token(disc: i64) -> bool {
-    disc == 4 || disc == 16 || disc == 17 || disc == 19 || disc == 18 || disc == 21 || disc == 20 || disc == 50 || disc == 61
+    disc == 4 || disc == 16 || disc == 17 || disc == 19 || disc == 18 || disc == 21 || disc == 20 || disc == 50 || disc == 61 || disc == 91
 }
 
 // Loop consume until we reach a SYNC_TOKEN or Eof.
@@ -839,6 +839,21 @@ fn parse_postfix(p: &mut Parser) -> i64 {
     expr_idx
 }
 
+// M3.1：判断 op 字符串是否全由自定义运算符字符（@/$/~）组成。
+fn is_custom_op_str(op: str) -> bool {
+    if op == "" { false }
+    else {
+        let mut i: i64 = 0;
+        let mut all = true;
+        while i < op.len() {
+            let c = op[i];
+            if c != "@" && c != "$" && c != "~" { all = false; };
+            i = i + 1;
+        };
+        all
+    }
+}
+
 fn binop_prec(op: str) -> i64 {
     if op == "*" || op == "/" || op == "%" { 5 }
     else if op == "+" || op == "-" || op == ">>" { 4 }
@@ -846,6 +861,8 @@ fn binop_prec(op: str) -> i64 {
     else if op == "==" || op == "!=" { 2 }
     else if op == "&&" { 1 }
     else if op == "||" { 0 }
+    // M3.1：自定义运算符统一默认优先级 4（与 +/- 同级，左结合）
+    else if is_custom_op_str(op) { 4 }
     else { -1 }
 }
 
@@ -865,12 +882,14 @@ fn token_to_binop_str(tok: Token) -> str {
     else if d == 37 { "&&" }
     else if d == 38 { "||" }
     else if d == 63 { ">>" }
+    // M3.1：自定义运算符（disc 92）——运算符名在 sval
+    else if d == 92 { tok.sval }
     else { "" }
 }
 
 fn is_binop(tok: Token) -> bool {
     let d = tok.disc;
-    d == 26 || d == 27 || d == 28 || d == 29 || d == 30 || d == 31 || d == 32 || d == 33 || d == 34 || d == 35 || d == 36 || d == 37 || d == 38 || d == 63
+    d == 26 || d == 27 || d == 28 || d == 29 || d == 30 || d == 31 || d == 32 || d == 33 || d == 34 || d == 35 || d == 36 || d == 37 || d == 38 || d == 63 || d == 92
 }
 
 fn parse_binary(p: &mut Parser, min_prec: i64) -> i64 {
@@ -1568,11 +1587,18 @@ fn parse_generic_params(p: &mut Parser) -> Vec<str> {
     generics
 }
 
-fn parse_fn(p: &mut Parser, is_async: bool) -> FnDef {
+fn parse_fn(p: &mut Parser, is_async: bool, forced_name: str) -> FnDef {
     parser_advance(p); // skip fn
     // async already consumed by caller (parse_program / parse_impl_block)
-    let name_tok = parser_advance(p);
-    let name = name_tok.sval;
+    // M3.1：forced_name 非空时使用合成名（`operator <op> = fn(...)` 绑定函数），
+    // 否则从 token 流读取函数名。
+    let name: str;
+    if forced_name == "" {
+        let name_tok = parser_advance(p);
+        name = name_tok.sval;
+    } else {
+        name = forced_name;
+    };
     // Parse optional generic params `<T, U>`
     let generics = parse_generic_params(p);
     parser_advance(p); // skip (
@@ -1667,6 +1693,37 @@ fn parse_fn(p: &mut Parser, is_async: bool) -> FnDef {
     };
 
     FnDef { name: name, params: params, return_type: return_type, body_start: body_start, body_count: body_count, generics: generics, is_async: is_async }
+}
+
+// M3.1：自定义运算符声明 `operator <op> = fn(params) -> T { body }`。
+// 绑定函数以合成名 `__custom_op_<op>` 注册进 program.fns（普通 FnDef），
+// 运算符名记录进 program.operator_ops（lower 阶段据此把 `a <op> b` 降级
+// 为对 `__custom_op_<op>` 的调用）。与 Rust 侧 decl.rs/operator 分支对齐。
+fn parse_operator_def(p: &mut Parser, ops: &mut Vec<str>, fns: &mut Vec<FnDef>) {
+    parser_advance(p); // skip operator
+    let op_tok = parser_advance(p); // CustomOp token
+    let op = op_tok.sval;
+    if op == "" {
+        record_error_and_recover(p, "operator 声明后需跟自定义运算符（由 @/$/~ 组成）");
+        return;
+    };
+    // 期望 =
+    let eq = parser_peek(p);
+    if eq.disc != 42 {
+        record_error_and_recover(p, "operator 声明需 `operator <op> = fn(...)`");
+        return;
+    };
+    parser_advance(p); // skip =
+    // 期望 fn
+    let fnt = parser_peek(p);
+    if fnt.disc != 4 {
+        record_error_and_recover(p, "operator 绑定需为 fn(...)");
+        return;
+    };
+    let syn_name = "__custom_op_" + op;
+    let fndef = parse_fn(p, false, syn_name);
+    ops.push(op);
+    fns.push(fndef);
 }
 
 fn parse_struct_def(p: &mut Parser) -> StructDef {
@@ -1861,7 +1918,7 @@ fn parse_impl_block(p: &mut Parser) -> ImplBlock {
         if t2.disc != 4 && t2.disc != 64 { break; }; // expect fn or async fn
         let is_async = (t2.disc == 64);
         if is_async { parser_advance(p); }; // skip async
-        fns.push(parse_fn(p, is_async));
+        fns.push(parse_fn(p, is_async, ""));
         let t3 = parser_peek(p);
         if t3.disc == 54 { parser_advance(p); };
     };
@@ -1894,6 +1951,8 @@ fn parse_program(tokens: Vec<Token>) -> Program {
     let mut fns = Vec::new();
     let mut trait_defs = Vec::new();
     let mut impls = Vec::new();
+    // M3.1：自定义运算符声明收集（operator_ops）
+    let mut operator_ops = Vec::new();
     // Collect main statements in a LOCAL Vec first, then push to shared block_idxs
     // AFTER the loop. This prevents nested block expressions from interleaving.
     let mut main_local_idxs: Vec<i64> = Vec::new();
@@ -1914,11 +1973,15 @@ fn parse_program(tokens: Vec<Token>) -> Program {
             // Fn (4) or async fn (Async=64, consume async then parse_fn)
             let is_async = (d == 64);
             if is_async { parser_advance(&mut p); };
-            fns.push(parse_fn(&mut p, is_async));
+            fns.push(parse_fn(&mut p, is_async, ""));
             if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
         } else if d == 19 {
             // Trait (19)
             trait_defs.push(parse_trait_def(&mut p));
+            if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
+        } else if d == 91 {
+            // M3.1：Operator (91) — `operator <op> = fn(...)` 自定义运算符声明
+            parse_operator_def(&mut p, &mut operator_ops, &mut fns);
             if parser_peek(&p).disc == 54 { parser_advance(&mut p); };
         } else if d == 18 {
             // Impl (18)
@@ -1993,5 +2056,6 @@ fn parse_program(tokens: Vec<Token>) -> Program {
         match_arms: p.match_arms,
         block_idxs: p.block_idxs,
         loop_idxs: p.loop_idxs,
+        operator_ops: operator_ops,
     }
 }

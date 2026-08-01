@@ -251,4 +251,8 @@ struct HirProgram {
     // Problem 21 批次4：编译期 warning（与 Rust 侧 TenthWarning 对齐）
     // 用于内存/FLOPs 预估等不中断编译的提示信息。
     warnings: Vec<HirError>,
+    // M3.1：自定义运算符名（`operator <op> = fn(...)` 声明）。绑定函数
+    // 以合成名 `__custom_op_<op>` 存在于 p.fns，lower 期据 operator_ops
+    // 把 `a <op> b` 降级为对 `__custom_op_<op>` 的调用。
+    custom_ops: Vec<str>,
 }

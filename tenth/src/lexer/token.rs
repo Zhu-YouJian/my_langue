@@ -69,6 +69,11 @@ pub enum TokenKind {
     /// `lossy expr`：显式接受可能算错的值（编译期污点归零，运行时 no-op）。
     /// 对应 Rust 的 `unsafe`："我知道这里可能算错，我负责"。
     Lossy,
+    /// `operator <op> = fn(...)`：自定义运算符声明关键字（M3.1）。
+    Operator,
+    /// 自定义运算符 token：`@`/`$`/`~` 的连续组合（如 `@@`、`@~`、`$$`）。
+    /// 第二字段为运算符名（如 "@@"）。仅 `@$~` 三个字符，与内置 token 零冲突。
+    CustomOperator(String),
 
     Plus,
     Minus,
@@ -201,6 +206,8 @@ impl fmt::Display for TokenKind {
             TokenKind::Move => write!(f, "move"),
             TokenKind::Dyn => write!(f, "dyn"),
             TokenKind::Lossy => write!(f, "lossy"),
+            TokenKind::Operator => write!(f, "operator"),
+            TokenKind::CustomOperator(s) => write!(f, "{}", s),
             TokenKind::Plus => write!(f, "+"),
             TokenKind::Minus => write!(f, "-"),
             TokenKind::Star => write!(f, "*"),
