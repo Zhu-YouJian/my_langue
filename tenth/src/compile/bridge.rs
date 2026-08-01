@@ -245,6 +245,7 @@ fn convert_enum_def(val: &Value, span: &Span) -> TenthResult<ast::Item> {
     Ok(ast::Item {
         kind: ast::ItemKind::EnumDef {
             name: ast::Ident { name, span: span.clone() },
+            generics: Vec::new(),
             variants: ast_variants,
         },
         span: span.clone(),
@@ -1120,6 +1121,9 @@ fn convert_expr_depth(
                     enum_name: ast::Ident { name, span: span.clone() },
                     variant: ast::Ident { name: variant, span: span.clone() },
                     fields,
+                    // M2.1：路径 B（tenthc 前端）语法层不支持 `Enum<T>::Variant` 显式实参，
+                    // 泛型枚举在 Rust 后端按字段推断（与 Option/Result 一致）。
+                    generics: Vec::new(),
                 },
                 span: span.clone(),
             })

@@ -172,6 +172,7 @@ mod interpreter_limits_tests {
             structs: HashMap::new(),
             generic_structs: HashMap::new(),
             enums: HashMap::new(),
+            generic_enums: HashMap::new(),
             unions: HashMap::new(),
             trait_defs: HashMap::new(),
             trait_impls: HashMap::new(),

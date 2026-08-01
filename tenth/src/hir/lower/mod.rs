@@ -28,6 +28,8 @@ pub struct Lowerer {
     generic_structs: HashMap<String, HirGenericStruct>,
     unions: HashMap<String, Vec<(String, Type)>>,
     enums: HashMap<String, Vec<(String, Vec<(String, Type)>)>>,
+    /// M2.1：泛型枚举（`enum X<T> { .. }`）。
+    generic_enums: HashMap<String, HirGenericEnum>,
     methods: HashMap<String, HashMap<String, HirFnDef>>,
     modules: HashMap<String, HirProgram>,
     uses: Vec<(Vec<String>, String)>,
@@ -134,6 +136,7 @@ impl Lowerer {
             || self.enums.contains_key(name)
             || self.unions.contains_key(name)
             || self.generic_structs.contains_key(name)
+            || self.generic_enums.contains_key(name)
     }
 
     /// M1.3：把具体值表达式改写为 `into_dyn(value, "TraitName")` 调用。
@@ -180,7 +183,8 @@ impl Lowerer {
             // 仅当 name 是已声明的用户类型时才做 impl 检查；
             // 未声明的 TypeParam（真泛型参数 T）保守放行（防误报）。
             Type::TypeParam { name } => {
-                if self.structs.contains_key(name) || self.enums.contains_key(name) || self.unions.contains_key(name) {
+                if self.structs.contains_key(name) || self.enums.contains_key(name) || self.unions.contains_key(name)
+                    || self.generic_structs.contains_key(name) || self.generic_enums.contains_key(name) {
                     name.clone()
                 } else {
                     return Ok(());
@@ -261,6 +265,7 @@ impl Lowerer {
             generic_structs: HashMap::new(),
             unions: HashMap::new(),
             enums: HashMap::new(),
+            generic_enums: HashMap::new(),
             methods: HashMap::new(),
             modules: HashMap::new(),
             uses: Vec::new(),

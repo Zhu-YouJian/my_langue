@@ -268,6 +268,16 @@ pub struct HirGenericStruct {
     pub fields: Vec<(String, Type)>,
 }
 
+/// M2.1：泛型枚举定义（`enum Option<T> { Some(T), None }`）。
+/// 变体字段类型中的 `TypeParam("T")` 在实例化时替换为具体类型实参。
+#[derive(Debug, Clone, PartialEq)]
+pub struct HirGenericEnum {
+    pub name: String,
+    pub generics: Vec<String>,
+    /// 变体列表： (variant_name, Vec<(field_name, Type)>) —— 与 HirProgram.enums 同形
+    pub variants: Vec<(String, Vec<(String, Type)>)>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct HirProgram {
     pub functions: Vec<HirFnDef>,
@@ -280,6 +290,8 @@ pub struct HirProgram {
     pub generic_structs: HashMap<String, HirGenericStruct>,
     pub unions: HashMap<String, Vec<(String, Type)>>,
     pub enums: HashMap<String, Vec<(String, Vec<(String, Type)>)>>,
+    /// M2.1：泛型枚举（`enum X<T> { .. }`），非泛型枚举仍在 `enums` 中。
+    pub generic_enums: HashMap<String, HirGenericEnum>,
     pub trait_defs: HashMap<String, HirTraitDef>,
     pub trait_impls: HashMap<String, HashMap<String, HashMap<String, HirFnDef>>>,
     /// 编译期警告（内存/算力预估等，非致命）

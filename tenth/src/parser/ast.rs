@@ -140,6 +140,8 @@ pub enum ExprKind {
         enum_name: Ident,
         variant: Ident,
         fields: Vec<(Ident, Expr)>,
+        /// 显式泛型实参：`MyEnum<i64>::Some(5)` 的 `<i64>`（无则为空 Vec，靠推断）
+        generics: Vec<TypeAnnotation>,
     },
     Match {
         scrutinee: Box<Expr>,
@@ -298,6 +300,7 @@ pub enum ItemKind {
     },
     EnumDef {
         name: Ident,
+        generics: Vec<GenericParam>,
         variants: Vec<EnumVariant>,
     },
     Impl {

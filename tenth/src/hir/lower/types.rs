@@ -173,7 +173,7 @@ impl Lowerer {
             Type::TypeParam { name } => {
                 if self.structs.contains_key(name) {
                     Type::Struct(name.clone())
-                } else if self.enums.contains_key(name) {
+                } else if self.enums.contains_key(name) || self.generic_enums.contains_key(name) {
                     Type::Enum(name.clone())
                 } else if self.unions.contains_key(name) {
                     Type::Union(name.clone())
@@ -273,6 +273,7 @@ impl Lowerer {
                     || self.enums.contains_key(name)
                     || self.unions.contains_key(name)
                     || self.generic_structs.contains_key(name)
+                    || self.generic_enums.contains_key(name)
                 {
                     Some(name.clone())
                 } else {
@@ -357,6 +358,7 @@ impl Lowerer {
                 || self.enums.contains_key(name)
                 || self.unions.contains_key(name)
                 || self.generic_structs.contains_key(name)
+                || self.generic_enums.contains_key(name)
             {
                 return self.nominal_type_name(arg).as_deref() == Some(name.as_str());
             }

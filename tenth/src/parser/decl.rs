@@ -153,6 +153,8 @@ impl Parser {
             TokenKind::Enum => {
                 self.advance();
                 let name = self.expect_ident()?;
+                // M2.1：枚举显式泛型参数 `<T, U>`（与 struct 分支一致）
+                let generics = self.parse_generic_params()?;
                 self.known_enums.insert(name.name.clone());
                 self.expect(TokenKind::LBrace)?;
                 let mut variants = Vec::new();
@@ -195,7 +197,7 @@ impl Parser {
                 }
                 self.expect(TokenKind::RBrace)?;
                 self.match_token(TokenKind::Semicolon);
-                Ok(Item { kind: ItemKind::EnumDef { name, variants }, span })
+                Ok(Item { kind: ItemKind::EnumDef { name, generics, variants }, span })
             }
             TokenKind::Union => {
                 self.advance();

@@ -33,13 +33,22 @@ impl Lowerer {
                     if parts.len() == 2 {
                         let enum_name = parts[0];
                         let variant = parts[1];
-                        if let Some(variants) = self.enums.get(enum_name) {
-                            if variants.iter().any(|(v, _)| v == variant) {
-                                // 问题1：Option/Result 作为泛型枚举——返回 Type::Generic 携带类型参数
-                                // Option<T> → Generic { base: Enum("Option"), args: [Unknown] }
-                                // Result<T, E> → Generic { base: Enum("Result"), args: [Unknown, str] }
-                                // 具体类型参数在 Call 表达式处理时从实参推断（见下方 Call 分支）
-                                let ty = match enum_name {
+                        if self.enum_variant_fields(enum_name, variant).is_some() {
+                            // 问题1：Option/Result 作为泛型枚举——返回 Type::Generic 携带类型参数
+                            // Option<T> → Generic { base: Enum("Option"), args: [Unknown] }
+                            // Result<T, E> → Generic { base: Enum("Result"), args: [Unknown, str] }
+                            // 具体类型参数在 Call 表达式处理时从实参推断（见下方 Call 分支）
+                            // M2.1：泛型枚举（`enum X<T> { .. }`）的单元变体也返回 Generic，
+                            // 实参先用 Unknown 占位，构造点从实参推断。用户泛型枚举优先于
+                            // 内置 Option/Result 按名特判（shadow 语义与泛型 struct 一致）。
+                            let ty = if self.generic_enums.contains_key(enum_name) {
+                                let n = self.generic_enum_param_names(enum_name).len();
+                                Type::Generic {
+                                    base: Box::new(Type::Enum(enum_name.to_string())),
+                                    args: vec![Type::Unknown; n],
+                                }
+                            } else {
+                                match enum_name {
                                     "Option" => Type::Generic {
                                         base: Box::new(Type::Enum("Option".to_string())),
                                         args: vec![Type::Unknown],
@@ -49,17 +58,17 @@ impl Lowerer {
                                         args: vec![Type::Unknown, Type::str_()],
                                     },
                                     _ => Type::Enum(enum_name.to_string()),
-                                };
-                                return Ok(HirExpr {
-                                    kind: HirExprKind::EnumLiteral {
-                                        enum_name: enum_name.to_string(),
-                                        variant: variant.to_string(),
-                                        fields: Vec::new(),
-                                    },
-                                    ty,
-                                    span,
-                                });
-                            }
+                                }
+                            };
+                            return Ok(HirExpr {
+                                kind: HirExprKind::EnumLiteral {
+                                    enum_name: enum_name.to_string(),
+                                    variant: variant.to_string(),
+                                    fields: Vec::new(),
+                                },
+                                ty,
+                                span,
+                            });
                         }
                     }
                     (HirExprKind::Var(ident.name.clone()), Type::Unknown)
@@ -261,26 +270,35 @@ impl Lowerer {
                         // Option::Some(value) → Generic { base: Enum("Option"), args: [value.ty] }
                         // Result::Ok(value) → Generic { base: Enum("Result"), args: [value.ty, str] }
                         // Result::Err(msg) → Generic { base: Enum("Result"), args: [Unknown, msg.ty] }
-                        let ty = match enum_name.as_str() {
-                            "Option" => {
-                                let inner_ty = lowered_args.first().map(|a| a.ty.clone()).unwrap_or(Type::Unknown);
-                                Type::Generic {
-                                    base: Box::new(Type::Enum("Option".to_string())),
-                                    args: vec![inner_ty],
-                                }
+                        // M2.1：用户泛型枚举优先（shadow 内置 Option/Result 时走泛型推断）。
+                        let ty = if self.generic_enums.contains_key(enum_name.as_str()) {
+                            let arg_tys: Vec<Type> = lowered_args.iter().map(|a| a.ty.clone()).collect();
+                            Type::Generic {
+                                base: Box::new(Type::Enum(enum_name.clone())),
+                                args: self.infer_generic_enum_args(enum_name, variant, &arg_tys),
                             }
-                            "Result" => {
-                                let (ok_ty, err_ty) = match variant.as_str() {
-                                    "Ok" => (lowered_args.first().map(|a| a.ty.clone()).unwrap_or(Type::Unknown), Type::str_()),
-                                    "Err" => (Type::Unknown, lowered_args.first().map(|a| a.ty.clone()).unwrap_or(Type::str_())),
-                                    _ => (Type::Unknown, Type::str_()),
-                                };
-                                Type::Generic {
-                                    base: Box::new(Type::Enum("Result".to_string())),
-                                    args: vec![ok_ty, err_ty],
+                        } else {
+                            match enum_name.as_str() {
+                                "Option" => {
+                                    let inner_ty = lowered_args.first().map(|a| a.ty.clone()).unwrap_or(Type::Unknown);
+                                    Type::Generic {
+                                        base: Box::new(Type::Enum("Option".to_string())),
+                                        args: vec![inner_ty],
+                                    }
                                 }
+                                "Result" => {
+                                    let (ok_ty, err_ty) = match variant.as_str() {
+                                        "Ok" => (lowered_args.first().map(|a| a.ty.clone()).unwrap_or(Type::Unknown), Type::str_()),
+                                        "Err" => (Type::Unknown, lowered_args.first().map(|a| a.ty.clone()).unwrap_or(Type::str_())),
+                                        _ => (Type::Unknown, Type::str_()),
+                                    };
+                                    Type::Generic {
+                                        base: Box::new(Type::Enum("Result".to_string())),
+                                        args: vec![ok_ty, err_ty],
+                                    }
+                                }
+                                _ => Type::Unknown,
                             }
-                            _ => Type::Unknown,
                         };
                         let tuple_fields: Vec<(String, HirExpr)> = lowered_args.into_iter().enumerate()
                             .map(|(i, a)| (format!("_{}", i), a))
@@ -1083,7 +1101,7 @@ impl Lowerer {
                 }, struct_ty)
             }
 
-            ExprKind::EnumLiteral { enum_name, variant, fields } => {
+            ExprKind::EnumLiteral { enum_name, variant, fields, generics } => {
                 let lowered_fields: Vec<(String, HirExpr)> = fields.iter()
                     .map(|(id, e)| {
                         let lowered = self.lower_expr(e)?;
@@ -1091,34 +1109,59 @@ impl Lowerer {
                     })
                     .collect::<TenthResult<_>>()?;
                 // 问题1：Option/Result 作为泛型枚举——从字段推断类型参数
-                let ty = match enum_name.name.as_str() {
-                    "Option" => {
-                        let inner_ty = lowered_fields.first()
-                            .map(|(_, e)| e.ty.clone())
-                            .unwrap_or(Type::Unknown);
+                // M2.1：泛型枚举 `enum X<T> { .. }`：
+                //   - 显式实参（`MyEnum<i64>::Some(5)`）优先
+                //   - 否则从变体字段类型推断（`MyEnum::Some(5)`，与 Option/Result 同款）
+                // 用户泛型枚举优先于内置 Option/Result 按名特判（shadow 语义）。
+                let ty = if !generics.is_empty() {
+                    // 显式类型实参
+                    let arg_tys: Vec<Type> = generics.iter().map(|g| self.annotation_type(g)).collect();
+                    if self.generic_enums.contains_key(&enum_name.name) {
                         Type::Generic {
-                            base: Box::new(Type::Enum("Option".to_string())),
-                            args: vec![inner_ty],
+                            base: Box::new(Type::Enum(enum_name.name.clone())),
+                            args: arg_tys,
                         }
+                    } else {
+                        // 非泛型枚举给出显式实参：保守回退为普通枚举类型
+                        Type::Enum(enum_name.name.clone())
                     }
-                    "Result" => {
-                        let (ok_ty, err_ty) = match variant.name.as_str() {
-                            "Ok" => (
-                                lowered_fields.first().map(|(_, e)| e.ty.clone()).unwrap_or(Type::Unknown),
-                                Type::str_(),
-                            ),
-                            "Err" => (
-                                Type::Unknown,
-                                lowered_fields.first().map(|(_, e)| e.ty.clone()).unwrap_or(Type::str_()),
-                            ),
-                            _ => (Type::Unknown, Type::str_()),
-                        };
-                        Type::Generic {
-                            base: Box::new(Type::Enum("Result".to_string())),
-                            args: vec![ok_ty, err_ty],
+                } else if self.generic_enums.contains_key(&enum_name.name) {
+                    // M2.1：泛型枚举无显式实参 → 从变体字段类型推断
+                    let arg_tys: Vec<Type> = lowered_fields.iter().map(|(_, e)| e.ty.clone()).collect();
+                    Type::Generic {
+                        base: Box::new(Type::Enum(enum_name.name.clone())),
+                        args: self.infer_generic_enum_args(&enum_name.name, &variant.name, &arg_tys),
+                    }
+                } else {
+                    match enum_name.name.as_str() {
+                        "Option" => {
+                            let inner_ty = lowered_fields.first()
+                                .map(|(_, e)| e.ty.clone())
+                                .unwrap_or(Type::Unknown);
+                            Type::Generic {
+                                base: Box::new(Type::Enum("Option".to_string())),
+                                args: vec![inner_ty],
+                            }
                         }
+                        "Result" => {
+                            let (ok_ty, err_ty) = match variant.name.as_str() {
+                                "Ok" => (
+                                    lowered_fields.first().map(|(_, e)| e.ty.clone()).unwrap_or(Type::Unknown),
+                                    Type::str_(),
+                                ),
+                                "Err" => (
+                                    Type::Unknown,
+                                    lowered_fields.first().map(|(_, e)| e.ty.clone()).unwrap_or(Type::str_()),
+                                ),
+                                _ => (Type::Unknown, Type::str_()),
+                            };
+                            Type::Generic {
+                                base: Box::new(Type::Enum("Result".to_string())),
+                                args: vec![ok_ty, err_ty],
+                            }
+                        }
+                        _ => Type::Enum(enum_name.name.clone()),
                     }
-                    _ => Type::Enum(enum_name.name.clone()),
                 };
                 (HirExprKind::EnumLiteral {
                     enum_name: enum_name.name.clone(),
@@ -1176,7 +1219,11 @@ impl Lowerer {
                 if let Some(enum_name) = scrutinee_enum_name {
                     let has_wildcard = lowered_arms.iter().any(|arm| matches!(arm.pattern, HirPattern::Wildcard));
                     if !has_wildcard {
-                        if let Some(variants) = self.enums.get(enum_name) {
+                        // M2.1：穷尽性检查同时覆盖非泛型枚举（enums）与泛型枚举（generic_enums）。
+                        // 泛型枚举的变体定义（含 TypeParam 字段类型）在 generic_enums 中。
+                        let variants = self.enums.get(enum_name)
+                            .or_else(|| self.generic_enums.get(enum_name).map(|ge| &ge.variants));
+                        if let Some(variants) = variants {
                             let covered: std::collections::HashSet<&str> = lowered_arms.iter()
                                 .filter_map(|arm| {
                                     if let HirPattern::EnumVariant { variant, .. } = &arm.pattern {
@@ -1389,6 +1436,47 @@ impl Lowerer {
         Ok(HirExpr { kind, ty, span })
     }
 
+    // ── M2.1：泛型枚举辅助 ─────────────────────────────────────────────────
+    // 构造/匹配路径统一从这里查询枚举定义：非泛型枚举在 `enums`，泛型枚举在
+    // `generic_enums`（变体字段类型含 TypeParam，实例化时替换）。
+
+    /// 枚举变体字段定义（含泛型枚举），找不到返回 None。
+    /// 泛型枚举返回带 `TypeParam("T")` 的字段类型（未实例化）。
+    pub(super) fn enum_variant_fields(&self, enum_name: &str, variant: &str) -> Option<Vec<(String, Type)>> {
+        if let Some(variants) = self.enums.get(enum_name) {
+            return variants.iter().find(|(v, _)| v == variant).map(|(_, f)| f.clone());
+        }
+        self.generic_enums.get(enum_name)
+            .and_then(|ge| ge.variants.iter().find(|(v, _)| v == variant))
+            .map(|(_, f)| f.clone())
+    }
+
+    /// 泛型枚举声明的类型参数名列表（非泛型枚举返回空 Vec）。
+    pub(super) fn generic_enum_param_names(&self, name: &str) -> Vec<String> {
+        self.generic_enums.get(name)
+            .map(|ge| ge.generics.clone())
+            .unwrap_or_default()
+    }
+
+    /// 从构造实参推断泛型枚举的类型实参。
+    /// 对每个声明类型参数，找变体字段类型为 `TypeParam(param)`（或嵌套其中，如
+    /// `Vec<T>`/`Option<T>`）的字段，取对应位置实参类型；找不到的保持 Unknown。
+    fn infer_generic_enum_args(&self, enum_name: &str, variant: &str, arg_tys: &[Type]) -> Vec<Type> {
+        let param_names = self.generic_enum_param_names(enum_name);
+        let mut args: Vec<Type> = vec![Type::Unknown; param_names.len()];
+        if let Some(vfields) = self.enum_variant_fields(enum_name, variant) {
+            for (i, (_, fty)) in vfields.iter().enumerate() {
+                let arg_ty = arg_tys.get(i).cloned().unwrap_or(Type::Unknown);
+                for (pi, pname) in param_names.iter().enumerate() {
+                    if let Some(t) = extract_param_type_from_field(fty, pname, &arg_ty) {
+                        args[pi] = t;
+                    }
+                }
+            }
+        }
+        args
+    }
+
     pub(super) fn lower_index(&mut self, idx: &ast::IndexExpr) -> TenthResult<Index> {
         match idx {
             ast::IndexExpr::Single(e) => Ok(Index::Single(self.lower_expr(e)?)),
@@ -1453,21 +1541,32 @@ impl Lowerer {
     pub(super) fn bind_pattern_vars(&mut self, pattern: &HirPattern, scrutinee_ty: &Type) {
         match pattern {
             HirPattern::EnumVariant { enum_name, variant, field_bind, tuple_binds } => {
-                let variant_fields = self.enums.get(enum_name)
-                    .and_then(|variants| variants.iter().find(|(v, _)| v == variant))
-                    .map(|(_, fields)| fields.clone());
+                // M2.1：泛型枚举——变体字段类型中的 TypeParam 需替换为 scrutinee 的实参，
+                // 否则 `match MyEnum::Some(x) { Some(v) => v + 1 }` 中 v 的类型是未实例化的 T。
+                let variant_fields = self.enum_variant_fields(enum_name, variant);
+                let type_map: HashMap<String, Type> = if self.generic_enums.contains_key(enum_name) {
+                    let params = self.generic_enum_param_names(enum_name);
+                    let args = match scrutinee_ty {
+                        Type::Generic { base, args } if matches!(base.as_ref(), Type::Enum(n) if n == enum_name) => args.clone(),
+                        _ => Vec::new(),
+                    };
+                    params.into_iter().zip(args.into_iter()).collect()
+                } else {
+                    HashMap::new()
+                };
+                let subst = |t: &Type| substitute_type(t, &type_map);
 
                 if let Some((_fname, bname)) = field_bind {
                     let bind_ty = variant_fields.as_ref()
                         .and_then(|f| f.first())
-                        .map(|(_, t)| t.clone())
+                        .map(|(_, t)| subst(t))
                         .unwrap_or(Type::Unknown);
                     self.scope.define_var(bname.clone(), bind_ty, false);
                 }
                 for (i, (_, bind_name)) in tuple_binds.iter().enumerate() {
                     let bind_ty = variant_fields.as_ref()
                         .and_then(|f| f.get(i))
-                        .map(|(_, t)| t.clone())
+                        .map(|(_, t)| subst(t))
                         .unwrap_or(Type::Unknown);
                     self.scope.define_var(bind_name.clone(), bind_ty, false);
                 }
@@ -1884,5 +1983,42 @@ impl Lowerer {
         };
         // 只有 Generic（带实参）才可能发生状态转换；键不同即转换
         matches!(receiver, Type::Generic { .. }) && recv_key != ret_key
+    }
+}
+
+/// M2.1：若 `field_ty` 中参数 `pname` 的位置与 `arg_ty` 结构对应，
+/// 返回 `arg_ty` 中对应位置的类型（即泛型枚举类型实参）。
+/// 覆盖：字段类型恰为 `T` → 取整个实参类型；`Vec<T>`/`Option<T>`/`[T]`/`&T` 等
+/// 嵌套结构 → 递归内层（实参结构需匹配，否则返回 None 保守保持 Unknown）。
+fn extract_param_type_from_field(field_ty: &Type, pname: &str, arg_ty: &Type) -> Option<Type> {
+    match field_ty {
+        Type::TypeParam { name } if name == pname => Some(arg_ty.clone()),
+        // 容器/引用：实参需为同形结构才提取内层
+        Type::Array { inner, .. } | Type::Ref(inner, _) | Type::MutRef(inner, _) => {
+            match arg_ty {
+                Type::Array { inner: ai, .. } | Type::Ref(ai, _) | Type::MutRef(ai, _) => {
+                    extract_param_type_from_field(inner, pname, ai)
+                }
+                _ => None,
+            }
+        }
+        Type::Generic { args, .. } => {
+            // 实参结构：Generic(...) 取 args；Array（如 [i64] 表示 Vec<i64>）视为单元素
+            let arg_args: Vec<Type> = match arg_ty {
+                Type::Generic { args, .. } => args.clone(),
+                Type::Array { inner, .. } => vec![(**inner).clone()],
+                _ => return None,
+            };
+            if args.len() != arg_args.len() {
+                return None;
+            }
+            for (ft, at) in args.iter().zip(arg_args.iter()) {
+                if let Some(t) = extract_param_type_from_field(ft, pname, at) {
+                    return Some(t);
+                }
+            }
+            None
+        }
+        _ => None,
     }
 }

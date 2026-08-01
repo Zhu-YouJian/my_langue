@@ -1699,6 +1699,12 @@ fn parse_enum_def(p: &mut Parser) -> EnumDef {
     parser_advance(p); // skip enum
     let name_tok = parser_advance(p);
     let name = name_tok.sval;
+    // M2.1：语法兼容 `enum X<T> { .. }` 声明——调用 parse_generic_params 跳过
+    // `<T, U>`，泛型信息丢弃。tenthc 语义上不按泛型特化（与 Rust 侧 M2.1 前
+    // 一致，仅保证语法兼容，参照 typestate `impl File<Open>` 先例）。
+    // 变体字段中的 `T` 类型注解照常解析为 TypeParam，lower/wasm 路径不受影响
+    // （枚举变体布局按字段数*8 计算，不依赖字段类型）。
+    parse_generic_params(p);
     parser_advance(p); // skip {
     let mut variants = Vec::new();
     loop {

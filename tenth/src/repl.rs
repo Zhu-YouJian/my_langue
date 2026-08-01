@@ -32,6 +32,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
         structs: HashMap::new(),
         generic_structs: HashMap::new(),
         enums: HashMap::new(),
+        generic_enums: HashMap::new(),
         unions: HashMap::new(),
         trait_defs: HashMap::new(),
         trait_impls: HashMap::new(),
@@ -122,7 +123,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                     continue;
                 }
                 if trimmed == ":enums" {
-                    if accumulated_program.enums.is_empty() {
+                    if accumulated_program.enums.is_empty() && accumulated_program.generic_enums.is_empty() {
                         println!("  (no enums)");
                     } else {
                         for (name, variants) in &accumulated_program.enums {
@@ -138,6 +139,20 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                             }).collect();
                             println!("  enum {} {{ {} }}", name, variant_strs.join(", "));
                         }
+                        // M2.1：泛型枚举（`enum X<T> { .. }`）
+                        for (name, ge) in &accumulated_program.generic_enums {
+                            let variant_strs: Vec<String> = ge.variants.iter().map(|(v, fields)| {
+                                if fields.is_empty() {
+                                    v.clone()
+                                } else {
+                                    let field_strs: Vec<String> = fields.iter()
+                                        .map(|(n, t)| format!("{}: {}", n, t))
+                                        .collect();
+                                    format!("{}({})", v, field_strs.join(", "))
+                                }
+                            }).collect();
+                            println!("  enum {}<{}> {{ {} }}", name, ge.generics.join(", "), variant_strs.join(", "));
+                        }
                     }
                     continue;
                 }
@@ -152,6 +167,7 @@ pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
                         structs: HashMap::new(),
                         generic_structs: HashMap::new(),
                         enums: HashMap::new(),
+                        generic_enums: HashMap::new(),
                         unions: HashMap::new(),
                         trait_defs: HashMap::new(),
                         trait_impls: HashMap::new(),
@@ -473,6 +489,7 @@ fn load_file(
     accumulated_program.uses.extend(hir_program.uses.clone());
     accumulated_program.methods.extend(hir_program.methods.clone());
     accumulated_program.generic_structs.extend(hir_program.generic_structs.clone());
+    accumulated_program.generic_enums.extend(hir_program.generic_enums.clone());
     accumulated_program.trait_defs.extend(hir_program.trait_defs.clone());
     accumulated_program.trait_impls.extend(hir_program.trait_impls.clone());
     accumulated_program.main_expr = hir_program.main_expr;
@@ -531,6 +548,7 @@ fn execute_line_with_limits(
     accumulated_program.uses.extend(hir_program.uses.clone());
     accumulated_program.methods.extend(hir_program.methods.clone());
     accumulated_program.generic_structs.extend(hir_program.generic_structs.clone());
+    accumulated_program.generic_enums.extend(hir_program.generic_enums.clone());
     accumulated_program.trait_defs.extend(hir_program.trait_defs.clone());
     accumulated_program.trait_impls.extend(hir_program.trait_impls.clone());
     accumulated_program.main_expr = hir_program.main_expr;

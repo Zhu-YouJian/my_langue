@@ -232,7 +232,7 @@ impl Lowerer {
                         });
                     }
                 }
-                ast::ItemKind::EnumDef { name, variants } => {
+                ast::ItemKind::EnumDef { name, generics, variants } => {
                     let variant_list: Vec<(String, Vec<(String, Type)>)> = variants.iter()
                         .map(|v| {
                             let fields: Vec<(String, Type)> = match &v.kind {
@@ -251,7 +251,23 @@ impl Lowerer {
                             (v.name.name.clone(), fields)
                         })
                         .collect();
-                    self.enums.insert(name.name.clone(), variant_list);
+                    if generics.is_empty() {
+                        // 无泛型参数：注册为非泛型枚举（向后兼容）
+                        // 清除同名泛型枚举条目，保证"后声明覆盖"（shadow 一致）。
+                        self.generic_enums.remove(&name.name);
+                        self.enums.insert(name.name.clone(), variant_list);
+                    } else {
+                        // M2.1：泛型枚举 `enum X<T> { .. }` → generic_enums，
+                        // 变体字段类型中的 TypeParam("T") 在实例化时替换。
+                        // 清除同名内置/非泛型条目（如用户 `enum Option<T>` shadow 内置 Option）。
+                        self.enums.remove(&name.name);
+                        let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
+                        self.generic_enums.insert(name.name.clone(), HirGenericEnum {
+                            name: name.name.clone(),
+                            generics: gen_names,
+                            variants: variant_list,
+                        });
+                    }
                 }
                 ast::ItemKind::Union { name, fields } => {
                     let field_types: Vec<(String, Type)> = fields.iter()
@@ -466,6 +482,7 @@ impl Lowerer {
                     let mut lowerer = Lowerer::new();
                     lowerer.structs = self.structs.clone();
                     lowerer.enums = self.enums.clone();
+                    lowerer.generic_enums = self.generic_enums.clone();
                     lowerer.methods = self.methods.clone();
                     lowerer.generic_funcs = self.generic_funcs.clone();
                     lowerer.generic_structs = self.generic_structs.clone();
@@ -830,6 +847,7 @@ impl Lowerer {
             generic_structs: self.generic_structs.clone(),
             unions: self.unions.clone(),
             enums: self.enums.clone(),
+            generic_enums: self.generic_enums.clone(),
             trait_defs: self.trait_defs.clone(),
             trait_impls: self.trait_impls.clone(),
             warnings: std::mem::take(&mut self.warnings),

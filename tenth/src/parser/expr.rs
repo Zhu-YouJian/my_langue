@@ -119,112 +119,27 @@ impl Parser {
                     } else {
                         ExprKind::Ident(Ident { name, span })
                     }
+                } else if matches!(self.peek_kind(), TokenKind::Lt) && self.looks_like_generic_enum_construction() {
+                    // M2.1：泛型枚举构造 `MyEnum<i64>::Some(5)` — 显式类型实参
+                    self.advance();
+                    let mut generic_args = Vec::new();
+                    while !matches!(self.peek_kind(), TokenKind::Gt | TokenKind::Shr) {
+                        generic_args.push(self.parse_type()?);
+                        if !matches!(self.peek_kind(), TokenKind::Comma) {
+                            break;
+                        }
+                        self.advance();
+                    }
+                    self.expect_gt()?;
+                    self.expect(TokenKind::ColonColon)?;
+                    let enum_name = Ident { name: name.clone(), span: span.clone() };
+                    let variant_name = self.expect_ident()?;
+                    self.parse_enum_variant_expr(&enum_name, &variant_name, generic_args)?
                 } else if matches!(self.peek_kind(), TokenKind::ColonColon) {
                     let enum_name = Ident { name: name.clone(), span: span.clone() };
                     self.advance();
                     let variant_name = self.expect_ident()?;
-                    let path_name = format!("{}::{}", enum_name.name, variant_name.name);
-
-                    if matches!(self.peek_kind(), TokenKind::LParen) {
-                        // Check if next token is RParen (empty parens → function call, not enum)
-                        let next_is_rparen = self.tokens.get(self.pos + 1)
-                            .map_or(false, |t| matches!(t.kind, TokenKind::RParen));
-                        if next_is_rparen {
-                            // Empty parens: treat as function call, e.g. HashMap::new()
-                            ExprKind::Ident(Ident {
-                                name: path_name,
-                                span: enum_name.span,
-                            })
-                        } else {
-                            let next_is_ident = self.tokens.get(self.pos + 1)
-                                .map_or(false, |t| matches!(t.kind, TokenKind::Identifier(_)));
-                            // Check if identifier is followed by `:` → named-field enum construction
-                            let is_named_field = next_is_ident && self.tokens.get(self.pos + 2)
-                                .map_or(false, |t| matches!(t.kind, TokenKind::Colon));
-                            if is_named_field {
-                            self.advance();
-                            let mut fields = Vec::new();
-                            while !matches!(self.peek_kind(), TokenKind::RParen) {
-                                let fname = self.expect_ident()?;
-                                self.expect(TokenKind::Colon)?;
-                                let val = self.parse_expr()?;
-                                fields.push((fname, val));
-                                if !matches!(self.peek_kind(), TokenKind::Comma) {
-                                    break;
-                                }
-                                self.advance();
-                            }
-                            self.expect(TokenKind::RParen)?;
-                            ExprKind::EnumLiteral {
-                                enum_name,
-                                variant: variant_name,
-                                fields,
-                            }
-                        } else if next_is_ident {
-                            // Identifier without colon → function call, e.g. math::add(x, y)
-                            ExprKind::Ident(Ident {
-                                name: path_name,
-                                span: enum_name.span,
-                            })
-                        } else if self.known_enums.contains(&enum_name.name) {
-                            // Known enum constructor with positional arg: Some(42)
-                            self.advance();
-                            let mut fields = Vec::new();
-                            let mut field_idx = 0;
-                            while !matches!(self.peek_kind(), TokenKind::RParen) {
-                                let val = self.parse_expr()?;
-                                let fname = Ident {
-                                    name: format!("_{}", field_idx),
-                                    span: val.span.clone(),
-                                };
-                                fields.push((fname, val));
-                                field_idx += 1;
-                                if !matches!(self.peek_kind(), TokenKind::Comma) {
-                                    break;
-                                }
-                                self.advance();
-                            }
-                            self.expect(TokenKind::RParen)?;
-                            ExprKind::EnumLiteral {
-                                enum_name,
-                                variant: variant_name,
-                                fields,
-                            }
-                        } else {
-                            // Unknown name with positional args → function call
-                            ExprKind::Ident(Ident {
-                                name: path_name,
-                                span: enum_name.span,
-                            })
-                        }
-                        } // close if next_is_rparen else
-                    } else if matches!(self.peek_kind(), TokenKind::LBrace) {
-                        self.advance();
-                        let mut fields = Vec::new();
-                        while !matches!(self.peek_kind(), TokenKind::RBrace) {
-                            let fname = self.expect_ident()?;
-                            self.expect(TokenKind::Colon)?;
-                            let val = self.parse_expr()?;
-                            fields.push((fname, val));
-                            if !matches!(self.peek_kind(), TokenKind::Comma) {
-                                break;
-                            }
-                            self.advance();
-                        }
-                        self.expect(TokenKind::RBrace)?;
-                        ExprKind::EnumLiteral {
-                            enum_name,
-                            variant: variant_name,
-                            fields,
-                        }
-                    } else {
-                        // Unit variant: TokenKind::Eof, Option::None, etc.
-                        ExprKind::EnumLiteral {
-                            enum_name,
-                            variant: variant_name,
-                            fields: Vec::new(),
-                        }
-                    }
+                    self.parse_enum_variant_expr(&enum_name, &variant_name, Vec::new())?
                 } else {
                     ExprKind::Ident(Ident { name, span })
                 }
@@ -618,6 +533,157 @@ impl Parser {
             return false;
         }
         matches!(&self.tokens[i].kind, TokenKind::LBrace)
+    }
+
+    /// 泛型枚举构造检测：`Name<TypeArgs>::Variant`（匹配的 `>` 后跟 `::`）。
+    /// 与 looks_like_generic_struct_literal（`>` 后跟 `{`）和 looks_like_generic_call
+    /// （`>` 后跟 `(`）区分。用深度扫描支持嵌套泛型实参（`Wrap<Vec<i64>>::Item`，
+    /// 内层 `>>` 被词法化为 Shr）。
+    pub(super) fn looks_like_generic_enum_construction(&self) -> bool {
+        let mut i = self.pos + 1;
+        let mut depth: i32 = 0;
+        let mut closed = false;
+        while i < self.tokens.len() {
+            match &self.tokens[i].kind {
+                TokenKind::Lt => depth += 1,
+                TokenKind::Gt => {
+                    depth -= 1;
+                    if depth <= 0 { closed = true; }
+                }
+                TokenKind::Shr => {
+                    // >> 视为两个 >；depth==1 时正好闭合最外层
+                    depth -= 2;
+                    if depth <= 0 { closed = true; }
+                }
+                TokenKind::Comma | TokenKind::Identifier(_) => {}
+                _ => return false,
+            }
+            i += 1;
+            if closed { break; }
+        }
+        if !closed {
+            return false;
+        }
+        if i >= self.tokens.len() {
+            return false;
+        }
+        matches!(&self.tokens[i].kind, TokenKind::ColonColon)
+    }
+
+    /// 解析 `EnumName::Variant(...)` 的变体构造（M2.1：含泛型枚举 `EnumName<T>::Variant`）。
+    /// `generics` 为显式类型实参（非泛型枚举传空 Vec；为空时 lower 端按字段推断）。
+    /// 从 parse_primary 的 `::` 分支提取，供裸 `::` 与 `Name<...>::` 两条路径共用。
+    pub(super) fn parse_enum_variant_expr(
+        &mut self,
+        enum_name: &Ident,
+        variant_name: &Ident,
+        generics: Vec<TypeAnnotation>,
+    ) -> TenthResult<ExprKind> {
+        let path_name = format!("{}::{}", enum_name.name, variant_name.name);
+        if matches!(self.peek_kind(), TokenKind::LParen) {
+            // Check if next token is RParen (empty parens → function call, not enum)
+            let next_is_rparen = self.tokens.get(self.pos + 1)
+                .map_or(false, |t| matches!(t.kind, TokenKind::RParen));
+            if next_is_rparen {
+                // Empty parens: treat as function call, e.g. HashMap::new()
+                Ok(ExprKind::Ident(Ident {
+                    name: path_name,
+                    span: enum_name.span.clone(),
+                }))
+            } else {
+                let next_is_ident = self.tokens.get(self.pos + 1)
+                    .map_or(false, |t| matches!(t.kind, TokenKind::Identifier(_)));
+                // Check if identifier is followed by `:` → named-field enum construction
+                let is_named_field = next_is_ident && self.tokens.get(self.pos + 2)
+                    .map_or(false, |t| matches!(t.kind, TokenKind::Colon));
+                if is_named_field {
+                    self.advance();
+                    let mut fields = Vec::new();
+                    while !matches!(self.peek_kind(), TokenKind::RParen) {
+                        let fname = self.expect_ident()?;
+                        self.expect(TokenKind::Colon)?;
+                        let val = self.parse_expr()?;
+                        fields.push((fname, val));
+                        if !matches!(self.peek_kind(), TokenKind::Comma) {
+                            break;
+                        }
+                        self.advance();
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    Ok(ExprKind::EnumLiteral {
+                        enum_name: enum_name.clone(),
+                        variant: variant_name.clone(),
+                        fields,
+                        generics,
+                    })
+                } else if next_is_ident {
+                    // Identifier without colon → function call, e.g. math::add(x, y)
+                    Ok(ExprKind::Ident(Ident {
+                        name: path_name,
+                        span: enum_name.span.clone(),
+                    }))
+                } else if self.known_enums.contains(&enum_name.name) {
+                    // Known enum constructor with positional arg: Some(42)
+                    self.advance();
+                    let mut fields = Vec::new();
+                    let mut field_idx = 0;
+                    while !matches!(self.peek_kind(), TokenKind::RParen) {
+                        let val = self.parse_expr()?;
+                        let fname = Ident {
+                            name: format!("_{}", field_idx),
+                            span: val.span.clone(),
+                        };
+                        fields.push((fname, val));
+                        field_idx += 1;
+                        if !matches!(self.peek_kind(), TokenKind::Comma) {
+                            break;
+                        }
+                        self.advance();
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    Ok(ExprKind::EnumLiteral {
+                        enum_name: enum_name.clone(),
+                        variant: variant_name.clone(),
+                        fields,
+                        generics,
+                    })
+                } else {
+                    // Unknown name with positional args → function call
+                    Ok(ExprKind::Ident(Ident {
+                        name: path_name,
+                        span: enum_name.span.clone(),
+                    }))
+                }
+            }
+        } else if matches!(self.peek_kind(), TokenKind::LBrace) {
+            self.advance();
+            let mut fields = Vec::new();
+            while !matches!(self.peek_kind(), TokenKind::RBrace) {
+                let fname = self.expect_ident()?;
+                self.expect(TokenKind::Colon)?;
+                let val = self.parse_expr()?;
+                fields.push((fname, val));
+                if !matches!(self.peek_kind(), TokenKind::Comma) {
+                    break;
+                }
+                self.advance();
+            }
+            self.expect(TokenKind::RBrace)?;
+            Ok(ExprKind::EnumLiteral {
+                enum_name: enum_name.clone(),
+                variant: variant_name.clone(),
+                fields,
+                generics,
+            })
+        } else {
+            // Unit variant: TokenKind::Eof, Option::None, etc.
+            Ok(ExprKind::EnumLiteral {
+                enum_name: enum_name.clone(),
+                variant: variant_name.clone(),
+                fields: Vec::new(),
+                generics,
+            })
+        }
     }
 
     /// Look ahead inside enum variant parentheses to determine if fields are named.
