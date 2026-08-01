@@ -162,7 +162,7 @@
 //   std::optim::accumulate::accumulate_grad<T>  // 梯度累积辅助
 //   std::optim::accumulate::accumulate_loop<T>  // 梯度累积循环（高阶函数，对多个 micro_batch 自动 forward+backward）
 //   std::optim::lr_schedule::cosine_lr, step_lr, exp_lr, warmup_lr, warmup_cosine_lr, warmup_step_lr  // 学习率调度器（f64 标量，参考 PyTorch 语义）
-//   std::data::dataloader::new, has_next, next_batch, reset, num_batches
+//   std::data::dataloader::new, has_next, next_batch, advance, reset, num_batches  // L2.2：新增 advance 手动推进 cursor
 //   std::data::mnist::parse_images, parse_labels, one_hot, normalize_pixel, read_i32_be
 //   std::utils::serialization::save_model, load_model, save_checkpoint
 //   std::init::initializers::xavier_uniform<T>, xavier_normal<T>, he_normal<T>, he_uniform<T>, zeros_init<T>, constant_init<T>
@@ -172,7 +172,7 @@
 //   std::collections::iter::map, filter, reduce, range, concat, reverse, take, skip, zip, enumerate, any, all, sum, find, count_if
 //   std::collections::collections::flat_map, any, all, find, count_if, partition, sum, product, from_entries, map_values, filter_map
 //   std::string::string::join_lines, join_comma, repeat_sep, indent, word_wrap, is_blank, capitalize, count
-//   std::string::string_builder::new, append, to_string, len, is_empty, clear
+//   std::string::string_builder::new, append, build, len, is_empty, clear  // L2.2：原 to_string 与内置 native 同名冲突，改名 build
 //   std::utils::math::min, max, clamp, abs, fmin, fmax, fclamp, fabs, signum
 //   std::time::time::now, now_ms, date, time_of_day, datetime, sleep_ms, start_timer, elapsed, elapsed_ms
 //   std::date::Date, date_new, date_from_days, date_to_days, date_to_string, date_add_days, date_diff, date_weekday, date_eq, date_lt, date_le, date_gt, date_ge, date_ne  // Date 类型（struct 包装，Wave 3 第 8 项 路径 B）
@@ -225,6 +225,6 @@
 // ── New in this batch (E批) ──
 //   #3 assert, assert_eq (built-in native function, no import needed)
 //   std::collections::hashset::new, insert, contains, remove, len, is_empty, to_array, clear, from_array, set_union, intersection, difference, is_subset
-//   std::string::string_builder::new, append, to_string, len, is_empty, clear
+//   std::string::string_builder::new, append, build, len, is_empty, clear  // L2.2：原 to_string 与内置 native 同名冲突，改名 build
 //   std::curry::partial, curry, compose
 //   std::crypto::hash::sha256_hex, sha512_hex, md5_hex   // 哈希函数 wrapper（Vec 输入；_str 版本直接调用 native）

@@ -22,7 +22,9 @@ fn rand_range(lo: f64, hi: f64) -> f64 {
 }
 
 /// Pick a random element from a Vec
-fn choice(v: Vec) i32 {
+/// L2.2 修复：旧语法 `fn choice(v: Vec) i32`（无 `->`）改为 `-> i32`，
+/// 整模块恢复编译（其余 6 个函数连带可用）。
+fn choice(v: Vec) -> i32 {
     let len = v.len();
     if len == 0 {
         return -1;

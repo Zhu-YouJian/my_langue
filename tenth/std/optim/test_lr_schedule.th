@@ -155,13 +155,15 @@ fn main() {
     assert(approx(b6, base_lr, tol), "step_lr(step_size=0) should be base_lr");
 
     // warmup_steps > total_steps 且 step < warmup_steps：cosine 退化，仅 warmup 阶段
-    let b7 = warmup_cosine_lr(base_lr, 50, 100, 50);
-    // s=50 < warmup_steps=100，走 warmup_lr 分支：base_lr * 50/100 = base_lr/2
-    assert(approx(b7, base_lr / 2.0, tol), "warmup_cosine_lr with warmup>total, step in warmup should be linear");
+    // L2.2 修复：warmup_steps > total_steps 且 step < total_steps：仍在 warmup 阶段（线性）
+    // （step 未越过 total，先判 s>=total 为假，再走 warmup 分支）
+    let b7 = warmup_cosine_lr(base_lr, 30, 100, 50);
+    // s=30 < total_steps=50 且 s=30 < warmup_steps=100，走 warmup_lr 分支：base_lr * 30/100 = 0.3
+    assert(approx(b7, base_lr * 0.3, tol), "warmup_cosine_lr with warmup>total, step<total should be linear");
 
-    // warmup_steps > total_steps 且 step >= total_steps：返回 LR_EPS
-    let b8 = warmup_cosine_lr(base_lr, 60, 100, 50);
-    // s=60 >= total_steps=50 → 走 s >= total_steps 分支 → base_lr * LR_EPS
+    // warmup_steps > total_steps 且 step >= total_steps：训练已结束 → 返回 ~0
+    let b8 = warmup_cosine_lr(base_lr, 50, 100, 50);
+    // s=50 >= total_steps=50 → 走 s >= total_steps 分支 → base_lr * LR_EPS
     assert(b8 < 1e-6, "warmup_cosine_lr with warmup>total, step>=total should be ~0");
 
     // warmup_steps=0 在 warmup_step_lr 中：直接进入 step decay

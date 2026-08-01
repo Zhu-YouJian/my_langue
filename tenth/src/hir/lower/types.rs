@@ -830,7 +830,12 @@ impl Lowerer {
             "f64_from_bits" => Ok(Type::f64()),
             "tensor_from_vec" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),
             "zeros" | "ones" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),
-            "save_weights" | "load_weights" => Ok(Type::unit()),
+            // L2.2 修复：save_weights 返回 Unit；load_weights 运行时返回 Vec<张量>
+            // （见 interpreter/natives.rs 与 vm/natives.rs），原误把两者都标 Unit
+            // 导致 std/utils/serialization.th 的 load_model -> Vec 编译失败。
+            // TypeParam("Vec") 与 `-> Vec` 注解（from_annotation Named→TypeParam）匹配。
+            "save_weights" => Ok(Type::unit()),
+            "load_weights" => Ok(Type::TypeParam { name: "Vec".to_string() }),
             "cross_entropy" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
             // select 原语（论文 T47/T48/T50）：broadcast 三输入 shape；dtype 由 then/else 决定
             "select" => {

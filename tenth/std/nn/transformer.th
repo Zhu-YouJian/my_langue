@@ -5,6 +5,14 @@
 // Uses pre-norm (LayerNorm before each sub-layer) which is more stable
 // for training deep Transformers.
 //
+// L2.2 修复：文件顶部补 use 导入（函数体调用 layer_norm/multihead_attention/
+// feedforward 及其 make_* 构造函数，此前无任何 use 导致编译报“未定义的泛型函数”）。
+use std::nn::layer_norm
+use std::nn::layer_norm::make_layer_norm
+use std::nn::multihead_attention
+use std::nn::feedforward
+use std::nn::feedforward::make_feedforward_params
+
 // 符号维度标注（Phase 2 短期规划方向 3）：
 //   x: [S, D]                输入（seq_len, d_model）
 //   w_q/w_k/w_v/w_o: [D, D]   MHA 投影矩阵（d_model, d_model）
@@ -37,7 +45,10 @@ fn transformer_encoder_block<T>(
 ) -> Tensor[T, S, D] {
     // Pre-norm: LayerNorm before attention
     let x_norm = layer_norm<T>(x, ln1_gamma, ln1_beta, 1e-5);
-    let mask = zeros(1);  // no mask for encoder (mask is metadata, kept as f64)
+    // L2.2 修复：mask 必须是 [n_heads, seq_len, seq_len] 与 scores 精确同 shape
+    // （masked_fill 无广播）。原 zeros(1) 仅能通过 parse，运行时 masked_fill 报
+    // shape mismatch。全零 = encoder 无 mask（不遮蔽任何位置），语义正确。
+    let mask = zeros(n_heads, seq_len, seq_len);
     let attn = multihead_attention<T>(x_norm, w_q, w_k, w_v, w_o, mask, seq_len, d_model, n_heads, dropout_p);
     let x = x + attn;  // residual connection
 

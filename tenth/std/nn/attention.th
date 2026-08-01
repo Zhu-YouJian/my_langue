@@ -21,14 +21,17 @@
 // Batched 版本：见下方 scaled_dot_product_attention_batched<T>，使用 bmm
 // 支持 3D 输入 [B, S, D]，与 multihead_attention.th 的 per-head 计算路径一致
 
+// L2.2 修复：运行时无 `shape()` 自由函数（仅 `.shape_tensor()` 返回 f64 张量，
+// 且无 to_vec() 可取元素），d_k 改为显式参数传入（与 multihead_attention.th
+// 的 seq_len/d_model 模式一致；f32_stdlib_parity_test.rs 内联等价实现同签名）。
 fn scaled_dot_product_attention<T>(
     q: Tensor[T, S_q, D_k],
     k: Tensor[T, S_k, D_k],
     v: Tensor[T, S_k, D_v],
     mask: Tensor[f64, ..],  // mask is metadata (indices/boolean), kept as f64
+    d_k: i64,
     dropout_p: T,
 ) -> Tensor[T, S_q, D_v] {
-    let d_k = shape(q)[1];
     let scale = 1.0 / sqrt(d_k);
     // scores = Q @ K^T * scale
     let kT = k.transpose();
@@ -66,14 +69,16 @@ fn scaled_dot_product_attention<T>(
 //   mask: [..]          灵活 shape（通常 [B, S_q, S_k] 或 [S_q, S_k]）
 //   返回: [B, S_q, D_v]
 
+// L2.2 修复：同 2D 版本——运行时无 shape()，d_k 显式传入
+// （与 multihead_attention_test.rs 内联 sdp_batched 等价实现同签名）。
 fn scaled_dot_product_attention_batched<T>(
     q: Tensor[T, B, S_q, D_k],
     k: Tensor[T, B, S_k, D_k],
     v: Tensor[T, B, S_k, D_v],
     mask: Tensor[f64, ..],  // mask 沿最后一维应用，shape 通常 (B, S_q, S_k) 或 (S_q, S_k)
+    d_k: i64,
     dropout_p: T,
 ) -> Tensor[T, B, S_q, D_v] {
-    let d_k = shape(q)[2];
     let scale = 1.0 / sqrt(d_k);
     // scores = Q @ K^T * scale  →  (B, S_q, S_k)
     let k_t = k.transpose();              // (B, D_k, S_k)

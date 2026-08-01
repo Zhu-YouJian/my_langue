@@ -108,17 +108,23 @@ fn warmup_lr(base_lr: f64, step: i64, warmup_steps: i64) -> f64 {
 // 边界：
 //   - warmup_steps <= 0：跳过 warmup，直接进入 cosine 衰减
 //   - total_steps <= 0：返回 base_lr
-//   - warmup_steps >= total_steps：cosine 阶段 denom <= 0，返回 base_lr * LR_EPS
+//   - step >= total_steps：训练已结束，返回 base_lr * LR_EPS（终点值）
+//   - warmup_steps >= total_steps：异常配置（warmup 步数超过 total），
+//     此时以「已结束」优先：step 越过 total 即返回终点值，
+//     step 未到 total 则仍走 warmup 线性段（math 语义，L2.2）
 fn warmup_cosine_lr(base_lr: f64, step: i64, warmup_steps: i64, total_steps: i64) -> f64 {
     if total_steps <= 0 {
         return base_lr;
     }
     let s = if step < 0 { 0 } else { step };
-    if warmup_steps > 0 && s < warmup_steps {
-        return warmup_lr(base_lr, s, warmup_steps);
-    }
+    // L2.2 修复：先判「训练已结束」（step >= total_steps）。
+    // 此前 warmup 分支在前，warmup>total 且 step>=total 时会错误返回 warmup 段值；
+    // 统一后「已结束」优先于 warmup，与 cosine_lr 的终点语义一致。
     if s >= total_steps {
         return base_lr * LR_EPS;
+    }
+    if warmup_steps > 0 && s < warmup_steps {
+        return warmup_lr(base_lr, s, warmup_steps);
     }
     // cosine 阶段：把 [warmup_steps, total_steps] 映射到 [0, 1] 的 progress
     let w_f = to_f64(warmup_steps);

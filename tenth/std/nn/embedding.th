@@ -29,12 +29,21 @@
 // Embedding lookup: weight[indices]
 // Each index selects a row from the weight matrix.
 //
-// Phase 3 DRY 清理：泛型化 <T> 支持 f32/f64（合法——body 内只调 gather native
-// function，不含 native 构造函数调用，符合 linear.th 范本模式）。
+// L2.2 修复（方案 b：改实现，不动 runtime）：
+//   gather native 要求 index.ndim == base.ndim（PyTorch gather 语义），
+//   直接 gather(weight, 0, indices)（indices 1D vs weight 2D）会报 ndim 不匹配。
+//   改为先构造 [S, D] 的 index 张量：indices [S] → reshape [S,1] →
+//   `+ zeros(seq_len, dim)`（加法广播 [S,1]→[S,D]）使 index[i,j] = indices[i]，
+//   再 gather(weight, 0, idx2d)：out[i,j] = weight[indices[i], j]（PyTorch embedding 语义）。
+//   VM 与解释器双路径均支持 reshape/加法广播/gather。
+//   seq_len/dim 显式传入（运行时无 shape()/to_vec()，与 multihead_attention.th 模式一致）。
 // 注：indices 类型保留 f64（元数据语义，非数据；gather 内部按 as_int 整数处理）。
 fn embedding<T>(
-    weight: Tensor[T, V, D],
-    indices: Tensor[f64, S],
-) -> Tensor[T, S, D] {
-    gather(weight, 0, indices)
+    weight: Tensor[T, ..],
+    indices: Tensor[f64, ..],
+    seq_len: i64,
+    dim: i64,
+) -> Tensor[T, ..] {
+    let idx2d = indices.reshape(seq_len, 1) + zeros(seq_len, dim);
+    gather(weight, 0, idx2d)
 }

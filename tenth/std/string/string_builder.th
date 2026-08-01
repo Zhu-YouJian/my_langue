@@ -1,6 +1,6 @@
 // StringBuilder — 高效的字符串构建器
 //
-// 底层用 Array<Str> 积累片段，to_string() 时一次性拼接。
+// 底层用 Array<Str> 积累片段，build() 时一次性拼接。
 // 避免反复拼接大字符串的 O(n²) 开销。
 //
 // Usage:
@@ -8,10 +8,16 @@
 //   let sb = StringBuilder::new();
 //   let sb = sb.append("Hello, ");
 //   let sb = sb.append("World!");
-//   sb.to_string()   // "Hello, World!"
-//   sb.len()         // 13
-//   sb.clear();
-//   sb.is_empty()    // true
+//   build(sb)      // "Hello, World!"
+//   len(sb)        // 13
+//   clear(sb);
+//   is_empty(sb)   // true
+//
+// L2.2 修复：
+//   - append 去掉 `s.clone()`（String 无 clone 方法，值语义直接传）
+//   - 原 `to_string` 与内置 native `to_string`（通用值→字符串）同名冲突——
+//     运行时 natives 优先于 user function，导致模块函数永远无法被调用，
+//     故改名为 `build`。
 
 struct StringBuilder {
     parts: Vec,
@@ -28,8 +34,10 @@ fn new() -> StringBuilder {
 
 // 追加一个字符串片段。
 // 返回 StringBuilder 自身以支持链式调用。
+// L2.2 修复：String 是值语义，去掉 `s.clone()`（String 无 clone 方法），
+// 直接 push（值复制进入 Vec，s 仍可用以计算 total_len）。
 fn append(sb: StringBuilder, s: Str) -> StringBuilder {
-    sb.parts.push(s.clone());
+    sb.parts.push(s);
     StringBuilder {
         parts: sb.parts,
         total_len: sb.total_len + s.len(),
@@ -38,7 +46,8 @@ fn append(sb: StringBuilder, s: Str) -> StringBuilder {
 
 // 将积累的片段拼接为一个完整的字符串。
 // 使用 join 一次性拼接所有片段。
-fn to_string(sb: StringBuilder) -> Str {
+// L2.2 改名：原 to_string 与内置 native 同名冲突，改名为 build。
+fn build(sb: StringBuilder) -> Str {
     sb.parts.join("")
 }
 

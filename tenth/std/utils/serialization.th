@@ -14,12 +14,17 @@
 
 // Save model parameters to a binary file.
 // Wraps the built-in save_weights for a more descriptive API.
-fn save_model(path: str, params: Vec) -> i32 {
+// L2.2 修复：save_weights 返回 Unit（types.rs 白名单确认），原注解 i32 错误。
+// 注：不写返回注解（默认 Unit）——`-> Unit` 会被类型系统解析为 TypeParam("Unit")
+// 而非 Unit base 类型，导致返回检查报“声明返回 Unit 但未返回值”。
+fn save_model(path: str, params: Vec) {
     save_weights(path, params)
 }
 
 // Load model parameters from a binary file.
 // Returns a Vec of tensors in the same order they were saved.
+// L2.2 修复：load_weights 运行时返回 Vec<张量>，types.rs 白名单已同步为
+// Vec 返回类型（原误标 Unit 导致本函数编译失败）。
 fn load_model(path: str) -> Vec {
     load_weights(path)
 }
@@ -27,14 +32,14 @@ fn load_model(path: str) -> Vec {
 // Checkpoint: save training state (model params + optimizer state)
 // This is a higher-level API that saves both model and optimizer
 // parameters in separate files.
+// L2.2 修复：同 save_model——返回 Unit（不写注解，默认 Unit）。
 fn save_checkpoint(
     path_prefix: str,
     model_params: Vec,
     optim_params: Vec,
-) -> i32 {
+) {
     let model_path = path_prefix + ".model.thw";
     let optim_path = path_prefix + ".optim.thw";
-    let r1 = save_weights(model_path, model_params);
-    let r2 = save_weights(optim_path, optim_params);
-    if r1 == 0 && r2 == 0 { 0 } else { 1 }
+    save_weights(model_path, model_params);
+    save_weights(optim_path, optim_params);
 }

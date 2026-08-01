@@ -3,6 +3,15 @@
 // Since Tenth doesn't yet support generators/iterators, this module
 // provides a struct-based API where the caller manually advances the
 // cursor.
+//
+// L2.2 修复：next_batch 本身不推进 cursor（返回切片不更新状态），
+// 迭代需配合 advance() 手动推进。正确迭代模式：
+//   let mut loader = new(data, batch_sz);
+//   while loader.has_next() {
+//       let batch = next_batch(loader);
+//       let loader = advance(loader);   // 值语义：返回推进后的新 DataLoader
+//       // 处理 batch ...
+//   }
 
 // Create a DataLoader struct with dataset and batch configuration.
 // Fields:
@@ -33,8 +42,9 @@ fn has_next(loader: DataLoader) -> bool {
 }
 
 // Get the next batch (slice from cursor to cursor+batch_sz)
-// Returns a Vec of samples and advances the cursor.
-// If remaining samples < batch_sz, returns whatever is left.
+// Returns a Vec of samples. Does NOT advance the cursor (value semantics);
+// call advance() to move to the next batch. If remaining samples < batch_sz,
+// returns whatever is left.
 fn next_batch(loader: DataLoader) -> Vec {
     let start = loader.cursor;
     let end = if start + loader.batch_sz > loader.len {
@@ -50,6 +60,24 @@ fn next_batch(loader: DataLoader) -> Vec {
         i = i + 1;
     }
     batch
+}
+
+// Advance the cursor by one batch (value semantics: returns a new DataLoader).
+// L2.2 修复：原 next_batch 不推进 cursor 导致无法迭代（死循环）；
+// 本函数提供手动推进，与 next_batch 配合实现多 batch 迭代。
+fn advance(loader: DataLoader) -> DataLoader {
+    let start = loader.cursor;
+    let end = if start + loader.batch_sz > loader.len {
+        loader.len
+    } else {
+        start + loader.batch_sz
+    };
+    DataLoader {
+        data: loader.data,
+        batch_sz: loader.batch_sz,
+        cursor: end,
+        len: loader.len,
+    }
 }
 
 // Reset the cursor to the beginning

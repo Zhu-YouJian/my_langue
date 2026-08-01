@@ -829,27 +829,10 @@ th_lower_test!(th_lower_nn_feedforward, "std/nn/feedforward.th");
 th_lower_test!(th_lower_nn_layer_norm, "std/nn/layer_norm.th");
 th_lower_test!(th_lower_nn_multihead_attention, "std/nn/multihead_attention.th");
 
-// embedding.th 的 lower 受 gather ndim 限制：weight[V,D]+indices[S] 维度数
-// 不匹配，lower 阶段 shape 检查报 "维度数 2 ≠ 1"。这是已知的运行时 ndim
-// 限制在 lower 阶段的体现（见 embedding.th 注释）。此测试验证 lower 失败
-// 的原因是 shape 维度不匹配（而非 native 泛型构造函数 TypeError），证明
-// 第一波修复已消除 native 泛型 TypeError，gather ndim 是独立遗留问题。
-#[test]
-fn th_lower_nn_embedding_ndim_limitation() {
-    let err = lower_th_file("std/nn/embedding.th").unwrap_err();
-    // 预期：shape 维度数不匹配（gather ndim 限制），而非 native 泛型 TypeError
-    assert!(
-        err.contains("维度数") || err.contains("dimension") || err.contains("shape"),
-        "embedding lower 失败应为 shape 维度不匹配（gather ndim 限制），实际: {}",
-        err
-    );
-    // 确保不是 native 泛型构造函数的 TypeError（第一波修复目标）
-    assert!(
-        !err.contains("native") || !err.contains("泛型"),
-        "embedding lower 不应再触发 native 泛型构造函数 TypeError，实际: {}",
-        err
-    );
-}
+// L2.2 修复：embedding.th 已改为「reshape + 加法广播构造 [S,D] index 再 gather」
+// 的实现（见 embedding.th 注释），gather ndim 限制已绕过，lower 现应成功。
+// 原 ndim 限制测试（期望 lower 失败）升级为 th_lower_test（期望 lower 成功）。
+th_lower_test!(th_lower_nn_embedding, "std/nn/embedding.th");
 
 // transformer.th 的 lower 受跨文件泛型函数解析限制：transformer.th 调用
 // layer_norm<T>/multihead_attention<T>/feedforward<T>（定义在其他 .th 文件），

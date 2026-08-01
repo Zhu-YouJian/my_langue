@@ -23,15 +23,17 @@
 // stride and pad default to 1 and 0 respectively.
 //
 // Phase 3 DRY 清理：泛型化 <T> 支持 f32/f64。
+// L2.2 修复：运行时无 `shape()` 自由函数，kH/kW 改为显式参数传入
+// （x.conv2d 方法本身会校验 kH/kW 与权重 shape[2]/shape[3] 一致）。
 fn conv2d<T>(
     x: Tensor[T, N, C_in, H, W],
     w: Tensor[T, C_out, C_in, kH, kW],
     b: Tensor[T, C_out],
+    kH: i64,
+    kW: i64,
     stride: i64,
     pad: i64,
 ) -> Tensor[T, N, C_out, H_out, W_out] {
-    let kH = shape(w)[2];
-    let kW = shape(w)[3];
     let out = x.conv2d(w, kH, kW, stride, pad);
     out + b
 }
