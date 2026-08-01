@@ -126,7 +126,7 @@
 
 | 子项 | 现象 | 影响模块 | 修复方向 |
 |---|---|---|---|
-| **a1** | **VM 路径不支持高阶函数**：`f(...)`（通过参数名调用传入的函数）在 VM 下报"未定义的函数 'f'"且不静默回退；解释器路径正常（probe 验证 `apply_twice(|v| v+1, 10)` VM=Unit+报错，INTERP=12） | `collections.th`、`iter.th`（全部高阶函数）、`curry.th`、`optim/accumulate.th::accumulate_loop` | 运行时部：VM 字节码/闭包调用缺口 |
+| **a1** | **VM 路径不支持高阶函数**：`f(...)`（通过参数名调用传入的函数）在 VM 下报"未定义的函数 'f'"且不静默回退；解释器路径正常（probe 验证 `apply_twice(|v| v+1, 10)` VM=Unit+报错，INTERP=12） | `collections.th`、`iter.th`（全部高阶函数）、`curry.th`、`optim/accumulate.th::accumulate_loop`、**`runtime.th`（闭包值经 `with_step_limit` 的 VM 路径）**（L2.4 补充：`with_step_limit(1000000, \|_\| {1+1})` VM 下返回 Unit/报"第一个参数必须是整数步数"，解释器正常） | 运行时部：VM 字节码/闭包调用缺口 |
 | **a2** | **解释器路径 `int + Vec.get(i)` 类型不匹配**：`total = total + items.get(i)` 报"加法类型不匹配"（VM 正常） | `collections.th::sum/product`、`iter.th::sum`（解释器路径） | **✅ 已修（L2.3a）**：`eval_binary` 入口对 `Value::Shared/Ref/MutRef` 操作数统一解壳（`interpreter/binary.rs`），对齐 VM 行为；回归测试 `l23a_fix_test.rs` 3 项 |
 | **a3** | **VM 未注册 `str_add` native**：字符串拼接/插值在 VM 路径报"未定义的函数 'str_add'"；解释器路径正常 | `json::parse`、`toml`、`test_runtime`（f-string）、`test_json/min/obj`、`test_toml`（VM 路径） | **✅ 已修（L2.3a）**：`runtime/natives.rs::register_all_natives` 补 `str_add(String,String)`（与解释器 `eval_binary` String+String 及 WASM host 对齐）；回归测试 `l23a_fix_test.rs` 4 项（f-string/json/toml/parity） |
 
@@ -142,19 +142,21 @@
 | `nn/embedding.th` | 返回注解与实际 `gather` 结果 shape 不符 | 需要 runtime 提供 `index_select`，或改注解/实现 |
 | `data/dataloader.th` | `next_batch` 不推进 cursor，无法迭代 | 返回新 DataLoader 或加 cursor 推进 |
 | `optim/lr_schedule.th` | `warmup_cosine_lr` warmup>total 边界语义与测试预期不符（轻微） | 统一分支顺序（先判 `step>=total`）或改测试预期 |
+| `nn/activations.th` | **`leaky_relu` 符号错误（L2.4 smoke 发现）**：实现 `x.relu() + slope * (-x).relu()`，x<0 时得 +slope*|x|（应为 -slope*|x|）。实测 `leaky_relu([-2,-1,0,1,2], 0.1)` 得 [0.2,0.1,0,1,2]（正确 [-0.2,-0.1,0,1,2]）；`leaky_relu_default` 同病 | `x.relu() - slope * (-x).relu()`（或 `max(x, slope*x)`） |
+| `random/random.th` | **`choice` 返回随机索引而非元素（L2.4 smoke 发现）**：实现 `let idx = random_int(0, len-1); idx`，应返回 `v.get(idx)`。实测 `choice([7])` 返回 0 | 改为 `v.get(idx)` |
 
 ### (c) 文档失实清单
 
-| 位置 | 声称 | 实际 | 影响 |
-|---|---|---|---|
-| `prelude.th` | `std::json::json::encode, decode, encode_pretty` | 实际 `parse, stringify, stringify_pretty`（encode/decode 不存在） | 用户按文档 use 即编译失败 |
-| `prelude.th` | `std::env::env::get` 等 | `std::env::env::xxx` 不工作；正确 `std::env::get` | use 失败 |
-| `prelude.th` | `std::http::http::get` | 不工作；正确 `std::http::get` | use 失败 |
-| `prelude.th` | `std::net::net::connect` | 不工作；正确 `std::net::connect` | use 失败 |
-| `prelude.th`/参考手册 | `nn::attention/conv/embedding/transformer`、`std::random`、`std::utils::serialization` 列为可用 | 实际 ❌（见 §三） | 声称实现、实际不可用 |
-| `prelude.th` | `std::io::io::eprint` | 意外可用（use 回退机制兜底）——但属偶然，不应作为规范 | 一致性 |
+| 位置 | 声称 | 实际 | 影响 | 勘误状态 |
+|---|---|---|---|---|
+| `prelude.th` | `std::json::json::encode, decode, encode_pretty` | 实际 `parse, stringify, stringify_pretty`（encode/decode 不存在） | 用户按文档 use 即编译失败 | ✅ 已勘误（L2.3b，2026-08-02） |
+| `prelude.th` | `std::env::env::get` 等 | `std::env::env::xxx` 不工作；正确 `std::env::get` | use 失败 | ✅ 已勘误（L2.3b） |
+| `prelude.th` | `std::http::http::get` | 不工作；正确 `std::http::get` | use 失败 | ✅ 已勘误（L2.3b） |
+| `prelude.th` | `std::net::net::connect` | 不工作；正确 `std::net::connect` | use 失败 | ✅ 已勘误（L2.3b） |
+| `prelude.th`/参考手册 | `nn::attention/conv/embedding/transformer`、`std::random`、`std::utils::serialization` 列为可用 | 实际 ❌（见 §三） | 声称实现、实际不可用 | ✅ 已勘误（L2.3b）：实现已由 L2.2 修复，能力全梳理/参考手册同步为"可用" |
+| `prelude.th` | `std::io::io::eprint` | 意外可用（use 回退机制兜底）——但属偶然，不应作为规范 | 一致性 | ✅ 已勘误（L2.3b）：修正为 `std::io::eprint` |
 
-> 注：`docs/语言参考手册.md` 与 `能力梳理/能力全梳理.md` 中声称已实现的模块（attention/conv/embedding/transformer/random/serialization/json 的 encode 等）与实测不符，属 (c) 类，建议在 L2.2 修复后同步勘误。
+> 注：`docs/语言参考手册.md` 与 `能力梳理/能力全梳理.md` 中声称已实现的模块（attention/conv/embedding/transformer/random/serialization/json 的 encode 等）与实测不符，属 (c) 类。**L2.3b（2026-08-02）已全部勘误**：json 的 encode/decode 失实、`std::<file>::env/net/http/io` 路径失实已修正 `prelude.th` 注释；attention/conv/embedding/transformer/random/serialization 的实现已由 L2.2 修复，能力全梳理/参考手册已同步为可用状态。
 
 ---
 
@@ -182,3 +184,45 @@
 2. **8 个标准库 bug（b 类）**是 L2.2 的直接修单：random/serialization/string_builder/attention/conv/embedding/transformer/dataloader 均是小改动即可修复。
 3. **6 处文档失实（c 类）**需在修复后同步勘误 `prelude.th` 与参考手册。
 4. **AI 核心（nn/optim/init）整体健康**：除 attention/conv/embedding/transformer 4 个模块外全部可用，`stdlib_demo.th` 实例运行通过。
+
+---
+
+## 七、L2.4 标准库 smoke 测试体系（2026-08-02）
+
+> 执行者：测试部（L2.4 任务）。目标：为每个**可用**模块建最小 smoke 测试，走**真实 use 路径**（`use std::<path>::<item>` + 调用代表性函数/常量），任何"模块不可用"回归立即暴露。本盘点中 ❌ 模块经 L2.2/L2.3a 修复后已全部可用，故 smoke 覆盖它们。
+
+### 7.1 测试文件
+
+`tenth/tests/stdlib_smoke_test.rs`：**56 个测试 / 覆盖 44 个可用模块**。
+
+- **机制**：通过真实二进制 `tenth.exe run <tmp.th>` 子进程执行（cwd=tenth/ 使 `use std::...` 解析到 `tenth/std/`），断言 exit 0 + stdout 含 `= true`（末尾布尔表达式求值为真）。与既有 `stdlib_test.rs`（内联实现/直调 native）互补——本套件专门守护"模块 use 后可用"。
+- **路径**：默认 VM（默认路径）；a1 缺口模块走解释器（`TENTH_NO_VM=1`）。
+
+### 7.2 覆盖清单（56 测试）
+
+| 域 | 模块（测试数） |
+|---|---|
+| math | constants、stats（2） |
+| nn | activations、linear、loss、feedforward、layer_norm、multihead_attention、pool、ops、batchnorm、dropout、positional_encoding、attention、conv、embedding、transformer（15） |
+| init/optim | initializers、sgd、adam、adamw、rmsprop、adagrad、clip、lr_schedule、accumulate（9） |
+| collections | hashset、collections（含高阶）、iter（含高阶）（5） |
+| string/json/toml/crypto/random/time | string、string_builder、json、toml、crypto/hash、random、time、date、duration（9） |
+| fs/cli/process/env/io/http/net/regex | fs、cli、process、env、io、http、net、regex（8） |
+| runtime/curry/utils/data/autograd/logging | runtime、curry、utils/math、utils/serialization、data/dataloader、data/mnist、autograd、logging（8） |
+
+### 7.3 路径与约束说明
+
+| 模块 | 路径 | 原因 |
+|---|---|---|
+| `curry`、`collections`·`iter` 高阶、`runtime` | 解释器（TENTH_NO_VM=1） | a1：VM 不支持闭包值/参数名调用函数；L2.4 实测 `with_step_limit(1000000, \|_\| {1+1})` 在 VM 下返回 Unit/报错，解释器正常 |
+| `autograd` | use 编译检查（不调用） | `call_custom_opN` 需 Rust 端 `register_custom_op` 注册 op_id 才可执行 |
+| `http`/`net` | 127.0.0.1:1（本机拒绝连接） | 不触网验证 Result 路径（get/connect 返回 Err 不崩溃） |
+| `data/mnist` | 仅基础函数 | `parse_images/parse_labels` 需真实 MNIST 数据文件（条件） |
+| `async`、`math/functions`、`prelude` | 跳过 | 空壳（0 公开项）/索引文件 |
+| `random::choice`、`nn::activations::leaky_relu` | 值断言受限 | 当前实现有缺陷（见 §四 b），smoke 只做 shape/空向量分支断言 |
+
+### 7.4 验证结果
+
+- 单文件：`cargo test --release --test stdlib_smoke_test` → **56 passed，0 failed**（~2.5s）
+- 全量：`cargo test --release -j 4` → **1902 passed，0 failed，0 回归**（基线 1846 + 56 新增）
+- 未修改任何标准库代码；临时探针在 `.trae/tmp/smoke_probe/`（不入库）。

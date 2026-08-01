@@ -137,6 +137,11 @@
 //   (handle table pattern, same as tcp_* / regex object table in runtime)
 
 // ── Std lib (use path::to::function) ──
+//   路径规范（L2.3b 勘误）：单文件模块（位于 std/ 根目录，如 io/env/net/http/process/
+//   date/duration/curry/autograd/runtime）用 `std::<file>::<item>`（如 std::env::get、
+//   std::http::get、std::net::connect、std::io::eprint）；子目录模块（如 nn/optim/math/
+//   string/collections/random/json/cli/logging/fs/data/init/utils/time）用
+//   `std::<dir>::<file>::<item>`（如 std::random::random::rand_int、std::json::json::parse）。
 //   std::nn::linear::linear<T>
 //   std::nn::loss::mse<T>, mse_loss<T>, binary_cross_entropy, l1_loss<T>, huber_loss<T>, huber_loss_train<T>  // binary_cross_entropy 仍 f64
 //   std::nn::activations::relu<T>, sigmoid<T>, tanh<T>, softmax<T>, exp<T>, log<T>, gelu<T>, leaky_relu<T>, leaky_relu_default, leaky_relu_select<T>, leaky_relu_select_default  // *_default 仍 f64
@@ -181,15 +186,15 @@
 //   std::cli::cli::args_count, arg, args, args_tail, has_flag, flag_value
 //   std::logging::logging::debug, info, warn, error, set_level, LEVEL_DEBUG, LEVEL_INFO, LEVEL_WARN, LEVEL_ERROR
 //   std::fs::fs::exists, is_file, is_dir, join, mkdir_all, list_dir, size, remove, copy, rename, read_text, read_bytes, write_text, write_bytes, read_lines, extension, filename, parent
-//   std::io::io::eprint, eprintln, read_line, read_line_result   // stderr/stdin I/O（包装 eprint/eprintln/read_line native）
-//   std::env::env::get, get_result, get_or_empty, set, exit      // 环境变量与进程退出（包装 env_get/env_set/exit native）
-//   std::net::net::connect, read, write, close, set_timeout      // TCP 客户端（包装 tcp_* native，handle table 模式）
-//   std::net::net::listen, accept, listener_close                // TCP 服务端（包装 tcp_listen/tcp_accept/tcp_listener_close native）
+//   std::io::eprint, eprintln, read_line, read_line_result       // stderr/stdin I/O（包装 eprint/eprintln/read_line native；io.th 在 std 根目录）
+//   std::env::get, get_result, get_or_empty, set, exit           // 环境变量与进程退出（包装 env_get/env_set/exit native；env.th 在 std 根目录）
+//   std::net::connect, read, write, close, set_timeout           // TCP 客户端（包装 tcp_* native，handle table 模式；net.th 在 std 根目录）
+//   std::net::listen, accept, listener_close                     // TCP 服务端（包装 tcp_listen/tcp_accept/tcp_listener_close native）
 //   (built-in, no import needed) udp_bind, udp_recv_from, udp_send_to, udp_close, udp_set_timeout  // UDP native（基本功核查第 69 项，直接暴露，无 wrapper）
 //   std::process::new, arg, run, output                          // 子进程执行（包装 command_new/command_arg/command_run/command_output native，handle table 模式）
-//   std::http::http::get, post                                    // HTTP/1.1 客户端（手写协议，无 HTTPS）
+//   std::http::get, post                                         // HTTP/1.1 客户端（手写协议，无 HTTPS；http.th 在 std 根目录）
 //   std::async                                                  // 异步 I/O 文档（async_sleep_ms/async_tcp_read/async_tcp_write 为 built-in native）
-//   std::json::json::encode, decode, encode_pretty, load, save
+//   std::json::json::parse, stringify, stringify_pretty, load, save   // L2.3b 勘误：API 实为 parse/stringify/stringify_pretty（encode/decode/encode_pretty 不存在）
 //   std::autograd::call_custom_op1<T>, call_custom_op2<T>, call_custom_op3<T>  // PROJ-006 自定义可微算子（Rust 端 register_custom_op 返回 op_id，.th 端通过此 wrapper 调用）
 //   std::runtime::run_with_limit, limit_or_default, run_with_timeout, timeout_or_default
 //   (built-in, no import needed) with_step_limit, with_timeout_ms, is_timeout
