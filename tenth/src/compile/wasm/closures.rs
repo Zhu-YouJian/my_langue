@@ -60,6 +60,7 @@ impl WasmCompiler {
             HirExprKind::StructLiteral { fields, .. } => {
                 for (_, e) in fields { self.ccb_expr(codes, e)?; }
             }
+            HirExprKind::UnionLiteral { value, .. } => { self.ccb_expr(codes, value)?; }
             HirExprKind::EnumLiteral { fields, .. } => {
                 for (_, e) in fields { self.ccb_expr(codes, e)?; }
             }
@@ -196,6 +197,7 @@ impl WasmCompiler {
             HirExprKind::StructLiteral { fields, .. } => {
                 for (_, e) in fields { self.cs_expr(e); }
             }
+            HirExprKind::UnionLiteral { value, .. } => self.cs_expr(value),
             HirExprKind::EnumLiteral { fields, .. } => {
                 for (_, e) in fields { self.cs_expr(e); }
             }
@@ -294,6 +296,7 @@ impl WasmCompiler {
             HirExprKind::StructLiteral { fields, .. } => {
                 for (_, e) in fields { self.cc_expr(e, num_user_funcs); }
             }
+            HirExprKind::UnionLiteral { value, .. } => { self.cc_expr(value, num_user_funcs); }
             HirExprKind::EnumLiteral { fields, .. } => {
                 for (_, e) in fields { self.cc_expr(e, num_user_funcs); }
             }

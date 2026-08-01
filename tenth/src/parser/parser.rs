@@ -205,8 +205,8 @@ impl Parser {
         let mut stmts = Vec::new();
         while !self.at_eof() {
             match self.peek_kind() {
-                TokenKind::Async | TokenKind::Fn | TokenKind::Struct | TokenKind::Enum | TokenKind::Impl
-                | TokenKind::Mod | TokenKind::Use | TokenKind::Trait => {
+                TokenKind::Async | TokenKind::Fn | TokenKind::Struct | TokenKind::Enum | TokenKind::Union
+                | TokenKind::Impl | TokenKind::Mod | TokenKind::Use | TokenKind::Trait => {
                     items.push(self.parse_item()?);
                 }
                 _ => {

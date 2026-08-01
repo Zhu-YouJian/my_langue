@@ -203,6 +203,7 @@ impl Vm {
                     33 => NewStruct(r!(u64) as usize, r!(u64) as usize),
                     34 => LoadField(r!(u64) as usize),
                     35 => StoreField(r!(u64) as usize),
+                    56 => NewUnion(r!(u64) as usize, r!(u64) as usize),
                     36 => IndexGet,
                     37 => SliceStr,
                     38 => MakeEnum(r!(u64) as usize, r!(u64) as usize, r!(u64) as usize),
@@ -518,6 +519,14 @@ impl Vm {
                     self.stack.push(Value::Struct { name, fields: Rc::new(RefCell::new(fields)) });
                 }
 
+                // M1.2：union 构造 — 弹出栈顶 value，构造带 active_field 的 tagged union
+                Op::NewUnion(name_i, field_i) => {
+                    let name = strings.get(name_i).cloned().unwrap_or_default();
+                    let active_field = strings.get(field_i).cloned().unwrap_or_default();
+                    let value = self.stack.pop().unwrap_or(Value::Unit);
+                    self.stack.push(Value::Union { name, active_field, value: Box::new(value) });
+                }
+
                 Op::LoadField(i) => {
                     let fname = strings.get(i).cloned().unwrap_or_default();
                     let val = self.stack.pop().unwrap_or(Value::Unit);
@@ -529,7 +538,29 @@ impl Vm {
                     let fname = strings.get(i).cloned().unwrap_or_default();
                     let new_val = self.stack.pop().unwrap_or(Value::Unit);
                     let target = self.stack.pop().unwrap_or(Value::Unit);
-                    self.set_field(&target, &fname, new_val)?;
+                    // M1.2：Union 字段修改（tagged union）——只允许修改 active 字段，
+                    // 构造新 Value::Union 推回栈（bytecode 对 Union 目标随后 Store 写回变量槽）。
+                    match &target {
+                        Value::Union { name, active_field, .. } => {
+                            if active_field == &fname {
+                                self.stack.push(Value::Union {
+                                    name: name.clone(),
+                                    active_field: active_field.clone(),
+                                    value: Box::new(new_val),
+                                });
+                            } else {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
+                                    message: format!(
+                                        "union '{}' 当前活跃字段是 '{}'，不能修改非活跃字段 '{}'",
+                                        name, active_field, fname
+                                    ),
+                                });
+                            }
+                        }
+                        _ => {
+                            self.set_field(&target, &fname, new_val)?;
+                        }
+                    }
                 }
 
                 Op::IndexGet => {
@@ -1211,6 +1242,17 @@ impl Vm {
                     if n == field { return Ok(v.clone()); }
                 }
                 err(&format!("没有字段 '{}'", field))
+            }
+            // M1.2：Union 字段访问（tagged union）——只允许读取当前 active 字段
+            Value::Union { name, active_field, value } => {
+                if active_field == field {
+                    Ok((**value).clone())
+                } else {
+                    err(&format!(
+                        "union '{}' 当前活跃字段是 '{}'，不能访问非活跃字段 '{}'",
+                        name, active_field, field
+                    ))
+                }
             }
             _ => err(&format!("没有字段 '{}'", field)),
         }

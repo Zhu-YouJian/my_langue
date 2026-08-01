@@ -16,6 +16,7 @@ pub enum Op {
     Call(usize), CallN(usize, usize), MethodCall(usize, usize), Ret,
     MakeVec(usize), MakeMap(usize),
     NewStruct(usize, usize), LoadField(usize), StoreField(usize),
+    NewUnion(usize, usize),    // M1.2：union 构造 — name_idx, active_field_idx；弹出栈顶 value → Value::Union
     IndexGet,
     SliceStr,
     MakeEnum(usize, usize, usize),

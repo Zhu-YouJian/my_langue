@@ -206,6 +206,7 @@ fn expr_has_control_flow(expr: &HirExpr) -> bool {
         HirExprKind::StructLiteral { fields, .. } => {
             fields.iter().any(|(_, e)| expr_has_control_flow(e))
         }
+        HirExprKind::UnionLiteral { value, .. } => expr_has_control_flow(value),
         HirExprKind::EnumLiteral { fields, .. } => {
             fields.iter().any(|(_, e)| expr_has_control_flow(e))
         }

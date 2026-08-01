@@ -676,6 +676,14 @@ impl Lowerer {
                             })
                             .unwrap_or(Type::Unknown)
                     }
+                    // M1.2：Union 字段访问。tagged union 的字段类型从声明表解析，
+                    // 运行时会检查该字段是否为当前 active 字段。
+                    Type::Union(name) => {
+                        self.unions.get(name)
+                            .and_then(|fields| fields.iter().find(|(n, _)| n == &field.name))
+                            .map(|(_, ty)| ty.clone())
+                            .unwrap_or(Type::Unknown)
+                    }
                     _ => Type::Unknown,
                 };
                 (HirExprKind::Field { target: Box::new(t), field: field.name.clone() }, field_ty)
@@ -931,6 +939,50 @@ impl Lowerer {
             }
 
             ExprKind::StructLiteral { name, generics, fields, use_defaults } => {
+                // M1.2：Union 构造。Tenth 的 union 是带 active_field 的 tagged union
+                // （非 C 风格内存重叠），`MyUnion { field: value }` 恰好激活一个字段
+                // → 生成 UnionLiteral，运行时构造 Value::Union { active_field, value }。
+                // 声明先于表达式全部注册（lower_program 两遍），字段名校验无前向引用问题。
+                if self.unions.contains_key(&name.name) {
+                    if *use_defaults {
+                        return Err(TenthError::TypeError {
+                            line: span.line,
+                            col: span.col,
+                            message: format!("union '{}' 不支持默认字段填充（..）", name.name),
+                        });
+                    }
+                    if fields.len() != 1 {
+                        return Err(TenthError::TypeError {
+                            line: span.line,
+                            col: span.col,
+                            message: format!(
+                                "union '{}' 构造必须恰好激活一个字段（tagged union，实际给了 {} 个字段）",
+                                name.name, fields.len()
+                            ),
+                        });
+                    }
+                    let (fname, fexpr) = &fields[0];
+                    let declared = self.unions.get(&name.name)
+                        .map(|fs| fs.iter().any(|(n, _)| n == &fname.name))
+                        .unwrap_or(false);
+                    if !declared {
+                        return Err(TenthError::TypeError {
+                            line: span.line,
+                            col: span.col,
+                            message: format!("union '{}' 没有字段 '{}'", name.name, fname.name),
+                        });
+                    }
+                    let lowered = self.lower_expr(fexpr)?;
+                    return Ok(HirExpr {
+                        kind: HirExprKind::UnionLiteral {
+                            name: name.name.clone(),
+                            active_field: fname.name.clone(),
+                            value: Box::new(lowered),
+                        },
+                        ty: Type::Union(name.name.clone()),
+                        span: span.clone(),
+                    });
+                }
                 let mut lowered_fields: Vec<(String, HirExpr)> = fields.iter()
                     .map(|(id, e)| {
                         let lowered = self.lower_expr(e)?;

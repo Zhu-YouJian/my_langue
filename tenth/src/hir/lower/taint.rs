@@ -399,6 +399,7 @@ impl<'a> TaintAnalyzer<'a> {
                 for (_, f) in fields { acc = acc.join(self.expr_taint(f, vt, ret, depth)); }
                 acc
             }
+            HirExprKind::UnionLiteral { value, .. } => self.expr_taint(value, vt, ret, depth),
             HirExprKind::Match { scrutinee, arms, .. } => {
                 let st = self.expr_taint(scrutinee, vt, ret, depth);
                 let mut acc = Lossiness::Exact;

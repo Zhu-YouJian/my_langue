@@ -330,6 +330,18 @@ unsafe extern "C" fn host_new_struct(
     std::ptr::write(out, Value::Struct { name, fields: Rc::new(RefCell::new(fields)) });
 }
 
+// M1.2：union 构造 hostcall — 与 VM 的 NewUnion 一致：
+// 栈顶单个 value → Value::Union { name, active_field, value }
+unsafe extern "C" fn host_new_union(
+    vm: *mut Vm, name_idx: u64, field_idx: u64, val_ptr: *const Value, out: *mut Value,
+) {
+    let vm = &mut *vm;
+    let name = vm.string_at(name_idx as usize).unwrap_or_default();
+    let active_field = vm.string_at(field_idx as usize).unwrap_or_default();
+    let value = (*val_ptr).clone();
+    std::ptr::write(out, Value::Union { name, active_field, value: Box::new(value) });
+}
+
 unsafe extern "C" fn host_load_field(vm: *mut Vm, field_idx: u64, recv: *const Value, out: *mut Value) {
     let vm = &mut *vm;
     let fname = vm.string_at(field_idx as usize).unwrap_or_default();
@@ -341,6 +353,14 @@ unsafe extern "C" fn host_load_field(vm: *mut Vm, field_idx: u64, recv: *const V
                 .map(|(_, v)| v.clone())
                 .unwrap_or(Value::Unit));
         }
+        // M1.2：Union 字段访问（tagged union）——只读当前 active 字段
+        Value::Union { active_field, value, .. } => {
+            if active_field == &fname {
+                std::ptr::write(out, (**value).clone());
+            } else {
+                std::ptr::write(out, Value::Unit);
+            }
+        }
         _ => std::ptr::write(out, Value::Unit),
     }
 }
@@ -348,13 +368,29 @@ unsafe extern "C" fn host_load_field(vm: *mut Vm, field_idx: u64, recv: *const V
 unsafe extern "C" fn host_store_field(vm: *mut Vm, field_idx: u64, recv: *mut Value, val: *const Value, out: *mut Value) {
     let vm = &mut *vm;
     let fname = vm.string_at(field_idx as usize).unwrap_or_default();
-    if let Value::Struct { fields, .. } = &*recv {
-        let mut fields = fields.borrow_mut();
-        if let Some(slot) = fields.iter_mut().find(|(n, _)| n == &fname) {
-            slot.1 = (*val).clone();
+    match &*recv {
+        Value::Struct { fields, .. } => {
+            let mut fields = fields.borrow_mut();
+            if let Some(slot) = fields.iter_mut().find(|(n, _)| n == &fname) {
+                slot.1 = (*val).clone();
+            }
+            std::ptr::write(out, (*recv).clone());
         }
+        // M1.2：Union 字段修改（tagged union）——只允许修改 active 字段，
+        // 写回新构造的 Union（bytecode 对 Union 目标随后 Store 写回变量槽）。
+        Value::Union { name, active_field, .. } => {
+            if active_field == &fname {
+                std::ptr::write(out, Value::Union {
+                    name: name.clone(),
+                    active_field: active_field.clone(),
+                    value: Box::new((*val).clone()),
+                });
+            } else {
+                std::ptr::write(out, (*recv).clone());
+            }
+        }
+        _ => std::ptr::write(out, (*recv).clone()),
     }
-    std::ptr::write(out, (*recv).clone());
 }
 
 unsafe extern "C" fn host_index_get(vm: *mut Vm, target: *const Value, idx: *const Value, out: *mut Value) {
@@ -616,6 +652,7 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
         ("host_make_vec", host_make_vec as usize),
         ("host_make_map", host_make_map as usize),
         ("host_new_struct", host_new_struct as usize),
+        ("host_new_union", host_new_union as usize),
         ("host_load_field", host_load_field as usize),
         ("host_store_field", host_store_field as usize),
         ("host_index_get", host_index_get as usize),

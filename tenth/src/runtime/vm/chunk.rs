@@ -35,6 +35,7 @@ impl Chunk {
             Call(_) => 27, CallN(..) => 28, MethodCall(..) => 29, Ret => 30,
             MakeVec(_) => 31, MakeMap(_) => 32,
             NewStruct(..) => 33, LoadField(_) => 34, StoreField(_) => 35,
+            NewUnion(..) => 56,
             IndexGet => 36, SliceStr => 37,
             MakeEnum(..) => 38, IsEnumVariant(_) => 39, EnumGetField(_) => 40,
             PushRange(..) => 41, MoveOp => 42,
@@ -66,6 +67,7 @@ impl Chunk {
             Jump(o) | JmpFalse(o) | JmpTrue(o) => w!(*o, i32),
             MakeVec(n) | MakeMap(n) => w!(*n, u64),
             NewStruct(n, f) => { w!(*n, u64); w!(*f, u64); }
+            NewUnion(n, f) => { w!(*n, u64); w!(*f, u64); }
             MakeEnum(n, v, f) => { w!(*n, u64); w!(*v, u64); w!(*f, u64); }
             IsEnumVariant(v) => w!(*v, u64),
             EnumGetField(f) => w!(*f, u64),
@@ -104,6 +106,7 @@ impl Chunk {
             33 => NewStruct(r!(u64) as usize, r!(u64) as usize),
             34 => LoadField(r!(u64) as usize),
             35 => StoreField(r!(u64) as usize),
+            56 => NewUnion(r!(u64) as usize, r!(u64) as usize),
             36 => IndexGet,
             37 => SliceStr,
             38 => MakeEnum(r!(u64) as usize, r!(u64) as usize, r!(u64) as usize),

@@ -418,6 +418,14 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.call_hostcall_new_struct("host_new_struct", name_i as u64, field_count as u64, args_addr, out);
                 self.bump_sp()?;
             }
+            NewUnion(name_i, field_i) => {
+                // M1.2：union 构造 — 栈顶单个 value 弹出，构造 Value::Union
+                self.sp -= VALUE_SIZE as i32;
+                let val_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
+                let out = self.stack_addr_at_sp();
+                self.call_hostcall_new_union("host_new_union", name_i as u64, field_i as u64, val_addr, out);
+                self.bump_sp()?;
+            }
             LoadField(i) => {
                 self.sp -= VALUE_SIZE as i32;
                 let recv_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
@@ -776,6 +784,15 @@ impl<'a, M: Module> Translator<'a, M> {
         let a1 = self.builder.ins().iconst(types::I64, name_idx as i64);
         let a2 = self.builder.ins().iconst(types::I64, field_count as i64);
         self.builder.ins().call_indirect(sig, callee, &[self.vm, a1, a2, args, out]);
+    }
+
+    /// `fn(vm, u64, u64, *const Value, *mut Value)` — e.g. host_new_union.
+    fn call_hostcall_new_union(&mut self, name: &str, name_idx: u64, field_idx: u64, val: Value_, out: Value_) {
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[types::I64, types::I64, self.ptr, self.ptr], None);
+        let a1 = self.builder.ins().iconst(types::I64, name_idx as i64);
+        let a2 = self.builder.ins().iconst(types::I64, field_idx as i64);
+        self.builder.ins().call_indirect(sig, callee, &[self.vm, a1, a2, val, out]);
     }
 
     /// `fn(vm, u64, u64, u64, *const Value, *mut Value)` — e.g. host_make_enum.

@@ -90,6 +90,13 @@ pub enum HirExprKind {
         fields: Vec<(String, HirExpr)>,
         has_default: bool,
     },
+    /// Union 构造：带 active_field 的 tagged union。
+    /// `MyUnion { field: value }` 只激活一个字段 → 运行时 Value::Union。
+    UnionLiteral {
+        name: String,
+        active_field: String,
+        value: Box<HirExpr>,
+    },
     EnumLiteral {
         enum_name: String,
         variant: String,

@@ -55,6 +55,20 @@ impl super::Interpreter {
                     message: format!("枚举变体没有字段 '{}'", field),
                 })
             }
+            // M1.2：Union 字段访问（tagged union）。只允许读取当前 active 字段；
+            // 访问非活跃字段报错，防止误读未激活的内存（非 C 风格重叠）。
+            Value::Union { name, active_field, value } => {
+                if active_field == field {
+                    Ok(Some((**value).clone()))
+                } else {
+                    Err(TenthError::RuntimeError { line: None, col: None,
+                        message: format!(
+                            "union '{}' 当前活跃字段是 '{}'，不能访问非活跃字段 '{}'",
+                            name, active_field, field
+                        ),
+                    })
+                }
+            }
             Value::Vec(items) => {
                 // Allow .len() on Vec — handled in MethodCall, but also allow field-style access
                 if field == "len" {

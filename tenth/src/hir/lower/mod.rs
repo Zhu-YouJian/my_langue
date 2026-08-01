@@ -603,6 +603,9 @@ fn substitute_kind_in_place(kind: &mut HirExprKind, map: &HashMap<String, Type>)
                 substitute_expr_in_place(e, map);
             }
         }
+        HirExprKind::UnionLiteral { value, .. } => {
+            substitute_expr_in_place(value, map);
+        }
         HirExprKind::EnumLiteral { fields, .. } => {
             for (_, e) in fields.iter_mut() {
                 substitute_expr_in_place(e, map);

@@ -1150,6 +1150,9 @@ impl Lowerer {
                     Self::collect_return_dims_expr(e, out);
                 }
             }
+            HirExprKind::UnionLiteral { value, .. } => {
+                Self::collect_return_dims_expr(value, out);
+            }
             HirExprKind::EnumLiteral { fields, .. } => {
                 for (_, e) in fields {
                     Self::collect_return_dims_expr(e, out);

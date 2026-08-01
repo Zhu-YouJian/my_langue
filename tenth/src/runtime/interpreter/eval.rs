@@ -518,6 +518,26 @@ impl super::Interpreter {
                         }
                         return Ok(Some(Value::Unit));
                     }
+                    // M1.2：Union 字段修改——只允许修改当前 active 字段（tagged union 语义）
+                    Value::Union { name, active_field, .. } => {
+                        if active_field != field {
+                            return Err(TenthError::RuntimeError { line: Some(expr.span.line), col: Some(expr.span.col),
+                                message: format!(
+                                    "union '{}' 当前活跃字段是 '{}'，不能修改非活跃字段 '{}'",
+                                    name, active_field, field
+                                ),
+                            });
+                        }
+                        let updated = Value::Union {
+                            name: name.clone(),
+                            active_field: active_field.clone(),
+                            value: Box::new(rhs),
+                        };
+                        if let Some(vn) = target_var_name {
+                            self.insert_var(vn, updated);
+                        }
+                        return Ok(Some(Value::Unit));
+                    }
                     Value::MutRef(weak) => {
                         let rc = weak.upgrade().ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                             message: "无法通过悬垂的 &mut 引用赋值字段".into(),
@@ -661,6 +681,17 @@ impl super::Interpreter {
                 // default values for any missing fields in the HIR. The interpreter
                 // just evaluates the complete field list as-is.
                 Ok(Some(Value::Struct { name: name.clone(), fields: Rc::new(RefCell::new(field_vals)) }))
+            }
+
+            HirExprKind::UnionLiteral { name, active_field, value } => {
+                let v = self.eval_expr(value)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
+                    message: format!("union '{}' 活跃字段 '{}' 的值为空", name, active_field),
+                })?;
+                Ok(Some(Value::Union {
+                    name: name.clone(),
+                    active_field: active_field.clone(),
+                    value: Box::new(v),
+                }))
             }
 
             HirExprKind::EnumLiteral { enum_name, variant, fields } => {

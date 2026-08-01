@@ -588,6 +588,43 @@ impl WasmCompiler {
                 body.instruction(&Instruction::LocalGet(tmp));
             }
 
+            // M1.2：union 构造。WASM 采用既有 union 布局（所有字段 offset 0 共享内存），
+            // active_field 标签不落内存（与 VM/解释器的 Value::Union tagged 语义差异，
+            // 见能力全梳理 §1.2 已知边界）。
+            HirExprKind::UnionLiteral { name, active_field, value } => {
+                let sz = self.struct_size(name);
+                body.instruction(&Instruction::I32Const(sz as i32));
+                body.instruction(&Instruction::Call(HOST_TENTH_ALLOC)); // tenth_alloc -> i32
+                body.instruction(&Instruction::I64ExtendI32U); // i32 -> i64
+                let tmp = self.local_count;
+                self.local_count += 1;
+                body.instruction(&Instruction::LocalSet(tmp));
+                let layout = self.struct_layouts.get(name).cloned()
+                    .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
+                        message: format!("WASM: 未知 union '{}'", name),
+                    })?;
+                if let Some(&(offset, _size, vt)) = layout.get(active_field) {
+                    body.instruction(&Instruction::LocalGet(tmp));
+                    body.instruction(&Instruction::I32WrapI64);
+                    self.compile_expr(body, value)?;
+                    if matches!(vt, ValType::F32) && matches!(&value.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
+                        body.instruction(&Instruction::F32ConvertI64S);
+                    } else if matches!(vt, ValType::F64) && matches!(&value.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
+                        body.instruction(&Instruction::F64ConvertI64S);
+                    }
+                    let arg = wasm_encoder::MemArg { offset: offset as u64, align: 0, memory_index: 0 };
+                    match vt {
+                        ValType::I64 => { body.instruction(&Instruction::I64Store(arg)); }
+                        ValType::I32 => { body.instruction(&Instruction::I32Store(arg)); }
+                        ValType::F64 => { body.instruction(&Instruction::F64Store(arg)); }
+                        ValType::F32 => { body.instruction(&Instruction::F32Store(arg)); }
+                        _ => {}
+                    }
+                }
+                // Push i64 pointer as result
+                body.instruction(&Instruction::LocalGet(tmp));
+            }
+
             HirExprKind::Field { target, field } => {
                 self.compile_expr(body, target)?;
                 body.instruction(&Instruction::I32WrapI64); // pointer i64 -> i32

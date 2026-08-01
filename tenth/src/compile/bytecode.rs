@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use crate::error::TenthResult;
 use crate::hir::hir::*;
+use crate::hir::types::Type;
 use super::super::runtime::vm::{Chunk, Op};
 
 pub struct BytecodeCompiler {
@@ -299,6 +300,14 @@ impl BytecodeCompiler {
                 self.chunk.emit(Op::NewStruct(ni, fields.len()));
             }
 
+            UnionLiteral { name, active_field, value } => {
+                // M1.2：union 构造 — 压 value 后 NewUnion(name, active_field)
+                let name_i = self.chunk.add_string(name);
+                let field_i = self.chunk.add_string(active_field);
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::NewUnion(name_i, field_i));
+            }
+
             Field { target, field } => {
                 self.compile_expr(target)?;
                 let fi = self.chunk.add_string(field);
@@ -306,10 +315,24 @@ impl BytecodeCompiler {
             }
 
             FieldAssign { target, field, value } => {
+                // M1.2：Union 字段修改——StoreField 对 Union 会把修改后的值推回栈
+                // （tagged union 非共享），若目标是变量则随后 Store 写回变量槽。
+                let is_union_var = matches!(target.ty, Type::Union(_))
+                    && matches!(target.kind, HirExprKind::Var(_));
                 self.compile_expr(target)?;
                 self.compile_expr(value)?;
                 let fi = self.chunk.add_string(field);
                 self.chunk.emit(Op::StoreField(fi));
+                if is_union_var {
+                    if let HirExprKind::Var(vn) = &target.kind {
+                        if let Some(pos) = self.locals.iter().position(|n| n == vn) {
+                            self.chunk.emit(Op::Store(pos));
+                        } else {
+                            let i = self.chunk.add_string(vn);
+                            self.chunk.emit(Op::StoreGlobal(i));
+                        }
+                    }
+                }
             }
 
             DerefAssign { target, value } => {

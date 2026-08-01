@@ -158,6 +158,9 @@ impl Lowerer {
             HirExprKind::StructLiteral { fields, .. } => {
                 for (_, e) in fields { Self::collect_free_vars(e, vars); }
             }
+            HirExprKind::UnionLiteral { value, .. } => {
+                Self::collect_free_vars(value, vars);
+            }
             HirExprKind::EnumLiteral { fields, .. } => {
                 for (_, e) in fields { Self::collect_free_vars(e, vars); }
             }
