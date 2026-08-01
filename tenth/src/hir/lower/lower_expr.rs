@@ -87,7 +87,9 @@ impl Lowerer {
                             | "str_at" | "str_len" | "str_cmp" | "str_slice" | "str_add" | "str_eq" | "str_int"
                             | "Vec::new" | "HashMap::new"
                             // 问题29：智能指针构造 native（Box/Rc/Arc/Pin，返回类型见 resolve_builtin）
+                            // M3.4：Weak 弱引用 native（Weak::new 构造 / weak_upgrade 升级 / 计数辅助）
                             | "Box::new" | "Rc::new" | "Arc::new" | "Pin::new"
+                            | "Weak::new" | "weak_upgrade" | "weak_strong_count" | "weak_weak_count"
                             | "compile_host" | "compile_program"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
@@ -1983,6 +1985,7 @@ impl Lowerer {
             // HeapBox/Pin/SharedBox/AtomicBox：容器类型，drop 行为由运行时管理，不在编译期自动生成 drop 调用
             Type::HeapBox(inner) | Type::Pin(inner) => self.type_impls_drop(inner),
             Type::SharedBox(_) | Type::AtomicBox(_) => false, // RC/Arc 管理自身生命周期
+            Type::Weak(_) => false, // Weak 不持有所有权，无需 drop
             _ => false,
         }
     }

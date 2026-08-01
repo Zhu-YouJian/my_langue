@@ -107,6 +107,35 @@ impl Parser {
                     span,
                 })
             }
+            // M3.3：声明式宏定义 `macro name(param1, param2) { body_expr }`。
+            // body 是表达式模板（单个表达式或 `{ ... }` 块）。参数为纯标识符列表
+            // （无类型注解），0 参宏可省略括号（`macro seven { 7 }`）。宏定义是编译期
+            // 构造：parse_program 末尾的展开 pass 收集后，调用点替换为 body（参数按名
+            // 代入），宏定义本身从 AST 移除。
+            TokenKind::Macro => {
+                self.advance();
+                let name = self.expect_ident()?;
+                let mut params = Vec::new();
+                if matches!(self.peek_kind(), TokenKind::LParen) {
+                    self.advance();
+                    while !matches!(self.peek_kind(), TokenKind::RParen) {
+                        let p = self.expect_ident()?;
+                        params.push(p);
+                        if !matches!(self.peek_kind(), TokenKind::Comma) {
+                            break;
+                        }
+                        self.advance();
+                    }
+                    self.expect(TokenKind::RParen)?;
+                }
+                self.expect(TokenKind::LBrace)?;
+                let body = self.parse_expr()?;
+                self.expect(TokenKind::RBrace)?;
+                Ok(Item {
+                    kind: ItemKind::MacroDef { name, params, body },
+                    span,
+                })
+            }
             TokenKind::Struct => {
                 self.advance();
                 let name = self.expect_ident()?;

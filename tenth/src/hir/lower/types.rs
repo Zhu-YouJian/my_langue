@@ -670,6 +670,12 @@ impl Lowerer {
                     _ => Type::Unknown,
                 }
             }
+            // M3.4：Weak 弱引用方法——不能直接解引用（必须先 weak_upgrade 取强引用），
+            // 仅支持 clone（Weak::clone 共享同一弱句柄，返回同类型 Weak<T>）。
+            Type::Weak(_) => match method {
+                "clone" => receiver.clone(),
+                _ => Type::Unknown,
+            },
             _ => {
                 // 阶段2a M2（G3）：用户自定义方法——查方法表返回真实返回类型。
                 // 状态传播的关键：`close(self) -> File<Closed>` 的返回类型在此取出，
@@ -768,6 +774,28 @@ impl Lowerer {
             "Pin::new" => Ok(Type::Pin(Box::new(
                 args.first().map(|a| a.ty.clone()).unwrap_or(Type::Unknown),
             ))),
+            // M3.4：Weak 弱引用 native 的静态返回类型。
+            // - Weak::new(rc: Rc<T>|Arc<T>) → Weak<T>（取参数容器的内部类型 T）
+            // - weak_upgrade(w: Weak<T>) → Option<Rc<T>>（成功 Some(强引用 Rc)、失败 None）
+            // - weak_strong_count / weak_weak_count → i64
+            "Weak::new" => {
+                let inner = match args.first().map(|a| &a.ty) {
+                    Some(Type::SharedBox(inner)) | Some(Type::AtomicBox(inner)) => inner.as_ref().clone(),
+                    _ => Type::Unknown,
+                };
+                Ok(Type::Weak(Box::new(inner)))
+            }
+            "weak_upgrade" => {
+                let inner = match args.first().map(|a| &a.ty) {
+                    Some(Type::Weak(inner)) => inner.as_ref().clone(),
+                    _ => Type::Unknown,
+                };
+                Ok(Type::Generic {
+                    base: Box::new(Type::Enum("Option".to_string())),
+                    args: vec![Type::SharedBox(Box::new(inner))],
+                })
+            }
+            "weak_strong_count" | "weak_weak_count" => Ok(Type::Base(BaseType::I64)),
             "compile_host" => Ok(Type::Base(BaseType::I32)),
             // M1.3：dyn 升级 native——返回 Type::Dyn(trait_name)。
             // trait 名从 args[1]（字符串字面量）提取；非字面量/缺失 → Unknown

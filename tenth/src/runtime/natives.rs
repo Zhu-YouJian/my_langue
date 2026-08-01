@@ -2765,6 +2765,67 @@ pub fn register_all_natives(vm: &mut Vm) {
         Ok(Value::Pin(Box::new(args[0].clone())))
     });
 
+    // ── M3.4：Weak 弱引用 ──
+    // Weak::new(rc)：从 Rc/Arc 值创建弱引用（不增加强引用计数）。
+    // 非 Rc/Arc 值 → 运行时报错。
+    vm.add_native("Weak::new".into(), |_vm, args| {
+        if args.is_empty() {
+            return Err(TenthError::RuntimeError { line: None, col: None, message: "Weak::new() 需要 1 个参数".into() });
+        }
+        match &args[0] {
+            Value::SharedBox(rc) => Ok(Value::Weak(Rc::downgrade(rc))),
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "Weak::new() 只能从 Rc/Arc 值创建弱引用".into() }),
+        }
+    });
+    // weak_upgrade(w)：尝试取强引用。成功 → Option::Some(Rc 值)；
+    // 原 Rc 已被释放 → Option::None。
+    vm.add_native("weak_upgrade".into(), |_vm, args| {
+        if args.is_empty() {
+            return Err(TenthError::RuntimeError { line: None, col: None, message: "weak_upgrade() 需要 1 个参数".into() });
+        }
+        match &args[0] {
+            Value::Weak(w) => {
+                match w.upgrade() {
+                    Some(rc) => Ok(Value::Enum {
+                        enum_name: "Option".to_string(),
+                        variant: "Some".to_string(),
+                        fields: Rc::new(RefCell::new(vec![("_0".to_string(), Value::SharedBox(rc))])),
+                    }),
+                    None => Ok(Value::Enum {
+                        enum_name: "Option".to_string(),
+                        variant: "None".to_string(),
+                        fields: Rc::new(RefCell::new(vec![])),
+                    }),
+                }
+            }
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "weak_upgrade() 需要一个 Weak 值".into() }),
+        }
+    });
+    // weak_strong_count(w)：当前强引用（Rc/Arc）数量。
+    vm.add_native("weak_strong_count".into(), |_vm, args| {
+        if args.is_empty() {
+            return Err(TenthError::RuntimeError { line: None, col: None, message: "weak_strong_count() 需要 1 个参数".into() });
+        }
+        match &args[0] {
+            Value::Weak(w) => Ok(Value::Int(w.strong_count() as i64, BaseType::I64)),
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "weak_strong_count() 需要一个 Weak 值".into() }),
+        }
+    });
+    // weak_weak_count(w)：当前弱引用数量。
+    vm.add_native("weak_weak_count".into(), |_vm, args| {
+        if args.is_empty() {
+            return Err(TenthError::RuntimeError { line: None, col: None, message: "weak_weak_count() 需要 1 个参数".into() });
+        }
+        match &args[0] {
+            Value::Weak(w) => Ok(Value::Int(w.weak_count() as i64, BaseType::I64)),
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "weak_weak_count() 需要一个 Weak 值".into() }),
+        }
+    });
+
     // ── M1.3：dyn Trait 升级 ──
     // into_dyn(value, trait_name)：把具体值包装为 Value::Dyn。
     // type_name 从值运行时类型提取（Struct/Enum/Union/TypeParam）。

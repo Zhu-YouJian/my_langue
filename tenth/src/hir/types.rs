@@ -74,6 +74,9 @@ pub enum Type {
     /// Pin<T>: 固定不可移动包装（问题31）。
     /// 运行时对应 Value::Pin(Box<Value>)。
     Pin(Box<Type>),
+    /// Weak<T>: 弱引用（M3.4）。不增加引用计数，可 upgrade() 尝试取强引用。
+    /// 运行时对应 Value::Weak(Weak<RefCell<Value>>)。
+    Weak(Box<Type>),
     Unknown,
 }
 
@@ -134,6 +137,7 @@ impl fmt::Display for Type {
             Type::SharedBox(inner) => write!(f, "Rc<{}>", inner),
             Type::AtomicBox(inner) => write!(f, "Arc<{}>", inner),
             Type::Pin(inner) => write!(f, "Pin<{}>", inner),
+            Type::Weak(inner) => write!(f, "Weak<{}>", inner),
             Type::Ref(inner, lt) => {
                 if let Some(l) = lt { write!(f, "&'{} {}", l, inner) }
                 else { write!(f, "&{}", inner) }
@@ -301,7 +305,8 @@ impl Type {
                 let arg_tys: Vec<Type> = args.iter().map(Self::from_annotation).collect();
                 // 问题29：智能指针类型注解 `Box<T>`/`Rc<T>`/`Arc<T>`/`Pin<T>`
                 // 映射为内置容器类型（Type::HeapBox/SharedBox/AtomicBox/Pin）。
-                // 保守条件：base 恰好是这 4 个名字、且恰好 1 个类型实参——避免与
+                // M3.4：`Weak<T>` 弱引用映射为 Type::Weak。
+                // 保守条件：base 恰好是这 5 个名字、且恰好 1 个类型实参——避免与
                 // 用户自定义 `struct Box<T>` 等泛型类型冲突。若用户恰好声明了同名
                 // struct/enum/union/泛型 struct，Lowerer::annotation_type（has_struct
                 // 防护）会在注解处理点回退为 Type::Generic。
@@ -311,6 +316,7 @@ impl Type {
                         "Rc" => return Type::SharedBox(Box::new(arg_tys[0].clone())),
                         "Arc" => return Type::AtomicBox(Box::new(arg_tys[0].clone())),
                         "Pin" => return Type::Pin(Box::new(arg_tys[0].clone())),
+                        "Weak" => return Type::Weak(Box::new(arg_tys[0].clone())),
                         _ => {}
                     }
                 }

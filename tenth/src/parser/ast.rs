@@ -349,6 +349,15 @@ pub enum ItemKind {
         op: String,
         func: Box<Item>,
     },
+    /// M3.3：声明式宏定义 `macro name(param1, param2) { body_expr }`。
+    /// body 是表达式模板，参数位置在展开时替换为实参 AST。宏是编译期构造：
+    /// `parse_program` 末尾的展开 pass 收集后，调用点 AST 替换为 body（参数代入），
+    /// 宏定义本身从 AST 移除，不进 HIR。
+    MacroDef {
+        name: Ident,
+        params: Vec<Ident>,
+        body: Expr,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

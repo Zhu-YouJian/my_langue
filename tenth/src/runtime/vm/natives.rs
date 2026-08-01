@@ -859,6 +859,12 @@ impl Vm {
                 "clone" => Ok(Value::Pin(Box::new((*v).clone()))),
                 _ => err(&format!("Pin 没有方法 '{}'", method)),
             },
+            // M3.4：Weak 弱引用——不能直接解引用（必须先 weak_upgrade 取强引用），
+            // 仅支持 clone（Weak::clone 共享同一弱句柄）。
+            Value::Weak(w) => match method {
+                "clone" => Ok(Value::Weak(w.clone())),
+                _ => err(&format!("Weak 没有方法 '{}'", method)),
+            },
             // M1.3：dyn Trait 动态分派——通过 `__dyn_{trait}_{type}_{method}`
             // 字节码函数调用（lowerer 在 `impl Trait for Type` 时注册这些函数）。
             // 与解释器（trait_impls 直接查表 + eval HIR body）语义一致。

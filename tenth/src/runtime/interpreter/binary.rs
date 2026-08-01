@@ -423,6 +423,13 @@ impl super::Interpreter {
             Value::HeapBox(v) => format!("Box({})", self.value_to_string(v)),
             Value::SharedBox(v) => format!("Rc({})", self.value_to_string(&v.borrow())),
             Value::Pin(v) => format!("Pin({})", self.value_to_string(v)),
+            Value::Weak(w) => {
+                if let Some(rc) = w.upgrade() {
+                    format!("Weak<{}>", self.value_to_string(&rc.borrow()))
+                } else {
+                    "Weak<dangling>".to_string()
+                }
+            }
             Value::Dyn { trait_name, type_name, value } => {
                 format!("dyn {}<{}>({})", trait_name, type_name, self.value_to_string(value))
             }

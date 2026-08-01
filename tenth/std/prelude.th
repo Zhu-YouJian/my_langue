@@ -20,6 +20,11 @@
 //   __call_custom_op         — PROJ-006 自定义可微算子调用 native（Rust 端 register_custom_op 返回的 op_id + 输入张量；推荐通过 std::autograd::call_custom_op1/2/3 wrapper 调用）
 //   tensor_gt, tensor_lt, tensor_ge, tensor_le, tensor_eq, tensor_ne  — tensor comparisons (返回 f64 0.0/1.0 张量)
 //   Vec::new, HashMap::new   — collections
+//   Box::new, Rc::new, Arc::new, Pin::new — smart pointers (问题29, built-in native)
+//   Weak::new(rc)            — 从 Rc/Arc 值创建弱引用（M3.4，不增加强引用计数；非 Rc 值报错）
+//   weak_upgrade(w)          — 尝试取强引用 → Option<Rc<T>>（原 Rc 已释放 → Option::None）
+//   weak_strong_count(w)     — 当前强引用（Rc/Arc）数量（i64）
+//   weak_weak_count(w)       — 当前弱引用数量（i64）
 //   read_file, write_bytes, read_bytes — file I/O
 //   save_weights, load_weights — model serialization
 //   format, parse_int, parse_float — formatting & parsing

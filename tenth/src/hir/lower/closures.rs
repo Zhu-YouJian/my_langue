@@ -63,7 +63,9 @@ impl Lowerer {
                     | "regex_replace" | "regex_split"
                     // Wave 3 第 8 项：Date native（路径 B，复用 struct 机制，返回 i64 或 Tuple）
                     | "date_to_unix_days" | "date_from_unix_days" | "date_i64_add_days"
-                    | "date_diff_days" | "date_day_of_week" => {}
+                    | "date_diff_days" | "date_day_of_week"
+                    // M3.4：Weak 弱引用 native（Weak::new 含 :: 自动跳过；其余补白名单）
+                    | "weak_upgrade" | "weak_strong_count" | "weak_weak_count" => {}
                     _ => { vars.insert(name.clone()); }
                 }
             }

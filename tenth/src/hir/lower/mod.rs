@@ -115,9 +115,9 @@ impl Lowerer {
     /// 类型注解 → Type（M1.1 智能指针入口）。
     ///
     /// 在 `Type::from_annotation` 基础上叠加「has_struct 防护」：`Box<T>`/
-    /// `Rc<T>`/`Arc<T>`/`Pin<T>` 默认映射为内置容器类型，但若用户恰好声明了
-    /// 同名 struct/enum/union/泛型 struct（如 `struct Box<T> { .. }`），则回退
-    /// 为 `Type::Generic`（用户类型优先，防误报）。所有处理用户类型注解的
+    /// `Rc<T>`/`Arc<T>`/`Pin<T>`/`Weak<T>` 默认映射为内置容器类型，但若用户
+    /// 恰好声明了同名 struct/enum/union/泛型 struct（如 `struct Box<T> { .. }`），
+    /// 则回退为 `Type::Generic`（用户类型优先，防误报）。所有处理用户类型注解的
     /// 调用点应使用本方法而非裸 `Type::from_annotation`。
     pub(super) fn annotation_type(&self, ann: &ast::TypeAnnotation) -> Type {
         let ty = Type::from_annotation(ann);
@@ -136,6 +136,10 @@ impl Lowerer {
             },
             Type::Pin(inner) if self.user_type_declared("Pin") => Type::Generic {
                 base: Box::new(Type::TypeParam { name: "Pin".to_string() }),
+                args: vec![*inner],
+            },
+            Type::Weak(inner) if self.user_type_declared("Weak") => Type::Generic {
+                base: Box::new(Type::TypeParam { name: "Weak".to_string() }),
                 args: vec![*inner],
             },
             _ => ty,
@@ -433,8 +437,8 @@ pub(super) fn is_copy_type(ty: &Type, structs: &HashMap<String, Vec<(String, Typ
         Type::Dyn(_) => false, // trait 对象不可 Copy
         // HeapBox/Pin: 所有权指针，不可 Copy
         Type::HeapBox(_) | Type::Pin(_) => false,
-        // SharedBox/AtomicBox: 共享指针，不可 Copy
-        Type::SharedBox(_) | Type::AtomicBox(_) => false,
+        // SharedBox/AtomicBox/Weak: 共享/弱引用指针，不可 Copy
+        Type::SharedBox(_) | Type::AtomicBox(_) | Type::Weak(_) => false,
         _ => false, // Function types, Tensor types, etc. are not Copy by default
     }
 }

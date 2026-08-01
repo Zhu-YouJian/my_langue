@@ -90,9 +90,9 @@ impl super::Interpreter {
             Value::String(_) | Value::Vec(_) | Value::Map(_) | Value::Range { .. } | Value::Iterator(_) => {
                 self.eval_native_method(recv, method, args)
             }
-            // 问题29：智能指针容器方法（Box/Rc/Arc/Pin）——显式 deref/clone，
+            // 问题29：智能指针容器方法（Box/Rc/Arc/Pin）+ M3.4 Weak——显式 deref/clone，
             // 不自动解包（与 VM call_method_priv 一致）
-            Value::HeapBox(_) | Value::SharedBox(_) | Value::Pin(_) => {
+            Value::HeapBox(_) | Value::SharedBox(_) | Value::Pin(_) | Value::Weak(_) => {
                 self.eval_smart_ptr_method(recv, method, args).map(Some)
             }
             // M1.3：dyn Trait 动态分派——按 trait_impls[trait][type] 查方法实现，
@@ -823,10 +823,11 @@ impl super::Interpreter {
         result
     }
 
-    /// 问题29：智能指针容器方法（Box/Rc/Arc/Pin）。
+    /// 问题29：智能指针容器方法（Box/Rc/Arc/Pin）+ M3.4 Weak。
     /// 与 VM call_method_priv（vm/natives.rs）语义一致：
     /// - deref/deref_mut：返回内部值（Value 克隆）
     /// - clone：HeapBox/Pin 深拷贝内部值重新包装；SharedBox 用 Rc::clone 共享
+    /// - Weak：仅 clone（Weak::clone 共享弱句柄）；不能直接解引用
     pub(super) fn eval_smart_ptr_method(&self, recv: &Value, method: &str, _args: &[Value]) -> TenthResult<Value> {
         match recv {
             Value::HeapBox(v) => match method {
@@ -848,6 +849,12 @@ impl super::Interpreter {
                 "clone" => Ok(Value::Pin(Box::new((**v).clone()))),
                 _ => Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("Pin 没有方法 '{}'", method),
+                }),
+            },
+            Value::Weak(w) => match method {
+                "clone" => Ok(Value::Weak(w.clone())),
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
+                    message: format!("Weak 没有方法 '{}'", method),
                 }),
             },
             _ => Err(TenthError::RuntimeError { line: None, col: None,

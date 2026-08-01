@@ -156,6 +156,9 @@ pub enum Value {
     SharedBox(Rc<RefCell<Value>>),
     /// Pin<T>：固定不可移动包装（问题31）。
     Pin(Box<Value>),
+    /// Weak<T>：弱引用（M3.4）。不增加引用计数，可 upgrade() 尝试取强引用。
+    /// 存 `std::rc::Weak<RefCell<Value>>` 才能 upgrade（返回 Option<Rc<RefCell<Value>>>）。
+    Weak(Weak<RefCell<Value>>),
 
     // ── M1.3：dyn Trait 动态分发 ──
     /// dyn Trait 动态分发对象：
@@ -243,6 +246,11 @@ impl Value {
             Value::HeapBox(v) => Type::HeapBox(Box::new(v.type_of())),
             Value::SharedBox(v) => Type::SharedBox(Box::new(v.borrow().type_of())),
             Value::Pin(v) => Type::Pin(Box::new(v.type_of())),
+            // Weak 已悬垂（原 Rc 被释放）→ 内部类型不可知，保守返回 Unknown。
+            Value::Weak(w) => match w.upgrade() {
+                Some(rc) => Type::Weak(Box::new(rc.borrow().type_of())),
+                None => Type::Unknown,
+            },
             Value::Dyn { trait_name, .. } => Type::Dyn(trait_name.clone()),
             Value::BigInt(_) => Type::Base(BaseType::BigInt),
             Value::Complex(_, _) => Type::Base(BaseType::C128),
@@ -261,6 +269,7 @@ impl Value {
             Value::HeapBox(v) => v.as_float(),
             Value::SharedBox(v) => v.borrow().as_float(),
             Value::Pin(v) => v.as_float(),
+            Value::Weak(w) => w.upgrade().and_then(|rc| rc.borrow().as_float()),
             Value::Dyn { value, .. } => value.as_float(),
             _ => None,
         }
@@ -279,6 +288,7 @@ impl Value {
             Value::HeapBox(v) => v.as_f32(),
             Value::SharedBox(v) => v.borrow().as_f32(),
             Value::Pin(v) => v.as_f32(),
+            Value::Weak(w) => w.upgrade().and_then(|rc| rc.borrow().as_f32()),
             Value::Dyn { value, .. } => value.as_f32(),
             _ => None,
         }
@@ -295,6 +305,7 @@ impl Value {
             Value::HeapBox(v) => v.as_int(),
             Value::SharedBox(v) => v.borrow().as_int(),
             Value::Pin(v) => v.as_int(),
+            Value::Weak(w) => w.upgrade().and_then(|rc| rc.borrow().as_int()),
             Value::Dyn { value, .. } => value.as_int(),
             _ => None,
         }
@@ -319,6 +330,7 @@ impl Value {
             Value::HeapBox(v) => v.is_truthy(),
             Value::SharedBox(v) => v.borrow().is_truthy(),
             Value::Pin(v) => v.is_truthy(),
+            Value::Weak(w) => w.upgrade().map_or(false, |rc| rc.borrow().is_truthy()),
             Value::Dyn { value, .. } => value.is_truthy(),
             _ => true,
         }
@@ -566,6 +578,10 @@ impl fmt::Display for Value {
             Value::HeapBox(v) => write!(f, "Box({})", v),
             Value::SharedBox(v) => write!(f, "Rc({})", v.borrow()),
             Value::Pin(v) => write!(f, "Pin({})", v),
+            Value::Weak(w) => match w.upgrade() {
+                Some(rc) => write!(f, "Weak<{}>", rc.borrow()),
+                None => write!(f, "Weak<dangling>"),
+            },
             Value::Dyn { trait_name, type_name, value } => {
                 write!(f, "dyn {}<{}>({})", trait_name, type_name, value)
             }

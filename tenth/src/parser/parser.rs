@@ -31,6 +31,7 @@ const SYNC_TOKENS: &[TokenKind] = &[
     TokenKind::Impl,
     TokenKind::Mod,
     TokenKind::Use,
+    TokenKind::Macro,
     TokenKind::RBrace,
     TokenKind::Eof,
 ];
@@ -207,7 +208,7 @@ impl Parser {
             match self.peek_kind() {
                 TokenKind::Async | TokenKind::Fn | TokenKind::Struct | TokenKind::Enum | TokenKind::Union
                 | TokenKind::Impl | TokenKind::Mod | TokenKind::Use | TokenKind::Trait
-                | TokenKind::Operator => {
+                | TokenKind::Operator | TokenKind::Macro => {
                     items.push(self.parse_item()?);
                 }
                 _ => {
@@ -259,6 +260,11 @@ impl Parser {
                 span,
             });
         }
-        Ok(Program { items })
+        let mut program = Program { items };
+        // M3.3：声明式宏展开 pass（parse 完成后、lower 前）。收集宏定义并从 AST
+        // 移除，再把调用点 AST 替换为 body（参数代入）。挂在 parse_program 末尾
+        // 使所有调用方（main/repl/wasm host/import/测试）零改动获得宏能力。
+        super::macro_expand::expand_program_macros(&mut program)?;
+        Ok(program)
     }
 }

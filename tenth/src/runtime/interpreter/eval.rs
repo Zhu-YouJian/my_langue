@@ -113,6 +113,8 @@ impl super::Interpreter {
                             // Wave 3 第 8 项：Date native（路径 B，复用 struct 机制，返回 i64 或 Tuple）
                             | "date_to_unix_days" | "date_from_unix_days" | "date_i64_add_days"
                             | "date_diff_days" | "date_day_of_week"
+                            // M3.4：Weak 弱引用 native（Weak::new 含 :: 走上方 FnRef 路径，自动覆盖）
+                            | "weak_upgrade" | "weak_strong_count" | "weak_weak_count"
                             // B批：字符串/文本处理 native
                             | "unicode_nfc" | "unicode_nfd"
                             | "str_to_utf16" | "utf16_to_str"
