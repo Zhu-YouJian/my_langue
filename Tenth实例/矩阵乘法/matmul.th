@@ -1,4 +1,8 @@
 // 张量运算完整演示 — matmul、广播、转置、逐元素运算
+//
+// 注：本实例不使用同名 let 重绑定——VM 字节码后端对局部变量是扁平槽位模型，
+// 同名 `let` 重绑定后读取仍命中旧槽位（position 首个匹配）。已记录待总师修复；
+// 本实例用唯一变量名规避。
 
 fn main() {
     // ── 基础张量 ──────────────────────────────────────────
@@ -26,15 +30,15 @@ fn main() {
     println("[[1,2,3]] + [[10]] (broadcast → [11,12,13] sum=36):");
     println(z.sum());
 
-    // 同形张量逐元素运算
-    let a = tensor[[1.0, 2.0], [3.0, 4.0]];
-    let b = tensor[[10.0, 20.0], [30.0, 40.0]];
-    let c = a + b;
+    // 同形张量逐元素运算（变量名唯一，避免 VM 重绑定限制）
+    let a2 = tensor[[1.0, 2.0], [3.0, 4.0]];
+    let b2 = tensor[[10.0, 20.0], [30.0, 40.0]];
+    let c2 = a2 + b2;
     println("A + B (element-wise) sum=110:");
-    println(c.sum());
-    let d = a * b;
+    println(c2.sum());
+    let d2 = a2 * b2;
     println("A * B (element-wise) sum=300:");
-    println(d.sum());
+    println(d2.sum());
 
     // ── 一元激活函数 ─────────────────────────────────────
     println("\n=== 激活函数 ===");
@@ -48,11 +52,11 @@ fn main() {
 
     // ── 规约 ──────────────────────────────────────────────
     println("\n=== 规约 ===");
-    let d = tensor[[1.0, 2.0], [3.0, 4.0]];
+    let d3 = tensor[[1.0, 2.0], [3.0, 4.0]];
     println("sum: 10 =");
-    println(d.sum());
+    println(d3.sum());
     println("mean: 2.5 =");
-    println(d.mean());
+    println(d3.mean());
     println("flatten + sum:");
-    println(d.flatten().sum());
+    println(d3.flatten().sum());
 }

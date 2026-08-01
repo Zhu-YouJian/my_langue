@@ -1,0 +1,37 @@
+// struct 上的自定义运算符重载（impl Add → `a + b` 降级为 `a.add(b)`）
+//
+// 特性（M3.1 顺带修复）：用户 struct 实现 trait 方法后，内置运算符 + 会
+// 降级为方法调用。本文件演示在自定义 struct Point 上重载 `+`。
+//
+// ⚠️ 运行方式：VM 对「具体值 trait 方法」的分派有缺口（Value::Struct 的
+// 方法分派只做字段访问），因此本文件必须用解释器路径运行：
+//   TENTH_NO_VM=1 tenth run operator_overload.th
+//
+// 若直接用默认路径（VM）运行，会在 `a + b` 处报"没有方法"——这是 VM 的
+// 既有局限（非本特性引入），详见 tenth/tests/custom_operator_test.rs 的
+// test_coexist_with_builtin_overload 注释。
+//
+// 另注：运算符重载的降级仅支持单层 `a + b`；链式 `a + b + c` 的降级
+// 在解释器路径也有缺口（运行时"加法类型不匹配"），本文件已避免。
+
+struct Point { x: f64 }
+trait Add { fn add(self, other: Point) -> Point; }
+impl Add for Point {
+    fn add(self, other: Point) -> Point { Point { x: self.x + other.x } }
+}
+
+fn main() {
+    println("=== struct 上的运算符重载（impl Add）===");
+    println("");
+
+    let a = Point { x: 1.5 };
+    let b = Point { x: 2.5 };
+    let c = a + b;                        // 降级为 a.add(b)
+    println("  Point{1.5} + Point{2.5} = Point{", c.x, "}");
+    println("");
+
+    // 与新建 struct 直接相加（单层重载；链式 a+b+c 的降级有缺口，已避免）
+    let e = a + Point { x: 1.0 };
+    println("  (1.5 + 1.0).x = ", e.x);
+    println("");
+}

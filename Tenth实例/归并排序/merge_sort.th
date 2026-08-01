@@ -30,13 +30,21 @@ fn merge(left: Vec<i64>, right: Vec<i64>) -> Vec<i64> {
     let ln = left.len();
     let rn = right.len();
 
-    while i < ln && j < rn {
-        if left[i] <= right[j] {
-            result.push(left[i]);
-            i = i + 1;
+    // 注：VM 路径不支持 while 条件里的 &&，改用嵌套 if；
+    //     解释器路径下直接索引返回 Shared 包裹，先绑定到变量再比较/运算。
+    while i < ln {
+        if j < rn {
+            let li = left[i];
+            let rj = right[j];
+            if li <= rj {
+                result.push(li);
+                i = i + 1;
+            } else {
+                result.push(rj);
+                j = j + 1;
+            };
         } else {
-            result.push(right[j]);
-            j = j + 1;
+            break;
         };
     };
 

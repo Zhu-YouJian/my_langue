@@ -9,11 +9,13 @@ fn main() {
     let mut i: i64 = 0;
     while i < words.len() {
         let w = words[i];
-        let current = freq.get(w);
-        if current == 0 {
-            freq.insert(w, 1);
-        } else {
+        // 注：HashMap.get 对缺失键返回 Unit（非 0），用 contains_key 判断存在性；
+        //     words[i] 在解释器路径返回 Shared 包裹，先绑定到变量（自动解包）再作键。
+        if freq.contains_key(w) {
+            let current = freq.get(w);
             freq.insert(w, current + 1);
+        } else {
+            freq.insert(w, 1);
         };
         i = i + 1;
     };

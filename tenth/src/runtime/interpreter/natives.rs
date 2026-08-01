@@ -2487,13 +2487,16 @@ impl super::Interpreter {
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
-            // CLI functions
+            // CLI functions（读取真实进程参数：cli_args_count 含程序名）
             "cli_args_count" => {
-                return Ok(Some(Value::Int(1, BaseType::I32))); // Default: just program name
+                return Ok(Some(Value::Int(std::env::args().len() as i64, BaseType::I32)));
             }
             "cli_arg" => {
-                if let Some(Value::Int(_idx, _)) = args.first() {
-                    return Ok(Some(Value::String(String::new())));
+                if let Some(Value::Int(idx, _)) = args.first() {
+                    let all: Vec<String> = std::env::args().collect();
+                    if let Some(s) = all.get(*idx as usize) {
+                        return Ok(Some(Value::String(s.clone())));
+                    }
                 }
                 return Ok(Some(Value::String(String::new())));
             }

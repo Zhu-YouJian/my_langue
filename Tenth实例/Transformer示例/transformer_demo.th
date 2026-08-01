@@ -75,8 +75,9 @@ fn main() {
     let b2 = zeros(d_model);
 
     // FFN(x) = GELU(x @ W1 + b1) @ W2 + b2
+    // 注：gelu 是泛型函数 <T>，导入后需显式类型参数（与 std 测试一致）
     let hidden = x_after_attn.matmul(w1) + b1;
-    let activated = gelu(hidden);
+    let activated = gelu<f64>(hidden);
     let ffn_out = activated.matmul(w2) + b2;
     let x_final = x_after_attn + ffn_out;
     println("  hidden = x @ W1 + b1  shape = [", seq_len, ", ", d_ff, "]");

@@ -79,7 +79,34 @@ Tenth实例/
 | 随机数应用 | `随机数应用/` | random_int、random_float、蒙特卡洛估算π |
 | 文件操作 | `文件操作/` | path_join、read/write_file、list_dir、copy |
 | MNIST 训练 | `MNIST训练/` | IDX解析、2层MLP、cross_entropy、SGD |
+| 语言核心新特性 | `语言核心新特性/` | 智能指针（Box/Rc/Arc/Pin）、Union tagged、dyn Trait、泛型枚举、Newtype、标签 break/continue、自定义运算符、声明式宏、Weak 弱引用、Phantom 类型、Drop/RAII、Copy、运算符重载（`impl Add`） |
+| 宏与自定义运算符 | `宏与自定义运算符/` | 声明式宏（嵌套/0参/if体/循环中）、自定义运算符（`@` `$` `~` 组合、优先级、绑定函数） |
+| Shape 检查演示 | `Shape检查演示/` | shape 检查、matmul 维度 |
+| Transformer 示例 | `Transformer示例/` | Self-Attention、GELU、FFN、残差连接 |
+| 标准库使用示例 | `标准库使用示例/` | nn::activations、init::initializers、AdamW 公式 |
+| 梯度裁剪与累积 | `梯度裁剪与累积/` | clip_grad_by_value、梯度累积概念 |
+| 自动微分 Shape 校验 | `自动微分Shape校验/` | autodiff 的 shape 校验、backward 错误 |
+| 算力内存预警 | `算力内存预警/` | 编译期算力/内存预估 warning |
+| 类型状态 Typestate | `类型状态Typestate/` | 类型状态模式、编译期状态机 |
+| 多分类器 | `多分类器/` | 多分类、softmax、交叉熵 |
+
+## 修复与状态标注（2026-08-02 实例目录维护）
+
+- 🔧 **已修复（双路径 🟢 默认 VM + 解释器均通过）**：
+  - `Adam优化器/adam.th` — 标量 `pow` 方法改全局函数
+  - `Transformer示例/transformer_demo.th`、`标准库使用示例/stdlib_demo.th` — 泛型函数补显式类型参数（`gelu<f64>` 等）
+  - `命令行参数/cli_demo.th` — 补 `use std::cli::cli::has_flag/flag_value`（cli 参数 native 已改为读取真实进程参数）
+  - `梯度裁剪与累积/grad_clip_accum.th` — `clip_grad_by_value<f64>` 显式类型参数
+  - `归并排序/merge_sort.th` — 去掉 while 条件 `&&`（VM 缺陷，已顺带修编译器）、Vec 索引先绑定变量
+  - `打家劫舍II/house_robber.th`、`词频统计/word_count.th`、`最长公共子序列/lcs.th` — Vec/HashMap 索引值先绑定变量、`contains_key` 判存在
+  - `矩阵乘法/matmul.th` — 避免同名 let 重绑定（VM 缺陷，已顺带修编译器）
+  - `微型CNN/cnn.th` — VM `randn` 已支持任意维 shape（原仅 2D 导致 conv2d 权重维度错误）；显示改整张量打印
+  - `日志系统/logging_demo.th` — 因顶层 let 对函数不可见的语言级限制，改为无状态显式级别的内联实现
+- 🟡 **需解释器路径（VM 结构性缺口，待总师排期，已加头部注释）**：
+  - `Trait示例/trait_demo.th` — VM 对具体值 trait 方法分派缺失（call_method_priv 只做字段访问）
+  - `闭包合集/closures.th`、`闭包捕获/closure_capture.th` — VM 缺闭包值间接调用（CallIndirect）
+  - `矩阵分解/matfact.th`、`边缘检测/sobel.th` — VM 的 `for row in tensor` 迭代缺 tensor.len()
 
 ---
 
-*最后更新：2026-07-01*
+*最后更新：2026-08-02*

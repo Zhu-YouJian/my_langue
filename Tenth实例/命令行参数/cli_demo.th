@@ -1,6 +1,11 @@
 // 命令行参数解析示例
 //
 // 演示: cli_args_count(), cli_arg(), has_flag(), flag_value()
+// 注：has_flag / flag_value 来自 std::cli::cli，需 use 导入（完整函数路径）；
+//     cli_args_count() / cli_arg() 为内置 native。
+
+use std::cli::cli::has_flag
+use std::cli::cli::flag_value
 
 fn main() {
     println("=== 命令行参数解析 ===");

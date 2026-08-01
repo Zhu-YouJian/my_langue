@@ -1,0 +1,27 @@
+# 语言核心新特性（M1-M4 补全成果）
+
+综合演示 Tenth 语言核心近期（2026-08-01/02）补全的新特性。
+
+## 文件
+
+- `lang_core_features.th` — 12 项特性分节演示：
+  Box/Rc/Arc/Pin 智能指针、Union tagged 类型、dyn Trait 动态分发、
+  泛型枚举 `<T>`、Newtype、标签 break/continue、自定义运算符、
+  声明式宏、Weak 弱引用、Phantom 类型、Drop trait/RAII、Copy trait
+
+- `operator_overload.th` — 第 13 项：struct 上的自定义运算符重载
+  （impl Add → `a + b` 降级为 `a.add(b)`）。因 VM 对具体值 trait 方法
+  分派有缺口，需解释器路径：`TENTH_NO_VM=1`
+
+## 运行
+
+```
+tenth run lang_core_features.th
+TENTH_NO_VM=1 tenth run operator_overload.th
+```
+
+## 背景
+
+语言核心 M1-M4 补全：M1（智能指针/union/dyn trait）、M2（标签循环/
+泛型枚举/newtype/drop/copy）、M3（自定义运算符/宏/weak）、M4（Phantom）。
+各特性均有对应 Rust 测试覆盖，自举 OK。

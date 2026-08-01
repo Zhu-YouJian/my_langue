@@ -15,7 +15,9 @@ fn rob(nums: Vec<i64>) -> i64 {
     let mut prev2_1 = nums[0];
     let mut prev1_1 = max(nums[0], nums[1]);
     for i in 2..(n - 1) {
-        let curr = max(prev2_1 + nums[i], prev1_1);
+        // 注：解释器路径下 nums[i] 返回 Shared 包裹，先绑定到变量再参与运算
+        let ni = nums[i];
+        let curr = max(prev2_1 + ni, prev1_1);
         prev2_1 = prev1_1;
         prev1_1 = curr;
     };
@@ -25,7 +27,8 @@ fn rob(nums: Vec<i64>) -> i64 {
     let mut prev2_2 = nums[1];
     let mut prev1_2 = max(nums[1], nums[2]);
     for i in 3..n {
-        let curr = max(prev2_2 + nums[i], prev1_2);
+        let ni = nums[i];
+        let curr = max(prev2_2 + ni, prev1_2);
         prev2_2 = prev1_2;
         prev1_2 = curr;
     };

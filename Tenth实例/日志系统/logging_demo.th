@@ -1,45 +1,75 @@
 // 日志系统示例 — 分级日志输出
 //
-// 演示: debug(), info(), warn(), error(), set_level()
+// 说明：`std::logging` 模块当前存在语言级限制——顶层 `let` 绑定对函数不可见
+// （含同文件内），因此模块内依赖 LEVEL_DEBUG 常量与可变 log_level 状态的
+// debug/info/warn/error/set_level 无法被调用。本示例改为**无状态显式传级别**
+// 的等价实现（与 std::logging 相同的格式化与过滤语义），可直接运行。
+//
+// 演示: 级别格式化（DEBUG/INFO/WARN/ERROR）+ 最小级别过滤
+//
+// 注：该限制已记录（顶层 let 作用域 + 模块状态导入），待总师排期修复语言层；
+//     修复后本示例可切回 `use std::logging::logging::*` 的真实模块用法。
+
+// 级别常量：LEVEL_DEBUG=0, LEVEL_INFO=1, LEVEL_WARN=2, LEVEL_ERROR=3
+// 用函数代替顶层 let（顶层 let 对函数不可见），并显式传入当前最小级别。
+
+fn format_message(level: i32, msg: str) -> str {
+    if level == 0 {
+        "[DEBUG] " + msg
+    } else if level == 1 {
+        "[INFO] " + msg
+    } else if level == 2 {
+        "[WARN] " + msg
+    } else {
+        "[ERROR] " + msg
+    }
+}
+
+// 按最小级别过滤并输出：level >= min_level 才显示
+fn log_msg(level: i32, min_level: i32, msg: str) {
+    if level >= min_level {
+        println(format_message(level, msg));
+    };
+}
 
 fn main() {
-    println("=== 日志系统演示 ===");
-
-    // 默认级别为 INFO，DEBUG 消息不会显示
-    info("这是一条 INFO 消息");
-    warn("这是一条 WARN 消息");
-    error("这是一条 ERROR 消息");
-    debug("这条 DEBUG 消息不会显示（默认级别为 INFO）");
-
-    // 切换到 DEBUG 级别
+    println("=== 日志系统演示（无状态显式级别，语义同 std::logging） ===");
     println("");
-    println("--- 切换到 DEBUG 级别 ---");
-    set_level(0);  // LEVEL_DEBUG = 0
-    debug("现在 DEBUG 消息可见了");
-    info("INFO 消息仍然可见");
-    warn("WARN 消息仍然可见");
-    error("ERROR 消息仍然可见");
 
-    // 切换到 WARN 级别
+    // 默认最小级别 INFO(1)，DEBUG(0) 不显示
+    let mut min_level: i32 = 1;
+    println("--- 最小级别 INFO(1) ---");
+    log_msg(1, min_level, "INFO 消息");
+    log_msg(2, min_level, "WARN 消息");
+    log_msg(3, min_level, "ERROR 消息");
+    log_msg(0, min_level, "DEBUG 消息（被过滤）");
     println("");
-    println("--- 切换到 WARN 级别 ---");
-    set_level(2);  // LEVEL_WARN = 2
-    debug("DEBUG 消息被过滤");
-    info("INFO 消息被过滤");
-    warn("WARN 消息可见");
-    error("ERROR 消息可见");
 
-    // 切换到 ERROR 级别
+    // 切到 DEBUG(0)
+    println("--- 最小级别 DEBUG(0) ---");
+    min_level = 0;
+    log_msg(0, min_level, "DEBUG 消息可见了");
+    log_msg(1, min_level, "INFO 消息仍然可见");
+    log_msg(2, min_level, "WARN 消息仍然可见");
+    log_msg(3, min_level, "ERROR 消息仍然可见");
     println("");
-    println("--- 切换到 ERROR 级别 ---");
-    set_level(3);  // LEVEL_ERROR = 3
-    debug("DEBUG 被过滤");
-    info("INFO 被过滤");
-    warn("WARN 被过滤");
-    error("只有 ERROR 消息可见");
 
-    // 恢复 INFO 级别
-    set_level(1);
+    // 切到 WARN(2)
+    println("--- 最小级别 WARN(2) ---");
+    min_level = 2;
+    log_msg(0, min_level, "DEBUG 被过滤");
+    log_msg(1, min_level, "INFO 被过滤");
+    log_msg(2, min_level, "WARN 消息可见");
+    log_msg(3, min_level, "ERROR 消息可见");
+    println("");
+
+    // 切到 ERROR(3)
+    println("--- 最小级别 ERROR(3) ---");
+    min_level = 3;
+    log_msg(0, min_level, "DEBUG 被过滤");
+    log_msg(1, min_level, "INFO 被过滤");
+    log_msg(2, min_level, "WARN 被过滤");
+    log_msg(3, min_level, "只有 ERROR 消息可见");
 
     println("");
     println("日志系统演示完成!");

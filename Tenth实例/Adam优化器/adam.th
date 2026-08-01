@@ -42,12 +42,12 @@ fn main() {
         vw = beta2 * vw + (1.0 - beta2) * gw * gw;
         vb = beta2 * vb + (1.0 - beta2) * gb * gb;
 
-        // 偏差修正
+        // 偏差修正（标量用全局 pow 函数，非方法）
         let t = to_f64(epoch + 1);
-        let mw_hat = mw / (1.0 - beta1.pow(t));
-        let mb_hat = mb / (1.0 - beta1.pow(t));
-        let vw_hat = vw / (1.0 - beta2.pow(t));
-        let vb_hat = vb / (1.0 - beta2.pow(t));
+        let mw_hat = mw / (1.0 - pow(beta1, t));
+        let mb_hat = mb / (1.0 - pow(beta1, t));
+        let vw_hat = vw / (1.0 - pow(beta2, t));
+        let vb_hat = vb / (1.0 - pow(beta2, t));
 
         // 参数更新
         w = w - lr * mw_hat / (vw_hat.sqrt() + eps);

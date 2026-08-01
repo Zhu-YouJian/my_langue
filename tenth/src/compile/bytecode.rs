@@ -99,8 +99,10 @@ impl BytecodeCompiler {
             },
 
             Var(name) => {
-                // Check locals first
-                if let Some(pos) = self.locals.iter().position(|n| n == name) {
+                // Check locals first. 用 rposition（最近绑定）：同名 let/循环变量
+                // 重绑定会追加新槽位，position（首个匹配）会读旧槽位导致错误值
+                // （如 `let x = n; let x = x + 10;` 读回首个 x）。
+                if let Some(pos) = self.locals.iter().rposition(|n| n == name) {
                     self.chunk.emit(Op::Load(pos));
                 } else {
                     let i = self.chunk.add_string(name);
@@ -113,7 +115,13 @@ impl BytecodeCompiler {
                 let saved_tail = self.tail_call_ok;
                 self.tail_call_ok = false;
                 self.compile_expr(left)?;
-                self.compile_expr(right)?;
+                // 短路逻辑运算符（And/Or）的右操作数**不能**在此急切编译：
+                // 其短路分支内部会再次 compile_expr(right)，此前无条件编译右操作数
+                // 导致双重求值 + 栈污染 —— `true || false` 错误返回 false、
+                // `false && true` 错误返回 true（右操作数覆盖栈顶）。
+                if !matches!(op, BinOp::And | BinOp::Or) {
+                    self.compile_expr(right)?;
+                }
                 self.tail_call_ok = saved_tail;
                 use crate::hir::hir::BinOp::*;
                 self.chunk.emit(match op {
@@ -255,7 +263,8 @@ impl BytecodeCompiler {
             Assign { target, value } => {
                 self.compile_expr(value)?;
                 self.chunk.emit(Op::Dup);
-                if let Some(pos) = self.locals.iter().position(|n| n == target) {
+                // rposition：写最近绑定的槽位（同名重绑定/循环变量场景）
+                if let Some(pos) = self.locals.iter().rposition(|n| n == target) {
                     self.chunk.emit(Op::Store(pos));
                 } else {
                     // New local
@@ -274,7 +283,8 @@ impl BytecodeCompiler {
 
             AssignOp { target, op, value } => {
                 // target = target op value
-                if let Some(pos) = self.locals.iter().position(|n| n == target) {
+                // rposition：读/写最近绑定的槽位
+                if let Some(pos) = self.locals.iter().rposition(|n| n == target) {
                     self.chunk.emit(Op::Load(pos));
                 } else {
                     let i = self.chunk.add_string(target);
@@ -284,7 +294,7 @@ impl BytecodeCompiler {
                 use crate::hir::hir::BinOp::*;
                 self.chunk.emit(match op { Add=>Op::Add, Sub=>Op::Sub, Mul=>Op::Mul, Div=>Op::Div, _=>Op::Add });
                 self.chunk.emit(Op::Dup);
-                if let Some(pos) = self.locals.iter().position(|n| n == target) {
+                if let Some(pos) = self.locals.iter().rposition(|n| n == target) {
                     self.chunk.emit(Op::Store(pos));
                 } else {
                     let i = self.chunk.add_string(target);
@@ -327,7 +337,8 @@ impl BytecodeCompiler {
                 self.chunk.emit(Op::StoreField(fi));
                 if is_union_var {
                     if let HirExprKind::Var(vn) = &target.kind {
-                        if let Some(pos) = self.locals.iter().position(|n| n == vn) {
+                        // rposition：写最近绑定槽位
+                        if let Some(pos) = self.locals.iter().rposition(|n| n == vn) {
                             self.chunk.emit(Op::Store(pos));
                         } else {
                             let i = self.chunk.add_string(vn);
@@ -690,7 +701,8 @@ impl BytecodeCompiler {
                         }
                         crate::hir::hir::InterpPart::Expr(name) => {
                             // Look up variable and convert to string
-                            if let Some(pos) = self.locals.iter().position(|n| n == name) {
+                            // rposition：最近绑定槽位
+                            if let Some(pos) = self.locals.iter().rposition(|n| n == name) {
                                 self.chunk.emit(Op::Load(pos));
                             } else {
                                 let i = self.chunk.add_string(name);
@@ -791,7 +803,8 @@ impl BytecodeCompiler {
                 // Store captured variable values as globals in the main chunk
                 // so the closure can access them via LoadGlobal
                 for cap_name in captures {
-                    if let Some(pos) = self.locals.iter().position(|n| n == cap_name) {
+                    // rposition：捕获最近绑定值
+                    if let Some(pos) = self.locals.iter().rposition(|n| n == cap_name) {
                         // Load from local and store as global
                         self.chunk.emit(Op::Load(pos));
                         let gi = self.chunk.add_string(cap_name);

@@ -23,9 +23,13 @@ fn lcs(s1: str, s2: str) -> i64 {
 
         for j in 1..=n {
             if s1[i - 1] == s2[j - 1] {
-                curr.push(prev[j - 1] + 1);
+                // 注：解释器路径下 prev/curr 索引返回 Shared 包裹，先绑定到变量再运算
+                let pj = prev[j - 1];
+                curr.push(pj + 1);
             } else {
-                curr.push(max(prev[j], curr[j - 1]));
+                let pj = prev[j];
+                let cj = curr[j - 1];
+                curr.push(max(pj, cj));
             };
         };
 

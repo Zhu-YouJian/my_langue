@@ -60,9 +60,9 @@ fn main() {
 
     println("=== CNN 预测 ===");
     println("期待: [1,0; 1,0; 0,1; 0,1]");
-    for row in pred {
-        println(row);
-    };
+    // 注：VM 路径不支持 `for row in tensor` 张量迭代（张量无 len 方法），
+    // 改用整张量直接打印（解释器路径亦可用）。
+    println(pred);
 
     println("\n=== CE loss ===");
     println(cross_entropy(logits, target).sum());

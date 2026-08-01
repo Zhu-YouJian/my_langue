@@ -16,9 +16,10 @@ fn main() {
     // 模拟训练爆炸时的梯度：含异常大值
     let gw = tensor[[0.5, -0.3, 5.0, -8.0, 0.2]];
     println("  原始梯度         = ", gw);
-    println("  按值裁剪 [-1, 1] = ", clip_grad_by_value(gw, 1.0));
-    println("  按值裁剪 [-3, 3] = ", clip_grad_by_value(gw, 3.0));
-    println("  按值裁剪 [-0.5, 0.5] = ", clip_grad_by_value(gw, 0.5));
+    // 注：clip_grad_by_value 是泛型函数 <T>，需显式类型参数
+    println("  按值裁剪 [-1, 1] = ", clip_grad_by_value<f64>(gw, 1.0));
+    println("  按值裁剪 [-3, 3] = ", clip_grad_by_value<f64>(gw, 3.0));
+    println("  按值裁剪 [-0.5, 0.5] = ", clip_grad_by_value<f64>(gw, 0.5));
     println("");
 
     // ── 2. 梯度裁剪在训练中的用法（伪代码）──
@@ -30,7 +31,7 @@ fn main() {
     println("  backward(loss);");
     println("  let gw = grad(w);");
     println("  // 裁剪梯度，防止爆炸");
-    println("  let gw_clip = clip_grad_by_value(gw, 5.0);");
+    println("  let gw_clip = clip_grad_by_value<f64>(gw, 5.0);");
     println("  w = w - lr * gw_clip;");
     println("");
 
@@ -46,7 +47,7 @@ fn main() {
     println("    };");
     println("    // 累积完成，统一更新");
     println("    let gw = grad(w);");
-    println("    w = w - lr * clip_grad_by_value(gw, 5.0);");
+    println("    w = w - lr * clip_grad_by_value<f64>(gw, 5.0);");
     println("    zero_grad();");
     println("");
 

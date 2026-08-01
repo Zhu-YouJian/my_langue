@@ -1229,11 +1229,17 @@ pub fn register_all_natives(vm: &mut Vm) {
             _ => Ok(Value::Float(0.0))
         }
     });
-    // CLI functions
+    // CLI functions（读取真实进程参数：cli_args_count 含程序名）
     vm.add_native("cli_args_count".into(), |_vm, _args| {
-        Ok(Value::Int(1, BaseType::I32))
+        Ok(Value::Int(std::env::args().len() as i64, BaseType::I32))
     });
-    vm.add_native("cli_arg".into(), |_vm, _args| {
+    vm.add_native("cli_arg".into(), |_vm, args| {
+        if let Some(Value::Int(idx, _)) = args.first() {
+            let all: Vec<String> = std::env::args().collect();
+            if let Some(s) = all.get(*idx as usize) {
+                return Ok(Value::String(s.clone()));
+            }
+        }
         Ok(Value::String(String::new()))
     });
     // JSON functions
@@ -1930,30 +1936,19 @@ pub fn register_all_natives(vm: &mut Vm) {
         }
     });
     vm.add_native("randn".into(), |_vm, args| {
-        let rows = match args.first() { Some(Value::Int(n, _)) => *n as usize, _ => 1 };
-        let cols = match args.get(1) { Some(Value::Int(n, _)) => *n as usize, _ => 1 };
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let data: Vec<f64> = (0..rows * cols).map(|_| {
-            // Box-Muller transform for normal distribution
-            let u1: f64 = rng.r#gen::<f64>().max(1e-10);
-            let u2: f64 = rng.r#gen::<f64>();
-            (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
-        }).collect();
-        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec(data, vec![rows, cols])))))
+        // 对齐 zeros/ones/rand：支持任意维 shape（此前仅 2D rows×cols，
+        // 导致 randn(4,1,2,2) 在 VM 路径退化为 2D，conv2d 报权重维度错误）。
+        let shape: Vec<usize> = args.iter()
+            .map(|a| a.as_int().unwrap_or(1) as usize)
+            .collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::randn(&shape)))))
     });
     vm.add_native("randn_f32".into(), |_vm, args| {
-        let rows = match args.first() { Some(Value::Int(n, _)) => *n as usize, _ => 1 };
-        let cols = match args.get(1) { Some(Value::Int(n, _)) => *n as usize, _ => 1 };
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let data: Vec<f32> = (0..rows * cols).map(|_| {
-            // Box-Muller transform for normal distribution (f32 版本)
-            let u1: f32 = rng.r#gen::<f32>().max(1e-10);
-            let u2: f32 = rng.r#gen::<f32>();
-            (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
-        }).collect();
-        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec_f32(data, vec![rows, cols])))))
+        // 对齐 randn：支持任意维 shape
+        let shape: Vec<usize> = args.iter()
+            .map(|a| a.as_int().unwrap_or(1) as usize)
+            .collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::randn_f32(&shape)))))
     });
     // ── Tensor 构造函数（与 interpreter::natives 对齐，支持任意 shape）──
     // 历史：这些函数仅在 interpreter 实现，JIT/VM 路径下返回 Unit。

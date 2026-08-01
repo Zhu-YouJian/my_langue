@@ -18,7 +18,8 @@ fn main() {
     // ── 1. 激活函数：GELU vs LeakyReLU ──
     println("── 1. 激活函数 ──");
     let x = tensor[[-2.0, -1.0, 0.0, 1.0, 2.0]];
-    let y_gelu = gelu(x);
+    // 注：gelu 是泛型函数 <T>，导入后需显式类型参数（与 std 测试一致）
+    let y_gelu = gelu<f64>(x);
     let y_leaky = leaky_relu_default(x);
     println("  输入 x         = ", x);
     println("  GELU(x)        = ", y_gelu);
@@ -27,8 +28,8 @@ fn main() {
 
     // ── 2. 权重初始化器 ──
     println("── 2. 权重初始化器 ──");
-    let w_xavier = xavier_normal(3, 4);
-    let w_he = he_normal(3, 4);
+    let w_xavier = xavier_normal<f64>(3, 4);
+    let w_he = he_normal<f64>(3, 4);
     let sq_x = w_xavier * w_xavier;
     let sq_h = w_he * w_he;
     let mean_sq_x = sq_x.mean();
@@ -41,7 +42,7 @@ fn main() {
     // AdamW 与 Adam 的区别：权重衰减直接作用于参数，不污染梯度
     println("── 3. AdamW 优化器单步（内联展示公式）──");
     new_grad();
-    let w = param(he_normal(2, 3));
+    let w = param(he_normal<f64>(2, 3));
     let target = tensor[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     let diff = w - target;
     let loss = (diff * diff).mean();

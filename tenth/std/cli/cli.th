@@ -2,8 +2,13 @@
 //
 // Provides functions for reading command-line arguments.
 //
-// Usage:
-//   use std::cli::cli
+// Usage（注意：多段路径 use 需完整函数路径导入）：
+//   use std::cli::cli::has_flag
+//   use std::cli::cli::flag_value
+//
+// 注（2026-08-02）：cli_args_count / cli_arg 底层 native 已从桩实现（恒返回
+// 1/空串）改为读取真实进程参数（cli_args_count 含程序名），两条执行路径（VM/解释器）
+// 已对齐。
 
 /// Get the number of command-line arguments (including program name)
 fn args_count() -> i32 {
