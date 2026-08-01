@@ -1,8 +1,0 @@
-﻿tenth.exe : Error: 杩愯鏃堕敊璇?鈥?鏃犳硶璇诲彇 m33_demo.th锛氱郴缁熸壘涓嶅埌鎸囧畾鐨勬枃浠躲€?(os error 2)
-所在位置 行:1 字符: 22
-+ ... tion tenth; & .\target\release\tenth.exe run m33_demo.th 2>&1 | Out-F ...
-+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (Error: 杩愯鏃堕敊璇?...躲€?(os error 2) 
-   :String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
