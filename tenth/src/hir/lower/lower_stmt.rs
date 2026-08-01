@@ -63,7 +63,7 @@ impl Lowerer {
 
         let kind = match &stmt.kind {
             StmtKind::Let { names, type_ann, mutable, init } => {
-                let lowered_init = init.as_ref().map(|i| self.lower_expr(i)).transpose()?;
+                let mut lowered_init = init.as_ref().map(|i| self.lower_expr(i)).transpose()?;
                 // 类型注解强制化：若 type_ann 和 init 都存在，检查 shape 兼容性并合并
                 let ty = match (type_ann.as_ref(), lowered_init.as_ref()) {
                     (Some(ann), Some(init_expr)) => {
@@ -74,6 +74,17 @@ impl Lowerer {
                     (None, Some(init_expr)) => init_expr.ty.clone(),
                     (None, None) => Type::Unknown,
                 };
+
+                // M1.3：dyn 类型注解驱动的隐式升级——`let d: dyn Draw = rect;`
+                // ① 编译期检查：具体类型必须实现该 trait（未实现 → TypeError，防误报）；
+                // ② init 改写为 `into_dyn(rect, "Draw")`，运行时包装为 Value::Dyn。
+                if let Type::Dyn(trait_name) = &ty {
+                    if let Some(init_expr) = lowered_init {
+                        self.check_dyn_upgrade(trait_name, &init_expr.ty, &span)?;
+                        let call = self.make_into_dyn_call(init_expr, trait_name, &span);
+                        lowered_init = Some(call);
+                    }
+                }
 
                 for name in names {
                     self.scope.define_var(name.name.clone(), ty.clone(), *mutable);
@@ -346,6 +357,13 @@ impl Lowerer {
                                     span: fn_item.span.clone(),
                                     is_test: false,
                                 };
+                                // M1.3：dyn 分派函数注册——VM 路径（call_method_priv 的
+                                // Value::Dyn 分支）通过 `__dyn_{trait}_{type}_{method}`
+                                // 名字调用字节码函数（VM 不能直接执行 HirFnDef）；
+                                // 解释器路径仍直接用 trait_impls 表。
+                                let mut dyn_fn = fn_def.clone();
+                                dyn_fn.name = format!("__dyn_{}_{}_{}", trait_name_str, type_name_str, fn_def.name);
+                                self.functions.push(dyn_fn);
                                 method_map.insert(fn_def.name.clone(), fn_def);
                             }
                         }

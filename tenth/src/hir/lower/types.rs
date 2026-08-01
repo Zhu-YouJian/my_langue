@@ -635,6 +635,17 @@ impl Lowerer {
                 "chars" => Type::Array { inner: Box::new(Type::Base(BaseType::Char)), size: None },
                 _ => Type::Unknown,
             },
+            // M1.3：dyn 接收者的方法返回类型——查 trait 定义签名。
+            // `d.draw()`（d: dyn Draw）→ Draw::draw 的返回类型；
+            // 方法不在 trait 中 → Unknown（运行时按无该方法报错）。
+            Type::Dyn(trait_name) => {
+                if let Some(trait_def) = self.trait_defs.get(trait_name) {
+                    if let Some(m) = trait_def.methods.iter().find(|m| m.name == method) {
+                        return m.return_type.clone();
+                    }
+                }
+                Type::Unknown
+            }
             Type::Array { inner, size } => match method {
                 "len" => Type::Base(BaseType::I64),
                 "push" => Type::unit(),
@@ -756,6 +767,19 @@ impl Lowerer {
                 args.first().map(|a| a.ty.clone()).unwrap_or(Type::Unknown),
             ))),
             "compile_host" => Ok(Type::Base(BaseType::I32)),
+            // M1.3：dyn 升级 native——返回 Type::Dyn(trait_name)。
+            // trait 名从 args[1]（字符串字面量）提取；非字面量/缺失 → Unknown
+            // （运行时仍正确包装，仅静态类型信息缺失）。
+            "into_dyn" => {
+                let trait_name = args.get(1).and_then(|a| match &a.kind {
+                    HirExprKind::Literal(Literal::String(s)) => Some(s.clone()),
+                    _ => None,
+                });
+                Ok(match trait_name {
+                    Some(t) => Type::Dyn(t),
+                    None => Type::Unknown,
+                })
+            }
             "format" => Ok(Type::str_()),
             "to_string" | "type_name" => Ok(Type::str_()),
             "with_step_limit" | "with_timeout_ms" => Ok(Type::Unknown),

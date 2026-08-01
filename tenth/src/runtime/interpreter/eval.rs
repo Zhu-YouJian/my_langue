@@ -72,6 +72,8 @@ impl super::Interpreter {
                             | "read_line" | "env_get" | "env_set" | "exit"
                             // 阶段1-静默失败：Result/Option 显式解包原语（自由函数 native）
                             | "or_die" | "assume_ok"
+                            // M1.3：dyn Trait 升级 native（into_dyn(value, trait_name)）
+                            | "into_dyn"
                             | "Vec::new" | "HashMap::new"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"

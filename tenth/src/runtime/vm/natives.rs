@@ -859,6 +859,22 @@ impl Vm {
                 "clone" => Ok(Value::Pin(Box::new((*v).clone()))),
                 _ => err(&format!("Pin 没有方法 '{}'", method)),
             },
+            // M1.3：dyn Trait 动态分派——通过 `__dyn_{trait}_{type}_{method}`
+            // 字节码函数调用（lowerer 在 `impl Trait for Type` 时注册这些函数）。
+            // 与解释器（trait_impls 直接查表 + eval HIR body）语义一致。
+            Value::Dyn { trait_name, type_name, value } => {
+                let mangled = format!("__dyn_{}_{}_{}", trait_name, type_name, method);
+                if !self.has_fn(&mangled) {
+                    return err(&format!(
+                        "dyn {} 值（具体类型 {}）没有方法 '{}'",
+                        trait_name, type_name, method
+                    ));
+                }
+                let mut dyn_args = Vec::with_capacity(args.len() + 1);
+                dyn_args.push((*value).clone());
+                dyn_args.extend(args.iter().cloned());
+                self.call_with_args(&mangled, &dyn_args)
+            }
             _ => err(&format!("没有方法 '{}'", method)),
         }
     }

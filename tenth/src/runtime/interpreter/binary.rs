@@ -423,6 +423,9 @@ impl super::Interpreter {
             Value::HeapBox(v) => format!("Box({})", self.value_to_string(v)),
             Value::SharedBox(v) => format!("Rc({})", self.value_to_string(&v.borrow())),
             Value::Pin(v) => format!("Pin({})", self.value_to_string(v)),
+            Value::Dyn { trait_name, type_name, value } => {
+                format!("dyn {}<{}>({})", trait_name, type_name, self.value_to_string(value))
+            }
             Value::BigInt(s) => format!("{}bi", s),
             Value::Complex(re, im) => {
                 if *im < 0.0 {

@@ -95,6 +95,24 @@ impl super::Interpreter {
             Value::HeapBox(_) | Value::SharedBox(_) | Value::Pin(_) => {
                 self.eval_smart_ptr_method(recv, method, args).map(Some)
             }
+            // M1.3：dyn Trait 动态分派——按 trait_impls[trait][type] 查方法实现，
+            // 复用既有 call_method_impl（与具体值的 trait 方法分派同一机制）。
+            Value::Dyn { trait_name, type_name, value } => {
+                let method_fn = self.trait_impls
+                    .get(trait_name)
+                    .and_then(|impls| impls.get(type_name))
+                    .and_then(|methods| methods.get(method))
+                    .cloned();
+                match method_fn {
+                    Some(fn_def) => self.call_method_impl(value, &fn_def, args),
+                    None => Err(TenthError::RuntimeError { line: None, col: None,
+                        message: format!(
+                            "dyn {} 值（具体类型 {}）没有方法 '{}'",
+                            trait_name, type_name, method
+                        ),
+                    }),
+                }
+            }
             _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("此类型不支持方法 '{}'", method),
             }),

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use crate::parser::ast as ast;
 use crate::parser::ast::{ExprKind, StmtKind};
-use crate::error::TenthWarning;
+use crate::error::{TenthError, TenthResult, TenthWarning};
 use super::hir::*;
 use super::types::*;
 
@@ -134,6 +134,75 @@ impl Lowerer {
             || self.enums.contains_key(name)
             || self.unions.contains_key(name)
             || self.generic_structs.contains_key(name)
+    }
+
+    /// M1.3：把具体值表达式改写为 `into_dyn(value, "TraitName")` 调用。
+    /// 生成的 HirExpr 类型为 Type::Dyn(trait_name)，运行时由 into_dyn native
+    /// 包装为 Value::Dyn。
+    pub(super) fn make_into_dyn_call(&self, value: HirExpr, trait_name: &str, span: &crate::lexer::token::Span) -> HirExpr {
+        let trait_name_owned = trait_name.to_string();
+        let dyn_ty = Type::Dyn(trait_name_owned.clone());
+        HirExpr {
+            kind: HirExprKind::Call {
+                func: Box::new(HirExpr {
+                    kind: HirExprKind::Var("into_dyn".to_string()),
+                    ty: Type::Unknown,
+                    span: span.clone(),
+                }),
+                args: vec![
+                    value,
+                    HirExpr {
+                        kind: HirExprKind::Literal(Literal::String(trait_name_owned.clone())),
+                        ty: Type::str_(),
+                        span: span.clone(),
+                    },
+                ],
+                ret_ty: dyn_ty.clone(),
+            },
+            ty: dyn_ty,
+            span: span.clone(),
+        }
+    }
+
+    /// M1.3：dyn 升级编译期类型检查（防误报底线）。
+    /// 仅在「明确知道具体类型 + 明确 trait 名」时检查 trait_impls；
+    /// Unknown / 未声明的 TypeParam（真泛型参数）/ 其他 一律保守放行。
+    pub(super) fn check_dyn_upgrade(&self, trait_name: &str, ty: &Type, span: &crate::lexer::token::Span) -> TenthResult<()> {
+        let type_name = match ty {
+            Type::Struct(name) | Type::Enum(name) | Type::Union(name) => name.clone(),
+            Type::Generic { base, .. } => match base.as_ref() {
+                Type::Struct(name) | Type::Enum(name) => name.clone(),
+                // 泛型 struct 实例（`File<Open>`）：trait impl 以 base 名注册
+                Type::TypeParam { name } => name.clone(),
+                _ => return Ok(()),
+            },
+            // struct/enum/union 字面量表达式推断为 TypeParam(name)——
+            // 仅当 name 是已声明的用户类型时才做 impl 检查；
+            // 未声明的 TypeParam（真泛型参数 T）保守放行（防误报）。
+            Type::TypeParam { name } => {
+                if self.structs.contains_key(name) || self.enums.contains_key(name) || self.unions.contains_key(name) {
+                    name.clone()
+                } else {
+                    return Ok(());
+                }
+            }
+            // Unknown / 其他：保守放行（防误报）
+            _ => return Ok(()),
+        };
+        let has_impl = self.trait_impls
+            .get(trait_name)
+            .map_or(false, |impls| impls.contains_key(&type_name));
+        if !has_impl {
+            return Err(TenthError::TypeError {
+                line: span.line,
+                col: span.col,
+                message: format!(
+                    "类型 '{}' 未实现 trait '{}'，无法升级为 dyn {}",
+                    type_name, trait_name, trait_name
+                ),
+            });
+        }
+        Ok(())
     }
 
     /// 收集表达式中所有"作为最终值产出"的 Ref/MutRef 所引用的变量名。

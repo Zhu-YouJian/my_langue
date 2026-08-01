@@ -136,7 +136,10 @@ impl Lowerer {
                             | "url_encode" | "url_decode"
                             // 哈希函数（SHA-256/SHA-512/MD5）
                             | "sha256" | "sha512" | "md5"
-                            | "sha256_str" | "sha512_str" | "md5_str" => {
+                            | "sha256_str" | "sha512_str" | "md5_str"
+                            // M1.3：dyn Trait 升级 native（into_dyn(value, trait_name)）
+                            // 由类型注解驱动的隐式升级在 Let 分支改写为对它的调用
+                            | "into_dyn" => {
                                 (HirExprKind::Var(ident.name.clone()), Type::Unknown)
                             }
                             _ => {

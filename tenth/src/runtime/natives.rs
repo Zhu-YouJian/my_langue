@@ -11,7 +11,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use crate::hir::types::BaseType;
+use crate::hir::types::{BaseType, Type};
 use std::rc::Rc;
 
 use crate::error::{TenthError, TenthResult};
@@ -2763,6 +2763,28 @@ pub fn register_all_natives(vm: &mut Vm) {
             return Err(TenthError::RuntimeError { line: None, col: None, message: "Pin::new() 需要 1 个参数".into() });
         }
         Ok(Value::Pin(Box::new(args[0].clone())))
+    });
+
+    // ── M1.3：dyn Trait 升级 ──
+    // into_dyn(value, trait_name)：把具体值包装为 Value::Dyn。
+    // type_name 从值运行时类型提取（Struct/Enum/Union/TypeParam）。
+    vm.add_native("into_dyn".into(), |_vm, args| {
+        if args.len() < 2 {
+            return Err(TenthError::RuntimeError { line: None, col: None, message: "into_dyn() 需要 2 个参数 (value, trait_name)".into() });
+        }
+        let trait_name = match &args[1] {
+            Value::String(s) => s.clone(),
+            _ => return Err(TenthError::RuntimeError { line: None, col: None, message: "into_dyn() 的 trait_name 必须是字符串".into() }),
+        };
+        let type_name = match args[0].type_of() {
+            Type::Struct(n) | Type::Enum(n) | Type::Union(n) | Type::TypeParam { name: n } => n,
+            t => t.to_string(),
+        };
+        Ok(Value::Dyn {
+            trait_name,
+            type_name,
+            value: Box::new(args[0].clone()),
+        })
     });
 
     // ── 问题35：BigInt 运算 ──

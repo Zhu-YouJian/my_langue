@@ -157,6 +157,17 @@ pub enum Value {
     /// Pin<T>：固定不可移动包装（问题31）。
     Pin(Box<Value>),
 
+    // ── M1.3：dyn Trait 动态分发 ──
+    /// dyn Trait 动态分发对象：
+    /// - trait_name：dyn 指向的 trait 名（如 "Draw"）
+    /// - type_name：具体类型名（如 "Circle"）
+    /// - value：具体值（Box 包装，避免递归大小）
+    Dyn {
+        trait_name: String,
+        type_name: String,
+        value: Box<Value>,
+    },
+
     // ── 问题35：BigInt ──
     BigInt(String),
 
@@ -232,6 +243,7 @@ impl Value {
             Value::HeapBox(v) => Type::HeapBox(Box::new(v.type_of())),
             Value::SharedBox(v) => Type::SharedBox(Box::new(v.borrow().type_of())),
             Value::Pin(v) => Type::Pin(Box::new(v.type_of())),
+            Value::Dyn { trait_name, .. } => Type::Dyn(trait_name.clone()),
             Value::BigInt(_) => Type::Base(BaseType::BigInt),
             Value::Complex(_, _) => Type::Base(BaseType::C128),
             Value::Decimal(_) => Type::Base(BaseType::Decimal),
@@ -249,6 +261,7 @@ impl Value {
             Value::HeapBox(v) => v.as_float(),
             Value::SharedBox(v) => v.borrow().as_float(),
             Value::Pin(v) => v.as_float(),
+            Value::Dyn { value, .. } => value.as_float(),
             _ => None,
         }
     }
@@ -266,6 +279,7 @@ impl Value {
             Value::HeapBox(v) => v.as_f32(),
             Value::SharedBox(v) => v.borrow().as_f32(),
             Value::Pin(v) => v.as_f32(),
+            Value::Dyn { value, .. } => value.as_f32(),
             _ => None,
         }
     }
@@ -281,6 +295,7 @@ impl Value {
             Value::HeapBox(v) => v.as_int(),
             Value::SharedBox(v) => v.borrow().as_int(),
             Value::Pin(v) => v.as_int(),
+            Value::Dyn { value, .. } => value.as_int(),
             _ => None,
         }
     }
@@ -304,6 +319,7 @@ impl Value {
             Value::HeapBox(v) => v.is_truthy(),
             Value::SharedBox(v) => v.borrow().is_truthy(),
             Value::Pin(v) => v.is_truthy(),
+            Value::Dyn { value, .. } => value.is_truthy(),
             _ => true,
         }
     }
@@ -550,6 +566,9 @@ impl fmt::Display for Value {
             Value::HeapBox(v) => write!(f, "Box({})", v),
             Value::SharedBox(v) => write!(f, "Rc({})", v.borrow()),
             Value::Pin(v) => write!(f, "Pin({})", v),
+            Value::Dyn { trait_name, type_name, value } => {
+                write!(f, "dyn {}<{}>({})", trait_name, type_name, value)
+            }
             Value::BigInt(s) => write!(f, "{}bi", s),
             Value::Complex(re, im) => {
                 if *im < 0.0 {
