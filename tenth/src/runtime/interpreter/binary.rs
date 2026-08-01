@@ -16,6 +16,18 @@ use crate::runtime::autodiff::TapeOp;
 
 impl super::Interpreter {
     pub(super) fn eval_binary(&mut self, op: &BinOp, l: &Value, r: &Value) -> TenthResult<Value> {
+        // L2.3a-a2：解释器路径 Vec.push 会用 Shared 包裹元素，导致 `acc + Vec.get(i)`
+        // （std::collections::iter::sum / collections::product 等）在解释器路径报
+        // "加法类型不匹配"，而 VM 路径正常（VM 的 Vec 元素不包裹）。
+        // 运算前统一解壳 Shared/Ref/MutRef，使解释器与 VM 行为一致。deref_wrapped
+        // 递归处理多层包裹；非包裹值直接返回 clone（无性能影响路径仅多一次 clone）。
+        if matches!(l, Value::Shared(_) | Value::Ref(_) | Value::MutRef(_))
+            || matches!(r, Value::Shared(_) | Value::Ref(_) | Value::MutRef(_))
+        {
+            let l = super::natives::deref_wrapped(l);
+            let r = super::natives::deref_wrapped(r);
+            return self.eval_binary(op, &l, &r);
+        }
         match op {
             BinOp::Add => match (l, r) {
                 (Value::Int(a, dt), Value::Int(b, _)) => {

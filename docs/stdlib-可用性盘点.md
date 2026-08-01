@@ -50,9 +50,9 @@
 | `async.th` | 0 | 空壳 | 纯文档（async native 为 built-in，无 .th API） |
 | `autograd.th` | 3 | ⚠️ 条件 | `call_custom_op1/2/3` 需 Rust 端 `register_custom_op` 返回的 op_id 才可用；未注册 op 报"未注册"。模块本身编译/调用路径正常 |
 | `cli/cli.th` | 6 | ✅ | 双路径可用（底层 native 已读真实进程参数） |
-| `collections/collections.th` | 11 | ⚠️ | 高阶函数（`any/all/find/count_if/partition/flat_map`）**VM 路径失败**："未定义的函数 'f'"（a1：VM 不支持参数名调用函数）；`sum/product` 解释器路径失败："加法类型不匹配"（a2）。VM 下 `sum/product` 可用 |
+| `collections/collections.th` | 11 | ⚠️ | 高阶函数（`any/all/find/count_if/partition/flat_map`）**VM 路径失败**："未定义的函数 'f'"（a1：VM 不支持参数名调用函数）；`sum/product` 解释器路径**已修**（L2.3a-a2：eval_binary 对 Shared 解壳），双路径可用 |
 | `collections/hashset.th` | 14 | ✅ | 双路径可用（`HashSet` struct + 链式 API） |
-| `collections/iter.th` | 15 | ⚠️ | 同 `collections.th`：高阶函数 VM 失败（a1）、`sum` 解释器失败（a2） |
+| `collections/iter.th` | 15 | ⚠️ | 同 `collections.th`：高阶函数 VM 失败（a1）；`sum` 解释器路径**已修**（L2.3a-a2） |
 | `crypto/hash.th` | 3 | ✅ | `sha256_hex/sha512_hex/md5_hex` 双路径可用 |
 | `curry.th` | 3 | ⚠️ | `partial/curry/compose` 解释器路径可用；**VM 路径失败**（a1） |
 | `data/dataloader.th` | 6 | ⚠️ | **`next_batch` 不推进 cursor**（b）：注释声称"advances the cursor"但实现只返回切片不更新状态，`has_next` 恒真、迭代死循环。需改为返回新 DataLoader（值语义）或提供手动推进 API |
@@ -64,7 +64,7 @@
 | `http.th` | 2 | ✅ | `get/post` 可用（需网络；失败返回 `Result::Err` 不崩溃）。**prelude 写的 `std::http::http::get` 不工作**（c） |
 | `init/initializers.th` | 6 | ✅ | 双路径可用（`xavier/he/zeros/constant_init`，f32/f64 泛型均过） |
 | `io.th` | 4 | ✅ | `eprint/eprintln/read_line` 可用 |
-| `json/json.th` | 25 | ⚠️ | `parse` 完整解析在 **VM 路径失败**："未定义的函数 'str_add'"（a3），解释器路径全过（官方 test 12 项全绿）；`stringify` 双路径可用。**API 名失实**：prelude 写 `encode/decode/encode_pretty`，实际是 `parse/stringify/stringify_pretty`（c） |
+| `json/json.th` | 25 | ✅ | `parse` 完整解析**双路径可用**（L2.3a-a3 修复 VM str_add 后，官方 test 12 项 VM/解释器全绿）；`stringify` 双路径可用。**API 名失实**：prelude 写 `encode/decode/encode_pretty`，实际是 `parse/stringify/stringify_pretty`（c） |
 | `logging/logging.th` | 11 | ✅ | **重点疑点通过**：`use std::logging::logging::*` 后 `LEVEL_*` 常量 + 可变全局 `log_level` 可用，`set_level` 真能改状态（LEVEL_DEBUG→全打；切 ERROR→info/debug 不再输出） |
 | `math/constants.th` | 35 | ✅ | **重点疑点通过**：`use std::math::constants::*` 后函数内 `PI/E/TAU/PHI` 可用（VM+解释器），23 个函数全过 |
 | `math/functions.th` | 0 | 空壳 | 纯文档（内置标量/张量数学的说明，无实际函数） |
@@ -101,7 +101,7 @@
 | `string/string.th` | 8 | ✅ | `join_lines/join_comma/repeat_sep/indent/word_wrap/is_blank/capitalize/count` 可用 |
 | `string/string_builder.th` | 7 | ❌ | **`append` 用 `s.clone()` 但 String 无 `clone` 方法**（b）：解释器报"String 没有方法 'clone'"，VM 报"没有字段 'total_len'"。修复：去掉 clone（String 值语义） |
 | `time/time.th` | 9 | ✅ | `now/now_ms/date/time_of_day/datetime/sleep_ms/start_timer/elapsed*` 可用 |
-| `toml/toml.th` | 18 | ⚠️ | 官方 `test_toml.th` **VM 路径失败**（a3 str_add），解释器路径全过 |
+| `toml/toml.th` | 18 | ✅ | 官方 `test_toml.th` **双路径全过**（L2.3a-a3 修复 VM str_add） |
 | `utils/math.th` | 9 | ✅ | `min/max/clamp/abs/fmin/fmax/fclamp/fabs/signum` 可用 |
 | `utils/serialization.th` | 3 | ❌ | **返回类型注解错误**（b）：`save_model(...) -> i32` 但底层 `save_weights` 返回 `Unit`，3 个函数全部编译失败。修复：注解改 `-> Unit`（或让 native 返回状态码） |
 
@@ -110,13 +110,13 @@
 | 文件 | 状态 | 说明 |
 |---|---|---|
 | `test_date.th` | ✅ | 双路径全过 |
-| `test_runtime.th` | ⚠️ | VM 路径失败（a3 str_add，f-string 插值触发），解释器路径过 |
+| `test_runtime.th` | ✅ | 双路径过（L2.3a-a3 修复 VM str_add 后 f-string 在 VM 可用） |
 | `math/test_stats.th` | ✅ | 全过 |
 | `optim/test_lr_schedule.th` | ⚠️ | 1 个边界断言失败（warmup>total 语义，见 lr_schedule） |
-| `json/test_json.th` | ⚠️ | VM 路径 str_add 失败，解释器 12 项全过 |
-| `json/test_min.th` | ⚠️ | 同 test_json |
-| `json/test_obj.th` | ⚠️ | 同 test_json |
-| `toml/test_toml.th` | ⚠️ | VM 路径 str_add 失败，解释器全过 |
+| `json/test_json.th` | ✅ | 双路径全过（L2.3a-a3 修复 VM str_add） |
+| `json/test_min.th` | ✅ | 同 test_json |
+| `json/test_obj.th` | ✅ | 同 test_json |
+| `toml/test_toml.th` | ✅ | 双路径全过（L2.3a-a3 修复 VM str_add） |
 
 ---
 
@@ -127,8 +127,8 @@
 | 子项 | 现象 | 影响模块 | 修复方向 |
 |---|---|---|---|
 | **a1** | **VM 路径不支持高阶函数**：`f(...)`（通过参数名调用传入的函数）在 VM 下报"未定义的函数 'f'"且不静默回退；解释器路径正常（probe 验证 `apply_twice(|v| v+1, 10)` VM=Unit+报错，INTERP=12） | `collections.th`、`iter.th`（全部高阶函数）、`curry.th`、`optim/accumulate.th::accumulate_loop` | 运行时部：VM 字节码/闭包调用缺口 |
-| **a2** | **解释器路径 `int + Vec.get(i)` 类型不匹配**：`total = total + items.get(i)` 报"加法类型不匹配"（VM 正常） | `collections.th::sum/product`、`iter.th::sum`（解释器路径） | 运行时部：解释器 `Vec.get` 返回类型与 int 运算不匹配 |
-| **a3** | **VM 未注册 `str_add` native**：字符串拼接/插值在 VM 路径报"未定义的函数 'str_add'"；解释器路径正常 | `json::parse`、`toml`、`test_runtime`（f-string）、`test_json/min/obj`、`test_toml`（VM 路径） | 运行时部：VM 补齐 `str_add` native（HIR 字符串操作） |
+| **a2** | **解释器路径 `int + Vec.get(i)` 类型不匹配**：`total = total + items.get(i)` 报"加法类型不匹配"（VM 正常） | `collections.th::sum/product`、`iter.th::sum`（解释器路径） | **✅ 已修（L2.3a）**：`eval_binary` 入口对 `Value::Shared/Ref/MutRef` 操作数统一解壳（`interpreter/binary.rs`），对齐 VM 行为；回归测试 `l23a_fix_test.rs` 3 项 |
+| **a3** | **VM 未注册 `str_add` native**：字符串拼接/插值在 VM 路径报"未定义的函数 'str_add'"；解释器路径正常 | `json::parse`、`toml`、`test_runtime`（f-string）、`test_json/min/obj`、`test_toml`（VM 路径） | **✅ 已修（L2.3a）**：`runtime/natives.rs::register_all_natives` 补 `str_add(String,String)`（与解释器 `eval_binary` String+String 及 WASM host 对齐）；回归测试 `l23a_fix_test.rs` 4 项（f-string/json/toml/parity） |
 
 ### (b) 标准库自身 bug（修复建议 → L2.2）
 
@@ -167,8 +167,8 @@
 | **`optim/lr_schedule`**：LR_PI/LR_EPS 顶层常量 | ✅ 可用（1 个边界断言失败，见 b） | `call_lr_schedule.th` 双路径 exit 0；官方测试 6 组全过、1 边界失败 |
 | **`math/functions`**、**`math/stats`** | functions 是空壳（纯文档）；stats ✅ | `test_stats.th` 全过 |
 | **`string/string.th`**、**`string_builder`** | string.th ✅；string_builder ❌（`String.clone` 不存在） | `call_string.th` 双路径过；`call_string_builder.th` 双路径失败 |
-| **`collections`**（collections/hashset/iter） | hashset ✅；collections/iter ⚠️（a1+a2 双路径各有缺口，无完整可用路径） | 见 §四 |
-| **`json`、`toml`** | 解释器路径 ✅（官方测试全绿）；VM 路径 ❌（a3 str_add）；json API 名失实（c） | `test_json/toml` 解释器 exit 0、VM exit 1 |
+| **`collections`**（collections/hashset/iter） | hashset ✅；collections/iter ⚠️（仅剩 a1 VM 高阶函数缺口；a2 已修，sum/product 双路径可用） | 见 §四 |
+| **`json`、`toml`** | **双路径 ✅**（L2.3a 修复 a3 后官方测试 VM/解释器全绿）；json API 名失实（c） | `test_json/toml` 双路径 exit 0 |
 | **`nn/*` 核心** | feedforward/layer_norm/multihead_attention/linear/loss/activations/dropout/batchnorm/pool/ops/positional_encoding **全部 ✅**；attention/conv/embedding/transformer ❌ | `call_nn.th` + `call_nn_mha.th` 双路径 exit 0；坏模块归因见 §三 |
 | **`optim/*`** | 全部 ✅（返回 tuple 需解构；accumulate_loop 受 a1 影响） | `call_optim.th` 双路径 exit 0 |
 | **`data/dataloader`、`data/mnist`** | dataloader ⚠️（next_batch 不推进 cursor）；mnist 基础函数 ✅ | 见 §三 |
@@ -178,7 +178,7 @@
 
 ## 六、结论与建议
 
-1. **语言层 3 个缺口（a1/a2/a3）是最大瓶颈**：a1（VM 高阶函数）和 a3（VM str_add）影响 12 个模块的 VM 路径，a2 影响解释器路径的集合数值函数。建议优先回报总师，交运行时部修复。
+1. **语言层 3 个缺口（a1/a2/a3）是最大瓶颈**：**a2、a3 已修（L2.3a）**——a2（解释器 Shared 解壳）解锁 `sum/product` 解释器路径，a3（VM str_add 注册）解锁 json/toml/f-string 的 VM 路径（共 12 个模块）。**仅剩 a1**（VM 高阶函数调用）影响 `collections/iter`、`curry`、`accumulate_loop` 的 VM 路径，属结构性大工程，待后续专项。
 2. **8 个标准库 bug（b 类）**是 L2.2 的直接修单：random/serialization/string_builder/attention/conv/embedding/transformer/dataloader 均是小改动即可修复。
 3. **6 处文档失实（c 类）**需在修复后同步勘误 `prelude.th` 与参考手册。
 4. **AI 核心（nn/optim/init）整体健康**：除 attention/conv/embedding/transformer 4 个模块外全部可用，`stdlib_demo.th` 实例运行通过。

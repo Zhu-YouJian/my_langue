@@ -2666,6 +2666,23 @@ pub fn register_all_natives(vm: &mut Vm) {
             })
         }
     });
+    // L2.3a-a3：str_add(a, b) — 字符串拼接（VM 路径缺注册的 hostcall/native）。
+    // bytecode.rs 编译 f-string（HirExprKind::InterpolatedString）时用
+    // CallN("str_add", 2) 拼接各部分；此前 VM native 表未注册该函数，
+    // 导致 f-string 在 VM 路径报"未定义的函数 'str_add'"（解释器走
+    // InterpolatedString 分支不受影响）。语义与解释器 eval_binary 的
+    // String+String 分支（binary.rs）及 WASM host str_add 对齐。
+    vm.add_native("str_add".into(), |_vm, args| {
+        if args.len() == 2 {
+            if let (Value::String(a), Value::String(b)) = (&args[0], &args[1]) {
+                return Ok(Value::String(format!("{a}{b}")));
+            }
+        }
+        Err(TenthError::RuntimeError { line: None, col: None,
+            message: "str_add() 需要 2 个字符串参数".into(),
+        })
+    });
+
     // 16. parse_int(s) — 字符串→整数（解析失败返回 0，与解释器一致）
     vm.add_native("parse_int".into(), |_vm, args| {
         if let Some(Value::String(s)) = args.first() {

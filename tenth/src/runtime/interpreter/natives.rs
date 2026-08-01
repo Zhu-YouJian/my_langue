@@ -53,7 +53,10 @@ fn ok_result(value: Value) -> Value {
 /// 自动剥壳——解释器路径下 Vec.push 会用 Shared 包裹元素（便于索引赋值变更），
 /// 而 to_f64 等仅识别 Int/Float/Float32/Tensor，需要此处解壳以对齐 VM 行为。
 /// 非包裹类型原样 clone 返回。
-fn deref_wrapped(v: &Value) -> Value {
+/// L2.3a-a2：提升为 pub(super)，供 binary.rs 的 eval_binary 复用以对齐 VM
+/// （VM 的 Vec 元素不包裹，sum/product 的 `acc + Vec.get(i)` 在解释器路径
+/// 因 Shared 包裹而报"加法类型不匹配"，解壳后行为与 VM 一致）。
+pub(super) fn deref_wrapped(v: &Value) -> Value {
     match v {
         Value::Shared(rc) => {
             let inner = rc.borrow();
