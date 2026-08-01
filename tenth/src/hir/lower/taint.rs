@@ -511,27 +511,27 @@ impl<'a> TaintAnalyzer<'a> {
                 *ret = ret.join(t);
             }
             HirStmtKind::Return(None) => {}
-            HirStmtKind::While { cond, body } => {
+            HirStmtKind::While { cond, body, .. } => {
                 self.expr_taint(cond, vt, ret, depth);
                 let mut vt_body = vt.clone();
                 self.stmt_taint(body, &mut vt_body, ret, depth + 1);
                 merge_vt(vt, &vt_body, depth + 1);
             }
-            HirStmtKind::DoWhile { body, cond } => {
+            HirStmtKind::DoWhile { body, cond, .. } => {
                 let mut vt_body = vt.clone();
                 self.stmt_taint(body, &mut vt_body, ret, depth + 1);
                 merge_vt(vt, &vt_body, depth + 1);
                 self.expr_taint(cond, vt, ret, depth);
             }
-            HirStmtKind::For { var, iter, body } => {
+            HirStmtKind::For { var, iter, body, .. } => {
                 self.expr_taint(iter, vt, ret, depth);
                 let mut vt_body = vt.clone();
                 vt_body.let_bind(var, Lossiness::Exact, depth + 1);
                 self.stmt_taint(body, &mut vt_body, ret, depth + 1);
                 merge_vt(vt, &vt_body, depth + 1);
             }
-            HirStmtKind::Break(_) | HirStmtKind::Continue => {}
-            HirStmtKind::Loop { body } => {
+            HirStmtKind::Break { .. } | HirStmtKind::Continue { .. } => {}
+            HirStmtKind::Loop { body, .. } => {
                 let mut vt_body = vt.clone();
                 for s in body { self.stmt_taint(s, &mut vt_body, ret, depth + 1); }
                 merge_vt(vt, &vt_body, depth + 1);

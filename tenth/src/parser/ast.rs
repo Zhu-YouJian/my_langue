@@ -224,22 +224,35 @@ pub enum StmtKind {
     },
     Expr(Expr),
     Return(Option<Expr>),
-    Break(Option<Expr>),
-    Continue,
+    /// M2.3：break。`label` 为 `break 'outer` 的循环标签（复用 Lifetime token），
+    /// `value` 为 `break val` 的返回值（可为 None）。
+    Break {
+        label: Option<String>,
+        value: Option<Expr>,
+    },
+    /// M2.3：continue。`label` 为 `continue 'outer` 的循环标签。
+    Continue {
+        label: Option<String>,
+    },
     While {
+        /// M2.3：循环标签 `'outer: while ...`（None 表示无标签）
+        label: Option<String>,
         cond: Expr,
         body: Box<Stmt>,
     },
     DoWhile {
+        label: Option<String>,
         body: Box<Stmt>,
         condition: Expr,
     },
     For {
+        label: Option<String>,
         var: Ident,
         iter: Expr,
         body: Box<Stmt>,
     },
     Loop {
+        label: Option<String>,
         body: Vec<Stmt>,
     },
 }

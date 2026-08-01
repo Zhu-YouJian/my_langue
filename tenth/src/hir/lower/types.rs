@@ -1231,11 +1231,11 @@ impl Lowerer {
             HirStmtKind::Expr(e) => Self::collect_return_dims_expr(e, out),
             HirStmtKind::Let { init: Some(e), .. } => Self::collect_return_dims_expr(e, out),
             HirStmtKind::Let { init: None, .. } => {}
-            HirStmtKind::While { cond, body } => {
+            HirStmtKind::While { cond, body, .. } => {
                 Self::collect_return_dims_expr(cond, out);
                 Self::collect_return_dims_stmt(body, out);
             }
-            HirStmtKind::DoWhile { body, cond } => {
+            HirStmtKind::DoWhile { body, cond, .. } => {
                 Self::collect_return_dims_stmt(body, out);
                 Self::collect_return_dims_expr(cond, out);
             }
@@ -1243,15 +1243,15 @@ impl Lowerer {
                 Self::collect_return_dims_expr(iter, out);
                 Self::collect_return_dims_stmt(body, out);
             }
-            HirStmtKind::Loop { body } => {
+            HirStmtKind::Loop { body, .. } => {
                 for s in body {
                     Self::collect_return_dims_stmt(s, out);
                 }
             }
             // Break 的值表达式理论上不可能含 return 语句（return 是语句）；
             // 保守起见仍下降以与旧收集器行为对齐。
-            HirStmtKind::Break(Some(e)) => Self::collect_return_dims_expr(e, out),
-            HirStmtKind::Break(None) | HirStmtKind::Continue => {}
+            HirStmtKind::Break { value: Some(e), .. } => Self::collect_return_dims_expr(e, out),
+            HirStmtKind::Break { value: None, .. } | HirStmtKind::Continue { .. } => {}
         }
     }
 

@@ -980,7 +980,7 @@ impl WasmCompiler {
                     self.local_count += 1;
                 }
             }
-            HirStmtKind::Loop { body: lb } => {
+            HirStmtKind::Loop { body: lb, .. } => {
                 self.if_depths.push((0, 0));
                 body.instruction(&Instruction::Block(BlockType::Empty));
                 body.instruction(&Instruction::Loop(BlockType::Empty));
@@ -990,7 +990,7 @@ impl WasmCompiler {
                 body.instruction(&Instruction::End);
                 self.if_depths.pop();
             }
-            HirStmtKind::While { cond, body: lb } => {
+            HirStmtKind::While { cond, body: lb, .. } => {
                 self.if_depths.push((0, 0));
                 body.instruction(&Instruction::Block(BlockType::Empty));
                 body.instruction(&Instruction::Loop(BlockType::Empty));
@@ -1003,7 +1003,7 @@ impl WasmCompiler {
                 body.instruction(&Instruction::End);
                 self.if_depths.pop();
             }
-            HirStmtKind::DoWhile { body: lb, cond } => {
+            HirStmtKind::DoWhile { body: lb, cond, .. } => {
                 // Lowered as: loop { body; if !cond { break; } }
                 self.if_depths.push((0, 0));
                 body.instruction(&Instruction::Block(BlockType::Empty));
@@ -1023,10 +1023,18 @@ impl WasmCompiler {
                 }
                 body.instruction(&Instruction::Return);
             }
-            HirStmtKind::Break(val) => {
+            HirStmtKind::Break { label, value } => {
+                // M2.3：标签 break 暂不支持 WASM 后端（明确报错，不静默错编译）。
+                if let Some(l) = label {
+                    return Err(TenthError::TypeError {
+                        line: stmt.span.line,
+                        col: stmt.span.col,
+                        message: format!("标签 break '{}' 暂不支持 WASM 后端（VM/解释器路径可用）", l),
+                    });
+                }
                 // If break has a value, compile it (WASM doesn't support break-with-value,
                 // so just evaluate the expression for side effects)
-                if let Some(e) = val {
+                if let Some(e) = value {
                     self.compile_expr(body, e)?;
                     body.instruction(&Instruction::Drop);
                 }
@@ -1034,12 +1042,20 @@ impl WasmCompiler {
                 let depth = 1 + break_offset + if_depth;
                 body.instruction(&Instruction::Br(depth));
             }
-            HirStmtKind::Continue => {
+            HirStmtKind::Continue { label } => {
+                // M2.3：标签 continue 暂不支持 WASM 后端（明确报错，不静默错编译）。
+                if let Some(l) = label {
+                    return Err(TenthError::TypeError {
+                        line: stmt.span.line,
+                        col: stmt.span.col,
+                        message: format!("标签 continue '{}' 暂不支持 WASM 后端（VM/解释器路径可用）", l),
+                    });
+                }
                 let &(if_depth, _) = self.if_depths.last().unwrap_or(&(0, 0));
                 let depth = if_depth;
                 body.instruction(&Instruction::Br(depth));
             }
-            HirStmtKind::For { var, iter, body: lb } => {
+            HirStmtKind::For { var, iter, body: lb, .. } => {
                 // Only Range iterators are supported (for x in start..end { ... })
                 match &iter.kind {
                     HirExprKind::Range { start, end, inclusive } => {

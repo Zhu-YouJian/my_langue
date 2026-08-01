@@ -212,7 +212,13 @@ impl Parser {
                 _ => {
                     let span = self.span();
                     match self.peek_kind() {
-                        TokenKind::Let | TokenKind::While => {
+                        // M2.3：Lifetime(_) —— `'label: while/for/loop/do` 循环标签前缀
+                        // （复用 Lifetime token），需走 parse_stmt 解析标签。
+                        // 顺带补全顶层语句分发缺口：for/loop/do/return/break/continue
+                        // 也是 StmtKind 语句，此前在顶层会落入 parse_expr 报错。
+                        TokenKind::Let | TokenKind::While | TokenKind::For
+                        | TokenKind::Loop | TokenKind::Do | TokenKind::Return
+                        | TokenKind::Break | TokenKind::Continue | TokenKind::Lifetime(_) => {
                             stmts.push(self.parse_stmt()?);
                         }
                         _ => {

@@ -111,11 +111,11 @@ impl WasmCompiler {
         match &s.kind {
             HirStmtKind::Expr(e) => { self.ccb_expr(codes, e)?; }
             HirStmtKind::Let { init, .. } => { if let Some(e) = init { self.ccb_expr(codes, e)?; } }
-            HirStmtKind::While { cond, body } => {
+            HirStmtKind::While { cond, body, .. } => {
                 self.ccb_expr(codes, cond)?;
                 self.ccb_stmt(codes, body)?;
             }
-            HirStmtKind::Loop { body } => { for s in body { self.ccb_stmt(codes, s)?; } }
+            HirStmtKind::Loop { body, .. } => { for s in body { self.ccb_stmt(codes, s)?; } }
             HirStmtKind::For { body, .. } => { self.ccb_stmt(codes, body)?; }
             HirStmtKind::Return(expr) => { if let Some(e) = expr { self.ccb_expr(codes, e)?; } }
             _ => {}
@@ -227,8 +227,8 @@ impl WasmCompiler {
         match &s.kind {
             HirStmtKind::Expr(e) => self.cs_expr(e),
             HirStmtKind::Let { init, .. } => { if let Some(e) = init { self.cs_expr(e); } }
-            HirStmtKind::While { cond, body } => { self.cs_expr(cond); self.cs_stmt(body); }
-            HirStmtKind::Loop { body } => { for s in body { self.cs_stmt(s); } }
+            HirStmtKind::While { cond, body, .. } => { self.cs_expr(cond); self.cs_stmt(body); }
+            HirStmtKind::Loop { body, .. } => { for s in body { self.cs_stmt(s); } }
             HirStmtKind::For { body, .. } => self.cs_stmt(body),
             HirStmtKind::Return(expr) => { if let Some(e) = expr { self.cs_expr(e); } }
             _ => {}
@@ -346,11 +346,11 @@ impl WasmCompiler {
         match &s.kind {
             HirStmtKind::Expr(e) => self.cc_expr(e, num_user_funcs),
             HirStmtKind::Let { init, .. } => { if let Some(e) = init { self.cc_expr(e, num_user_funcs); } }
-            HirStmtKind::While { cond, body } => {
+            HirStmtKind::While { cond, body, .. } => {
                 self.cc_expr(cond, num_user_funcs);
                 self.cc_stmt(body, num_user_funcs);
             }
-            HirStmtKind::Loop { body } => { for s in body { self.cc_stmt(s, num_user_funcs); } }
+            HirStmtKind::Loop { body, .. } => { for s in body { self.cc_stmt(s, num_user_funcs); } }
             HirStmtKind::For { body, .. } => self.cc_stmt(body, num_user_funcs),
             HirStmtKind::Return(expr) => { if let Some(e) = expr { self.cc_expr(e, num_user_funcs); } }
             _ => {}

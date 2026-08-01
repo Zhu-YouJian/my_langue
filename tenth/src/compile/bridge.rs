@@ -528,6 +528,7 @@ fn convert_stmt(
             };
             Ok(Some(ast::Stmt {
                 kind: ast::StmtKind::While {
+                    label: None,
                     cond,
                     body: Box::new(ast::Stmt {
                         kind: ast::StmtKind::Expr(ast::Expr {
@@ -562,6 +563,7 @@ fn convert_stmt(
             };
             Ok(Some(ast::Stmt {
                 kind: ast::StmtKind::For {
+                    label: None,
                     var: ast::Ident { name: var_name, span: span.clone() },
                     iter,
                     body: Box::new(ast::Stmt {
@@ -587,19 +589,19 @@ fn convert_stmt(
                 Vec::new()
             };
             Ok(Some(ast::Stmt {
-                kind: ast::StmtKind::Loop { body: body_stmts },
+                kind: ast::StmtKind::Loop { label: None, body: body_stmts },
                 span: span.clone(),
             }))
         }
         "break" => {
             Ok(Some(ast::Stmt {
-                kind: ast::StmtKind::Break(None),
+                kind: ast::StmtKind::Break { label: None, value: None },
                 span: span.clone(),
             }))
         }
         "continue" => {
             Ok(Some(ast::Stmt {
-                kind: ast::StmtKind::Continue,
+                kind: ast::StmtKind::Continue { label: None },
                 span: span.clone(),
             }))
         }

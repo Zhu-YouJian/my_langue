@@ -434,10 +434,14 @@ fn test_vm_tensor_literal() {
 
 #[test]
 fn test_error_span_in_borrow_check() {
+    // M2.6：i64 是 Copy 类型（`move x` 对 Copy 值不失效，值被复制原变量仍可用）；
+    // 数组字面量 `[1,2,3]` 推断为 Type::Array{i64} 也是 Copy。用含 Vec 字段的
+    // 非 Copy 结构体触发 borrow check 错误（本测试意图是错误 span 传播）。
     let src = r#"
-        let x = 42;
+        struct S { items: Vec<i64> }
+        let x = S { items: [1, 2, 3] };
         let y = move x;
-        let z = x + 1
+        let z = x.items.len()
     "#;
     let result = run_code(src);
     assert!(result.is_err());

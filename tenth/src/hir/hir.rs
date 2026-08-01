@@ -219,21 +219,33 @@ pub enum HirStmtKind {
     Expr(HirExpr),
     Return(Option<HirExpr>),
     While {
+        /// M2.3：循环标签（`'outer: while ...`）
+        label: Option<String>,
         cond: HirExpr,
         body: Box<HirStmt>,
     },
     DoWhile {
+        label: Option<String>,
         body: Box<HirStmt>,
         cond: HirExpr,
     },
     For {
+        label: Option<String>,
         var: String,
         iter: HirExpr,
         body: Box<HirStmt>,
     },
-    Break(Option<Box<HirExpr>>),
-    Continue,
+    /// M2.3：break。`label` 为 `break 'outer` 的循环标签，`value` 为 `break val` 的返回值。
+    Break {
+        label: Option<String>,
+        value: Option<Box<HirExpr>>,
+    },
+    /// M2.3：continue。`label` 为 `continue 'outer` 的循环标签。
+    Continue {
+        label: Option<String>,
+    },
     Loop {
+        label: Option<String>,
         body: Vec<HirStmt>,
     },
 }

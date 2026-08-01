@@ -25,6 +25,10 @@ pub struct Lowerer {
     functions: Vec<HirFnDef>,
     generic_funcs: HashMap<String, HirFnDef>,
     structs: HashMap<String, Vec<(String, Type)>>,
+    /// M2.2：Newtype（tuple struct）名集合——`struct Name(Type)` 声明的
+    /// 非泛型 tuple struct。构造 `Name(args)` 在 Call 分支按此集合改写为
+    /// StructLiteral（字段名 `_0, _1, ...`）。
+    tuple_structs: HashSet<String>,
     generic_structs: HashMap<String, HirGenericStruct>,
     unions: HashMap<String, Vec<(String, Type)>>,
     enums: HashMap<String, Vec<(String, Vec<(String, Type)>)>>,
@@ -44,6 +48,11 @@ pub struct Lowerer {
     /// 按「类型不确定（泛型）时不报」的防误报原则，不参与污点判定
     /// （实例化体类型虽已具体化，但标准库大量泛型化，参与会导致大面积新报错）。
     pub(super) generic_instantiations: HashSet<String>,
+    /// M2.3：循环标签栈（lower 语句粒度）——`'outer: while/for/loop/do` 压入标签，
+    /// 退出循环弹出；用于在 lower 期校验 `break 'x` / `continue 'x` 的标签
+    /// 是否指向某个外层循环（未定义标签 / 标签在循环外 → 编译期 TypeError）。
+    /// 注意：闭包体 lower 时会清空（闭包是独立函数体，不能跳出外层循环）。
+    loop_labels: Vec<Option<String>>,
     /// 编译期收集的警告（内存/算力预估等，非致命）
     pub(super) warnings: Vec<TenthWarning>,
     // 注意：跨函数 shape 求解已函子化（阶段 0）——不再使用全局可变收集器
@@ -262,6 +271,7 @@ impl Lowerer {
             functions: Vec::new(),
             generic_funcs: HashMap::new(),
             structs: HashMap::new(),
+            tuple_structs: HashSet::new(),
             generic_structs: HashMap::new(),
             unions: HashMap::new(),
             enums: HashMap::new(),
@@ -275,6 +285,7 @@ impl Lowerer {
             imported_files: HashSet::new(),
             generic_instantiations: HashSet::new(),
             warnings: Vec::new(),
+            loop_labels: Vec::new(),
         };
 
         lowerer.trait_defs.insert("Display".to_string(), HirTraitDef {
@@ -361,6 +372,13 @@ pub(super) fn is_copy_type(ty: &Type, structs: &HashMap<String, Vec<(String, Typ
                     return true;
                 }
             }
+            // Copy 与 Drop 互斥（Rust 语义）：实现 Drop 的类型不可 Copy——
+            // 否则 `move`/赋值后原变量仍可用，同一资源会被 drop 多次。
+            if let Some(impls) = trait_impls.get("Drop") {
+                if impls.contains_key(name) {
+                    return false;
+                }
+            }
             // 自动派生：检查所有字段是否都是 Copy
             if let Some(fields) = structs.get(name) {
                 fields.iter().all(|(_, ft)| is_copy_type(ft, structs, trait_impls))
@@ -373,6 +391,34 @@ pub(super) fn is_copy_type(ty: &Type, structs: &HashMap<String, Vec<(String, Typ
                 if impls.contains_key(name) {
                     return true;
                 }
+            }
+            // Copy 与 Drop 互斥（Rust 语义）
+            if let Some(impls) = trait_impls.get("Drop") {
+                if impls.contains_key(name) {
+                    return false;
+                }
+            }
+            false
+        }
+        // TypeParam：struct/enum 字面量与注解经 from_annotation 映射为
+        // TypeParam("Name")（非 Type::Struct/Enum）。若 Name 是已声明的
+        // struct/enum，按同名类型判定 Copy（显式 impl Copy → 是；实现
+        // Drop → 否；否则 struct 字段全 Copy → 自动派生）。未声明的真
+        // 泛型变量保守视为非 Copy（move 后不可再用，防误放行）。
+        Type::TypeParam { name } => {
+            if let Some(impls) = trait_impls.get("Copy") {
+                if impls.contains_key(name) {
+                    return true;
+                }
+            }
+            // Copy 与 Drop 互斥（Rust 语义）
+            if let Some(impls) = trait_impls.get("Drop") {
+                if impls.contains_key(name) {
+                    return false;
+                }
+            }
+            if let Some(fields) = structs.get(name) {
+                return fields.iter().all(|(_, ft)| is_copy_type(ft, structs, trait_impls));
             }
             false
         }
@@ -732,11 +778,11 @@ fn substitute_stmt_in_place(stmt: &mut HirStmt, map: &HashMap<String, Type>) {
         HirStmtKind::Return(e) => {
             if let Some(e) = e.as_mut() { substitute_expr_in_place(e, map); }
         }
-        HirStmtKind::While { cond, body } => {
+        HirStmtKind::While { cond, body, .. } => {
             substitute_expr_in_place(cond, map);
             substitute_stmt_in_place(body, map);
         }
-        HirStmtKind::DoWhile { body, cond } => {
+        HirStmtKind::DoWhile { body, cond, .. } => {
             substitute_stmt_in_place(body, map);
             substitute_expr_in_place(cond, map);
         }
@@ -744,8 +790,11 @@ fn substitute_stmt_in_place(stmt: &mut HirStmt, map: &HashMap<String, Type>) {
             substitute_expr_in_place(iter, map);
             substitute_stmt_in_place(body, map);
         }
-        HirStmtKind::Break(_) | HirStmtKind::Continue => {}
-        HirStmtKind::Loop { body } => {
+        HirStmtKind::Break { value, .. } => {
+            if let Some(e) = value.as_mut() { substitute_expr_in_place(e, map); }
+        }
+        HirStmtKind::Continue { .. } => {}
+        HirStmtKind::Loop { body, .. } => {
             for s in body.iter_mut() {
                 substitute_stmt_in_place(s, map);
             }

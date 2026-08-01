@@ -119,6 +119,16 @@ pub enum TenthError {
     #[error("continue")]
     ContinueSignal,
 
+    /// M2.3：Non-error signal：`break 'label` 被执行，携带目标循环标签。
+    /// 逐层向上传播，直到遇到标签匹配的循环；若没有任何循环匹配，
+    /// 会继续传播到函数边界（lower 期已保证标签合法，正常不可达）。
+    #[error("break '{}", _0)]
+    LabeledBreakSignal(String),
+
+    /// M2.3：Non-error signal：`continue 'label` 被执行，携带目标循环标签。
+    #[error("continue '{}", _0)]
+    LabeledContinueSignal(String),
+
     /// Non-error signal: a `?` operator encountered Result::Err and propagates it.
     /// Caught by `try { }` blocks and function boundaries.
     #[error("try propagate")]

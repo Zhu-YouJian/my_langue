@@ -83,7 +83,9 @@ fn test_move_semantics() {
 
 #[test]
 fn test_use_after_move_should_fail() {
-    let src = "{ let x = 42; let y = move x; x }";
+    // M2.6：i64 是 Copy 类型（`move x` 对 Copy 值不失效，原变量仍可用）；
+    // 数组字面量也是 Copy。用含 Vec 字段的非 Copy 结构体触发「使用了已移动的值」。
+    let src = "struct S { items: Vec<i64> }; { let x = S { items: [1, 2, 3] }; let y = move x; x }";
     let result = run_code(src);
     assert!(result.is_err(), "expected error when using moved value");
 }

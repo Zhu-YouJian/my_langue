@@ -82,6 +82,23 @@ impl Parser {
     pub(super) fn parse_stmt(&mut self) -> TenthResult<Stmt> {
         let span = self.span();
 
+        // M2.3：循环标签前缀 `'name: while/for/loop/do ...`
+        // 复用 Lifetime token（与 `&'a T` 类型注解中的 lifetime 通过上下文区分：
+        // 语句起始的 `'name : <loop关键字>` 是循环标签；类型注解中的 `&'a T` 由
+        // type_parser 消费）。若非标签形态则原样留给表达式解析。
+        let mut label: Option<String> = None;
+        if let TokenKind::Lifetime(name) = &self.peek().kind {
+            let next = self.tokens.get(self.pos + 1).map(|t| &t.kind).unwrap_or(&TokenKind::Eof);
+            if matches!(next, TokenKind::Colon) {
+                let following = self.tokens.get(self.pos + 2).map(|t| &t.kind).unwrap_or(&TokenKind::Eof);
+                if matches!(following, TokenKind::While | TokenKind::For | TokenKind::Loop | TokenKind::Do) {
+                    label = Some(name.clone());
+                    self.advance(); // consume Lifetime
+                    self.advance(); // consume Colon
+                }
+            }
+        }
+
         match self.peek_kind() {
             TokenKind::Let => {
                 self.advance();
@@ -177,6 +194,14 @@ impl Parser {
             }
             TokenKind::Break => {
                 self.advance();
+                // M2.3：`break 'label` — 紧跟 Lifetime token 则为标签形式
+                let break_label = if let TokenKind::Lifetime(name) = &self.peek().kind {
+                    let l = name.clone();
+                    self.advance();
+                    Some(l)
+                } else {
+                    None
+                };
                 let value = if !matches!(self.peek_kind(), TokenKind::Semicolon)
                     && !matches!(self.peek_kind(), TokenKind::RBrace)
                 {
@@ -186,15 +211,23 @@ impl Parser {
                 };
                 self.match_token(TokenKind::Semicolon);
                 Ok(Stmt {
-                    kind: StmtKind::Break(value),
+                    kind: StmtKind::Break { label: break_label, value },
                     span,
                 })
             }
             TokenKind::Continue => {
                 self.advance();
+                // M2.3：`continue 'label` — 紧跟 Lifetime token 则为标签形式
+                let continue_label = if let TokenKind::Lifetime(name) = &self.peek().kind {
+                    let l = name.clone();
+                    self.advance();
+                    Some(l)
+                } else {
+                    None
+                };
                 self.match_token(TokenKind::Semicolon);
                 Ok(Stmt {
-                    kind: StmtKind::Continue,
+                    kind: StmtKind::Continue { label: continue_label },
                     span,
                 })
             }
@@ -204,7 +237,7 @@ impl Parser {
                 let stmts = self.parse_block_stmts()?;
                 self.match_token(TokenKind::Semicolon);
                 Ok(Stmt {
-                    kind: StmtKind::Loop { body: stmts },
+                    kind: StmtKind::Loop { label, body: stmts },
                     span,
                 })
             }
@@ -234,6 +267,7 @@ impl Parser {
                 self.match_token(TokenKind::Semicolon);
                 Ok(Stmt {
                     kind: StmtKind::DoWhile {
+                        label,
                         body: Box::new(body),
                         condition,
                     },
@@ -259,6 +293,7 @@ impl Parser {
                 self.match_token(TokenKind::Semicolon);
                 Ok(Stmt {
                     kind: StmtKind::While {
+                        label,
                         cond,
                         body: Box::new(body),
                     },
@@ -286,6 +321,7 @@ impl Parser {
                 self.match_token(TokenKind::Semicolon);
                 Ok(Stmt {
                     kind: StmtKind::For {
+                        label,
                         var,
                         iter,
                         body: Box::new(body),

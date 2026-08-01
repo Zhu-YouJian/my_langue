@@ -3,7 +3,7 @@
 //! Walks HIR and emits bytecode for the stack VM.
 
 use std::collections::HashMap;
-use crate::error::TenthResult;
+use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
 use crate::hir::types::Type;
 use super::super::runtime::vm::{Chunk, Op};
@@ -17,8 +17,10 @@ pub struct BytecodeCompiler {
     /// Labels: (label_id, code_offset)
     labels: HashMap<usize, usize>,
     next_label: usize,
-    /// Loop context stack: (loop_start_code_offset, break_label, continue_label)
-    loop_stack: Vec<(usize, usize, usize)>,
+    /// Loop context stack: (label, loop_start_code_offset, break_label, continue_label)
+    /// M2.3：`label` 为该循环的 `'outer:` 标签（None 表示无标签），
+    /// `break 'outer` / `continue 'outer` 在栈中从顶向下搜索匹配标签取跳转目标。
+    loop_stack: Vec<(Option<String>, usize, usize, usize)>,
     /// Additional chunks compiled from closures (name, chunk)
     closure_chunks: Vec<(String, Chunk)>,
     /// Counter for generating unique closure names
@@ -619,8 +621,13 @@ impl BytecodeCompiler {
                     });
                 }
             }
-            HirExprKind::Move { .. } => {
-                self.chunk.emit(Op::MoveOp);
+            HirExprKind::Move(inner) => {
+                // 修复：Move 在 VM 中应求值 inner（把被移动的值压栈），而非仅发射
+                // no-op 的 MoveOp。原先 `let y = move x`（非 Copy 类型）只发射
+                // MoveOp（不压入 x 的值），y 拿到栈上垃圾值——移动语义的接收端
+                // 在纯 VM 路径损坏（CLI 靠 VmCompileFailed 静默回退解释器掩盖）。
+                // 编译期所有权标记（scope Moved）仍负责拦截 move 后的使用。
+                self.compile_expr(inner)?;
             }
             HirExprKind::Lossy(inner) => {
                 // `lossy` 是纯编译期构造：编译为 inner 本身（运行时 no-op，无附加指令）
@@ -851,13 +858,13 @@ impl BytecodeCompiler {
                 }
                 self.chunk.emit(Op::Ret);
             }
-            HirStmtKind::DoWhile { body, cond } => {
+            HirStmtKind::DoWhile { label, body, cond } => {
                 // do-while: execute body first, then check condition
                 let loop_start = self.chunk.code.len();
                 let break_label = self.new_label();
                 let continue_label = self.new_label();
                 self.label(continue_label); // continue jumps to condition check
-                self.loop_stack.push((loop_start, break_label, continue_label));
+                self.loop_stack.push((label.clone(), loop_start, break_label, continue_label));
                 self.compile_stmt(body)?;
                 // Check condition
                 self.compile_expr(cond)?;
@@ -871,12 +878,12 @@ impl BytecodeCompiler {
                 self.label(break_label); // break jumps here
                 self.loop_stack.pop();
             }
-            HirStmtKind::While { cond, body } => {
+            HirStmtKind::While { label, cond, body } => {
                 let loop_start = self.chunk.code.len();
                 let break_label = self.new_label();
                 let continue_label = self.new_label();
                 self.label(continue_label); // continue: re-evaluate cond
-                self.loop_stack.push((loop_start, break_label, continue_label));
+                self.loop_stack.push((label.clone(), loop_start, break_label, continue_label));
                 self.compile_expr(cond)?;
                 self.chunk.emit(Op::JmpFalse(0));
                 self.patch_jump(break_label);
@@ -887,12 +894,12 @@ impl BytecodeCompiler {
                 self.label(break_label);
                 self.loop_stack.pop();
             }
-            HirStmtKind::Loop { body } => {
+            HirStmtKind::Loop { label, body } => {
                 let loop_start = self.chunk.code.len();
                 let break_label = self.new_label();
                 let continue_label = self.new_label();
                 self.label(continue_label); // continue jumps here
-                self.loop_stack.push((loop_start, break_label, continue_label));
+                self.loop_stack.push((label.clone(), loop_start, break_label, continue_label));
                 for s in body {
                     self.compile_stmt(s)?;
                 }
@@ -902,7 +909,7 @@ impl BytecodeCompiler {
                 self.label(break_label); // break jumps here
                 self.loop_stack.pop();
             }
-            HirStmtKind::For { var, iter, body } => {
+            HirStmtKind::For { label, var, iter, body } => {
                 // Compile for-in loop
                 match &iter.kind {
                     HirExprKind::Range { start, end, inclusive } => {
@@ -922,8 +929,10 @@ impl BytecodeCompiler {
                         let loop_start = self.chunk.code.len();
                         let break_label = self.new_label();
                         let continue_label = self.new_label();
-                        self.label(continue_label);
-                        self.loop_stack.push((loop_start, break_label, continue_label));
+                        // M2.3 fix：continue_label 不在 loop_start 处绑定——
+                        // 对 for 循环，continue 应跳过 body 剩余并执行 var += 1，
+                        // 目标在下方 `var += 1` 之前（见 compile_stmt body 之后）。
+                        self.loop_stack.push((label.clone(), loop_start, break_label, continue_label));
 
                         // condition: var < end (or var <= end for inclusive)
                         self.chunk.emit(Op::Load(var_slot));
@@ -943,7 +952,8 @@ impl BytecodeCompiler {
                         // body
                         self.compile_stmt(body)?;
 
-                        // var += 1
+                        // var += 1 — continue 跳到这里（跳过 body 剩余、执行增量）
+                        self.label(continue_label);
                         self.chunk.emit(Op::Load(var_slot));
                         self.chunk.emit(Op::PushInt(1));
                         self.chunk.emit(Op::Add);
@@ -983,8 +993,8 @@ impl BytecodeCompiler {
                         let loop_start = self.chunk.code.len();
                         let break_label = self.new_label();
                         let continue_label = self.new_label();
-                        self.label(continue_label);
-                        self.loop_stack.push((loop_start, break_label, continue_label));
+                        // M2.3 fix：同 Range 分支——continue 跳过 body 剩余并执行 __idx += 1
+                        self.loop_stack.push((label.clone(), loop_start, break_label, continue_label));
 
                         // condition: __idx < __iter.len()
                         self.chunk.emit(Op::Load(idx_slot));
@@ -1004,7 +1014,8 @@ impl BytecodeCompiler {
                         // body
                         self.compile_stmt(body)?;
 
-                        // __idx += 1
+                        // __idx += 1 — continue 跳到这里（跳过 body 剩余、执行增量）
+                        self.label(continue_label);
                         self.chunk.emit(Op::Load(idx_slot));
                         self.chunk.emit(Op::PushInt(1));
                         self.chunk.emit(Op::Add);
@@ -1018,20 +1029,46 @@ impl BytecodeCompiler {
                     }
                 }
             }
-            HirStmtKind::Break(val) => {
-                if let Some(&(_, break_label, _)) = self.loop_stack.last() {
+            HirStmtKind::Break { label, value } => {
+                // M2.3：带标签时从 loop_stack 顶向下搜索匹配标签的循环；无标签取最近循环。
+                let target = if let Some(l) = &label {
+                    self.loop_stack.iter().rev().find(|(lb, _, _, _)| lb.as_ref() == Some(l))
+                } else {
+                    self.loop_stack.last()
+                };
+                if let Some(&(_, _, break_label, _)) = target {
                     // If break has a value, compile it first (pushes value on stack)
-                    if let Some(e) = val {
+                    if let Some(e) = value {
                         self.compile_expr(e)?;
                     }
                     self.chunk.emit(Op::Jump(0));
                     self.patches.push((self.chunk.code.len() - 4, break_label));
+                } else if label.is_some() {
+                    // lower 期已校验标签，此处理论不可达（防御性报错）
+                    return Err(TenthError::TypeError {
+                        line: stmt.span.line,
+                        col: stmt.span.col,
+                        message: format!("未定义循环标签 '{}'", label.as_ref().unwrap()),
+                    });
                 }
             }
-            HirStmtKind::Continue => {
-                if let Some(&(_, _, continue_label)) = self.loop_stack.last() {
+            HirStmtKind::Continue { label } => {
+                // M2.3：带标签时从 loop_stack 顶向下搜索匹配标签的循环；无标签取最近循环。
+                let target = if let Some(l) = &label {
+                    self.loop_stack.iter().rev().find(|(lb, _, _, _)| lb.as_ref() == Some(l))
+                } else {
+                    self.loop_stack.last()
+                };
+                if let Some(&(_, _, _, continue_label)) = target {
                     self.chunk.emit(Op::Jump(0));
                     self.patches.push((self.chunk.code.len() - 4, continue_label));
+                } else if label.is_some() {
+                    // lower 期已校验标签，此处理论不可达（防御性报错）
+                    return Err(TenthError::TypeError {
+                        line: stmt.span.line,
+                        col: stmt.span.col,
+                        message: format!("未定义循环标签 '{}'", label.as_deref().unwrap()),
+                    });
                 }
             }
         }

@@ -838,36 +838,52 @@ impl super::Interpreter {
                 };
                 Err(TenthError::ReturnValue(val))
             }
-            HirStmtKind::Break(val) => {
+            HirStmtKind::Break { label, value } => {
                 // If break has a value, evaluate it first (result is discarded since
                 // loops in interpreter don't produce values).
-                if let Some(e) = val {
+                if let Some(e) = value {
                     self.eval_expr(e)?;
                 }
-                Err(TenthError::BreakSignal)
+                // M2.3：带标签的 break 用 LabeledBreakSignal 携带目标标签向上传播
+                match label {
+                    Some(l) => Err(TenthError::LabeledBreakSignal(l.clone())),
+                    None => Err(TenthError::BreakSignal),
+                }
             }
-            HirStmtKind::Continue => Err(TenthError::ContinueSignal),
-            HirStmtKind::Loop { body } => {
+            HirStmtKind::Continue { label } => {
+                // M2.3：带标签的 continue 用 LabeledContinueSignal 携带目标标签向上传播
+                match label {
+                    Some(l) => Err(TenthError::LabeledContinueSignal(l.clone())),
+                    None => Err(TenthError::ContinueSignal),
+                }
+            }
+            HirStmtKind::Loop { label, body } => {
                 loop {
                     let mut should_break = false;
                     for s in body {
                         match self.eval_stmt(s) {
-                            Err(TenthError::BreakSignal) => { should_break = true; break; }
-                            Err(TenthError::ContinueSignal) => continue,
-                            other => { other?; }
+                            Ok(()) => {}
+                            Err(e) => match self.classify_loop_signal(&label, e) {
+                                LoopSignal::Break => { should_break = true; break; }
+                                LoopSignal::Continue => continue,
+                                LoopSignal::Propagate(e) => return Err(e),
+                            },
                         }
                     }
                     if should_break { break; }
                 }
                 Ok(())
             }
-            HirStmtKind::DoWhile { body, cond } => {
+            HirStmtKind::DoWhile { label, body, cond } => {
                 // do-while: execute body once, then check condition
                 loop {
                     match self.eval_stmt(body) {
-                        Err(TenthError::BreakSignal) => break,
-                        Err(TenthError::ContinueSignal) => continue,
-                        other => { other?; }
+                        Ok(()) => {}
+                        Err(e) => match self.classify_loop_signal(&label, e) {
+                            LoopSignal::Break => break,
+                            LoopSignal::Continue => continue,
+                            LoopSignal::Propagate(e) => return Err(e),
+                        },
                     }
                     let c = self.eval_expr(cond)?.ok_or_else(|| TenthError::RuntimeError { line: Some(stmt.span.line), col: Some(stmt.span.col),
                         message: "do-while 条件为空值".into(),
@@ -878,7 +894,7 @@ impl super::Interpreter {
                 }
                 Ok(())
             }
-            HirStmtKind::While { cond, body } => {
+            HirStmtKind::While { label, cond, body } => {
                 loop {
                     let c = self.eval_expr(cond)?.ok_or_else(|| TenthError::RuntimeError { line: Some(stmt.span.line), col: Some(stmt.span.col),
                         message: "while 条件为空值".into(),
@@ -887,14 +903,17 @@ impl super::Interpreter {
                         break;
                     }
                     match self.eval_stmt(body) {
-                        Err(TenthError::BreakSignal) => break,
-                        Err(TenthError::ContinueSignal) => continue,
-                        other => { other?; }
+                        Ok(()) => {}
+                        Err(e) => match self.classify_loop_signal(&label, e) {
+                            LoopSignal::Break => break,
+                            LoopSignal::Continue => continue,
+                            LoopSignal::Propagate(e) => return Err(e),
+                        },
                     }
                 }
                 Ok(())
             }
-            HirStmtKind::For { var, iter, body } => {
+            HirStmtKind::For { label, var, iter, body } => {
                 let iter_val = self.eval_expr(iter)?.ok_or_else(|| TenthError::RuntimeError { line: Some(stmt.span.line), col: Some(stmt.span.col),
                     message: "for 迭代对象为空值".into(),
                 })?;
@@ -904,9 +923,12 @@ impl super::Interpreter {
                         for i in start..e {
                             self.insert_var(var.clone(), Value::Int(i, BaseType::I32));
                             match self.eval_stmt(body) {
-                                Err(TenthError::BreakSignal) => break,
-                                Err(TenthError::ContinueSignal) => continue,
-                                other => { other?; }
+                                Ok(()) => {}
+                                Err(e) => match self.classify_loop_signal(&label, e) {
+                                    LoopSignal::Break => break,
+                                    LoopSignal::Continue => continue,
+                                    LoopSignal::Propagate(e) => return Err(e),
+                                },
                             }
                         }
                     }
@@ -919,9 +941,12 @@ impl super::Interpreter {
                             };
                             self.insert_var(var.clone(), val);
                             match self.eval_stmt(body) {
-                                Err(TenthError::BreakSignal) => break,
-                                Err(TenthError::ContinueSignal) => continue,
-                                other => { other?; }
+                                Ok(()) => {}
+                                Err(e) => match self.classify_loop_signal(&label, e) {
+                                    LoopSignal::Break => break,
+                                    LoopSignal::Continue => continue,
+                                    LoopSignal::Propagate(e) => return Err(e),
+                                },
                             }
                         }
                     }
@@ -945,9 +970,12 @@ impl super::Interpreter {
                             let val = Value::Tensor(Rc::new(RefCell::new(row_tensor)));
                             self.insert_var(var.clone(), val);
                             match self.eval_stmt(body) {
-                                Err(TenthError::BreakSignal) => break,
-                                Err(TenthError::ContinueSignal) => continue,
-                                other => { other?; }
+                                Ok(()) => {}
+                                Err(e) => match self.classify_loop_signal(&label, e) {
+                                    LoopSignal::Break => break,
+                                    LoopSignal::Continue => continue,
+                                    LoopSignal::Propagate(e) => return Err(e),
+                                },
                             }
                         }
                     }
@@ -963,9 +991,12 @@ impl super::Interpreter {
                                 };
                                 self.insert_var(var.clone(), val);
                                 match self.eval_stmt(body) {
-                                    Err(TenthError::BreakSignal) => break,
-                                    Err(TenthError::ContinueSignal) => continue,
-                                    other => { other?; }
+                                    Ok(()) => {}
+                                    Err(e) => match self.classify_loop_signal(&label, e) {
+                                        LoopSignal::Break => break,
+                                        LoopSignal::Continue => continue,
+                                        LoopSignal::Propagate(e) => return Err(e),
+                                    },
                                 }
                             }
                         }
@@ -980,7 +1011,35 @@ impl super::Interpreter {
             }
         }.map_err(|e| Self::fill_span(e, &stmt.span))
     }
+}
 
+/// M2.3：循环体执行结果的信号分类——break / continue 是否为作用于当前循环的信号。
+enum LoopSignal {
+    /// break 信号（无标签，或标签匹配当前循环）——退出当前循环
+    Break,
+    /// continue 信号（无标签，或标签匹配当前循环）——跳到当前循环继续点
+    Continue,
+    /// 其他（普通完成 / 非当前循环的标签信号 / 其他错误）——向上传播
+    Propagate(TenthError),
+}
+
+impl super::Interpreter {
+    /// M2.3：分类循环体执行结果。
+    /// - 无标签 BreakSignal/ContinueSignal → 作用于最近循环（当前循环）
+    /// - LabeledBreakSignal(l)/LabeledContinueSignal(l) 且 l == 当前循环标签 → 作用于当前循环
+    /// - 标签不匹配 → 向上传播（逐层退出直到标签匹配的循环）
+    fn classify_loop_signal(&self, label: &Option<String>, e: TenthError) -> LoopSignal {
+        match e {
+            TenthError::BreakSignal => LoopSignal::Break,
+            TenthError::ContinueSignal => LoopSignal::Continue,
+            TenthError::LabeledBreakSignal(l) if label.as_ref() == Some(&l) => LoopSignal::Break,
+            TenthError::LabeledContinueSignal(l) if label.as_ref() == Some(&l) => LoopSignal::Continue,
+            other => LoopSignal::Propagate(other),
+        }
+    }
+}
+
+impl super::Interpreter {
     /// 问题12：补全 RuntimeError 的源码位置。
     /// 若 RuntimeError 已有 line/col（手动填充的），则保留；
     /// 否则用当前表达式/语句的 span 填充。

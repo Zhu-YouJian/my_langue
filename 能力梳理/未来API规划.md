@@ -71,7 +71,7 @@
 | 能力 | 目标签名 | 依赖 | 实现要点 | 优先级 |
 |------|---------|------|---------|--------|
 | break 带值 | `loop { break val; }` | 无 | Break 指令携带 Value | C |
-| 标签 break | `break 'outer` | 无 | 循环标签表 + Break 跳转目标 | C |
+| 标签 break | `break 'outer` | 无 | 循环标签表 + Break 跳转目标 | ✅ 已完成（2026-08-01 M2.3，详见 能力全梳理 §1.3） |
 | try / catch / 异常 | `try { } catch(e) { }` | 异常处理运行时 | try 关键字已存在；unwind 机制 + catch 块 | B |
 | try 表达式 / `?` 操作符 | `fn f() -> Result<T,E> { let x = g()?; }` | Result 类型 | Lower 把 `?` 展开为 match + 提前 return | B |
 | do-while 循环 | `do { } while cond` | 无 | Parser 新增 do 语法 + 条件后测跳转 | C |

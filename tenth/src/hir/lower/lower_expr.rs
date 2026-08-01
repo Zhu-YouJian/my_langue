@@ -257,6 +257,33 @@ impl Lowerer {
             }
 
             ExprKind::Call { func, args } => {
+                // M2.2：Newtype（tuple struct）构造 `Meters(3.5)` / `Pair(1, "a")`。
+                // parser 把 `Name(args)` 解析为 Call { func: Ident("Name"), args }，
+                // 与普通函数调用在 AST 层无法区分；当 Name 是已声明的非泛型
+                // tuple struct（且无同名函数遮蔽）时，改写为 StructLiteral
+                // （字段名 `_0, _1, ...`，与 lower_program 的 Tuple 注册一致），
+                // 与 named struct 共用运行时 Struct 表示（解释器/VM/WASM 均支持）。
+                if let ExprKind::Ident(ident) = &func.kind {
+                    if self.tuple_structs.contains(&ident.name)
+                        && self.structs.contains_key(&ident.name)
+                        && self.scope.lookup_fn(&ident.name).is_none()
+                    {
+                        let lowered_args = self.process_call_args(func, args, &span)?;
+                        let lowered_fields: Vec<(String, HirExpr)> = lowered_args.into_iter().enumerate()
+                            .map(|(i, a)| (format!("_{}", i), a))
+                            .collect();
+                        return Ok(HirExpr {
+                            kind: HirExprKind::StructLiteral {
+                                name: ident.name.clone(),
+                                fields: lowered_fields,
+                                has_default: false,
+                            },
+                            ty: Type::TypeParam { name: ident.name.clone() },
+                            span,
+                        });
+                    }
+                }
+
                 let f = self.lower_expr(func)?;
 
                 // Process call arguments: resolve named args, fill defaults, collect variadic
@@ -828,7 +855,7 @@ impl Lowerer {
                 }
 
                 // RAII：收集当前作用域中实现了 Drop trait 的变量，在作用域退出时调用 drop()
-                let drop_vars: Vec<String> = self.collect_drop_vars();
+                let drop_vars: Vec<(String, Option<String>)> = self.collect_drop_vars();
 
                 let stmts_without_final: Vec<HirStmt> = if final_expr.is_some() {
                     lowered_stmts[..lowered_stmts.len().saturating_sub(1)].to_vec()
@@ -837,8 +864,10 @@ impl Lowerer {
                 };
 
                 // 构造包含 drop 调用的块
-                let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
-                self.scope = outer_scope;
+                // 块结束：弹回父作用域（块内变量不可见、不再参与外层 drop 收集）。
+                // 既有实现错误地恢复到块自身作用域，导致块内变量泄漏到块外——
+                // Drop 特性激活后表现为嵌套块变量在块退出后于外层作用域被二次 drop。
+                self.scope = *self.scope.parent.take().unwrap();
 
                 if drop_vars.is_empty() {
                     (HirExprKind::Block { stmts: stmts_without_final, final_expr: final_expr.map(Box::new) }, ty)
@@ -893,10 +922,14 @@ impl Lowerer {
                     self.scope.define_var(name.clone(), ty.clone(), false);
                 }
 
+                // M2.3：闭包是独立函数体，不能跳出外层循环——清空循环标签栈，
+                // 使闭包内的 `break 'x` / `continue 'x` 不会误匹配外层函数循环的标签。
+                let saved_loop_labels = std::mem::take(&mut self.loop_labels);
                 let b = self.lower_expr(body)?;
+                self.loop_labels = saved_loop_labels;
 
-                let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
-                self.scope = outer_scope;
+                // 闭包体作用域结束：弹回父作用域（闭包参数/局部变量不外泄）。
+                self.scope = *self.scope.parent.take().unwrap();
 
                 // Analyze free variables in the closure body (excluding params)
                 let captures = Self::free_vars_in(&b);
@@ -1191,8 +1224,8 @@ impl Lowerer {
 
                         let body = self.lower_expr(&arm.body)?;
 
-                        let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
-                        self.scope = outer_scope;
+                        // match arm 作用域结束：弹回父作用域（模式绑定不外泄到 match 之后）。
+                        self.scope = *self.scope.parent.take().unwrap();
 
                         Ok(HirMatchArm { pattern: hir_pattern, guard, body })
                     })
@@ -1308,13 +1341,23 @@ impl Lowerer {
             ExprKind::Move(inner) => {
                 let e = self.lower_expr(inner)?;
                 let ty = e.ty.clone();
+                let is_copy = super::is_copy_type(&ty, &self.structs, &self.trait_impls);
                 if let ExprKind::Ident(ident) = &inner.kind {
                     // Copy 类型的值在 move 时不标记为 Moved（值被复制，原变量仍可用）
-                    if !super::is_copy_type(&ty, &self.structs, &self.trait_impls) {
+                    if !is_copy {
                         self.scope.set_ownership(&ident.name, Ownership::Moved);
                     }
                 }
-                (HirExprKind::Move(Box::new(e)), ty)
+                // Copy 类型：`move x` 是值拷贝（无所有权转移），直接解包为
+                // 普通表达式——解释器运行时 Move 分支会无条件把变量标为
+                // Value::Moved（不感知 Copy），不解包会导致 Copy 变量在
+                // 解释器路径被误判为「已移动」。VM 路径 Move 编译为值拷贝，
+                // 解包前后行为一致（no-op）。
+                if is_copy {
+                    (e.kind, ty)
+                } else {
+                    (HirExprKind::Move(Box::new(e)), ty)
+                }
             }
 
             ExprKind::Lossy(inner) => {
@@ -1848,14 +1891,28 @@ impl Lowerer {
             .is_some()
     }
 
-    /// 收集当前作用域中所有实现了 Drop trait 的变量名。
+    /// 收集当前作用域中所有实现了 Drop trait 的变量。
+    /// 返回 (变量名, 类型名) 列表：类型名为普通命名类型（struct/enum）时
+    /// 用于生成对 `__dyn_Drop_{Type}_drop` 的直接调用（VM 可执行）；
+    /// 容器类型（元组/数组/Box 内嵌 Drop 类型）无独立 mangled 函数，
+    /// 类型名为 None，回退为 `var.drop()` 方法调用（仅解释器可执行）。
     /// 按定义顺序的逆序返回（后定义的先 drop）。
-    fn collect_drop_vars(&self) -> Vec<String> {
+    fn collect_drop_vars(&self) -> Vec<(String, Option<String>)> {
         // 从 scope 中获取所有变量及其类型
-        let mut drop_vars: Vec<String> = Vec::new();
+        let mut drop_vars: Vec<(String, Option<String>)> = Vec::new();
         self.scope.for_each_var(|name, ty| {
             if self.type_impls_drop(ty) {
-                drop_vars.push(name.to_string());
+                // 已移动的变量不再拥有值（所有权已转移），跳过——
+                // 否则 `let b = move a;` 后 a 与 b 都会被 drop，双重释放。
+                if matches!(self.scope.get_ownership(name), Some(Ownership::Moved)) {
+                    return;
+                }
+                let type_name = match ty {
+                    Type::Struct(n) | Type::Enum(n) => Some(n.clone()),
+                    Type::TypeParam { name } => Some(name.clone()),
+                    _ => None,
+                };
+                drop_vars.push((name.to_string(), type_name));
             }
         });
         // 逆序：后定义的先 drop
@@ -1868,6 +1925,14 @@ impl Lowerer {
         match ty {
             Type::Base(_) | Type::Never => false,
             Type::Ref(_, _) | Type::MutRef(_, _) => false, // 引用不 drop
+            // TypeParam：struct/enum 字面量与注解经 from_annotation 映射为
+            // TypeParam("Name")（非 Type::Struct/Enum），必须按同名类型查
+            // trait_impls["Drop"]，否则 RAII 永不触发（M2.5 缺口）。
+            Type::TypeParam { name } => {
+                self.trait_impls.get("Drop")
+                    .and_then(|impls| impls.get(name))
+                    .is_some()
+            }
             Type::Struct(name) => {
                 self.trait_impls.get("Drop")
                     .and_then(|impls| impls.get(name))
@@ -1889,24 +1954,45 @@ impl Lowerer {
     }
 
     /// 为指定的变量列表生成 drop 调用语句。
-    /// 每个变量生成一个 `var.drop()` 方法调用。
-    fn make_drop_stmt(drop_vars: &[String], span: crate::lexer::token::Span) -> HirStmt {
+    /// 普通命名类型生成对 `__dyn_Drop_{Type}_drop` 的直接函数调用
+    /// （该函数由 lower_stmt 的 trait impl 注册，解释器/VM 均可执行）；
+    /// 容器类型回退为 `var.drop()` 方法调用。
+    fn make_drop_stmt(drop_vars: &[(String, Option<String>)], span: crate::lexer::token::Span) -> HirStmt {
         // 将所有 drop 调用组合到一个 Expr 语句中
         // 使用 Block 按顺序执行每个 drop 调用
-        let drop_calls: Vec<HirExpr> = drop_vars.iter().map(|var_name| {
-            HirExpr {
-                kind: HirExprKind::MethodCall {
-                    receiver: Box::new(HirExpr {
-                        kind: HirExprKind::Var(var_name.clone()),
-                        ty: Type::Unknown,
-                        span: span.clone(),
-                    }),
-                    method: "drop".to_string(),
-                    args: vec![],
-                    ret_ty: Type::unit(),
+        let drop_calls: Vec<HirExpr> = drop_vars.iter().map(|(var_name, type_name)| {
+            match type_name {
+                Some(tn) => HirExpr {
+                    kind: HirExprKind::Call {
+                        func: Box::new(HirExpr {
+                            kind: HirExprKind::Var(format!("__dyn_Drop_{}_drop", tn)),
+                            ty: Type::Unknown,
+                            span: span.clone(),
+                        }),
+                        args: vec![HirExpr {
+                            kind: HirExprKind::Var(var_name.clone()),
+                            ty: Type::Unknown,
+                            span: span.clone(),
+                        }],
+                        ret_ty: Type::unit(),
+                    },
+                    ty: Type::unit(),
+                    span: span.clone(),
                 },
-                ty: Type::unit(),
-                span: span.clone(),
+                None => HirExpr {
+                    kind: HirExprKind::MethodCall {
+                        receiver: Box::new(HirExpr {
+                            kind: HirExprKind::Var(var_name.clone()),
+                            ty: Type::Unknown,
+                            span: span.clone(),
+                        }),
+                        method: "drop".to_string(),
+                        args: vec![],
+                        ret_ty: Type::unit(),
+                    },
+                    ty: Type::unit(),
+                    span: span.clone(),
+                },
             }
         }).collect();
 

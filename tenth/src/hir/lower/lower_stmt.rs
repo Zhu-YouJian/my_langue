@@ -56,6 +56,29 @@ impl Lowerer {
         ));
     }
 
+    /// M2.3：校验 `break 'x` / `continue 'x` 的标签。
+    /// - 无标签（普通 break/continue）→ 不校验（沿用既有行为，循环外静默忽略）。
+    /// - 带标签但完全不在任何循环内 → 报"标签形式必须位于循环体内"。
+    /// - 带标签但没有任何外层循环匹配该标签 → 报"未定义循环标签"。
+    fn check_loop_label(&self, label: &Option<String>, span: &Span, kind: &str) -> TenthResult<()> {
+        let Some(l) = label else { return Ok(()) };
+        if self.loop_labels.is_empty() {
+            return Err(TenthError::TypeError {
+                line: span.line,
+                col: span.col,
+                message: format!("{} '{}' 不在任何循环内（标签形式必须位于循环体内）", kind, l),
+            });
+        }
+        if !self.loop_labels.iter().any(|lb| lb.as_ref() == Some(l)) {
+            return Err(TenthError::TypeError {
+                line: span.line,
+                col: span.col,
+                message: format!("未定义循环标签 '{}'", l),
+            });
+        }
+        Ok(())
+    }
+
     pub(super) fn lower_stmt(&mut self, stmt: &ast::Stmt) -> TenthResult<HirStmt> {
         use ast::StmtKind;
 
@@ -123,15 +146,18 @@ impl Lowerer {
                 // 做纯递归推导（Φ 的构造性定义，见 types.rs）。
                 HirStmtKind::Return(lowered)
             }
-            StmtKind::While { cond, body } => {
+            StmtKind::While { label, cond, body } => {
+                self.loop_labels.push(label.clone());
                 let c = self.lower_expr(cond)?;
                 // Release borrows from the condition so the body can reborrow.
                 self.scope.release_borrows();
                 let b = self.lower_stmt(body)?;
-                HirStmtKind::While { cond: c, body: Box::new(b) }
+                self.loop_labels.pop();
+                HirStmtKind::While { label: label.clone(), cond: c, body: Box::new(b) }
             }
-            StmtKind::DoWhile { body, condition } => {
+            StmtKind::DoWhile { label, body, condition } => {
                 // Lower do-while to loop { body; if !condition { break; } }
+                self.loop_labels.push(label.clone());
                 let b = self.lower_stmt(body)?;
                 let c = self.lower_expr(condition)?;
                 let neg_cond = HirExpr {
@@ -140,7 +166,7 @@ impl Lowerer {
                     span: span.clone(),
                 };
                 let break_stmt = HirStmt {
-                    kind: HirStmtKind::Break(None),
+                    kind: HirStmtKind::Break { label: None, value: None },
                     span: span.clone(),
                 };
                 let if_break = HirExpr {
@@ -157,7 +183,9 @@ impl Lowerer {
                     ty: Type::unit(),
                     span: span.clone(),
                 };
+                self.loop_labels.pop();
                 HirStmtKind::Loop {
+                    label: label.clone(),
                     body: vec![
                         b,
                         HirStmt {
@@ -167,7 +195,8 @@ impl Lowerer {
                     ],
                 }
             }
-            StmtKind::For { var, iter, body } => {
+            StmtKind::For { label, var, iter, body } => {
+                self.loop_labels.push(label.clone());
                 let it = self.lower_expr(iter)?;
                 // Release borrows from the iterator expression so the body can reborrow.
                 self.scope.release_borrows();
@@ -177,16 +206,25 @@ impl Lowerer {
                 self.scope.define_var(var.name.clone(), Type::Unknown, false);
                 let b = self.lower_stmt(body)?;
                 self.scope = *self.scope.parent.take().unwrap();
-                HirStmtKind::For { var: var.name.clone(), iter: it, body: Box::new(b) }
+                self.loop_labels.pop();
+                HirStmtKind::For { label: label.clone(), var: var.name.clone(), iter: it, body: Box::new(b) }
             }
-            StmtKind::Break(val) => {
-                HirStmtKind::Break(val.as_ref().map(|e| Box::new(self.lower_expr(e).unwrap_or_else(|_| {
-                    // Fallback: if lowering fails, create a unit expression
-                    HirExpr { kind: HirExprKind::Block { stmts: vec![], final_expr: None }, ty: Type::unit(), span: span.clone() }
-                }))))
+            StmtKind::Break { label, value } => {
+                self.check_loop_label(&label, &span, "break")?;
+                HirStmtKind::Break {
+                    label: label.clone(),
+                    value: value.as_ref().map(|e| Box::new(self.lower_expr(e).unwrap_or_else(|_| {
+                        // Fallback: if lowering fails, create a unit expression
+                        HirExpr { kind: HirExprKind::Block { stmts: vec![], final_expr: None }, ty: Type::unit(), span: span.clone() }
+                    }))),
+                }
             }
-            StmtKind::Continue => HirStmtKind::Continue,
-            StmtKind::Loop { body } => {
+            StmtKind::Continue { label } => {
+                self.check_loop_label(&label, &span, "continue")?;
+                HirStmtKind::Continue { label: label.clone() }
+            }
+            StmtKind::Loop { label, body } => {
+                self.loop_labels.push(label.clone());
                 let mut lowered_body: Vec<HirStmt> = Vec::new();
                 for s in body {
                     let lowered = self.lower_stmt(s)?;
@@ -201,7 +239,8 @@ impl Lowerer {
                     }
                     lowered_body.push(lowered);
                 }
-                HirStmtKind::Loop { body: lowered_body }
+                self.loop_labels.pop();
+                HirStmtKind::Loop { label: label.clone(), body: lowered_body }
             }
 
         };
@@ -223,6 +262,10 @@ impl Lowerer {
                     };
                     if generics.is_empty() {
                         self.structs.insert(name.name.clone(), field_types);
+                        // M2.2：记录 tuple struct（Newtype）名，供 Call 分支改写构造。
+                        if matches!(kind, ast::StructKind::Tuple(_)) {
+                            self.tuple_structs.insert(name.name.clone());
+                        }
                     } else {
                         let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
                         self.generic_structs.insert(name.name.clone(), HirGenericStruct {
@@ -294,8 +337,8 @@ impl Lowerer {
                                     self.scope.define_var(n.clone(), t.clone(), false);
                                 }
                                 let lowered = self.lower_expr(body).ok();
-                                let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
-                                self.scope = outer_scope;
+                                // trait 默认方法体作用域结束：弹回父作用域。
+                                self.scope = *self.scope.parent.take().unwrap();
                                 lowered
                             } else {
                                 None
@@ -358,8 +401,8 @@ impl Lowerer {
 
                                 let lowered_body = self.lower_expr(body)?;
 
-                                let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
-                                self.scope = outer_scope;
+                                // trait impl 方法体作用域结束：弹回父作用域。
+                                self.scope = *self.scope.parent.take().unwrap();
 
                                 let fn_def = HirFnDef {
                                     name: name.name.clone(),
@@ -452,8 +495,8 @@ impl Lowerer {
 
                                 let lowered_body = self.lower_expr(body)?;
 
-                                let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
-                                self.scope = outer_scope;
+                                // inherent impl 方法体作用域结束：弹回父作用域。
+                                self.scope = *self.scope.parent.take().unwrap();
 
                                 let fn_def = HirFnDef {
                                     name: name.name.clone(),
@@ -700,8 +743,8 @@ impl Lowerer {
 
                     let lowered_body = self.lower_expr(body)?;
 
-                    let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
-                    self.scope = outer_scope;
+                    // 函数体作用域结束：弹回父作用域（函数局部变量不外泄到后续函数）。
+                    self.scope = *self.scope.parent.take().unwrap();
 
                     // 跨函数 shape 求解（函子化，阶段 0）：合并 body 推断的 shape 到 return_type
                     // 让调用方能拿到更精确的返回 shape（如 `fn make() -> Tensor[f64, ..] { zeros(3,4) }` → [3,4]）
@@ -780,10 +823,12 @@ impl Lowerer {
             }
         }
 
-        // 自动派生 Copy trait：对于所有字段都是 Copy 类型的结构体，自动注册 impl Copy
+        // 自动派生 Copy trait：对于所有字段都是 Copy 类型的结构体，自动注册 impl Copy。
+        // 与 Rust 语义一致：实现 Drop 的类型不可派生 Copy（drop 会随拷贝倍增）。
         let copy_auto_types: Vec<String> = self.structs.iter()
             .filter(|(name, fields)| {
                 !self.trait_impls.get("Copy").map_or(false, |impls| impls.contains_key(*name))
+                    && !self.trait_impls.get("Drop").map_or(false, |impls| impls.contains_key(*name))
                     && fields.iter().all(|(_, ft)| super::is_copy_type(ft, &self.structs, &self.trait_impls))
             })
             .map(|(name, _)| name.clone())
@@ -803,8 +848,8 @@ impl Lowerer {
 
                     let lowered_body = self.lower_expr(body)?;
 
-                    let outer_scope = std::mem::replace(&mut self.scope, Scope::new());
-                    self.scope = outer_scope;
+                    // <expr> 顶层表达式作用域结束：弹回父作用域。
+                    self.scope = *self.scope.parent.take().unwrap();
 
                     main_expr = Some(lowered_body);
                     break;

@@ -213,23 +213,23 @@ impl Lowerer {
             HirStmtKind::Return(e) => {
                 if let Some(e) = e { Self::collect_free_vars(e, vars); }
             }
-            HirStmtKind::While { cond, body } => {
+            HirStmtKind::While { cond, body, .. } => {
                 Self::collect_free_vars(cond, vars);
                 Self::collect_free_vars_stmt(body, vars);
             }
-            HirStmtKind::DoWhile { body, cond } => {
+            HirStmtKind::DoWhile { body, cond, .. } => {
                 Self::collect_free_vars_stmt(body, vars);
                 Self::collect_free_vars(cond, vars);
             }
-            HirStmtKind::For { var, iter, body } => {
+            HirStmtKind::For { var, iter, body, .. } => {
                 Self::collect_free_vars(iter, vars);
                 let mut inner: HashSet<String> = HashSet::new();
                 Self::collect_free_vars_stmt(body, &mut inner);
                 inner.retain(|v| v != var);
                 vars.extend(inner);
             }
-            HirStmtKind::Break(_) | HirStmtKind::Continue => {}
-            HirStmtKind::Loop { body } => {
+            HirStmtKind::Break { .. } | HirStmtKind::Continue { .. } => {}
+            HirStmtKind::Loop { body, .. } => {
                 for s in body { Self::collect_free_vars_stmt(s, vars); }
             }
         }
