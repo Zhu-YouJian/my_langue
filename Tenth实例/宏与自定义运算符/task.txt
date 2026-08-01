@@ -4,7 +4,8 @@
 
 ## 文件
 
-- `macro_ops.th` — 声明式宏 + 自定义运算符 专题演示
+- `macro_ops.th` — 声明式宏 + 自定义运算符 专题演示（默认 VM 路径即可）
+- `operator_overload.th` — struct 上的运算符重载（`impl Add` → `a + b` 降级为 `a.add(b)`），因 VM 对具体值 trait 方法分派有缺口，需解释器路径：`TENTH_NO_VM=1 tenth run operator_overload.th`
 
 ## 覆盖
 
@@ -27,7 +28,7 @@
 
 ```
 tenth run macro_ops.th
+TENTH_NO_VM=1 tenth run operator_overload.th
 ```
 
-默认 VM/JIT 路径原生支持（宏展开在 parse 阶段、自定义运算符降级为
-普通函数调用），无需 TENTH_NO_VM。
+宏展开在 parse 阶段、自定义运算符降级为普通函数调用，默认 VM/JIT 路径原生支持，无需 TENTH_NO_VM。

@@ -1,0 +1,14 @@
+# 梯度裁剪与累积
+
+展示训练中的梯度处理技巧。
+
+## 覆盖
+
+- `std::optim::clip::clip_grad_by_value`：逐元素裁剪到 `[-max_val, max_val]`
+- 梯度累积概念（多个 micro-batch 累积等价于大 batch）
+
+## 运行
+
+```
+tenth run grad_clip_accum.th
+```

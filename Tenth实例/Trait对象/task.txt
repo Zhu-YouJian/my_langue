@@ -1,0 +1,17 @@
+# Trait 对象（dyn 动态分发）
+
+展示如何把实现了同一 trait 的不同类型统一为动态分发对象，通过 `dyn Trait` 按具体类型调用方法。
+
+## 覆盖
+
+- `trait Draw` 定义 + 两个类型 `impl Draw`
+- 类型注解驱动升级：`let d: dyn Draw = 具体值;`
+- 通过 dyn 对象调用 trait 方法时按具体类型动态分派
+
+## 运行
+
+```
+tenth run dyn_trait.th
+```
+
+> 注：本实例演示 dyn 对象形式（VM 可用）；"具体值直接调 trait 方法"的形式在 VM 有缺口，见 `Trait示例` 实例（需解释器路径）。

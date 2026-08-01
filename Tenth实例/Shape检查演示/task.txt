@@ -1,0 +1,15 @@
+# Shape 检查演示
+
+展示 Tenth 的编译期张量 shape 校验（护城河 A/D 的基础）：`Tensor[f64, M, K]` 符号维度约束、matmul 内侧维度一致性、编译期报错而非运行时崩溃。
+
+## 覆盖
+
+- 用 `Tensor[f64, M, K]` 类型注解声明 shape 约束
+- 编译期 shape 检查通过的正确用例
+- （注释掉的）编译期报错的错误用例
+
+## 运行
+
+```
+tenth run shape_check_demo.th
+```

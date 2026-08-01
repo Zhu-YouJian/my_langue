@@ -1,0 +1,47 @@
+// Drop 析构与 Copy 值语义
+//
+// 所有权相关特性（M2.5 / M2.6 / M3.5）：
+//   - Drop trait：impl Drop for T，作用域退出时自动调用 drop()（RAII）
+//   - Copy trait：全字段可复制时自动派生，赋值 / 传参不移动原值
+//   - Phantom 类型：未使用的类型参数（仅参与类型区分）
+//
+// 运行：tenth run drop_copy.th（默认 VM/JIT 路径即可）
+
+// Drop：作用域退出时打印释放信息
+struct Res { id: i64 }
+impl Drop for Res {
+    fn drop(self) {
+        println("  [drop] Res " + to_string(self.id) + " 作用域退出时释放")
+    }
+}
+
+// Copy：全字段 i64 自动派生 Copy，赋值不移动
+struct Point { x: i64, y: i64 }
+
+// Phantom：T 未被字段使用，仅参与类型区分
+struct Marker<T> { x: i64 }
+
+fn main() {
+    println("=== Drop / Copy / Phantom ===\n");
+
+    // Drop / RAII：块退出时自动调用 drop
+    println("  ── Drop ──");
+    {
+        let r = Res { id: 7 };
+        println("  [inside] 进入块作用域，创建 Res 7");
+    }
+    println("  [outside] 块退出后，上方应已打印 drop");
+
+    // Copy：赋值不移动原值
+    println("  ── Copy ──");
+    let p = Point { x: 3, y: 4 };
+    let q = p;                 // 全字段 Copy → p 不失效
+    println("  p.x = ", p.x, "，q.x = ", q.x, "（p 仍可用）");
+
+    // Phantom：未使用类型参数
+    println("  ── Phantom ──");
+    let m = Marker<i64> { x: 42 };
+    println("  Marker<i64> { x: 42 }，m.x = ", m.x);
+
+    println("");
+}

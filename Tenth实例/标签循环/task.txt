@@ -1,0 +1,15 @@
+# 标签循环
+
+展示给循环加标签后，从内层直接用 `break 'outer` / `continue 'outer` 跳出或继续指定层。
+
+## 覆盖
+
+- `'outer: while ...` 循环标签语法
+- `break 'outer`：内层直接跳出外层循环
+- `continue 'outer`：内层直接继续外层循环的下一轮
+
+## 运行
+
+```
+tenth run labeled_loop.th
+```

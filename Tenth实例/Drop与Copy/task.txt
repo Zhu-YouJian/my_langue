@@ -1,0 +1,15 @@
+# Drop 析构与 Copy 值语义
+
+展示所有权相关的三个特性：`Drop` trait（RAII 析构）、`Copy` trait（赋值不移动）、Phantom 类型（未使用的类型参数）。
+
+## 覆盖
+
+- `impl Drop for T`：作用域退出时自动调用 `drop()`（RAII）
+- `Copy` 自动派生：全字段可复制时赋值 / 传参不移动原值
+- Phantom：`struct Marker<T> { x: i64 }` 中 `T` 未被字段使用，仅参与类型区分
+
+## 运行
+
+```
+tenth run drop_copy.th
+```

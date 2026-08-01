@@ -1,0 +1,45 @@
+// Trait 对象：dyn 动态分发
+//
+// 把实现了同一 trait 的不同具体类型，统一为"动态分发对象"（M1.3 补全）：
+//   - 类型注解驱动升级：let d: dyn Trait = 具体值;
+//   - 通过 dyn 对象调用 trait 方法时，按具体类型动态分派
+//   - 未实现该 trait 的类型无法升级（编译期报错）
+//
+// 运行：tenth run dyn_trait.th（默认 VM/JIT 路径即可）
+//
+// 注：本文件演示 dyn 对象形式（VM 三路径可用）；"具体值直接调 trait
+// 方法"的形式在 VM 有缺口（见 Trait示例 实例，需解释器路径运行）。
+
+trait Draw {
+    fn area(self) -> f64;
+    fn name(self) -> str;
+}
+
+struct Circle { radius: f64 }
+struct Square { side: f64 }
+
+impl Draw for Circle {
+    fn area(self) -> f64 { 3.14159 * self.radius * self.radius }
+    fn name(self) -> str { "Circle" }
+}
+
+impl Draw for Square {
+    fn area(self) -> f64 { self.side * self.side }
+    fn name(self) -> str { "Square" }
+}
+
+fn main() {
+    println("=== Trait 对象（dyn 动态分发）===\n");
+
+    let c = Circle { radius: 2.0 };
+    let s = Square { side: 3.0 };
+
+    // 升级为 dyn Draw：两个不同类型统一为一个接口
+    let dc: dyn Draw = c;
+    let ds: dyn Draw = s;
+
+    println("  ", dc.name(), " 面积 = ", dc.area());
+    println("  ", ds.name(), " 面积 = ", ds.area());
+
+    println("");
+}

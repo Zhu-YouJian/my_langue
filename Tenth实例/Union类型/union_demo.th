@@ -1,0 +1,29 @@
+// Union 联合类型（tagged union）
+//
+// Tenth 的 union 是带"当前活跃字段"标记的联合类型（M1.2 补全）：
+//   - 声明：union 名称 { 字段: 类型, ... }
+//   - 构造：U { 字段: 值 }（恰好激活一个字段）
+//   - 访问 / 修改：仅允许当前活跃字段，访问非活跃字段会报错
+//
+// 运行：tenth run union_demo.th（默认 VM/JIT 路径即可）
+
+union Number { integer: i64, float: f64 }
+
+fn main() {
+    println("=== Union 联合类型 ===\n");
+
+    // 构造：激活 integer 字段
+    let n1 = Number { integer: 42 };
+    println("  Number { integer: 42 }，n1.integer = ", n1.integer);
+
+    // 构造：激活 float 字段
+    let n2 = Number { float: 3.14 };
+    println("  Number { float: 3.14 }，n2.float   = ", n2.float);
+
+    // 修改：仅 active 字段可修改
+    let mut n3 = Number { integer: 1 };
+    n3.integer = 100;
+    println("  n3.integer 修改为 100 = ", n3.integer);
+
+    println("");
+}

@@ -1,0 +1,38 @@
+// 泛型枚举：显式类型参数声明
+//
+// 自定义枚举可声明类型参数（M2.1 补全）：
+//   enum Maybe<T> { Just(T), Nothing }
+//   - 构造：Maybe<i64>::Just(42) 或 Maybe::Just(42)（从字段类型推断）
+//   - match 解构时，绑定变量的类型是实例化后的具体类型
+//
+// 运行：tenth run generic_enum.th（默认 VM/JIT 路径即可）
+//
+// 注：VM 对"同一函数内两个泛型枚举 match"有既有缺陷（AUDIT #18），
+// 因此两种不同实例化的解构演示放在独立函数中。
+
+enum Maybe<T> { Just(T), Nothing }
+
+fn demo_int() {
+    let mb = Maybe<i64>::Just(42);
+    let v = match mb {
+        Maybe::Just(x) => x,
+        Maybe::Nothing => -1,
+    };
+    println("  Maybe<i64>::Just(42) 解构 = ", v);
+}
+
+fn demo_str() {
+    let ms = Maybe<str>::Just("hi");
+    let vs = match ms {
+        Maybe::Just(x) => x,
+        Maybe::Nothing => "empty",
+    };
+    println("  Maybe<str>::Just(\"hi\") 解构 = ", vs);
+}
+
+fn main() {
+    println("=== 泛型枚举 <T> ===\n");
+    demo_int();
+    demo_str();
+    println("");
+}

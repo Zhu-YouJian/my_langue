@@ -1,0 +1,16 @@
+# 算力内存预警
+
+展示 Tenth 的编译期内存 / 算力预估（护城河 D）：对 ≥1GB 的 tensor 或 ≥1 GFLOP 的 matmul 在编译期发出 warning，让开发者在运行前就知道开销，而非等到 OOM 崩溃。
+
+## 覆盖
+
+- 大 tensor 触发编译期 warning（见 stderr）
+- 运行时用 `numel()` / `nbytes()` 查询 tensor 实际大小
+
+## 运行
+
+```
+tenth run memory_warning.th
+```
+
+> 观察：编译期 stderr 会输出 warning（非致命）。

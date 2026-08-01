@@ -1,0 +1,15 @@
+# 标准库使用示例
+
+展示标准库 `nn` / `init` / `optim` 模块的常用功能。
+
+## 覆盖
+
+- `nn::activations`：gelu、leaky_relu
+- `init::initializers`：xavier_normal、he_normal
+- `optim::adamw`：adamw_step（解耦权重衰减）
+
+## 运行
+
+```
+tenth run stdlib_demo.th
+```

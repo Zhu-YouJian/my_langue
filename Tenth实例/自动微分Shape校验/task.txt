@@ -1,0 +1,14 @@
+# 自动微分 Shape 校验
+
+展示 Autograd 反向传播的 shape 静态验证（护城河 A）：`backward()` 在 `acc_grad` 出口显式校验梯度 shape 是否与参数 shape 一致，不一致时报 `RuntimeError`，而非像 PyTorch/JAX 那样静默 squeeze 掩盖错误。
+
+## 覆盖
+
+- 正确的 shape 链路：前向 `[2,3] @ [3,2] = [2,2]`，反向梯度也是 `[2,3]`
+- 用 `.shape_tensor()` 运行时查询梯度 shape，验证与参数 shape 严格一致
+
+## 运行
+
+```
+tenth run autodiff_shape_check.th
+```

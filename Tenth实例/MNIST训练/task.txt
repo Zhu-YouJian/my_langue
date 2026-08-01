@@ -1,0 +1,15 @@
+# MNIST 训练
+
+手写数字识别——2 层 MLP 训练。
+
+## 文件
+
+- `mnist_mlp.th` — 真实 MNIST 数据集训练（网络 784 → 128 (ReLU) → 10 (Softmax)，cross_entropy 损失，SGD 优化）。需先下载 MNIST 数据到 `data/` 目录（文件头注释含下载地址）
+- `synthetic_mlp.th` — 合成数据 MLP 训练（不依赖 MNIST 数据文件，验证完整训练流程：前向、cross_entropy、SGD、自动微分）
+
+## 运行
+
+```
+tenth run synthetic_mlp.th
+tenth run mnist_mlp.th        # 需先准备 MNIST 数据
+```

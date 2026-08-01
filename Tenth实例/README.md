@@ -79,8 +79,14 @@ Tenth实例/
 | 随机数应用 | `随机数应用/` | random_int、random_float、蒙特卡洛估算π |
 | 文件操作 | `文件操作/` | path_join、read/write_file、list_dir、copy |
 | MNIST 训练 | `MNIST训练/` | IDX解析、2层MLP、cross_entropy、SGD |
-| 语言核心新特性 | `语言核心新特性/` | 智能指针（Box/Rc/Arc/Pin）、Union tagged、dyn Trait、泛型枚举、Newtype、标签 break/continue、自定义运算符、声明式宏、Weak 弱引用、Phantom 类型、Drop/RAII、Copy、运算符重载（`impl Add`） |
-| 宏与自定义运算符 | `宏与自定义运算符/` | 声明式宏（嵌套/0参/if体/循环中）、自定义运算符（`@` `$` `~` 组合、优先级、绑定函数） |
+| 智能指针 | `智能指针/` | Box/Rc/Arc/Pin、Weak 弱引用、deref/upgrade |
+| Union 类型 | `Union类型/` | tagged union、字段访问/修改（仅 active） |
+| Trait 对象 | `Trait对象/` | dyn 动态分发、类型注解驱动升级 |
+| 泛型枚举 | `泛型枚举/` | 显式 `<T>` 声明、构造、match 解构 |
+| Newtype 模式 | `Newtype模式/` | 元组结构体、`._0` 访问、类型区分 |
+| 标签循环 | `标签循环/` | break/continue 'outer、多层循环跳转 |
+| Drop 与 Copy | `Drop与Copy/` | Drop/RAII、Copy 自动派生、Phantom 类型 |
+| 宏与自定义运算符 | `宏与自定义运算符/` | 声明式宏（嵌套/0参/if体/循环中）、自定义运算符（`@` `$` `~` 组合、优先级、绑定函数）、struct 运算符重载（`impl Add`） |
 | Shape 检查演示 | `Shape检查演示/` | shape 检查、matmul 维度 |
 | Transformer 示例 | `Transformer示例/` | Self-Attention、GELU、FFN、残差连接 |
 | 标准库使用示例 | `标准库使用示例/` | nn::activations、init::initializers、AdamW 公式 |

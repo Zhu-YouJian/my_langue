@@ -1,0 +1,35 @@
+// Newtype 模式（元组结构体）
+//
+// 单个字段的元组结构体（M2.2 接通）：
+//   struct Meters(f64)
+//   - 构造：Meters(3.5)
+//   - 字段访问：m._0（注：不支持 `.0`，须用 `._0`）
+//   - 类型区分：裸 f64 不能直接传给 Meters 形参（编译期报错）
+//
+// 运行：tenth run newtype.th（默认 VM/JIT 路径即可）
+
+struct Meters(f64)
+struct Pair(i64, str)
+
+fn print_meters(m: Meters) {
+    println("  ", m._0, " 米");
+}
+
+fn main() {
+    println("=== Newtype 模式 ===\n");
+
+    // 构造与字段访问
+    let m = Meters(3.5);
+    println("  Meters(3.5)._0 = ", m._0);
+
+    // 多字段元组结构体
+    let p = Pair(3, "km");
+    println("  Pair(3, \"km\")._0 = ", p._0, "，._1 = ", p._1);
+
+    // 类型区分：Meters 与 f64 是不同的类型
+    // 若把下面这行取消注释，会编译期报错（裸 f64 不能传给 Meters 形参）：
+    // print_meters(3.5);
+    print_meters(m);
+
+    println("");
+}

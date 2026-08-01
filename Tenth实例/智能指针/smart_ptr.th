@@ -1,0 +1,42 @@
+// 智能指针：Box / Rc / Arc / Pin / Weak
+//
+// Tenth 的容器类型（M1.1 / M3.4 补全）：
+//   Box<T>   — 堆分配的所有权指针（独占）
+//   Rc<T>    — 引用计数共享指针（多个引用共享同一值）
+//   Arc<T>   — 原子引用计数（当前与 Rc 等价实现）
+//   Pin<T>   — 固定不可移动包装（自引用安全场景）
+//   Weak<T>  — 弱引用，不增加引用计数，可 upgrade 尝试取强引用
+//
+// 运行：tenth run smart_ptr.th（默认 VM/JIT 路径即可）
+
+fn main() {
+    println("=== 智能指针 ===\n");
+
+    // Box：独占所有权，deref() 取内部值
+    let b: Box<i64> = Box::new(42);
+    println("  Box::new(42).deref()      = ", b.deref());
+
+    // Rc：共享引用计数，clone() 不复制数据、只增加引用
+    let r = Rc::new(7);
+    let r2 = r.clone();
+    println("  Rc::new(7) 克隆后 .deref() = ", r2.deref());
+
+    // Arc：原子共享（当前与 Rc 等价实现）
+    let a = Arc::new(10);
+    println("  Arc::new(10).deref()      = ", a.deref());
+
+    // Pin：固定不可移动包装
+    let p = Pin::new(5);
+    println("  Pin::new(5).deref()       = ", p.deref());
+
+    // Weak：弱引用不阻止释放；原 Rc 存活时 upgrade 成功
+    let r3 = Rc::new(100);
+    let w = Weak::new(r3);
+    let o = weak_upgrade(w);
+    match o {
+        Option::Some(rc) => println("  Weak::upgrade 成功       = ", rc.deref()),
+        Option::None => println("  Weak::upgrade 失败（原 Rc 已释放）"),
+    }
+
+    println("");
+}

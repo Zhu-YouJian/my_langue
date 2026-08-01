@@ -1,0 +1,15 @@
+# 泛型枚举
+
+展示自定义枚举的显式类型参数声明 `enum Maybe<T>`，以及构造与 match 解构。
+
+## 覆盖
+
+- `enum Maybe<T> { Just(T), Nothing }` 显式声明
+- 构造：`Maybe<i64>::Just(42)`（显式实参）或 `Maybe::Just(42)`（从字段类型推断）
+- match 解构时绑定变量类型为实例化后的具体类型
+
+## 运行
+
+```
+tenth run generic_enum.th
+```

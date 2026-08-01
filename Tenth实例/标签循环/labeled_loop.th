@@ -1,0 +1,47 @@
+// 标签循环：break 'outer / continue 'outer
+//
+// 给循环加标签，从内层直接跳出 / 继续指定层（M2.3 补全）：
+//   'outer: while ... { while ... { break 'outer; } }
+//   - break 'outer     跳出外层循环
+//   - continue 'outer  继续外层循环的下一轮
+//
+// 运行：tenth run labeled_loop.th（默认 VM/JIT 路径即可）
+//
+// 注：VM 对"同一函数内多个标签循环"有既有缺陷（AUDIT #17），
+// 因此 break 与 continue 的演示放在独立函数中。
+
+fn demo_break() {
+    // 内层 j == 3 时，直接跳出两层循环
+    let mut s = 0;
+    'outer: while true {
+        let mut j = 0;
+        while j < 10 {
+            if j == 3 { break 'outer; }
+            s = s + 1;
+            j = j + 1;
+        }
+    }
+    println("  break 'outer 后 s = ", s, "（期望 3）");
+}
+
+fn demo_continue() {
+    // 偶数 k 时跳过外层循环体的剩余部分
+    let mut s = 0;
+    'outer: for k in 0..5 {
+        let mut j = 0;
+        while j < 3 {
+            j = j + 1;
+            if k % 2 == 0 { continue 'outer; }
+            s = s + 1;
+        }
+        s = s + 10;
+    }
+    println("  continue 'outer 后 s = ", s, "（期望 26）");
+}
+
+fn main() {
+    println("=== 标签循环 ===\n");
+    demo_break();
+    demo_continue();
+    println("");
+}

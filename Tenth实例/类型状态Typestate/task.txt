@@ -1,0 +1,24 @@
+# 类型状态 Typestate
+
+展示"非法状态表达不出来"：把对象资源的合法状态转换编进类型，编译期拦截非法操作（阶段 2a 护城河层 2）。
+
+## 文件
+
+- `typestate_demo.th` — 合法状态链：Open → read/close → Closed → reopen（运行成功）
+- `typestate_illegal.th` — 非法操作：`File<Closed>` 上调用 `.read()`，编译期报错（预期）
+- `typestate_arg_illegal.th` — G6 调用点参数检查：`File<Closed>` 传给期望 `File<Open>` 的形参，编译期报错（预期）
+
+## 关键机制
+
+- `struct File<S>`：S 是状态类型参数（Open/Closed）
+- `impl File<Open>` / `impl File<Closed>`：按状态特化方法
+- `fn close(self) -> File<Closed>`：消费式状态转换
+- 编译期按 receiver 静态状态解析方法
+
+## 运行
+
+```
+tenth run typestate_demo.th                    # 合法链
+tenth run typestate_illegal.th                 # 预期编译期报错（演示拦截）
+tenth run typestate_arg_illegal.th             # 预期编译期报错（演示 G6 拦截）
+```

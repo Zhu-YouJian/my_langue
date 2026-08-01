@@ -1,0 +1,17 @@
+# Transformer 示例
+
+Transformer Encoder 前向传播演示（合成数据，seq_len=4, d_model=8）。
+
+## 覆盖
+
+- QKV 投影：`Q = X @ W_q, K = X @ W_k, V = X @ W_v`
+- Scaled Dot-Product Attention：scores、softmax、attn = weights @ V
+- 输出投影 + 残差连接
+- Feed-Forward：GELU(x @ W1 + b1) @ W2 + b2 + 残差
+- 单步 MSE loss（不做完整训练循环）
+
+## 运行
+
+```
+tenth run transformer_demo.th
+```

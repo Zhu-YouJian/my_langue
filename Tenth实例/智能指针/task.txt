@@ -1,0 +1,16 @@
+# 智能指针
+
+展示 Tenth 的容器类型：堆分配所有权指针 `Box`、引用计数共享指针 `Rc`/`Arc`、固定指针 `Pin`，以及不增加引用计数的弱引用 `Weak`。
+
+## 覆盖
+
+- `Box::new(x)` 独占所有权，`deref()` 取内部值
+- `Rc::new(x)` / `Arc::new(x)` 引用计数共享，`clone()` 共享同一值
+- `Pin::new(x)` 固定不可移动包装
+- `Weak::new(rc)` + `weak_upgrade(w)`：弱引用不阻止释放，原值存活时升级成功
+
+## 运行
+
+```
+tenth run smart_ptr.th
+```
