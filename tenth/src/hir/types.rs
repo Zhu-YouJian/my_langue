@@ -299,6 +299,21 @@ impl Type {
             TA::Generic { base, args } => {
                 let base_ty = Self::from_annotation(&TA::Named(base.clone()));
                 let arg_tys: Vec<Type> = args.iter().map(Self::from_annotation).collect();
+                // 问题29：智能指针类型注解 `Box<T>`/`Rc<T>`/`Arc<T>`/`Pin<T>`
+                // 映射为内置容器类型（Type::HeapBox/SharedBox/AtomicBox/Pin）。
+                // 保守条件：base 恰好是这 4 个名字、且恰好 1 个类型实参——避免与
+                // 用户自定义 `struct Box<T>` 等泛型类型冲突。若用户恰好声明了同名
+                // struct/enum/union/泛型 struct，Lowerer::annotation_type（has_struct
+                // 防护）会在注解处理点回退为 Type::Generic。
+                if arg_tys.len() == 1 {
+                    match base.name.as_str() {
+                        "Box" => return Type::HeapBox(Box::new(arg_tys[0].clone())),
+                        "Rc" => return Type::SharedBox(Box::new(arg_tys[0].clone())),
+                        "Arc" => return Type::AtomicBox(Box::new(arg_tys[0].clone())),
+                        "Pin" => return Type::Pin(Box::new(arg_tys[0].clone())),
+                        _ => {}
+                    }
+                }
                 Type::Generic {
                     base: Box::new(base_ty),
                     args: arg_tys,

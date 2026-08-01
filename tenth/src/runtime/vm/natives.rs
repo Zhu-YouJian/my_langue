@@ -840,6 +840,25 @@ impl Vm {
 
                 _ => err(&format!("Int 没有方法 '{}'", method)),
             },
+            // 问题29：智能指针容器方法（Box/Rc/Arc/Pin）。
+            // 与解释器 eval_smart_ptr_method（interpreter/methods.rs）语义一致：
+            // - deref/deref_mut：返回内部值（Value 克隆）
+            // - clone：HeapBox/Pin 深拷贝内部值重新包装；SharedBox 用 Rc::clone 共享
+            Value::HeapBox(v) => match method {
+                "deref" | "deref_mut" => Ok((*v).clone()),
+                "clone" => Ok(Value::HeapBox(Box::new((*v).clone()))),
+                _ => err(&format!("Box 没有方法 '{}'", method)),
+            },
+            Value::SharedBox(rc) => match method {
+                "deref" | "deref_mut" => Ok(rc.borrow().clone()),
+                "clone" => Ok(Value::SharedBox(Rc::clone(&rc))),
+                _ => err(&format!("Rc 没有方法 '{}'", method)),
+            },
+            Value::Pin(v) => match method {
+                "deref" | "deref_mut" => Ok((*v).clone()),
+                "clone" => Ok(Value::Pin(Box::new((*v).clone()))),
+                _ => err(&format!("Pin 没有方法 '{}'", method)),
+            },
             _ => err(&format!("没有方法 '{}'", method)),
         }
     }

@@ -67,10 +67,10 @@ impl Lowerer {
                 // 类型注解强制化：若 type_ann 和 init 都存在，检查 shape 兼容性并合并
                 let ty = match (type_ann.as_ref(), lowered_init.as_ref()) {
                     (Some(ann), Some(init_expr)) => {
-                        let ann_ty = Type::from_annotation(ann);
+                        let ann_ty = self.annotation_type(ann);
                         Self::check_and_merge_tensor_shape(&ann_ty, &init_expr.ty, &span, "let 注解")?
                     }
-                    (Some(ann), None) => Type::from_annotation(ann),
+                    (Some(ann), None) => self.annotation_type(ann),
                     (None, Some(init_expr)) => init_expr.ty.clone(),
                     (None, None) => Type::Unknown,
                 };
@@ -97,7 +97,7 @@ impl Lowerer {
 
                 HirStmtKind::Let {
                     names: names.iter().map(|n| n.name.clone()).collect(),
-                    type_ann: type_ann.as_ref().map(|a| Type::from_annotation(a)),
+                    type_ann: type_ann.as_ref().map(|a| self.annotation_type(a)),
                     mutable: *mutable,
                     init: lowered_init,
                 }
@@ -204,10 +204,10 @@ impl Lowerer {
                 ast::ItemKind::StructDef { name, generics, kind, .. } => {
                     let field_types: Vec<(String, Type)> = match kind {
                         ast::StructKind::Named(fields) => fields.iter()
-                            .map(|f| (f.name.name.clone(), Type::from_annotation(&f.type_ann)))
+                            .map(|f| (f.name.name.clone(), self.annotation_type(&f.type_ann)))
                             .collect(),
                         ast::StructKind::Tuple(types) => types.iter().enumerate()
-                            .map(|(i, ty)| (format!("_{}", i), Type::from_annotation(ty)))
+                            .map(|(i, ty)| (format!("_{}", i), self.annotation_type(ty)))
                             .collect(),
                     };
                     if generics.is_empty() {
@@ -228,12 +228,12 @@ impl Lowerer {
                                 ast::EnumVariantKind::Unit => Vec::new(),
                                 ast::EnumVariantKind::Named(named_fields) => {
                                     named_fields.iter()
-                                        .map(|f| (f.name.name.clone(), Type::from_annotation(&f.type_ann)))
+                                        .map(|f| (f.name.name.clone(), self.annotation_type(&f.type_ann)))
                                         .collect()
                                 }
                                 ast::EnumVariantKind::Tuple(types) => {
                                     types.iter().enumerate()
-                                        .map(|(i, ty)| (format!("_{}", i), Type::from_annotation(ty)))
+                                        .map(|(i, ty)| (format!("_{}", i), self.annotation_type(ty)))
                                         .collect()
                                 }
                             };
@@ -244,7 +244,7 @@ impl Lowerer {
                 }
                 ast::ItemKind::Union { name, fields } => {
                     let field_types: Vec<(String, Type)> = fields.iter()
-                        .map(|f| (f.name.name.clone(), Type::from_annotation(&f.type_ann)))
+                        .map(|f| (f.name.name.clone(), self.annotation_type(&f.type_ann)))
                         .collect();
                     self.unions.insert(name.name.clone(), field_types);
                 }
@@ -254,10 +254,10 @@ impl Lowerer {
                     let method_sigs: Vec<HirTraitMethod> = methods.iter()
                         .map(|m| {
                             let param_types: Vec<(String, Type)> = m.params.iter()
-                                .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
+                                .map(|p| (p.name.name.clone(), self.annotation_type(&p.type_ann)))
                                 .collect();
                             let ret_ty = m.return_type.as_ref()
-                                .map(|rt| Type::from_annotation(rt))
+                                .map(|rt| self.annotation_type(rt))
                                 .unwrap_or(Type::unit());
                             // Lower default body if present
                             let default_body = if let Some(body) = &m.body {
@@ -293,10 +293,10 @@ impl Lowerer {
                         continue;
                     }
                     let param_types: Vec<(String, Type)> = params.iter()
-                        .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
+                        .map(|p| (p.name.name.clone(), self.annotation_type(&p.type_ann)))
                         .collect();
                     let ret_ty = return_type.as_ref()
-                        .map(|rt| Type::from_annotation(rt))
+                        .map(|rt| self.annotation_type(rt))
                         .unwrap_or(Type::unit());
                     let ret_ty = self.resolve_struct_type(ret_ty);
                     self.scope.define_fn(name.name.clone(), param_types, ret_ty);
@@ -316,10 +316,10 @@ impl Lowerer {
                             if let ast::ItemKind::Function { name, generics, params, return_type, body, .. } = &fn_item.kind {
                                 let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
                                 let param_types: Vec<(String, Type)> = params.iter()
-                                    .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
+                                    .map(|p| (p.name.name.clone(), self.annotation_type(&p.type_ann)))
                                     .collect();
                                 let ret_ty = return_type.as_ref()
-                                    .map(|rt| Type::from_annotation(rt))
+                                    .map(|rt| self.annotation_type(rt))
                                     .unwrap_or(Type::unit());
 
                                 let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
@@ -403,10 +403,10 @@ impl Lowerer {
                             if let ast::ItemKind::Function { name, generics, params, return_type, body, .. } = &fn_item.kind {
                                 let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
                                 let param_types: Vec<(String, Type)> = params.iter()
-                                    .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
+                                    .map(|p| (p.name.name.clone(), self.annotation_type(&p.type_ann)))
                                     .collect();
                                 let ret_ty = return_type.as_ref()
-                                    .map(|rt| Type::from_annotation(rt))
+                                    .map(|rt| self.annotation_type(rt))
                                     .unwrap_or(Type::unit());
 
                                 let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));
@@ -650,10 +650,10 @@ impl Lowerer {
                     }
                     let gen_names: Vec<String> = generics.iter().map(|g| g.name.name.clone()).collect();
                     let param_types: Vec<(String, Type)> = params.iter()
-                        .map(|p| (p.name.name.clone(), Type::from_annotation(&p.type_ann)))
+                        .map(|p| (p.name.name.clone(), self.annotation_type(&p.type_ann)))
                         .collect();
                     let ret_ty = return_type.as_ref()
-                        .map(|rt| Type::from_annotation(rt))
+                        .map(|rt| self.annotation_type(rt))
                         .unwrap_or(Type::unit());
 
                     let body_scope = Scope::with_parent(std::mem::replace(&mut self.scope, Scope::new()));

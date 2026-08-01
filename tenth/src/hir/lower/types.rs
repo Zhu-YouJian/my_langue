@@ -645,6 +645,18 @@ impl Lowerer {
                 "iter" => Type::Unknown,
                 _ => Type::Unknown,
             },
+            // 问题29：智能指针容器方法（Box/Rc/Arc/Pin 双侧：VM call_method_priv 与
+            // 解释器 eval_smart_ptr_method 运行时语义一致）
+            Type::HeapBox(inner) | Type::SharedBox(inner) | Type::AtomicBox(inner) | Type::Pin(inner) => {
+                match method {
+                    // deref/deref_mut：返回内部值类型（`Box<i64>.deref()` → i64）
+                    "deref" | "deref_mut" => inner.as_ref().clone(),
+                    // clone：深拷贝内部值重新包装（SharedBox 用 Rc::clone 共享），
+                    // 返回同容器类型（`Box<i64>.clone()` → Box<i64>）
+                    "clone" => receiver.clone(),
+                    _ => Type::Unknown,
+                }
+            }
             _ => {
                 // 阶段2a M2（G3）：用户自定义方法——查方法表返回真实返回类型。
                 // 状态传播的关键：`close(self) -> File<Closed>` 的返回类型在此取出，
@@ -728,6 +740,21 @@ impl Lowerer {
             "write_file" | "write_bytes" => Ok(Type::unit()),
             "Vec::new" => Ok(Type::Array { inner: Box::new(Type::Unknown), size: None }),
             "HashMap::new" => Ok(Type::Unknown),
+            // 问题29：智能指针构造 native 的静态返回类型。
+            // 泛型实参 T 取实参表达式的推断类型：`Box::new(42)` → Box<i64>。
+            // 无实参/无法推断 → Unknown（运行时仍正确包装，仅静态信息缺失）。
+            "Box::new" => Ok(Type::HeapBox(Box::new(
+                args.first().map(|a| a.ty.clone()).unwrap_or(Type::Unknown),
+            ))),
+            "Rc::new" => Ok(Type::SharedBox(Box::new(
+                args.first().map(|a| a.ty.clone()).unwrap_or(Type::Unknown),
+            ))),
+            "Arc::new" => Ok(Type::AtomicBox(Box::new(
+                args.first().map(|a| a.ty.clone()).unwrap_or(Type::Unknown),
+            ))),
+            "Pin::new" => Ok(Type::Pin(Box::new(
+                args.first().map(|a| a.ty.clone()).unwrap_or(Type::Unknown),
+            ))),
             "compile_host" => Ok(Type::Base(BaseType::I32)),
             "format" => Ok(Type::str_()),
             "to_string" | "type_name" => Ok(Type::str_()),

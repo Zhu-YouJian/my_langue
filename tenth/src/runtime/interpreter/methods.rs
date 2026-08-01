@@ -90,6 +90,11 @@ impl super::Interpreter {
             Value::String(_) | Value::Vec(_) | Value::Map(_) | Value::Range { .. } | Value::Iterator(_) => {
                 self.eval_native_method(recv, method, args)
             }
+            // 问题29：智能指针容器方法（Box/Rc/Arc/Pin）——显式 deref/clone，
+            // 不自动解包（与 VM call_method_priv 一致）
+            Value::HeapBox(_) | Value::SharedBox(_) | Value::Pin(_) => {
+                self.eval_smart_ptr_method(recv, method, args).map(Some)
+            }
             _ => Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("此类型不支持方法 '{}'", method),
             }),
@@ -798,6 +803,39 @@ impl super::Interpreter {
         self.pop_scope();
 
         result
+    }
+
+    /// 问题29：智能指针容器方法（Box/Rc/Arc/Pin）。
+    /// 与 VM call_method_priv（vm/natives.rs）语义一致：
+    /// - deref/deref_mut：返回内部值（Value 克隆）
+    /// - clone：HeapBox/Pin 深拷贝内部值重新包装；SharedBox 用 Rc::clone 共享
+    pub(super) fn eval_smart_ptr_method(&self, recv: &Value, method: &str, _args: &[Value]) -> TenthResult<Value> {
+        match recv {
+            Value::HeapBox(v) => match method {
+                "deref" | "deref_mut" => Ok((**v).clone()),
+                "clone" => Ok(Value::HeapBox(Box::new((**v).clone()))),
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
+                    message: format!("Box 没有方法 '{}'", method),
+                }),
+            },
+            Value::SharedBox(rc) => match method {
+                "deref" | "deref_mut" => Ok(rc.borrow().clone()),
+                "clone" => Ok(Value::SharedBox(Rc::clone(rc))),
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
+                    message: format!("Rc 没有方法 '{}'", method),
+                }),
+            },
+            Value::Pin(v) => match method {
+                "deref" | "deref_mut" => Ok((**v).clone()),
+                "clone" => Ok(Value::Pin(Box::new((**v).clone()))),
+                _ => Err(TenthError::RuntimeError { line: None, col: None,
+                    message: format!("Pin 没有方法 '{}'", method),
+                }),
+            },
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: format!("此类型不支持方法 '{}'", method),
+            }),
+        }
     }
 
     pub(super) fn eval_tensor_method(&mut self, recv: &Value, method: &str, args: &[Value]) -> TenthResult<Value> {

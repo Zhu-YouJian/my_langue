@@ -97,6 +97,45 @@ impl Lowerer {
         }
     }
 
+    /// 类型注解 → Type（M1.1 智能指针入口）。
+    ///
+    /// 在 `Type::from_annotation` 基础上叠加「has_struct 防护」：`Box<T>`/
+    /// `Rc<T>`/`Arc<T>`/`Pin<T>` 默认映射为内置容器类型，但若用户恰好声明了
+    /// 同名 struct/enum/union/泛型 struct（如 `struct Box<T> { .. }`），则回退
+    /// 为 `Type::Generic`（用户类型优先，防误报）。所有处理用户类型注解的
+    /// 调用点应使用本方法而非裸 `Type::from_annotation`。
+    pub(super) fn annotation_type(&self, ann: &ast::TypeAnnotation) -> Type {
+        let ty = Type::from_annotation(ann);
+        match ty {
+            Type::HeapBox(inner) if self.user_type_declared("Box") => Type::Generic {
+                base: Box::new(Type::TypeParam { name: "Box".to_string() }),
+                args: vec![*inner],
+            },
+            Type::SharedBox(inner) if self.user_type_declared("Rc") => Type::Generic {
+                base: Box::new(Type::TypeParam { name: "Rc".to_string() }),
+                args: vec![*inner],
+            },
+            Type::AtomicBox(inner) if self.user_type_declared("Arc") => Type::Generic {
+                base: Box::new(Type::TypeParam { name: "Arc".to_string() }),
+                args: vec![*inner],
+            },
+            Type::Pin(inner) if self.user_type_declared("Pin") => Type::Generic {
+                base: Box::new(Type::TypeParam { name: "Pin".to_string() }),
+                args: vec![*inner],
+            },
+            _ => ty,
+        }
+    }
+
+    /// 用户是否声明了名为 name 的 struct/enum/union/泛型 struct。
+    /// 用于 has_struct 防护：内置智能指针名与用户类型名冲突时用户类型优先。
+    fn user_type_declared(&self, name: &str) -> bool {
+        self.structs.contains_key(name)
+            || self.enums.contains_key(name)
+            || self.unions.contains_key(name)
+            || self.generic_structs.contains_key(name)
+    }
+
     /// 收集表达式中所有"作为最终值产出"的 Ref/MutRef 所引用的变量名。
     /// 用于 `let r = if c { &x } else { &y };` 类构造，让 r 同时被记录为
     /// x 和 y 的 borrow holder——任一分支选中都需保留对应借用状态。

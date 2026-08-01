@@ -77,6 +77,8 @@ impl Lowerer {
                             | "or_die" | "assume_ok"
                             | "str_at" | "str_len" | "str_cmp" | "str_slice" | "str_add" | "str_eq" | "str_int"
                             | "Vec::new" | "HashMap::new"
+                            // 问题29：智能指针构造 native（Box/Rc/Arc/Pin，返回类型见 resolve_builtin）
+                            | "Box::new" | "Rc::new" | "Arc::new" | "Pin::new"
                             | "compile_host" | "compile_program"
                             | "start_grad" | "new_grad" | "stop_grad"
                             | "param" | "backward" | "grad" | "zero_grad"
@@ -350,7 +352,7 @@ impl Lowerer {
                     // 由 substitute_kind_in_place 中的 native dtype 修正逻辑改写 func_name
                     // （如 F32 → randn_f32）。
                     let type_args: Vec<Type> = generics.iter()
-                        .map(|ta| Type::from_annotation(ta))
+                        .map(|ta| self.annotation_type(ta))
                         .collect();
                     if type_args.len() != 1 {
                         return Err(TenthError::TypeError {
@@ -431,7 +433,7 @@ impl Lowerer {
                     .clone();
 
                 let type_args: Vec<Type> = generics.iter()
-                    .map(|ta| Type::from_annotation(ta))
+                    .map(|ta| self.annotation_type(ta))
                     .collect();
 
                 let mut type_map: HashMap<String, Type> = HashMap::new();
@@ -849,7 +851,7 @@ impl Lowerer {
                 let lowered_params: Vec<_> = params.iter()
                     .map(|(name, ann)| {
                         let ty = ann.as_ref()
-                            .map(|a| Type::from_annotation(a))
+                            .map(|a| self.annotation_type(a))
                             .unwrap_or(Type::Unknown);
                         (name.name.clone(), ty)
                     })
@@ -1012,7 +1014,7 @@ impl Lowerer {
                     Type::from_annotation(&ast::TypeAnnotation::Named(ast::Ident { name: name.name.clone(), span: name.span.clone() }))
                 } else {
                     let arg_tys: Vec<Type> = generics.iter()
-                        .map(|g| Type::from_annotation(g))
+                        .map(|g| self.annotation_type(g))
                         .collect();
                     Type::Generic {
                         base: Box::new(Type::TypeParam { name: name.name.clone() }),
