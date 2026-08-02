@@ -19,6 +19,7 @@ use tenth::runtime::interpreter::Interpreter;
 use tenth::runtime::vm::Vm;
 use tenth::runtime::value::Value;
 use tenth::compile::bytecode::BytecodeCompiler;
+use tenth::compile::jit;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -80,6 +81,57 @@ fn run_vm(src: &str) -> Result<Value, String> {
             Err(e) => return Err(format!("compile error: {}", e)),
         }
         vm.call("main").map_err(|e| e.to_string())
+    } else {
+        Ok(Value::Unit)
+    }
+}
+
+/// JIT 路径：与 run_vm 相同，但通过 jit::run_jit 执行（fallback 到 VM）。
+fn run_jit(src: &str) -> Result<Value, String> {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().map_err(|e| e.to_string())?;
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).map_err(|e| e.to_string())?;
+
+    let mut vm = Vm::new();
+    vm.add_native("println".into(), |_vm, args| {
+        for a in args { print!("{a}"); }
+        println!();
+        Ok(Value::Unit)
+    });
+    vm.add_native("assert".into(), |_vm, args| {
+        if let Some(Value::Bool(b)) = args.first() {
+            assert!(*b, "assertion failed");
+        }
+        Ok(Value::Unit)
+    });
+
+    for func in &hir.functions {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile(func) {
+            Ok((chunk, closures)) => {
+                vm.add_fn(func.name.clone(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+    }
+    if let Some(ref expr) = hir.main_expr {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile_main(expr) {
+            Ok((chunk, closures)) => {
+                vm.add_fn("main".into(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+        jit::run_jit(&mut vm, "main").map_err(|e| e.to_string())
     } else {
         Ok(Value::Unit)
     }
@@ -219,10 +271,10 @@ fn test_mul_binds_tighter_than_custom_op() {
 
 #[test]
 fn test_coexist_with_builtin_overload() {
-    // 注意：`a + b` 降级为 `a.add(b)` 方法调用。解释器路径支持 trait 方法
-    // 分派；VM 路径的 Value::Struct 方法分派只做字段访问（既有局限，非本
-    // 特性引入），因此本测试仅验证解释器路径——自定义运算符本身在 VM 路径
-    // 由其余测试覆盖（它们降级为顶层函数调用，VM 支持）。
+    // `a + b` 降级为 `a.add(b)` 方法调用。批次2 C 前，VM 路径的 Value::Struct
+    // 方法分派只做字段访问（既有局限），本测试仅验证解释器路径；批次2 C
+    // （编译期具体值 trait 方法改写 → `__dyn_Add_V_add`）后，VM/JIT 路径与
+    // 解释器一致，此处补 VM/JIT 断言（与自定义运算符降级为顶层函数调用共存）。
     let src = r#"
     struct V { x: i64 }
     trait Add { fn add(self, other: V) -> V; }
@@ -239,6 +291,13 @@ fn test_coexist_with_builtin_overload() {
     "#;
     let r = run(src).unwrap();
     expect_int(&r.unwrap(), 20, "解释器");
+
+    // 批次2 C：VM/JIT 路径与解释器一致（具体值 trait 方法编译期改写已打通）
+    let r = run_vm(src).unwrap();
+    expect_int(&r, 20, "VM");
+
+    let r = run_jit(src).unwrap();
+    expect_int(&r, 20, "JIT");
 }
 
 // ── 边界：未声明 / 重复声明 / 运算符名 ─────────────────────────────────────

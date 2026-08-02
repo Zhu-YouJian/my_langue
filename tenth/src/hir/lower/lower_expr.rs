@@ -180,6 +180,22 @@ impl Lowerer {
                 if let Some((trait_name, method_name)) = self.try_binary_op_overload(op, &l.ty) {
                     if self.has_trait_impl_for_type(&trait_name, &l.ty) {
                         let method = method_name.to_string();
+                        // 批次2 C：运算符重载的 trait 方法在 VM 的具体值分派。
+                        // `a + b` 降级为 `add` 方法调用，但直接构造 MethodCall 会绕过
+                        // MethodCall 分支的 trait 改写（VM call_method_priv 对
+                        // Value::Struct 只做字段访问、不查 trait 表）。运算符→trait
+                        // 映射固定（Add→add），此处按已知 trait 直接改写为对
+                        // `__dyn_{trait}_{type}_{method}` 的普通 Call（与 MethodCall
+                        // 分支同模式，VM/JIT/WASM/解释器四路径同通）。
+                        if let Some((kind, ty)) = self.try_rewrite_trait_method(
+                            &l, &method, std::slice::from_ref(&r), &span, Some(trait_name),
+                        ) {
+                            return Ok(HirExpr {
+                                kind,
+                                ty: ty.clone(),
+                                span: span.clone(),
+                            });
+                        }
                         // AUDIT #19：trait 方法（`impl Add for Point` 的 `add`）不在
                         // inherent 方法表（methods）中，resolve_method_type 查不到会
                         // 回退 Unknown —— 单层 `a + b` 可用，但链式 `(a + b) + c` 的
@@ -252,6 +268,18 @@ impl Lowerer {
                 let (kind, ty) = if let Some((trait_name, method_name)) = self.try_unary_op_overload(op) {
                     if self.has_trait_impl_for_type(&trait_name, &e.ty) {
                         let method = method_name.to_string();
+                        // 批次2 C：与二元重载同理——一元运算符（`-a` → `a.neg()`）直接
+                        // 构造 MethodCall 绕过 trait 改写，此处按已知 trait 改写为
+                        // `__dyn_*` 调用（四路径同通）。
+                        if let Some((kind, ty)) = self.try_rewrite_trait_method(
+                            &e, &method, &[], &span, Some(trait_name),
+                        ) {
+                            return Ok(HirExpr {
+                                kind,
+                                ty: ty.clone(),
+                                span: span.clone(),
+                            });
+                        }
                         // AUDIT #19：与二元重载同因——trait 方法返回类型从 trait
                         // impl 定义取，避免回退 Unknown 使外层链式断链。
                         let ret_ty = self.trait_impl_method_ret_type(&trait_name, &e.ty, &method)
@@ -696,6 +724,40 @@ impl Lowerer {
                             },
                             ty: ret_ty,
                             span: expr.span.clone(),
+                        });
+                    }
+                    // 批次2 C：具体值 trait 方法编译期改写（VM/JIT/WASM/解释器四路径打通）。
+                    //
+                    // 背景：inherent 方法有 `__{Type}_{method}` 编译期改写（上方），但 trait
+                    // 方法（`impl Shape for Circle` 的 `area`）此前直接 fall-through 为带 plain
+                    // 方法名的 MethodCall——VM 的 `call_method_priv` 对 Value::Struct 只做字段
+                    // 访问、不查 trait 表，报「没有方法」。而 `__dyn_{Trait}_{Type}_{method}`
+                    // 函数已由 lower_stmt 无条件注册进 self.functions 并被编译进 VM
+                    // （dyn 路径可用即实证），缺的只是「具体值方法调用 → __dyn_*」这条路由。
+                    //
+                    // 改写规则（严格防静默错值）：
+                    // - 按 receiver 静态类型（type_name，与 inherent 块同源）查 trait_impls，
+                    //   收集所有在该类型上实现了此方法的 trait；
+                    // - **恰好 1 个** trait 命中 → 改写为对 `__dyn_{trait}_{type}_{method}`
+                    //   的普通 Call（与 inherent 改写同模式），四后端同通；
+                    // - 0 个（无实现）或 ≥2 个（歧义）命中 → **不改写**：无匹配保持既有
+                    //   fall-through 响亮报错；歧义不静默选一个，保持现状（未来增强）。
+                    //
+                    // 边界：
+                    // - 枚举不改写（recv_type_name 不含 Enum，与解释器 Value::Enum 不分派一致）；
+                    // - trait 默认方法体不注册进 trait_impls（lower_stmt 只注册 impl 显式方法），
+                    //   此处查表不命中 → 不改写，保持双路径现状（能力全梳理已记录）；
+                    // - 泛型 `<T>` 内具体值 trait 方法：TypeParam("T") 查表通常不命中，
+                    //   不改写（VM 响亮报错，与 P3 可选运行时兜底衔接，非静默）。
+                    // 具体值 trait 方法编译期改写（恰一 trait 命中 → __dyn_* Call；
+                    // 0 无匹配 / ≥2 歧义 → 不改写保持现状响亮报错）。
+                    if let Some((kind, ty)) = self.try_rewrite_trait_method(
+                        &recv, &method.name, &lowered_args, &span, None,
+                    ) {
+                        return Ok(HirExpr {
+                            kind,
+                            ty: ty.clone(),
+                            span: span.clone(),
                         });
                     }
                     // 阶段2a M2（G3）：泛型 struct 实例（如 `File<Closed>`）上调用
@@ -1972,6 +2034,87 @@ impl Lowerer {
             .and_then(|impls| impls.get(type_name))
             .and_then(|methods| methods.get(method))
             .map(|def| def.return_type.clone())
+    }
+
+    /// 批次2 C：具体值 trait 方法编译期改写（与 inherent `__Type_method` 改写同模式）。
+    ///
+    /// 在 `__dyn_{trait}_{type}_{method}` 函数已由 lower_stmt 无条件注册的前提下，
+    /// 把「具体值上的 trait 方法调用」改写为对它的普通 Call，使 VM/JIT/WASM/解释器
+    /// 四路径同通（VM `call_method_priv` 对 Value::Struct 只做字段访问、不查 trait 表）。
+    ///
+    /// - `known_trait: Some(t)`：调用方已确定 trait（运算符重载 Add→add 固定映射），
+    ///   直接按该 trait 改写（无 `__dyn_*` 函数则回退 None 不改写）；
+    /// - `known_trait: None`：按 receiver 静态类型收集所有实现该方法的 trait，
+    ///   **恰好 1 个**才改写；0 或 ≥2 返回 None 不改写——无匹配保持既有 fall-through
+    ///   响亮报错，歧义不静默选一个（规避静默错值，歧义报错为未来增强）。
+    ///
+    /// 返回 `Some((HirExprKind::Call, ret_ty))`（改写成功）或 `None`（不改写）。
+    fn try_rewrite_trait_method(
+        &self,
+        recv: &HirExpr,
+        method: &str,
+        args: &[HirExpr],
+        span: &Span,
+        known_trait: Option<&str>,
+    ) -> Option<(HirExprKind, Type)> {
+        // 与 inherent 块同源的 receiver 类型名（Struct/TypeParam/Generic base）。
+        // 枚举不改写（recv_type_name 不含 Enum，与解释器 Value::Enum 不分派一致）。
+        let type_name = match &recv.ty {
+            Type::Struct(name) | Type::TypeParam { name } => name.clone(),
+            Type::Generic { base, .. } => match base.as_ref() {
+                Type::Struct(name) | Type::TypeParam { name } => name.clone(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        // 收集命中 trait：known_trait 模式只查该 trait；否则遍历全部 trait_impls。
+        let mut matching_traits: Vec<String> = Vec::new();
+        match known_trait {
+            Some(t) => {
+                if self.trait_impls.get(t)
+                    .and_then(|impls| impls.get(&type_name))
+                    .and_then(|methods| methods.get(method))
+                    .is_some() {
+                    matching_traits.push(t.to_string());
+                }
+            }
+            None => {
+                for (trait_name, type_impls) in &self.trait_impls {
+                    if type_impls.get(&type_name)
+                        .and_then(|methods| methods.get(method))
+                        .is_some() {
+                        matching_traits.push(trait_name.clone());
+                    }
+                }
+            }
+        }
+        if matching_traits.len() != 1 {
+            return None;
+        }
+        let trait_name = &matching_traits[0];
+        let mangled = format!("__dyn_{}_{}_{}", trait_name, type_name, method);
+        // 防御性校验：__dyn_* 注册与 trait_impls 同源（lower_stmt），理论上必含；
+        // 不含则不改写（防用户病态手写同名函数干扰路由）。
+        if !self.functions.iter().any(|f| f.name == mangled) {
+            return None;
+        }
+        let mut all_args = vec![recv.clone()];
+        all_args.extend(args.iter().cloned());
+        let ret_ty = self.trait_impl_method_ret_type(trait_name, &recv.ty, method)
+            .unwrap_or_else(|| self.resolve_method_type(&recv.ty, method, &all_args));
+        let func = HirExpr {
+            kind: HirExprKind::Var(mangled),
+            ty: Type::Unknown,
+            span: span.clone(),
+        };
+        Some((
+            HirExprKind::Call {
+                func: Box::new(func),
+                args: all_args,
+                ret_ty: ret_ty.clone(),
+            },
+            ret_ty,
+        ))
     }
 
     /// 收集当前作用域中所有实现了 Drop trait 的变量。

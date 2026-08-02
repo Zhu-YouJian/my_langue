@@ -3,16 +3,11 @@
 // 特性（M3.1 顺带修复）：用户 struct 实现 trait 方法后，内置运算符 + 会
 // 降级为方法调用。本文件演示在自定义 struct Point 上重载 `+`。
 //
-// ⚠️ 运行方式：VM 对「具体值 trait 方法」的分派有缺口（Value::Struct 的
-// 方法分派只做字段访问），因此本文件必须用解释器路径运行：
-//   TENTH_NO_VM=1 tenth run operator_overload.th
-//
-// 若直接用默认路径（VM）运行，会在 `a + b` 处报"没有方法"——这是 VM 的
-// 既有局限（非本特性引入），详见 tenth/tests/custom_operator_test.rs 的
-// test_coexist_with_builtin_overload 注释。
+// 运行方式：默认路径（VM）与解释器均可运行（2026-08-03 批次2 C 完成——
+// 具体值 trait 方法编译期改写 `__dyn_*` 路由，operator_overload 实例转绿）。
 //
 // 另注：AUDIT #19（链式重载断链）已于 2026-08-02 修复——`(a + b) + c`
-// 的复合 receiver 类型现能正确传播，链式运算在解释器路径可用。
+// 的复合 receiver 类型现能正确传播，链式运算在 VM/解释器路径均可用。
 
 struct Point { x: f64 }
 trait Add { fn add(self, other: Point) -> Point; }

@@ -1,9 +1,7 @@
 // Trait 示例
 //
-// ⚠️ 需解释器路径运行（VM 路径会报“没有方法 'area'”）：
-//   TENTH_NO_VM=1 tenth.exe run "Tenth实例/Trait示例/trait_demo.th"
-// 根因：VM 的 call_method_priv 对具体值的 trait 方法分派缺失（只做字段访问），
-// M1.3 已知遗留；解释器路径正确分派 trait impl 方法。待总师单独排期修复 VM。
+// 演示 trait 定义、impl、具体值 trait 方法调用（编译期改写 `__dyn_*` 路由，
+// 2026-08-03 批次2 C 完成）。默认路径（VM）与解释器均可运行。
 
 trait Shape {
     fn area(self) -> f64;
