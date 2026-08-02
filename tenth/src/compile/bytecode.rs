@@ -865,8 +865,10 @@ impl BytecodeCompiler {
                                 let i = self.chunk.add_string(name);
                                 self.chunk.emit(Op::LoadGlobal(i));
                             }
-                            // Convert to string via format builtin
-                            let fi = self.chunk.add_string("format");
+                            // Convert to string via to_string builtin（任意值均可；
+                            // 旧用 format(x) 要求模板字符串，非字符串值报错——既有
+                            // VM 限制，2026-08-03 修复，语义对齐解释器 value_to_string）
+                            let fi = self.chunk.add_string("to_string");
                             self.chunk.emit(Op::CallN(fi, 1));
                             count += 1;
                         }

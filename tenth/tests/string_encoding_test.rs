@@ -163,6 +163,85 @@ fn test_fstring_multiple_vars() {
     assert_eq!(as_str(&v), "1 + 2 = 3");
 }
 
+// AUDIT-11.4.27：f-string 表达式插值 + 格式说明符（修复后守护）
+
+#[test]
+fn test_fstring_expr_interp_vm() {
+    // 任意表达式插值：{a+b}
+    let src = "fn main() { let a = 1; let b = 2; f\"{a+b}\" }";
+    let v = run_vm(src).expect("VM 执行失败");
+    assert_eq!(as_str(&v), "3");
+}
+
+#[test]
+fn test_fstring_expr_interp_interp() {
+    let src = "fn main() { let a = 1; let b = 2; f\"{a+b}\" }";
+    let v = run_interp(src).expect("解释器执行失败");
+    assert_eq!(as_str(&v), "3");
+}
+
+#[test]
+fn test_fstring_float_literal_interp() {
+    // 手册 §2.3：f"value = {x}, pi = {3.14}"
+    let src = "fn main() { let x = 5; f\"value = {x}, pi = {3.14}\" }";
+    let v = run_vm(src).expect("VM 执行失败");
+    assert_eq!(as_str(&v), "value = 5, pi = 3.14");
+}
+
+#[test]
+fn test_fstring_format_spec_vm() {
+    // 手册 §12.15.1 末行：f"pi ≈ {3.14159:.2f}" → "pi ≈ 3.14"
+    let src = "fn main() { f\"pi ≈ {3.14159:.2f}\" }";
+    let v = run_vm(src).expect("VM 执行失败");
+    assert_eq!(as_str(&v), "pi ≈ 3.14");
+}
+
+#[test]
+fn test_fstring_format_spec_interp() {
+    let src = "fn main() { f\"pi ≈ {3.14159:.2f}\" }";
+    let v = run_interp(src).expect("解释器执行失败");
+    assert_eq!(as_str(&v), "pi ≈ 3.14");
+}
+
+#[test]
+fn test_fstring_format_spec_width_vm() {
+    // 变量 + 宽度说明符：{n:>5}
+    let src = "fn main() { let n = 42; f\"[{n:>5}]\" }";
+    let v = run_vm(src).expect("VM 执行失败");
+    assert_eq!(as_str(&v), "[   42]");
+}
+
+#[test]
+fn test_fstring_escaped_braces_vm() {
+    // {{ }} → 字面 {}（f-string 花括号转义）
+    let src = "fn main() { let name = \"X\"; f\"{{name}}\" }";
+    let v = run_vm(src).expect("VM 执行失败");
+    assert_eq!(as_str(&v), "{name}");
+}
+
+#[test]
+fn test_fstring_escaped_braces_interp() {
+    let src = "fn main() { let name = \"X\"; f\"{{name}}\" }";
+    let v = run_interp(src).expect("解释器执行失败");
+    assert_eq!(as_str(&v), "{name}");
+}
+
+#[test]
+fn test_interp_string_nonstring_vm() {
+    // 普通字符串插值含非字符串值（数字）：VM 路径此前走 format(x) 报错，
+    // 2026-08-03 改 to_string(x) 后与解释器一致（手册 §2.3 示例的组成部分）
+    let src = "fn main() { let name = \"Alice\"; let age = 30; \"name={name}, age={age}\" }";
+    let v = run_vm(src).expect("VM 执行失败");
+    assert_eq!(as_str(&v), "name=Alice, age=30");
+}
+
+#[test]
+fn test_interp_string_nonstring_interp() {
+    let src = "fn main() { let name = \"Alice\"; let age = 30; \"name={name}, age={age}\" }";
+    let v = run_interp(src).expect("解释器执行失败");
+    assert_eq!(as_str(&v), "name=Alice, age=30");
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // 第 38 项：format() 命名参数
 // ══════════════════════════════════════════════════════════════════════
@@ -233,6 +312,71 @@ fn test_format_float_precision_interp() {
     assert_eq!(as_str(&v), "3.14");
 }
 
+// AUDIT-11.4.26：format 进制说明符 {:x}/{:X}/{:o}/{:b}/{:d}（修复后守护）
+
+#[test]
+fn test_format_hex_lower_vm() {
+    // 手册 §12.15.1：format("0x{:x}", 255) → "0xff"
+    let v = run_vm("format(\"0x{:x}\", 255)").expect("VM 执行失败");
+    assert_eq!(as_str(&v), "0xff");
+}
+
+#[test]
+fn test_format_hex_lower_interp() {
+    let v = run_interp("format(\"0x{:x}\", 255)").expect("解释器执行失败");
+    assert_eq!(as_str(&v), "0xff");
+}
+
+#[test]
+fn test_format_hex_upper_vm() {
+    let v = run_vm("format(\"{:X}\", 255)").expect("VM 执行失败");
+    assert_eq!(as_str(&v), "FF");
+}
+
+#[test]
+fn test_format_hex_upper_interp() {
+    let v = run_interp("format(\"{:X}\", 255)").expect("解释器执行失败");
+    assert_eq!(as_str(&v), "FF");
+}
+
+#[test]
+fn test_format_octal_vm() {
+    let v = run_vm("format(\"{:o}\", 8)").expect("VM 执行失败");
+    assert_eq!(as_str(&v), "10");
+}
+
+#[test]
+fn test_format_octal_interp() {
+    let v = run_interp("format(\"{:o}\", 8)").expect("解释器执行失败");
+    assert_eq!(as_str(&v), "10");
+}
+
+#[test]
+fn test_format_binary_vm() {
+    let v = run_vm("format(\"{:b}\", 5)").expect("VM 执行失败");
+    assert_eq!(as_str(&v), "101");
+}
+
+#[test]
+fn test_format_binary_interp() {
+    let v = run_interp("format(\"{:b}\", 5)").expect("解释器执行失败");
+    assert_eq!(as_str(&v), "101");
+}
+
+#[test]
+fn test_format_decimal_spec_vm() {
+    // {:d} 十进制（若已有则保持）
+    let v = run_vm("format(\"{:d}\", 42)").expect("VM 执行失败");
+    assert_eq!(as_str(&v), "42");
+}
+
+#[test]
+fn test_format_hex_zero_padded_vm() {
+    // 宽度 + 补零：{:08x} → 000000ff
+    let v = run_vm("format(\"{:08x}\", 255)").expect("VM 执行失败");
+    assert_eq!(as_str(&v), "000000ff");
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // 第 40 项：format() 越界报错（不再原样输出 {placeholder}）
 // ══════════════════════════════════════════════════════════════════════
@@ -252,6 +396,65 @@ fn test_format_out_of_bounds_error_interp() {
 // ══════════════════════════════════════════════════════════════════════
 // 第 42 项：Unicode NFC/NFD 规范化
 // ══════════════════════════════════════════════════════════════════════
+
+// AUDIT-11.4.25：字符串 \u{...} Unicode 转义（修复后守护）
+
+#[test]
+fn test_unicode_escape_combining_vm() {
+    // 手册 §12.15.2："cafe\u{0301}" = "cafe" + U+0301（5 code points）
+    let src = "fn main() { \"cafe\\u{0301}\" }";
+    let v = run_vm(src).expect("VM 执行失败");
+    assert_eq!(as_str(&v), "cafe\u{0301}");
+}
+
+#[test]
+fn test_unicode_escape_combining_interp() {
+    let src = "fn main() { \"cafe\\u{0301}\" }";
+    let v = run_interp(src).expect("解释器执行失败");
+    assert_eq!(as_str(&v), "cafe\u{0301}");
+}
+
+#[test]
+fn test_unicode_escape_ascii_codepoint() {
+    // \u{30} → '0'（ASCII 码点）
+    let src = "fn main() { \"\\u{30}\" }";
+    let v = run_vm(src).expect("VM 执行失败");
+    assert_eq!(as_str(&v), "0");
+}
+
+#[test]
+fn test_unicode_escape_lowercase_hex() {
+    // \u{1f600} → 😀（U+1F600，非 BMP，4 字节 UTF-8）
+    let src = "fn main() { \"\\u{1f600}\" }";
+    let v = run_vm(src).expect("VM 执行失败");
+    assert_eq!(as_str(&v), "\u{1F600}");
+}
+
+#[test]
+fn test_hex_byte_escape_vm() {
+    // \x41 → 'A'（与字节串 \xNN 一致的十六进制字节转义）
+    let src = "fn main() { \"\\x41\" }";
+    let v = run_vm(src).expect("VM 执行失败");
+    assert_eq!(as_str(&v), "A");
+}
+
+#[test]
+fn test_hex_byte_escape_interp() {
+    let src = "fn main() { \"\\x41\" }";
+    let v = run_interp(src).expect("解释器执行失败");
+    assert_eq!(as_str(&v), "A");
+}
+
+#[test]
+fn test_unicode_escape_manual_normalization() {
+    // 手册 §12.15.2 完整示例：unicode_nfc("cafe\u{0301}") == "café"
+    let src = "fn main() { unicode_nfc(\"cafe\\u{0301}\") == \"café\" }";
+    let v = run_vm(src).expect("VM 执行失败");
+    match v {
+        Value::Bool(b) => assert!(b, "NFC 归一后应相等"),
+        other => panic!("期望 Bool，实际 {:?}", other),
+    }
+}
 
 #[test]
 fn test_unicode_nfc_vm() {

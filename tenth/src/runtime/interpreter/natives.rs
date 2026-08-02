@@ -97,29 +97,82 @@ fn err_result(msg: impl Into<String>) -> Value {
 }
 
 /// 将 Tenth 格式说明符应用到值上，返回格式化后的字符串。
-/// 支持：`>5`（右对齐）、`<5`（左对齐）、`^5`（居中）、`.2f`（小数点精度）
-fn apply_format_spec(value: &str, spec: &str) -> String {
+/// 支持：`>5`（右对齐）、`<5`（左对齐）、`^5`（居中）、`.2f`（小数点精度）、
+/// `x`/`X`/`o`/`b`/`d`（整数进制，可带宽度/补零/`#` 前缀，如 `08x`、`#x`）。
+/// 与 VM 侧 `runtime/natives.rs::apply_format_spec` 语义保持一致。
+fn apply_format_spec(value: &Value, spec: &str) -> String {
     let spec = spec.trim();
     if spec.is_empty() {
-        return value.to_string();
+        return format!("{}", value);
     }
+    // 进制说明符：x/X/o/b/d（含 `#` 前缀、宽度与补零，如 `08x`、`#X`）
+    if let Some(radix_char) = spec.chars().last() {
+        let radix = match radix_char {
+            'x' | 'X' => 16,
+            'o' => 8,
+            'b' => 2,
+            'd' => 10,
+            _ => 0,
+        };
+        if radix != 0 {
+            let prefix = &spec[..spec.len() - radix_char.len_utf8()];
+            let (use_base_prefix, width_part) = match prefix.strip_prefix('#') {
+                Some(rest) => (true, rest),
+                None => (false, prefix),
+            };
+            if width_part.is_empty() || width_part.chars().all(|c| c.is_ascii_digit()) {
+                let zero_pad = width_part.starts_with('0');
+                let width: usize = width_part.parse().unwrap_or(0);
+                if let Value::Int(n, _) = value {
+                    let mut s = match radix_char {
+                        'x' => format!("{:x}", n),
+                        'X' => format!("{:X}", n),
+                        'o' => format!("{:o}", n),
+                        'b' => format!("{:b}", n),
+                        _ => format!("{}", n),
+                    };
+                    if use_base_prefix {
+                        let base = match radix_char {
+                            'x' => "0x",
+                            'X' => "0X",
+                            'o' => "0o",
+                            'b' => "0b",
+                            _ => "",
+                        };
+                        s = format!("{}{}", base, s);
+                    }
+                    if width > s.len() {
+                        if zero_pad {
+                            s = format!("{:0>width$}", s, width = width);
+                        } else {
+                            s = format!("{:>width$}", s, width = width);
+                        }
+                    }
+                    return s;
+                }
+                // 非整数应用进制说明符 — 回退到默认字符串形式
+                return format!("{}", value);
+            }
+        }
+    }
+    let value_str = format!("{}", value);
     if let Some(width_str) = spec.strip_prefix('>') {
         let width = width_str.parse::<usize>().unwrap_or(0);
-        format!("{:>width$}", value, width = width)
+        format!("{:>width$}", value_str, width = width)
     } else if let Some(width_str) = spec.strip_prefix('<') {
         let width = width_str.parse::<usize>().unwrap_or(0);
-        format!("{:<width$}", value, width = width)
+        format!("{:<width$}", value_str, width = width)
     } else if let Some(width_str) = spec.strip_prefix('^') {
         let width = width_str.parse::<usize>().unwrap_or(0);
-        format!("{:^width$}", value, width = width)
+        format!("{:^width$}", value_str, width = width)
     } else if spec.starts_with('.') {
         let trimmed = spec.trim_end_matches('f');
         let decimals = trimmed[1..].parse::<usize>().unwrap_or(2);
-        let val: f64 = value.parse().unwrap_or(0.0);
+        let val: f64 = value_str.parse().unwrap_or(0.0);
         format!("{:.decimals$}", val, decimals = decimals)
     } else {
         // Unknown specifier - pass through as-is
-        value.to_string()
+        value_str
     }
 }
 
@@ -161,12 +214,11 @@ fn format_placeholder(
     num_positional: usize,
     _has_named_args: bool,
 ) -> TenthResult<String> {
-    let arg_val = if placeholder.is_empty() {
+    let arg_val: &Value = if placeholder.is_empty() {
         // Positional placeholder: take next positional arg (arg_idx)
         let pos = 1 + arg_idx; // +1 for template at args[0]
         if pos < args.len() && pos < 1 + num_positional {
-            let val = &args[pos];
-            format!("{}", val)
+            &args[pos]
         } else {
             return Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("format() 位置参数 #{} 越界（共 {} 个位置参数）",
@@ -177,8 +229,7 @@ fn format_placeholder(
         // Explicit numeric index: {0}, {1}
         let idx: usize = placeholder.parse::<usize>().unwrap_or(0);
         if idx < num_positional {
-            let val = &args[1 + idx];
-            format!("{}", val)
+            &args[1 + idx]
         } else {
             return Err(TenthError::RuntimeError { line: None, col: None,
                 message: format!("format() 索引 #{} 越界（共 {} 个位置参数）", idx, num_positional),
@@ -187,7 +238,7 @@ fn format_placeholder(
     } else {
         // Named parameter: {name}
         match named_args.get(placeholder) {
-            Some(val) => format!("{}", val),
+            Some(val) => val,
             None => {
                 return Err(TenthError::RuntimeError { line: None, col: None,
                     message: format!("format() 未找到命名参数 '{}'", placeholder),
@@ -198,11 +249,10 @@ fn format_placeholder(
 
     // Apply format specifier if present
     if fmt_spec.is_empty() {
-        Ok(arg_val)
+        Ok(format!("{}", arg_val))
     } else {
         // Parse format specifier and apply with Rust's format!
-        let formatted = apply_format_spec(&arg_val, fmt_spec);
-        Ok(formatted)
+        Ok(apply_format_spec(arg_val, fmt_spec))
     }
 }
 

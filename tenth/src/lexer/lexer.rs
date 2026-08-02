@@ -435,7 +435,10 @@ impl Lexer {
         })
     }
 
-    fn read_string(&mut self) -> TenthResult<Token> {
+    /// `is_fstring`：是否为 `f"..."` 模板字符串。f-string 的 `{expr}` 插值支持
+    /// 任意表达式与格式说明符（`{a+b}`、`{3.14:.2f}`），普通字符串仅支持
+    /// `{identifier}` 简单标识符插值（编译为字符串拼接）。
+    fn read_string(&mut self, is_fstring: bool) -> TenthResult<Token> {
         let span = self.span();
         self.advance(); // consume opening "
         let mut parts: Vec<StringPart> = Vec::new();
@@ -478,10 +481,122 @@ impl Lexer {
                     Some('"') => { self.advance(); current_literal.push('"'); }
                     Some('{') => { self.advance(); current_literal.push('{'); }
                     Some('}') => { self.advance(); current_literal.push('}'); }
+                    Some('0') => { self.advance(); current_literal.push('\0'); }
+                    Some('u') => {
+                        // \u{HEX} — Unicode 码点转义（UTF-8 编码输出），如 \u{0301}
+                        self.advance(); // consume 'u'
+                        if self.peek() == Some('{') {
+                            self.advance(); // consume '{'
+                            let mut hex = String::new();
+                            while let Some(c) = self.peek() {
+                                if c == '}' {
+                                    self.advance(); // consume '}'
+                                    break;
+                                }
+                                hex.push(c);
+                                self.advance();
+                            }
+                            match u32::from_str_radix(hex.trim(), 16) {
+                                Ok(cp) => match char::from_u32(cp) {
+                                    Some(ch) => current_literal.push(ch),
+                                    None => {
+                                        return Err(TenthError::LexerError {
+                                            line: span.line,
+                                            col: span.col,
+                                            message: format!("无效的 Unicode 码点：\\u{{{}}}", hex),
+                                        });
+                                    }
+                                },
+                                Err(_) => {
+                                    return Err(TenthError::LexerError {
+                                        line: span.line,
+                                        col: span.col,
+                                        message: format!("无效的 Unicode 转义：\\u{{{}}}（需要十六进制数字）", hex),
+                                    });
+                                }
+                            }
+                        } else {
+                            // \u 后非 { — 向后兼容：原样保留 'u'
+                            current_literal.push('u');
+                        }
+                    }
+                    Some('x') => {
+                        // \xNN — 十六进制字节转义 → 对应字符
+                        self.advance(); // consume 'x'
+                        let hi = self.peek().and_then(|c| c.to_digit(16));
+                        self.advance();
+                        let lo = self.peek().and_then(|c| c.to_digit(16));
+                        match (hi, lo) {
+                            (Some(h), Some(l)) => {
+                                self.advance();
+                                current_literal.push((h as u8 * 16 + l as u8) as char);
+                            }
+                            _ => {
+                                return Err(TenthError::LexerError {
+                                    line: span.line,
+                                    col: span.col,
+                                    message: "无效的转义序列：\\x 后需要两个十六进制数字".into(),
+                                });
+                            }
+                        }
+                    }
                     Some(c) => { self.advance(); current_literal.push(c); }
                     None => break,
                 }
             } else if ch == '{' {
+                if is_fstring {
+                    // f-string：支持任意表达式插值 + 格式说明符（{expr:spec}）。
+                    // {{ → 字面 '{'
+                    if self.peek_next() == Some('{') {
+                        self.advance();
+                        self.advance();
+                        current_literal.push('{');
+                        continue;
+                    }
+                    self.advance(); // consume {
+                    let mut expr = String::new();
+                    let mut depth: usize = 1;
+                    let mut found_close = false;
+                    while let Some(c) = self.peek() {
+                        match c {
+                            '}' => {
+                                self.advance();
+                                depth -= 1;
+                                if depth == 0 {
+                                    found_close = true;
+                                    break;
+                                }
+                                expr.push('}');
+                            }
+                            '{' => {
+                                self.advance();
+                                depth += 1;
+                                expr.push('{');
+                            }
+                            '"' => break, // 保护：表达式内不应出现未转义 "
+                            _ => {
+                                expr.push(c);
+                                self.advance();
+                            }
+                        }
+                    }
+                    let trimmed = expr.trim();
+                    if found_close && !trimmed.is_empty() {
+                        has_interpolation = true;
+                        if !current_literal.is_empty() {
+                            parts.push(StringPart::Literal(current_literal));
+                            current_literal = String::new();
+                        }
+                        parts.push(StringPart::Expr(trimmed.to_string()));
+                    } else {
+                        // 空 {} 或无闭合 } — 当作字面文本
+                        current_literal.push('{');
+                        current_literal.push_str(&expr);
+                        if found_close {
+                            current_literal.push('}');
+                        }
+                    }
+                } else {
                 // String interpolation: {expr}
                 // Only treat as interpolation if the next character looks like
                 // the start of a valid identifier (alphabetic or _). Otherwise
@@ -531,6 +646,12 @@ impl Lexer {
                     current_literal.push(ch);
                     self.advance();
                 }
+                }
+            } else if is_fstring && ch == '}' && self.peek_next() == Some('}') {
+                // f-string：}} → 字面 '}'
+                self.advance();
+                self.advance();
+                current_literal.push('}');
             } else {
                 current_literal.push(ch);
                 self.advance();
@@ -743,9 +864,10 @@ impl Lexer {
         // f-字符串字面量 `f"..."`（模板字符串 → 编译为 format() 调用）
         if ch == 'f' && self.peek_next() == Some('"') {
             self.advance(); // consume 'f'
-            // read_string 已经支持 {expr} 插值，生成 InterpolatedString token
-            // 我们将其包装为 FString token 以便 HIR 层区分
-            let mut token = self.read_string()?;
+            // read_string(true) 让 f-string 支持任意表达式插值 + 格式说明符，
+            // 生成 InterpolatedString token；我们将其包装为 FString token 以便
+            // HIR 层区分（编译为 format() 调用）。
+            let mut token = self.read_string(true)?;
             if let TokenKind::InterpolatedString(parts) = token.kind {
                 token.kind = TokenKind::FString(parts);
             }
@@ -765,7 +887,7 @@ impl Lexer {
                 self.advance(); // consume 3rd "
                 return self.read_multiline_string();
             }
-            return self.read_string();
+            return self.read_string(false);
         }
 
         if ch == '\'' {
