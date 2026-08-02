@@ -87,6 +87,20 @@ impl Lowerer {
 
         let kind = match &stmt.kind {
             StmtKind::Let { names, type_ann, mutable, init } => {
+                // S4b：无 init 的 let 语义——带类型注解（`let x: T;`）合法，运行时取
+                // 类型零值默认（tenthc 自举编译器 `let char_val: str;` 先声明后赋值，
+                // 自举路径不可破坏）；无注解（`let x;`）编译期报错（无法推断类型）。
+                if init.is_none() && type_ann.is_none() {
+                    let name = names.first().map(|n| n.name.as_str()).unwrap_or("_");
+                    return Err(TenthError::TypeError {
+                        line: span.line,
+                        col: span.col,
+                        message: format!(
+                            "let '{}' 必须初始化或标注类型（不支持无初始值且无类型注解的 let）",
+                            name
+                        ),
+                    });
+                }
                 // 9b：递归闭包自引用——`let fact = |n| ... fact(n-1)` 的 init 是闭包时，
                 // 压入绑定名（lower 闭包体时同名引用解析为 Var(name) 且不捕获，
                 // 见 lower_expr 的 Ident/Closure 分支），结束后弹出。
@@ -423,6 +437,18 @@ impl Lowerer {
                                             span,
                                         });
                                         continue;
+                                    }
+                                    // S4b：无 init 的顶层 let 编译期报错（顶层 let 成为程序
+                                    // 全局，必须在声明处初始化；无既有用法依赖）。
+                                    if init.is_none() {
+                                        return Err(TenthError::TypeError {
+                                            line: span.line,
+                                            col: span.col,
+                                            message: format!(
+                                                "顶层 let '{}' 必须初始化（全局变量必须带初始值）",
+                                                names[0].name
+                                            ),
+                                        });
                                     }
                                     let name = names[0].name.clone();
                                     // 9b：顶层 let init 为闭包时同样压入 self_ref_lets
