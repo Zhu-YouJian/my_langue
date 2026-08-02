@@ -287,12 +287,12 @@ impl Vm {
                             self.stack.push(r);
                         } else {
                             let (a, b) = self.pop2();
-                            let r = self.add_priv(&a, &b)?;
+                            let r = self.add_priv(&a, &b).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                             self.stack.push(r);
                         }
                     } else {
                         let (a, b) = self.pop2();
-                        let r = self.add_priv(&a, &b)?;
+                        let r = self.add_priv(&a, &b).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                         self.stack.push(r);
                     }
                 }
@@ -316,12 +316,12 @@ impl Vm {
                             self.stack.push(r);
                         } else {
                             let (a, b) = self.pop2();
-                            let r = self.sub_priv(&a, &b)?;
+                            let r = self.sub_priv(&a, &b).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                             self.stack.push(r);
                         }
                     } else {
                         let (a, b) = self.pop2();
-                        let r = self.sub_priv(&a, &b)?;
+                        let r = self.sub_priv(&a, &b).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                         self.stack.push(r);
                     }
                 }
@@ -345,12 +345,12 @@ impl Vm {
                             self.stack.push(r);
                         } else {
                             let (a, b) = self.pop2();
-                            let r = self.mul_priv(&a, &b)?;
+                            let r = self.mul_priv(&a, &b).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                             self.stack.push(r);
                         }
                     } else {
                         let (a, b) = self.pop2();
-                        let r = self.mul_priv(&a, &b)?;
+                        let r = self.mul_priv(&a, &b).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                         self.stack.push(r);
                     }
                 }
@@ -361,7 +361,7 @@ impl Vm {
                         let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
                             (Value::Int(x, dt), Value::Int(y, _)) => {
                                 if *y == 0 {
-                                    return err("整数除零");
+                                    return Err(self.err_here(chunk_idx, ip, "整数除零".into()));
                                 }
                                 let r = x.checked_div(*y).ok_or_else(|| int_overflow_err(*dt))?;
                                 check_int_overflow(r, *dt)?;
@@ -377,12 +377,12 @@ impl Vm {
                             self.stack.push(r);
                         } else {
                             let (a, b) = self.pop2();
-                            let r = self.div_priv(&a, &b)?;
+                            let r = self.div_priv(&a, &b).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                             self.stack.push(r);
                         }
                     } else {
                         let (a, b) = self.pop2();
-                        let r = self.div_priv(&a, &b)?;
+                        let r = self.div_priv(&a, &b).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                         self.stack.push(r);
                     }
                 }
@@ -390,7 +390,7 @@ impl Vm {
                 15 => {
                     let b = self.pop_int()?; let a = self.pop_int()?;
                     if b == 0 {
-                        return err("整数取模除零");
+                        return Err(self.err_here(chunk_idx, ip, "整数取模除零".into()));
                     }
                     // AUDIT-11.4.17：checked_rem 拦截 i64::MIN % -1 等溢出（overflow-checks=true 下直接 % 会 panic）
                     let r = a.checked_rem(b).ok_or_else(|| int_overflow_err(BaseType::I32))?;
@@ -409,7 +409,7 @@ impl Vm {
                         Value::Float(n) => self.stack.push(Value::Float(-n)),
                         Value::Float32(n) => self.stack.push(Value::Float32(-n)),
                         Value::Tensor(t) => self.stack.push(Value::Tensor(Rc::new(RefCell::new(t.borrow().neg())))),
-                        _ => return err("无法取负"),
+                        _ => return Err(self.err_here(chunk_idx, ip, "无法取负".into())),
                     }
                 }
                 17 => {
@@ -581,7 +581,7 @@ impl Vm {
                         let n = self.stack.len() - base;
                         let mut args = vec![Value::Unit; n];
                         for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
-                        let result = native_fn(self, &args)?;
+                        let result = native_fn(self, &args).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                         self.stack.push(result);
                     } else if let Some(&callee_idx) = self.functions.get(name) {
                         let callee_args = self.chunks[callee_idx].num_args;
@@ -614,7 +614,7 @@ impl Vm {
                         locals = new_locals;
                         base = 0;  // callee 新栈从 0 开始
                     } else {
-                        return Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) });
+                        return Err(self.err_here(chunk_idx, ip, format!("未定义的函数 '{}'", name)));
                     }
                 }
                 28 => {
@@ -629,17 +629,22 @@ impl Vm {
                     for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
 
                     // Try to find the function by name, checking globals for FnRef closures
-                    // R5：callee_name 借用 globals/strings，仅 FnRef 分支条件性 clone
-                    let callee_name: &str = if let Some(Value::FnRef { name: fname, .. }) = self.globals.get(name) {
-                        fname.as_str()
-                    } else {
-                        name
-                    };
+                    // a1 P3：全局闭包 FnRef 携带捕获值 → 按名调用须追加捕获实参
+                    // （槽位 params..params+captures），否则捕获缺失 → 静默错值。
+                    let (callee_name, extra_captures): (String, Vec<Value>) =
+                        if let Some(Value::FnRef { name: fname, captures, .. }) = self.globals.get(name) {
+                            (fname.clone(), captures.clone())
+                        } else {
+                            (name.to_string(), Vec::new())
+                        };
+                    for cap in extra_captures {
+                        args.push(cap);
+                    }
 
-                    if let Some(native_fn) = self.natives.get(callee_name).copied() {
-                        let result = native_fn(self, &args)?;
+                    if let Some(native_fn) = self.natives.get(&callee_name).copied() {
+                        let result = native_fn(self, &args).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                         self.stack.push(result);
-                    } else if let Some(&callee_idx) = self.functions.get(callee_name) {
+                    } else if let Some(&callee_idx) = self.functions.get(&callee_name) {
                         // Phase 2 栈迁移：保存 caller 栈到 Frame，给 callee 一个空栈
                         let caller_stack = std::mem::take(&mut self.stack);
                         // R4 操作数栈复用：从池取空闲栈（保留容量），池空则新建预分配栈，
@@ -662,10 +667,10 @@ impl Vm {
                         locals = args;
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
                         base = 0;  // callee 新栈从 0 开始
-                    } else if let Some(native_fn) = self.natives.get(name).copied() {
-                        let result = native_fn(self, &args)?;
+                    } else if let Some(native_fn) = self.natives.get(&callee_name).copied() {
+                        let result = native_fn(self, &args).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                         self.stack.push(result);
-                    } else if let Some(&callee_idx) = self.functions.get(name) {
+                    } else if let Some(&callee_idx) = self.functions.get(&callee_name) {
                         // Phase 2 栈迁移：保存 caller 栈到 Frame，给 callee 一个空栈
                         let caller_stack = std::mem::take(&mut self.stack);
                         // R4 操作数栈复用：从池取空闲栈（保留容量），池空则新建预分配栈，
@@ -689,7 +694,7 @@ impl Vm {
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
                         base = 0;  // callee 新栈从 0 开始
                     } else {
-                        return Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) });
+                        return Err(self.err_here(chunk_idx, ip, format!("未定义的函数 '{}'", name)));
                     }
                 }
                 29 => {
@@ -700,7 +705,7 @@ impl Vm {
                     let mut args = vec![Value::Unit; n];
                     for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
                     let receiver = self.stack.pop().unwrap_or(Value::Unit);
-                    let result = self.call_method_priv(&receiver, &name, &args)?;
+                    let result = self.call_method_priv(&receiver, &name, &args).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                     self.stack.push(result);
                 }
 
@@ -780,7 +785,7 @@ impl Vm {
                     let i = r!(u64) as usize;
                     let fname = strings.get(i).cloned().unwrap_or_default();
                     let val = self.stack.pop().unwrap_or(Value::Unit);
-                    let v = self.get_field(&val, &fname)?;
+                    let v = self.get_field(&val, &fname).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                     self.stack.push(v);
                 }
                 35 => {
@@ -799,16 +804,14 @@ impl Vm {
                                     value: Box::new(new_val),
                                 });
                             } else {
-                                return Err(TenthError::RuntimeError { line: None, col: None,
-                                    message: format!(
-                                        "union '{}' 当前活跃字段是 '{}'，不能修改非活跃字段 '{}'",
-                                        name, active_field, fname
-                                    ),
-                                });
+                                return Err(self.err_here(chunk_idx, ip, format!(
+                                    "union '{}' 当前活跃字段是 '{}'，不能修改非活跃字段 '{}'",
+                                    name, active_field, fname
+                                )));
                             }
                         }
                         _ => {
-                            self.set_field(&target, &fname, new_val)?;
+                            self.set_field(&target, &fname, new_val).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                         }
                     }
                 }
@@ -850,10 +853,10 @@ impl Vm {
                                         self.stack.push(Value::Float(val));
                                     }
                                     None => {
-                                        return err(&format!(
+                                        return Err(self.err_here(chunk_idx, ip, format!(
                                             "索引 {} 越界，形状为 {:?}",
                                             i, tensor.shape()
-                                        ));
+                                        )));
                                     }
                                 }
                             } else {
@@ -862,11 +865,11 @@ impl Vm {
                                         drop(tensor);
                                         self.stack.push(Value::Tensor(Rc::new(RefCell::new(sub))));
                                     }
-                                    Err(msg) => return err(&msg),
+                                    Err(msg) => return Err(self.err_here(chunk_idx, ip, msg)),
                                 }
                             }
                         }
-                        _ => return err("无法索引"),
+                        _ => return Err(self.err_here(chunk_idx, ip, "无法索引".into())),
                     }
                 }
                 37 => {
@@ -880,12 +883,12 @@ impl Vm {
                             let si = start_idx.min(len);
                             let ei = end_idx.min(len);
                             if si > ei {
-                                return err("字符串切片起始位置大于结束位置");
+                                return Err(self.err_here(chunk_idx, ip, "字符串切片起始位置大于结束位置".into()));
                             }
                             let slice: String = chars[si..ei].iter().collect();
                             self.stack.push(Value::String(slice));
                         }
-                        _ => return err("SliceStr 需要字符串目标"),
+                        _ => return Err(self.err_here(chunk_idx, ip, "SliceStr 需要字符串目标".into())),
                     }
                 }
 
@@ -1032,9 +1035,17 @@ impl Vm {
                 }
                 44 => {
                     let params_count = r!(u64) as usize;
+                    let captures_count = r!(u64) as usize;
                     let name_idx = r!(u64) as usize;
                     // Create a FnRef value pointing to the closure function
                     let name = strings.get(name_idx).cloned().unwrap_or_default();
+                    // a1 P3：从父栈弹出 captures_count 个捕获值装入 FnRef.captures（值内联）。
+                    // 弹出顺序与闭包 chunk 捕获槽（params..params+captures）一致。
+                    let mut captures = Vec::with_capacity(captures_count);
+                    for _ in 0..captures_count {
+                        captures.push(self.stack.pop().unwrap_or(Value::Unit));
+                    }
+                    captures.reverse();
                     let param_names: Vec<(String, crate::hir::types::Type)> = (0..params_count)
                         .map(|i| (format!("__param_{i}"), crate::hir::types::Type::Unknown))
                         .collect();
@@ -1042,6 +1053,7 @@ impl Vm {
                         name,
                         params: param_names,
                         return_type: crate::hir::types::Type::Unknown,
+                        captures,
                     });
                 }
 
@@ -1235,17 +1247,22 @@ impl Vm {
                     args.resize(n, Value::Unit);
                     for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
 
-                    // 查找函数（同 CallN）；R5：callee_name 借用，仅 FnRef 分支条件性 clone
-                    let callee_name: &str = if let Some(Value::FnRef { name: fname, .. }) = self.globals.get(name) {
-                        fname.as_str()
-                    } else {
-                        name
-                    };
+                    // 查找函数（同 CallN）；a1 P3：全局闭包 FnRef 携带捕获值 → 追加捕获实参
+                    // （槽位 params..params+captures），否则捕获缺失 → 静默错值。
+                    let (callee_name, extra_captures): (String, Vec<Value>) =
+                        if let Some(Value::FnRef { name: fname, captures, .. }) = self.globals.get(name) {
+                            (fname.clone(), captures.clone())
+                        } else {
+                            (name.to_string(), Vec::new())
+                        };
+                    for cap in extra_captures {
+                        args.push(cap);
+                    }
 
-                    if let Some(native_fn) = self.natives.get(callee_name).copied() {
-                        let result = native_fn(self, &args)?;
+                    if let Some(native_fn) = self.natives.get(&callee_name).copied() {
+                        let result = native_fn(self, &args).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                         self.stack.push(result);
-                    } else if let Some(&callee_idx) = self.functions.get(callee_name) {
+                    } else if let Some(&callee_idx) = self.functions.get(&callee_name) {
                         // TCO：不压帧，直接替换当前帧状态
                         // R5：旧 locals 清空入池，args 成为新 locals（buffer 循环复用）
                         let mut old_locals = std::mem::replace(&mut locals, args);
@@ -1259,10 +1276,10 @@ impl Vm {
                         ip = 0;
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
                         // base 不重置 — 当前栈帧继续使用
-                    } else if let Some(native_fn) = self.natives.get(name).copied() {
-                        let result = native_fn(self, &args)?;
+                    } else if let Some(native_fn) = self.natives.get(&callee_name).copied() {
+                        let result = native_fn(self, &args).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                         self.stack.push(result);
-                    } else if let Some(&callee_idx) = self.functions.get(name) {
+                    } else if let Some(&callee_idx) = self.functions.get(&callee_name) {
                         // TCO：不压帧，直接替换当前帧状态
                         // R5：旧 locals 清空入池，args 成为新 locals（buffer 循环复用）
                         let mut old_locals = std::mem::replace(&mut locals, args);
@@ -1276,7 +1293,100 @@ impl Vm {
                         ip = 0;
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
                     } else {
-                        return Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) });
+                        return Err(self.err_here(chunk_idx, ip, format!("未定义的函数 '{}'", name)));
+                    }
+                }
+                // a1 P1：57 CallClosure / 58 TailCallClosure（VM 闭包值间接调用）
+                // 栈布局 [arg1..argN, callee]：先弹 callee 值，再弹 N 个参数（locals 池复用，同 CallN）。
+                57 => {
+                    let n = r!(u64) as usize;
+                    let callee = self.stack.pop().unwrap_or(Value::Unit);
+                    let mut args = self.locals_pool.pop().unwrap_or_default();
+                    args.resize(n, Value::Unit);
+                    for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
+
+                    match &callee {
+                        Value::FnRef { name, captures, .. } => {
+                            // a1 P3：追加捕获值作为额外实参（槽位 params..params+captures），
+                            // 闭包 chunk 以 params+captures 个槽位接收。
+                            for cap in captures {
+                                args.push(cap.clone());
+                            }
+                            // R5：callee_name 借用 globals/strings，仅 FnRef 分支条件性 clone（同 CallN）
+                            let callee_name: &str = if let Some(Value::FnRef { name: fname, .. }) = self.globals.get(name) {
+                                fname.as_str()
+                            } else {
+                                name
+                            };
+                            // FnRef 指向 native 函数名也支持（如 `let p = println; p("x")`）
+                            if let Some(native_fn) = self.natives.get(callee_name).copied() {
+                                let result = native_fn(self, &args).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                                self.stack.push(result);
+                            } else if let Some(&callee_idx) = self.functions.get(callee_name) {
+                                // 压新帧调用（同 CallN）
+                                let caller_stack = std::mem::take(&mut self.stack);
+                                self.stack = self.stack_pool.pop().unwrap_or_else(|| Vec::with_capacity(64));
+                                self.frames.push(Frame {
+                                    ip,
+                                    chunk_idx,
+                                    locals: std::mem::take(&mut locals),
+                                    stack_base: base,
+                                    operand_stack: caller_stack,
+                                    task_id: current_task_id,
+                                });
+                                chunk_idx = callee_idx;
+                                code = Rc::clone(&self.chunks[chunk_idx].code);
+                                strings = Rc::clone(&self.chunks[chunk_idx].strings);
+                                ip = 0;
+                                locals = args;
+                                locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
+                                base = 0;
+                            } else {
+                                return Err(self.err_here(chunk_idx, ip, format!("未定义的函数 '{}'", name)));
+                            }
+                        }
+                        _ => return Err(self.err_here(chunk_idx, ip, format!("期望可调用值，得到 {:?}", callee))),
+                    }
+                }
+                58 => {
+                    let n = r!(u64) as usize;
+                    let callee = self.stack.pop().unwrap_or(Value::Unit);
+                    let mut args = self.locals_pool.pop().unwrap_or_default();
+                    args.resize(n, Value::Unit);
+                    for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
+
+                    match &callee {
+                        Value::FnRef { name, captures, .. } => {
+                            // a1 P3：追加捕获值作为额外实参（槽位 params..params+captures），
+                            // 闭包 chunk 以 params+captures 个槽位接收。
+                            for cap in captures {
+                                args.push(cap.clone());
+                            }
+                            let callee_name: &str = if let Some(Value::FnRef { name: fname, .. }) = self.globals.get(name) {
+                                fname.as_str()
+                            } else {
+                                name
+                            };
+                            if let Some(native_fn) = self.natives.get(callee_name).copied() {
+                                let result = native_fn(self, &args).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                                self.stack.push(result);
+                            } else if let Some(&callee_idx) = self.functions.get(callee_name) {
+                                // TCO：复用当前帧（同 TailCall），不压新帧
+                                let mut old_locals = std::mem::replace(&mut locals, args);
+                                old_locals.clear();
+                                if self.locals_pool.len() < LOCALS_POOL_MAX {
+                                    self.locals_pool.push(old_locals);
+                                }
+                                chunk_idx = callee_idx;
+                                code = Rc::clone(&self.chunks[chunk_idx].code);
+                                strings = Rc::clone(&self.chunks[chunk_idx].strings);
+                                ip = 0;
+                                locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
+                            } else {
+                                return Err(self.err_here(chunk_idx, ip, format!("未定义的函数 '{}'", name)));
+                            }
+                        }
+                        _ => return Err(self.err_here(chunk_idx, ip, format!("期望可调用值，得到 {:?}", callee))),
                     }
                 }
                 // 未知 opcode：与旧 decode 的 `_ => Ret` 一致，执行 Ret 动作

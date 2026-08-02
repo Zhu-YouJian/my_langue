@@ -73,6 +73,7 @@ fn run_vm(hir: &tenth::hir::hir::HirProgram) -> Result<Value, String> {
                     name: func.name.clone(),
                     params: func.params.clone(),
                     return_type: func.return_type.clone(),
+                    captures: vec![],
                 },
             );
         }
@@ -129,6 +130,33 @@ fn as_f64_vec(val: &Value) -> Vec<f64> {
         Value::Float(f) => vec![*f],
         _ => panic!("expected tensor value, got {:?}", val.type_of()),
     }
+}
+
+// ── a1 P3：顶层全局闭包携带捕获值，按名调用（CallN）须追加捕获实参 ──
+
+#[test]
+fn toplevel_global_closure_capture_call_by_name() {
+    // P3 前：闭包捕获走全局名 hack + CallN 不追加捕获实参 → 跨函数按名调用全局闭包时
+    // 捕获槽读到错误值（静默）。P3 后：CallN 从 globals-FnRef 追加捕获实参。
+    // make_adder(5) 存为全局 add5（captures=[5]），use_global_adder 内 add5 不在 locals
+    // → 强制走 CallN("add5") 路径。add5(3) = 8。
+    let src = r#"
+        fn make_adder(n: i32) -> fn(i32) -> i32 {
+            |x: i32| x + n
+        }
+        let add5 = make_adder(5);
+        fn use_global_adder(x: i32) -> i32 {
+            add5(x)
+        }
+        fn main() -> i32 { use_global_adder(3) }
+    "#;
+    let hir = lower_code(src);
+    // 解释器
+    let v = run_interp(&hir).unwrap().unwrap();
+    assert_eq!(as_i64(&v), 8, "interp 全局闭包按名调用捕获注入失败: {}", as_i64(&v));
+    // VM（含全局初始化 chunk，走 CallN 路径）
+    let v = run_vm(&hir).unwrap();
+    assert_eq!(as_i64(&v), 8, "VM 全局闭包按名调用捕获注入失败: {}", as_i64(&v));
 }
 
 // ── 1. 顶层常量对同文件函数可见 ────────────────────────────────

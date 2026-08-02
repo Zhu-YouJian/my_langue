@@ -10,8 +10,8 @@
 //!
 //! 路径选择（见 docs/stdlib-可用性盘点.md §四）：
 //! - 默认走 VM（默认路径）
-//! - a1（VM 高阶函数/闭包值调用缺口）影响 curry / collections·iter 高阶 /
-//!   collections·collections 高阶 / accumulate_loop / runtime 闭包 → 走解释器
+//! - a1 已修复（2026-08-03 P1-P3 闭包值调用 + 捕获内联）：curry / collections·iter 高阶 /
+//!   collections·collections 高阶 / accumulate_loop / runtime 闭包已解锁 VM 路径（P4 翻转）
 //! - autograd 需 Rust 端注册 op 才可调用 → 仅验证模块 use 可编译（import 检查）
 //! - http/net 用 127.0.0.1:1（本机拒绝连接，不触网）验证 Result 路径
 
@@ -410,7 +410,7 @@ let m = from_entries(e);
 sum([1, 2, 3, 4]) == 10 && product([1, 2, 3, 4]) == 24 && m.len() == 2
 "#;
 
-/// collections.th 高阶函数（any/all/find/count_if/partition）——a1 缺口走解释器。
+/// collections.th 高阶函数（any/all/find/count_if/partition）——a1 已修复（2026-08-03），VM 路径。
 const M29_COLLECTIONS_COLLECTIONS_HOF: &str = r#"
 use std::collections::collections::any
 use std::collections::collections::all
@@ -437,7 +437,7 @@ take([1,2,3,4], 2).len() == 2 && skip([1,2,3,4], 2).len() == 2 && zip([1,2], [10
 enumerate([7,8]).len() == 2
 "#;
 
-/// iter.th 高阶函数（map/filter/reduce/any）——a1 缺口走解释器。
+/// iter.th 高阶函数（map/filter/reduce/any）——a1 已修复（2026-08-03），VM 路径。
 const M31_COLLECTIONS_ITER_HOF: &str = r#"
 use std::collections::iter::map
 use std::collections::iter::filter
@@ -609,7 +609,7 @@ match compile("\\d+") {
 // runtime / curry / utils / data / autograd / logging
 // ══════════════════════════════════════════════════════════════════
 
-/// runtime：闭包值调用在 VM 失效（a1 类），走解释器路径。
+/// runtime：闭包值调用经 with_step_limit/timeout 在 VM 可用（a1 已修复，2026-08-03）。
 const M49_RUNTIME: &str = r#"
 use std::runtime::*
 
@@ -617,7 +617,7 @@ limit_or_default(1000000, |_| { 1 + 1 }, -1) == 2 && timeout_or_default(1000, |_
 run_with_limit(1000000, |_| { 7 }, -1) == 7
 "#;
 
-/// curry：全部为闭包构造/调用，a1 缺口走解释器。
+/// curry：全部为闭包构造/调用，a1 已修复（2026-08-03），VM 路径。
 const M50_CURRY: &str = r#"
 use std::curry::*
 
@@ -773,13 +773,13 @@ fn smoke_collections_hashset() { smoke_vm("collections/hashset", M27_COLLECTIONS
 fn smoke_collections_collections() { smoke_vm("collections/collections", M28_COLLECTIONS_COLLECTIONS); }
 
 #[test]
-fn smoke_collections_collections_hof() { smoke_interp("collections/collections 高阶(a1 解释器)", M29_COLLECTIONS_COLLECTIONS_HOF); }
+fn smoke_collections_collections_hof() { smoke_vm("collections/collections 高阶(a1 已修复 VM)", M29_COLLECTIONS_COLLECTIONS_HOF); }
 
 #[test]
 fn smoke_collections_iter() { smoke_vm("collections/iter", M30_COLLECTIONS_ITER); }
 
 #[test]
-fn smoke_collections_iter_hof() { smoke_interp("collections/iter 高阶(a1 解释器)", M31_COLLECTIONS_ITER_HOF); }
+fn smoke_collections_iter_hof() { smoke_vm("collections/iter 高阶(a1 已修复 VM)", M31_COLLECTIONS_ITER_HOF); }
 
 #[test]
 fn smoke_string_string() { smoke_vm("string/string", M32_STRING_STRING); }
@@ -833,10 +833,10 @@ fn smoke_net() { smoke_vm("net", M47_NET); }
 fn smoke_regex() { smoke_vm("regex", M48_REGEX); }
 
 #[test]
-fn smoke_runtime() { smoke_interp("runtime(a1 闭包解释器)", M49_RUNTIME); }
+fn smoke_runtime() { smoke_vm("runtime(a1 闭包已修复 VM)", M49_RUNTIME); }
 
 #[test]
-fn smoke_curry() { smoke_interp("curry(a1 解释器)", M50_CURRY); }
+fn smoke_curry() { smoke_vm("curry(a1 已修复 VM)", M50_CURRY); }
 
 #[test]
 fn smoke_utils_math() { smoke_vm("utils/math", M51_UTILS_MATH); }

@@ -1,10 +1,15 @@
-//! VM 字节码块：code + strings + 元信息。
+//! VM 字节码块：code + strings + 行号表 + 元信息。
 //!
 //! 从 runtime/vm.rs 拆分而来（T3b 架构重构）。
 //!
 //! 2026-08-02（性能优化 R1）：`code`/`strings` 改为 `Rc` 共享——
 //! 消除 Op::Call/CallN/TailCall 每次函数调用对整段字节码与字符串表的深拷贝。
 //! 编译期通过 `Rc::make_mut` 原地写入（refcount==1 时零拷贝）；运行期只读。
+//!
+//! 2026-08-02（B 批：VM 报错行号补全）：新增 `lines` 行号表（指令偏移 → 源码行号，
+//! 记录于语句/表达式边界）。VM 运行时错误按当前 `ip` 查最近前驱条目定位源码行，
+//! 使 `RuntimeError` 不再是无行号的 `line: None`。仅行号（无列号）；运行期只读，
+//! 与 code/strings 同模式用 `Rc` 共享。
 
 use std::rc::Rc;
 use super::op::Op;
@@ -17,12 +22,39 @@ pub struct Chunk {
     pub code: Rc<Vec<u8>>,
     /// 字符串表。Rc 共享：与 code 同理，消除调用路径深拷贝。
     pub strings: Rc<Vec<String>>,
+    /// 行号表：(指令偏移, 源码行号)，按偏移升序。编译期在语句/表达式边界记录；
+    /// 运行期报错时按 `ip` 查最近前驱条目得到行号。Rc 共享，与 code/strings 同理。
+    pub lines: Rc<Vec<(u32, u32)>>,
     pub num_locals: usize,
     pub num_args: usize,
 }
 
 impl Chunk {
-    pub fn new() -> Self { Chunk { code: Rc::new(vec![]), strings: Rc::new(vec![]), num_locals: 0, num_args: 0 } }
+    pub fn new() -> Self { Chunk { code: Rc::new(vec![]), strings: Rc::new(vec![]), lines: Rc::new(vec![]), num_locals: 0, num_args: 0 } }
+
+    /// 记录当前指令偏移对应的源码行号（供运行时错误定位）。
+    /// 去重：与最后一条行号相同则跳过（同一行内的连续语句/表达式只记一条）。
+    /// 行号为 0 的合成 span 不记录。
+    pub fn note_line(&mut self, line: usize) {
+        if line == 0 { return; }
+        let offset = Rc::make_mut(&mut self.code).len() as u32;
+        let lines = Rc::make_mut(&mut self.lines);
+        if let Some(&(_, last)) = lines.last() {
+            if last == line as u32 { return; }
+        }
+        lines.push((offset, line as u32));
+    }
+
+    /// 按指令偏移查最近前驱行号条目。条目按偏移升序（编译期顺序记录），
+    /// 线性扫描即可；仅在运行时错误路径调用，条目数 ≈ 源码行数，开销可忽略。
+    pub fn line_at(&self, ip: usize) -> Option<usize> {
+        let ip = ip as u32;
+        let mut result = None;
+        for &(off, line) in self.lines.iter() {
+            if off <= ip { result = Some(line as usize); } else { break; }
+        }
+        result
+    }
 
     pub fn add_string(&mut self, s: &str) -> usize {
         // 编译期唯一持有者（refcount==1），make_mut 原地写零拷贝
@@ -62,6 +94,9 @@ impl Chunk {
             Yield => 53,
             PushChar(_) => 54,
             TailCall(..) => 55,
+            // a1 P1：57/58 追加在尾部（56 = NewUnion），不动既有指令编码
+            CallClosure(_) => 57,
+            TailCallClosure(_) => 58,
         });
 
         // Emit operands
@@ -85,10 +120,12 @@ impl Chunk {
             IsStruct(n) => w!(*n, u64),
             PushRange(s, e, inc) => { w!(*s, i64); w!(*e, i64); code.push(if *inc {1} else {0}); }
             MakeTensor(r, c, d) => { w!(*r, u64); w!(*c, u64); code.push(*d); }
-            MakeClosure(p, c) => { w!(*p, u64); w!(*c, u64); }
+            MakeClosure(p, c, n) => { w!(*p, u64); w!(*c, u64); w!(*n, u64); }
             MakeTuple(n) | IsTuple(n) | TupleGet(n) => w!(*n, u64),
             MoveOp => {}
             TailCall(i, n) => { w!(*i, u64); w!(*n, u64); }
+            // a1 P1：单操作数（参数数量）
+            CallClosure(n) | TailCallClosure(n) => w!(*n, u64),
             _ => {}
         }
     }
@@ -126,7 +163,7 @@ impl Chunk {
             41 => PushRange(r!(i64), r!(i64), { let b = self.code[*ip]; *ip += 1; b != 0 }),
             42 => MoveOp,
             43 => MakeTensor(r!(u64) as usize, r!(u64) as usize, { let d = self.code[*ip]; *ip += 1; d }),
-            44 => MakeClosure(r!(u64) as usize, r!(u64) as usize),
+            44 => MakeClosure(r!(u64) as usize, r!(u64) as usize, r!(u64) as usize),
             45 => PushFloat32(r!(f32)),
             46 => IsStruct(r!(u64) as usize),
             47 => Await,
@@ -136,6 +173,9 @@ impl Chunk {
             51 => TupleGet(r!(u64) as usize),
             52 => Try,
             53 => Yield,
+            // a1 P1：57/58 追加在尾部（56 = NewUnion）
+            57 => CallClosure(r!(u64) as usize),
+            58 => TailCallClosure(r!(u64) as usize),
             54 => PushChar(r!(u32)),
             55 => TailCall(r!(u64) as usize, r!(u64) as usize),
             _ => panic!("bad opcode {b}"),

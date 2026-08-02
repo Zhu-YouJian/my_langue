@@ -594,11 +594,49 @@ unsafe extern "C" fn host_make_tensor_bf16(
 }
 
 unsafe extern "C" fn host_make_closure(
-    vm: *mut Vm, _params: u64, chunk_idx: u64, out: *mut Value,
+    vm: *mut Vm, params: u64, captures_count: u64, name_idx: u64, args_ptr: *const Value, out: *mut Value,
 ) {
     let vm = &mut *vm;
-    let name = vm.chunk_name_at(chunk_idx as usize).unwrap_or_default();
-    std::ptr::write(out, Value::FnRef { name, params: vec![], return_type: crate::hir::types::Type::Base(crate::hir::types::BaseType::Unit) });
+    // a1 P1：第二个操作数在 bytecode 里是「字符串表索引」（与 VM opcode 44 MakeClosure 对齐），
+    // 不是 chunk 位置索引。此前误用 `chunk_name_at`（chunk_names 表），两张表只在巧合下相等，
+    // 多闭包程序会得到错误的名字（调错函数）。改用 `string_at` 从当前 chunk 的字符串表取闭包 chunk 名。
+    let name = vm.string_at(name_idx as usize).unwrap_or_default();
+    // a1 P3：捕获值内联——从 JIT 栈上取 captures_count 个值装入 FnRef.captures（值内联，
+    // 与 VM opcode 44 对齐）。顺序与闭包 chunk 捕获槽（params..params+captures）一致。
+    let captures = if args_ptr.is_null() || captures_count == 0 {
+        vec![]
+    } else {
+        std::slice::from_raw_parts(args_ptr, captures_count as usize).to_vec()
+    };
+    std::ptr::write(out, Value::FnRef {
+        name,
+        params: vec![],
+        return_type: crate::hir::types::Type::Base(crate::hir::types::BaseType::Unit),
+        captures,
+    });
+}
+
+/// a1 P1：间接调用栈上闭包/函数值（Op::CallClosure 的 JIT hostcall）。
+/// 栈布局 [arg1..argN, callee]（arg_count = N+1 个值，最后一个为 callee）。
+/// 走 `Vm::call_value`（FnRef 按名 → natives/globals-FnRef/functions；其他值报「期望可调用值」）。
+/// 错误写入 last_error 并写 Unit（翻译器随后紧跟 host_check_error 立即中断，B2 模式）。
+unsafe extern "C" fn host_call_indirect(
+    vm: *mut Vm, arg_count: u64, args_ptr: *const Value, out: *mut Value,
+) {
+    let vm = &mut *vm;
+    let all = safe_slice(args_ptr, arg_count);
+    if all.is_empty() {
+        vm.set_last_error("CallClosure: 缺少 callee".into());
+        std::ptr::write(out, Value::Unit);
+        return;
+    }
+    let n = all.len();
+    let callee = all[n - 1].clone();
+    let args = &all[..n - 1];
+    match vm.call_value(&callee, args) {
+        Ok(v) => std::ptr::write(out, v),
+        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+    }
 }
 
 unsafe extern "C" fn host_load_global(vm: *mut Vm, name_idx: u64, out: *mut Value) {
@@ -648,6 +686,7 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
         ("host_lte", host_lte as usize),
         ("host_gte", host_gte as usize),
         ("host_call", host_call as usize),
+        ("host_call_indirect", host_call_indirect as usize),
         ("host_method_call", host_method_call as usize),
         ("host_make_vec", host_make_vec as usize),
         ("host_make_map", host_make_map as usize),

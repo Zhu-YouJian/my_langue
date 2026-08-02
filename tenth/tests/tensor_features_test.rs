@@ -598,6 +598,7 @@ fn run_vm_inner(src: &str, search_paths: Option<Vec<String>>) -> Value {
                         name: func.name.clone(),
                         params: func.params.clone(),
                         return_type: func.return_type.clone(),
+                        captures: vec![],
                     },
                 );
             }

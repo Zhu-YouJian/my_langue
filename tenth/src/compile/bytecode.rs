@@ -45,6 +45,11 @@ pub struct BytecodeCompiler {
     is_main: bool,
     /// M3.5：程序级全局名集合（顶层 let / use 导入）。
     global_names: std::collections::HashSet<String>,
+    /// a1 P1：当前编译函数名（闭包 chunk 命名前缀）。
+    /// 每个函数用独立 BytecodeCompiler 编译，闭包名 `__closure_{N}` 会在多个函数
+    /// 间冲突（后注册者覆盖先注册者 → FnRef 解析到错误 chunk → 静默错值）。
+    /// 闭包名改为 `__closure_{fn_name}_{N}` 保证跨函数唯一。
+    fn_name: String,
 }
 
 impl BytecodeCompiler {
@@ -64,6 +69,7 @@ impl BytecodeCompiler {
             tail_call_ok: false,
             is_main: false,
             global_names: std::collections::HashSet::new(),
+            fn_name: String::new(),
         }
     }
 
@@ -76,6 +82,8 @@ impl BytecodeCompiler {
 
     pub fn compile(mut self, func: &HirFnDef) -> TenthResult<(Chunk, Vec<(String, Chunk)>)> {
         self.is_main = false;
+        // a1 P1：闭包命名前缀（跨函数唯一，防闭包 chunk 名冲突）
+        self.fn_name = func.name.clone();
         self.chunk.num_args = func.params.len();
         self.current_fn_args = func.params.len();
         for (name, _) in &func.params {
@@ -100,6 +108,7 @@ impl BytecodeCompiler {
 
     pub fn compile_main(mut self, expr: &HirExpr) -> TenthResult<(Chunk, Vec<(String, Chunk)>)> {
         self.is_main = true;
+        self.fn_name = "main".to_string();
         self.compile_expr(expr)?;
         self.chunk.emit(Op::Ret);
         self.resolve_patches();
@@ -114,6 +123,7 @@ impl BytecodeCompiler {
         use crate::hir::hir::HirStmtKind;
         use crate::lexer::token::Span;
         self.is_main = true;
+        self.fn_name = "__globals".to_string();
         // 全局名集合（供 StoreGlobal 判定；全局本身必然命中）
         for g in globals {
             self.global_names.insert(g.name.clone());
@@ -148,6 +158,9 @@ impl BytecodeCompiler {
 
     fn compile_expr(&mut self, expr: &HirExpr) -> TenthResult<()> {
         use HirExprKind::*;
+        // B 批（VM 报错行号）：在表达式边界记录源码行号到 chunk 行号表，
+        // 供 VM 运行时错误按指令偏移定位行号。去重由 Chunk::note_line 处理。
+        self.chunk.note_line(expr.span.line);
         match &expr.kind {
             Literal(lit) => match lit {
                 crate::hir::hir::Literal::Int(n, _) => self.chunk.emit(Op::PushInt(*n)),
@@ -265,19 +278,34 @@ impl BytecodeCompiler {
                 match &func.kind {
                     Var(name) => {
                         let i = self.chunk.add_string(name);
-                        // Tail call optimization: reuse current frame when in tail position
-                        // and arg count matches the current function's param count.
-                        if self.tail_call_ok && args.len() == self.current_fn_args {
+                        // a1 P1：Var 命中 local 槽（函数参数/局部变量里装的闭包值）→
+                        // 压值 + CallClosure/TailCallClosure（CallN 只查 functions/globals，
+                        // 无法按名解析 local 闭包）。未命中 local → 保持按名直调（顶层函数/全局闭包）。
+                        if let Some(pos) = self.locals.iter().rposition(|n| n == name) {
+                            self.chunk.emit(Op::Load(pos));
+                            if self.tail_call_ok && args.len() == self.current_fn_args {
+                                self.chunk.emit(Op::TailCallClosure(args.len()));
+                            } else {
+                                self.chunk.emit(Op::CallClosure(args.len()));
+                            }
+                        } else if self.tail_call_ok && args.len() == self.current_fn_args {
+                            // Tail call optimization: reuse current frame when in tail position
+                            // and arg count matches the current function's param count.
                             self.chunk.emit(Op::TailCall(i, args.len()));
                         } else {
                             self.chunk.emit(Op::CallN(i, args.len()));
                         }
                     }
                     _ => {
-                        // Indirect call — compile func as expression, then we'd need CallIndirect
-                        // For now, fallback: evaluate func and push it as a value
+                        // a1 P1：非 Var 表达式（间接调用，如 `(cond ? f : g)(x)`、`get_fn()(x)`）→
+                        // 编译 func 压入函数值，再发 CallClosure/TailCallClosure。
+                        // 此前是「无调用占位」（值悬栈、后续栈错乱），此处从占位改为真调用。
                         self.compile_expr(func)?;
-                        for _ in args { let _ = self.chunk; } // dummy
+                        if self.tail_call_ok && args.len() == self.current_fn_args {
+                            self.chunk.emit(Op::TailCallClosure(args.len()));
+                        } else {
+                            self.chunk.emit(Op::CallClosure(args.len()));
+                        }
                     }
                 }
             }
@@ -867,19 +895,42 @@ impl BytecodeCompiler {
             // Closure: |params| body
             Closure { params, body, captures } => {
                 // Compile the closure body as a separate chunk
-                let closure_name = format!("__closure_{}", self.closure_counter);
+                // a1 P1：闭包名带函数名前缀（跨函数唯一）——多个函数各自含闭包时，
+                // `__closure_{N}` 会在 functions 表中互相覆盖（FnRef 名解析到错误 chunk → 静默错值）。
+                let closure_name = format!("__closure_{}_{}", self.fn_name, self.closure_counter);
                 self.closure_counter += 1;
+
+                // a1 P3：捕获正确性——捕获值内联（替代旧的「全局名 hack」）。
+                // 捕获分两类：
+                //   1) 父局部变量（self.locals 命中）→ 值内联进 FnRef.captures；闭包 chunk
+                //      以 params.len()+i 槽位接收（不再 LoadGlobal——旧方案多实例捕获同名变量
+                //      会互相覆盖 → 静默错值，如 make_adder(5)/make_adder(10) add5(3) 返回 13）。
+                //   2) 程序全局名（self.locals 未命中）→ 闭包体直接 LoadGlobal 解析（不内联）。
+                let mut captured_locals: Vec<(String, usize)> = Vec::new();
+                for cap_name in captures {
+                    // rposition：捕获最近绑定值
+                    if let Some(pos) = self.locals.iter().rposition(|n| n == cap_name) {
+                        captured_locals.push((cap_name.clone(), pos));
+                    }
+                }
 
                 let mut closure_compiler = BytecodeCompiler::new();
                 closure_compiler.closure_counter = self.closure_counter;
                 // M3.5：闭包编译器共享全局名集合（shadow 判定一致）
                 closure_compiler.global_names = self.global_names.clone();
+                // a1 P1：闭包编译器继承函数名前缀（嵌套闭包命名一致）
+                closure_compiler.fn_name = self.fn_name.clone();
 
-                // Set up params as locals in the closure chunk
-                closure_compiler.chunk.num_args = params.len();
-                closure_compiler.current_fn_args = params.len();
+                // a1 P3：闭包 chunk 槽位 = params + 捕获局部（捕获在 params.len()+i）。
+                // num_args 含捕获（调用时 CallClosure/call_value 把捕获值追加为额外实参）。
+                let total_args = params.len() + captured_locals.len();
+                closure_compiler.chunk.num_args = total_args;
+                closure_compiler.current_fn_args = total_args;
                 for (name, _) in params {
                     closure_compiler.locals.push(name.clone());
+                }
+                for (cap_name, _) in &captured_locals {
+                    closure_compiler.locals.push(cap_name.clone());
                 }
 
                 // Compile the closure body (in tail position for TCO)
@@ -890,16 +941,21 @@ impl BytecodeCompiler {
                 closure_compiler.resolve_patches();
                 closure_compiler.chunk.num_locals = closure_compiler.locals.len();
 
-                // Store captured variable values as globals in the main chunk
-                // so the closure can access them via LoadGlobal
-                for cap_name in captures {
-                    // rposition：捕获最近绑定值
-                    if let Some(pos) = self.locals.iter().rposition(|n| n == cap_name) {
-                        // Load from local and store as global
-                        self.chunk.emit(Op::Load(pos));
-                        let gi = self.chunk.add_string(cap_name);
-                        self.chunk.emit(Op::StoreGlobal(gi));
-                    }
+                // a1 P3：嵌套闭包 chunk 注册——闭包体内的嵌套闭包（如 `|n| |x| x+n`）的
+                // chunk 收在 closure_compiler.closure_chunks，必须并入父级注册表，
+                // 否则内层 FnRef 名（如 __closure_main_1）在 functions 表查不到 → 「未定义的函数」。
+                // 同时回传计数器，避免外层后续闭包与内层编号冲突（命名唯一性）。
+                for (n, c) in std::mem::take(&mut closure_compiler.closure_chunks) {
+                    self.closure_chunks.push((n, c));
+                }
+                if closure_compiler.closure_counter > self.closure_counter {
+                    self.closure_counter = closure_compiler.closure_counter;
+                }
+
+                // a1 P3：父栈压捕获值（值内联），MakeClosure 弹出装入 FnRef.captures。
+                // 压栈顺序与闭包 chunk 捕获槽（params..params+captures）一致。
+                for (_, pos) in &captured_locals {
+                    self.chunk.emit(Op::Load(*pos));
                 }
 
                 // Register the closure chunk
@@ -907,7 +963,7 @@ impl BytecodeCompiler {
 
                 // Emit MakeClosure with the closure name index
                 let name_i = self.chunk.add_string(&closure_name);
-                self.chunk.emit(Op::MakeClosure(params.len(), name_i));
+                self.chunk.emit(Op::MakeClosure(params.len(), captured_locals.len(), name_i));
             }
 
         }
@@ -915,6 +971,9 @@ impl BytecodeCompiler {
     }
 
     fn compile_stmt(&mut self, stmt: &HirStmt) -> TenthResult<()> {
+        // B 批（VM 报错行号）：语句边界记录行号——覆盖无 init 的 let / 裸 return /
+        // break / continue 等不经过 compile_expr 的语句，保证语句级粒度完整。
+        self.chunk.note_line(stmt.span.line);
         match &stmt.kind {
             HirStmtKind::Let { names, init, .. } => {
                 if let Some(e) = init {

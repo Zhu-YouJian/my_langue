@@ -1,9 +1,7 @@
 // 闭包合集 — 演示 Tenth 闭包功能（含变量捕获）
 //
-// ⚠️ 需解释器路径运行（VM 路径会报“未定义的函数 'compute'”）：
-//   TENTH_NO_VM=1 tenth.exe run "Tenth实例/闭包合集/closures.th"
-// 根因：VM 缺少闭包值的间接调用（CallIndirect）——`let f = |x| ...; f(2)`
-// 按函数名查找 f 失败；解释器路径支持闭包值调用。待总师单独排期修复 VM。
+// 运行：tenth.exe run "Tenth实例/闭包合集/closures.th"
+// （2026-08-03 a1 VM 闭包值调用完成：闭包值间接调用 VM 路径已可用，默认路径运行）
 
 fn main() {
     // 简单闭包

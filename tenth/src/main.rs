@@ -278,6 +278,7 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram, sandbox: Option<FsSandbox>, tim
                 name: func.name.clone(),
                 params: func.params.clone(),
                 return_type: func.return_type.clone(),
+                captures: vec![],
             });
         }
     }
@@ -409,6 +410,7 @@ fn vm_run(path: &str) -> TenthResult<()> {
                     name: func.name.clone(),
                     params: func.params.clone(),
                     return_type: func.return_type.clone(),
+                    captures: vec![],
                 });
             }
             Err(_) => {

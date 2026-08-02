@@ -262,6 +262,7 @@ impl Interpreter {
                 name: "tensor".to_string(),
                 params: vec![("data".to_string(), Type::Unknown)],
                 return_type: Type::Unknown,
+                captures: vec![],
             },
         );
 
@@ -272,6 +273,7 @@ impl Interpreter {
                 name: "start_grad".to_string(),
                 params: vec![],
                 return_type: Type::unit(),
+                captures: vec![],
             },
         );
         self.insert_var(
@@ -280,6 +282,7 @@ impl Interpreter {
                 name: "new_grad".to_string(),
                 params: vec![],
                 return_type: Type::unit(),
+                captures: vec![],
             },
         );
         self.insert_var(
@@ -288,6 +291,7 @@ impl Interpreter {
                 name: "stop_grad".to_string(),
                 params: vec![],
                 return_type: Type::unit(),
+                captures: vec![],
             },
         );
         self.insert_var(
@@ -296,6 +300,7 @@ impl Interpreter {
                 name: "zero_grad".to_string(),
                 params: vec![],
                 return_type: Type::unit(),
+                captures: vec![],
             },
         );
         self.insert_var(
@@ -307,6 +312,7 @@ impl Interpreter {
                     ("target".to_string(), Type::Unknown),
                 ],
                 return_type: Type::Unknown,
+                captures: vec![],
             },
         );
         // select 原语（论文 T47/T48/T50）：逐元素条件选择，支持广播与可微
@@ -320,6 +326,7 @@ impl Interpreter {
                     ("else".to_string(), Type::Unknown),
                 ],
                 return_type: Type::Unknown,
+                captures: vec![],
             },
         );
         // scatter 原语：不可变散布，按 index 沿 dim 覆盖 base 的对应位置
@@ -334,6 +341,7 @@ impl Interpreter {
                     ("src".to_string(), Type::Unknown),
                 ],
                 return_type: Type::Unknown,
+                captures: vec![],
             },
         );
         // gather 原语：沿 dim 维按 index 取值（与 PyTorch gather 对齐）
@@ -347,6 +355,7 @@ impl Interpreter {
                     ("index".to_string(), Type::Unknown),
                 ],
                 return_type: Type::Unknown,
+                captures: vec![],
             },
         );
         // Scalar math
@@ -357,6 +366,7 @@ impl Interpreter {
                     name: name.to_string(),
                     params: vec![("x".to_string(), Type::Unknown)],
                     return_type: Type::Unknown,
+                    captures: vec![],
                 },
             );
         }
@@ -368,6 +378,7 @@ impl Interpreter {
                     name: name.to_string(),
                     params: vec![("dims".to_string(), Type::Unknown)],
                     return_type: Type::Unknown,
+                    captures: vec![],
                 },
             );
         }
@@ -379,6 +390,7 @@ impl Interpreter {
                     name: name.to_string(),
                     params: vec![("path".to_string(), Type::Unknown)],
                     return_type: Type::Unknown,
+                    captures: vec![],
                 },
             );
         }
@@ -388,6 +400,7 @@ impl Interpreter {
                 name: "param".to_string(),
                 params: vec![("t".to_string(), Type::Unknown)],
                 return_type: Type::Unknown,
+                captures: vec![],
             },
         );
         self.insert_var(
@@ -396,6 +409,7 @@ impl Interpreter {
                 name: "backward".to_string(),
                 params: vec![("loss".to_string(), Type::Unknown)],
                 return_type: Type::unit(),
+                captures: vec![],
             },
         );
         self.insert_var(
@@ -404,6 +418,7 @@ impl Interpreter {
                 name: "grad".to_string(),
                 params: vec![("param".to_string(), Type::Unknown)],
                 return_type: Type::Unknown,
+                captures: vec![],
             },
         );
         // 护城河 F：explain_error() — 返回上一次 backward 失败的根因说明列表
@@ -413,6 +428,7 @@ impl Interpreter {
                 name: "explain_error".to_string(),
                 params: vec![],
                 return_type: Type::Unknown,
+                captures: vec![],
             },
         );
 
@@ -425,6 +441,7 @@ impl Interpreter {
                     name: func.name.clone(),
                     params: params.clone(),
                     return_type: ret.clone(),
+                    captures: vec![],
                 },
             );
         }
@@ -448,6 +465,7 @@ impl Interpreter {
                                 name: alias.clone(),
                                 params,
                                 return_type: ret,
+                                captures: vec![],
                             },
                         );
                     }
@@ -502,54 +520,59 @@ impl Interpreter {
             name: "tensor".to_string(),
             params: vec![("data".to_string(), Type::Unknown)],
             return_type: Type::Unknown,
+            captures: vec![],
         });
         for name in &["start_grad", "new_grad", "stop_grad", "zero_grad"] {
             self.insert_var(name.to_string(), Value::FnRef {
-                name: name.to_string(), params: vec![], return_type: Type::unit(),
+                name: name.to_string(), params: vec![], return_type: Type::unit(), captures: vec![],
             });
         }
         self.insert_var("cross_entropy".to_string(), Value::FnRef {
             name: "cross_entropy".to_string(),
             params: vec![("logits".to_string(), Type::Unknown), ("target".to_string(), Type::Unknown)],
             return_type: Type::Unknown,
+            captures: vec![],
         });
         self.insert_var("select".to_string(), Value::FnRef {
             name: "select".to_string(),
             params: vec![("cond".to_string(), Type::Unknown), ("then".to_string(), Type::Unknown), ("else".to_string(), Type::Unknown)],
             return_type: Type::Unknown,
+            captures: vec![],
         });
         self.insert_var("scatter".to_string(), Value::FnRef {
             name: "scatter".to_string(),
             params: vec![("base".to_string(), Type::Unknown), ("dim".to_string(), Type::Unknown), ("index".to_string(), Type::Unknown), ("src".to_string(), Type::Unknown)],
             return_type: Type::Unknown,
+            captures: vec![],
         });
         self.insert_var("gather".to_string(), Value::FnRef {
             name: "gather".to_string(),
             params: vec![("base".to_string(), Type::Unknown), ("dim".to_string(), Type::Unknown), ("index".to_string(), Type::Unknown)],
             return_type: Type::Unknown,
+            captures: vec![],
         });
         for name in &["abs", "sqrt", "sin", "cos", "ln", "pow"] {
             self.insert_var(name.to_string(), Value::FnRef {
-                name: name.to_string(), params: vec![("x".to_string(), Type::Unknown)], return_type: Type::Unknown,
+                name: name.to_string(), params: vec![("x".to_string(), Type::Unknown)], return_type: Type::Unknown, captures: vec![],
             });
         }
         for name in &["zeros", "ones"] {
             self.insert_var(name.to_string(), Value::FnRef {
-                name: name.to_string(), params: vec![("dims".to_string(), Type::Unknown)], return_type: Type::Unknown,
+                name: name.to_string(), params: vec![("dims".to_string(), Type::Unknown)], return_type: Type::Unknown, captures: vec![],
             });
         }
         // Register all program functions as FnRefs
         for func in self.functions.clone() {
             let params = func.params.clone();
             let ret = func.return_type.clone();
-            self.insert_var(func.name.clone(), Value::FnRef { name: func.name.clone(), params, return_type: ret });
+            self.insert_var(func.name.clone(), Value::FnRef { name: func.name.clone(), params, return_type: ret, captures: vec![] });
         }
         // Register module functions
         for module in self.modules.clone().values() {
             for func in &module.functions {
                 let params = func.params.clone();
                 let ret = func.return_type.clone();
-                self.insert_var(func.name.clone(), Value::FnRef { name: func.name.clone(), params, return_type: ret });
+                self.insert_var(func.name.clone(), Value::FnRef { name: func.name.clone(), params, return_type: ret, captures: vec![] });
             }
         }
         // M3.5：初始化程序级顶层 let 全局（test 路径也能读取全局常量/状态）

@@ -26,7 +26,7 @@ pub enum Op {
     PushRange(i64, i64, bool),  // start, end, inclusive
     MoveOp,                     // no-op marker for move semantics
     MakeTensor(usize, usize, u8), // rows, cols, dtype (0=F64, 1=F32) — pops rows*cols values
-    MakeClosure(usize, usize),  // params_count, chunk_idx — creates a closure value
+    MakeClosure(usize, usize, usize),  // params_count, captures_count, chunk_idx — creates a closure value
     Await,
     Spawn,
     MakeTuple(usize),           // n — pops n values, pushes Value::Tuple
@@ -35,6 +35,10 @@ pub enum Op {
     Try,                        // pops Result; Ok(v) → push v; Err(e) → early return TryPropagate(e)
     Yield,                      // 协作式调度：让出控制权，当前 task 回到 ready_queue 尾部
     TailCall(usize, usize),     // TCO：函数名索引 + 参数数量 — 不压新帧，复用当前帧替换 PC 和 slot
+    // a1（VM 闭包值调用 / CallIndirect）P1：间接调用栈上闭包/函数值。
+    // 编码 57/58 追加在尾部，不动既有指令编码（最大 56 = NewUnion）。
+    CallClosure(usize),         // 参数数量 n — 栈上 [arg1..argN, callee] → 弹 callee + N 参数 → 压新帧调用
+    TailCallClosure(usize),     // TCO：同上但复用当前帧（尾调用）；JIT 不支持 → fallback VM
 }
 
 // ── Scheduler internals ─────────────────────────────────────────────────────

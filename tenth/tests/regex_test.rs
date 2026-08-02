@@ -193,6 +193,7 @@ fn run_vm(src: &str) -> Value {
                     name: func.name.clone(),
                     params: func.params.clone(),
                     return_type: func.return_type.clone(),
+                    captures: vec![],
                 });
             }
             Err(e) => panic!("字节码编译错误: {}", e),

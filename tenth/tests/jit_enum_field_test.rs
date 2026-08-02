@@ -51,6 +51,7 @@ fn compile_to_vm(hir: &tenth::hir::hir::HirProgram, vm: &mut Vm) -> Result<(), S
                     name: func.name.clone(),
                     params: func.params.clone(),
                     return_type: func.return_type.clone(),
+                    captures: vec![],
                 });
             }
             Err(e) => return Err(format!("compile error: {}", e)),

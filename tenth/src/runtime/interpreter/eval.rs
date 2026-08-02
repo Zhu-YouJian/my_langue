@@ -48,6 +48,7 @@ impl super::Interpreter {
                                     name: name.clone(),
                                     params: fn_def.params.clone(),
                                     return_type: fn_def.return_type.clone(),
+                                    captures: vec![],
                                 }));
                             }
                         }
@@ -56,6 +57,7 @@ impl super::Interpreter {
                         name: name.clone(),
                         params: Vec::new(),
                         return_type: Type::Unknown,
+                        captures: vec![],
                     }));
                 }
                 if self.vars.get(name).map_or(false, |s| s.iter().any(|(_, v)| matches!(v, Value::Moved))) {
@@ -131,6 +133,7 @@ impl super::Interpreter {
                                     name: name.clone(),
                                     params: Vec::new(),
                                     return_type: Type::Unknown,
+                                    captures: vec![],
                                 })
                             }
                             _ => None,

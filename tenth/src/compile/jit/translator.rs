@@ -362,6 +362,32 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.call_hostcall_call("host_call", i as u64, n as u64, args_addr, out);
                 self.bump_sp()?;
             }
+            CallClosure(n) => {
+                // a1 P1：间接调用闭包/函数值。栈上 [arg1..argN, callee]（N+1 个值），
+                // host_call_indirect 取最后一个为 callee，其余为参数（走 Vm::call_value）。
+                self.sp -= ((n + 1) as i32) * (VALUE_SIZE as i32);
+                let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
+                let out = self.stack_addr_at_sp();
+                self.call_hostcall_make_n("host_call_indirect", (n + 1) as u64, args_addr, out);
+                self.bump_sp()?;
+                // B2: 检查 host_call_indirect 是否设置了错误（如「期望可调用值」/未定义函数）。
+                // 若有错误，立即返回 ok=false，让 run_jit 读取 last_error 并触发 fallback/报错，
+                // 避免错误延迟到 run_jit 末尾才浮出（复用 MethodCall 的 B2 模式）。
+                let err_flag = self.call_hostcall_vm_ret_u8("host_check_error");
+                let has_err = self.builder.ins().icmp_imm(IntCC::NotEqual, err_flag, 0);
+                let err_blk = self.builder.create_block();
+                let cont_blk = self.builder.create_block();
+                self.builder.ins().brif(has_err, err_blk, &[], cont_blk, &[]);
+                // 错误路径：返回 ok=0（run_jit 会 take_last_error 并返回 Err）
+                self.builder.switch_to_block(err_blk);
+                self.builder.seal_block(err_blk);
+                let ok_false = self.builder.ins().iconst(types::I8, 0);
+                self.builder.ins().return_(&[ok_false]);
+                // 继续路径
+                self.builder.switch_to_block(cont_blk);
+                self.builder.seal_block(cont_blk);
+                self.terminated = false;
+            }
             MethodCall(i, n) => {
                 // host_method_call 期望 receiver + n 个 args = n+1 个值
                 // sp 下移 (n+1)*VS，让 args_addr 指向 receiver
@@ -517,9 +543,16 @@ impl<'a, M: Module> Translator<'a, M> {
                 }
                 self.bump_sp()?;
             }
-            MakeClosure(params, chunk_idx) => {
+            MakeClosure(params, captures, chunk_idx) => {
+                // a1 P3：捕获值已由 bytecode 压到 JIT 栈（[cap0..capN]），MakeClosure 弹出
+                // 装入 FnRef.captures（值内联，与 VM opcode 44 对齐）。复用 make_enum 的
+                // hostcall 签名（vm, u64, u64, u64, *const Value, *mut Value）。
+                self.sp -= (captures as i32) * (VALUE_SIZE as i32);
+                let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
-                self.call_hostcall_2_u64("host_make_closure", params as u64, chunk_idx as u64, out);
+                self.call_hostcall_make_enum(
+                    "host_make_closure", params as u64, captures as u64, chunk_idx as u64, args_addr, out,
+                );
                 self.bump_sp()?;
             }
             IsStruct(_) => {
@@ -531,8 +564,9 @@ impl<'a, M: Module> Translator<'a, M> {
                 // Yield（Phase 2 Step 3-4 协作式调度）同样需要调度器支持，JIT 不支持。
                 return Err(format!("JIT: async opcode not supported, fallback to VM"));
             }
-            MakeTuple(_) | IsTuple(_) | TupleGet(_) | Try | TailCall(..) => {
+            MakeTuple(_) | IsTuple(_) | TupleGet(_) | Try | TailCall(..) | TailCallClosure(..) => {
                 // Tuple / Try / TailCall opcodes not JIT-compiled; fallback to VM.
+                // a1 P1：TailCallClosure（闭包尾调用）与 TailCall 同策略——不 JIT 编译，整体 fallback VM。
                 return Err(format!("JIT: tuple/try/tailcall opcode not supported, fallback to VM"));
             }
         }
@@ -749,15 +783,6 @@ impl<'a, M: Module> Translator<'a, M> {
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[self.ptr, self.ptr, self.ptr, self.ptr], None);
         self.builder.ins().call_indirect(sig, callee, &[self.vm, a, b, c, out]);
-    }
-
-    /// `fn(vm, u64, u64, *mut Value)` — e.g. host_make_closure.
-    fn call_hostcall_2_u64(&mut self, name: &str, a: u64, b: u64, out: Value_) {
-        let callee = self.hostcall_addr(name).unwrap();
-        let sig = self.import_sig(&[types::I64, types::I64, self.ptr], None);
-        let a_val = self.builder.ins().iconst(types::I64, a as i64);
-        let b_val = self.builder.ins().iconst(types::I64, b as i64);
-        self.builder.ins().call_indirect(sig, callee, &[self.vm, a_val, b_val, out]);
     }
 
     /// `fn(vm, u64, u64, *const Value, *mut Value)` — e.g. host_call.

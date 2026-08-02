@@ -2181,7 +2181,8 @@ pub fn register_all_natives(vm: &mut Vm) {
         vm.step_budget = Some(limit.max(0) as u64);
         vm.deadline_ms = None;
         let result = match &args[1] {
-            Value::FnRef { name, .. } => vm.call_with_args(name, &[]),
+            // a1 P3：走 call_value（而非 call_with_args）——带捕获的闭包 FnRef 能注入捕获值
+            Value::FnRef { .. } => vm.call_value(&args[1], &[]),
             // VM 无法在 native 内执行 tree-walk 闭包；与解释器 Timeout 语义一致返回 Unit。
             _ => {
                 vm.step_budget = saved_budget;
@@ -2217,7 +2218,8 @@ pub fn register_all_natives(vm: &mut Vm) {
         vm.step_budget = Some(u64::MAX);
         vm.deadline_ms = Some(now + (ms.max(0) as u128));
         let result = match &args[1] {
-            Value::FnRef { name, .. } => vm.call_with_args(name, &[]),
+            // a1 P3：走 call_value（而非 call_with_args）——带捕获的闭包 FnRef 能注入捕获值
+            Value::FnRef { .. } => vm.call_value(&args[1], &[]),
             _ => {
                 vm.step_budget = saved_budget;
                 vm.deadline_ms = saved_deadline;

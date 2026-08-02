@@ -114,6 +114,11 @@ pub enum Value {
         name: String,
         params: Vec<(String, Type)>,
         return_type: Type,
+        /// a1 P3：捕获值内联（与解释器 `Value::Closure.captures` 对齐）。
+        /// 闭包创建时（Op::MakeClosure）从父栈弹出 captures_count 个捕获值装入；
+        /// 调用时按闭包 chunk 的捕获槽位（`params..params+captures`）追加为额外实参。
+        /// 默认空——非闭包/无捕获的 FnRef（顶层函数/native 别名）不受影响。
+        captures: Vec<Value>,
     },
     Closure {
         params: Vec<(String, Type)>,

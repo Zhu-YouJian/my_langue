@@ -15,6 +15,7 @@ use tenth::parser::parser::Parser;
 use tenth::hir::lower::Lowerer;
 use tenth::runtime::vm::Vm;
 use tenth::runtime::value::Value;
+use tenth::runtime::natives::register_all_natives;
 use tenth::compile::bytecode::BytecodeCompiler;
 use tenth::compile::jit;
 use std::rc::Rc;
@@ -50,6 +51,14 @@ fn run_jit(src: &str) -> Result<Value, String> {
                 for (name, closure_chunk) in closures {
                     vm.add_fn(name, closure_chunk);
                 }
+                // 与 main.rs 对齐：函数注册为全局 FnRef（函数作值传递时按名解析，
+                // 如 `partial(add, 5)` 的实参 `add`）。
+                vm.set_global(func.name.clone(), Value::FnRef {
+                    name: func.name.clone(),
+                    params: func.params.clone(),
+                    return_type: func.return_type.clone(),
+                    captures: vec![],
+                });
             }
             Err(e) => return Err(format!("compile error: {}", e)),
         }
@@ -284,4 +293,203 @@ fn test_jit_loop_fallback_no_panic() {
     } else {
         panic!("expected Ok(Int(7))");
     }
+}
+
+// ── a1 P1/P2：闭包值调用对拍（VM vs JIT）───────────────────────────────────
+//
+// 背景：a1 引入 Op::CallClosure（opcode 57，间接调用栈上闭包/函数值）后，
+// VM 与 JIT 对「闭包值调用」必须产出一致结果。此前闭包值调用在两条路径
+// 都失败（VM 无调用指令；JIT call_with_args 不解析 FnRef）——见
+// `.trae/tmp/a1_closure_call_plan.md`。以下用例逐个对拍，覆盖：
+// - 单闭包无捕获（let f = |x| x+1; f(5)）
+// - 多捕获（|x| x*scale+base）
+// - 闭包作参数传入函数、函数体内调用闭包值（HOF）
+// - 多函数各含闭包（闭包 chunk 名跨函数唯一性——防静默错值回归）
+// - 递归闭包（fact 通过全局名自引用）
+
+/// 纯 VM 路径（vm.call，不经 JIT）——与 run_jit 对照。
+/// 与 dyn_trait_test.rs 的 run_vm 同构，注册全部 natives。
+fn run_vm(src: &str) -> Result<Value, String> {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().map_err(|e| e.to_string())?;
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).map_err(|e| e.to_string())?;
+
+    let mut vm = Vm::new();
+    register_all_natives(&mut vm);
+
+    for func in &hir.functions {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile(func) {
+            Ok((chunk, closures)) => {
+                vm.add_fn(func.name.clone(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+                // 与 main.rs 对齐：函数注册为全局 FnRef（函数作值传递时按名解析）。
+                vm.set_global(func.name.clone(), Value::FnRef {
+                    name: func.name.clone(),
+                    params: func.params.clone(),
+                    return_type: func.return_type.clone(),
+                    captures: vec![],
+                });
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+    }
+
+    if let Some(ref expr) = hir.main_expr {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile_main(expr) {
+            Ok((chunk, closures)) => {
+                vm.add_fn("main".into(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+        vm.call("main").map_err(|e| e.to_string())
+    } else if vm.has_fn("main") {
+        vm.call("main").map_err(|e| e.to_string())
+    } else {
+        Ok(Value::Unit)
+    }
+}
+
+/// 断言 VM 与 JIT 对同一源码产出一致且等于预期的 Int 结果。
+fn assert_vm_jit_int(src: &str, expected: i64, label: &str) {
+    let vm_res = run_vm(src).unwrap_or_else(|e| panic!("[{}] VM 执行失败: {}", label, e));
+    let jit_res = run_jit(src).unwrap_or_else(|e| panic!("[{}] JIT 执行失败: {}", label, e));
+    let vm_int = match vm_res { Value::Int(n, _) => n, v => panic!("[{}] VM 期望 Int，实际 {:?}", label, v) };
+    let jit_int = match jit_res { Value::Int(n, _) => n, v => panic!("[{}] JIT 期望 Int，实际 {:?}", label, v) };
+    assert_eq!(vm_int, expected, "[{}] VM 结果错误: {} != {}", label, vm_int, expected);
+    assert_eq!(jit_int, expected, "[{}] JIT 结果错误: {} != {}", label, jit_int, expected);
+    assert_eq!(vm_int, jit_int, "[{}] VM/JIT 不一致: {} != {}", label, vm_int, jit_int);
+}
+
+#[test]
+fn test_closure_call_single() {
+    // 单闭包无捕获：let f = |x| x+1; f(5) → 6
+    assert_vm_jit_int(r#"
+        fn main() -> Int {
+            let f = |x: Int| x + 1;
+            f(5)
+        }
+    "#, 6, "single");
+}
+
+#[test]
+fn test_closure_call_capture() {
+    // 多捕获：|x| x*scale+base → 3*2+10 = 16
+    assert_vm_jit_int(r#"
+        fn main() -> Int {
+            let base = 10;
+            let scale = 2;
+            let compute = |x: Int| x * scale + base;
+            compute(3)
+        }
+    "#, 16, "capture");
+}
+
+#[test]
+fn test_closure_call_param_hof() {
+    // 闭包作参数传入函数，函数体内调用闭包值（HOF）：apply(f,x){ f(f(x)) } → 7
+    assert_vm_jit_int(r#"
+        fn apply_twice(f: fn(Int) -> Int, x: Int) -> Int {
+            f(f(x))
+        }
+        fn main() -> Int {
+            let inc = |x: Int| x + 1;
+            apply_twice(inc, 5)
+        }
+    "#, 7, "hof");
+}
+
+#[test]
+fn test_closure_call_multiple_factories() {
+    // 多函数各含闭包：闭包 chunk 名必须跨函数唯一，否则后注册者覆盖先注册者
+    // （FnRef 解析到错误 chunk → 静默错值）。inc(5)*100 + dbl(5) = 6*100+10 = 610；
+    // 若名冲突回归（inc→10, dbl→10）则得 1010，可辨识。
+    assert_vm_jit_int(r#"
+        fn make_inc() -> fn(Int) -> Int {
+            |x: Int| x + 1
+        }
+        fn make_double() -> fn(Int) -> Int {
+            |x: Int| x * 2
+        }
+        fn main() -> Int {
+            let inc = make_inc();
+            let dbl = make_double();
+            inc(5) * 100 + dbl(5)
+        }
+    "#, 610, "multi-factory");
+}
+
+#[test]
+fn test_closure_call_curry() {
+    // 闭包返回闭包（curry/partial 风格）：partial(add,5) 返回 |x| f(arg,x)，
+    // 内层闭包捕获外层参数 f/arg（走全局捕获 hack）。add5(3) → 8。
+    // 注：递归闭包（`let fact = |n| ... fact(n-1)`）在 lowering 阶段被拒
+    // （"未定义变量 'fact'"——闭包初始化器内自引用未绑定），属前端限制，
+    // 非 a1 VM/JIT 范畴，故对拍用例不含递归闭包。
+    assert_vm_jit_int(r#"
+        fn partial(f: fn(Int, Int) -> Int, arg: Int) -> fn(Int) -> Int {
+            |x: Int| f(arg, x)
+        }
+        fn add(a: Int, b: Int) -> Int { a + b }
+        fn main() -> Int {
+            let add5 = partial(add, 5);
+            add5(3)
+        }
+    "#, 8, "curry");
+}
+
+#[test]
+fn test_capture_inline_adder_independent() {
+    // a1 P3 核心：捕获值内联后多实例捕获独立。P3 前 make_adder(5)/make_adder(10)
+    // 捕获同名 n 走全局名 hack 互相覆盖，add5(3) 静默返回 13（应为 8）。
+    // 8*100+13 = 813；若捕获串扰（add5 看到 n=10）则 13*100+13=1313，可辨识。
+    assert_vm_jit_int(r#"
+        fn make_adder(n: Int) -> fn(Int) -> Int {
+            |x: Int| x + n
+        }
+        fn main() -> Int {
+            let add5 = make_adder(5);
+            let add10 = make_adder(10);
+            add5(3) * 100 + add10(3)
+        }
+    "#, 813, "adder-independent");
+}
+
+#[test]
+fn test_capture_inline_nested_closure() {
+    // a1 P3：嵌套闭包 `|n| |x| x+n`（闭包返回闭包）。内层闭包捕获外层参数 n（值内联），
+    // 且内层 chunk 必须并入父级注册表——否则 FnRef 名查不到 → 「未定义的函数」。
+    assert_vm_jit_int(r#"
+        fn main() -> Int {
+            let make_adder = |n: Int| |x: Int| x + n;
+            let add5 = make_adder(5);
+            let add10 = make_adder(10);
+            add5(3) * 100 + add10(3)
+        }
+    "#, 813, "nested-closure");
+}
+
+#[test]
+fn test_capture_inline_hof_param() {
+    // a1 P3：带捕获的闭包作参数传入 HOF，函数体内经参数槽间接调用（CallClosure 捕获注入）。
+    // apply_twice(addn, 3) = f(f(3)) = (3+5)+5 = 13。
+    assert_vm_jit_int(r#"
+        fn apply_twice(f: fn(Int) -> Int, x: Int) -> Int {
+            f(f(x))
+        }
+        fn main() -> Int {
+            let n = 5;
+            let addn = |x: Int| x + n;
+            apply_twice(addn, 3)
+        }
+    "#, 13, "hof-capturing");
 }

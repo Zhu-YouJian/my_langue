@@ -183,14 +183,70 @@ impl Vm {
     }
 
     /// Call a function by name with explicit args (used by JIT hostcalls).
+    ///
+    /// a1 P1：补 globals-FnRef 解析——闭包值以 `StoreGlobal` 存为全局名（bytecode
+    /// 闭包捕获 hack）时，按 `FnRef.name`（即闭包 chunk 名 `__closure_N`）解析；
+    /// 与 execute.rs opcode 28 CallN 的既有逻辑对齐。仅 FnRef 分支条件性 clone。
+    ///
+    /// a1 P3：全局闭包 FnRef 携带捕获值 → 按名调用追加捕获实参（槽位
+    /// params..params+captures），否则捕获缺失 → 静默错值。无捕获的常见路径
+    /// 保持零额外分配（extra_captures 为空时直接借用 args）。
     pub fn call_with_args(&mut self, name: &str, args: &[Value]) -> TenthResult<Value> {
-        // Try native first
+        // Try native first (直名)
         if let Some(native_fn) = self.natives.get(name).copied() {
+            return native_fn(self, args);
+        }
+        // globals-FnRef 解析：`let f = |x| x+1; f(5)` 在 JIT/解释器宿主调用时，
+        // `f` 是全局 FnRef（name = 闭包 chunk 名）。natives 别名同样可解析
+        // （`let p = println; p("x")` → FnRef.name = "println"）。
+        let mut extra_captures: Vec<Value> = Vec::new();
+        let callee_name: String = match self.globals.get(name) {
+            Some(Value::FnRef { name: fname, captures, .. }) => {
+                extra_captures = captures.clone();
+                fname.clone()
+            }
+            _ => name.to_string(),
+        };
+        if let Some(native_fn) = self.natives.get(&callee_name).copied() {
+            if !extra_captures.is_empty() {
+                let mut all = args.to_vec();
+                all.extend(extra_captures.iter().cloned());
+                return native_fn(self, &all);
+            }
             return native_fn(self, args);
         }
         // Push args and call user function
         for a in args { self.stack.push(a.clone()); }
-        self.call(name)
+        for c in &extra_captures { self.stack.push(c.clone()); }
+        self.call(&callee_name)
+    }
+
+    /// a1 P1：调用一个「可调用值」（解释器 `apply_closure` 的 VM 等价物）。
+    ///
+    /// 语义对齐解释器 `apply_closure`（methods.rs:673-705）：
+    /// - `Value::FnRef { name, .. }` → 按名调用（natives → globals-FnRef → functions）
+    /// - 其余值 → 「期望可调用值，得到 {:?}」（带类型）
+    ///
+    /// 供 JIT `host_call_indirect` 与 VM `CallClosure` 共用。
+    /// a1 P3：捕获值追加为额外实参（槽位 params..params+captures）。name 是闭包
+    /// chunk 名（非全局变量名），call_with_args 不会从 globals 二次追加，不会重复。
+    pub fn call_value(&mut self, callee: &Value, args: &[Value]) -> TenthResult<Value> {
+        match callee {
+            Value::FnRef { name, captures, .. } => {
+                if captures.is_empty() {
+                    self.call_with_args(name, args)
+                } else {
+                    let mut all = args.to_vec();
+                    all.extend(captures.iter().cloned());
+                    self.call_with_args(name, &all)
+                }
+            }
+            _ => Err(TenthError::RuntimeError {
+                line: None,
+                col: None,
+                message: format!("期望可调用值，得到 {:?}", callee),
+            }),
+        }
     }
 
     // ── Public arithmetic/method wrappers (for JIT hostcalls) ──────────────
@@ -335,4 +391,24 @@ impl Vm {
 
 fn err<T>(msg: &str) -> TenthResult<T> {
     Err(TenthError::RuntimeError { line: None, col: None, message: msg.into() })
+}
+
+impl Vm {
+    /// B 批（VM 报错行号）：给运行时错误补充当前指令位置对应的源码行号。
+    /// 仅当错误尚未携带行号时补齐（已带行号/非 RuntimeError 原样透传）。
+    /// 用于 dispatch 循环内以 `?` 传播的错误（native / 方法调用 / 张量算术 / 字段访问等）。
+    fn with_line(&self, chunk_idx: usize, ip: usize, err: TenthError) -> TenthError {
+        match err {
+            TenthError::RuntimeError { line: None, col, message } => {
+                TenthError::RuntimeError { line: self.chunks[chunk_idx].line_at(ip), col, message }
+            }
+            other => other,
+        }
+    }
+
+    /// B 批（VM 报错行号）：构造带当前指令位置行号的运行时错误。
+    /// 用于 dispatch 循环内直接构造 RuntimeError 的场景（未定义函数 / 除零 / 无法索引等）。
+    fn err_here(&self, chunk_idx: usize, ip: usize, message: String) -> TenthError {
+        TenthError::RuntimeError { line: self.chunks[chunk_idx].line_at(ip), col: None, message }
+    }
 }

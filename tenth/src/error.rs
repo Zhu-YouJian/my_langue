@@ -147,9 +147,12 @@ pub type TenthResult<T> = Result<T, TenthError>;
 /// 格式化 RuntimeError 的显示文本（问题12）。
 /// 若 line/col 存在则显示 "第 L 行第 C 列：运行时错误 — message"，
 /// 否则保持原格式 "运行时错误 — message"。
+/// B 批（VM 报错行号）：支持仅 line 有值（col 为 None，如 VM 行号表只提供行号）
+/// 的情况——显示 "第 L 行：运行时错误 — message"。
 fn runtime_error_format(line: Option<usize>, col: Option<usize>, message: &str) -> String {
     match (line, col) {
         (Some(l), Some(c)) => format!("第 {} 行第 {} 列：运行时错误 — {}", l, c, message),
+        (Some(l), None) => format!("第 {} 行：运行时错误 — {}", l, message),
         _ => format!("运行时错误 — {}", message),
     }
 }
