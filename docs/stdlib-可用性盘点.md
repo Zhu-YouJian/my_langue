@@ -1,6 +1,6 @@
 # 标准库可用性盘点（L2.1）
 
-> 盘点日期：2026-08-02
+> 盘点日期：2026-08-02（2026-08-03 a1 VM 高阶函数修复后更新）
 > 盘点范围：`tenth/std/` 全部 65 个 `.th` 文件
 > 执行者：标准库部 + 测试部（subagent）
 > 状态标记：✅ 可用 ｜ ⚠️ 部分/条件 ｜ ❌ 不可用 ｜ 空壳（无实际内容）
@@ -50,11 +50,11 @@
 | `async.th` | 0 | 空壳 | 纯文档（async native 为 built-in，无 .th API） |
 | `autograd.th` | 3 | ⚠️ 条件 | `call_custom_op1/2/3` 需 Rust 端 `register_custom_op` 返回的 op_id 才可用；未注册 op 报"未注册"。模块本身编译/调用路径正常 |
 | `cli/cli.th` | 6 | ✅ | 双路径可用（底层 native 已读真实进程参数） |
-| `collections/collections.th` | 11 | ⚠️ | 高阶函数（`any/all/find/count_if/partition/flat_map`）**VM 路径失败**："未定义的函数 'f'"（a1：VM 不支持参数名调用函数）；`sum/product` 解释器路径**已修**（L2.3a-a2：eval_binary 对 Shared 解壳），双路径可用 |
+| `collections/collections.th` | 11 | ⚠️ | 高阶函数 `any/all/find/count_if/partition` **a1 已修（2026-08-03）双路径可用**（VM=解释器对拍一致）；`flat_map` 仍受 **AUDIT-11.4.28** 阻塞（VM Vec 方法分派缺 `extend`）；`sum/product` 双路径可用（L2.3a-a2） |
 | `collections/hashset.th` | 14 | ✅ | 双路径可用（`HashSet` struct + 链式 API） |
-| `collections/iter.th` | 15 | ⚠️ | 同 `collections.th`：高阶函数 VM 失败（a1）；`sum` 解释器路径**已修**（L2.3a-a2） |
+| `collections/iter.th` | 15 | ✅ | `map/filter/reduce/any` 高阶函数 **a1 已修（2026-08-03）双路径可用**；`sum` 双路径可用（L2.3a-a2） |
 | `crypto/hash.th` | 3 | ✅ | `sha256_hex/sha512_hex/md5_hex` 双路径可用 |
-| `curry.th` | 3 | ⚠️ | `partial/curry/compose` 解释器路径可用；**VM 路径失败**（a1） |
+| `curry.th` | 3 | ✅ | `partial/curry/compose` **a1 已修（2026-08-03）双路径可用**（多实例独立 add5/add7 互不污染，VM=解释器对拍一致） |
 | `data/dataloader.th` | 6 | ⚠️ | **`next_batch` 不推进 cursor**（b）：注释声称"advances the cursor"但实现只返回切片不更新状态，`has_next` 恒真、迭代死循环。需改为返回新 DataLoader（值语义）或提供手动推进 API |
 | `data/mnist.th` | 5 | ⚠️ 条件 | `read_i32_be/one_hot/normalize_pixel` 可用；`parse_images/parse_labels` 需真实 MNIST 数据文件（条件） |
 | `date.th` | 15 | ✅ | 官方 `test_date.th` 双路径全过（含闰年/跨年/边界） |
@@ -85,7 +85,7 @@
 | `nn/pool.th` | 4 | ✅ | `max_pool2d/avg_pool2d` 及 explicit 版可用（输入需 4D NCHW） |
 | `nn/positional_encoding.th` | 1 | ✅ | 可用 |
 | `nn/transformer.th` | 2 | ❌ | **缺 `use` 导入**（b）：函数体调用 `layer_norm`/`multihead_attention`/`feedforward` 但文件顶部无任何 use，编译报"未定义的泛型函数 'layer_norm'"。修复：文件顶部补 3 个 use |
-| `optim/accumulate.th` | 2 | ⚠️ | `accumulate_grad` 可用；`accumulate_loop`（高阶函数）VM 路径失败（a1） |
+| `optim/accumulate.th` | 2 | ✅ | `accumulate_grad` + `accumulate_loop`（高阶）**a1 已修（2026-08-03）双路径可用**（3 micro-batch 梯度=4.0 对拍一致） |
 | `optim/adagrad.th` | 1 | ✅ | 可用（返回 tuple `(new_w,new_g2)` 需解构） |
 | `optim/adam.th` | 1 | ✅ | 可用（返回 tuple 需解构） |
 | `optim/adamw.th` | 4 | ✅ | `adamw_step`（tuple）+ `_w/_m/_v`（JIT 友好单值）均可 |
@@ -126,7 +126,7 @@
 
 | 子项 | 现象 | 影响模块 | 修复方向 |
 |---|---|---|---|
-| **a1** | **VM 路径不支持高阶函数**：`f(...)`（通过参数名调用传入的函数）在 VM 下报"未定义的函数 'f'"且不静默回退；解释器路径正常（probe 验证 `apply_twice(|v| v+1, 10)` VM=Unit+报错，INTERP=12） | `collections.th`、`iter.th`（全部高阶函数）、`curry.th`、`optim/accumulate.th::accumulate_loop`、**`runtime.th`（闭包值经 `with_step_limit` 的 VM 路径）**（L2.4 补充：`with_step_limit(1000000, \|_\| {1+1})` VM 下返回 Unit/报"第一个参数必须是整数步数"，解释器正常） | 运行时部：VM 字节码/闭包调用缺口 |
+| **a1** | **VM 路径不支持高阶函数**：`f(...)`（通过参数名调用传入的函数）在 VM 下报"未定义的函数 'f'"且不静默回退；解释器路径正常（probe 验证 `apply_twice(|v| v+1, 10)` VM=Unit+报错，INTERP=12） | `collections.th`、`iter.th`（全部高阶函数）、`curry.th`、`optim/accumulate.th::accumulate_loop`、**`runtime.th`（闭包值经 `with_step_limit` 的 VM 路径）** | **✅ 已修（2026-08-03，a1 P1-P5）**：新增 `CallClosure/TailCallClosure` 指令（opcode 57/58）+ `Vm::call_value` + 捕获内联（FnRef.captures）+ JIT `host_call_indirect`/`host_make_closure` 索引修复；受影响面 13 函数 12 个 VM 可用（VM=解释器对拍一致）；`flat_map`/`map_values`/`filter_map` 仍阻塞于 **AUDIT-11.4.28**（VM Vec/Map 方法分派缺口，非 a1 残余）；stdlib_smoke_test 4 个高阶用例（M29/M31/M49/M50）已翻转 VM 路径（56/56） |
 | **a2** | **解释器路径 `int + Vec.get(i)` 类型不匹配**：`total = total + items.get(i)` 报"加法类型不匹配"（VM 正常） | `collections.th::sum/product`、`iter.th::sum`（解释器路径） | **✅ 已修（L2.3a）**：`eval_binary` 入口对 `Value::Shared/Ref/MutRef` 操作数统一解壳（`interpreter/binary.rs`），对齐 VM 行为；回归测试 `l23a_fix_test.rs` 3 项 |
 | **a3** | **VM 未注册 `str_add` native**：字符串拼接/插值在 VM 路径报"未定义的函数 'str_add'"；解释器路径正常 | `json::parse`、`toml`、`test_runtime`（f-string）、`test_json/min/obj`、`test_toml`（VM 路径） | **✅ 已修（L2.3a）**：`runtime/natives.rs::register_all_natives` 补 `str_add(String,String)`（与解释器 `eval_binary` String+String 及 WASM host 对齐）；回归测试 `l23a_fix_test.rs` 4 项（f-string/json/toml/parity） |
 
@@ -169,10 +169,10 @@
 | **`optim/lr_schedule`**：LR_PI/LR_EPS 顶层常量 | ✅ 可用（1 个边界断言失败，见 b） | `call_lr_schedule.th` 双路径 exit 0；官方测试 6 组全过、1 边界失败 |
 | **`math/functions`**、**`math/stats`** | functions 是空壳（纯文档）；stats ✅ | `test_stats.th` 全过 |
 | **`string/string.th`**、**`string_builder`** | string.th ✅；string_builder ❌（`String.clone` 不存在） | `call_string.th` 双路径过；`call_string_builder.th` 双路径失败 |
-| **`collections`**（collections/hashset/iter） | hashset ✅；collections/iter ⚠️（仅剩 a1 VM 高阶函数缺口；a2 已修，sum/product 双路径可用） | 见 §四 |
+| **`collections`**（collections/hashset/iter） | hashset ✅；collections/iter ✅（a1 已修 2026-08-03，map/filter/reduce 双路径可用）；collections ⚠️（flat_map 受 AUDIT-11.4.28 阻塞） | 见 §四 |
 | **`json`、`toml`** | **双路径 ✅**（L2.3a 修复 a3 后官方测试 VM/解释器全绿）；json API 名失实（c） | `test_json/toml` 双路径 exit 0 |
 | **`nn/*` 核心** | feedforward/layer_norm/multihead_attention/linear/loss/activations/dropout/batchnorm/pool/ops/positional_encoding **全部 ✅**；attention/conv/embedding/transformer ❌ | `call_nn.th` + `call_nn_mha.th` 双路径 exit 0；坏模块归因见 §三 |
-| **`optim/*`** | 全部 ✅（返回 tuple 需解构；accumulate_loop 受 a1 影响） | `call_optim.th` 双路径 exit 0 |
+| **`optim/*`** | 全部 ✅（返回 tuple 需解构；accumulate_loop a1 已修 2026-08-03） | `call_optim.th` 双路径 exit 0 |
 | **`data/dataloader`、`data/mnist`** | dataloader ⚠️（next_batch 不推进 cursor）；mnist 基础函数 ✅ | 见 §三 |
 | **`crypto/hash`、`random`、`time`、`date`、`duration`、`fs`、`cli`、`process`、`env`、`io`、`http`、`net`、`async`、`autograd`、`runtime`、`curry`、`regex`、`utils/*`** | crypto/time/date/duration/fs/cli/process/env/io/http/net/runtime/regex/utils-math ✅；curry/autograd ⚠️；random ❌；async 空壳；serialization ❌ | 见 §三 |
 
@@ -180,7 +180,7 @@
 
 ## 六、结论与建议
 
-1. **语言层 3 个缺口（a1/a2/a3）是最大瓶颈**：**a2、a3 已修（L2.3a）**——a2（解释器 Shared 解壳）解锁 `sum/product` 解释器路径，a3（VM str_add 注册）解锁 json/toml/f-string 的 VM 路径（共 12 个模块）。**仅剩 a1**（VM 高阶函数调用）影响 `collections/iter`、`curry`、`accumulate_loop` 的 VM 路径，属结构性大工程，待后续专项。
+1. **语言层 3 个缺口（a1/a2/a3）已全部修复**：**a2、a3 已修（L2.3a）**——a2（解释器 Shared 解壳）解锁 `sum/product` 解释器路径，a3（VM str_add 注册）解锁 json/toml/f-string 的 VM 路径；**a1（VM 高阶函数调用）已修（2026-08-03，a1 P1-P5）**——`collections/iter`、`curry`、`accumulate_loop`、`runtime` 高阶的 VM 路径全部解锁（VM=解释器对拍一致）。**新阻塞（AUDIT-11.4.28）**：`flat_map`/`map_values`/`filter_map` 仍受 VM Vec/Map 方法分派缺口影响（非 a1 残余，待运行时部补齐分派，约 15 行/方法）。
 2. **8 个标准库 bug（b 类）**是 L2.2 的直接修单：random/serialization/string_builder/attention/conv/embedding/transformer/dataloader 均是小改动即可修复。
 3. **6 处文档失实（c 类）**需在修复后同步勘误 `prelude.th` 与参考手册。
 4. **AI 核心（nn/optim/init）整体健康**：除 attention/conv/embedding/transformer 4 个模块外全部可用，`stdlib_demo.th` 实例运行通过。
@@ -196,7 +196,7 @@
 `tenth/tests/stdlib_smoke_test.rs`：**56 个测试 / 覆盖 44 个可用模块**。
 
 - **机制**：通过真实二进制 `tenth.exe run <tmp.th>` 子进程执行（cwd=tenth/ 使 `use std::...` 解析到 `tenth/std/`），断言 exit 0 + stdout 含 `= true`（末尾布尔表达式求值为真）。与既有 `stdlib_test.rs`（内联实现/直调 native）互补——本套件专门守护"模块 use 后可用"。
-- **路径**：默认 VM（默认路径）；a1 缺口模块走解释器（`TENTH_NO_VM=1`）。
+- **路径**：默认 VM（默认路径）。a1 缺口已修（2026-08-03），原 a1 模块（curry/collections·iter 高阶/runtime）已翻转 VM 路径（M29/M31/M49/M50 smoke_interp→smoke_vm）。
 
 ### 7.2 覆盖清单（56 测试）
 
@@ -214,7 +214,7 @@
 
 | 模块 | 路径 | 原因 |
 |---|---|---|
-| `curry`、`collections`·`iter` 高阶、`runtime` | 解释器（TENTH_NO_VM=1） | a1：VM 不支持闭包值/参数名调用函数；L2.4 实测 `with_step_limit(1000000, \|_\| {1+1})` 在 VM 下返回 Unit/报错，解释器正常 |
+| `curry`、`collections`·`iter` 高阶、`runtime` | **✅ VM（2026-08-03 a1 已修）** | a1 完成（CallClosure/TailCallClosure + `Vm::call_value` + 捕获内联）；smoke 用例已翻转 VM 路径（M29/M31/M49/M50） |
 | `autograd` | use 编译检查（不调用） | `call_custom_opN` 需 Rust 端 `register_custom_op` 注册 op_id 才可执行 |
 | `http`/`net` | 127.0.0.1:1（本机拒绝连接） | 不触网验证 Result 路径（get/connect 返回 Err 不崩溃） |
 | `data/mnist` | 仅基础函数 | `parse_images/parse_labels` 需真实 MNIST 数据文件（条件） |
