@@ -369,6 +369,20 @@ impl super::Interpreter {
                 a.len() == b.len()
                     && a.iter().zip(b.iter()).all(|(x, y)| self.values_eq(x, y))
             }
+            // AUDIT-11.4.24：Vec/Array 相等比较——元素逐一相等（解包 Shared 包裹）。
+            // 此前落入 `_ => false`，元素相同也返回 false（base64/hex 断言静默失败）。
+            // 解释器数组字面量元素是 Value::Shared，需 deref_wrapped 再比较。
+            (Value::Vec(a), Value::Vec(b))
+            | (Value::Array(a), Value::Array(b))
+            | (Value::Vec(a), Value::Array(b))
+            | (Value::Array(a), Value::Vec(b)) => {
+                let a = a.borrow();
+                let b = b.borrow();
+                a.len() == b.len()
+                    && a.iter().zip(b.iter()).all(|(x, y)| {
+                        self.values_eq(&super::natives::deref_wrapped(x), &super::natives::deref_wrapped(y))
+                    })
+            }
             _ => false,
         }
     }

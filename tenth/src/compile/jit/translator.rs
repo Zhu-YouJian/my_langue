@@ -569,6 +569,10 @@ impl<'a, M: Module> Translator<'a, M> {
                 // a1 P1：TailCallClosure（闭包尾调用）与 TailCall 同策略——不 JIT 编译，整体 fallback VM。
                 return Err(format!("JIT: tuple/try/tailcall opcode not supported, fallback to VM"));
             }
+            MakeRef | MakeMutRef(_) | Deref | DerefStore => {
+                // AUDIT-11.4.21：引用语义 opcodes 不 JIT 编译；整体 fallback VM。
+                return Err(format!("JIT: ref/deref opcode not supported, fallback to VM"));
+            }
         }
         Ok(())
     }

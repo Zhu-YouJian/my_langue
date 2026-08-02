@@ -187,6 +187,101 @@ impl Vm {
                     } else { err("join() 分隔符必须是字符串") }
                 }
                 "is_empty" => Ok(Value::Bool(items.borrow().is_empty())),
+                // AUDIT-11.4.28：补齐 VM Vec 方法（语义对齐解释器 methods.rs eval_vec_method）。
+                "index_of" => {
+                    if args.len() != 1 { return err("index_of() 需要 1 个参数"); }
+                    let vec = items.borrow();
+                    for (i, v) in vec.iter().enumerate() {
+                        if self.vm_eq(v, &args[0]) {
+                            return Ok(Value::Int(i as i64, BaseType::I32));
+                        }
+                    }
+                    Ok(Value::Int(-1, BaseType::I32))
+                }
+                "reverse" => {
+                    let vec = items.borrow();
+                    let reversed: Vec<Value> = vec.iter().rev().cloned().collect();
+                    Ok(Value::Vec(Rc::new(RefCell::new(reversed))))
+                }
+                "slice" => {
+                    if args.len() != 2 { return err("slice() 需要 2 个参数 (起始, 结束)"); }
+                    let start = args[0].as_int().unwrap_or(0).max(0) as usize;
+                    let end = args[1].as_int().unwrap_or(0).max(0) as usize;
+                    let vec = items.borrow();
+                    let end = end.min(vec.len());
+                    if start > end {
+                        return Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))));
+                    }
+                    let sliced: Vec<Value> = vec[start..end].to_vec();
+                    Ok(Value::Vec(Rc::new(RefCell::new(sliced))))
+                }
+                "extend" => {
+                    if args.len() != 1 { return err("extend() 需要 1 个参数 (Vec)"); }
+                    if let Value::Vec(other) = &args[0] {
+                        let other_vals = other.borrow().clone();
+                        let mut vec = items.borrow_mut();
+                        for v in other_vals { vec.push(v); }
+                        return Ok(Value::Unit);
+                    }
+                    err("extend() 参数必须是 Vec")
+                }
+                "sort" => {
+                    let mut vec = items.borrow_mut();
+                    vec.sort_by(|a, b| {
+                        match (a, b) {
+                            (Value::Int(x, _), Value::Int(y, _)) => x.cmp(y),
+                            (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+                            (Value::String(x), Value::String(y)) => x.cmp(y),
+                            _ => std::cmp::Ordering::Equal,
+                        }
+                    });
+                    Ok(Value::Unit)
+                }
+                "dedup" => {
+                    let mut vec = items.borrow_mut();
+                    vec.dedup_by(|a, b| self.vm_eq(a, b));
+                    Ok(Value::Unit)
+                }
+                "first" => {
+                    let vec = items.borrow();
+                    match vec.first() {
+                        Some(v) => Ok(v.clone()),
+                        None => Ok(Value::Unit),
+                    }
+                }
+                "last" => {
+                    let vec = items.borrow();
+                    match vec.last() {
+                        Some(v) => Ok(v.clone()),
+                        None => Ok(Value::Unit),
+                    }
+                }
+                "flatten" => {
+                    let vec = items.borrow();
+                    let mut result = Vec::new();
+                    for v in vec.iter() {
+                        match v {
+                            Value::Vec(inner) => {
+                                for item in inner.borrow().iter() {
+                                    result.push(item.clone());
+                                }
+                            }
+                            other => result.push(other.clone()),
+                        }
+                    }
+                    Ok(Value::Vec(Rc::new(RefCell::new(result))))
+                }
+                "chunks" => {
+                    if args.len() != 1 { return err("chunks() 需要 1 个参数 (大小)"); }
+                    let size = args[0].as_int().unwrap_or(1).max(1) as usize;
+                    let vec = items.borrow();
+                    let mut result = Vec::new();
+                    for chunk in vec.chunks(size) {
+                        let c: Vec<Value> = chunk.to_vec();
+                        result.push(Value::Vec(Rc::new(RefCell::new(c))));
+                    }
+                    Ok(Value::Vec(Rc::new(RefCell::new(result))))
+                }
                 _ => err(&format!("Vec 没有方法 '{}'", method)),
             },
             Value::Map(m) => match method {
@@ -222,6 +317,17 @@ impl Vm {
                     Ok(Value::Vec(Rc::new(RefCell::new(values))))
                 }
                 "is_empty" => Ok(Value::Bool(m.borrow().is_empty())),
+                // AUDIT-11.4.28：Map.entries（语义对齐解释器 methods.rs eval_map_method）——
+                // 返回 [[key, value], ...] 的 Vec。阻塞 map_values/filter_map 的根因。
+                "entries" => {
+                    let entries: Vec<Value> = m.borrow().iter().map(|(k, v)| {
+                        Value::Vec(Rc::new(RefCell::new(vec![
+                            Value::String(k.clone()),
+                            v.clone(),
+                        ])))
+                    }).collect();
+                    Ok(Value::Vec(Rc::new(RefCell::new(entries))))
+                }
                 _ => err(&format!("Map 没有方法 '{}'", method)),
             },
             Value::Tensor(t) => {

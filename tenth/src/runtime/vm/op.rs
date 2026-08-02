@@ -39,6 +39,13 @@ pub enum Op {
     // 编码 57/58 追加在尾部，不动既有指令编码（最大 56 = NewUnion）。
     CallClosure(usize),         // 参数数量 n — 栈上 [arg1..argN, callee] → 弹 callee + N 参数 → 压新帧调用
     TailCallClosure(usize),     // TCO：同上但复用当前帧（尾调用）；JIT 不支持 → fallback VM
+    // AUDIT-11.4.21（&mut 写回顺序失效）：引用语义 opcodes（编码 59-62 追加在尾部）。
+    // 与解释器 eval.rs 的引用处理对齐：&x → Value::Ref；&mut 变量 → 复用/创建
+    // Value::Shared 槽位 + Value::MutRef(Weak)；*m = v → DerefStore 写穿 Weak。
+    MakeRef,                    // 弹值 → Value::Ref(Rc(RefCell(v)))
+    MakeMutRef(usize),          // slot — locals[slot] 包装/复用 Shared 回写槽位，压 Value::MutRef(Weak)
+    Deref,                      // 弹值；Ref/MutRef 读穿，其他透传（VM 宽松，兼容旧 pass-through）
+    DerefStore,                 // 栈 [value, target] — target 为 MutRef/Ref 写穿，其他报错
 }
 
 // ── Scheduler internals ─────────────────────────────────────────────────────

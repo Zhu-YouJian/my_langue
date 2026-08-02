@@ -97,6 +97,11 @@ impl Chunk {
             // a1 P1：57/58 追加在尾部（56 = NewUnion），不动既有指令编码
             CallClosure(_) => 57,
             TailCallClosure(_) => 58,
+            // AUDIT-11.4.21：引用语义 opcodes 59-62
+            MakeRef => 59,
+            MakeMutRef(_) => 60,
+            Deref => 61,
+            DerefStore => 62,
         });
 
         // Emit operands
@@ -126,6 +131,8 @@ impl Chunk {
             TailCall(i, n) => { w!(*i, u64); w!(*n, u64); }
             // a1 P1：单操作数（参数数量）
             CallClosure(n) | TailCallClosure(n) => w!(*n, u64),
+            // AUDIT-11.4.21：MakeMutRef 带槽位操作数
+            MakeMutRef(i) => w!(*i, u64),
             _ => {}
         }
     }
@@ -176,6 +183,10 @@ impl Chunk {
             // a1 P1：57/58 追加在尾部（56 = NewUnion）
             57 => CallClosure(r!(u64) as usize),
             58 => TailCallClosure(r!(u64) as usize),
+            59 => MakeRef,
+            60 => MakeMutRef(r!(u64) as usize),
+            61 => Deref,
+            62 => DerefStore,
             54 => PushChar(r!(u32)),
             55 => TailCall(r!(u64) as usize, r!(u64) as usize),
             _ => panic!("bad opcode {b}"),

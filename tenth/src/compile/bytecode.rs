@@ -453,14 +453,29 @@ impl BytecodeCompiler {
             }
 
             DerefAssign { target, value } => {
-                self.compile_expr(target)?;
+                // AUDIT-11.4.21：target 形如 Deref(inner)——压 inner（引用值本身）
+                // 再压 value，DerefStore 写穿（MutRef/Ref 写穿；非引用报错）。
+                // 此前硬编码 Store(0) 依赖被引用变量恰好在槽位 0，顺序相关静默错值。
+                match &target.kind {
+                    Deref(inner) => self.compile_expr(inner)?,
+                    _ => self.compile_expr(target)?,
+                }
                 self.compile_expr(value)?;
-                self.chunk.emit(Op::Store(0));
+                self.chunk.emit(Op::DerefStore);
             }
-            DerefAssignOp { target, value, .. } => {
-                self.compile_expr(target)?;
+            DerefAssignOp { target, op, value, .. } => {
+                // AUDIT-11.4.21：读当前值 → 运算 → 写穿（栈 [target, cur, rhs] →
+                // [target, result] → DerefStore）。此前忽略 op 且硬编码 Store(0)。
+                match &target.kind {
+                    Deref(inner) => self.compile_expr(inner)?,
+                    _ => self.compile_expr(target)?,
+                }
+                self.chunk.emit(Op::Dup);
+                self.chunk.emit(Op::Deref);
                 self.compile_expr(value)?;
-                self.chunk.emit(Op::Store(0));
+                use crate::hir::hir::BinOp::*;
+                self.chunk.emit(match op { Add=>Op::Add, Sub=>Op::Sub, Mul=>Op::Mul, Div=>Op::Div, _=>Op::Add });
+                self.chunk.emit(Op::DerefStore);
             }
 
             Index { target, indices } => {
@@ -508,9 +523,35 @@ impl BytecodeCompiler {
                 self.chunk.emit(Op::MakeVec(elements.len()));
             }
 
-            Ref(inner) | MutRef(inner) | Deref(inner) => {
-                // VM doesn't track ownership; treat as pass-through
+            Ref(inner) => {
+                // AUDIT-11.4.21：&x → 求值 x 后 MakeRef（Value::Ref 独立单元格）。
                 self.compile_expr(inner)?;
+                self.chunk.emit(Op::MakeRef);
+            }
+            MutRef(inner) => {
+                // AUDIT-11.4.21：&mut 变量 → MakeMutRef(slot)：把 locals[slot] 包装/复用
+                // Shared 回写槽位，压 Value::MutRef(Weak)。后续 *m=v 经 DerefStore 写穿
+                // Shared 单元格，变量读取可见更新——不再依赖槽位顺序。
+                if let HirExprKind::Var(vn) = &inner.kind {
+                    if let Some(pos) = self.locals.iter().rposition(|n| n == vn) {
+                        self.chunk.emit(Op::MakeMutRef(pos));
+                    } else {
+                        // 全局变量 &mut：VM 不追踪全局槽位，退化为共享引用（MakeRef）。
+                        // 解释器对全局 &mut 也是创建局部 Shared 影子（写穿不影响全局），
+                        // 退化行为净效果一致（原值不被修改）。
+                        let i = self.chunk.add_string(vn);
+                        self.chunk.emit(Op::LoadGlobal(i));
+                        self.chunk.emit(Op::MakeRef);
+                    }
+                } else {
+                    self.compile_expr(inner)?;
+                    self.chunk.emit(Op::MakeRef);
+                }
+            }
+            Deref(inner) => {
+                // *r → 求值 r 后 Deref：Ref/MutRef 读穿；非引用透传（VM 宽松，兼容旧行为）。
+                self.compile_expr(inner)?;
+                self.chunk.emit(Op::Deref);
             }
 
             EnumLiteral { enum_name, variant, fields } => {

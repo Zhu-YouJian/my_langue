@@ -2826,7 +2826,7 @@ impl super::Interpreter {
             "base64_encode" => {
                 if let Some(Value::Vec(arr)) = args.first() {
                     let bytes: Vec<u8> = arr.borrow().iter()
-                        .map(|v| match v {
+                        .map(|v| match &deref_wrapped(v) {
                             Value::Int(n, _) => *n as u8,
                             _ => 0,
                         })
@@ -2855,7 +2855,7 @@ impl super::Interpreter {
             "hex_encode" => {
                 if let Some(Value::Vec(arr)) = args.first() {
                     let bytes: Vec<u8> = arr.borrow().iter()
-                        .map(|v| match v {
+                        .map(|v| match &deref_wrapped(v) {
                             Value::Int(n, _) => *n as u8,
                             _ => 0,
                         })

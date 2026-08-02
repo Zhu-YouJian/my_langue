@@ -1389,6 +1389,59 @@ impl Vm {
                         _ => return Err(self.err_here(chunk_idx, ip, format!("期望可调用值，得到 {:?}", callee))),
                     }
                 }
+                // AUDIT-11.4.21：59 MakeRef / 60 MakeMutRef / 61 Deref / 62 DerefStore
+                // （引用语义，与解释器 eval.rs 对齐——不再 pass-through + 硬编码 Store(0)）
+                59 => {
+                    // &x → Value::Ref(独立 RefCell)
+                    let v = self.stack.pop().unwrap_or(Value::Unit);
+                    self.stack.push(Value::Ref(Rc::new(RefCell::new(v))));
+                }
+                60 => {
+                    // &mut 变量 → 包装/复用 Shared 回写槽位 + Value::MutRef(Weak)
+                    let i = r!(u64) as usize;
+                    if i < locals.len() {
+                        let v = locals[i].clone();
+                        let rc = match v {
+                            Value::Shared(rc) => rc,
+                            other => {
+                                let rc = Rc::new(RefCell::new(other));
+                                locals[i] = Value::Shared(rc.clone());
+                                rc
+                            }
+                        };
+                        self.stack.push(Value::MutRef(Rc::downgrade(&rc)));
+                    } else {
+                        self.stack.push(Value::Moved);
+                    }
+                }
+                61 => {
+                    // *r → Ref/MutRef 读穿；非引用透传（VM 宽松，兼容旧 pass-through）
+                    let v = self.stack.pop().unwrap_or(Value::Unit);
+                    let out = match &v {
+                        Value::Ref(rc) => rc.borrow().clone(),
+                        Value::MutRef(w) => w.upgrade().map(|rc| rc.borrow().clone()).unwrap_or(Value::Moved),
+                        other => other.clone(),
+                    };
+                    self.stack.push(out);
+                }
+                62 => {
+                    // *m = v → 栈 [value, target]：target 为 MutRef 写穿 Weak（解释器一致）；
+                    // Ref 也写穿（仅用于全局 &mut 退化路径，净效果与解释器局部影子一致）；
+                    // 其他报错（与解释器「只能通过可变引用赋值」一致，避免静默错值）。
+                    let value = self.stack.pop().unwrap_or(Value::Unit);
+                    let target = self.stack.pop().unwrap_or(Value::Unit);
+                    match &target {
+                        Value::MutRef(w) => {
+                            let rc = w.upgrade().ok_or_else(|| self.err_here(chunk_idx, ip, "无法通过悬垂的 &mut 引用赋值".into()))?;
+                            *rc.borrow_mut() = value;
+                        }
+                        Value::Ref(rc) => {
+                            *rc.borrow_mut() = value;
+                        }
+                        _ => return Err(self.err_here(chunk_idx, ip, "只能通过可变引用赋值".into())),
+                    }
+                    self.stack.push(Value::Unit);
+                }
                 // 未知 opcode：与旧 decode 的 `_ => Ret` 一致，执行 Ret 动作
                 _ => {
                     let result = self.stack.pop().unwrap_or(Value::Unit);
@@ -1433,12 +1486,38 @@ impl Vm {
 
     fn pop_int(&mut self) -> TenthResult<i64> {
         match self.stack.pop() {
-            Some(Value::Int(n, _)) => Ok(n),
-            _ => err("期望整数"),
+            Some(v) => match Self::deref_wrapped(&v) {
+                Value::Int(n, _) => Ok(n),
+                _ => err("期望整数"),
+            },
+            None => err("期望整数"),
         }
     }
 
+    /// AUDIT-11.4.21：解包 Shared/Ref/MutRef/SharedBox（对齐解释器 natives::deref_wrapped）。
+    /// `&mut` 后变量槽位变为 Value::Shared，算术/比较/取整前需解包再运算——
+    /// 否则 VM 在 &mut 之后对变量做算术会报类型不匹配（解释器 eval_binary 已前置解包）。
+    fn deref_wrapped(v: &Value) -> Value {
+        match v {
+            Value::Shared(rc) => rc.borrow().clone(),
+            Value::Ref(rc) => rc.borrow().clone(),
+            Value::MutRef(w) => w.upgrade().map(|rc| rc.borrow().clone()).unwrap_or(Value::Moved),
+            Value::SharedBox(rc) => rc.borrow().clone(),
+            other => other.clone(),
+        }
+    }
+
+    fn is_wrapped(v: &Value) -> bool {
+        matches!(v, Value::Shared(_) | Value::Ref(_) | Value::MutRef(_) | Value::SharedBox(_))
+    }
+
     pub(super) fn add_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+        // AUDIT-11.4.21：运算前解包包裹值（对齐解释器 eval_binary 前置 deref）
+        if Self::is_wrapped(a) || Self::is_wrapped(b) {
+            let a = Self::deref_wrapped(a);
+            let b = Self::deref_wrapped(b);
+            return self.add_priv(&a, &b);
+        }
         Ok(match (a, b) {
             // AUDIT-11.4.17：checked_add 拦截 i64 层溢出（overflow-checks=true 下直接 + 会 panic）
             (Value::Int(x, dt), Value::Int(y, _)) => {
@@ -1501,6 +1580,12 @@ impl Vm {
     }
 
     pub(super) fn sub_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+        // AUDIT-11.4.21：运算前解包包裹值
+        if Self::is_wrapped(a) || Self::is_wrapped(b) {
+            let a = Self::deref_wrapped(a);
+            let b = Self::deref_wrapped(b);
+            return self.sub_priv(&a, &b);
+        }
         Ok(match (a, b) {
             // AUDIT-11.4.17：checked_sub 拦截 i64 层溢出
             (Value::Int(x, dt), Value::Int(y, _)) => {
@@ -1564,6 +1649,12 @@ impl Vm {
     }
 
     pub(super) fn mul_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+        // AUDIT-11.4.21：运算前解包包裹值
+        if Self::is_wrapped(a) || Self::is_wrapped(b) {
+            let a = Self::deref_wrapped(a);
+            let b = Self::deref_wrapped(b);
+            return self.mul_priv(&a, &b);
+        }
         Ok(match (a, b) {
             // AUDIT-11.4.17：checked_mul 拦截 i64 层溢出
             (Value::Int(x, dt), Value::Int(y, _)) => {
@@ -1627,6 +1718,12 @@ impl Vm {
     }
 
     pub(super) fn div_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+        // AUDIT-11.4.21：运算前解包包裹值
+        if Self::is_wrapped(a) || Self::is_wrapped(b) {
+            let a = Self::deref_wrapped(a);
+            let b = Self::deref_wrapped(b);
+            return self.div_priv(&a, &b);
+        }
         Ok(match (a, b) {
             (Value::Int(x, dt), Value::Int(y, _)) => {
                 if *y == 0 {
@@ -1695,6 +1792,12 @@ impl Vm {
     }
 
     pub(super) fn compare(&self, a: &Value, b: &Value, nf: fn(f64, f64) -> bool, sf: fn(&str, &str) -> bool) -> TenthResult<bool> {
+        // AUDIT-11.4.21：比较前解包包裹值（&mut 后变量为 Shared）
+        if Self::is_wrapped(a) || Self::is_wrapped(b) {
+            let a = Self::deref_wrapped(a);
+            let b = Self::deref_wrapped(b);
+            return self.compare(&a, &b, nf, sf);
+        }
         Ok(match (a, b) {
             (Value::Int(x, _), Value::Int(y, _)) => nf(*x as f64, *y as f64),
             (Value::Float(x), Value::Float(y)) => nf(*x, *y),
@@ -1764,6 +1867,10 @@ impl Vm {
     }
 
     pub(super) fn vm_eq(&self, a: &Value, b: &Value) -> bool {
+        // AUDIT-11.4.21/24：比较前解包包裹值（&mut 后变量为 Shared；对齐解释器 values_eq 前置 deref）
+        if Self::is_wrapped(a) || Self::is_wrapped(b) {
+            return self.vm_eq(&Self::deref_wrapped(a), &Self::deref_wrapped(b));
+        }
         match (a, b) {
             (Value::Int(x, _), Value::Int(y, _)) => x == y,
             (Value::Float(x), Value::Float(y)) => (x - y).abs() < 1e-10,
@@ -1779,6 +1886,14 @@ impl Vm {
             (Value::Char(x), Value::Char(y)) => x == y,
             (Value::String(x), Value::String(y)) => x == y,
             (Value::Unit, Value::Unit) => true,
+            // AUDIT-11.4.24：Vec 相等比较——元素逐一相等（VM 元素为普通值）。
+            // 此前落入 `_ => false`，元素相同也返回 false（base64/hex 断言静默失败）。
+            (Value::Vec(a), Value::Vec(b)) => {
+                let a = a.borrow();
+                let b = b.borrow();
+                a.len() == b.len()
+                    && a.iter().zip(b.iter()).all(|(x, y)| self.vm_eq(x, y))
+            }
             _ => false,
         }
     }
