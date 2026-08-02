@@ -435,6 +435,8 @@ impl Vm {
                         Ok(Value::Tensor(Rc::new(RefCell::new(clipped))))
                     }
                     // 张量属性查询（配合护城河 D 内存预估，与 interpreter 同步）
+                    // len = 第 0 维长度（行数），NumPy 语义；VM 通用 for-in 迭代张量依赖它
+                    "len" => Ok(Value::Int(tensor.shape().first().copied().unwrap_or(0) as i64, BaseType::I32)),
                     "numel" => Ok(Value::Int(tensor.data.len() as i64, BaseType::I32)),
                     "nbytes" | "bytes" => {
                         let n = tensor.data.len() as i64;

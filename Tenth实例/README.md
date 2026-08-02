@@ -96,7 +96,7 @@ Tenth实例/
 | 类型状态 Typestate | `类型状态Typestate/` | 类型状态模式、编译期状态机 |
 | 多分类器 | `多分类器/` | 多分类、softmax、交叉熵 |
 
-## 修复与状态标注（2026-08-02 实例目录维护；2026-08-03 a1 + 批次2 C 更新）
+## 修复与状态标注（2026-08-02 实例目录维护；2026-08-03 a1 + 批次2 C + 任务4 更新）
 
 - 🔧 **已修复（双路径 🟢 默认 VM + 解释器均通过）**：
   - `Adam优化器/adam.th` — 标量 `pow` 方法改全局函数
@@ -110,8 +110,7 @@ Tenth实例/
   - `日志系统/logging_demo.th` — 因顶层 let 对函数不可见的语言级限制，改为无状态显式级别的内联实现
   - `闭包合集/closures.th`、`闭包捕获/closure_capture.th` — a1 VM 闭包值调用完成（2026-08-03，CallClosure/TailCallClosure + 捕获内联），已移除头部 ⚠️ 注释，默认 VM 路径运行
   - `Trait示例/trait_demo.th`、`宏与自定义运算符/operator_overload.th` — 批次2 C VM 具体值 trait 方法分派完成（2026-08-03，编译期改写 `__dyn_*` 路由），已移除头部 ⚠️ 注释，默认 VM 路径运行
-- 🟡 **需解释器路径（VM 结构性缺口，待总师排期，已加头部注释）**：
-  - `矩阵分解/matfact.th`、`边缘检测/sobel.th` — VM 的 `for row in tensor` 迭代缺 tensor.len()
+  - `矩阵分解/matfact.th`、`边缘检测/sobel.th` — VM 张量 for-in 迭代补齐 `tensor.len()`（2026-08-03，任务4，VM natives.rs + interpreter methods.rs 双侧），已移除头部 ⚠️ 注释，默认 VM 路径运行；**62 实例全部双路径可运行**
 
 ---
 

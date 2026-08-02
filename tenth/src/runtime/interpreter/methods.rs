@@ -1489,6 +1489,8 @@ impl super::Interpreter {
                         Ok(Value::Tensor(Rc::new(RefCell::new(clipped))))
                     }
                     // 张量属性查询（配合护城河 D 内存预估）
+                    // len = 第 0 维长度（行数），NumPy 语义；与 VM 端 natives.rs 对齐
+                    "len" => Ok(Value::Int(tensor.shape().first().copied().unwrap_or(0) as i64, BaseType::I32)),
                     "numel" => Ok(Value::Int(tensor.data.len() as i64, BaseType::I32)),
                     "nbytes" | "bytes" => {
                         // 字节数 = 元素数 * dtype 字节数

@@ -3,10 +3,7 @@
 // 演示: autodiff 在数值优化上的应用 (非 ML)
 // M (4×3) ≈ U (4×2) @ V (2×3)
 //
-// ⚠️ 需解释器路径运行（VM 路径对 `for row in tensor` 迭代报“张量没有方法 'len'”）：
-//   TENTH_NO_VM=1 tenth.exe run "Tenth实例/矩阵分解/matfact.th"
-// 根因：VM 的 for-in 迭代张量依赖 tensor.len()，VM 未实现（结构性缺口）；
-// 解释器路径支持张量迭代。待总师单独排期修复 VM。
+// 2026-08-03 修复：VM 张量 for-in 迭代补齐 tensor.len()（任务4），默认 VM 路径运行。
 
 fn main() {
     // 目标矩阵 M
