@@ -41,6 +41,17 @@ pub struct Vm {
     globals: HashMap<String, Value>,
     stack: Vec<Value>,
     frames: Vec<Frame>,
+    /// R4 操作数栈复用池：存放已清空但保留容量的空闲操作数栈。
+    /// 函数返回（Ret/Try 提前返回）时 callee 栈入池，下次 Call 时复用，
+    /// 消除每次函数调用的栈 buffer alloc/free（fib(28) 约 83 万次调用的大头）。
+    /// 池内栈均为空（len=0）且不再被任何 Frame 引用，跨任务安全。
+    stack_pool: Vec<Vec<Value>>,
+    /// R5 locals 复用池：存放已清空但保留容量的空闲 locals 向量。
+    /// 函数返回（Ret/Try 提前返回/未知 opcode 回退）时 callee locals 入池，
+    /// 下次 Call/CallN/TailCall 时复用（resize 填 Unit），消除每次调用
+    /// `vec![Value::Unit; n]` 的 buffer alloc/free（fib(28) 约 83 万次调用的大头之一）。
+    /// 池内 locals 均 len=0（元素已 drop）且不再被任何 Frame/闭包引用——跨任务安全。
+    locals_pool: Vec<Vec<Value>>,
     /// Autodiff computation tape (active when `recording` is true).
     pub tape: Option<Tape>,
     /// Whether tensor operations should be recorded on the tape.
@@ -112,7 +123,7 @@ impl Vm {
         Vm {
             functions: HashMap::new(), chunks: Vec::new(), chunk_names: Vec::new(),
             natives: HashMap::new(), globals: HashMap::new(),
-            stack: Vec::new(), frames: Vec::new(),
+            stack: Vec::new(), frames: Vec::new(), stack_pool: Vec::new(), locals_pool: Vec::new(),
             tape: None, recording: false,
             step_budget: None, deadline_ms: None, fs_sandbox: None,
             jit_ctx: None, last_error: None, current_chunk_idx: 0,

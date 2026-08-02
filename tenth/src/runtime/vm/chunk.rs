@@ -1,30 +1,41 @@
 //! VM 字节码块：code + strings + 元信息。
 //!
 //! 从 runtime/vm.rs 拆分而来（T3b 架构重构）。
+//!
+//! 2026-08-02（性能优化 R1）：`code`/`strings` 改为 `Rc` 共享——
+//! 消除 Op::Call/CallN/TailCall 每次函数调用对整段字节码与字符串表的深拷贝。
+//! 编译期通过 `Rc::make_mut` 原地写入（refcount==1 时零拷贝）；运行期只读。
 
+use std::rc::Rc;
 use super::op::Op;
 
 // ── Chunk ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
-    pub code: Vec<u8>,
-    pub strings: Vec<String>,
+    /// 字节码。Rc 共享：运行期 Call/Ret 只做引用计数 +1，不深拷贝。
+    pub code: Rc<Vec<u8>>,
+    /// 字符串表。Rc 共享：与 code 同理，消除调用路径深拷贝。
+    pub strings: Rc<Vec<String>>,
     pub num_locals: usize,
     pub num_args: usize,
 }
 
 impl Chunk {
-    pub fn new() -> Self { Chunk { code: vec![], strings: vec![], num_locals: 0, num_args: 0 } }
+    pub fn new() -> Self { Chunk { code: Rc::new(vec![]), strings: Rc::new(vec![]), num_locals: 0, num_args: 0 } }
 
     pub fn add_string(&mut self, s: &str) -> usize {
-        if let Some(i) = self.strings.iter().position(|x| x == s) { return i; }
-        let i = self.strings.len(); self.strings.push(s.to_string()); i
+        // 编译期唯一持有者（refcount==1），make_mut 原地写零拷贝
+        let strings = Rc::make_mut(&mut self.strings);
+        if let Some(i) = strings.iter().position(|x| x == s) { return i; }
+        let i = strings.len(); strings.push(s.to_string()); i
     }
 
     pub fn emit(&mut self, op: Op) {
         use Op::*;
-        self.code.push(match &op {
+        // 编译期唯一持有者（refcount==1），make_mut 原地写零拷贝
+        let code = Rc::make_mut(&mut self.code);
+        code.push(match &op {
             PushInt(_) => 0, PushFloat(_) => 1, PushBool(_) => 2, PushStr(_) => 3,
             PushUnit => 4, Pop => 5, Dup => 6,
             Load(_) => 7, Store(_) => 8, LoadGlobal(_) => 9, StoreGlobal(_) => 10,
@@ -54,11 +65,11 @@ impl Chunk {
         });
 
         // Emit operands
-        macro_rules! w { ($n:expr, $t:ty) => { self.code.extend_from_slice(&($n as $t).to_le_bytes()) } }
+        macro_rules! w { ($n:expr, $t:ty) => { code.extend_from_slice(&($n as $t).to_le_bytes()) } }
         match &op {
             PushInt(n) => w!(*n, i64), PushFloat(f) => w!(*f, f64),
             PushFloat32(f) => w!(*f, f32),
-            PushBool(b) => self.code.push(if *b {1} else {0}),
+            PushBool(b) => code.push(if *b {1} else {0}),
             PushChar(c) => w!(*c, u32),
             PushStr(i) | LoadGlobal(i) | StoreGlobal(i) | Call(i) | LoadField(i) | StoreField(i) => w!(*i, u64),
             CallN(i, n) => { w!(*i, u64); w!(*n, u64); }
@@ -72,8 +83,8 @@ impl Chunk {
             IsEnumVariant(v) => w!(*v, u64),
             EnumGetField(f) => w!(*f, u64),
             IsStruct(n) => w!(*n, u64),
-            PushRange(s, e, inc) => { w!(*s, i64); w!(*e, i64); self.code.push(if *inc {1} else {0}); }
-            MakeTensor(r, c, d) => { w!(*r, u64); w!(*c, u64); self.code.push(*d); }
+            PushRange(s, e, inc) => { w!(*s, i64); w!(*e, i64); code.push(if *inc {1} else {0}); }
+            MakeTensor(r, c, d) => { w!(*r, u64); w!(*c, u64); code.push(*d); }
             MakeClosure(p, c) => { w!(*p, u64); w!(*c, u64); }
             MakeTuple(n) | IsTuple(n) | TupleGet(n) => w!(*n, u64),
             MoveOp => {}

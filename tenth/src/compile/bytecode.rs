@@ -3,6 +3,7 @@
 //! Walks HIR and emits bytecode for the stack VM.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
 use crate::hir::types::Type;
@@ -1229,7 +1230,8 @@ impl BytecodeCompiler {
                 let bytes = offset.to_le_bytes();
                 for (i, b) in bytes.iter().enumerate() {
                     if patch_pos + i < self.chunk.code.len() {
-                        self.chunk.code[patch_pos + i] = *b;
+                        // code 为 Rc<Vec<u8>>：编译期唯一持有者，make_mut 原地写
+                        Rc::make_mut(&mut self.chunk.code)[patch_pos + i] = *b;
                     }
                 }
             }

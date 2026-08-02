@@ -14,7 +14,16 @@ use crate::runtime::async_io::ASYNC_IO;
 
 use super::Vm;
 use super::err;
-use super::op::{Op, Frame, YieldReason};
+use super::op::{Frame, YieldReason};
+
+/// R4 操作数栈复用池上限：防止极端深递归/深调用链时池内空闲栈无限累积。
+/// 池内每个栈初始容量 64（Value 约 32-40 字节，单栈约 2.5KB），
+/// 1024 个上限 ≈ 2.5MB 峰值，足够覆盖常规递归深度。
+const STACK_POOL_MAX: usize = 1024;
+/// R5 locals 复用池上限：防止极端深递归/深调用链时池内空闲 locals 无限累积。
+/// 每个 locals 向量容量 = 局部变量数 × Value 大小（数十字节），
+/// 256 个上限足够覆盖常规调用模式，峰值内存可控。
+const LOCALS_POOL_MAX: usize = 256;
 
 impl Vm {
     /// Phase 2 调度器主循环（Step 3-4）。
@@ -36,6 +45,8 @@ impl Vm {
                 locals[i] = self.stack.pop().unwrap();
             }
         }
+        // R4 操作数栈预分配：初始帧栈 reserve 后 take，主任务从预分配容量开始
+        self.stack.reserve(64);
         let initial_frame = Frame {
             ip: 0,
             chunk_idx: entry_chunk,
@@ -141,24 +152,33 @@ impl Vm {
         self.stack = frame.operand_stack;
         self.current_task = current_task_id;
 
-        let mut code = self.chunks[chunk_idx].code.clone();
-        let mut strings = self.chunks[chunk_idx].strings.clone();
+        // R1 性能优化：Rc::clone 只做引用计数 +1，消除调用路径对整段
+        // 字节码与字符串表的深拷贝（fib(28) 约 83 万次调用的主要瓶颈）。
+        let mut code = Rc::clone(&self.chunks[chunk_idx].code);
+        let mut strings = Rc::clone(&self.chunks[chunk_idx].strings);
 
         // H-4: 独立的循环计数器，用于触发周期性 deadline 检查。
         // 不依赖 step_budget（用户可能只设 --timeout 而不设步数预算）。
         let mut loop_counter: u64 = 0;
 
+        // R1 每指令预算检查轻量化：循环外判定一次，循环内用寄存器内计数器，
+        // 避免每条指令的 Option match。语义与旧实现完全一致：
+        // - 步数预算耗尽仍报 Timeout("VM 步数预算耗尽")
+        // - 只设 --timeout 不设步数预算时 deadline 仍触发（H-4，逻辑不动）
+        // - 退出 run_until_yield 时把剩余预算写回 self.step_budget，
+        //   保证 with_step_limit/with_timeout_ms 的 save/restore 与
+        //   跨任务恢复（Suspended/Yield 后重新进入）语义不变。
+        let has_budget = self.step_budget.is_some();
+        let mut budget_left = self.step_budget.unwrap_or(0);
+
         loop {
-            // 安全 H-4：step_budget 和 deadline_ms 独立检查。
-            // 历史实现把 deadline 检查嵌套在 step_budget 内，导致只设
-            // `--timeout` 而不设 step_budget 时 deadline 永远不触发。
-            if let Some(ref mut budget) = self.step_budget {
-                if *budget == 0 {
+            if has_budget {
+                if budget_left == 0 {
                     return Err(TenthError::Timeout {
                         message: "VM 步数预算耗尽".into(),
                     });
                 }
-                *budget -= 1;
+                budget_left -= 1;
             }
             // 每隔 4096 次循环检查一次墙钟 deadline，开销可忽略。
             // 用独立计数器避免依赖 step_budget（step_budget 可能未设）。
@@ -176,102 +196,198 @@ impl Vm {
                     }
                 }
             }
-            // Inline opcode read (no closure, so code/strings can be reassigned)
-            let op: Op = {
-                use Op::*;
-                if ip >= code.len() {
-                    // 代码执行完毕（隐式 Ret）：任务完成，结果为 Unit
-                    self.stack.push(Value::Unit);
-                    return Ok(YieldReason::Completed);
+            // R3 性能优化：合并 decode（byte→Op）与 dispatch（Op→动作）双重分派为
+            // 单一 match（byte→动作），消除 Op 枚举构造与第二次分派跳转的开销。
+            // 语义零改动：操作数读取顺序、边界检查（ip 越界或操作数越界时
+            // push Unit + 返回 Completed）、每指令动作均与原实现逐字一致。
+            if ip >= code.len() {
+                // 代码执行完毕（隐式 Ret）：任务完成，结果为 Unit
+                if has_budget { self.step_budget = Some(budget_left); } // R1：预算回写
+                self.stack.push(Value::Unit);
+                return Ok(YieldReason::Completed);
+            }
+            let b = code[ip]; ip += 1;
+            // 内联操作数读取宏（原 decode 的 r! 原样保留）：边界检查行为一致，
+            // ip + n > code.len() 时 push Unit + 返回 Completed。
+            macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if ip + n > code.len() { if has_budget { self.step_budget = Some(budget_left); } self.stack.push(Value::Unit); return Ok(YieldReason::Completed); } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&code[ip..ip+n]); ip += n; <$t>::from_le_bytes(buf) }}; }
+            match b {
+                // 0 PushInt
+                0 => {
+                    let n = r!(i64);
+                    self.stack.push(Value::Int(n, BaseType::I32));
                 }
-                let b = code[ip]; ip += 1;
-                macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if ip + n > code.len() { self.stack.push(Value::Unit); return Ok(YieldReason::Completed); } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&code[ip..ip+n]); ip += n; <$t>::from_le_bytes(buf) }}; }
-                match b {
-                    0 => PushInt(r!(i64)), 1 => PushFloat(r!(f64)),
-                    2 => PushBool({ let v = code[ip] != 0; ip += 1; v }),
-                    3 => PushStr(r!(u64) as usize),
-                    4 => PushUnit, 5 => Pop, 6 => Dup,
-                    7 => Load(r!(u64) as usize), 8 => Store(r!(u64) as usize),
-                    9 => LoadGlobal(r!(u64) as usize), 10 => StoreGlobal(r!(u64) as usize),
-                    11 => Add, 12 => Sub, 13 => Mul, 14 => Div, 15 => Mod,
-                    16 => Neg, 17 => Not,
-                    18 => Eq, 19 => Neq, 20 => Lt, 21 => Gt, 22 => Lte, 23 => Gte,
-                    24 => Jump(r!(i32)), 25 => JmpFalse(r!(i32)), 26 => JmpTrue(r!(i32)),
-                    27 => Call(r!(u64) as usize), 28 => CallN(r!(u64) as usize, r!(u64) as usize),
-                    29 => MethodCall(r!(u64) as usize, r!(u64) as usize), 30 => Ret,
-                    31 => MakeVec(r!(u64) as usize), 32 => MakeMap(r!(u64) as usize),
-                    33 => NewStruct(r!(u64) as usize, r!(u64) as usize),
-                    34 => LoadField(r!(u64) as usize),
-                    35 => StoreField(r!(u64) as usize),
-                    56 => NewUnion(r!(u64) as usize, r!(u64) as usize),
-                    36 => IndexGet,
-                    37 => SliceStr,
-                    38 => MakeEnum(r!(u64) as usize, r!(u64) as usize, r!(u64) as usize),
-                    39 => IsEnumVariant(r!(u64) as usize),
-                    40 => EnumGetField(r!(u64) as usize),
-                    41 => PushRange(r!(i64), r!(i64), { let b = code[ip]; ip += 1; b != 0 }),
-                    42 => MoveOp,
-                    43 => MakeTensor(r!(u64) as usize, r!(u64) as usize, { let d = code[ip]; ip += 1; d }),
-                    44 => MakeClosure(r!(u64) as usize, r!(u64) as usize),
-                    45 => PushFloat32(r!(f32)),
-                    46 => IsStruct(r!(u64) as usize),
-                    47 => Await,
-                    48 => Spawn,
-                    49 => MakeTuple(r!(u64) as usize),
-                    50 => IsTuple(r!(u64) as usize),
-                    51 => TupleGet(r!(u64) as usize),
-                    52 => Try,
-                    53 => Yield,
-                    54 => PushChar(r!(u32)),
-                    55 => TailCall(r!(u64) as usize, r!(u64) as usize),
-                    _ => Ret,
+                // 1 PushFloat
+                1 => {
+                    let f = r!(f64);
+                    self.stack.push(Value::Float(f));
                 }
-            };
-            match op {
-                Op::PushInt(n) => self.stack.push(Value::Int(n, BaseType::I32)),
-                Op::PushFloat(f) => self.stack.push(Value::Float(f)),
-                Op::PushFloat32(f) => self.stack.push(Value::Float32(f)),
-                Op::PushBool(b) => self.stack.push(Value::Bool(b)),
-                Op::PushChar(c) => {
-                    let ch = char::from_u32(c).unwrap_or('\0');
-                    self.stack.push(Value::Char(ch));
+                // 2 PushBool
+                2 => {
+                    let v = code[ip] != 0; ip += 1;
+                    self.stack.push(Value::Bool(v));
                 }
-                Op::PushStr(i) => {
+                // 3 PushStr
+                3 => {
+                    let i = r!(u64) as usize;
                     let s = strings.get(i).cloned().unwrap_or_default();
                     self.stack.push(Value::String(s));
                 }
-                Op::PushUnit => self.stack.push(Value::Unit),
-                Op::Pop => { self.stack.pop(); }
-                Op::Dup => {
+                // 4 PushUnit / 5 Pop / 6 Dup
+                4 => self.stack.push(Value::Unit),
+                5 => { self.stack.pop(); }
+                6 => {
                     let v = self.stack.last().cloned().unwrap_or(Value::Unit);
                     self.stack.push(v);
                 }
-
-                Op::Load(i) => {
+                // 7 Load / 8 Store
+                7 => {
+                    let i = r!(u64) as usize;
                     let v = locals.get(i).cloned().unwrap_or(Value::Unit);
                     self.stack.push(v);
                 }
-                Op::Store(i) => {
+                8 => {
+                    let i = r!(u64) as usize;
                     let v = self.stack.pop().unwrap_or(Value::Unit);
                     if i >= locals.len() { locals.resize(i+1, Value::Unit); }
                     locals[i] = v;
                 }
-                Op::LoadGlobal(i) => {
+                // 9 LoadGlobal / 10 StoreGlobal
+                9 => {
+                    let i = r!(u64) as usize;
                     let name = strings.get(i).cloned().unwrap_or_default();
                     let v = self.globals.get(&name).cloned().unwrap_or(Value::Unit);
                     self.stack.push(v);
                 }
-                Op::StoreGlobal(i) => {
+                10 => {
+                    let i = r!(u64) as usize;
                     let name = strings.get(i).cloned().unwrap_or_default();
                     let v = self.stack.pop().unwrap_or(Value::Unit);
                     self.globals.insert(name, v);
                 }
-
-                Op::Add => { let (a,b)=self.pop2(); let r=self.add_priv(&a,&b)?; self.stack.push(r); }
-                Op::Sub => { let (a,b)=self.pop2(); let r=self.sub_priv(&a,&b)?; self.stack.push(r); }
-                Op::Mul => { let (a,b)=self.pop2(); let r=self.mul_priv(&a,&b)?; self.stack.push(r); }
-                Op::Div => { let (a,b)=self.pop2(); let r=self.div_priv(&a,&b)?; self.stack.push(r); }
-                Op::Mod => {
+                // 11 Add / 12 Sub / 13 Mul / 14 Div（R2 标量快路径，逐字保留）
+                11 => {
+                    // R2 快路径：栈顶两元素同为同型标量时 peek 计算（不弹栈），命中才弹栈；
+                    // 混合类型 / String / Tensor 一律走 add_priv 慢路径（语义零改动）。
+                    let n = self.stack.len();
+                    if n >= 2 {
+                        let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
+                            (Value::Int(x, dt), Value::Int(y, _)) => {
+                                // AUDIT-11.4.17：与 add_priv 完全一致（checked_add + 窄 dtype 检查，dtype 取左操作数）
+                                let r = x.checked_add(*y).ok_or_else(|| int_overflow_err(*dt))?;
+                                check_int_overflow(r, *dt)?;
+                                Some(Value::Int(r, *dt))
+                            }
+                            (Value::Float(x), Value::Float(y)) => Some(Value::Float(x + y)),
+                            (Value::Float32(x), Value::Float32(y)) => Some(Value::Float32(x + y)),
+                            _ => None,
+                        };
+                        if let Some(r) = fast {
+                            self.stack.pop();
+                            self.stack.pop();
+                            self.stack.push(r);
+                        } else {
+                            let (a, b) = self.pop2();
+                            let r = self.add_priv(&a, &b)?;
+                            self.stack.push(r);
+                        }
+                    } else {
+                        let (a, b) = self.pop2();
+                        let r = self.add_priv(&a, &b)?;
+                        self.stack.push(r);
+                    }
+                }
+                12 => {
+                    // R2 快路径：同 add_priv 模式，慢路径 sub_priv 兜底。
+                    let n = self.stack.len();
+                    if n >= 2 {
+                        let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
+                            (Value::Int(x, dt), Value::Int(y, _)) => {
+                                let r = x.checked_sub(*y).ok_or_else(|| int_overflow_err(*dt))?;
+                                check_int_overflow(r, *dt)?;
+                                Some(Value::Int(r, *dt))
+                            }
+                            (Value::Float(x), Value::Float(y)) => Some(Value::Float(x - y)),
+                            (Value::Float32(x), Value::Float32(y)) => Some(Value::Float32(x - y)),
+                            _ => None,
+                        };
+                        if let Some(r) = fast {
+                            self.stack.pop();
+                            self.stack.pop();
+                            self.stack.push(r);
+                        } else {
+                            let (a, b) = self.pop2();
+                            let r = self.sub_priv(&a, &b)?;
+                            self.stack.push(r);
+                        }
+                    } else {
+                        let (a, b) = self.pop2();
+                        let r = self.sub_priv(&a, &b)?;
+                        self.stack.push(r);
+                    }
+                }
+                13 => {
+                    // R2 快路径：同 add_priv 模式，慢路径 mul_priv 兜底。
+                    let n = self.stack.len();
+                    if n >= 2 {
+                        let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
+                            (Value::Int(x, dt), Value::Int(y, _)) => {
+                                let r = x.checked_mul(*y).ok_or_else(|| int_overflow_err(*dt))?;
+                                check_int_overflow(r, *dt)?;
+                                Some(Value::Int(r, *dt))
+                            }
+                            (Value::Float(x), Value::Float(y)) => Some(Value::Float(x * y)),
+                            (Value::Float32(x), Value::Float32(y)) => Some(Value::Float32(x * y)),
+                            _ => None,
+                        };
+                        if let Some(r) = fast {
+                            self.stack.pop();
+                            self.stack.pop();
+                            self.stack.push(r);
+                        } else {
+                            let (a, b) = self.pop2();
+                            let r = self.mul_priv(&a, &b)?;
+                            self.stack.push(r);
+                        }
+                    } else {
+                        let (a, b) = self.pop2();
+                        let r = self.mul_priv(&a, &b)?;
+                        self.stack.push(r);
+                    }
+                }
+                14 => {
+                    // R2 快路径：Int-Int 分支与 div_priv 完全一致（除零检查 + checked_div 拦 i64::MIN/-1 + 窄 dtype 检查）。
+                    let n = self.stack.len();
+                    if n >= 2 {
+                        let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
+                            (Value::Int(x, dt), Value::Int(y, _)) => {
+                                if *y == 0 {
+                                    return err("整数除零");
+                                }
+                                let r = x.checked_div(*y).ok_or_else(|| int_overflow_err(*dt))?;
+                                check_int_overflow(r, *dt)?;
+                                Some(Value::Int(r, *dt))
+                            }
+                            (Value::Float(x), Value::Float(y)) => Some(Value::Float(x / y)),
+                            (Value::Float32(x), Value::Float32(y)) => Some(Value::Float32(x / y)),
+                            _ => None,
+                        };
+                        if let Some(r) = fast {
+                            self.stack.pop();
+                            self.stack.pop();
+                            self.stack.push(r);
+                        } else {
+                            let (a, b) = self.pop2();
+                            let r = self.div_priv(&a, &b)?;
+                            self.stack.push(r);
+                        }
+                    } else {
+                        let (a, b) = self.pop2();
+                        let r = self.div_priv(&a, &b)?;
+                        self.stack.push(r);
+                    }
+                }
+                // 15 Mod / 16 Neg / 17 Not
+                15 => {
                     let b = self.pop_int()?; let a = self.pop_int()?;
                     if b == 0 {
                         return err("整数取模除零");
@@ -281,7 +397,7 @@ impl Vm {
                     self.stack.push(Value::Int(r, BaseType::I32));
                     // 注：Mod 指令通过 pop_int 获取值，丢失 dtype，默认 I32
                 }
-                Op::Neg => {
+                16 => {
                     let v = self.stack.pop().unwrap_or(Value::Unit);
                     match v {
                         Value::Int(n, dt) => {
@@ -296,60 +412,204 @@ impl Vm {
                         _ => return err("无法取负"),
                     }
                 }
-                Op::Not => {
+                17 => {
                     let v = self.stack.pop().unwrap_or(Value::Unit);
                     self.stack.push(Value::Bool(!v.is_truthy()));
                 }
 
-                Op::Eq => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.vm_eq(&a,&b))); }
-                Op::Neq => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(!self.vm_eq(&a,&b))); }
-                Op::Lt => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x<y,|x,y|x<y)?)); }
-                Op::Gt => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x>y,|x,y|x>y)?)); }
-                Op::Lte => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x<=y,|x,y|x<=y)?)); }
-                Op::Gte => { let (a,b)=self.pop2(); self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x>=y,|x,y|x>=y)?)); }
-
-                Op::Jump(o) => { ip = (ip as i32 + o) as usize; }
-                Op::JmpFalse(o) => {
+                // 18 Eq / 19 Neq / 20 Lt / 21 Gt / 22 Lte / 23 Gte
+                18 => {
+                    // R2 快路径：同型标量比较（语义与 vm_eq 完全一致：Int 精确相等，Float 1e-10，Float32 1e-6）
+                    let n = self.stack.len();
+                    if n >= 2 {
+                        let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
+                            (Value::Int(x, _), Value::Int(y, _)) => Some(x == y),
+                            (Value::Float(x), Value::Float(y)) => Some((x - y).abs() < 1e-10),
+                            (Value::Float32(x), Value::Float32(y)) => Some((x - y).abs() < 1e-6),
+                            _ => None,
+                        };
+                        if let Some(b) = fast {
+                            self.stack.pop();
+                            self.stack.pop();
+                            self.stack.push(Value::Bool(b));
+                        } else {
+                            let (a, b) = self.pop2();
+                            self.stack.push(Value::Bool(self.vm_eq(&a, &b)));
+                        }
+                    } else {
+                        let (a, b) = self.pop2();
+                        self.stack.push(Value::Bool(self.vm_eq(&a, &b)));
+                    }
+                }
+                19 => {
+                    // R2 快路径：vm_eq 取反（保持 NaN 语义：用 !(...) 而非 >= 反向，与 vm_eq 一致）
+                    let n = self.stack.len();
+                    if n >= 2 {
+                        let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
+                            (Value::Int(x, _), Value::Int(y, _)) => Some(x != y),
+                            (Value::Float(x), Value::Float(y)) => Some(!((x - y).abs() < 1e-10)),
+                            (Value::Float32(x), Value::Float32(y)) => Some(!((x - y).abs() < 1e-6)),
+                            _ => None,
+                        };
+                        if let Some(b) = fast {
+                            self.stack.pop();
+                            self.stack.pop();
+                            self.stack.push(Value::Bool(b));
+                        } else {
+                            let (a, b) = self.pop2();
+                            self.stack.push(Value::Bool(!self.vm_eq(&a, &b)));
+                        }
+                    } else {
+                        let (a, b) = self.pop2();
+                        self.stack.push(Value::Bool(!self.vm_eq(&a, &b)));
+                    }
+                }
+                20 => {
+                    // R2 快路径：同型标量比较（语义与 compare 完全一致：Int-Int / Float32-Float32 提升为 f64 比较）
+                    let n = self.stack.len();
+                    if n >= 2 {
+                        let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
+                            (Value::Int(x, _), Value::Int(y, _)) => Some((*x as f64) < (*y as f64)),
+                            (Value::Float(x), Value::Float(y)) => Some(x < y),
+                            (Value::Float32(x), Value::Float32(y)) => Some((*x as f64) < (*y as f64)),
+                            _ => None,
+                        };
+                        if let Some(b) = fast {
+                            self.stack.pop();
+                            self.stack.pop();
+                            self.stack.push(Value::Bool(b));
+                        } else {
+                            let (a, b) = self.pop2();
+                            self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x<y,|x,y|x<y)?));
+                        }
+                    } else {
+                        let (a, b) = self.pop2();
+                        self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x<y,|x,y|x<y)?));
+                    }
+                }
+                21 => {
+                    let n = self.stack.len();
+                    if n >= 2 {
+                        let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
+                            (Value::Int(x, _), Value::Int(y, _)) => Some((*x as f64) > (*y as f64)),
+                            (Value::Float(x), Value::Float(y)) => Some(x > y),
+                            (Value::Float32(x), Value::Float32(y)) => Some((*x as f64) > (*y as f64)),
+                            _ => None,
+                        };
+                        if let Some(b) = fast {
+                            self.stack.pop();
+                            self.stack.pop();
+                            self.stack.push(Value::Bool(b));
+                        } else {
+                            let (a, b) = self.pop2();
+                            self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x>y,|x,y|x>y)?));
+                        }
+                    } else {
+                        let (a, b) = self.pop2();
+                        self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x>y,|x,y|x>y)?));
+                    }
+                }
+                22 => {
+                    let n = self.stack.len();
+                    if n >= 2 {
+                        let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
+                            (Value::Int(x, _), Value::Int(y, _)) => Some((*x as f64) <= (*y as f64)),
+                            (Value::Float(x), Value::Float(y)) => Some(x <= y),
+                            (Value::Float32(x), Value::Float32(y)) => Some((*x as f64) <= (*y as f64)),
+                            _ => None,
+                        };
+                        if let Some(b) = fast {
+                            self.stack.pop();
+                            self.stack.pop();
+                            self.stack.push(Value::Bool(b));
+                        } else {
+                            let (a, b) = self.pop2();
+                            self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x<=y,|x,y|x<=y)?));
+                        }
+                    } else {
+                        let (a, b) = self.pop2();
+                        self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x<=y,|x,y|x<=y)?));
+                    }
+                }
+                23 => {
+                    let n = self.stack.len();
+                    if n >= 2 {
+                        let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
+                            (Value::Int(x, _), Value::Int(y, _)) => Some((*x as f64) >= (*y as f64)),
+                            (Value::Float(x), Value::Float(y)) => Some(x >= y),
+                            (Value::Float32(x), Value::Float32(y)) => Some((*x as f64) >= (*y as f64)),
+                            _ => None,
+                        };
+                        if let Some(b) = fast {
+                            self.stack.pop();
+                            self.stack.pop();
+                            self.stack.push(Value::Bool(b));
+                        } else {
+                            let (a, b) = self.pop2();
+                            self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x>=y,|x,y|x>=y)?));
+                        }
+                    } else {
+                        let (a, b) = self.pop2();
+                        self.stack.push(Value::Bool(self.compare(&a,&b,|x,y|x>=y,|x,y|x>=y)?));
+                    }
+                }
+                // 24 Jump / 25 JmpFalse / 26 JmpTrue
+                24 => {
+                    let o = r!(i32);
+                    ip = (ip as i32 + o) as usize;
+                }
+                25 => {
+                    let o = r!(i32);
                     if !self.stack.pop().unwrap_or(Value::Unit).is_truthy() {
                         ip = (ip as i32 + o) as usize;
                     }
                 }
-                Op::JmpTrue(o) => {
+                26 => {
+                    let o = r!(i32);
                     if self.stack.pop().unwrap_or(Value::Unit).is_truthy() {
                         ip = (ip as i32 + o) as usize;
                     }
                 }
 
-                Op::Call(i) => {
-                    let name = strings[i].clone();
+                // 27 Call / 28 CallN / 29 MethodCall（TailCall=55 在末尾）
+                27 => {
+                    let i = r!(u64) as usize;
+                    // R5：借用 strings 表，消灭每次调用的无条件 String clone
+                    let name = strings.get(i).map(|s| s.as_str()).unwrap_or("");
                     // Try native first (legacy: uses stack depth as arg count)
-                    if let Some(native_fn) = self.natives.get(&name).copied() {
+                    if let Some(native_fn) = self.natives.get(name).copied() {
                         let n = self.stack.len() - base;
                         let mut args = vec![Value::Unit; n];
                         for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
                         let result = native_fn(self, &args)?;
                         self.stack.push(result);
-                    } else if let Some(&callee_idx) = self.functions.get(&name) {
+                    } else if let Some(&callee_idx) = self.functions.get(name) {
                         let callee_args = self.chunks[callee_idx].num_args;
                         let callee_locals = self.chunks[callee_idx].num_locals;
                         // Phase 2 栈迁移：先从 caller 栈 pop args 到 callee locals
-                        let mut new_locals = vec![Value::Unit; callee_locals.max(callee_args)];
+                        // R5 locals 复用池：取空闲 locals（保留容量），池空则新建，resize 填 Unit
+                        let mut new_locals = self.locals_pool.pop().unwrap_or_default();
+                        new_locals.resize(callee_locals.max(callee_args), Value::Unit);
                         for i in (0..callee_args).rev() {
                             if self.stack.len() > base { new_locals[i] = self.stack.pop().unwrap(); }
                         }
                         // 保存 caller 栈到 Frame，给 callee 一个空栈
                         let caller_stack = std::mem::take(&mut self.stack);
+                        // R4 操作数栈复用：从池取空闲栈（保留容量），池空则新建预分配栈，
+                        // 消除每次调用 callee 栈的 buffer alloc/free
+                        self.stack = self.stack_pool.pop().unwrap_or_else(|| Vec::with_capacity(64));
                         self.frames.push(Frame {
                             ip,
                             chunk_idx,
-                            locals: locals.clone(),
+                            // R4：caller locals 零拷贝移入 frame（Ret 时恢复），消除每次调用的深拷贝
+                            locals: std::mem::take(&mut locals),
                             stack_base: base,
                             operand_stack: caller_stack,
                             task_id: current_task_id,
                         });
                         chunk_idx = callee_idx;
-                        code = self.chunks[chunk_idx].code.clone();
-                        strings = self.chunks[chunk_idx].strings.clone();
+                        code = Rc::clone(&self.chunks[chunk_idx].code);
+                        strings = Rc::clone(&self.chunks[chunk_idx].strings);
                         ip = 0;
                         locals = new_locals;
                         base = 0;  // callee 新栈从 0 开始
@@ -357,58 +617,74 @@ impl Vm {
                         return Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) });
                     }
                 }
-                Op::CallN(i, num_args) => {
-                    let name = strings.get(i).cloned().unwrap_or_default();
+                28 => {
+                    let i = r!(u64) as usize;
+                    let num_args = r!(u64) as usize;
+                    // R5：借用 strings 表，消灭每次调用的无条件 String clone；
+                    // args 从 locals 池取（CallN 的 args 即 callee locals）
+                    let name = strings.get(i).map(|s| s.as_str()).unwrap_or("");
                     let n = num_args;
-                    let mut args = vec![Value::Unit; n];
+                    let mut args = self.locals_pool.pop().unwrap_or_default();
+                    args.resize(n, Value::Unit);
                     for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
 
                     // Try to find the function by name, checking globals for FnRef closures
-                    let callee_name = if let Some(Value::FnRef { name: fname, .. }) = self.globals.get(&name) {
-                        fname.clone()
+                    // R5：callee_name 借用 globals/strings，仅 FnRef 分支条件性 clone
+                    let callee_name: &str = if let Some(Value::FnRef { name: fname, .. }) = self.globals.get(name) {
+                        fname.as_str()
                     } else {
-                        name.clone()
+                        name
                     };
 
-                    if let Some(native_fn) = self.natives.get(&callee_name).copied() {
+                    if let Some(native_fn) = self.natives.get(callee_name).copied() {
                         let result = native_fn(self, &args)?;
                         self.stack.push(result);
-                    } else if let Some(&callee_idx) = self.functions.get(&callee_name) {
+                    } else if let Some(&callee_idx) = self.functions.get(callee_name) {
                         // Phase 2 栈迁移：保存 caller 栈到 Frame，给 callee 一个空栈
                         let caller_stack = std::mem::take(&mut self.stack);
+                        // R4 操作数栈复用：从池取空闲栈（保留容量），池空则新建预分配栈，
+                        // 消除每次调用 callee 栈的 buffer alloc/free
+                        self.stack = self.stack_pool.pop().unwrap_or_else(|| Vec::with_capacity(64));
                         self.frames.push(Frame {
                             ip,
                             chunk_idx,
-                            locals: locals.clone(),
+                            // R4：caller locals 零拷贝移入 frame（Ret 时恢复），消除每次调用的深拷贝
+                            locals: std::mem::take(&mut locals),
                             stack_base: base,
                             operand_stack: caller_stack,
                             task_id: current_task_id,
                         });
                         chunk_idx = callee_idx;
-                        code = self.chunks[chunk_idx].code.clone();
-                        strings = self.chunks[chunk_idx].strings.clone();
+                        code = Rc::clone(&self.chunks[chunk_idx].code);
+                        strings = Rc::clone(&self.chunks[chunk_idx].strings);
                         ip = 0;
+                        // R5：args（来自池）成为 callee locals
                         locals = args;
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
                         base = 0;  // callee 新栈从 0 开始
-                    } else if let Some(native_fn) = self.natives.get(&name).copied() {
+                    } else if let Some(native_fn) = self.natives.get(name).copied() {
                         let result = native_fn(self, &args)?;
                         self.stack.push(result);
-                    } else if let Some(&callee_idx) = self.functions.get(&name) {
+                    } else if let Some(&callee_idx) = self.functions.get(name) {
                         // Phase 2 栈迁移：保存 caller 栈到 Frame，给 callee 一个空栈
                         let caller_stack = std::mem::take(&mut self.stack);
+                        // R4 操作数栈复用：从池取空闲栈（保留容量），池空则新建预分配栈，
+                        // 消除每次调用 callee 栈的 buffer alloc/free
+                        self.stack = self.stack_pool.pop().unwrap_or_else(|| Vec::with_capacity(64));
                         self.frames.push(Frame {
                             ip,
                             chunk_idx,
-                            locals: locals.clone(),
+                            // R4：caller locals 零拷贝移入 frame（Ret 时恢复），消除每次调用的深拷贝
+                            locals: std::mem::take(&mut locals),
                             stack_base: base,
                             operand_stack: caller_stack,
                             task_id: current_task_id,
                         });
                         chunk_idx = callee_idx;
-                        code = self.chunks[chunk_idx].code.clone();
-                        strings = self.chunks[chunk_idx].strings.clone();
+                        code = Rc::clone(&self.chunks[chunk_idx].code);
+                        strings = Rc::clone(&self.chunks[chunk_idx].strings);
                         ip = 0;
+                        // R5：args（来自池）成为 callee locals
                         locals = args;
                         locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
                         base = 0;  // callee 新栈从 0 开始
@@ -416,48 +692,9 @@ impl Vm {
                         return Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) });
                     }
                 }
-                Op::TailCall(i, num_args) => {
-                    // TCO：复用当前帧，不压新帧
-                    let name = strings.get(i).cloned().unwrap_or_default();
-                    let n = num_args;
-                    let mut args = vec![Value::Unit; n];
-                    for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
-
-                    // 查找函数（同 CallN）
-                    let callee_name = if let Some(Value::FnRef { name: fname, .. }) = self.globals.get(&name) {
-                        fname.clone()
-                    } else {
-                        name.clone()
-                    };
-
-                    if let Some(native_fn) = self.natives.get(&callee_name).copied() {
-                        let result = native_fn(self, &args)?;
-                        self.stack.push(result);
-                    } else if let Some(&callee_idx) = self.functions.get(&callee_name) {
-                        // TCO：不压帧，直接替换当前帧状态
-                        chunk_idx = callee_idx;
-                        code = self.chunks[chunk_idx].code.clone();
-                        strings = self.chunks[chunk_idx].strings.clone();
-                        ip = 0;
-                        locals = args;
-                        locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
-                        // base 不重置 — 当前栈帧继续使用
-                    } else if let Some(native_fn) = self.natives.get(&name).copied() {
-                        let result = native_fn(self, &args)?;
-                        self.stack.push(result);
-                    } else if let Some(&callee_idx) = self.functions.get(&name) {
-                        // TCO：不压帧，直接替换当前帧状态
-                        chunk_idx = callee_idx;
-                        code = self.chunks[chunk_idx].code.clone();
-                        strings = self.chunks[chunk_idx].strings.clone();
-                        ip = 0;
-                        locals = args;
-                        locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
-                    } else {
-                        return Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) });
-                    }
-                }
-                Op::MethodCall(i, num_args) => {
+                29 => {
+                    let i = r!(u64) as usize;
+                    let num_args = r!(u64) as usize;
                     let name = strings.get(i).cloned().unwrap_or_default();
                     let n = num_args;
                     let mut args = vec![Value::Unit; n];
@@ -467,34 +704,48 @@ impl Vm {
                     self.stack.push(result);
                 }
 
-                Op::Ret => {
+                // 30 Ret
+                30 => {
                     let result = self.stack.pop().unwrap_or(Value::Unit);
                     if let Some(f) = self.frames.pop() {
-                        // Phase 2 栈迁移：恢复 caller 栈（丢弃 callee 栈），push 结果
-                        self.stack = f.operand_stack;
+                        // R5 locals 复用池：callee locals 清空入池（函数返回后 locals 不再被任何 Frame/闭包引用）
+                        let mut callee_locals = std::mem::take(&mut locals);
+                        callee_locals.clear();
+                        if self.locals_pool.len() < LOCALS_POOL_MAX {
+                            self.locals_pool.push(callee_locals);
+                        }
+                        // Phase 2 栈迁移：恢复 caller 栈；callee 栈清空入池复用（R4：消除每调用一次 alloc/free）
+                        let mut callee_stack = std::mem::replace(&mut self.stack, f.operand_stack);
+                        callee_stack.clear();
+                        if self.stack_pool.len() < STACK_POOL_MAX {
+                            self.stack_pool.push(callee_stack);
+                        }
                         self.stack.push(result);
                         ip = f.ip;
                         chunk_idx = f.chunk_idx;
-                        code = self.chunks[chunk_idx].code.clone();
-                        strings = self.chunks[chunk_idx].strings.clone();
+                        code = Rc::clone(&self.chunks[chunk_idx].code);
+                        strings = Rc::clone(&self.chunks[chunk_idx].strings);
                         locals = f.locals;
                         base = f.stack_base;
                         current_task_id = f.task_id;
                         self.current_task = current_task_id;
                     } else {
                         // 顶层 Ret：任务完成。把结果推回栈供调度器 pop。
+                        if has_budget { self.step_budget = Some(budget_left); } // R1：预算回写
                         self.stack.push(result);
                         return Ok(YieldReason::Completed);
                     }
                 }
-
-                Op::MakeVec(n) => {
+                // 31 MakeVec / 32 MakeMap
+                31 => {
+                    let n = r!(u64) as usize;
                     let mut v = Vec::new();
                     for _ in 0..n { v.push(self.stack.pop().unwrap_or(Value::Unit)); }
                     v.reverse();
                     self.stack.push(Value::Vec(Rc::new(RefCell::new(v))));
                 }
-                Op::MakeMap(n) => {
+                32 => {
+                    let n = r!(u64) as usize;
                     let mut m = HashMap::new();
                     for _ in 0..n {
                         let val = self.stack.pop().unwrap_or(Value::Unit);
@@ -507,7 +758,10 @@ impl Vm {
                     self.stack.push(Value::Map(Rc::new(RefCell::new(m))));
                 }
 
-                Op::NewStruct(name_i, n) => {
+                // 33 NewStruct / 34 LoadField / 35 StoreField / 56 NewUnion
+                33 => {
+                    let name_i = r!(u64) as usize;
+                    let n = r!(u64) as usize;
                     let name = strings.get(name_i).cloned().unwrap_or_default();
                     let mut fields = Vec::new();
                     for _ in 0..n {
@@ -522,23 +776,15 @@ impl Vm {
                     fields.reverse();
                     self.stack.push(Value::Struct { name, fields: Rc::new(RefCell::new(fields)) });
                 }
-
-                // M1.2：union 构造 — 弹出栈顶 value，构造带 active_field 的 tagged union
-                Op::NewUnion(name_i, field_i) => {
-                    let name = strings.get(name_i).cloned().unwrap_or_default();
-                    let active_field = strings.get(field_i).cloned().unwrap_or_default();
-                    let value = self.stack.pop().unwrap_or(Value::Unit);
-                    self.stack.push(Value::Union { name, active_field, value: Box::new(value) });
-                }
-
-                Op::LoadField(i) => {
+                34 => {
+                    let i = r!(u64) as usize;
                     let fname = strings.get(i).cloned().unwrap_or_default();
                     let val = self.stack.pop().unwrap_or(Value::Unit);
                     let v = self.get_field(&val, &fname)?;
                     self.stack.push(v);
                 }
-
-                Op::StoreField(i) => {
+                35 => {
+                    let i = r!(u64) as usize;
                     let fname = strings.get(i).cloned().unwrap_or_default();
                     let new_val = self.stack.pop().unwrap_or(Value::Unit);
                     let target = self.stack.pop().unwrap_or(Value::Unit);
@@ -566,8 +812,18 @@ impl Vm {
                         }
                     }
                 }
+                // M1.2：union 构造 — 弹出栈顶 value，构造带 active_field 的 tagged union
+                56 => {
+                    let name_i = r!(u64) as usize;
+                    let field_i = r!(u64) as usize;
+                    let name = strings.get(name_i).cloned().unwrap_or_default();
+                    let active_field = strings.get(field_i).cloned().unwrap_or_default();
+                    let value = self.stack.pop().unwrap_or(Value::Unit);
+                    self.stack.push(Value::Union { name, active_field, value: Box::new(value) });
+                }
 
-                Op::IndexGet => {
+                // 36 IndexGet / 37 SliceStr
+                36 => {
                     let idx = self.stack.pop().unwrap_or(Value::Unit);
                     let target = self.stack.pop().unwrap_or(Value::Unit);
                     match target {
@@ -613,8 +869,7 @@ impl Vm {
                         _ => return err("无法索引"),
                     }
                 }
-
-                Op::SliceStr => {
+                37 => {
                     let end_idx = self.pop_int()? as usize;
                     let start_idx = self.pop_int()? as usize;
                     let target = self.stack.pop().unwrap_or(Value::Unit);
@@ -634,7 +889,11 @@ impl Vm {
                     }
                 }
 
-                Op::MakeEnum(name_i, variant_i, n) => {
+                // 38 MakeEnum / 39 IsEnumVariant / 40 EnumGetField（IsStruct=46 在下方）
+                38 => {
+                    let name_i = r!(u64) as usize;
+                    let variant_i = r!(u64) as usize;
+                    let n = r!(u64) as usize;
                     let enum_name = strings.get(name_i).cloned().unwrap_or_default();
                     let variant = strings.get(variant_i).cloned().unwrap_or_default();
                     let mut fields = Vec::new();
@@ -657,8 +916,8 @@ impl Vm {
                         fields: Rc::new(RefCell::new(fields)),
                     });
                 }
-
-                Op::IsEnumVariant(variant_i) => {
+                39 => {
+                    let variant_i = r!(u64) as usize;
                     let variant_name = strings.get(variant_i).cloned().unwrap_or_default();
                     let val = self.stack.pop().unwrap_or(Value::Unit);
                     let matches = match &val {
@@ -667,18 +926,8 @@ impl Vm {
                     };
                     self.stack.push(Value::Bool(matches));
                 }
-
-                Op::IsStruct(name_i) => {
-                    let struct_name = strings.get(name_i).cloned().unwrap_or_default();
-                    let val = self.stack.pop().unwrap_or(Value::Unit);
-                    let matches = match &val {
-                        Value::Struct { name, .. } => name == &struct_name,
-                        _ => false,
-                    };
-                    self.stack.push(Value::Bool(matches));
-                }
-
-                Op::EnumGetField(field_i) => {
+                40 => {
+                    let field_i = r!(u64) as usize;
                     let field_name = strings.get(field_i).cloned().unwrap_or_default();
                     let val = self.stack.pop().unwrap_or(Value::Unit);
                     let found = match val {
@@ -700,15 +949,20 @@ impl Vm {
                     }
                 }
 
-                Op::PushRange(start, end, inclusive) => {
+                // 41 PushRange / 42 MoveOp / 43 MakeTensor / 44 MakeClosure
+                41 => {
+                    let start = r!(i64);
+                    let end = r!(i64);
+                    let inclusive = { let b = code[ip]; ip += 1; b != 0 };
                     self.stack.push(Value::Range { start, end, inclusive });
                 }
-
-                Op::MoveOp => {
+                42 => {
                     // no-op: move semantics are checked at HIR level
                 }
-
-                Op::MakeTensor(rows, cols, dtype) => {
+                43 => {
+                    let rows = r!(u64) as usize;
+                    let cols = r!(u64) as usize;
+                    let dtype = { let d = code[ip]; ip += 1; d };
                     use crate::hir::types::BaseType;
                     use half::{bf16, f16};
                     let total = rows * cols;
@@ -776,8 +1030,9 @@ impl Vm {
                         self.stack.push(Value::Tensor(Rc::new(RefCell::new(tensor))));
                     }
                 }
-
-                Op::MakeClosure(params_count, name_idx) => {
+                44 => {
+                    let params_count = r!(u64) as usize;
+                    let name_idx = r!(u64) as usize;
                     // Create a FnRef value pointing to the closure function
                     let name = strings.get(name_idx).cloned().unwrap_or_default();
                     let param_names: Vec<(String, crate::hir::types::Type)> = (0..params_count)
@@ -790,18 +1045,22 @@ impl Vm {
                     });
                 }
 
-                Op::Spawn => {
-                    let v = self.stack.pop().unwrap_or(Value::Unit);
-                    // Phase 2 Step 3-4：spawn 保持 eager 语义（立即求值，包装为 Ready Future）。
-                    // 设计决策：真正的并发不来自 spawn，而来自 Step 5 的 async I/O 创建 Pending Future。
-                    // spawn 的 inner 在 bytecode 层面已被编译为"先求值 inner 再 Op::Spawn"，
-                    // 改为延迟执行需要重构 bytecode 编译逻辑，超出 Step 3-4 范围。
-                    // eager spawn 仍然有用：await 时如果遇到 Pending Future（由 async I/O 创建），
-                    // 调度器会切换到其他就绪任务，包括其他 spawn 产生的 eager Future 的 await 者。
-                    self.stack.push(Value::future_ready(v));
+                // 45 PushFloat32 / 46 IsStruct / 47 Await / 48 Spawn / 49 MakeTuple / 50 IsTuple / 51 TupleGet
+                45 => {
+                    let f = r!(f32);
+                    self.stack.push(Value::Float32(f));
                 }
-
-                Op::Await => {
+                46 => {
+                    let name_i = r!(u64) as usize;
+                    let struct_name = strings.get(name_i).cloned().unwrap_or_default();
+                    let val = self.stack.pop().unwrap_or(Value::Unit);
+                    let matches = match &val {
+                        Value::Struct { name, .. } => name == &struct_name,
+                        _ => false,
+                    };
+                    self.stack.push(Value::Bool(matches));
+                }
+                47 => {
                     let v = self.stack.pop().unwrap_or(Value::Unit);
                     // Phase 2 Step 3-4：检查 FutureState
                     // - Ready：直接取值（快路径，Phase 1 兼容）
@@ -837,6 +1096,7 @@ impl Vm {
                                 });
                                 let frames = std::mem::take(&mut self.frames);
                                 self.suspended.insert(current_task_id, frames);
+                                if has_budget { self.step_budget = Some(budget_left); } // R1：预算回写
                                 return Ok(YieldReason::Suspended(current_task_id));
                             }
                         }
@@ -846,8 +1106,18 @@ impl Vm {
                         }
                     }
                 }
-
-                Op::MakeTuple(n) => {
+                48 => {
+                    let v = self.stack.pop().unwrap_or(Value::Unit);
+                    // Phase 2 Step 3-4：spawn 保持 eager 语义（立即求值，包装为 Ready Future）。
+                    // 设计决策：真正的并发不来自 spawn，而来自 Step 5 的 async I/O 创建 Pending Future。
+                    // spawn 的 inner 在 bytecode 层面已被编译为"先求值 inner 再 Op::Spawn"，
+                    // 改为延迟执行需要重构 bytecode 编译逻辑，超出 Step 3-4 范围。
+                    // eager spawn 仍然有用：await 时如果遇到 Pending Future（由 async I/O 创建），
+                    // 调度器会切换到其他就绪任务，包括其他 spawn 产生的 eager Future 的 await 者。
+                    self.stack.push(Value::future_ready(v));
+                }
+                49 => {
+                    let n = r!(u64) as usize;
                     // Pop n values (last pushed = highest index) and assemble Tuple
                     let mut items = Vec::with_capacity(n);
                     for _ in 0..n {
@@ -856,8 +1126,8 @@ impl Vm {
                     items.reverse();
                     self.stack.push(Value::Tuple(items));
                 }
-
-                Op::IsTuple(expected_len) => {
+                50 => {
+                    let expected_len = r!(u64) as usize;
                     // Pop value, push Bool(val is Tuple with expected_len).
                     // Mirrors IsEnumVariant: pop + push bool.
                     let val = self.stack.pop().unwrap_or(Value::Unit);
@@ -867,8 +1137,8 @@ impl Vm {
                     };
                     self.stack.push(Value::Bool(matches));
                 }
-
-                Op::TupleGet(i) => {
+                51 => {
+                    let i = r!(u64) as usize;
                     let val = self.stack.pop().unwrap_or(Value::Unit);
                     let elem = match &val {
                         Value::Tuple(items) => items.get(i).cloned().unwrap_or(Value::Unit),
@@ -876,8 +1146,8 @@ impl Vm {
                     };
                     self.stack.push(elem);
                 }
-
-                Op::Try => {
+                // 52 Try / 53 Yield / 54 PushChar / 55 TailCall / 未知 opcode → Ret
+                52 => {
                     // `expr?` — Result::Ok(v) → push v; Result::Err(e) → early return
                     // 语义：若 Err，构造 Result::Err 并执行函数 early return（frame 恢复）。
                     // 这与 interpreter 的 TryPropagate 信号等价，但 VM 直接在内部完成 frame 切换。
@@ -890,19 +1160,30 @@ impl Vm {
                         // 构造 Result::Err 作为函数返回值，执行 early return（复用 Ret 的 frame 恢复逻辑）
                         let result = val.clone();
                         if let Some(f) = self.frames.pop() {
-                            // Phase 2 栈迁移：恢复 caller 栈（同 Op::Ret）
-                            self.stack = f.operand_stack;
+                            // R5 locals 复用池：callee locals 清空入池（early return 后不再被引用）
+                            let mut callee_locals = std::mem::take(&mut locals);
+                            callee_locals.clear();
+                            if self.locals_pool.len() < LOCALS_POOL_MAX {
+                                self.locals_pool.push(callee_locals);
+                            }
+                            // Phase 2 栈迁移：恢复 caller 栈（同 Op::Ret）；callee 栈清空入池复用（R4）
+                            let mut callee_stack = std::mem::replace(&mut self.stack, f.operand_stack);
+                            callee_stack.clear();
+                            if self.stack_pool.len() < STACK_POOL_MAX {
+                                self.stack_pool.push(callee_stack);
+                            }
                             self.stack.push(result);
                             ip = f.ip;
                             chunk_idx = f.chunk_idx;
-                            code = self.chunks[chunk_idx].code.clone();
-                            strings = self.chunks[chunk_idx].strings.clone();
+                            code = Rc::clone(&self.chunks[chunk_idx].code);
+                            strings = Rc::clone(&self.chunks[chunk_idx].strings);
                             locals = f.locals;
                             base = f.stack_base;
                             current_task_id = f.task_id;
                             self.current_task = current_task_id;
                         } else {
                             // 最外层函数：任务完成（early return Err）。把结果推回栈供调度器 pop。
+                            if has_budget { self.step_budget = Some(budget_left); } // R1：预算回写
                             self.stack.push(result);
                             return Ok(YieldReason::Completed);
                         }
@@ -919,8 +1200,7 @@ impl Vm {
                         self.stack.push(inner);
                     }
                 }
-
-                Op::Yield => {
+                53 => {
                     // Phase 2 Step 3-4：协作式调度，主动让出控制权。
                     // 保存当前帧到 self.frames，take 整个 frames 到 suspended，
                     // task_id 推回 ready_queue 尾部，返回 Yield 信号给调度器。
@@ -936,7 +1216,100 @@ impl Vm {
                     let frames = std::mem::take(&mut self.frames);
                     self.suspended.insert(current_task_id, frames);
                     self.ready_queue.push_back(current_task_id);
+                    if has_budget { self.step_budget = Some(budget_left); } // R1：预算回写
                     return Ok(YieldReason::Yield(current_task_id));
+                }
+                54 => {
+                    let c = r!(u32);
+                    let ch = char::from_u32(c).unwrap_or('\0');
+                    self.stack.push(Value::Char(ch));
+                }
+                55 => {
+                    let i = r!(u64) as usize;
+                    let num_args = r!(u64) as usize;
+                    // TCO：复用当前帧，不压新帧
+                    // R5：借用 strings 表；args 从 locals 池取（TCO 的 args 即新 callee locals）
+                    let name = strings.get(i).map(|s| s.as_str()).unwrap_or("");
+                    let n = num_args;
+                    let mut args = self.locals_pool.pop().unwrap_or_default();
+                    args.resize(n, Value::Unit);
+                    for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
+
+                    // 查找函数（同 CallN）；R5：callee_name 借用，仅 FnRef 分支条件性 clone
+                    let callee_name: &str = if let Some(Value::FnRef { name: fname, .. }) = self.globals.get(name) {
+                        fname.as_str()
+                    } else {
+                        name
+                    };
+
+                    if let Some(native_fn) = self.natives.get(callee_name).copied() {
+                        let result = native_fn(self, &args)?;
+                        self.stack.push(result);
+                    } else if let Some(&callee_idx) = self.functions.get(callee_name) {
+                        // TCO：不压帧，直接替换当前帧状态
+                        // R5：旧 locals 清空入池，args 成为新 locals（buffer 循环复用）
+                        let mut old_locals = std::mem::replace(&mut locals, args);
+                        old_locals.clear();
+                        if self.locals_pool.len() < LOCALS_POOL_MAX {
+                            self.locals_pool.push(old_locals);
+                        }
+                        chunk_idx = callee_idx;
+                        code = Rc::clone(&self.chunks[chunk_idx].code);
+                        strings = Rc::clone(&self.chunks[chunk_idx].strings);
+                        ip = 0;
+                        locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
+                        // base 不重置 — 当前栈帧继续使用
+                    } else if let Some(native_fn) = self.natives.get(name).copied() {
+                        let result = native_fn(self, &args)?;
+                        self.stack.push(result);
+                    } else if let Some(&callee_idx) = self.functions.get(name) {
+                        // TCO：不压帧，直接替换当前帧状态
+                        // R5：旧 locals 清空入池，args 成为新 locals（buffer 循环复用）
+                        let mut old_locals = std::mem::replace(&mut locals, args);
+                        old_locals.clear();
+                        if self.locals_pool.len() < LOCALS_POOL_MAX {
+                            self.locals_pool.push(old_locals);
+                        }
+                        chunk_idx = callee_idx;
+                        code = Rc::clone(&self.chunks[chunk_idx].code);
+                        strings = Rc::clone(&self.chunks[chunk_idx].strings);
+                        ip = 0;
+                        locals.resize(self.chunks[chunk_idx].num_locals.max(locals.len()), Value::Unit);
+                    } else {
+                        return Err(TenthError::RuntimeError { line: None, col: None, message: format!("未定义的函数 '{}'", name) });
+                    }
+                }
+                // 未知 opcode：与旧 decode 的 `_ => Ret` 一致，执行 Ret 动作
+                _ => {
+                    let result = self.stack.pop().unwrap_or(Value::Unit);
+                    if let Some(f) = self.frames.pop() {
+                        // R5 locals 复用池：callee locals 清空入池（回退 Ret 后不再被引用）
+                        let mut callee_locals = std::mem::take(&mut locals);
+                        callee_locals.clear();
+                        if self.locals_pool.len() < LOCALS_POOL_MAX {
+                            self.locals_pool.push(callee_locals);
+                        }
+                        // Phase 2 栈迁移：恢复 caller 栈；callee 栈清空入池复用（R4：消除每调用一次 alloc/free）
+                        let mut callee_stack = std::mem::replace(&mut self.stack, f.operand_stack);
+                        callee_stack.clear();
+                        if self.stack_pool.len() < STACK_POOL_MAX {
+                            self.stack_pool.push(callee_stack);
+                        }
+                        self.stack.push(result);
+                        ip = f.ip;
+                        chunk_idx = f.chunk_idx;
+                        code = Rc::clone(&self.chunks[chunk_idx].code);
+                        strings = Rc::clone(&self.chunks[chunk_idx].strings);
+                        locals = f.locals;
+                        base = f.stack_base;
+                        current_task_id = f.task_id;
+                        self.current_task = current_task_id;
+                    } else {
+                        // 顶层：任务完成。把结果推回栈供调度器 pop。
+                        if has_budget { self.step_budget = Some(budget_left); } // R1：预算回写
+                        self.stack.push(result);
+                        return Ok(YieldReason::Completed);
+                    }
                 }
             }
         }
