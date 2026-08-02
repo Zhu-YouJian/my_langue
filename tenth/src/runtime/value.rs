@@ -97,7 +97,7 @@ pub enum FutureState {
     Ready(Value),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Value {
     /// 整数值。第二字段为 dtype（I8/I16/I32/I64/U8/U16/U32/U64），保留到运行时。
     Int(i64, BaseType),
@@ -185,6 +185,20 @@ pub enum Value {
 
     // ── 问题37：Decimal ──
     Decimal(String),
+}
+
+/// M1-S2（true letrec）：手动 Debug——转发 Display（天然有界）。
+///
+/// 派生 Debug 在 true letrec 自引用 cell 上会**无限递归**：cell 是
+/// `Value::Shared(Rc<RefCell<Value>>)`，闭包创建后 cell 内含闭包值
+/// （`Value::FnRef`/`Value::Closure`），其 captures 又含该 cell → `{:?}` 递归
+/// 直到栈溢出（可达路径：`期望可调用值，得到 {:?}` 打印含 cell 的闭包值）。
+/// Display 对 `FnRef`/`Closure` 只打印 `<fn {name}>`/`<closure>`（不递归 captures），
+/// 因此 Debug→Display 转发对一切可达环均有界。
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 impl Value {

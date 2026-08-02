@@ -46,6 +46,11 @@ pub enum Op {
     MakeMutRef(usize),          // slot — locals[slot] 包装/复用 Shared 回写槽位，压 Value::MutRef(Weak)
     Deref,                      // 弹值；Ref/MutRef 读穿，其他透传（VM 宽松，兼容旧 pass-through）
     DerefStore,                 // 栈 [value, target] — target 为 MutRef/Ref 写穿，其他报错
+    // M1-S2（true letrec）：递归闭包自引用 cell opcodes（编码 63/64 追加在尾部）。
+    // 闭包创建序列：[正常捕获压栈] → MakeCell（空 Shared cell）→ MakeClosure（cell 装入
+    // captures 尾部）→ BindSelfCapture(k)（把 FnRef 自身写入 captures[k] 的 cell）。
+    MakeCell,                   // 压 Value::Shared(Rc(RefCell(Unit)))——自引用占位 cell
+    BindSelfCapture(usize),     // 弹 FnRef → 其 captures[k] 为 Shared cell → 写入自身 → 压回
 }
 
 // ── Scheduler internals ─────────────────────────────────────────────────────

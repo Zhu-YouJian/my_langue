@@ -75,6 +75,10 @@ pub enum HirExprKind {
         params: Vec<(String, Type)>,
         body: Box<HirExpr>,
         captures: Vec<String>,
+        /// M1-S2（true letrec）：递归闭包自引用名——闭包创建时按实例建可变 cell
+        /// 并绑定自身，体引用解析为该 cell（不再按名/全局解析）。与 `captures`
+        /// 互斥（这些名字已从 captures 排除）。
+        self_refs: Vec<String>,
     },
     Assign {
         target: String,

@@ -10,12 +10,14 @@ use super::{substitute_type, substitute_expr, check_generic_instantiation_soundn
 use super::Lowerer;
 
 impl Lowerer {
-    /// AUDIT-11.4.23：解析模块限定调用 `mod::fn(...)` / 模块限定函数引用。
-    /// 前置条件：`alias`（首段）是 `use path::mod;` 注册的模块别名（module_aliases）。
+    /// 解析模块限定调用 `mod::fn(...)` / 模块限定函数引用。
+    /// 前置条件：`alias`（首段）是 `use path::mod;` 注册的模块别名（module_aliases，
+    /// 文件级模块，AUDIT-11.4.23），或内联 `mod { }` 块名（self.modules 键，M1-S3a）。
     /// 命中时把 `fn_name` 注册进作用域（含泛型→generic_funcs，供 `mod::fn<T>(...)`
-    /// 显式类型参数调用），并返回对底层函数名的引用——模块函数已整体进入
-    /// `self.functions`/`self.generic_funcs`，后端（bytecode/wasm/解释器）按函数名
-    /// 直接解析，无需额外限定名处理。未命中（非模块别名 / 模块内无此函数）返回 None。
+    /// 显式类型参数调用），并返回对底层函数名的引用——文件级模块函数已由 use 处理
+    /// 整体进入 `self.functions`；内联 mod 函数在此补入 `self.functions`（first-wins，
+    /// 与 use 导入一致）。后端（bytecode/wasm/解释器）按函数名直接解析，无需额外
+    /// 限定名处理。未命中（非模块别名 / 非内联 mod / 模块内无此函数）返回 None。
     fn try_resolve_module_qualified(
         &mut self,
         alias: &str,
@@ -24,6 +26,10 @@ impl Lowerer {
     ) -> TenthResult<Option<HirExpr>> {
         let module_key = match self.module_aliases.get(alias) {
             Some(k) => k.clone(),
+            // M1-S3a：内联 `mod { }` 块（手册 §9.1/9.2）——模块名本身即是
+            // self.modules 的键，无需 `use path::mod;` 即可限定调用。
+            // 文件级模块（AUDIT-11.4.23）仍需 use 注册别名才走此处。
+            None if self.modules.contains_key(alias) => alias.to_string(),
             None => return Ok(None),
         };
         let module = match self.modules.get(&module_key) {
@@ -42,6 +48,11 @@ impl Lowerer {
         self.scope.define_fn(fn_name.to_string(), param_types.clone(), ret_ty.clone());
         if !fn_def.generics.is_empty() {
             self.generic_funcs.insert(fn_name.to_string(), fn_def.clone());
+        } else if !self.functions.iter().any(|f| f.name == fn_def.name) {
+            // M1-S3a：内联 mod 的函数未随 use 进入 self.functions（文件级模块由
+            // use 处理整体并入），在此补入使后端（bytecode/wasm/解释器）能按
+            // 函数名解析 `mod::fn()` → Var("fn")。first-wins 与 use 导入一致。
+            self.functions.push(fn_def.clone());
         }
         let ty = Type::FnType {
             params: param_types.iter().map(|(_, t)| t.clone()).collect(),
@@ -172,7 +183,7 @@ impl Lowerer {
                             | "path_join" | "path_exists" | "path_is_file" | "path_is_dir"
                             | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file" | "rename_file"
                             | "time_now" | "time_now_ms" | "time_date" | "time_time" | "time_datetime" | "time_sleep_ms"
-                            | "random_int" | "random_float"
+                            | "random_int" | "random_float" | "random_seed"
                             | "math_tan" | "math_asin" | "math_acos" | "math_atan" | "math_atan2"
                             | "math_sinh" | "math_cosh" | "math_tanh" | "math_log10" | "math_log2" | "math_exp" | "math_pow"
                             | "math_floor" | "math_ceil" | "math_round"
@@ -1119,17 +1130,23 @@ impl Lowerer {
 
                 // Analyze free variables in the closure body (excluding params)
                 let mut captures = Self::free_vars_in(&b);
-                // 9b：递归闭包自引用——自身绑定名（及外层正在初始化的递归闭包名）
-                // 排除出 captures：创建时对应槽位尚未绑定，按值捕获会得到 Unit/旧值
-                // → 运行时错误或静默错值。运行时改按名解析：VM 经 globals（let 会
-                // StoreGlobal）/ 解释器经作用域链（动态作用域，调用时已绑定）。
-                captures.retain(|c| !self.self_ref_lets.iter().any(|n| n == c));
+                // M1-S2（true letrec）：自引用名判定——`self_ref_lets` 栈顶（当前正在
+                // 初始化的闭包绑定名）且被体引用时，记录为 `self_refs`（闭包创建时按
+                // 实例建可变 cell 并绑定自身，不再按名/全局解析）。仅栈顶名是「本闭包
+                // 的自引用」；外层 letrec 名保持普通捕获（按值捕获其 cell，调用时经
+                // Shared 解引用）。9b 旧语义排除全部 self_ref_lets 名会导致逃逸作用域
+                // 后按名解析失败（解释器报未定义变量）/ 多实例全局别名（VM 静默错值）。
+                let self_refs: Vec<String> = match self.self_ref_lets.last() {
+                    Some(last) if captures.iter().any(|c| c == last) => vec![last.clone()],
+                    _ => Vec::new(),
+                };
+                captures.retain(|c| !self_refs.iter().any(|n| n == c));
 
                 let closure_ty = Type::FnType {
                     params: lowered_params.iter().map(|(_, t)| t.clone()).collect(),
                     ret: Box::new(b.ty.clone()),
                 };
-                (HirExprKind::Closure { params: lowered_params, body: Box::new(b), captures }, closure_ty)
+                (HirExprKind::Closure { params: lowered_params, body: Box::new(b), captures, self_refs }, closure_ty)
             }
 
             ExprKind::Assign { target, value } => {
@@ -2353,11 +2370,12 @@ impl Lowerer {
                 let f = final_expr.as_ref().map(|fe| Box::new(self.rewrite_inst_method_calls(fe)));
                 HirExprKind::Block { stmts: s, final_expr: f }
             }
-            HirExprKind::Closure { params, body, captures } => {
+            HirExprKind::Closure { params, body, captures, self_refs } => {
                 HirExprKind::Closure {
                     params: params.clone(),
                     body: Box::new(self.rewrite_inst_method_calls(body)),
                     captures: captures.clone(),
+                    self_refs: self_refs.clone(),
                 }
             }
             HirExprKind::Assign { target, value } => {

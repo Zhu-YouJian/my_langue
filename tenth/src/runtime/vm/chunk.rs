@@ -102,6 +102,9 @@ impl Chunk {
             MakeMutRef(_) => 60,
             Deref => 61,
             DerefStore => 62,
+            // M1-S2（true letrec）：自引用 cell opcodes 63/64
+            MakeCell => 63,
+            BindSelfCapture(_) => 64,
         });
 
         // Emit operands
@@ -133,6 +136,8 @@ impl Chunk {
             CallClosure(n) | TailCallClosure(n) => w!(*n, u64),
             // AUDIT-11.4.21：MakeMutRef 带槽位操作数
             MakeMutRef(i) => w!(*i, u64),
+            // M1-S2（true letrec）：BindSelfCapture 带捕获槽位索引
+            BindSelfCapture(i) => w!(*i, u64),
             _ => {}
         }
     }
@@ -185,6 +190,9 @@ impl Chunk {
             58 => TailCallClosure(r!(u64) as usize),
             59 => MakeRef,
             60 => MakeMutRef(r!(u64) as usize),
+            // M1-S2（true letrec）：自引用 cell opcodes 63/64
+            63 => MakeCell,
+            64 => BindSelfCapture(r!(u64) as usize),
             61 => Deref,
             62 => DerefStore,
             54 => PushChar(r!(u32)),

@@ -502,6 +502,39 @@ choice_index([10, 20, 30]) >= 0 && choice_index([10, 20, 30]) <= 2 &&
 sample([1, 2, 3], 2).len() == 2
 "#;
 
+// M1-S4a：shuffle 真洗牌（Fisher-Yates 就地交换）+ rand_seed 确定性复现。
+// 多重集不变（1..8 各恰好一次）+ 同 seed 复现 + 顺序确实改变，末尾整体求值。
+const M37B_SHUFFLE: &str = r#"
+use std::random::random::*
+
+rand_seed(20260803)
+let v = shuffle([1, 2, 3, 4, 5, 6, 7, 8]);
+// 多重集不变：1..8 各恰好出现一次
+let mut ok = true;
+let mut k = 1;
+while k <= 8 {
+    let mut c = 0;
+    let mut p = 0;
+    while p < 8 {
+        if v.get(p) == k { c = c + 1; }
+        p = p + 1;
+    }
+    if c != 1 { ok = false; }
+    k = k + 1;
+}
+// 确定性：同 seed 复现同结果
+rand_seed(20260803)
+let w = shuffle([1, 2, 3, 4, 5, 6, 7, 8]);
+let mut same = true;
+let mut q = 0;
+while q < 8 {
+    if v.get(q) != w.get(q) { same = false; }
+    q = q + 1;
+}
+// 顺序确实改变（相对有序原列）；末尾整体求值
+ok && same && v.get(0) != 1
+"#;
+
 const M38_TIME: &str = r#"
 use std::time::time::*
 
@@ -798,6 +831,23 @@ fn smoke_crypto_hash() { smoke_vm("crypto/hash", M36_CRYPTO_HASH); }
 
 #[test]
 fn smoke_random() { smoke_vm("random/random", M37_RANDOM); }
+
+#[test]
+fn smoke_random_shuffle_vm() { smoke_vm("random/shuffle", M37B_SHUFFLE); }
+
+#[test]
+fn smoke_random_shuffle_interp() { smoke_interp("random/shuffle-interp", M37B_SHUFFLE); }
+
+// M1-S4a：VM 与解释器同 seed 洗牌输出逐字节一致（双路径确定性对齐）。
+#[test]
+fn smoke_random_shuffle_double_path_consistent() {
+    let prog = "use std::random::random::*\nrand_seed(42)\nprintln(shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))\n";
+    let (c1, o1, e1) = run_th(prog, true);
+    let (c2, o2, e2) = run_th(prog, false);
+    assert_eq!(c1, 0, "VM 失败 stderr: {e1}");
+    assert_eq!(c2, 0, "解释器失败 stderr: {e2}");
+    assert_eq!(o1, o2, "VM 与解释器同 seed 洗牌输出应一致\nVM: {o1}\nInterp: {o2}");
+}
 
 #[test]
 fn smoke_time() { smoke_vm("time/time", M38_TIME); }

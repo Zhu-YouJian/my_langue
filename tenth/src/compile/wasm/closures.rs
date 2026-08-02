@@ -23,7 +23,7 @@ impl WasmCompiler {
 
     pub(super) fn ccb_expr(&mut self, codes: &mut CodeSection, e: &HirExpr) -> TenthResult<()> {
         match &e.kind {
-            HirExprKind::Closure { params, body, captures } => {
+            HirExprKind::Closure { params, body, captures, self_refs: _ } => {
                 let func = self.compile_closure_body(params, body, captures)?;
                 codes.function(&func);
                 // Recurse for nested closures
@@ -251,7 +251,7 @@ impl WasmCompiler {
 
     pub(super) fn cc_expr(&mut self, e: &HirExpr, num_user_funcs: u32) {
         match &e.kind {
-            HirExprKind::Closure { params, body, captures } => {
+            HirExprKind::Closure { params, body, captures, self_refs: _ } => {
                 let cidx = self.closure_info.len() as u32;
                 // func_idx = IMPORT_COUNT + num_user_funcs + 1 (main) + cidx
                 let func_idx = IMPORT_COUNT + num_user_funcs + 1 + cidx;

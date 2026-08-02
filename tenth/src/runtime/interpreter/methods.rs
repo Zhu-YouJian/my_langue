@@ -672,6 +672,12 @@ impl super::Interpreter {
 
     /// Apply a closure value to arguments, returning the result.
     pub(super) fn apply_closure(&mut self, closure: &Value, args: &[Value]) -> TenthResult<Value> {
+        // M1-S2（true letrec）：自引用 cell（Value::Shared）解包后递归调用
+        // （iterator 高阶方法把 cell 作闭包实参传入的路径）。
+        if let Value::Shared(rc) = closure {
+            let inner = rc.borrow().clone();
+            return self.apply_closure(&inner, args);
+        }
         match closure {
             Value::Closure { params, body, captures } => {
                 // AUDIT-11.4.3: push_scope 后逐个 insert captures
@@ -1462,6 +1468,18 @@ impl super::Interpreter {
                             .collect();
                         let result_tensor = tensor.permute(&dims)
                             .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
+                        Ok(Value::Tensor(Rc::new(RefCell::new(result_tensor))))
+                    }
+                    // M1-S3a：手册 §11.3 broadcast_to（位置参数形式，D3 修复）。
+                    // 与 VM 端 natives.rs 的 broadcast_to 语义一致：目标 shape 由
+                    // 整数位置参数收集，广播失败返回 RuntimeError。
+                    "broadcast_to" => {
+                        let target_shape: Vec<usize> = args.iter()
+                            .map(|a| a.as_int().unwrap_or(1) as usize)
+                            .collect();
+                        let result_tensor = tensor.broadcast_to(&target_shape).ok_or_else(|| {
+                            TenthError::RuntimeError { line: None, col: None, message: format!("无法广播到 {:?}", target_shape) }
+                        })?;
                         Ok(Value::Tensor(Rc::new(RefCell::new(result_tensor))))
                     }
                     "softmax" => {

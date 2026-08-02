@@ -936,7 +936,7 @@ impl BytecodeCompiler {
             }
 
             // Closure: |params| body
-            Closure { params, body, captures } => {
+            Closure { params, body, captures, self_refs } => {
                 // Compile the closure body as a separate chunk
                 // a1 P1：闭包名带函数名前缀（跨函数唯一）——多个函数各自含闭包时，
                 // `__closure_{N}` 会在 functions 表中互相覆盖（FnRef 名解析到错误 chunk → 静默错值）。
@@ -957,6 +957,14 @@ impl BytecodeCompiler {
                     }
                 }
 
+                // M1-S2（true letrec）：自引用名追加为捕获槽位（位于 params+正常捕获之后）。
+                // 闭包创建序列：[正常捕获压栈] → MakeCell（空 Shared cell）→ MakeClosure
+                // （cell 装入 FnRef.captures 尾部）→ BindSelfCapture（把 FnRef 自身写入 cell）。
+                // 体引用 `Var(self_ref)` 经该槽位 Load 到 cell，调用时（CallClosure/call_value）
+                // 解包 Shared 后间接调用——实例级独立，不再按名/全局解析（根治 AUDIT-11.4.30
+                // 逃逸作用域 + 多实例全局别名静默错值）。
+                let self_ref_count = self_refs.len();
+
                 let mut closure_compiler = BytecodeCompiler::new();
                 closure_compiler.closure_counter = self.closure_counter;
                 // M3.5：闭包编译器共享全局名集合（shadow 判定一致）
@@ -965,8 +973,8 @@ impl BytecodeCompiler {
                 closure_compiler.fn_name = self.fn_name.clone();
 
                 // a1 P3：闭包 chunk 槽位 = params + 捕获局部（捕获在 params.len()+i）。
-                // num_args 含捕获（调用时 CallClosure/call_value 把捕获值追加为额外实参）。
-                let total_args = params.len() + captured_locals.len();
+                // num_args 含捕获 + 自引用 cell（调用时 CallClosure/call_value 追加为额外实参）。
+                let total_args = params.len() + captured_locals.len() + self_ref_count;
                 closure_compiler.chunk.num_args = total_args;
                 closure_compiler.current_fn_args = total_args;
                 for (name, _) in params {
@@ -974,6 +982,9 @@ impl BytecodeCompiler {
                 }
                 for (cap_name, _) in &captured_locals {
                     closure_compiler.locals.push(cap_name.clone());
+                }
+                for sr in self_refs {
+                    closure_compiler.locals.push(sr.clone());
                 }
 
                 // Compile the closure body (in tail position for TCO)
@@ -1000,13 +1011,24 @@ impl BytecodeCompiler {
                 for (_, pos) in &captured_locals {
                     self.chunk.emit(Op::Load(*pos));
                 }
+                // M1-S2（true letrec）：压自引用占位 cell（正常捕获之后）。
+                // MakeClosure 弹出反转后 captures = [正常捕获..., cells...]，
+                // cell 位于 captured_locals.len()+i。
+                for _ in 0..self_ref_count {
+                    self.chunk.emit(Op::MakeCell);
+                }
 
                 // Register the closure chunk
                 self.closure_chunks.push((closure_name.clone(), closure_compiler.chunk));
 
                 // Emit MakeClosure with the closure name index
                 let name_i = self.chunk.add_string(&closure_name);
-                self.chunk.emit(Op::MakeClosure(params.len(), captured_locals.len(), name_i));
+                self.chunk.emit(Op::MakeClosure(params.len(), captured_locals.len() + self_ref_count, name_i));
+                // M1-S2（true letrec）：绑定自引用 cell——FnRef.captures[captured_locals.len()+i]
+                // 的 Shared cell 写入闭包自身（栈顶 FnRef），随后压回供 let Store/StoreGlobal。
+                for i in 0..self_ref_count {
+                    self.chunk.emit(Op::BindSelfCapture(captured_locals.len() + i));
+                }
             }
 
         }

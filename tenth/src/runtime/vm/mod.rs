@@ -249,6 +249,12 @@ impl Vm {
     /// a1 P3：捕获值追加为额外实参（槽位 params..params+captures）。name 是闭包
     /// chunk 名（非全局变量名），call_with_args 不会从 globals 二次追加，不会重复。
     pub fn call_value(&mut self, callee: &Value, args: &[Value]) -> TenthResult<Value> {
+        // M1-S2（true letrec）：自引用 cell（Value::Shared）解包后递归调用——
+        // 闭包体 `Load(self_ref 槽)` 得到 cell，JIT host_call_indirect / natives 经此调用。
+        if let Value::Shared(rc) = callee {
+            let inner = rc.borrow().clone();
+            return self.call_value(&inner, args);
+        }
         match callee {
             Value::FnRef { name, captures, .. } => {
                 if captures.is_empty() {

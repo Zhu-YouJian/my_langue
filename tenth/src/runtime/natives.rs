@@ -14,6 +14,9 @@ use std::collections::HashMap;
 use crate::hir::types::{BaseType, Type};
 use std::rc::Rc;
 
+use rand::rngs::StdRng;
+use rand::SeedableRng;
+
 use crate::error::{TenthError, TenthResult};
 use crate::runtime::async_io::{ASYNC_IO, IoResult};
 use crate::runtime::autodiff::Tape;
@@ -205,6 +208,40 @@ fn format_placeholder(
         // Parse format specifier and apply with Rust's format!
         Ok(apply_format_spec(arg_val, fmt_spec))
     }
+}
+
+/// —— 可种子 RNG（M1-S4a 新增）——
+/// 默认 `random_int` / `random_float` 使用 CSPRNG（thread_rng，不可预测种子）。
+/// `random_seed(n)` 设置后，本线程后续随机数走确定性 `StdRng` 序列（可复现实验 /
+/// 确定性测试）；未设置时回退 thread_rng（原行为不变）。VM 与解释器共用本状态，
+/// 保证双路径同 seed 结果一致。
+thread_local! {
+    static SEEDED_RNG: RefCell<Option<StdRng>> = RefCell::new(None);
+}
+
+/// 设置/清除可种子 RNG（seed=Some 时以 seed_from_u64 重建；None 清除回退 CSPRNG）。
+pub(crate) fn set_seeded_rng(seed: Option<u64>) {
+    SEEDED_RNG.with(|cell| {
+        *cell.borrow_mut() = seed.map(StdRng::seed_from_u64);
+    });
+}
+
+/// 取下一个可种子 u64；未设置种子时返回 None（调用方回退 thread_rng）。
+pub(crate) fn next_seeded_u64() -> Option<u64> {
+    use rand::Rng;
+    SEEDED_RNG.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        guard.as_mut().map(|rng| rng.r#gen())
+    })
+}
+
+/// 取下一个可种子 f64（[0,1)）；未设置种子时返回 None。
+pub(crate) fn next_seeded_f64() -> Option<f64> {
+    use rand::Rng;
+    SEEDED_RNG.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        guard.as_mut().map(|rng| rng.r#gen())
+    })
 }
 
 /// 注册所有 native 函数到 VM。
@@ -1163,14 +1200,31 @@ pub fn register_all_natives(vm: &mut Vm) {
         let (low, high) = if lo <= hi { (lo, hi) } else { (hi, lo) };
         // 用 u64 全域取模，避免 i64 范围回绕到负数
         let range = (high as u64).saturating_sub(low as u64).saturating_add(1).max(1);
-        let r: u64 = rand::thread_rng().r#gen();
+        // M1-S4a：已设置 random_seed 时走确定性序列，否则回退 CSPRNG
+        let r: u64 = match next_seeded_u64() {
+            Some(r) => r,
+            None => rand::thread_rng().r#gen(),
+        };
         Ok(Value::Int(low + (r % range) as i64, BaseType::I32))
     });
     vm.add_native("random_float".into(), |_vm, _args| {
         use rand::Rng;
         // [0, 1) 半开区间，标准做法
-        let r: f64 = rand::thread_rng().r#gen();
+        // M1-S4a：已设置 random_seed 时走确定性序列，否则回退 CSPRNG
+        let r: f64 = match next_seeded_f64() {
+            Some(r) => r,
+            None => rand::thread_rng().r#gen(),
+        };
         Ok(Value::Float(r))
+    });
+    // M1-S4a：设置确定性随机种子（线程局部）；配合 shuffle/rand_int 可复现序列。
+    vm.add_native("random_seed".into(), |_vm, args| {
+        let seed = match args.first() {
+            Some(Value::Int(n, _)) => *n as u64,
+            _ => 0,
+        };
+        set_seeded_rng(Some(seed));
+        Ok(Value::Unit)
     });
     // Math functions（输入为 Float32 时返回 Float32，否则 Float）
     vm.add_native("math_tan".into(), |_vm, args| {

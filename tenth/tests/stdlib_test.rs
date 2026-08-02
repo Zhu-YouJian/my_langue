@@ -1209,6 +1209,135 @@ fn test_random_choice_index() {
     }
 }
 
+// ── shuffle 真洗牌测试（M1-S4a 修复）───────────────────────────────────
+// 运行时不支持 `use` 加载 .th 模块，故内联验证与 std/random/random.th
+// 的 shuffle 实现保持同步（Fisher-Yates 就地交换，含 set 就地写回）。
+// 确定性验证依赖 `random_seed` native（线程局部 seeded RNG，M1-S4a 新增）。
+
+/// 内联 shuffle（与 std/random/random.th 同步的 Fisher-Yates 实现）
+const INLINE_SHUFFLE: &str = r#"
+        fn shuffle(v: Vec) -> Vec {
+            let len = v.len();
+            let mut i = len - 1;
+            while i > 0 {
+                let j = random_int(0, i);
+                let tmp = v.get(i);
+                v.set(i, v.get(j));
+                v.set(j, tmp);
+                i = i - 1;
+            }
+            v
+        }
+"#;
+
+#[test]
+fn test_shuffle_preserves_multiset() {
+    // 洗牌后元素集合不变（同多重集）：1..8 各恰好出现一次。
+    let src = format!(r#"
+        {INLINE_SHUFFLE}
+        random_seed(42)
+        let v = shuffle([1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut ok = true;
+        let mut k = 1;
+        while k <= 8 {{
+            let mut c = 0;
+            let mut p = 0;
+            while p < 8 {{
+                if v.get(p) == k {{ c = c + 1; }}
+                p = p + 1;
+            }}
+            if c != 1 {{ ok = false; }}
+            k = k + 1;
+        }}
+        ok
+    "#);
+    let result = run_code(&src).unwrap();
+    match result {
+        Some(Value::Bool(true)) => {}
+        v => panic!("shuffle 应保持多重集不变（1..8 各一次），got {:?}", v),
+    }
+}
+
+#[test]
+fn test_shuffle_same_seed_reproducible() {
+    // 同 seed 两次 shuffle 结果一致（确定性复现）。
+    let src = format!(r#"
+        {INLINE_SHUFFLE}
+        random_seed(123)
+        let a = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        random_seed(123)
+        let b = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        let mut same = true;
+        let mut i = 0;
+        while i < 10 {{
+            if a.get(i) != b.get(i) {{ same = false; }}
+            i = i + 1;
+        }}
+        same
+    "#);
+    let result = run_code(&src).unwrap();
+    match result {
+        Some(Value::Bool(true)) => {}
+        v => panic!("同 seed 两次 shuffle 应一致，got {:?}", v),
+    }
+}
+
+#[test]
+fn test_shuffle_different_seed_differs() {
+    // 不同 seed 结果不同（seed 1 vs seed 2，10 元素下必然不同）。
+    let src = format!(r#"
+        {INLINE_SHUFFLE}
+        random_seed(1)
+        let a = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        random_seed(2)
+        let b = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        let mut diff = false;
+        let mut i = 0;
+        while i < 10 {{
+            if a.get(i) != b.get(i) {{ diff = true; }}
+            i = i + 1;
+        }}
+        diff
+    "#);
+    let result = run_code(&src).unwrap();
+    match result {
+        Some(Value::Bool(true)) => {}
+        v => panic!("不同 seed 的 shuffle 应不同，got {:?}", v),
+    }
+}
+
+#[test]
+fn test_shuffle_order_changes() {
+    // 对非平凡输入，shuffle 确实改变顺序（seed 20260803 下 8 元素首位已非 1，
+    // 经双路径实测 v[0]=7；VM=解释器同 seed 结果一致）。
+    let src = format!(r#"
+        {INLINE_SHUFFLE}
+        random_seed(20260803)
+        let v = shuffle([1, 2, 3, 4, 5, 6, 7, 8]);
+        v.get(0) != 1
+    "#);
+    let result = run_code(&src).unwrap();
+    match result {
+        Some(Value::Bool(true)) => {}
+        v => panic!("shuffle 应改变顺序，got {:?}", v),
+    }
+}
+
+#[test]
+fn test_shuffle_edge_cases() {
+    // 空 Vec / 单元素 Vec：原样返回，不崩溃。
+    let src = format!(r#"
+        {INLINE_SHUFFLE}
+        random_seed(7)
+        shuffle([]).len() == 0 && shuffle([5]).get(0) == 5
+    "#);
+    let result = run_code(&src).unwrap();
+    match result {
+        Some(Value::Bool(true)) => {}
+        v => panic!("空/单元素 shuffle 应原样返回，got {:?}", v),
+    }
+}
+
 // ── JSON Function Tests ──────────────────────────────────────────────────
 
 #[test]

@@ -580,6 +580,12 @@ impl<'a, M: Module> Translator<'a, M> {
                 // AUDIT-11.4.21：引用语义 opcodes 不 JIT 编译；整体 fallback VM。
                 return Err(format!("JIT: ref/deref opcode not supported, fallback to VM"));
             }
+            MakeCell | BindSelfCapture(_) => {
+                // M1-S2（true letrec）：自引用 cell opcodes 不 JIT 编译；整体 fallback VM。
+                // 闭包体本身（Load + CallClosure）仍可 JIT——host_call_indirect 走
+                // Vm::call_value（已支持 Shared cell 解包），letrec 语义保持正确。
+                return Err(format!("JIT: letrec cell opcode not supported, fallback to VM"));
+            }
         }
         Ok(())
     }

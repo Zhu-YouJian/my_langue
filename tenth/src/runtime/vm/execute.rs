@@ -1320,6 +1320,13 @@ impl Vm {
                     args.resize(n, Value::Unit);
                     for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
 
+                    // M1-S2（true letrec）：自引用 cell（Value::Shared）解包——闭包体
+                    // `Load(self_ref 槽)` 得到 cell，调用时须解出内部 FnRef。仅 Shared
+                    // 分支 clone（letrec 路径），普通 FnRef 零额外开销。
+                    let callee = match callee {
+                        Value::Shared(rc) => rc.borrow().clone(),
+                        other => other,
+                    };
                     match &callee {
                         Value::FnRef { name, captures, .. } => {
                             // a1 P3：追加捕获值作为额外实参（槽位 params..params+captures），
@@ -1370,6 +1377,11 @@ impl Vm {
                     args.resize(n, Value::Unit);
                     for i in (0..n).rev() { args[i] = self.stack.pop().unwrap_or(Value::Unit); }
 
+                    // M1-S2（true letrec）：自引用 cell 解包（同 57）。
+                    let callee = match callee {
+                        Value::Shared(rc) => rc.borrow().clone(),
+                        other => other,
+                    };
                     match &callee {
                         Value::FnRef { name, captures, .. } => {
                             // a1 P3：追加捕获值作为额外实参（槽位 params..params+captures），
@@ -1456,6 +1468,24 @@ impl Vm {
                         _ => return Err(self.err_here(chunk_idx, ip, "只能通过可变引用赋值".into())),
                     }
                     self.stack.push(Value::Unit);
+                }
+                // M1-S2（true letrec）：63 MakeCell / 64 BindSelfCapture
+                // （递归闭包自引用 cell——实例级独立，根治 AUDIT-11.4.30 多实例别名静默错值）。
+                63 => {
+                    // 压空 Shared cell（占位 Unit），稍后 BindSelfCapture 写入闭包自身。
+                    self.stack.push(Value::Shared(Rc::new(RefCell::new(Value::Unit))));
+                }
+                64 => {
+                    // 弹栈顶 FnRef，把自身 clone 写入 captures[k]（Shared cell），再压回。
+                    let idx = r!(u64) as usize;
+                    let v = self.stack.pop().unwrap_or(Value::Unit);
+                    if let Value::FnRef { captures, .. } = &v {
+                        if let Some(Value::Shared(rc)) = captures.get(idx) {
+                            let rc = rc.clone();
+                            *rc.borrow_mut() = v.clone();
+                        }
+                    }
+                    self.stack.push(v);
                 }
                 // 未知 opcode：与旧 decode 的 `_ => Ret` 一致，执行 Ret 动作
                 _ => {

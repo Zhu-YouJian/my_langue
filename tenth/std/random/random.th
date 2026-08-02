@@ -6,13 +6,21 @@
 // Usage:
 //   use std::random::random
 //
-// ⚠️ 已知不完整（L2.3b 勘误标注）：`shuffle` 实现不完整（未真正交换元素，待修）。
+// M1-S4a 修复：`shuffle` 现为真正的 Fisher-Yates 就地洗牌（此前仅生成随机下标
+// 未写回）；新增 `rand_seed(n)` 使随机序列可确定性复现（同 seed 同结果）。
 // L2.5 修复：`choice` 改为返回随机**元素**（与注释/教程一致）；返回随机索引
 // 的行为改名为 `choice_index`。
 
 /// Generate a random integer in [lo, hi] (inclusive)
 fn rand_int(lo: i32, hi: i32) -> i32 {
     random_int(lo, hi)
+}
+
+/// 设置确定性随机种子（线程局部）。设置后 `rand_int`/`rand_float`/`shuffle` 等
+/// 产生可复现序列（同 seed 两次结果一致）；换 seed 得不同序列。
+/// 未调用时使用系统 CSPRNG（不可预测，与既有行为一致）。M1-S4a 新增。
+fn rand_seed(seed: i32) {
+    random_seed(seed)
 }
 
 /// Generate a random float in [0.0, 1.0)
@@ -50,18 +58,19 @@ fn choice_index(v: Vec) -> i32 {
     idx
 }
 
-/// ⚠️ 实现不完整（待修，L2.3b 标注）：声称 Shuffle a Vec in place (Fisher-Yates)，
-/// 但实际未真正交换元素（仅生成随机下标未写回；Vec 无 set，rebuild 逻辑缺失），
-/// 原样返回 v。等待标准库部修复。
+/// Shuffle a Vec in place（Fisher-Yates，就地交换），返回洗牌后的同一 Vec。
+/// M1-S4a 修复：此前仅生成随机下标未写回（未真正交换），现用 `set` 就地交换。
+/// 配合 `rand_seed(n)` 可确定性复现（同 seed 同结果，便于测试）。
+/// 空 Vec / 单元素 Vec 原样返回。
 fn shuffle(v: Vec) -> Vec {
     let len = v.len();
     let mut i = len - 1;
     while i > 0 {
+        // 从 [0, i] 均匀选 j，交换 v[i] 与 v[j]（Fisher-Yates 后半段，等价洗牌）
         let j = random_int(0, i);
-        // swap v[i] and v[j]
         let tmp = v.get(i);
-        let vj = v.get(j);
-        // Vec doesn't have set, so we rebuild
+        v.set(i, v.get(j));
+        v.set(j, tmp);
         i = i - 1;
     }
     v

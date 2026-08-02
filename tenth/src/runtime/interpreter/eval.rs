@@ -98,7 +98,7 @@ impl super::Interpreter {
                             | "path_join" | "path_exists" | "path_is_file" | "path_is_dir"
                             | "mkdir" | "list_dir" | "file_size" | "remove_file" | "copy_file" | "rename_file"
                             | "time_now" | "time_now_ms" | "time_date" | "time_time" | "time_datetime" | "time_sleep_ms"
-                            | "random_int" | "random_float"
+                            | "random_int" | "random_float" | "random_seed"
                             | "math_tan" | "math_asin" | "math_acos" | "math_atan" | "math_atan2"
                             | "math_sinh" | "math_cosh" | "math_tanh" | "math_log10" | "math_log2" | "math_exp" | "math_pow"
                             | "math_floor" | "math_ceil" | "math_round"
@@ -412,18 +412,35 @@ impl super::Interpreter {
                 }
             }
 
-            HirExprKind::Closure { params, body, captures } => {
+            HirExprKind::Closure { params, body, captures, self_refs } => {
                 // Capture the values of free variables from the current scope
                 let captured_values: Vec<(String, Value)> = captures.iter()
                     .filter_map(|name| {
                         self.resolve_var(name).map(|v| (name.clone(), v))
                     })
                     .collect();
-                Ok(Some(Value::Closure {
+                // M1-S2（true letrec）：自引用名建可变 cell（Value::Shared 空槽）加入
+                // captures，闭包创建后再绑定自身（cell = 闭包值）。每实例独立（逃逸
+                // 定义作用域后 cell 随闭包走），不再按名/作用域链解析——根治
+                // AUDIT-11.4.30「逃逸作用域报未定义变量 / 多实例别名静默错值」。
+                let mut self_cells: Vec<(String, Value)> = Vec::new();
+                for name in self_refs {
+                    self_cells.push((name.clone(), Value::Shared(Rc::new(RefCell::new(Value::Unit)))));
+                }
+                let mut all_captures = captured_values;
+                all_captures.extend(self_cells.iter().cloned());
+                let closure_value = Value::Closure {
                     params: params.clone(),
                     body: Rc::new((**body).clone()),
-                    captures: captured_values,
-                }))
+                    captures: all_captures,
+                };
+                // 绑定自身：cell = 闭包值（自引用 Rc 环，运行时持活，程序生命周期内可达）
+                for (_, cell) in &self_cells {
+                    if let Value::Shared(rc) = cell {
+                        *rc.borrow_mut() = closure_value.clone();
+                    }
+                }
+                Ok(Some(closure_value))
             }
 
             HirExprKind::Range { start, end, inclusive } => {
@@ -758,6 +775,12 @@ impl super::Interpreter {
     pub(super) fn eval_call(
         &mut self, func: &Value, args: &[Value], span: &crate::lexer::token::Span,
     ) -> TenthResult<Option<Value>> {
+        // M1-S2（true letrec）：自引用 cell（Value::Shared）解包后递归调用——闭包体
+        // `Var(self_ref)` 解析到 cell，须解出内部闭包再调用。
+        if let Value::Shared(rc) = func {
+            let inner = rc.borrow().clone();
+            return self.eval_call(&inner, args, span);
+        }
         match func {
             Value::FnRef { name, .. } => {
                 self.call_named_fn(name, args, span)

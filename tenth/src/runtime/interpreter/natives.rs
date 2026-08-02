@@ -2423,6 +2423,15 @@ impl super::Interpreter {
                     message: "date_day_of_week(days) 期望一个整数".into(),
                 });
             }
+            // M1-S4a：设置确定性随机种子（线程局部）；配合 shuffle/rand_int 可复现序列。
+            "random_seed" => {
+                let seed = match args.first() {
+                    Some(Value::Int(n, _)) => *n as u64,
+                    _ => 0,
+                };
+                crate::runtime::natives::set_seeded_rng(Some(seed));
+                return Ok(Some(Value::Unit));
+            }
             // Random functions — 使用 rand crate 的 CSPRNG（thread_rng），
             // 与 VM 路径（runtime/natives.rs 第 941-963 行）对齐。
             // 历史 `DefaultHasher` + SystemTime 方案可被攻击者枚举纳秒时刻预测输出。
@@ -2440,13 +2449,21 @@ impl super::Interpreter {
                 let (low, high) = if lo <= hi { (lo, hi) } else { (hi, lo) };
                 // 用 u64 全域取模，避免 i64 范围回绕到负数
                 let range = (high as u64).saturating_sub(low as u64).saturating_add(1).max(1);
-                let r: u64 = rand::thread_rng().r#gen();
+                // M1-S4a：已设置 random_seed 时走确定性序列，否则回退 CSPRNG
+                let r: u64 = match crate::runtime::natives::next_seeded_u64() {
+                    Some(r) => r,
+                    None => rand::thread_rng().r#gen(),
+                };
                 return Ok(Some(Value::Int(low + (r % range) as i64, BaseType::I32)));
             }
             "random_float" => {
                 use rand::Rng;
                 // [0, 1) 半开区间，标准做法
-                let r: f64 = rand::thread_rng().r#gen();
+                // M1-S4a：已设置 random_seed 时走确定性序列，否则回退 CSPRNG
+                let r: f64 = match crate::runtime::natives::next_seeded_f64() {
+                    Some(r) => r,
+                    None => rand::thread_rng().r#gen(),
+                };
                 return Ok(Some(Value::Float(r)));
             }
             // Math functions
