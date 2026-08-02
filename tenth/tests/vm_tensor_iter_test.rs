@@ -7,14 +7,20 @@
 // 依赖 tensor 的 `len` 方法（= 第 0 维长度），但 VM tensor 方法分派（natives.rs）缺该分支。
 // 修复：VM natives.rs 与 interpreter methods.rs 双侧补齐 `tensor.len()` = shape[0]。
 //
+// S3b（M1）：1D 张量 for-in 元素形态统一——VM IndexGet 对 1D 给标量 Float（NumPy
+// 单索引沿第 0 维降维 → 0D 标量），解释器 For-Tensor 分支此前给 [1] 形状 1 元素张量；
+// 修复解释器 1D 分支为标量，VM=解释器一致。2D 行迭代（matfact/sobel）不回归。
+//
 // 本测试用纯 VM（无 JIT）守护：
 //   1. `tensor.len()` 返回第 0 维长度（行数）
 //   2. `for row in tensor` 逐行迭代（IndexGet 取行子张量），行内容正确
-//   3. Range / Vec 既有 for-in 迭代不回归
+//   3. `for x in 1D tensor` 元素为标量（VM=解释器对拍）
+//   4. Range / Vec 既有 for-in 迭代不回归
 use tenth::compile::bytecode::BytecodeCompiler;
 use tenth::hir::lower::Lowerer;
 use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
+use tenth::runtime::interpreter::Interpreter;
 use tenth::runtime::natives::register_all_natives;
 use tenth::runtime::value::Value;
 use tenth::runtime::vm::Vm;
@@ -46,6 +52,18 @@ fn run_plain_vm(src: &str) -> Result<Value, String> {
         }
     }
     vm.call("main").map_err(|e| e.to_string())
+}
+
+/// 解释器路径（tree-walk），用于 VM=解释器对拍。
+fn run_plain_interp(src: &str) -> Result<Value, String> {
+    let tokens = Lexer::new(src).tokenize().map_err(|e| e.to_string())?;
+    let program = Parser::new(tokens).parse_program().map_err(|e| e.to_string())?;
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).map_err(|e| e.to_string())?;
+    let mut interp = Interpreter::new(&hir);
+    interp.execute_program(&hir)
+        .map(|v| v.unwrap_or(Value::Unit))
+        .map_err(|e| e.to_string())
 }
 
 #[test]
@@ -130,4 +148,74 @@ fn vm_for_in_range_vec_no_regression() {
     let r = run_plain_vm(src).unwrap();
     assert!(matches!(r, Value::Int(n, _) if n == 660),
         "Range/Vec for-in 应得 660，实际 {:?}", r);
+}
+
+#[test]
+fn vm_for_in_1d_tensor_scalar_elements() {
+    // S3b：1D 张量 for-in 元素形态统一——VM IndexGet 给标量 Float。
+    // `tensor[[1,2,3]].flatten()` → 1D [3]；`for x in v` 的 x 必须是标量：
+    // 若为 [1] 张量，`total + x`（Float + 张量）会广播成张量，最终值类型不匹配。
+    let src = r#"
+        fn main() -> f64 {
+            let v = tensor[[1.0, 2.0, 3.0]].flatten();
+            let mut total: f64 = 0.0;
+            let mut count: f64 = 0.0;
+            for x in v {
+                total = total + x;
+                count = count + 1.0;
+            };
+            let ok_count: f64 = if count == 3.0 { 1.0 } else { 0.0 };
+            let ok_total: f64 = if total == 6.0 { 1.0 } else { 0.0 };
+            ok_count * 100.0 + ok_total * 10.0 + count
+        }
+    "#;
+    let r = run_plain_vm(src).unwrap();
+    // 期望: 1*100 + 1*10 + 3 = 113，且必须是 Float（标量求和）
+    assert!(matches!(r, Value::Float(v) if (v - 113.0).abs() < 1e-9),
+        "VM for x in 1D tensor 应为标量元素求和 total=6（113），实际 {:?}", r);
+}
+
+#[test]
+fn interp_for_in_1d_tensor_scalar_elements() {
+    // S3b：解释器 1D 张量 for-in 元素形态与 VM 统一（标量 Float）。
+    // 修复前解释器给 [1] 形状 1 元素张量（total 变张量 → 结果不匹配）。
+    let src = r#"
+        fn main() -> f64 {
+            let v = tensor[[1.0, 2.0, 3.0]].flatten();
+            let mut total: f64 = 0.0;
+            let mut count: f64 = 0.0;
+            for x in v {
+                total = total + x;
+                count = count + 1.0;
+            };
+            let ok_count: f64 = if count == 3.0 { 1.0 } else { 0.0 };
+            let ok_total: f64 = if total == 6.0 { 1.0 } else { 0.0 };
+            ok_count * 100.0 + ok_total * 10.0 + count
+        }
+    "#;
+    let r = run_plain_interp(src).unwrap();
+    assert!(matches!(r, Value::Float(v) if (v - 113.0).abs() < 1e-9),
+        "解释器 for x in 1D tensor 应给标量元素（113），实际 {:?}", r);
+}
+
+#[test]
+fn vm_interp_1d_tensor_for_in_parity() {
+    // S3b 对拍：同一程序 VM 与解释器结果一致（元素形态统一后）
+    let src = r#"
+        fn main() -> f64 {
+            let v = tensor[[1.0, 2.0, 3.0]].flatten();
+            let mut total: f64 = 0.0;
+            for x in v { total = total + x; };
+            total
+        }
+    "#;
+    let vm = run_plain_vm(src).unwrap();
+    let interp = run_plain_interp(src).unwrap();
+    match (vm, interp) {
+        (Value::Float(a), Value::Float(b)) => {
+            assert!((a - 6.0).abs() < 1e-9 && (a - b).abs() < 1e-9,
+                "VM=解释器 1D 标量求和应一致且=6，VM={} 解释器={}", a, b);
+        }
+        (vm, interp) => panic!("两路径都应为 Float(6.0)，VM={:?} 解释器={:?}", vm, interp),
+    }
 }

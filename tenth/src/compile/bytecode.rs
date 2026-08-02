@@ -38,10 +38,11 @@ pub struct BytecodeCompiler {
     current_fn_args: usize,
     /// True if the current expression is in tail-call position
     tail_call_ok: bool,
-    /// M3.5：是否编译顶层（main/globals）chunk。
-    /// 顶层 `let` 写全局表（成为程序全局）；函数/闭包内 `let` 若名字是程序
-    /// 全局（global_names 命中）则为 shadow，不写全局（避免覆盖），
-    /// 非全局名保持旧行为（StoreGlobal 供 VM 按名调用闭包）。
+    /// M3.5/S4b：是否编译顶层（main/globals）chunk。
+    /// 顶层 `let` 写全局表（成为程序全局）；函数/闭包内 `let` 只存 local，
+    /// 不镜像进全局表（S4b：消除 Rc/Weak 全局强引用泄漏，VM=解释器一致；
+    /// 闭包经 local 槽 CallClosure、捕获值内联，无需全局镜像按名调用）。
+    /// 程序全局 shadow（`let PI = 99`）由不写全局保证不覆盖全局。
     is_main: bool,
     /// M3.5：程序级全局名集合（顶层 let / use 导入）。
     global_names: std::collections::HashSet<String>,
@@ -367,21 +368,20 @@ impl BytecodeCompiler {
                     self.chunk.emit(Op::Store(pos));
                     false
                 };
-                // M3.5：若目标是「函数内 shadow 全局的局部」则不再写全局表
-                // （否则 `fn f() { let x = 1; x = 2; }` 会覆盖全局 x）。
-                // 其余情况保持旧行为（写全局供 closure FnRef 按名调用，
-                // 以及顶层/真实全局写入）。
-                // Also store as global so closure FnRef values can be called by name.
+                // S4b：写全局表判定——仅顶层（main/globals chunk）或真实程序全局
+                // 写全局；函数内局部赋值不再镜像（消除 Rc/Weak 全局强引用泄漏，
+                // 与 let 修复一致，VM=解释器；AssignOp 本就只写 local 可对照）。
+                // `fn f() { let x = 1; x = 2; }` 不再覆盖全局 x（局部只写 local）。
                 // Dup again so the assigned value remains on the stack (Assign is an
                 // expression and must produce a value — needed for block expressions
                 // like `{ x = 5; x }` and `let y = { x = 5; x }`).
-                let shadow_of_global = !self.is_main && is_local && self.global_names.contains(target);
+                let write_global = self.is_main || (!is_local && self.global_names.contains(target));
                 self.chunk.emit(Op::Dup);
-                if shadow_of_global {
-                    self.chunk.emit(Op::Pop);
-                } else {
+                if write_global {
                     let gi = self.chunk.add_string(target);
                     self.chunk.emit(Op::StoreGlobal(gi));
+                } else {
+                    self.chunk.emit(Op::Pop);
                 }
             }
 
@@ -1035,16 +1035,40 @@ impl BytecodeCompiler {
         Ok(())
     }
 
+    /// S4b：`let x: T;`（带类型注解、无 init）的零值默认——与解释器 default_value_for 一致。
+    /// str→""、i64/i32 等→0（Int(0, I32)，与整数字面量 0 一致）、f64→0.0、f32→0.0f32、
+    /// bool→false；其余类型回退 Unit。
+    fn emit_default_value(&mut self, ty: Option<&Type>) {
+        use crate::hir::types::BaseType;
+        match ty {
+            Some(Type::Base(BaseType::Str)) => {
+                let i = self.chunk.add_string("");
+                self.chunk.emit(Op::PushStr(i));
+            }
+            Some(Type::Base(BaseType::Bool)) => self.chunk.emit(Op::PushBool(false)),
+            Some(Type::Base(BaseType::F64)) => self.chunk.emit(Op::PushFloat(0.0)),
+            Some(Type::Base(BaseType::F32)) | Some(Type::Base(BaseType::F16))
+                | Some(Type::Base(BaseType::BF16)) => self.chunk.emit(Op::PushFloat32(0.0)),
+            Some(Type::Base(BaseType::I8)) | Some(Type::Base(BaseType::I16))
+                | Some(Type::Base(BaseType::I32)) | Some(Type::Base(BaseType::I64))
+                | Some(Type::Base(BaseType::U8)) | Some(Type::Base(BaseType::U16))
+                | Some(Type::Base(BaseType::U32)) | Some(Type::Base(BaseType::U64))
+                | Some(Type::Base(BaseType::BigInt)) => self.chunk.emit(Op::PushInt(0)),
+            _ => self.chunk.emit(Op::PushUnit),
+        }
+    }
+
     fn compile_stmt(&mut self, stmt: &HirStmt) -> TenthResult<()> {
         // B 批（VM 报错行号）：语句边界记录行号——覆盖无 init 的 let / 裸 return /
         // break / continue 等不经过 compile_expr 的语句，保证语句级粒度完整。
         self.chunk.note_line(stmt.span.line);
         match &stmt.kind {
-            HirStmtKind::Let { names, init, .. } => {
+            HirStmtKind::Let { names, init, type_ann, .. } => {
                 if let Some(e) = init {
                     self.compile_expr(e)?;
                 } else {
-                    self.chunk.emit(Op::PushUnit);
+                    // S4b：无 init 的 let（须带类型注解）→ 类型零值默认（与解释器一致）
+                    self.emit_default_value(type_ann.as_ref());
                 }
                 if names.len() == 1 {
                     // Single binding: store entire value
@@ -1052,12 +1076,12 @@ impl BytecodeCompiler {
                     self.locals.push(names[0].clone());
                     self.chunk.emit(Op::Dup);
                     self.chunk.emit(Op::Store(pos));
-                    // M3.5：写全局表的判定：
-                    // - 顶层（main/globals chunk）：总是写全局（顶层 let 成为全局）
-                    // - 函数/闭包内：仅当名字是程序全局时为 shadow，不写全局
-                    //   （避免函数内 `let PI = 99` 覆盖全局 PI）；
-                    //   非全局名保持旧行为（StoreGlobal 供 VM 按名调用闭包）。
-                    if self.is_main || !self.global_names.contains(&names[0]) {
+                    // S4b：写全局表的判定——仅顶层（main/globals chunk）写全局
+                    // （顶层 let 成为程序全局）；函数/闭包内 let 只存 local，不再
+                    // 镜像进全局表（消除 Rc/Weak 全局强引用泄漏——函数返回后局部
+                    // let 应随作用域释放，VM=解释器一致）。闭包经 local 槽
+                    // CallClosure、捕获值内联（a1 P3），无需全局镜像按名调用。
+                    if self.is_main {
                         let gi = self.chunk.add_string(&names[0]);
                         self.chunk.emit(Op::StoreGlobal(gi));
                     } else {
@@ -1076,8 +1100,8 @@ impl BytecodeCompiler {
                         let pos = self.locals.len();
                         self.locals.push(name.clone());
                         self.chunk.emit(Op::Store(pos));   // [Tuple, elem]
-                        // M3.5：与单名一致——顶层写全局；函数内 shadow 全局不写
-                        if self.is_main || !self.global_names.contains(name) {
+                        // S4b：与单名一致——仅顶层写全局；函数内只存 local
+                        if self.is_main {
                             let gi = self.chunk.add_string(name);
                             self.chunk.emit(Op::StoreGlobal(gi)); // [Tuple]
                         } else {

@@ -6,16 +6,12 @@
 //! - 弱引用不阻止强引用释放（函数返回后原 Rc 被 drop，weak_strong_count → 0）
 //!
 //! 已知 VM 分歧（既有行为，非本次引入）：
-//! ① VM 的 `Let` 编译为 `Dup + Store(局部) + StoreGlobal(全局镜像)`——局部
-//!    变量同时镜像到全局表，函数返回后全局仍持有 Rc 强引用，因此 VM 路径**不能**
-//!    用「函数边界 let 绑定」验证 drop 语义。VM 侧 drop 验证改用「临时 Rc
-//!    （无 let 绑定）」形式（临时实参在 native 调用后正确释放）；函数边界 drop
-//!    的干净语义测试保留在解释器（作用域 pop_scope 正确释放局部变量）。
-//! ② 计数 native（weak_strong_count/weak_weak_count）的**绝对/相对计数**在 VM
-//!    下受全局镜像与操作数栈残留影响而不可靠（每 let 绑定的句柄被复制到全局表）。
-//!    故计数测试仅保留在解释器（语义干净）；VM 路径只验证功能语义
-//!    （upgrade Some/None、clone、注解、报错），计数 native 为「可选辅助」。
-//!    此分歧已登记汇报总师，供后续 VM Let 全局镜像语义修复时参考。
+//! ① ~~VM 的 `Let` 编译为 `Dup + Store(局部) + StoreGlobal(全局镜像)`~~ **已修复（M1-S4b）**：
+//!    VM 的 let 现在仅顶层写全局，函数内 let 只存 local——函数返回后 Rc 强引用
+//!    正确释放，与解释器一致（见 `test_weak_upgrade_after_drop_none_vm_let_boundary`）。
+//! ② 计数 native（weak_strong_count/weak_weak_count）在 VM 下受操作数栈残留影响
+//!    而不可靠，计数测试仅保留在解释器（语义干净）；VM 路径只验证功能语义
+//!    （upgrade Some/None、clone、注解、报错）。
 //! - `weak_strong_count` / `weak_weak_count` 计数辅助
 //! - `w.clone()`（Weak::clone 共享弱句柄）方法
 //! - 类型注解 `let w: Weak<i64>` 类型检查通过
@@ -284,6 +280,55 @@ fn test_weak_upgrade_after_drop_none_vm() {
     "#;
     let result = run_vm(src).unwrap();
     expect_int(&result, 1, "VM: 临时 Rc 释放后 upgrade → None");
+}
+
+#[test]
+fn test_weak_upgrade_after_drop_none_vm_let_boundary() {
+    // S4b（M1）：VM 函数内 let 不再镜像全局表——`let r = Rc::new(42)` 在函数
+    // 返回后正确释放（Weak 失效 → upgrade None），与解释器一致。
+    // 修复前：全局镜像使 Rc 在全局表存活 → upgrade Some → 返回 0（静默错值）。
+    let src = r#"
+    fn make_weak() -> Weak<i64> {
+        let r = Rc::new(42);
+        Weak::new(r)
+    }
+    fn main() -> i64 {
+        let w = make_weak();
+        let o = weak_upgrade(w);
+        match o {
+            Option::Some(_) => 0,
+            Option::None => 1,
+        }
+    }
+    "#;
+    let result = run_vm(src).unwrap();
+    expect_int(&result, 1, "VM: 函数内 let Rc 返回后释放 → upgrade → None");
+}
+
+#[test]
+fn test_weak_upgrade_after_drop_none_vm_let_boundary_parity() {
+    // S4b 对拍：函数边界 let Rc/Weak 释放语义 VM=解释器一致（都返回 None → 1）
+    let src = r#"
+    fn make_weak() -> Weak<i64> {
+        let r = Rc::new(42);
+        Weak::new(r)
+    }
+    fn main() -> i64 {
+        let w = make_weak();
+        let o = weak_upgrade(w);
+        match o {
+            Option::Some(_) => 0,
+            Option::None => 1,
+        }
+    }
+    "#;
+    let vm = run_vm(src).unwrap();
+    let interp = run(src).unwrap();
+    expect_int(&vm, 1, "VM: 函数边界 let Rc 返回后释放 → None");
+    match interp {
+        Some(v) => expect_int(&v, 1, "解释器: 函数边界 let Rc 返回后释放 → None"),
+        None => panic!("期望 Some(Int(1))"),
+    }
 }
 
 #[test]

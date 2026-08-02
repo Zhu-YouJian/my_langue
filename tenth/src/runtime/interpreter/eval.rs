@@ -17,6 +17,26 @@ use crate::hir::types::Type;
 use crate::runtime::value::Value;
 use crate::runtime::tensor::Tensor;
 
+/// S4b：`let x: T;`（带类型注解、无 init）的零值默认。
+/// 语言语义：带注解的未初始化 let 取类型零值（str→"", i64→0, f64→0.0, bool→false），
+/// 与 VM bytecode 的 `emit_default_value` 一致；tenthc 自举编译器用「先声明后赋值」。
+/// 无注解的无 init let 已在 lower 阶段编译期报错，不会到达这里。
+fn default_value_for(ty: Option<&Type>) -> Value {
+    match ty {
+        Some(Type::Base(BaseType::Str)) => Value::String(String::new()),
+        Some(Type::Base(BaseType::Bool)) => Value::Bool(false),
+        Some(Type::Base(BaseType::F64)) => Value::Float(0.0),
+        Some(Type::Base(BaseType::F32)) | Some(Type::Base(BaseType::F16))
+            | Some(Type::Base(BaseType::BF16)) => Value::Float32(0.0),
+        Some(Type::Base(BaseType::I8)) | Some(Type::Base(BaseType::I16))
+            | Some(Type::Base(BaseType::I32)) | Some(Type::Base(BaseType::I64))
+            | Some(Type::Base(BaseType::U8)) | Some(Type::Base(BaseType::U16))
+            | Some(Type::Base(BaseType::U32)) | Some(Type::Base(BaseType::U64))
+            | Some(Type::Base(BaseType::BigInt)) => Value::Int(0, BaseType::I32),
+        _ => Value::Unit,
+    }
+}
+
 impl super::Interpreter {
     pub(super) fn eval_expr(&mut self, expr: &HirExpr) -> TenthResult<Option<Value>> {
         use HirExprKind;
@@ -826,10 +846,11 @@ impl super::Interpreter {
                 self.eval_expr(e)?;
                 Ok(())
             }
-            HirStmtKind::Let { names, init, .. } => {
+            HirStmtKind::Let { names, init, type_ann, .. } => {
+                // S4b：无 init 的 let（须带类型注解）→ 类型零值默认（str→""、i64→0…）
                 let val = match init {
                     Some(e) => self.eval_expr(e)?.unwrap_or(Value::Unit),
-                    None => Value::Unit,
+                    None => default_value_for(type_ann.as_ref()),
                 };
                 if names.len() == 1 {
                     self.insert_var(names[0].clone(), val);
@@ -987,28 +1008,44 @@ impl super::Interpreter {
                         let tensor = t.borrow();
                         let shape = tensor.shape();
                         let n = shape.first().copied().unwrap_or(0);
-                        let row_size: usize = shape[1..].iter().product();
-                        let flat = tensor.data.as_standard_layout().to_owned();
-                        let slice = flat.as_slice().unwrap_or(&[]);
-                        for i in 0..n {
-                            let start = i * row_size;
-                            let end = (start + row_size).min(slice.len());
-                            let row_data = slice[start..end].to_vec();
-                            let row_shape = if shape.len() > 1 {
-                                shape[1..].to_vec()
-                            } else {
-                                vec![1]
-                            };
-                            let row_tensor = Tensor::from_vec(row_data, row_shape);
-                            let val = Value::Tensor(Rc::new(RefCell::new(row_tensor)));
-                            self.insert_var(var.clone(), val);
-                            match self.eval_stmt(body) {
-                                Ok(()) => {}
-                                Err(e) => match self.classify_loop_signal(&label, e) {
-                                    LoopSignal::Break => break,
-                                    LoopSignal::Continue => continue,
-                                    LoopSignal::Propagate(e) => return Err(e),
-                                },
+                        // S3b：1D 张量 for-in 元素形态统一——1D 的 `for x in tensor`
+                        // 给标量（与解释器 t[i] / VM IndexGet 的 NumPy 语义一致：
+                        // 单索引沿第 0 维降维 → 0D 标量），不再构造 [1] 形状
+                        // 1 元素张量（此前 VM 给标量、解释器给 1 元素张量，分歧）。
+                        // 2D 及 N-D 保持逐行子张量（matfact/sobel 不回归）。
+                        if shape.len() == 1 {
+                            for i in 0..n {
+                                let val = tensor.get(&[i]).map(Value::Float).unwrap_or(Value::Unit);
+                                self.insert_var(var.clone(), val);
+                                match self.eval_stmt(body) {
+                                    Ok(()) => {}
+                                    Err(e) => match self.classify_loop_signal(&label, e) {
+                                        LoopSignal::Break => break,
+                                        LoopSignal::Continue => continue,
+                                        LoopSignal::Propagate(e) => return Err(e),
+                                    },
+                                }
+                            }
+                        } else {
+                            let row_size: usize = shape[1..].iter().product();
+                            let flat = tensor.data.as_standard_layout().to_owned();
+                            let slice = flat.as_slice().unwrap_or(&[]);
+                            for i in 0..n {
+                                let start = i * row_size;
+                                let end = (start + row_size).min(slice.len());
+                                let row_data = slice[start..end].to_vec();
+                                let row_shape = shape[1..].to_vec();
+                                let row_tensor = Tensor::from_vec(row_data, row_shape);
+                                let val = Value::Tensor(Rc::new(RefCell::new(row_tensor)));
+                                self.insert_var(var.clone(), val);
+                                match self.eval_stmt(body) {
+                                    Ok(()) => {}
+                                    Err(e) => match self.classify_loop_signal(&label, e) {
+                                        LoopSignal::Break => break,
+                                        LoopSignal::Continue => continue,
+                                        LoopSignal::Propagate(e) => return Err(e),
+                                    },
+                                }
                             }
                         }
                     }
