@@ -1103,7 +1103,6 @@ impl Lowerer {
                         let parent_path = &path_strs[..path_strs.len()-1];
                         let full_key = path_strs.join("::");
                         let parent_key = parent_path.join("::");
-                        let mut loaded_module: Option<&HirProgram> = None;
                         // 先尝试完整 path（如 std/nn/gelu.th）
                         if !self.modules.contains_key(&full_key) {
                             match self.try_import_file(&path_strs) {
@@ -1129,11 +1128,16 @@ impl Lowerer {
                             }
                         }
                         // 查找加载的模块：先查 full_key，再查 parent_key
-                        if let Some(m) = self.modules.get(&full_key) {
-                            loaded_module = Some(m);
-                        } else if let Some(m) = self.modules.get(&parent_key) {
-                            loaded_module = Some(m);
-                        }
+                        let module_at_full = self.modules.get(&full_key);
+                        let module_at_parent = if module_at_full.is_none() {
+                            self.modules.get(&parent_key)
+                        } else {
+                            None
+                        };
+                        // loaded_from_full：完整 path 本身是模块文件（use std::env → std/env.th）。
+                        // 这决定末段是「模块名」还是「函数名」——模块别名注册只发生在 full 命中时。
+                        let loaded_from_full = module_at_full.is_some();
+                        let loaded_module = module_at_full.or(module_at_parent);
 
                         if let Some(module) = loaded_module {
                             // 先 clone 为拥有值：避免 module（借自 self.modules）
@@ -1153,17 +1157,33 @@ impl Lowerer {
                             }
                             // M3.5：模块顶层 let 全局随 use 导入合并（常量/状态）
                             self.merge_module_globals(&module.globals);
-                            // Define the specifically requested function in scope.
                             // 目标函数可能在 functions（非泛型）或 generic_funcs（泛型）中。
                             let found = module.functions.iter().find(|f| &f.name == fn_name)
                                 .or_else(|| module.generic_funcs.iter().find(|f| &f.name == fn_name));
                             if let Some(fn_def) = found {
+                                // `use path::name` — 末段是函数：导入单个函数（既有行为）。
                                 let param_types = fn_def.params.clone();
                                 let ret_ty = fn_def.return_type.clone();
                                 self.scope.define_fn(alias.clone(), param_types, ret_ty);
                                 if !fn_def.generics.is_empty() {
                                     // 用 alias 作为键，使调用端写 `alias<T>(...)` 能解析到
                                     self.generic_funcs.insert(alias.clone(), fn_def.clone());
+                                }
+                            } else if loaded_from_full {
+                                // AUDIT-11.4.23：`use std::env;` 的末段 `env` 不是模块内的
+                                // 函数，而是模块文件本身 → 注册模块别名（`env::get_or_empty(...)`
+                                // 可用）+ 模块全部函数进作用域（裸名调用也可用，手册 §12.14.2
+                                // 同时使用 `env::get_or_empty` 与裸 `exit`）。
+                                self.module_aliases.insert(alias.clone(), full_key.clone());
+                                for fn_def in &module.functions {
+                                    let param_types = fn_def.params.clone();
+                                    let ret_ty = fn_def.return_type.clone();
+                                    self.scope.define_fn(fn_def.name.clone(), param_types, ret_ty);
+                                }
+                                for fn_def in &module.generic_funcs {
+                                    let param_types = fn_def.params.clone();
+                                    let ret_ty = fn_def.return_type.clone();
+                                    self.scope.define_fn(fn_def.name.clone(), param_types, ret_ty);
                                 }
                             }
                         } else {

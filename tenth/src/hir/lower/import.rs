@@ -38,6 +38,19 @@ impl Lowerer {
             if mod_file.exists() {
                 return self.load_and_compile_file(&mod_file, &canonical_key);
             }
+
+            // Try <search_dir>/<rel_path>/<last_segment>.th
+            // （目录型模块：`use std::collections;` → std/collections/collections.th，
+            //   与头部注释第 3 条一致；此前未实现导致目录模块裸引用成为静默 no-op。
+            //   AUDIT-11.4.23 模块别名导入的前置。）
+            if let Some(last) = mod_path.last() {
+                let dir_mod = std::path::Path::new(search_dir)
+                    .join(&rel_path)
+                    .join(format!("{}.th", last));
+                if dir_mod.exists() {
+                    return self.load_and_compile_file(&dir_mod, &canonical_key);
+                }
+            }
         }
 
         Ok(None)

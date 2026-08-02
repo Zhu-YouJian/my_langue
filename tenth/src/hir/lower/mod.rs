@@ -41,6 +41,11 @@ pub struct Lowerer {
     generic_enums: HashMap<String, HirGenericEnum>,
     methods: HashMap<String, HashMap<String, HirFnDef>>,
     modules: HashMap<String, HirProgram>,
+    /// AUDIT-11.4.23：模块别名映射（别名 → 模块 key）。
+    /// `use std::env;`（末段是模块文件而非函数）时注册 `env → "std::env"`，
+    /// 使 `env::get_or_empty(...)` 这类模块限定调用能解析到底层函数名
+    /// （模块函数已整体进入 self.functions，后端按函数名直接解析）。
+    module_aliases: HashMap<String, String>,
     uses: Vec<(Vec<String>, String)>,
     /// M3.5：程序级顶层 `let` 全局（常量与可变状态）。
     globals: Vec<HirGlobal>,
@@ -318,6 +323,7 @@ impl Lowerer {
             generic_enums: HashMap::new(),
             methods: HashMap::new(),
             modules: HashMap::new(),
+            module_aliases: HashMap::new(),
             uses: Vec::new(),
             globals: Vec::new(),
             trait_defs: HashMap::new(),

@@ -10,6 +10,50 @@ use super::{substitute_type, substitute_expr, check_generic_instantiation_soundn
 use super::Lowerer;
 
 impl Lowerer {
+    /// AUDIT-11.4.23：解析模块限定调用 `mod::fn(...)` / 模块限定函数引用。
+    /// 前置条件：`alias`（首段）是 `use path::mod;` 注册的模块别名（module_aliases）。
+    /// 命中时把 `fn_name` 注册进作用域（含泛型→generic_funcs，供 `mod::fn<T>(...)`
+    /// 显式类型参数调用），并返回对底层函数名的引用——模块函数已整体进入
+    /// `self.functions`/`self.generic_funcs`，后端（bytecode/wasm/解释器）按函数名
+    /// 直接解析，无需额外限定名处理。未命中（非模块别名 / 模块内无此函数）返回 None。
+    fn try_resolve_module_qualified(
+        &mut self,
+        alias: &str,
+        fn_name: &str,
+        span: &Span,
+    ) -> TenthResult<Option<HirExpr>> {
+        let module_key = match self.module_aliases.get(alias) {
+            Some(k) => k.clone(),
+            None => return Ok(None),
+        };
+        let module = match self.modules.get(&module_key) {
+            Some(m) => m.clone(),
+            None => return Ok(None),
+        };
+        // 目标函数可能在 functions（非泛型）或 generic_funcs（泛型）中。
+        let found = module.functions.iter().find(|f| f.name == fn_name)
+            .or_else(|| module.generic_funcs.iter().find(|f| f.name == fn_name));
+        let Some(fn_def) = found else {
+            return Ok(None);
+        };
+        let param_types = fn_def.params.clone();
+        let ret_ty = fn_def.return_type.clone();
+        // 注册进作用域，使后续 resolve_fn_overload 能匹配签名。
+        self.scope.define_fn(fn_name.to_string(), param_types.clone(), ret_ty.clone());
+        if !fn_def.generics.is_empty() {
+            self.generic_funcs.insert(fn_name.to_string(), fn_def.clone());
+        }
+        let ty = Type::FnType {
+            params: param_types.iter().map(|(_, t)| t.clone()).collect(),
+            ret: Box::new(ret_ty),
+        };
+        Ok(Some(HirExpr {
+            kind: HirExprKind::Var(fn_name.to_string()),
+            ty,
+            span: span.clone(),
+        }))
+    }
+
     pub(super) fn lower_expr(&mut self, expr: &ast::Expr) -> TenthResult<HirExpr> {
         use ast::ExprKind;
 
@@ -69,6 +113,12 @@ impl Lowerer {
                                 ty,
                                 span,
                             });
+                        }
+                        // AUDIT-11.4.23：模块限定调用 `mod::fn(...)` —
+                        // 首段是 `use path::mod;` 注册的模块别名时，解析到底层函数名
+                        // （模块函数已整体进入 self.functions，后端按函数名直接解析）。
+                        if let Some(resolved) = self.try_resolve_module_qualified(enum_name, variant, &ident.span)? {
+                            return Ok(resolved);
                         }
                     }
                     (HirExprKind::Var(ident.name.clone()), Type::Unknown)
@@ -1535,21 +1585,31 @@ impl Lowerer {
             }
 
             // f"..." 模板字符串 → 编译为 format("template", arg1, arg2, ...)
+            // 插值 `{expr}` 支持任意表达式；`{expr:spec}` 支持格式说明符
+            // （说明符随模板传递，由 format native 统一解析，与 format() 语义一致）。
             ExprKind::FString(parts) => {
                 let mut template = String::new();
                 let mut args: Vec<HirExpr> = Vec::new();
                 for p in parts {
                     match p {
                         ast::InterpPart::Literal(s) => template.push_str(s),
-                        ast::InterpPart::Expr(var_name) => {
-                            template.push_str("{}");
-                            // Resolve variable by name
-                            let var_expr = HirExpr {
-                                kind: HirExprKind::Var(var_name.clone()),
-                                ty: Type::Unknown,
-                                span: span.clone(),
-                            };
-                            args.push(var_expr);
+                        ast::InterpPart::Expr(expr_text) => {
+                            // 拆分为 表达式 与 格式说明符（第一个顶层 ':' 处）
+                            let (expr_str, spec_opt) = split_fstring_expr_spec(expr_text);
+                            match spec_opt {
+                                Some(spec) => {
+                                    template.push('{');
+                                    template.push(':');
+                                    template.push_str(spec);
+                                    template.push('}');
+                                }
+                                None => template.push_str("{}"),
+                            }
+                            // 将表达式文本重新解析为 AST 并 lower（支持任意表达式，
+                            // 不限于简单标识符）
+                            let expr = parse_fstring_expr(expr_str, &span)?;
+                            let hir = self.lower_expr(&expr)?;
+                            args.push(hir);
                         }
                     }
                 }
@@ -2334,4 +2394,43 @@ fn extract_param_type_from_field(field_ty: &Type, pname: &str, arg_ty: &Type) ->
         }
         _ => None,
     }
+}
+
+/// 将 f-string 插值内容按第一个「顶层 `:`」拆分为 (表达式, 格式说明符)。
+/// `:` 出现在括号/方括号/花括号内（如 `{f(a, b):>5}`）或字符串/字符字面量
+/// 内时不计为说明符分隔符；无分隔符则返回 (text, None)。
+fn split_fstring_expr_spec(text: &str) -> (&str, Option<&str>) {
+    let mut depth: i32 = 0;
+    let mut in_dquote = false;
+    let mut in_squote = false;
+    for (i, c) in text.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            '"' if !in_squote => in_dquote = !in_dquote,
+            '\'' if !in_dquote => in_squote = !in_squote,
+            ':' if depth == 0 && !in_dquote && !in_squote => {
+                return (&text[..i], Some(&text[i + 1..]));
+            }
+            _ => {}
+        }
+    }
+    (text, None)
+}
+
+/// 将 f-string 插值表达式文本重新解析为 AST 表达式。
+/// 错误统一包装为 TypeError（携带 f-string 所在行列），便于定位。
+fn parse_fstring_expr(text: &str, span: &Span) -> TenthResult<ast::Expr> {
+    let mut lexer = crate::lexer::lexer::Lexer::new(text);
+    let tokens = lexer.tokenize().map_err(|e| TenthError::TypeError {
+        line: span.line,
+        col: span.col,
+        message: format!("f-string 插值表达式解析失败：{}", e),
+    })?;
+    let mut parser = crate::parser::parser::Parser::new(tokens);
+    parser.parse_expr().map_err(|e| TenthError::TypeError {
+        line: span.line,
+        col: span.col,
+        message: format!("f-string 插值表达式解析失败：{}", e),
+    })
 }
