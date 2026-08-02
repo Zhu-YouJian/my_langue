@@ -95,7 +95,7 @@
 | `optim/sgd.th` | 3 | ✅ | `sgd_step`/`sgd_weight_decay`/`sgd_momentum`（tuple）可用 |
 | `prelude.th` | 0 | 空壳 | 索引/文档文件（`use std::prelude::*` 本就不支持） |
 | `process.th` | 4 | ✅ | `new/arg/run/output` 可用（`new` 返回 Result 需 `or_die`） |
-| `random/random.th` | 7 | ✅ | **L2.2 修复**旧语法 `fn choice(v: Vec) i32`（无 `->`）→ `-> i32`，整模块恢复编译；**L2.5 修复** `choice` 语义（返回元素）并新增 `choice_index`，`sample` 同步；`shuffle` 实现不完整（待修） |
+| `random/random.th` | 8 | ✅ | **L2.2 修复**旧语法 `fn choice(v: Vec) i32`（无 `->`）→ `-> i32`，整模块恢复编译；**L2.5 修复** `choice` 语义（返回元素）并新增 `choice_index`，`sample` 同步；**M1-S4a（2026-08-03）`shuffle` 已实现真 Fisher-Yates 就地交换**（此前仅生成随机下标未写回），新增 `rand_seed(n)` 确定性种子（同 seed 可复现，VM=解释器一致，8 项守护测试） |
 | `regex.th` | 6 | ✅ | `compile/match_/find/find_all/replace/split` 可用（`compile` 返回 Result 需 `or_die`） |
 | `runtime.th` | 4 | ✅ | `run_with_limit/limit_or_default/run_with_timeout/timeout_or_default` 双路径可用（走 native `with_*`） |
 | `string/string.th` | 8 | ✅ | `join_lines/join_comma/repeat_sep/indent/word_wrap/is_blank/capitalize/count` 可用 |
