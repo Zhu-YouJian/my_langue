@@ -670,6 +670,13 @@ impl Lowerer {
                     // AUDIT-11.1.5 / T18 修复：body 不能直接 clone，
                     // 必须递归替换 body 中所有 TypeParam，确保实例化后无残留类型变量。
                     let inst_body = substitute_expr(&template.body, &type_map);
+                    // 批次2 C P3：泛型实例化处 trait/inherent 方法改写。
+                    // 模板 body 定义时以 TypeParam("T") 类型 lower（trait_impls 查表
+                    // 不命中保持 MethodCall），实例化后 receiver 已有具体类型——
+                    // 在此处递归应用与普通 MethodCall 分支同源的改写规则
+                    // （inherent `__Type_method` 优先、trait `__dyn_*` 恰一命中其次、
+                    // 都不命中保持 fall-through 响亮报错），使 VM 与解释器一致。
+                    let inst_body = self.rewrite_inst_method_calls(&inst_body);
                     let inst_fn = HirFnDef {
                         name: mangled_name.clone(),
                         params: inst_params,
@@ -2190,6 +2197,270 @@ impl Lowerer {
             },
             ret_ty,
         ))
+    }
+
+    /// 批次2 C P3：泛型实例化 body 内的 MethodCall 编译期改写（单个 MethodCall）。
+    ///
+    /// 与普通 MethodCall 分支同源的改写规则（receiver 在实例化后已有具体类型）：
+    ///   1) inherent 优先：`__{Type}_{method}` mangled 函数存在 → 改写为普通 Call
+    ///      （与普通分支的 candidates 检查同构，`type_mangle_prefix`/`type_method_key`
+    ///      处理泛型状态类型 `File<Open>` → `__File_Open_read` 的特化优先）；
+    ///   2) trait 其次：`try_rewrite_trait_method` **恰好 1 个** trait 命中 →
+    ///      `__dyn_{trait}_{type}_{method}` Call；
+    ///   3) 都不命中 → None（保持 MethodCall fall-through，无匹配/歧义响亮报错）。
+    fn try_rewrite_inst_method_call(
+        &self,
+        recv: &HirExpr,
+        method: &str,
+        args: &[HirExpr],
+        span: &Span,
+    ) -> Option<HirExpr> {
+        // 1) inherent 优先（与普通 MethodCall 分支同源候选检查）。
+        let recv_type_name = match &recv.ty {
+            Type::Struct(name) | Type::TypeParam { name } => Some(name.clone()),
+            Type::Generic { base, .. } => match base.as_ref() {
+                Type::Struct(name) | Type::TypeParam { name } => Some(name.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(type_name) = &recv_type_name {
+            let mut candidates: Vec<String> = Vec::new();
+            if let Some(prefix) = super::type_mangle_prefix(&recv.ty) {
+                candidates.push(format!("__{}_{}", prefix, method));
+            }
+            if let Some(key) = super::type_method_key(&recv.ty) {
+                if key != *type_name {
+                    candidates.push(format!("__{}_{}", type_name, method));
+                }
+            }
+            if let Some(mangled) = candidates.iter().find(|m| {
+                self.functions.iter().any(|f| f.name == **m)
+            }) {
+                let mut all_args = vec![recv.clone()];
+                all_args.extend(args.iter().cloned());
+                let ret_ty = self.resolve_method_type(&recv.ty, method, &all_args);
+                let func = HirExpr {
+                    kind: HirExprKind::Var(mangled.clone()),
+                    ty: Type::Unknown,
+                    span: span.clone(),
+                };
+                let ret_ty2 = ret_ty.clone();
+                return Some(HirExpr {
+                    kind: HirExprKind::Call {
+                        func: Box::new(func),
+                        args: all_args,
+                        ret_ty,
+                    },
+                    ty: ret_ty2,
+                    span: span.clone(),
+                });
+            }
+        }
+        // 2) trait 其次：恰一 trait 命中 → `__dyn_*` Call（0 无匹配 / ≥2 歧义不改写）。
+        if let Some((kind, ty)) = self.try_rewrite_trait_method(recv, method, args, span, None) {
+            return Some(HirExpr {
+                kind,
+                ty: ty.clone(),
+                span: span.clone(),
+            });
+        }
+        None
+    }
+
+    /// 批次2 C P3：泛型实例化 body 内的 MethodCall 编译期改写（表达式递归 walker）。
+    ///
+    /// 背景：泛型模板 body 在定义时以 `TypeParam("T")` 类型 lower——MethodCall
+    /// 分支查 `trait_impls`（键是具体类型名）不命中，保持 plain MethodCall；实例化
+    /// 时 `substitute_expr` 已把 TypeParam 替换为具体类型，但 body 内的 MethodCall
+    /// 未被改写——VM 的 `call_method_priv` 对 Value::Struct 只做字段访问、不查
+    /// trait/inherent 表，报「没有方法」（解释器按运行时值类型查表可用），两路径
+    /// 不一致（P3 场景）。本 walker 在实例化点对实例化 body 递归应用改写规则。
+    fn rewrite_inst_method_calls(&self, expr: &HirExpr) -> HirExpr {
+        let span = expr.span.clone();
+        let kind = match &expr.kind {
+            HirExprKind::MethodCall { receiver, method, args, ret_ty } => {
+                let recv = self.rewrite_inst_method_calls(receiver);
+                let lowered_args: Vec<HirExpr> = args.iter()
+                    .map(|a| self.rewrite_inst_method_calls(a))
+                    .collect();
+                if let Some(rw) = self.try_rewrite_inst_method_call(&recv, method, &lowered_args, &span) {
+                    return rw;
+                }
+                HirExprKind::MethodCall {
+                    receiver: Box::new(recv),
+                    method: method.clone(),
+                    args: lowered_args,
+                    ret_ty: ret_ty.clone(),
+                }
+            }
+            HirExprKind::Binary { op, left, right, ty } => {
+                let l = self.rewrite_inst_method_calls(left);
+                let r = self.rewrite_inst_method_calls(right);
+                HirExprKind::Binary { op: op.clone(), left: Box::new(l), right: Box::new(r), ty: ty.clone() }
+            }
+            HirExprKind::Unary { op, expr: inner, ty } => {
+                HirExprKind::Unary { op: op.clone(), expr: Box::new(self.rewrite_inst_method_calls(inner)), ty: ty.clone() }
+            }
+            HirExprKind::Call { func, args, ret_ty } => {
+                let f = self.rewrite_inst_method_calls(func);
+                let a = args.iter().map(|x| self.rewrite_inst_method_calls(x)).collect();
+                HirExprKind::Call { func: Box::new(f), args: a, ret_ty: ret_ty.clone() }
+            }
+            HirExprKind::GenericCall { func, generics, args, ret_ty } => {
+                let f = self.rewrite_inst_method_calls(func);
+                let a = args.iter().map(|x| self.rewrite_inst_method_calls(x)).collect();
+                HirExprKind::GenericCall { func: Box::new(f), generics: generics.clone(), args: a, ret_ty: ret_ty.clone() }
+            }
+            HirExprKind::Index { target, indices } => {
+                let t = self.rewrite_inst_method_calls(target);
+                let idxs = indices.iter().map(|ix| match ix {
+                    Index::Single(e) => Index::Single(self.rewrite_inst_method_calls(e)),
+                    Index::Range { start, end } => Index::Range {
+                        start: start.as_ref().map(|s| Box::new(self.rewrite_inst_method_calls(s))),
+                        end: end.as_ref().map(|e| Box::new(self.rewrite_inst_method_calls(e))),
+                    },
+                    Index::Colon => Index::Colon,
+                }).collect();
+                HirExprKind::Index { target: Box::new(t), indices: idxs }
+            }
+            HirExprKind::Field { target, field } => {
+                HirExprKind::Field { target: Box::new(self.rewrite_inst_method_calls(target)), field: field.clone() }
+            }
+            HirExprKind::TensorLiteral { data, ty } => {
+                let d = data.iter().map(|row| row.iter().map(|e| self.rewrite_inst_method_calls(e)).collect()).collect();
+                HirExprKind::TensorLiteral { data: d, ty: ty.clone() }
+            }
+            HirExprKind::ArrayLiteral { elements, ty } => {
+                let e = elements.iter().map(|x| self.rewrite_inst_method_calls(x)).collect();
+                HirExprKind::ArrayLiteral { elements: e, ty: ty.clone() }
+            }
+            HirExprKind::Range { start, end, inclusive } => {
+                HirExprKind::Range {
+                    start: start.as_ref().map(|s| Box::new(self.rewrite_inst_method_calls(s))),
+                    end: end.as_ref().map(|e| Box::new(self.rewrite_inst_method_calls(e))),
+                    inclusive: *inclusive,
+                }
+            }
+            HirExprKind::If { cond, then_branch, else_branch, ty } => {
+                let c = self.rewrite_inst_method_calls(cond);
+                let t = self.rewrite_inst_method_calls(then_branch);
+                let e = else_branch.as_ref().map(|eb| Box::new(self.rewrite_inst_method_calls(eb)));
+                HirExprKind::If { cond: Box::new(c), then_branch: Box::new(t), else_branch: e, ty: ty.clone() }
+            }
+            HirExprKind::Block { stmts, final_expr } => {
+                let s = stmts.iter().map(|st| self.rewrite_inst_method_calls_stmt(st)).collect();
+                let f = final_expr.as_ref().map(|fe| Box::new(self.rewrite_inst_method_calls(fe)));
+                HirExprKind::Block { stmts: s, final_expr: f }
+            }
+            HirExprKind::Closure { params, body, captures } => {
+                HirExprKind::Closure {
+                    params: params.clone(),
+                    body: Box::new(self.rewrite_inst_method_calls(body)),
+                    captures: captures.clone(),
+                }
+            }
+            HirExprKind::Assign { target, value } => {
+                HirExprKind::Assign { target: target.clone(), value: Box::new(self.rewrite_inst_method_calls(value)) }
+            }
+            HirExprKind::AssignOp { target, op, value } => {
+                HirExprKind::AssignOp { target: target.clone(), op: op.clone(), value: Box::new(self.rewrite_inst_method_calls(value)) }
+            }
+            HirExprKind::StructLiteral { name, fields, has_default } => {
+                let f = fields.iter().map(|(n, v)| (n.clone(), self.rewrite_inst_method_calls(v))).collect();
+                HirExprKind::StructLiteral { name: name.clone(), fields: f, has_default: *has_default }
+            }
+            HirExprKind::UnionLiteral { name, active_field, value } => {
+                HirExprKind::UnionLiteral { name: name.clone(), active_field: active_field.clone(), value: Box::new(self.rewrite_inst_method_calls(value)) }
+            }
+            HirExprKind::EnumLiteral { enum_name, variant, fields } => {
+                let f = fields.iter().map(|(n, v)| (n.clone(), self.rewrite_inst_method_calls(v))).collect();
+                HirExprKind::EnumLiteral { enum_name: enum_name.clone(), variant: variant.clone(), fields: f }
+            }
+            HirExprKind::Match { scrutinee, arms } => {
+                let s = self.rewrite_inst_method_calls(scrutinee);
+                let a = arms.iter().map(|arm| HirMatchArm {
+                    pattern: arm.pattern.clone(),
+                    guard: arm.guard.as_ref().map(|g| self.rewrite_inst_method_calls(g)),
+                    body: self.rewrite_inst_method_calls(&arm.body),
+                }).collect();
+                HirExprKind::Match { scrutinee: Box::new(s), arms: a }
+            }
+            HirExprKind::Ref(inner) => HirExprKind::Ref(Box::new(self.rewrite_inst_method_calls(inner))),
+            HirExprKind::MutRef(inner) => HirExprKind::MutRef(Box::new(self.rewrite_inst_method_calls(inner))),
+            HirExprKind::Deref(inner) => HirExprKind::Deref(Box::new(self.rewrite_inst_method_calls(inner))),
+            HirExprKind::DerefAssign { target, value } => {
+                HirExprKind::DerefAssign {
+                    target: Box::new(self.rewrite_inst_method_calls(target)),
+                    value: Box::new(self.rewrite_inst_method_calls(value)),
+                }
+            }
+            HirExprKind::DerefAssignOp { target, op, value } => {
+                HirExprKind::DerefAssignOp {
+                    target: Box::new(self.rewrite_inst_method_calls(target)),
+                    op: op.clone(),
+                    value: Box::new(self.rewrite_inst_method_calls(value)),
+                }
+            }
+            HirExprKind::Move(inner) => HirExprKind::Move(Box::new(self.rewrite_inst_method_calls(inner))),
+            HirExprKind::Lossy(inner) => HirExprKind::Lossy(Box::new(self.rewrite_inst_method_calls(inner))),
+            HirExprKind::TryBlock(inner) => HirExprKind::TryBlock(Box::new(self.rewrite_inst_method_calls(inner))),
+            HirExprKind::Await(inner) => HirExprKind::Await(Box::new(self.rewrite_inst_method_calls(inner))),
+            HirExprKind::Spawn(inner) => HirExprKind::Spawn(Box::new(self.rewrite_inst_method_calls(inner))),
+            HirExprKind::Yield(inner) => HirExprKind::Yield(inner.as_ref().map(|i| Box::new(self.rewrite_inst_method_calls(i)))),
+            HirExprKind::InterpolatedString { parts } => HirExprKind::InterpolatedString { parts: parts.clone() },
+            HirExprKind::Tuple(items) => {
+                HirExprKind::Tuple(items.iter().map(|x| self.rewrite_inst_method_calls(x)).collect())
+            }
+            HirExprKind::FieldAssign { target, field, value } => {
+                HirExprKind::FieldAssign {
+                    target: Box::new(self.rewrite_inst_method_calls(target)),
+                    field: field.clone(),
+                    value: Box::new(self.rewrite_inst_method_calls(value)),
+                }
+            }
+            // 无子表达式的叶子变体。
+            HirExprKind::Literal(_) | HirExprKind::Var(_) => expr.kind.clone(),
+        };
+        HirExpr { kind, ty: expr.ty.clone(), span }
+    }
+
+    /// `rewrite_inst_method_calls` 的语句版本（Block 的 stmts 用）。
+    fn rewrite_inst_method_calls_stmt(&self, stmt: &HirStmt) -> HirStmt {
+        let span = stmt.span.clone();
+        let kind = match &stmt.kind {
+            HirStmtKind::Let { names, type_ann, mutable, init } => {
+                HirStmtKind::Let {
+                    names: names.clone(),
+                    type_ann: type_ann.clone(),
+                    mutable: *mutable,
+                    init: init.as_ref().map(|e| self.rewrite_inst_method_calls(e)),
+                }
+            }
+            HirStmtKind::Expr(e) => HirStmtKind::Expr(self.rewrite_inst_method_calls(e)),
+            HirStmtKind::Return(e) => HirStmtKind::Return(e.as_ref().map(|e| self.rewrite_inst_method_calls(e))),
+            HirStmtKind::While { label, cond, body } => {
+                let c = self.rewrite_inst_method_calls(cond);
+                HirStmtKind::While { label: label.clone(), cond: c, body: Box::new(self.rewrite_inst_method_calls_stmt(body)) }
+            }
+            HirStmtKind::DoWhile { label, body, cond } => {
+                let c = self.rewrite_inst_method_calls(cond);
+                HirStmtKind::DoWhile { label: label.clone(), body: Box::new(self.rewrite_inst_method_calls_stmt(body)), cond: c }
+            }
+            HirStmtKind::For { label, var, iter, body } => {
+                let i = self.rewrite_inst_method_calls(iter);
+                HirStmtKind::For { label: label.clone(), var: var.clone(), iter: i, body: Box::new(self.rewrite_inst_method_calls_stmt(body)) }
+            }
+            HirStmtKind::Break { label, value } => {
+                HirStmtKind::Break { label: label.clone(), value: value.as_ref().map(|v| Box::new(self.rewrite_inst_method_calls(v))) }
+            }
+            HirStmtKind::Continue { label } => HirStmtKind::Continue { label: label.clone() },
+            HirStmtKind::Loop { label, body } => {
+                let b = body.iter().map(|st| self.rewrite_inst_method_calls_stmt(st)).collect();
+                HirStmtKind::Loop { label: label.clone(), body: b }
+            }
+        };
+        HirStmt { kind, span }
     }
 
     /// 收集当前作用域中所有实现了 Drop trait 的变量。
