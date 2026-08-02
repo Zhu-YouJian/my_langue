@@ -3,7 +3,7 @@
 
 use wasm_encoder::{
     CodeSection, ConstExpr, DataSection, ElementSection, Elements, EntityType, ExportKind,
-    ExportSection, FunctionSection, ImportSection, MemorySection, MemoryType, Module,
+    ExportSection, FunctionSection, GlobalSection, ImportSection, MemorySection, MemoryType, Module,
     RefType, TableSection, TableType, TypeSection, ValType,
 };
 use crate::error::TenthResult;
@@ -44,6 +44,9 @@ impl WasmCompiler {
         reg(vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I64]); // 17: tensor_from_vec(data_ptr, len, rank) -> tensor_handle
         // Phase 5.2 F1：host_make_tensor_f16/bf16 复用相同签名 (i32,i32,i32)->i64，
         // type_cache 会去重，所以 type 索引仍为 12（与 tensor_from_vec 共享）
+        // M1-S1（P4）：标量 math host 函数 sin/cos/ln（f64->f64）与 pow（f64,f64->f64）
+        reg(vec![ValType::F64], vec![ValType::F64]);                                // 18: sin/cos/ln
+        reg(vec![ValType::F64, ValType::F64], vec![ValType::F64]);                  // 19: pow
         for func in &program.functions {
             let p: Vec<ValType> = func.params.iter().filter_map(|(_, t)| to_val_type(t)).collect();
             let r: Vec<ValType> = to_val_type(&func.return_type).into_iter().collect();
@@ -93,6 +96,11 @@ impl WasmCompiler {
         // Phase 5.2 F1：F16/BF16 张量专用 hostcall（与 tensor_from_vec 同签名）
         imports.import("host", "host_make_tensor_f16", EntityType::Function(ti(vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I64])));
         imports.import("host", "host_make_tensor_bf16", EntityType::Function(ti(vec![ValType::I32, ValType::I32, ValType::I32], vec![ValType::I64])));
+        // M1-S1（P4）：标量 math host 函数
+        imports.import("host", "host_sin", EntityType::Function(ti(vec![ValType::F64], vec![ValType::F64])));
+        imports.import("host", "host_cos", EntityType::Function(ti(vec![ValType::F64], vec![ValType::F64])));
+        imports.import("host", "host_ln", EntityType::Function(ti(vec![ValType::F64], vec![ValType::F64])));
+        imports.import("host", "host_pow", EntityType::Function(ti(vec![ValType::F64, ValType::F64], vec![ValType::F64])));
         module.section(&imports);
     }
 
@@ -142,10 +150,25 @@ impl WasmCompiler {
         module.section(&tables);
     }
 
-    /// Global section: no-op for Rust backend (bump pointer is host-managed).
-    pub(super) fn emit_global_section(&self, _module: &mut Module) {
-        // The Rust host manages the bump allocator offset via store state (u32),
-        // so no WASM global is needed.
+    /// Global section: 程序级顶层 let 全局（M1-S1 P3）。
+    /// 每个全局声明一个 mut i64 WASM 全局（初始 0），函数体经 GlobalGet/GlobalSet
+    /// 访问；main 开头求值 init 后 GlobalSet 初始化。bump pointer 仍由 host 管理
+    /// （无需 WASM 全局）。
+    pub(super) fn emit_global_section(&mut self, module: &mut Module, program: &HirProgram) {
+        let mut globals = GlobalSection::new();
+        let mut gi = 0u32;
+        for g in &program.globals {
+            if g.name.is_empty() {
+                continue;
+            }
+            self.global_map.insert(g.name.clone(), gi);
+            globals.global(
+                wasm_encoder::GlobalType { val_type: ValType::I64, mutable: true, shared: false },
+                &ConstExpr::i64_const(0),
+            );
+            gi += 1;
+        }
+        module.section(&globals);
     }
 
     /// D5.2: Emit element section to fill the table with closure function indices.

@@ -103,7 +103,13 @@ pub(super) const HOST_TENSOR_FROM_VEC: u32 = 17;
 // 通过 hostcall 在 host 侧构造 TensorData，数据从 WASM 线性内存读取）
 pub(super) const HOST_MAKE_TENSOR_F16: u32 = 18;
 pub(super) const HOST_MAKE_TENSOR_BF16: u32 = 19;
-pub(super) const IMPORT_COUNT: u32 = HOST_MAKE_TENSOR_BF16 + 1;
+// M1-S1（P4）：标量 math native（sin/cos/ln/pow）host 函数。
+// sqrt/abs 用 WASM 原生指令内联，不需要 host import。
+pub(super) const HOST_SIN: u32 = 20;
+pub(super) const HOST_COS: u32 = 21;
+pub(super) const HOST_LN: u32 = 22;
+pub(super) const HOST_POW: u32 = 23;
+pub(super) const IMPORT_COUNT: u32 = HOST_POW + 1;
 
 pub struct WasmCompiler {
     type_cache: HashMap<(Vec<ValType>, Vec<ValType>), u32>,
@@ -118,10 +124,21 @@ pub struct WasmCompiler {
     local_count: u32,
     /// Number of function parameters (params use correct WASM types, not i64)
     param_count: u32,
-    /// Stack of (If-block depth, break_offset) per enclosing loop.
+    /// Stack of (If-block depth, break_offset, loop_label) per enclosing loop.
     /// Break emits Br(1 + break_offset + if_depth), Continue emits Br(if_depth).
     /// break_offset=0 for while/loop, 1 for for (inner body block).
-    if_depths: Vec<(u32, u32)>,
+    /// M1-S1（P1）：label 为 `'name:` 循环标签（None=无标签），带标签
+    /// break/continue 从栈顶向下搜索匹配标签，按相对深度计算 Br 目标。
+    if_depths: Vec<(u32, u32, Option<String>)>,
+    /// M1-S1（P3）：程序级顶层 let 全局 —— 全局名 -> WASM mut i64 全局索引。
+    /// 函数体内经 GlobalGet/GlobalSet 访问；main 开头初始化（GlobalSet）。
+    global_map: HashMap<String, u32>,
+    /// M1-S1（P3）：全局名 -> 声明类型（供存储转换决定 f32/f64/bool）。
+    global_types: HashMap<String, Type>,
+    /// M1-S1（P2）：枚举定义（非泛型），供 EnumLiteral tag / Match 布局。
+    enums: HashMap<String, Vec<(String, Vec<(String, Type)>)>>,
+    /// M1-S1（P2）：泛型枚举定义，供泛型枚举布局与 Match 字段类型解析。
+    generic_enums: HashMap<String, HirGenericEnum>,
     // ── Closure tracking (D5) ──
     /// Closure idx -> (func_idx, type_idx, param_count)
     closure_info: Vec<(u32, u32, u32)>,
@@ -150,6 +167,10 @@ impl WasmCompiler {
             local_count: 0,
             param_count: 0,
             if_depths: Vec::new(),
+            global_map: HashMap::new(),
+            global_types: HashMap::new(),
+            enums: HashMap::new(),
+            generic_enums: HashMap::new(),
             closure_info: Vec::new(),
             closure_expr_map: HashMap::new(),
             closure_captures: Vec::new(),
@@ -161,6 +182,13 @@ impl WasmCompiler {
 
     pub fn compile(&mut self, program: &HirProgram) -> TenthResult<Vec<u8>> {
         self.hir_funcs = program.functions.clone();
+        // M1-S1（P2/P3）：快照枚举定义与全局类型（供布局 / Match / 全局存储转换）。
+        self.enums = program.enums.clone();
+        self.generic_enums = program.generic_enums.clone();
+        self.global_types = program.globals.iter()
+            .filter(|g| !g.name.is_empty())
+            .map(|g| (g.name.clone(), g.ty.clone()))
+            .collect();
         self.build_struct_layouts(program);
         self.collect_strings(program);
         self.collect_closures(program);
@@ -172,7 +200,7 @@ impl WasmCompiler {
         let _fc = self.emit_function_section(&mut module, program);
         self.emit_table_section(&mut module);
         self.emit_memory_section(&mut module);
-        self.emit_global_section(&mut module);
+        self.emit_global_section(&mut module, program);
         self.emit_export_section(&mut module, program);
         self.emit_elem_section(&mut module);
         self.emit_code_section(&mut module, program)?;

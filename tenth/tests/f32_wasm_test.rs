@@ -78,6 +78,11 @@ mod f32_wasm {
         // F1 Phase 2：f16/bf16 张量 hostcall stub（测试不涉及 f16/bf16，返回空指针）
         linker.func_wrap("host", "host_make_tensor_f16", |_: Caller<HostState>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
         linker.func_wrap("host", "host_make_tensor_bf16", |_: Caller<HostState>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
+        // M1-S1（P4）：标量 math host stub
+        linker.func_wrap("host", "host_sin", |_: Caller<HostState>, _: f64| -> f64 { 0.0 }).unwrap();
+        linker.func_wrap("host", "host_cos", |_: Caller<HostState>, _: f64| -> f64 { 0.0 }).unwrap();
+        linker.func_wrap("host", "host_ln", |_: Caller<HostState>, _: f64| -> f64 { 0.0 }).unwrap();
+        linker.func_wrap("host", "host_pow", |_: Caller<HostState>, _: f64, _: f64| -> f64 { 0.0 }).unwrap();
 
         (store, linker)
     }

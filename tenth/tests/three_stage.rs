@@ -131,6 +131,11 @@ mod three_stage {
         l2.func_wrap("host", "tensor_from_vec", |_: Caller<()>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
         l2.func_wrap("host", "host_make_tensor_f16", |_: Caller<()>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
         l2.func_wrap("host", "host_make_tensor_bf16", |_: Caller<()>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
+        // M1-S1（P4）：标量 math host stub
+        l2.func_wrap("host", "host_sin", |_: Caller<()>, _: f64| -> f64 { 0.0 }).unwrap();
+        l2.func_wrap("host", "host_cos", |_: Caller<()>, _: f64| -> f64 { 0.0 }).unwrap();
+        l2.func_wrap("host", "host_ln", |_: Caller<()>, _: f64| -> f64 { 0.0 }).unwrap();
+        l2.func_wrap("host", "host_pow", |_: Caller<()>, _: f64, _: f64| -> f64 { 0.0 }).unwrap();
         let i2 = l2.instantiate(&mut s2, &m2).expect("inst").start(&mut s2).expect("start");
         let add = i2.get_func(&s2, "add").expect("add");
         let mut r2 = [wasmi::Val::I64(0)];
@@ -218,6 +223,11 @@ mod three_stage {
         l2.func_wrap("host", "tensor_from_vec", |_: Caller<()>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
         l2.func_wrap("host", "host_make_tensor_f16", |_: Caller<()>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
         l2.func_wrap("host", "host_make_tensor_bf16", |_: Caller<()>, _: i32, _: i32, _: i32| -> i64 { 0 }).unwrap();
+        // M1-S1（P4）：标量 math host stub
+        l2.func_wrap("host", "host_sin", |_: Caller<()>, _: f64| -> f64 { 0.0 }).unwrap();
+        l2.func_wrap("host", "host_cos", |_: Caller<()>, _: f64| -> f64 { 0.0 }).unwrap();
+        l2.func_wrap("host", "host_ln", |_: Caller<()>, _: f64| -> f64 { 0.0 }).unwrap();
+        l2.func_wrap("host", "host_pow", |_: Caller<()>, _: f64, _: f64| -> f64 { 0.0 }).unwrap();
         let i2 = l2.instantiate(&mut s2, &m2).expect("[Wasmtime] inst").start(&mut s2).expect("[Wasmtime] start");
         let add = i2.get_func(&s2, "add").expect("[Wasmtime] add");
         let mut r2 = [wasmi::Val::I64(0)];

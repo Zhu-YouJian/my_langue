@@ -33,15 +33,32 @@ impl WasmCompiler {
             }
             self.struct_layouts.insert(uname.clone(), layout);
         }
-        // Also build layouts for enum variants (keyed as "EnumName::VariantName")
+        // Also build layouts for enum variants (keyed as "EnumName::VariantName").
+        // M1-S1（P2）：枚举布局 = tag(i64, offset 0) + 各字段统一 8 字节 i64 存储
+        // （float/bool 按位存储，EnumLiteral 存 / Match 取时按字段具体类型转换）。
         for (ename, variants) in &program.enums {
             for (vname, vfields) in variants {
-                let mut offset = 0u32;
+                let mut offset = 8u32; // tag 占 8 字节
                 let mut layout = HashMap::new();
-                for (fname, fty) in vfields {
-                    let (size, vt) = field_size_and_type(fty);
-                    layout.insert(fname.clone(), (offset, size, vt));
-                    offset += size;
+                layout.insert("__tag".to_string(), (0, 8, ValType::I64));
+                for (fname, _fty) in vfields {
+                    layout.insert(fname.clone(), (offset, 8, ValType::I64));
+                    offset += 8;
+                }
+                let key = format!("{}::{}", ename, vname);
+                self.struct_layouts.insert(key, layout);
+            }
+        }
+        // M1-S1（P2）：泛型枚举布局（字段含 TypeParam，统一按 8 字节 I64 存储；
+        // 与泛型 struct 一致，布局不随实例化变化——具体类型在存取点处理）。
+        for (ename, ge) in &program.generic_enums {
+            for (vname, vfields) in &ge.variants {
+                let mut offset = 8u32;
+                let mut layout = HashMap::new();
+                layout.insert("__tag".to_string(), (0, 8, ValType::I64));
+                for (fname, _fty) in vfields {
+                    layout.insert(fname.clone(), (offset, 8, ValType::I64));
+                    offset += 8;
                 }
                 let key = format!("{}::{}", ename, vname);
                 self.struct_layouts.insert(key, layout);

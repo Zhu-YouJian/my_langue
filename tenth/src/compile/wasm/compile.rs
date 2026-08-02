@@ -12,6 +12,7 @@ use super::{
     HOST_COMPILE_HOST, HOST_STR_LEN, HOST_STR_AT, HOST_STR_CMP,
     HOST_F64_BITS, HOST_STR_SLICE, HOST_TENSOR_FROM_VEC,
     HOST_MAKE_TENSOR_F16, HOST_MAKE_TENSOR_BF16,
+    HOST_SIN, HOST_COS, HOST_LN, HOST_POW,
 };
 
 impl WasmCompiler {
@@ -42,50 +43,25 @@ impl WasmCompiler {
         let locals: Vec<ValType> = (0..512).map(|_| ValType::I64).collect();
         let mut body = Function::new_with_locals_types(locals);
         // M3.5：程序级顶层 let 全局初始化（main 之前）。
-        // 每个全局分配一个 main 局部槽（i64），init 求值后 reinterpret 存储；
-        // `Var(global)` 经 local_map 命中（与普通 let 一致）。
+        // M1-S1（P3）：每个全局对应一个 WASM mut i64 全局（emit_global_section 声明），
+        // init 求值后按声明类型转 i64 存储形式 GlobalSet；函数体经 GlobalGet 访问。
         for g in &program.globals {
-            // 仅初始化带 init 的全局（init == None 的全局由 main_expr 原位初始化）
-            if g.name.is_empty() || g.init.is_none() {
+            if g.name.is_empty() {
                 continue;
             }
-            match &g.init {
-                Some(e) => {
-                    self.compile_expr(&mut body, e)?;
-                    // Phase 5：按 dtype 分支（与 compile_stmt 的 Let 一致）
-                    let target_f32 = matches!(&g.ty, Type::Base(BaseType::F32));
-                    let target_f64 = matches!(&g.ty, Type::Base(BaseType::F64));
-                    let expr_f32 = matches!(&e.ty, Type::Base(BaseType::F32));
-                    let expr_f64 = matches!(&e.ty, Type::Base(BaseType::F64));
-                    let expr_bool = matches!(&e.ty, Type::Base(BaseType::Bool));
-                    if target_f32 && !expr_f32 && !expr_f64 {
-                        body.instruction(&Instruction::F32ConvertI64S);
-                        body.instruction(&Instruction::F64PromoteF32);
-                        body.instruction(&Instruction::I64ReinterpretF64);
-                    } else if target_f64 && !expr_f32 && !expr_f64 {
-                        body.instruction(&Instruction::F64ConvertI64S);
-                        body.instruction(&Instruction::I64ReinterpretF64);
-                    } else if expr_f32 {
-                        body.instruction(&Instruction::F64PromoteF32);
-                        body.instruction(&Instruction::I64ReinterpretF64);
-                    } else if expr_f64 {
-                        body.instruction(&Instruction::I64ReinterpretF64);
-                    } else if expr_bool {
-                        body.instruction(&Instruction::I64ExtendI32U);
-                    }
-                }
-                None => {
-                    body.instruction(&Instruction::I64Const(0));
-                }
+            if let Some(e) = &g.init {
+                self.compile_expr(&mut body, e)?;
+                self.emit_i64_store_conversion(&mut body, &g.ty, &e.ty);
+            } else {
+                // 防御：无 init 全局置 0（语义见 lower：顶层无 init 通常已编译期拦截）
+                body.instruction(&Instruction::I64Const(0));
             }
-            self.local_map.insert(g.name.clone(), self.local_count);
-            body.instruction(&Instruction::LocalSet(self.local_count));
-            self.local_count += 1;
+            let gi = *self.global_map.get(&g.name).expect("global_map 已由 emit_global_section 填充");
+            body.instruction(&Instruction::GlobalSet(gi));
         }
-        if let Some(ref expr) = program.main_expr {
-            self.compile_expr(&mut body, expr)?;
-            self.wrap_to_i32(&mut body, &expr.ty);
-        } else if let Some(mf) = program.functions.iter().find(|f| f.name == "main") {
+        // M1-S1（P3 修复）：与 VM 路径一致，优先 `fn main`（存在时忽略残留的
+        // 空 Unit main_expr——顶层 let 提升为全局后 main_expr 常为 Unit 空块）。
+        if let Some(mf) = program.functions.iter().find(|f| f.name == "main") {
             let fi = self.resolve_func("main")?;
             body.instruction(&Instruction::Call(fi));
             if matches!(mf.return_type, Type::Base(BaseType::Unit)) {
@@ -94,6 +70,9 @@ impl WasmCompiler {
             } else {
                 self.wrap_to_i32(&mut body, &mf.return_type);
             }
+        } else if let Some(ref expr) = program.main_expr {
+            self.compile_expr(&mut body, expr)?;
+            self.wrap_to_i32(&mut body, &expr.ty);
         } else {
             body.instruction(&Instruction::I32Const(0));
         }
@@ -116,6 +95,10 @@ impl WasmCompiler {
                 }
                 BaseType::F64 => {
                     body.instruction(&Instruction::I32TruncF64S);
+                }
+                // M1-S1（P3 修复）：Unit 求值不压栈，直接推退出码（不能 Drop 空栈）。
+                BaseType::Unit => {
+                    body.instruction(&Instruction::I32Const(0));
                 }
                 _ => {
                     body.instruction(&Instruction::Drop);
@@ -153,6 +136,162 @@ impl WasmCompiler {
         }
     }
 
+    // ── M1-S1 辅助方法（P3 全局存储转换 / P4 math / P2 枚举布局与 Match）──────
+
+    /// 把栈顶值按「目标类型 + 源类型」转为 i64 存储形式（与 compile_stmt::Let 一致）。
+    fn emit_i64_store_conversion(&self, body: &mut Function, target_ty: &Type, value_ty: &Type) {
+        let target_f32 = matches!(target_ty, Type::Base(BaseType::F32));
+        let target_f64 = matches!(target_ty, Type::Base(BaseType::F64));
+        let expr_f32 = matches!(value_ty, Type::Base(BaseType::F32));
+        let expr_f64 = matches!(value_ty, Type::Base(BaseType::F64));
+        let expr_bool = matches!(value_ty, Type::Base(BaseType::Bool));
+        if target_f32 && !expr_f32 && !expr_f64 {
+            body.instruction(&Instruction::F32ConvertI64S);
+            body.instruction(&Instruction::F64PromoteF32);
+            body.instruction(&Instruction::I64ReinterpretF64);
+        } else if target_f64 && !expr_f32 && !expr_f64 {
+            body.instruction(&Instruction::F64ConvertI64S);
+            body.instruction(&Instruction::I64ReinterpretF64);
+        } else if expr_f32 {
+            body.instruction(&Instruction::F64PromoteF32);
+            body.instruction(&Instruction::I64ReinterpretF64);
+        } else if expr_f64 {
+            body.instruction(&Instruction::I64ReinterpretF64);
+        } else if expr_bool {
+            body.instruction(&Instruction::I64ExtendI32U);
+        }
+    }
+
+    /// 编译实参为 f64（int→F64ConvertI64S、f32→F64PromoteF32）。
+    fn compile_f64_arg(&mut self, body: &mut Function, e: &HirExpr) -> TenthResult<()> {
+        self.compile_expr(body, e)?;
+        match &e.ty {
+            Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64) => {
+                body.instruction(&Instruction::F64ConvertI64S);
+            }
+            Type::Base(BaseType::F32) => {
+                body.instruction(&Instruction::F64PromoteF32);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// M1-S1（P2）：枚举变体序号（tag 值）。EnumLiteral 存储与 Match 比较共用，
+    /// 保证一致性。
+    fn enum_variant_index(&self, enum_name: &str, variant: &str) -> TenthResult<u32> {
+        if let Some(variants) = self.enums.get(enum_name) {
+            for (i, (vname, _)) in variants.iter().enumerate() {
+                if vname == variant {
+                    return Ok(i as u32);
+                }
+            }
+        }
+        if let Some(ge) = self.generic_enums.get(enum_name) {
+            for (i, (vname, _)) in ge.variants.iter().enumerate() {
+                if vname == variant {
+                    return Ok(i as u32);
+                }
+            }
+        }
+        Err(TenthError::RuntimeError { line: None, col: None,
+            message: format!("WASM: 未知的枚举变体 '{}/{}'", enum_name, variant),
+        })
+    }
+
+    /// M1-S1（P2）：判别类型是否为枚举（用于 Match 走 tag 比较 vs 标量比较）。
+    fn is_enum_ty(&self, ty: &Type) -> bool {
+        let base = match ty {
+            Type::Enum(name) => Some(name.as_str()),
+            Type::TypeParam { name } => Some(name.as_str()),
+            Type::Generic { base, .. } => match base.as_ref() {
+                Type::Enum(name) | Type::TypeParam { name } => Some(name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        };
+        match base {
+            Some(name) => self.enums.contains_key(name) || self.generic_enums.contains_key(name),
+            None => false,
+        }
+    }
+
+    /// M1-S1（P2）：解析枚举变体字段的具体类型（泛型枚举按 scrutinee 实参替换 TypeParam）。
+    fn enum_field_type(&self, enum_name: &str, variant: &str, fname: &str, scrutinee_ty: &Type) -> TenthResult<Type> {
+        if let Some(variants) = self.enums.get(enum_name) {
+            for (vname, fields) in variants {
+                if vname == variant {
+                    for (fn_, ty) in fields {
+                        if fn_ == fname {
+                            return Ok(ty.clone());
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(ge) = self.generic_enums.get(enum_name) {
+            let args = match scrutinee_ty {
+                Type::Generic { args, .. } => args.clone(),
+                _ => Vec::new(),
+            };
+            for (vname, fields) in &ge.variants {
+                if vname == variant {
+                    for (fn_, ty) in fields {
+                        if fn_ == fname {
+                            return Ok(self.substitute_params(ty, &ge.generics, &args));
+                        }
+                    }
+                }
+            }
+        }
+        Err(TenthError::RuntimeError { line: None, col: None,
+            message: format!("WASM: 枚举 '{}/{}' 无字段 '{}'", enum_name, variant, fname),
+        })
+    }
+
+    /// 浅层 TypeParam 替换（WASM 枚举字段统一 8 字节 i64 存储，只需顶层类型判定
+    /// f32/f64/bool 的加载还原；嵌套类型都是 i64 指针无需转换）。
+    fn substitute_params(&self, ty: &Type, params: &[String], args: &[Type]) -> Type {
+        match ty {
+            Type::TypeParam { name } => {
+                if let Some(pos) = params.iter().position(|p| p == name) {
+                    args.get(pos).cloned().unwrap_or_else(|| ty.clone())
+                } else {
+                    ty.clone()
+                }
+            }
+            _ => ty.clone(),
+        }
+    }
+
+    /// M1-S1（P2）：从枚举指针加载某字段为**原始 i64 存储值**（不做类型还原——
+    /// 与后端一致：绑定存 i64 局部，使用时 Var 按 expr.ty 还原）。
+    fn load_enum_field(&mut self, body: &mut Function, scrut_local: u32, enum_name: &str, variant: &str, fname: &str) -> TenthResult<()> {
+        let key = format!("{}::{}", enum_name, variant);
+        let layout = self.struct_layouts.get(&key).cloned()
+            .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
+                message: format!("WASM: 未知的枚举变体 '{}'", key),
+            })?;
+        let (offset, _, _) = *layout.get(fname).ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
+            message: format!("WASM: 枚举 '{}/{}' 无字段 '{}'", enum_name, variant, fname),
+        })?;
+        body.instruction(&Instruction::LocalGet(scrut_local));
+        body.instruction(&Instruction::I32WrapI64);
+        let arg = wasm_encoder::MemArg { offset: offset as u64, align: 3, memory_index: 0 };
+        body.instruction(&Instruction::I64Load(arg));
+        Ok(())
+    }
+
+    /// 为未匹配的 match 分支推默认值（类型正确，避免 wasmi 验证失败）。
+    fn emit_default_value(&self, body: &mut Function, ty: &Type) {
+        match ty {
+            Type::Base(BaseType::F32) => { body.instruction(&Instruction::F32Const(0.0)); }
+            Type::Base(BaseType::F64) => { body.instruction(&Instruction::F64Const(0.0)); }
+            Type::Base(BaseType::Bool) => { body.instruction(&Instruction::I32Const(0)); }
+            _ => { body.instruction(&Instruction::I64Const(0)); }
+        }
+    }
+
     // ── Expression compilation ───────────────────────────────────────────
 
     pub(super) fn compile_expr(&mut self, body: &mut Function, expr: &HirExpr) -> TenthResult<()> {
@@ -179,6 +318,22 @@ impl WasmCompiler {
                             }
                             _ => {}
                         }
+                    }
+                } else if let Some(&gi) = self.global_map.get(name) {
+                    // M1-S1（P3）：程序级全局 —— GlobalGet + 按类型还原
+                    body.instruction(&Instruction::GlobalGet(gi));
+                    match &expr.ty {
+                        Type::Base(BaseType::F32) => {
+                            body.instruction(&Instruction::F64ReinterpretI64);
+                            body.instruction(&Instruction::F32DemoteF64);
+                        }
+                        Type::Base(BaseType::F64) => {
+                            body.instruction(&Instruction::F64ReinterpretI64);
+                        }
+                        Type::Base(BaseType::Bool) => {
+                            body.instruction(&Instruction::I32WrapI64);
+                        }
+                        _ => {}
                     }
                 } else if self.compiling_closure {
                     // D5.5: Check if this is a captured variable
@@ -410,6 +565,86 @@ impl WasmCompiler {
                         body.instruction(&Instruction::Call(HOST_STR_INT));
                         body.instruction(&Instruction::I64ExtendI32U); // i32 ptr -> i64
                     }
+                    // ── M1-S1（P4）：标量 math native ──
+                    // sqrt/abs 用 WASM 原生指令内联；sin/cos/ln/pow 走 host 函数。
+                    "sqrt" => {
+                        // sqrt(x)：f32→F32Sqrt、int→转 f64 后 F64Sqrt、f64→F64Sqrt
+                        if let Some(a) = args.first() {
+                            self.compile_expr(body, a)?;
+                            match &a.ty {
+                                Type::Base(BaseType::F32) => { body.instruction(&Instruction::F32Sqrt); }
+                                Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64) => {
+                                    body.instruction(&Instruction::F64ConvertI64S);
+                                    body.instruction(&Instruction::F64Sqrt);
+                                }
+                                _ => { body.instruction(&Instruction::F64Sqrt); }
+                            }
+                        } else {
+                            body.instruction(&Instruction::F64Const(0.0));
+                            body.instruction(&Instruction::F64Sqrt);
+                        }
+                    }
+                    "abs" => {
+                        if let Some(a) = args.first() {
+                            self.compile_expr(body, a)?;
+                            match &a.ty {
+                                Type::Base(BaseType::F32) => { body.instruction(&Instruction::F32Abs); }
+                                Type::Base(BaseType::F64) => { body.instruction(&Instruction::F64Abs); }
+                                Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64) => {
+                                    // abs(x) = (x ^ (x>>63)) - (x>>63)；类型系统 abs→F64
+                                    // （infer_scalar_dtype 默认 f64），故 i64 结果转 F64。
+                                    let t = self.local_count;
+                                    self.local_count += 1;
+                                    body.instruction(&Instruction::LocalSet(t));
+                                    body.instruction(&Instruction::LocalGet(t));
+                                    body.instruction(&Instruction::I64Const(63));
+                                    body.instruction(&Instruction::I64ShrS);
+                                    body.instruction(&Instruction::LocalGet(t));
+                                    body.instruction(&Instruction::I64Xor);
+                                    body.instruction(&Instruction::LocalGet(t));
+                                    body.instruction(&Instruction::I64Const(63));
+                                    body.instruction(&Instruction::I64ShrS);
+                                    body.instruction(&Instruction::I64Sub);
+                                    body.instruction(&Instruction::F64ConvertI64S);
+                                }
+                                _ => { body.instruction(&Instruction::F64Abs); }
+                            }
+                        }
+                    }
+                    "sin" => {
+                        if let Some(a) = args.first() {
+                            self.compile_f64_arg(body, a)?;
+                        } else {
+                            body.instruction(&Instruction::F64Const(0.0));
+                        }
+                        body.instruction(&Instruction::Call(HOST_SIN));
+                    }
+                    "cos" => {
+                        if let Some(a) = args.first() {
+                            self.compile_f64_arg(body, a)?;
+                        } else {
+                            body.instruction(&Instruction::F64Const(0.0));
+                        }
+                        body.instruction(&Instruction::Call(HOST_COS));
+                    }
+                    "ln" => {
+                        if let Some(a) = args.first() {
+                            self.compile_f64_arg(body, a)?;
+                        } else {
+                            body.instruction(&Instruction::F64Const(1.0));
+                        }
+                        body.instruction(&Instruction::Call(HOST_LN));
+                    }
+                    "pow" => {
+                        if args.len() >= 2 {
+                            self.compile_f64_arg(body, &args[0])?;
+                            self.compile_f64_arg(body, &args[1])?;
+                        } else {
+                            body.instruction(&Instruction::F64Const(1.0));
+                            body.instruction(&Instruction::F64Const(1.0));
+                        }
+                        body.instruction(&Instruction::Call(HOST_POW));
+                    }
                     _ => {
                         // D5.4: Closure call detection — if fname is a closure variable,
                         // use call_indirect instead of regular call
@@ -483,6 +718,14 @@ impl WasmCompiler {
 
             HirExprKind::Assign { target, value } => {
                 self.compile_expr(body, value)?;
+                // M1-S1（P3）：全局赋值 → GlobalSet（按全局声明类型转 i64 存储）
+                if let Some(&gi) = self.global_map.get(target) {
+                    let gty = self.global_types.get(target).cloned()
+                        .unwrap_or_else(|| value.ty.clone());
+                    self.emit_i64_store_conversion(body, &gty, &value.ty);
+                    body.instruction(&Instruction::GlobalSet(gi));
+                    return Ok(());
+                }
                 let target_idx = if let Some(&idx) = self.local_map.get(target) {
                     idx
                 } else {
@@ -512,6 +755,25 @@ impl WasmCompiler {
             }
 
             HirExprKind::AssignOp { target, op, value } => {
+                // M1-S1（P3）：全局自增 → GlobalGet/GlobalSet
+                if let Some(&gi) = self.global_map.get(target) {
+                    let gty = self.global_types.get(target).cloned()
+                        .unwrap_or_else(|| value.ty.clone());
+                    let is_f32 = matches!(&gty, Type::Base(BaseType::F32));
+                    let is_f64 = matches!(&gty, Type::Base(BaseType::F64));
+                    body.instruction(&Instruction::GlobalGet(gi));
+                    if is_f32 {
+                        body.instruction(&Instruction::F64ReinterpretI64);
+                        body.instruction(&Instruction::F32DemoteF64);
+                    } else if is_f64 {
+                        body.instruction(&Instruction::F64ReinterpretI64);
+                    }
+                    self.compile_expr(body, value)?;
+                    self.compile_binop(body, op, &gty)?;
+                    self.emit_i64_store_conversion(body, &gty, &gty);
+                    body.instruction(&Instruction::GlobalSet(gi));
+                    return Ok(());
+                }
                 let idx = if let Some(&idx) = self.local_map.get(target) {
                     idx
                 } else {
@@ -552,8 +814,9 @@ impl WasmCompiler {
             }
 
             HirExprKind::EnumLiteral { enum_name, variant, fields } => {
-                // Enum variants are stored like structs — allocate and write fields.
-                // Layout keyed as "EnumName::VariantName".
+                // M1-S1（P2）：枚举内存布局 = tag(i64, offset 0) + 各字段（统一 8 字节 i64
+                // 存储，float/bool 按位存储，Match 时按字段具体类型还原）。
+                // Layout keyed as "EnumName::VariantName"。
                 let layout_key = format!("{}::{}", enum_name, variant);
                 let sz = self.struct_size(&layout_key);
                 body.instruction(&Instruction::I32Const(sz as i32));
@@ -567,16 +830,40 @@ impl WasmCompiler {
                     .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                         message: format!("WASM: 未知的枚举变体 '{}/{}'", enum_name, variant),
                     })?;
+                // 变体 tag（供 Match 区分变体）
+                let vindex = self.enum_variant_index(enum_name, variant)?;
+                body.instruction(&Instruction::LocalGet(tmp));
+                body.instruction(&Instruction::I32WrapI64);
+                body.instruction(&Instruction::I64Const(vindex as i64));
+                let tag_arg = wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 };
+                body.instruction(&Instruction::I64Store(tag_arg));
                 for (fname, fexpr) in fields {
                     if let Some(&(offset, _size, vt)) = layout.get(fname) {
                         body.instruction(&Instruction::LocalGet(tmp));
                         body.instruction(&Instruction::I32WrapI64);
                         self.compile_expr(body, fexpr)?;
-                        // Phase 5：int→F32 转换（若字段为 F32 但值为整数）
+                        // Phase 5：int→F32/F64 转换（若字段为 float 但值为整数）
                         if matches!(vt, ValType::F32) && matches!(&fexpr.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
                             body.instruction(&Instruction::F32ConvertI64S);
                         } else if matches!(vt, ValType::F64) && matches!(&fexpr.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64)) {
                             body.instruction(&Instruction::F64ConvertI64S);
+                        }
+                        // M1-S1（P2）：i64 槽统一按字段表达式类型转 i64 存储
+                        // （泛型枚举字段布局为 I64，f32/f64/bool 需按位转存）
+                        if matches!(vt, ValType::I64) {
+                            match &fexpr.ty {
+                                Type::Base(BaseType::F32) => {
+                                    body.instruction(&Instruction::F64PromoteF32);
+                                    body.instruction(&Instruction::I64ReinterpretF64);
+                                }
+                                Type::Base(BaseType::F64) => {
+                                    body.instruction(&Instruction::I64ReinterpretF64);
+                                }
+                                Type::Base(BaseType::Bool) => {
+                                    body.instruction(&Instruction::I64ExtendI32U);
+                                }
+                                _ => {}
+                            }
                         }
                         let arg = wasm_encoder::MemArg { offset: offset as u64, align: 0, memory_index: 0 };
                         match vt {
@@ -589,6 +876,125 @@ impl WasmCompiler {
                     }
                 }
                 body.instruction(&Instruction::LocalGet(tmp));
+            }
+
+            // M1-S1（P2）：match 表达式 —— 枚举按 tag 比较变体 + 绑定字段；
+            // 标量（int/bool 字面量模式）按值比较；wildcard 兜底。
+            HirExprKind::Match { scrutinee, arms } => {
+                let is_enum = self.is_enum_ty(&scrutinee.ty);
+                let has_value = !matches!(&expr.ty, Type::Base(BaseType::Unit));
+                // 求值 scrutinee 存临时局部（枚举=指针，标量=值）
+                self.compile_expr(body, scrutinee)?;
+                let scrut_local = self.local_count;
+                self.local_count += 1;
+                body.instruction(&Instruction::LocalSet(scrut_local));
+                // 外层 block（结果类型）
+                if has_value {
+                    body.instruction(&Instruction::Block(BlockType::Result(to_val_type_required(&expr.ty)?)));
+                } else {
+                    body.instruction(&Instruction::Block(BlockType::Empty));
+                }
+                for arm in arms {
+                    match &arm.pattern {
+                        HirPattern::Wildcard => {
+                            self.compile_expr(body, &arm.body)?;
+                            body.instruction(&Instruction::Br(0));
+                        }
+                        HirPattern::EnumVariant { enum_name, variant, field_bind, tuple_binds } => {
+                            if !is_enum {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
+                                    message: format!("WASM: 非枚举 scrutinee 不能匹配枚举变体 '{}::{}'", enum_name, variant),
+                                });
+                            }
+                            let vindex = self.enum_variant_index(enum_name, variant)?;
+                            // 内层 block：tag 不匹配则跳过本臂
+                            body.instruction(&Instruction::Block(BlockType::Empty));
+                            body.instruction(&Instruction::LocalGet(scrut_local));
+                            body.instruction(&Instruction::I32WrapI64);
+                            let tag_arg = wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 };
+                            body.instruction(&Instruction::I64Load(tag_arg));
+                            body.instruction(&Instruction::I32WrapI64);
+                            body.instruction(&Instruction::I32Const(vindex as i32));
+                            body.instruction(&Instruction::I32Eq);
+                            body.instruction(&Instruction::I32Eqz); // 不相等 → 跳过
+                            body.instruction(&Instruction::BrIf(0));
+                            // 绑定字段
+                            if let Some((fname, bname)) = field_bind {
+                                let _bty = self.enum_field_type(enum_name, variant, fname, &scrutinee.ty)?;
+                                self.load_enum_field(body, scrut_local, enum_name, variant, fname)?;
+                                let bl = self.local_count;
+                                self.local_count += 1;
+                                body.instruction(&Instruction::LocalSet(bl));
+                                self.local_map.insert(bname.clone(), bl);
+                            }
+                            for (fname, bname) in tuple_binds {
+                                let _bty = self.enum_field_type(enum_name, variant, fname, &scrutinee.ty)?;
+                                self.load_enum_field(body, scrut_local, enum_name, variant, fname)?;
+                                let bl = self.local_count;
+                                self.local_count += 1;
+                                body.instruction(&Instruction::LocalSet(bl));
+                                self.local_map.insert(bname.clone(), bl);
+                            }
+                            // 守卫
+                            if let Some(g) = &arm.guard {
+                                self.compile_expr(body, g)?;
+                                body.instruction(&Instruction::I32Eqz);
+                                body.instruction(&Instruction::BrIf(0));
+                            }
+                            self.compile_expr(body, &arm.body)?;
+                            body.instruction(&Instruction::Br(1)); // 到外层 block 末尾（带结果）
+                            body.instruction(&Instruction::End); // end 内层 block
+                        }
+                        HirPattern::Literal(lit) => {
+                            if is_enum {
+                                return Err(TenthError::RuntimeError { line: None, col: None,
+                                    message: "WASM: 枚举 scrutinee 不能匹配字面量模式".into(),
+                                });
+                            }
+                            body.instruction(&Instruction::Block(BlockType::Empty));
+                            body.instruction(&Instruction::LocalGet(scrut_local));
+                            match lit {
+                                crate::hir::hir::Literal::Int(n, _) => {
+                                    body.instruction(&Instruction::I64Const(*n));
+                                    body.instruction(&Instruction::I64Eq);
+                                }
+                                crate::hir::hir::Literal::Bool(b) => {
+                                    body.instruction(&Instruction::I32Const(*b as i32));
+                                    body.instruction(&Instruction::I32Eq);
+                                }
+                                crate::hir::hir::Literal::Char(c) => {
+                                    body.instruction(&Instruction::I32Const(*c as i32));
+                                    body.instruction(&Instruction::I32Eq);
+                                }
+                                _ => {
+                                    return Err(TenthError::RuntimeError { line: None, col: None,
+                                        message: "WASM: 不支持的 match 字面量模式".into(),
+                                    });
+                                }
+                            }
+                            body.instruction(&Instruction::I32Eqz);
+                            body.instruction(&Instruction::BrIf(0));
+                            if let Some(g) = &arm.guard {
+                                self.compile_expr(body, g)?;
+                                body.instruction(&Instruction::I32Eqz);
+                                body.instruction(&Instruction::BrIf(0));
+                            }
+                            self.compile_expr(body, &arm.body)?;
+                            body.instruction(&Instruction::Br(1));
+                            body.instruction(&Instruction::End);
+                        }
+                        _ => {
+                            return Err(TenthError::RuntimeError { line: None, col: None,
+                                message: format!("WASM: 不支持的 match 模式 {:?}", arm.pattern),
+                            });
+                        }
+                    }
+                }
+                if has_value {
+                    // 无臂匹配兜底（类型正确）
+                    self.emit_default_value(body, &expr.ty);
+                }
+                body.instruction(&Instruction::End); // end 外层 block
             }
 
             HirExprKind::StructLiteral { name, fields, has_default: _ } => {
@@ -1021,8 +1427,8 @@ impl WasmCompiler {
                     self.local_count += 1;
                 }
             }
-            HirStmtKind::Loop { body: lb, .. } => {
-                self.if_depths.push((0, 0));
+            HirStmtKind::Loop { label, body: lb, .. } => {
+                self.if_depths.push((0, 0, label.clone()));
                 body.instruction(&Instruction::Block(BlockType::Empty));
                 body.instruction(&Instruction::Loop(BlockType::Empty));
                 for s in lb { self.compile_stmt(body, s)?; }
@@ -1031,8 +1437,8 @@ impl WasmCompiler {
                 body.instruction(&Instruction::End);
                 self.if_depths.pop();
             }
-            HirStmtKind::While { cond, body: lb, .. } => {
-                self.if_depths.push((0, 0));
+            HirStmtKind::While { label, cond, body: lb, .. } => {
+                self.if_depths.push((0, 0, label.clone()));
                 body.instruction(&Instruction::Block(BlockType::Empty));
                 body.instruction(&Instruction::Loop(BlockType::Empty));
                 self.compile_expr(body, cond)?;
@@ -1044,9 +1450,9 @@ impl WasmCompiler {
                 body.instruction(&Instruction::End);
                 self.if_depths.pop();
             }
-            HirStmtKind::DoWhile { body: lb, cond, .. } => {
+            HirStmtKind::DoWhile { label, body: lb, cond, .. } => {
                 // Lowered as: loop { body; if !cond { break; } }
-                self.if_depths.push((0, 0));
+                self.if_depths.push((0, 0, label.clone()));
                 body.instruction(&Instruction::Block(BlockType::Empty));
                 body.instruction(&Instruction::Loop(BlockType::Empty));
                 self.compile_stmt(body, lb.as_ref())?;
@@ -1065,38 +1471,84 @@ impl WasmCompiler {
                 body.instruction(&Instruction::Return);
             }
             HirStmtKind::Break { label, value } => {
-                // M2.3：标签 break 暂不支持 WASM 后端（明确报错，不静默错编译）。
-                if let Some(l) = label {
-                    return Err(TenthError::TypeError {
-                        line: stmt.span.line,
-                        col: stmt.span.col,
-                        message: format!("标签 break '{}' 暂不支持 WASM 后端（VM/解释器路径可用）", l),
-                    });
-                }
                 // If break has a value, compile it (WASM doesn't support break-with-value,
                 // so just evaluate the expression for side effects)
                 if let Some(e) = value {
                     self.compile_expr(body, e)?;
                     body.instruction(&Instruction::Drop);
                 }
-                let &(if_depth, break_offset) = self.if_depths.last().unwrap_or(&(0, 0));
-                let depth = 1 + break_offset + if_depth;
+                // M1-S1（P1）：带标签 break —— 从栈顶向下搜索匹配标签循环，
+                // 计算相对 WASM br 深度。
+                let depth = if let Some(l) = label {
+                    let mut found = None;
+                    for (i, (_, _, lab)) in self.if_depths.iter().enumerate().rev() {
+                        if lab.as_deref() == Some(l.as_str()) {
+                            found = Some(i);
+                            break;
+                        }
+                    }
+                    match found {
+                        Some(t) => {
+                            let mut depth = 0u32;
+                            // 越过中间循环：每个中间循环贡献其 loop 帧 + 目标 block 帧 + break_offset + if
+                            for j in (t + 1)..self.if_depths.len() {
+                                let (ifd, bo, _) = self.if_depths[j];
+                                depth += 1 + bo + ifd + 1;
+                            }
+                            let (ifd, bo, _) = self.if_depths[t];
+                            depth += 1 + bo + ifd;
+                            depth
+                        }
+                        None => {
+                            return Err(TenthError::TypeError {
+                                line: stmt.span.line,
+                                col: stmt.span.col,
+                                message: format!("未定义循环标签 '{}'", l),
+                            });
+                        }
+                    }
+                } else {
+                    let &(if_depth, break_offset, _) = self.if_depths.last().unwrap_or(&(0, 0, None));
+                    1 + break_offset + if_depth
+                };
                 body.instruction(&Instruction::Br(depth));
             }
             HirStmtKind::Continue { label } => {
-                // M2.3：标签 continue 暂不支持 WASM 后端（明确报错，不静默错编译）。
-                if let Some(l) = label {
-                    return Err(TenthError::TypeError {
-                        line: stmt.span.line,
-                        col: stmt.span.col,
-                        message: format!("标签 continue '{}' 暂不支持 WASM 后端（VM/解释器路径可用）", l),
-                    });
-                }
-                let &(if_depth, _) = self.if_depths.last().unwrap_or(&(0, 0));
-                let depth = if_depth;
+                // M1-S1（P1）：带标签 continue —— 搜索匹配标签，目标为对应 loop 帧。
+                let depth = if let Some(l) = label {
+                    let mut found = None;
+                    for (i, (_, _, lab)) in self.if_depths.iter().enumerate().rev() {
+                        if lab.as_deref() == Some(l.as_str()) {
+                            found = Some(i);
+                            break;
+                        }
+                    }
+                    match found {
+                        Some(t) => {
+                            let mut depth = 0u32;
+                            for j in (t + 1)..self.if_depths.len() {
+                                let (ifd, bo, _) = self.if_depths[j];
+                                depth += 1 + bo + ifd + 1;
+                            }
+                            let (ifd, _, _) = self.if_depths[t];
+                            depth += ifd;
+                            depth
+                        }
+                        None => {
+                            return Err(TenthError::TypeError {
+                                line: stmt.span.line,
+                                col: stmt.span.col,
+                                message: format!("未定义循环标签 '{}'", l),
+                            });
+                        }
+                    }
+                } else {
+                    let &(if_depth, _, _) = self.if_depths.last().unwrap_or(&(0, 0, None));
+                    if_depth
+                };
                 body.instruction(&Instruction::Br(depth));
             }
-            HirStmtKind::For { var, iter, body: lb, .. } => {
+            HirStmtKind::For { label, var, iter, body: lb, .. } => {
                 // Only Range iterators are supported (for x in start..end { ... })
                 match &iter.kind {
                     HirExprKind::Range { start, end, inclusive } => {
@@ -1113,7 +1565,7 @@ impl WasmCompiler {
                         }
                         body.instruction(&Instruction::LocalSet(var_local));
 
-                        self.if_depths.push((0, 1)); // break_offset=1 for for's inner body block
+                        self.if_depths.push((0, 1, label.clone())); // break_offset=1 for for's inner body block
                         // block (break target) + loop (continue/back-edge target)
                         body.instruction(&Instruction::Block(BlockType::Empty));
                         body.instruction(&Instruction::Loop(BlockType::Empty));

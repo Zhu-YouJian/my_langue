@@ -448,6 +448,20 @@ pub fn register_wasmtime_host_functions(linker: &mut Linker<u32>) -> TenthResult
             if len < 0 { 0 } else { len as i64 }
     }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
+    // ── M1-S1（P4）：标量 math host 函数（sin/cos/ln/pow）────────────────
+    linker.func_wrap("host", "host_sin",
+        |_caller: Caller<'_, u32>, x: f64| -> f64 { x.sin() })
+        .map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
+    linker.func_wrap("host", "host_cos",
+        |_caller: Caller<'_, u32>, x: f64| -> f64 { x.cos() })
+        .map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
+    linker.func_wrap("host", "host_ln",
+        |_caller: Caller<'_, u32>, x: f64| -> f64 { x.ln() })
+        .map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
+    linker.func_wrap("host", "host_pow",
+        |_caller: Caller<'_, u32>, base: f64, exp: f64| -> f64 { base.powf(exp) })
+        .map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
+
     Ok(())
 }
 

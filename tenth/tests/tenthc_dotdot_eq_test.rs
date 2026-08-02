@@ -239,6 +239,11 @@ mod tenthc_dotdot_eq {
         linker.func_wrap("host", "host_make_tensor_bf16", |_: Caller<()>, _data_ptr: i32, len: i32, _rank: i32| -> i64 {
             len as i64
         }).unwrap();
+        // M1-S1（P4）：标量 math host stub
+        linker.func_wrap("host", "host_sin", |_: Caller<()>, _: f64| -> f64 { 0.0 }).unwrap();
+        linker.func_wrap("host", "host_cos", |_: Caller<()>, _: f64| -> f64 { 0.0 }).unwrap();
+        linker.func_wrap("host", "host_ln", |_: Caller<()>, _: f64| -> f64 { 0.0 }).unwrap();
+        linker.func_wrap("host", "host_pow", |_: Caller<()>, _: f64, _: f64| -> f64 { 0.0 }).unwrap();
 
         // ── `env` module (tenthc wasm.th signatures) ──
         linker.func_wrap("env", "println", |_: Caller<()>, _: i64| {}).unwrap();
