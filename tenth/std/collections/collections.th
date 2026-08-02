@@ -8,7 +8,7 @@
 //
 // Usage:
 //   use std::collections::collections::flat_map
-//   use std::collections::collections::group_by
+//   (group_by was documented here but never implemented — see AUDIT-11.4.29)
 
 // ── Vec transformations ──
 
