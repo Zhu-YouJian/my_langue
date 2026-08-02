@@ -83,14 +83,16 @@ pub fn run_jit(vm: &mut Vm, name: &str) -> TenthResult<Value> {
         // B2: 安全网——即使 JIT 返回 ok=true，也检查是否有 hostcall 设置了
         // last_error（如 host_call / host_index_get 等非 MethodCall hostcall 报错）。
         // 若有错误，surface 之并触发 fallback，而非静默返回可能的 Unit。
-        if let Some(msg) = vm.take_last_error() {
-            return Err(TenthError::RuntimeError { line: None, col: None, message: msg });
+        // 9c：last_error 携带行号（`(line, message)`），构造 RuntimeError 时带上，
+        // 使 JIT 报错与 VM 的 err_here/with_line 行为一致（对齐报错文案）。
+        if let Some((line, msg)) = vm.take_last_error() {
+            return Err(TenthError::RuntimeError { line, col: None, message: msg });
         }
         vm.stack_push(out.clone());
         Ok(out)
     } else {
         // The trampoline sets the VM's last-error field; surface it here.
-        let msg = vm.take_last_error().unwrap_or_else(|| "JIT 执行失败".into());
-        Err(TenthError::RuntimeError { line: None, col: None, message: msg })
+        let (line, msg) = vm.take_last_error().unwrap_or((None, "JIT 执行失败".into()));
+        Err(TenthError::RuntimeError { line, col: None, message: msg })
     }
 }

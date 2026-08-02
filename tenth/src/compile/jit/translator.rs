@@ -18,7 +18,7 @@ use cranelift_module::{Linkage, Module};
 use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
 
-use crate::runtime::vm::{Chunk, Op};
+use crate::runtime::vm::{Chunk, Op, Vm};
 use crate::runtime::value::Value;
 
 // Cranelift's `StackSlot` and `SigRef` entity types live in `codegen::ir`
@@ -86,6 +86,7 @@ pub fn translate<M: Module>(
             out_ptr,
             ptr,
             terminated: false,
+            cur_line: 0,
         };
 
         t.translate_body()?;
@@ -119,6 +120,10 @@ struct Translator<'a, M: Module> {
     ptr: types::Type,
     /// Whether the current block already has a terminator.
     terminated: bool,
+    /// 9c：当前 opcode 的源码行号（0 = 无）。在 `emit_op` 入口从 chunk 行号表
+    /// `line_at(op_start)` 查得；每个 hostcall 前由 `emit_line_hint` 写入
+    /// `vm.current_line`，供 hostcall 报错时携带行号（对齐 VM err_here/with_line）。
+    cur_line: usize,
 }
 
 // Cranelift re-exports — `Value` clashes with our runtime `Value`, so alias.
@@ -219,6 +224,8 @@ impl<'a, M: Module> Translator<'a, M> {
 
     fn emit_op(&mut self, op: Op, op_start: usize, ip_after: usize) -> Result<(), String> {
         use Op::*;
+        // 9c：记录当前 opcode 的源码行号（0 = 无），供 hostcall 报错时携带。
+        self.cur_line = self.chunk.line_at(op_start).unwrap_or(0);
         match op {
             PushInt(n) => {
                 let out = self.stack_addr_at_sp();
@@ -710,15 +717,29 @@ impl<'a, M: Module> Translator<'a, M> {
         self.builder.import_signature(sig)
     }
 
+    /// 9c：在 hostcall 前把当前指令源码行号写入 `vm.current_line`（JIT 报错行号）。
+    /// `current_line` 是 `usize`（0 = 无行号），按字段偏移直接 store 指针宽整数。
+    /// hostcall 的 `set_last_error`/`set_jit_error` 读取补行号——对齐 VM 的
+    /// err_here/with_line 行为。行号每 opcode 恒定，Cranelift 会 CSE 常量。
+    fn emit_line_hint(&mut self) {
+        let off = std::mem::offset_of!(Vm, current_line) as i64;
+        let off_v = self.builder.ins().iconst(self.ptr, off);
+        let addr = self.builder.ins().iadd(self.vm, off_v);
+        let line_v = self.builder.ins().iconst(self.ptr, self.cur_line as i64);
+        self.builder.ins().store(MemFlags::new(), line_v, addr, 0);
+    }
+
     // ── Hostcall emitters (all take raw `Value_` addresses for Value params) ─
 
     fn call_hostcall_unit(&mut self, name: &str, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[self.ptr], None);
         self.builder.ins().call_indirect(sig, callee, &[self.vm, out]);
     }
 
     fn call_hostcall_i64(&mut self, name: &str, arg: i64, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::I64, self.ptr], None);
         let a = self.builder.ins().iconst(types::I64, arg);
@@ -726,6 +747,7 @@ impl<'a, M: Module> Translator<'a, M> {
     }
 
     fn call_hostcall_f64(&mut self, name: &str, arg: f64, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::F64, self.ptr], None);
         let a = self.builder.ins().f64const(arg);
@@ -735,6 +757,7 @@ impl<'a, M: Module> Translator<'a, M> {
     /// f32 hostcall 调用：参数以 f32 ABI 传递（4 字节寄存器），与 f64 路径
     /// 区分以保留 dtype 信息到运行时。栈布局不变——out 仍为 *mut Value。
     fn call_hostcall_f32(&mut self, name: &str, arg: f32, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::F32, self.ptr], None);
         let a = self.builder.ins().f32const(arg);
@@ -742,6 +765,7 @@ impl<'a, M: Module> Translator<'a, M> {
     }
 
     fn call_hostcall_u8(&mut self, name: &str, arg: u8, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::I8, self.ptr], None);
         let a = self.builder.ins().iconst(types::I8, arg as i64);
@@ -753,6 +777,7 @@ impl<'a, M: Module> Translator<'a, M> {
     }
 
     fn call_hostcall_val_ret_u8(&mut self, name: &str, arg: Value_) -> Value_ {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[self.ptr], Some(types::I8));
         let call = self.builder.ins().call_indirect(sig, callee, &[self.vm, arg]);
@@ -761,6 +786,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm) -> u8` — e.g. host_check_error.
     fn call_hostcall_vm_ret_u8(&mut self, name: &str) -> Value_ {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[], Some(types::I8));
         let call = self.builder.ins().call_indirect(sig, callee, &[self.vm]);
@@ -769,6 +795,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm, u64, *const Value, *mut Value)` — e.g. host_load_field.
     fn call_hostcall_u64_val(&mut self, name: &str, a: u64, val: Value_, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::I64, self.ptr, self.ptr], None);
         let a_val = self.builder.ins().iconst(types::I64, a as i64);
@@ -777,6 +804,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm, *const Value, *const Value, *mut Value)` — e.g. host_add.
     fn call_hostcall_2_val(&mut self, name: &str, a: Value_, b: Value_, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[self.ptr, self.ptr, self.ptr], None);
         self.builder.ins().call_indirect(sig, callee, &[self.vm, a, b, out]);
@@ -784,6 +812,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm, *const Value, *const Value, *const Value, *mut Value)` — e.g. host_slice_str.
     fn call_hostcall_3_val(&mut self, name: &str, a: Value_, b: Value_, c: Value_, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[self.ptr, self.ptr, self.ptr, self.ptr], None);
         self.builder.ins().call_indirect(sig, callee, &[self.vm, a, b, c, out]);
@@ -791,6 +820,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm, u64, u64, *const Value, *mut Value)` — e.g. host_call.
     fn call_hostcall_call(&mut self, name: &str, name_idx: u64, arg_count: u64, args: Value_, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::I64, types::I64, self.ptr, self.ptr], None);
         let a1 = self.builder.ins().iconst(types::I64, name_idx as i64);
@@ -800,6 +830,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm, u64, *const Value, *mut Value)` — e.g. host_make_vec.
     fn call_hostcall_make_n(&mut self, name: &str, count: u64, args: Value_, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::I64, self.ptr, self.ptr], None);
         let c = self.builder.ins().iconst(types::I64, count as i64);
@@ -808,6 +839,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm, u64, u64, *const Value, *mut Value)` — e.g. host_new_struct.
     fn call_hostcall_new_struct(&mut self, name: &str, name_idx: u64, field_count: u64, args: Value_, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::I64, types::I64, self.ptr, self.ptr], None);
         let a1 = self.builder.ins().iconst(types::I64, name_idx as i64);
@@ -817,6 +849,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm, u64, u64, *const Value, *mut Value)` — e.g. host_new_union.
     fn call_hostcall_new_union(&mut self, name: &str, name_idx: u64, field_idx: u64, val: Value_, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::I64, types::I64, self.ptr, self.ptr], None);
         let a1 = self.builder.ins().iconst(types::I64, name_idx as i64);
@@ -826,6 +859,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm, u64, u64, u64, *const Value, *mut Value)` — e.g. host_make_enum.
     fn call_hostcall_make_enum(&mut self, name: &str, name_idx: u64, variant_idx: u64, field_count: u64, args: Value_, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::I64, types::I64, types::I64, self.ptr, self.ptr], None);
         let a1 = self.builder.ins().iconst(types::I64, name_idx as i64);
@@ -836,6 +870,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm, i64, i64, u8, *mut Value)` — e.g. host_push_range.
     fn call_hostcall_push_range(&mut self, name: &str, start: i64, end: i64, inc: u8, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::I64, types::I64, types::I8, self.ptr], None);
         let a1 = self.builder.ins().iconst(types::I64, start);
@@ -846,6 +881,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm, u64, u64, *const Value, *mut Value)` — e.g. host_make_tensor.
     fn call_hostcall_make_tensor(&mut self, name: &str, rows: u64, cols: u64, args: Value_, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::I64, types::I64, self.ptr, self.ptr], None);
         let a1 = self.builder.ins().iconst(types::I64, rows as i64);
@@ -855,6 +891,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
     /// `fn(vm, u64, *const Value, *const Value, *mut Value)` — e.g. host_store_field.
     fn call_hostcall_store_field(&mut self, name: &str, field_idx: u64, recv: Value_, val: Value_, out: Value_) {
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::I64, self.ptr, self.ptr, self.ptr], None);
         let a1 = self.builder.ins().iconst(types::I64, field_idx as i64);
@@ -902,6 +939,7 @@ impl<'a, M: Module> Translator<'a, M> {
         self.sp -= VALUE_SIZE as i32;
         let a_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
         let out = a_addr; // result overwrites operand slot
+        self.emit_line_hint();
         let callee = self.hostcall_addr(name)?;
         let sig = self.import_sig(&[self.ptr, self.ptr], None);
         self.builder.ins().call_indirect(sig, callee, &[self.vm, a_addr, out]);

@@ -127,7 +127,16 @@ impl Lowerer {
                     let var_info = self.scope.lookup_var(&ident.name);
                     let fn_info = self.scope.lookup_fn(&ident.name);
                     if var_info.is_none() && fn_info.is_none() {
-                        match ident.name.as_str() {
+                        // 9b：递归闭包自引用——`let fact = |n| ... fact(n-1)` 的闭包体
+                        // 引用自身绑定名时（lower 该 let 的 init 期间 `self_ref_lets`
+                        // 含该名），解析为 Var(name)（类型 Unknown）而不报「未定义变量」。
+                        // 运行时按名解析：VM 经 globals（let 会 StoreGlobal）/ 解释器经
+                        // 作用域链——self_ref_lets 内的名字在闭包 lowering 时已被排除出
+                        // captures（Closure 分支），不会按值捕获到未绑定的槽位。
+                        if self.self_ref_lets.iter().any(|n| n == &ident.name) {
+                            (HirExprKind::Var(ident.name.clone()), Type::Unknown)
+                        } else {
+                            match ident.name.as_str() {
                             "println" | "print" | "eprintln" | "eprint" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
                             | "zeros_f16" | "ones_f16" | "zeros_bf16" | "ones_bf16"
                             | "read_file" | "write_file" | "write_bytes" | "read_bytes"
@@ -210,6 +219,7 @@ impl Lowerer {
                                     message: format!("未定义变量 '{}'", ident.name),
                                 });
                             }
+                        }
                         }
                     } else {
                         let ty = var_info.map(|v| v.0).or_else(|| {
@@ -1101,7 +1111,12 @@ impl Lowerer {
                 self.scope = *self.scope.parent.take().unwrap();
 
                 // Analyze free variables in the closure body (excluding params)
-                let captures = Self::free_vars_in(&b);
+                let mut captures = Self::free_vars_in(&b);
+                // 9b：递归闭包自引用——自身绑定名（及外层正在初始化的递归闭包名）
+                // 排除出 captures：创建时对应槽位尚未绑定，按值捕获会得到 Unit/旧值
+                // → 运行时错误或静默错值。运行时改按名解析：VM 经 globals（let 会
+                // StoreGlobal）/ 解释器经作用域链（动态作用域，调用时已绑定）。
+                captures.retain(|c| !self.self_ref_lets.iter().any(|n| n == c));
 
                 let closure_ty = Type::FnType {
                     params: lowered_params.iter().map(|(_, t)| t.clone()).collect(),

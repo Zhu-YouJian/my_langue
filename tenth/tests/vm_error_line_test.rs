@@ -15,9 +15,10 @@
 //! - 张量索引越界 / 无法索引（opcode 36 IndexGet）
 //! - 字符串切片非法（opcode 37 SliceStr）
 //!
-//! 注意：本测试直接调用 `vm.call("main")`（VM 路径），绕过 JIT——JIT 路径的
-//! hostcall 用字符串传递错误（`set_last_error(e.to_string())`），行号暂不保留
-//! （见 MEMO 记录，属 JIT 独立限制）。
+//! 注意：本测试直接调用 `vm.call("main")`（VM 路径），绕过 JIT。JIT 路径的
+//! 运行时错误行号由任务 9 子任务 9c 补齐（hostcall 捕获错误时携带当前指令行号，
+//! 见 `jit_error_line_test.rs`——JIT translator 写入 `vm.current_line`，
+//! hostcall 用 `Vm::set_jit_error` 补行号，`run_jit` surface 带行号错误）。
 
 use tenth::compile::bytecode::BytecodeCompiler;
 use tenth::error::TenthError;

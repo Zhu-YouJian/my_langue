@@ -127,7 +127,7 @@ unsafe extern "C" fn host_add(vm: *mut Vm, a: *const Value, b: *const Value, out
     let vm = &mut *vm;
     match vm.add(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -135,7 +135,7 @@ unsafe extern "C" fn host_sub(vm: *mut Vm, a: *const Value, b: *const Value, out
     let vm = &mut *vm;
     match vm.sub(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -143,7 +143,7 @@ unsafe extern "C" fn host_mul(vm: *mut Vm, a: *const Value, b: *const Value, out
     let vm = &mut *vm;
     match vm.mul(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -151,7 +151,7 @@ unsafe extern "C" fn host_div(vm: *mut Vm, a: *const Value, b: *const Value, out
     let vm = &mut *vm;
     match vm.div(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -159,7 +159,7 @@ unsafe extern "C" fn host_mod(vm: *mut Vm, a: *const Value, b: *const Value, out
     let vm = &mut *vm;
     match vm.rem(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -167,7 +167,7 @@ unsafe extern "C" fn host_neg(vm: *mut Vm, a: *const Value, out: *mut Value) {
     let vm = &mut *vm;
     match vm.neg(&*a) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -175,7 +175,7 @@ unsafe extern "C" fn host_not(vm: *mut Vm, a: *const Value, out: *mut Value) {
     let vm = &mut *vm;
     match vm.not(&*a) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -185,7 +185,7 @@ unsafe extern "C" fn host_eq(vm: *mut Vm, a: *const Value, b: *const Value, out:
     let vm = &mut *vm;
     match vm.eq(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -193,7 +193,7 @@ unsafe extern "C" fn host_neq(vm: *mut Vm, a: *const Value, b: *const Value, out
     let vm = &mut *vm;
     match vm.neq(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -201,7 +201,7 @@ unsafe extern "C" fn host_lt(vm: *mut Vm, a: *const Value, b: *const Value, out:
     let vm = &mut *vm;
     match vm.lt(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -209,7 +209,7 @@ unsafe extern "C" fn host_gt(vm: *mut Vm, a: *const Value, b: *const Value, out:
     let vm = &mut *vm;
     match vm.gt(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -217,7 +217,7 @@ unsafe extern "C" fn host_lte(vm: *mut Vm, a: *const Value, b: *const Value, out
     let vm = &mut *vm;
     match vm.lte(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -225,7 +225,7 @@ unsafe extern "C" fn host_gte(vm: *mut Vm, a: *const Value, b: *const Value, out
     let vm = &mut *vm;
     match vm.gte(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -239,7 +239,7 @@ unsafe extern "C" fn host_call(
     let args = safe_slice(args_ptr, arg_count);
     match vm.call_with_args(&name, args) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -258,7 +258,7 @@ unsafe extern "C" fn host_method_call(
     let args = &all[1..];
     match vm.call_method(&receiver, &method, args) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -397,7 +397,7 @@ unsafe extern "C" fn host_index_get(vm: *mut Vm, target: *const Value, idx: *con
     let vm = &mut *vm;
     match vm.index_get(&*target, &*idx) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -405,7 +405,7 @@ unsafe extern "C" fn host_slice_str(vm: *mut Vm, target: *const Value, start: *c
     let vm = &mut *vm;
     match vm.slice_str(&*target, &*start, &*end) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
@@ -635,14 +635,29 @@ unsafe extern "C" fn host_call_indirect(
     let args = &all[..n - 1];
     match vm.call_value(&callee, args) {
         Ok(v) => std::ptr::write(out, v),
-        Err(e) => { vm.set_last_error(e.to_string()); std::ptr::write(out, Value::Unit); }
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
 }
 
 unsafe extern "C" fn host_load_global(vm: *mut Vm, name_idx: u64, out: *mut Value) {
     let vm = &mut *vm;
     let name = vm.string_at(name_idx as usize).unwrap_or_default();
-    std::ptr::write(out, vm.get_global(&name).unwrap_or(Value::Unit));
+    // 9a：native 别名 fallback（与 VM opcode 9 LoadGlobal 对齐）——`let p = println; p("x")`
+    // 在 JIT 路径也能把 native 名作为 FnRef 可调用值绑定（call_value 支持 natives 查询）。
+    // 用户全局名优先（shadow native）。
+    let v = vm.get_global(&name).unwrap_or_else(|| {
+        if vm.natives.contains_key(&name) {
+            Value::FnRef {
+                name,
+                params: Vec::new(),
+                return_type: crate::hir::types::Type::Unknown,
+                captures: Vec::new(),
+            }
+        } else {
+            Value::Unit
+        }
+    });
+    std::ptr::write(out, v);
 }
 
 unsafe extern "C" fn host_store_global(vm: *mut Vm, name_idx: u64, val: *const Value, out: *mut Value) {

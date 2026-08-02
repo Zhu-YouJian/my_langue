@@ -255,7 +255,22 @@ impl Vm {
                 9 => {
                     let i = r!(u64) as usize;
                     let name = strings.get(i).cloned().unwrap_or_default();
-                    let v = self.globals.get(&name).cloned().unwrap_or(Value::Unit);
+                    // 9a：`let p = println` native 别名——globals 未命中时若名字是
+                    // native 函数则构造 FnRef（对齐解释器 eval.rs 的 native 名表
+                    // fallback），使 native 可作为可调用值绑定/传递（call_value/
+                    // CallClosure 已支持 natives 查询）。用户全局名优先（shadow native）。
+                    let v = self.globals.get(&name).cloned().or_else(|| {
+                        if self.natives.contains_key(&name) {
+                            Some(Value::FnRef {
+                                name,
+                                params: Vec::new(),
+                                return_type: crate::hir::types::Type::Unknown,
+                                captures: Vec::new(),
+                            })
+                        } else {
+                            None
+                        }
+                    }).unwrap_or(Value::Unit);
                     self.stack.push(v);
                 }
                 10 => {

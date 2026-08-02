@@ -67,10 +67,16 @@ pub struct Vm {
     pub fs_sandbox: Option<crate::runtime::limits::FsSandbox>,
     /// Lazily-initialised Cranelift JIT context. `None` until first JIT use.
     pub jit_ctx: Option<crate::compile::jit::context::JitContext>,
-    /// Last error message set by a JIT hostcall trampoline.
-    last_error: Option<String>,
+    /// 9c：JIT hostcall 报错时携带的行号（`(line, message)`）。
+    /// line 由 `set_last_error`/`set_jit_error` 从 `current_line`（JIT translator
+    /// 在每个 hostcall 前设置的当前指令源码行号）补入——对齐 VM 的 err_here/with_line。
+    last_error: Option<(Option<usize>, String)>,
     /// Index of the chunk currently being executed by JIT (for string lookup).
     pub current_chunk_idx: usize,
+    /// 9c：JIT 当前指令源码行号提示（0 表示无）。由 JIT translator 在每个
+    /// hostcall 前写入（直接从 chunk 行号表 `Chunk.lines` 查 `line_at(op_start)`），
+    /// 供 hostcall 捕获运行时错误时补行号（对齐 VM err_here/with_line 行为）。
+    pub current_line: usize,
     /// 护城河 F：上一次 backward 失败时的根因说明列表（由 formal_explain 生成）。
     /// 由 `explain_error()` native 读取并清空。
     pub last_explanation: Vec<String>,
@@ -126,7 +132,7 @@ impl Vm {
             stack: Vec::new(), frames: Vec::new(), stack_pool: Vec::new(), locals_pool: Vec::new(),
             tape: None, recording: false,
             step_budget: None, deadline_ms: None, fs_sandbox: None,
-            jit_ctx: None, last_error: None, current_chunk_idx: 0,
+            jit_ctx: None, last_error: None, current_chunk_idx: 0, current_line: 0,
             last_explanation: Vec::new(), tcp_streams: Vec::new(),
             tcp_listeners: Vec::new(),
             udp_sockets: Vec::new(),
@@ -164,8 +170,20 @@ impl Vm {
     pub fn stack_push(&mut self, v: Value) { self.stack.push(v); }
     pub fn stack_pop(&mut self) -> Value { self.stack.pop().unwrap_or(Value::Unit) }
     pub fn get_global(&self, name: &str) -> Option<Value> { self.globals.get(name).cloned() }
-    pub fn set_last_error(&mut self, msg: String) { self.last_error = Some(msg); }
-    pub fn take_last_error(&mut self) -> Option<String> { self.last_error.take() }
+    pub fn set_last_error(&mut self, msg: String) { self.last_error = Some((cur_line_opt(self.current_line), msg)); }
+    /// 9c：JIT hostcall 结构化报错——对齐 VM `with_line`：RuntimeError 无行号时
+    /// 补当前指令行号（`current_line`），取裸 message（不含「运行时错误 — 」前缀，
+    /// 避免双重前缀）；已有行号的原样保留。非 RuntimeError 按原 Display 透传。
+    pub fn set_jit_error(&mut self, e: &TenthError) {
+        match e {
+            TenthError::RuntimeError { line, message, .. } => {
+                let line = line.or_else(|| cur_line_opt(self.current_line));
+                self.last_error = Some((line, message.clone()));
+            }
+            other => self.last_error = Some((cur_line_opt(self.current_line), other.to_string())),
+        }
+    }
+    pub fn take_last_error(&mut self) -> Option<(Option<usize>, String)> { self.last_error.take() }
     /// 检查是否有未处理的错误（不清除）。
     /// JIT translator 在 MethodCall 后调用此方法，若发现错误则提前中止。
     pub fn has_last_error(&self) -> bool { self.last_error.is_some() }
@@ -391,6 +409,11 @@ impl Vm {
 
 fn err<T>(msg: &str) -> TenthResult<T> {
     Err(TenthError::RuntimeError { line: None, col: None, message: msg.into() })
+}
+
+/// 9c：把 JIT 行号提示（usize，0 = 无行号）转为 `Option<usize>`。
+fn cur_line_opt(line: usize) -> Option<usize> {
+    if line != 0 { Some(line) } else { None }
 }
 
 impl Vm {

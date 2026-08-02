@@ -87,7 +87,18 @@ impl Lowerer {
 
         let kind = match &stmt.kind {
             StmtKind::Let { names, type_ann, mutable, init } => {
+                // 9b：递归闭包自引用——`let fact = |n| ... fact(n-1)` 的 init 是闭包时，
+                // 压入绑定名（lower 闭包体时同名引用解析为 Var(name) 且不捕获，
+                // 见 lower_expr 的 Ident/Closure 分支），结束后弹出。
+                let is_self_ref_closure = names.len() == 1
+                    && matches!(init.as_ref().map(|i| &i.kind), Some(ast::ExprKind::Closure { .. }));
+                if is_self_ref_closure {
+                    self.self_ref_lets.push(names[0].name.clone());
+                }
                 let mut lowered_init = init.as_ref().map(|i| self.lower_expr(i)).transpose()?;
+                if is_self_ref_closure {
+                    self.self_ref_lets.pop();
+                }
                 // 类型注解强制化：若 type_ann 和 init 都存在，检查 shape 兼容性并合并
                 let ty = match (type_ann.as_ref(), lowered_init.as_ref()) {
                     (Some(ann), Some(init_expr)) => {
@@ -414,8 +425,20 @@ impl Lowerer {
                                         continue;
                                     }
                                     let name = names[0].name.clone();
+                                    // 9b：顶层 let init 为闭包时同样压入 self_ref_lets
+                                    // （`let fact = |n| ... fact(n-1)` 自引用解析）。
+                                    let is_self_ref_closure = matches!(
+                                        init.as_ref().map(|i| &i.kind),
+                                        Some(ast::ExprKind::Closure { .. })
+                                    );
+                                    if is_self_ref_closure {
+                                        self.self_ref_lets.push(name.clone());
+                                    }
                                     let mut lowered_init =
                                         init.as_ref().map(|i| self.lower_expr(i)).transpose()?;
+                                    if is_self_ref_closure {
+                                        self.self_ref_lets.pop();
+                                    }
                                     // 类型注解强制化（shape 检查，与 lower_stmt 的 let 一致）
                                     let ty = match (type_ann.as_ref(), lowered_init.as_ref()) {
                                         (Some(ann), Some(init_expr)) => {

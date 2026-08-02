@@ -65,6 +65,12 @@ pub struct Lowerer {
     /// 是否指向某个外层循环（未定义标签 / 标签在循环外 → 编译期 TypeError）。
     /// 注意：闭包体 lower 时会清空（闭包是独立函数体，不能跳出外层循环）。
     loop_labels: Vec<Option<String>>,
+    /// 9b：递归闭包自引用绑定名栈。lower `let name = |..| .. name(..) ..` 时
+    /// 压入 `name`，闭包体 lower 完弹出。闭包体内的同名引用：① 解析为
+    /// `Var(name)`（不自报「未定义变量」）；② 从 HIR `captures` 排除（自身引用
+    /// 不按值捕获——创建时槽位尚未绑定，捕获会得到 Unit/旧值 → 运行时错误或静默错值；
+    /// 改为运行时按名解析：VM 经 globals（let 会 StoreGlobal）/ 解释器经作用域链）。
+    self_ref_lets: Vec<String>,
     /// M3.1：自定义运算符 → 绑定函数名映射（`operator <op> = fn(...)`）。
     /// lower_program 第一遍注册，表达式降级为对绑定函数（合成名
     /// `__custom_op_<op>`）的普通调用。
@@ -335,6 +341,7 @@ impl Lowerer {
             loop_labels: Vec::new(),
             custom_ops: HashMap::new(),
             is_module: false,
+            self_ref_lets: Vec::new(),
         };
 
         lowerer.trait_defs.insert("Display".to_string(), HirTraitDef {

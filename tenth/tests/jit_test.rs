@@ -432,9 +432,8 @@ fn test_closure_call_multiple_factories() {
 fn test_closure_call_curry() {
     // 闭包返回闭包（curry/partial 风格）：partial(add,5) 返回 |x| f(arg,x)，
     // 内层闭包捕获外层参数 f/arg（走全局捕获 hack）。add5(3) → 8。
-    // 注：递归闭包（`let fact = |n| ... fact(n-1)`）在 lowering 阶段被拒
-    // （"未定义变量 'fact'"——闭包初始化器内自引用未绑定），属前端限制，
-    // 非 a1 VM/JIT 范畴，故对拍用例不含递归闭包。
+    // 注：递归闭包（`let fact = |n| ... fact(n-1)`）自引用解析见任务 9 子任务 9b
+    // （test_recursive_closure_self_reference 对拍），此处 curry 用例专注捕获参数。
     assert_vm_jit_int(r#"
         fn partial(f: fn(Int, Int) -> Int, arg: Int) -> fn(Int) -> Int {
             |x: Int| f(arg, x)
@@ -492,4 +491,73 @@ fn test_capture_inline_hof_param() {
             apply_twice(addn, 3)
         }
     "#, 13, "hof-capturing");
+}
+
+// ── 任务 9：a1 遗留三项补齐 ─────────────────────────────────────────────
+
+#[test]
+fn test_native_alias_binding() {
+    // 9a：`let p = println` native 别名——bytecode/VM 侧 `let p = <native名>` 能把
+    // native 作为可调用值绑定（FnRef 指向 native 名；LoadGlobal 未命中时查 natives）。
+    // 修复前 JIT/VM 报「期望可调用值，得到 Unit」。println 返回 Unit，故断言两路径
+    // 均成功（不报错）即可辨识回归。
+    let src = r#"
+        fn main() {
+            let p = println;
+            p("hello alias");
+        }
+    "#;
+    let vm_res = run_vm(src);
+    let jit_res = run_jit(src);
+    assert!(vm_res.is_ok(), "[native-alias] VM 应成功，实际 {:?}", vm_res);
+    assert!(jit_res.is_ok(), "[native-alias] JIT 应成功，实际 {:?}", jit_res);
+}
+
+#[test]
+fn test_native_alias_passed_as_value() {
+    // 9a：native 别名作函数实参传递——apply(p, 5) 内经参数槽间接调用
+    // （CallClosure → call_value → natives 查询）。修复前实参 LoadGlobal 得 Unit。
+    let src = r#"
+        fn apply(f: fn(i64) -> i64, x: i64) -> i64 {
+            f(x)
+        }
+        fn main() -> Int {
+            let p = println;
+            let r = apply(p, 5);
+            r
+        }
+    "#;
+    // println 返回 Unit；apply 返回 Unit。两路径都不应报错（可辨识回归）。
+    let vm_res = run_vm(src);
+    let jit_res = run_jit(src);
+    assert!(vm_res.is_ok(), "[native-alias-arg] VM 应成功，实际 {:?}", vm_res);
+    assert!(jit_res.is_ok(), "[native-alias-arg] JIT 应成功，实际 {:?}", jit_res);
+}
+
+#[test]
+fn test_recursive_closure_self_reference() {
+    // 9b：递归闭包 `let fact = |n| ... fact(n-1)`——前端自引用解析（lowering 不再报
+    // 「未定义变量 'fact'」），运行时按名解析（VM globals / 解释器作用域链）。
+    // fact(5) = 120，VM=JIT 对拍一致。
+    assert_vm_jit_int(r#"
+        fn main() -> Int {
+            let fact = |n: Int| if n <= 1 { 1 } else { n * fact(n - 1) };
+            fact(5)
+        }
+    "#, 120, "recursive-closure");
+}
+
+#[test]
+fn test_recursive_closure_with_capture() {
+    // 9b：递归闭包 + 捕获混用——自引用名排除出 captures（运行时按名解析），
+    // 同时 scale/base 正常捕获（值内联）。f(n)=n<=1?1:n*f(n-1)*scale+base：
+    // f(1)=1, f(2)=14, f(3)=94, f(4)=762。VM=JIT 对拍一致。
+    assert_vm_jit_int(r#"
+        fn main() -> Int {
+            let scale = 2;
+            let base = 10;
+            let f = |n: Int| if n <= 1 { 1 } else { n * f(n - 1) * scale + base };
+            f(4)
+        }
+    "#, 762, "recursive-closure-capture");
 }
