@@ -828,6 +828,9 @@ impl Lowerer {
                         .map(|rt| self.annotation_type(rt))
                         .unwrap_or(Type::unit());
                     let ret_ty = self.resolve_struct_type(ret_ty);
+                    // 断点 4.2：记录原始注解返回类型，供前向引用 shape 不动点
+                    // pass（run_forward_ref_shape_fixpoint）做注解合并/冲突检查。
+                    self.fn_annotations.insert(name.name.clone(), ret_ty.clone());
                     self.scope.define_fn(name.name.clone(), param_types, ret_ty);
                 }
                 _ => {}
@@ -1303,6 +1306,16 @@ impl Lowerer {
                 _ => {}
             }
         }
+
+        // 断点 4.2：前向引用 shape 不动点 pass。
+        // 全部函数 lower 完成后，对同文件常规函数做「无环全量不动点 + 轮数上限兜底」：
+        // 每轮用上一轮的精化返回类型重算调用点 ret_ty（纯 shape pass，复用
+        // resolve_method_type / infer_binary_type / collect_return_tensor_dims /
+        // join_return_dims / check_and_merge_tensor_shape），直到稳定或达 2n+1 轮；
+        // 递归（SCC）场景超限后回退首轮状态（保留既有行为）。
+        // 收敛性见 docs/shape-check-roadmap/前向引用断点收敛性论证.md（数理部 2026-08-02）。
+        // 主表达式（<expr>）在本 pass 之后 lower——其调用点天然拿到精化后的返回类型。
+        self.run_forward_ref_shape_fixpoint()?;
 
         // 自动派生 Copy trait：对于所有字段都是 Copy 类型的结构体，自动注册 impl Copy。
         // 与 Rust 语义一致：实现 Drop 的类型不可派生 Copy（drop 会随拷贝倍增）。

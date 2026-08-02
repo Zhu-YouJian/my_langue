@@ -24,6 +24,11 @@ pub struct Lowerer {
     scope: Scope,
     functions: Vec<HirFnDef>,
     generic_funcs: HashMap<String, HirFnDef>,
+    /// 断点 4.2：同文件常规函数的**原始注解返回类型**（首遍注册时记录）。
+    /// 不动点 pass（`run_forward_ref_shape_fixpoint`）用它做「注解 vs 前向引用
+    /// body」的合并/冲突检查，并识别参与不动点的函数（impl 方法 / use 导入
+    /// 函数不在此表——无前向引用缺口）。
+    fn_annotations: HashMap<String, Type>,
     structs: HashMap<String, Vec<(String, Type)>>,
     /// M2.2：Newtype（tuple struct）名集合——`struct Name(Type)` 声明的
     /// 非泛型 tuple struct。构造 `Name(args)` 在 Call 分支按此集合改写为
@@ -304,6 +309,7 @@ impl Lowerer {
             scope,
             functions: Vec::new(),
             generic_funcs: HashMap::new(),
+            fn_annotations: HashMap::new(),
             structs: HashMap::new(),
             tuple_structs: HashSet::new(),
             generic_structs: HashMap::new(),

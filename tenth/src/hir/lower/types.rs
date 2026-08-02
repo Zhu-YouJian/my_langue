@@ -1308,11 +1308,15 @@ impl Lowerer {
     /// 收集函数体中所有 return 语句的 shape（以及函数体末尾表达式的 shape），
     /// join 成一个统一的 shape，用于推断函数的精确返回 shape。
     ///
-    /// join 规则（逐维）：
-    /// - `Any` 与任意 → 取另一侧（Any 不约束）
-    /// - `Known(a)` 与 `Known(b)`：a == b → `Known(a)`；a ≠ b → `Any`（不同 Known 降为 Any）
-    /// - `Symbol(s)` 与 `Symbol(t)`：s == t → `Symbol(s)`；s ≠ t → `Any`（不同 Symbol 降为 Any）
-    /// - `Known` 与 `Symbol` → `Any`（保守降级，不假设 unify）
+    /// join 规则（逐维，**n 元共识语义**，与路径顺序无关）：
+    /// - 收集该维所有**非 Any** 输入：空（全 Any）→ `Any`
+    /// - 恰一种非 Any 值（全部相同）→ 取该值（`Known(a)` 全同 / `Symbol(s)` 全同）
+    /// - 存在 ≥2 种不同非 Any 值（不同 Known / 不同 Symbol / Known×Symbol 混合）→ `Any`
+    ///
+    /// 修复背景（docs/shape-check-roadmap/前向引用断点收敛性论证.md 引理 1，
+    /// 2026-08-02）：旧实现是**二元左折叠**，合并运算不可结合——同一多重集
+    /// `[K2,K1,K1]` 左折叠得 `K1`（假精确），而 `[K1,K1,K2]` 得 `Any`，结果依赖
+    /// 路径列表顺序（潜在误报/漏报源）。n 元共识语义结合/交换/幂等，与顺序无关。
     ///
     /// 维度数不一致 → 返回 Err（明确的逻辑错误，应报错）。
     pub(super) fn join_return_dims(shapes: &[Vec<Dim>]) -> Result<Vec<Dim>, String> {
@@ -1329,25 +1333,26 @@ impl Lowerer {
                 ));
             }
         }
-        // 逐维 join
+        // 逐维 join：n 元共识（所有非 Any 输入相同取该值，否则 Any）
         let mut result: Vec<Dim> = Vec::with_capacity(first.len());
         for i in 0..first.len() {
-            let mut joined: Dim = first[i].clone();
-            for s in &shapes[1..] {
-                joined = match (&joined, &s[i]) {
-                    // Any 与任意 → 取另一侧
-                    (Dim::Any, d) | (d, Dim::Any) => d.clone(),
-                    // Known 与 Known：相等保留，不等降为 Any
-                    (Dim::Known(a), Dim::Known(b)) if a == b => Dim::Known(*a),
-                    (Dim::Known(_), Dim::Known(_)) => Dim::Any,
-                    // Symbol 与 Symbol：同名保留，不同名降为 Any
-                    (Dim::Symbol(a), Dim::Symbol(b)) if a == b => Dim::Symbol(a.clone()),
-                    (Dim::Symbol(_), Dim::Symbol(_)) => Dim::Any,
-                    // Known 与 Symbol 混合 → 保守 Any（不假设 unify）
-                    (Dim::Known(_), Dim::Symbol(_)) | (Dim::Symbol(_), Dim::Known(_)) => Dim::Any,
-                };
+            let mut consensus: Option<Dim> = None;
+            let mut conflicted = false;
+            for s in shapes {
+                match &s[i] {
+                    // Any 不约束
+                    Dim::Any => {}
+                    d => match &consensus {
+                        None => consensus = Some(d.clone()),
+                        Some(prev) => {
+                            if prev != d {
+                                conflicted = true;
+                            }
+                        }
+                    },
+                }
             }
-            result.push(joined);
+            result.push(if conflicted { Dim::Any } else { consensus.unwrap_or(Dim::Any) });
         }
         Ok(result)
     }
@@ -1469,6 +1474,794 @@ impl Lowerer {
             merged_dims.push(merged);
         }
         Ok(Type::Tensor { dtype: annot_dtype, dims: merged_dims })
+    }
+
+    // ── 断点 4.2：前向引用 shape 不动点 pass ──────────────────────────────────
+    //
+    // 动机：调用**后定义**的同文件函数时，调用点只拿到注解签名
+    // （`Tensor[f64, ..]` → Any），拿不到 body 精化 shape，shape 检查漏到运行时
+    // （MEMO 2026-07-31：main 先于 make 定义时 `[3,4] @ [5,6]` 仍运行时报错）。
+    //
+    // 收敛性（`docs/shape-check-roadmap/前向引用断点收敛性论证.md`，数理部
+    // 2026-08-02，必读）：
+    // - 无环（纯前向引用）：至多 D+1 轮收敛，不动点唯一、与定义顺序无关
+    //   （定理 3；穷举 17,568 个无环程序 100% 收敛 + 100% 顺序无关实证）。
+    //   这是 4.2 的目标场景，**安全**。
+    // - 递归（自/互递归）：朴素迭代可进入周期 ≥ 2 震荡（定理 4），**必须轮数上限
+    //   兜底**——≤ 2n+1 轮仍未稳定 → 整体回退首轮状态（恢复既有行为，不引入新误报）。
+    //   诚实边界：本 pass **不宣称**递归程序也能收敛到好不动点（论证报告 §5.1）。
+    //
+    // 纯 shape pass：只重算调用节点 ret_ty 与表达式 ty（复用 resolve_method_type /
+    // infer_binary_type / index_type / merge_return_shape / collect_return_tensor_dims /
+    // join_return_dims / check_and_merge_tensor_shape），**不重放** lowering 副作用
+    // （无 G6 参数检查、无内存/算力预估 warning、无借用/move 检查），避免
+    // warning 重复与误报（论证报告 §4.2 关键工程约束）。
+    pub(super) fn run_forward_ref_shape_fixpoint(&mut self) -> TenthResult<()> {
+        let n = self.functions.len();
+        if n == 0 {
+            return Ok(());
+        }
+        // 参与不动点的函数：仅同文件常规函数（fn_annotations 有注解登记；
+        // lower_program 首遍注册时记录）。impl 方法 / use 导入函数无前向引用缺口
+        //（导入函数在其模块内已精化），不参与——保持既有行为。
+        //
+        // 回归修复（断点 4.2）：**只让「涉及 tensor」的函数参与**。无 tensor 程序
+        //（泛型枚举/纯标量）完全不走重推导——`recompute_expr_types` 不再改写其 body，
+        // 与轮 1 改动前行为一致（generic_enum_selfhost WASM-A "expected i32, found i64"
+        // 回归即源于纯标量 main 的 body 被重推导改写）。判定：函数返回类型是 Tensor，
+        // 或 body 中任一处子表达式类型为 Tensor（含调用 tensor 返回函数/方法、tensor
+        // 字面量、tensor 变量——覆盖前向引用链上的所有参与方）。
+        let participating: Vec<usize> = (0..n)
+            .filter(|i| {
+                if !self.fn_annotations.contains_key(&self.functions[*i].name) {
+                    return false;
+                }
+                let f = &self.functions[*i];
+                let returns_tensor = matches!(f.return_type, Type::Tensor { .. });
+                returns_tensor || Self::expr_involves_tensor(&f.body)
+            })
+            .collect();
+        if participating.is_empty() {
+            return Ok(());
+        }
+        // 保存首轮状态（递归震荡超限回退用）
+        let orig: Vec<(Type, HirExpr)> = participating
+            .iter()
+            .map(|i| (self.functions[*i].return_type.clone(), self.functions[*i].body.clone()))
+            .collect();
+
+        // R：函数名 → 当前返回类型（初始 = 首轮 lower 后的 return_type，程序顺序起点）
+        let mut r: HashMap<String, Type> = self
+            .functions
+            .iter()
+            .map(|f| (f.name.clone(), f.return_type.clone()))
+            .collect();
+        let max_rounds = 2 * n + 1;
+        let mut stabilized = false;
+        for _round in 0..max_rounds {
+            let mut changed = false;
+            for i in participating.iter().copied() {
+                let name = self.functions[i].name.clone();
+                let annot = self.fn_annotations.get(&name).cloned().unwrap();
+                // 纯 shape 重推导：沿已 lower 的 HIR body 重算调用 ret_ty + 表达式 ty
+                //（bindings 为函数体内 let/赋值的变量类型传播作用域栈——`let m =
+                // make(3,4)` 后 `m.matmul(n)` 的 receiver 才能拿到精化 shape）
+                let mut body = self.functions[i].body.clone();
+                let mut bindings: Vec<HashMap<String, Type>> = vec![HashMap::new()];
+                self.recompute_expr_types(&mut body, &r, &mut bindings);
+                // 收集 return dims（含 body 末表达式路径，与 lower_program 一致）
+                let mut all_shapes: Vec<Vec<Dim>> = Self::collect_return_tensor_dims(&body);
+                if let Type::Tensor { dims, .. } = &body.ty {
+                    if !matches!(body.ty, Type::Never) && dims.iter().any(|d| !matches!(d, Dim::Any)) {
+                        all_shapes.push(dims.clone());
+                    }
+                }
+                let actual_ty = if all_shapes.is_empty() {
+                    body.ty.clone()
+                } else {
+                    match Self::join_return_dims(&all_shapes) {
+                        Ok(joined_dims) => {
+                            let dtype = match &body.ty {
+                                Type::Tensor { dtype, .. } => dtype.clone(),
+                                _ => match &annot {
+                                    Type::Tensor { dtype, .. } => dtype.clone(),
+                                    _ => Box::new(Type::Unknown),
+                                },
+                            };
+                            Type::Tensor { dtype, dims: joined_dims }
+                        }
+                        // 维度数不匹配已在首轮 lower 报过；此处保守保持原返回类型
+                        Err(_) => continue,
+                    }
+                };
+                // 与注解合并——不动点会**新拦截**「注解 vs 前向引用 body」冲突
+                // （护城河改进，见论证报告 §5.4；行为变化属特性，需全量回归）
+                let merged_ret_ty = Self::check_and_merge_tensor_shape(
+                    &annot,
+                    &actual_ty,
+                    &self.functions[i].span,
+                    "函数返回值",
+                )?;
+                let old_ret = self.functions[i].return_type.clone();
+                let old_body = self.functions[i].body.clone();
+                if merged_ret_ty != old_ret || body != old_body {
+                    self.functions[i].return_type = merged_ret_ty.clone();
+                    self.functions[i].body = body;
+                    r.insert(name, merged_ret_ty);
+                    changed = true;
+                }
+            }
+            if !changed {
+                stabilized = true;
+                break;
+            }
+        }
+        // 递归震荡兜底：达到轮数上限仍未稳定 → 回退首轮状态（保留既有行为）
+        if !stabilized {
+            for (k, i) in participating.iter().enumerate() {
+                let (ret, body) = &orig[k];
+                self.functions[*i].return_type = ret.clone();
+                self.functions[*i].body = body.clone();
+            }
+        }
+        // 精化后校验：只对**被精化**（相对首轮有变化）的函数体重跑方法/二元/分支
+        // shape 检查——新拦截前向引用引发的 shape 冲突（如 main 先于 make 定义时
+        // matmul 内侧不匹配）。震荡回退后函数体无变化 → 跳过（与 lowering 首轮一致，
+        // 不引入递归程序误报）。
+        for (k, i) in participating.iter().enumerate() {
+            let (orig_ret, orig_body) = &orig[k];
+            let changed = self.functions[*i].return_type != *orig_ret
+                || self.functions[*i].body != *orig_body;
+            if changed {
+                Self::validate_refined_shape(&self.functions[*i].body)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// 判断函数 body 是否涉及 tensor：任一处子表达式类型为 `Type::Tensor`。
+    ///
+    /// 不动点 participating 过滤用（回归修复）：无 tensor 的纯标量/泛型枚举函数
+    /// 不参与重推导，避免 `recompute_expr_types` 改写其 body 造成后端类型破坏
+    /// （WASM-A "expected i32, found i64"）。遍历结构与 `recompute_expr_types` /
+    /// `recompute_stmt_types` 保持一致——凡重推导会触及的节点都被扫描到，不漏判
+    /// （调用 tensor 返回函数 → Call ret_ty 为 Tensor，天然覆盖前向引用链参与方）。
+    fn expr_involves_tensor(expr: &HirExpr) -> bool {
+        if matches!(expr.ty, Type::Tensor { .. }) {
+            return true;
+        }
+        match &expr.kind {
+            HirExprKind::Binary { left, right, .. } => {
+                Self::expr_involves_tensor(left) || Self::expr_involves_tensor(right)
+            }
+            HirExprKind::Unary { expr: inner, .. } => Self::expr_involves_tensor(inner),
+            HirExprKind::Call { func, args, .. } => {
+                Self::expr_involves_tensor(func) || args.iter().any(Self::expr_involves_tensor)
+            }
+            HirExprKind::GenericCall { func, args, .. } => {
+                Self::expr_involves_tensor(func) || args.iter().any(Self::expr_involves_tensor)
+            }
+            HirExprKind::MethodCall { receiver, args, .. } => {
+                Self::expr_involves_tensor(receiver) || args.iter().any(Self::expr_involves_tensor)
+            }
+            HirExprKind::Index { target, indices } => {
+                Self::expr_involves_tensor(target)
+                    || indices.iter().any(|idx| match idx {
+                        Index::Single(e) => Self::expr_involves_tensor(e),
+                        Index::Range { start, end, .. } => {
+                            start.as_deref().map(Self::expr_involves_tensor).unwrap_or(false)
+                                || end.as_deref().map(Self::expr_involves_tensor).unwrap_or(false)
+                        }
+                        Index::Colon => false,
+                    })
+            }
+            HirExprKind::Field { target, .. } => Self::expr_involves_tensor(target),
+            HirExprKind::TensorLiteral { data, .. } => {
+                data.iter().flatten().any(Self::expr_involves_tensor)
+            }
+            HirExprKind::ArrayLiteral { elements, .. } => {
+                elements.iter().any(Self::expr_involves_tensor)
+            }
+            HirExprKind::Range { start, end, .. } => {
+                start.as_deref().map(Self::expr_involves_tensor).unwrap_or(false)
+                    || end.as_deref().map(Self::expr_involves_tensor).unwrap_or(false)
+            }
+            HirExprKind::If { cond, then_branch, else_branch, .. } => {
+                Self::expr_involves_tensor(cond)
+                    || Self::expr_involves_tensor(then_branch)
+                    || else_branch.as_deref().map(Self::expr_involves_tensor).unwrap_or(false)
+            }
+            HirExprKind::Block { stmts, final_expr } => {
+                stmts.iter().any(Self::stmt_involves_tensor)
+                    || final_expr.as_deref().map(Self::expr_involves_tensor).unwrap_or(false)
+            }
+            HirExprKind::Closure { body, .. } => Self::expr_involves_tensor(body),
+            HirExprKind::Assign { value, .. } => Self::expr_involves_tensor(value),
+            HirExprKind::AssignOp { value, .. } => Self::expr_involves_tensor(value),
+            HirExprKind::StructLiteral { fields, .. } => {
+                fields.iter().any(|(_, e)| Self::expr_involves_tensor(e))
+            }
+            HirExprKind::UnionLiteral { value, .. } => Self::expr_involves_tensor(value),
+            HirExprKind::EnumLiteral { fields, .. } => {
+                fields.iter().any(|(_, e)| Self::expr_involves_tensor(e))
+            }
+            HirExprKind::Match { scrutinee, arms } => {
+                Self::expr_involves_tensor(scrutinee)
+                    || arms.iter().any(|arm| {
+                        arm.guard.as_ref().map(Self::expr_involves_tensor).unwrap_or(false)
+                            || Self::expr_involves_tensor(&arm.body)
+                    })
+            }
+            HirExprKind::Ref(inner)
+            | HirExprKind::MutRef(inner)
+            | HirExprKind::Deref(inner)
+            | HirExprKind::Move(inner)
+            | HirExprKind::Lossy(inner)
+            | HirExprKind::TryBlock(inner)
+            | HirExprKind::Await(inner)
+            | HirExprKind::Spawn(inner) => Self::expr_involves_tensor(inner),
+            HirExprKind::DerefAssign { target, value } => {
+                Self::expr_involves_tensor(target) || Self::expr_involves_tensor(value)
+            }
+            HirExprKind::DerefAssignOp { target, value, .. } => {
+                Self::expr_involves_tensor(target) || Self::expr_involves_tensor(value)
+            }
+            HirExprKind::FieldAssign { target, value, .. } => {
+                Self::expr_involves_tensor(target) || Self::expr_involves_tensor(value)
+            }
+            HirExprKind::Yield(Some(inner)) => Self::expr_involves_tensor(inner),
+            HirExprKind::Yield(None) => false,
+            HirExprKind::Tuple(elements) => elements.iter().any(Self::expr_involves_tensor),
+            HirExprKind::Literal(_)
+            | HirExprKind::Var(_)
+            | HirExprKind::InterpolatedString { .. } => false,
+        }
+    }
+
+    /// `expr_involves_tensor` 的语句部分（对应 `recompute_stmt_types` 遍历结构）。
+    fn stmt_involves_tensor(stmt: &HirStmt) -> bool {
+        match &stmt.kind {
+            HirStmtKind::Let { init: Some(e), .. } => Self::expr_involves_tensor(e),
+            HirStmtKind::Let { init: None, .. } => false,
+            HirStmtKind::Expr(e) => Self::expr_involves_tensor(e),
+            HirStmtKind::Return(Some(e)) => Self::expr_involves_tensor(e),
+            HirStmtKind::Return(None) => false,
+            HirStmtKind::While { cond, body, .. } => {
+                Self::expr_involves_tensor(cond) || Self::stmt_involves_tensor(body)
+            }
+            HirStmtKind::DoWhile { body, cond, .. } => {
+                Self::stmt_involves_tensor(body) || Self::expr_involves_tensor(cond)
+            }
+            HirStmtKind::For { iter, body, .. } => {
+                Self::expr_involves_tensor(iter) || Self::stmt_involves_tensor(body)
+            }
+            HirStmtKind::Loop { body, .. } => body.iter().any(Self::stmt_involves_tensor),
+            HirStmtKind::Break { value: Some(e), .. } => Self::expr_involves_tensor(e),
+            HirStmtKind::Break { value: None, .. } | HirStmtKind::Continue { .. } => false,
+        }
+    }
+
+    /// 纯 shape 重推导的表达式部分：bottom-up 重算表达式 `.ty`，
+    /// 并把命中 R 表（同文件函数）的调用节点 `ret_ty` 更新为当前 R 值
+    /// （含断点 4.1 的调用点实参代换，与 resolve_call_type 一致）。
+    fn recompute_expr_types(
+        &self,
+        expr: &mut HirExpr,
+        r: &HashMap<String, Type>,
+        bindings: &mut Vec<HashMap<String, Type>>,
+    ) {
+        // Phase 1：递归子表达式（bottom-up）
+        match &mut expr.kind {
+            HirExprKind::Binary { left, right, .. } => {
+                self.recompute_expr_types(left, r, bindings);
+                self.recompute_expr_types(right, r, bindings);
+            }
+            HirExprKind::Unary { expr: inner, .. } => {
+                self.recompute_expr_types(inner, r, bindings)
+            }
+            HirExprKind::Call { func, args, .. } => {
+                self.recompute_expr_types(func, r, bindings);
+                for a in args.iter_mut() {
+                    self.recompute_expr_types(a, r, bindings);
+                }
+            }
+            HirExprKind::GenericCall { func, args, .. } => {
+                self.recompute_expr_types(func, r, bindings);
+                for a in args.iter_mut() {
+                    self.recompute_expr_types(a, r, bindings);
+                }
+            }
+            HirExprKind::MethodCall { receiver, args, .. } => {
+                self.recompute_expr_types(receiver, r, bindings);
+                for a in args.iter_mut() {
+                    self.recompute_expr_types(a, r, bindings);
+                }
+            }
+            HirExprKind::Index { target, indices } => {
+                self.recompute_expr_types(target, r, bindings);
+                for idx in indices.iter_mut() {
+                    match idx {
+                        Index::Single(e) => self.recompute_expr_types(e, r, bindings),
+                        Index::Range { start, end, .. } => {
+                            if let Some(s) = start.as_mut() {
+                                self.recompute_expr_types(s, r, bindings);
+                            }
+                            if let Some(e) = end.as_mut() {
+                                self.recompute_expr_types(e, r, bindings);
+                            }
+                        }
+                        Index::Colon => {}
+                    }
+                }
+            }
+            HirExprKind::Field { target, .. } => self.recompute_expr_types(target, r, bindings),
+            HirExprKind::TensorLiteral { data, .. } => {
+                for row in data.iter_mut() {
+                    for e in row.iter_mut() {
+                        self.recompute_expr_types(e, r, bindings);
+                    }
+                }
+            }
+            HirExprKind::ArrayLiteral { elements, .. } => {
+                for e in elements.iter_mut() {
+                    self.recompute_expr_types(e, r, bindings);
+                }
+            }
+            HirExprKind::Range { start, end, .. } => {
+                if let Some(s) = start.as_mut() {
+                    self.recompute_expr_types(s, r, bindings);
+                }
+                if let Some(e) = end.as_mut() {
+                    self.recompute_expr_types(e, r, bindings);
+                }
+            }
+            HirExprKind::If { cond, then_branch, else_branch, .. } => {
+                self.recompute_expr_types(cond, r, bindings);
+                // 分支是独立作用域
+                bindings.push(HashMap::new());
+                self.recompute_expr_types(then_branch, r, bindings);
+                bindings.pop();
+                if let Some(eb) = else_branch.as_mut() {
+                    bindings.push(HashMap::new());
+                    self.recompute_expr_types(eb, r, bindings);
+                    bindings.pop();
+                }
+            }
+            HirExprKind::Block { stmts, final_expr } => {
+                // 块是独立作用域
+                bindings.push(HashMap::new());
+                for s in stmts.iter_mut() {
+                    self.recompute_stmt_types(s, r, bindings);
+                }
+                if let Some(fe) = final_expr.as_mut() {
+                    self.recompute_expr_types(fe, r, bindings);
+                }
+                bindings.pop();
+            }
+            // Closure：闭包体是独立函数，其 return 属于闭包自身（与
+            // collect_return_tensor_dims 一致），不下钻。
+            HirExprKind::Closure { .. } => {}
+            HirExprKind::Match { scrutinee, arms } => {
+                self.recompute_expr_types(scrutinee, r, bindings);
+                for arm in arms.iter_mut() {
+                    if let Some(g) = arm.guard.as_mut() {
+                        self.recompute_expr_types(g, r, bindings);
+                    }
+                    // arm body 是独立作用域
+                    bindings.push(HashMap::new());
+                    self.recompute_expr_types(&mut arm.body, r, bindings);
+                    bindings.pop();
+                }
+            }
+            HirExprKind::Ref(inner)
+            | HirExprKind::MutRef(inner)
+            | HirExprKind::Deref(inner)
+            | HirExprKind::Move(inner)
+            | HirExprKind::Lossy(inner)
+            | HirExprKind::TryBlock(inner)
+            | HirExprKind::Await(inner)
+            | HirExprKind::Spawn(inner) => self.recompute_expr_types(inner, r, bindings),
+            HirExprKind::DerefAssign { target, value } => {
+                self.recompute_expr_types(target, r, bindings);
+                self.recompute_expr_types(value, r, bindings);
+            }
+            HirExprKind::DerefAssignOp { target, value, .. } => {
+                self.recompute_expr_types(target, r, bindings);
+                self.recompute_expr_types(value, r, bindings);
+            }
+            // 赋值后目标变量的类型随 value 更新（绑定作用域）
+            HirExprKind::Assign { target, value } => {
+                self.recompute_expr_types(value, r, bindings);
+                if let Some(top) = bindings.last_mut() {
+                    top.insert(target.clone(), value.ty.clone());
+                }
+            }
+            HirExprKind::AssignOp { target, value, .. } => {
+                self.recompute_expr_types(value, r, bindings);
+                if let Some(top) = bindings.last_mut() {
+                    top.insert(target.clone(), value.ty.clone());
+                }
+            }
+            HirExprKind::Yield(Some(inner)) => self.recompute_expr_types(inner, r, bindings),
+            HirExprKind::Yield(None) => {}
+            HirExprKind::Tuple(elements) => {
+                for e in elements.iter_mut() {
+                    self.recompute_expr_types(e, r, bindings);
+                }
+            }
+            HirExprKind::FieldAssign { target, value, .. } => {
+                self.recompute_expr_types(target, r, bindings);
+                self.recompute_expr_types(value, r, bindings);
+            }
+            // 叶子节点
+            HirExprKind::Literal(_)
+            | HirExprKind::Var(_)
+            | HirExprKind::StructLiteral { .. }
+            | HirExprKind::UnionLiteral { .. }
+            | HirExprKind::EnumLiteral { .. }
+            | HirExprKind::InterpolatedString { .. } => {}
+        }
+
+        // Phase 2：重算自身 ty
+        expr.ty = match &expr.kind {
+            // 变量：命中绑定作用域 → 用绑定的精化类型（let/赋值的类型传播）
+            HirExprKind::Var(name) => bindings
+                .iter()
+                .rev()
+                .find_map(|m| m.get(name).cloned())
+                .unwrap_or_else(|| expr.ty.clone()),
+            // 调用节点：命中 R 表（同文件函数）→ 用当前 R 重算（含 4.1 实参代换）
+            HirExprKind::Call { func, args, ret_ty } => {
+                if let HirExprKind::Var(name) = &func.kind {
+                    if let Some(fn_def) = self.functions.iter().find(|f| &f.name == name) {
+                        if let Some(new_ret) = r.get(name.as_str()) {
+                            let merged = Self::merge_return_shape(ret_ty, new_ret);
+                            let mut dim_map: HashMap<String, Dim> = HashMap::new();
+                            for ((pname, _pty), arg) in fn_def.params.iter().zip(args.iter()) {
+                                dim_map.insert(pname.clone(), Self::dim_from_expr(arg));
+                            }
+                            Self::substitute_dims_in_type(&merged, &dim_map)
+                        } else {
+                            ret_ty.clone()
+                        }
+                    } else {
+                        ret_ty.clone()
+                    }
+                } else {
+                    ret_ty.clone()
+                }
+            }
+            // 方法与 lowering 的 MethodCall 分支一致（resolve_method_type 是纯函数）。
+            // 重算结果 Unknown 时保留既有 ret_ty（防退化）。
+            HirExprKind::MethodCall { receiver, method, args, ret_ty } => {
+                let t = self.resolve_method_type(&receiver.ty, method, args);
+                if matches!(t, Type::Unknown) {
+                    ret_ty.clone()
+                } else {
+                    t
+                }
+            }
+            HirExprKind::Binary { op, left, right, .. } => {
+                self.infer_binary_type(&Self::hir_binop_to_ast(op), &left.ty, &right.ty)
+            }
+            HirExprKind::Unary { op, expr: inner, .. } => match op {
+                // `?`：Result<T> → T；其他保持内层类型（与 lowering 一致）
+                UnaryOp::Try => match &inner.ty {
+                    Type::Generic { base, args } => {
+                        if let Type::Enum(name) = base.as_ref() {
+                            if name == "Result" {
+                                args.first().cloned().unwrap_or(Type::Unknown)
+                            } else {
+                                inner.ty.clone()
+                            }
+                        } else {
+                            inner.ty.clone()
+                        }
+                    }
+                    _ => inner.ty.clone(),
+                },
+                _ => inner.ty.clone(),
+            },
+            HirExprKind::Index { target, indices } => self.index_type(&target.ty, indices),
+            // 与 lowering 的 If 类型推断规则一致（含 Never 处理）
+            HirExprKind::If { then_branch, else_branch, .. } => match else_branch {
+                Some(eb) => match (&then_branch.ty, &eb.ty) {
+                    (Type::Never, Type::Never) => Type::Never,
+                    (Type::Never, _) => eb.ty.clone(),
+                    (_, Type::Never) => then_branch.ty.clone(),
+                    _ => eb.ty.clone(),
+                },
+                None => Type::unit(),
+            },
+            // 与 lowering 的 Block 类型推断规则一致
+            HirExprKind::Block { stmts, final_expr } => {
+                if let Some(fe) = final_expr {
+                    fe.ty.clone()
+                } else if matches!(stmts.last().map(|s| &s.kind), Some(HirStmtKind::Return(_))) {
+                    Type::Never
+                } else {
+                    Type::unit()
+                }
+            }
+            // 与 lowering 的 Match 类型推断规则一致（优先普通类型，其次 Never）
+            HirExprKind::Match { arms, .. } => arms
+                .iter()
+                .map(|arm| arm.body.ty.clone())
+                .find(|ty| !matches!(ty, Type::Unknown | Type::Never))
+                .or_else(|| {
+                    arms.iter()
+                        .map(|arm| arm.body.ty.clone())
+                        .find(|ty| matches!(ty, Type::Never))
+                })
+                .or_else(|| arms.first().map(|arm| arm.body.ty.clone()))
+                .unwrap_or(Type::Unknown),
+            // 其余节点保持既有 ty（字面量/结构体/Field/数组字面量等）
+            _ => expr.ty.clone(),
+        };
+    }
+
+    /// 纯 shape 重推导的语句部分。
+    fn recompute_stmt_types(
+        &self,
+        stmt: &mut HirStmt,
+        r: &HashMap<String, Type>,
+        bindings: &mut Vec<HashMap<String, Type>>,
+    ) {
+        match &mut stmt.kind {
+            HirStmtKind::Expr(e) => self.recompute_expr_types(e, r, bindings),
+            HirStmtKind::Let { names, init: Some(e), .. } => {
+                self.recompute_expr_types(e, r, bindings);
+                // let 绑定：名字 → init 精化类型（纯 shape pass 的变量类型传播）
+                if let Some(top) = bindings.last_mut() {
+                    for name in names {
+                        top.insert(name.clone(), e.ty.clone());
+                    }
+                }
+            }
+            HirStmtKind::Let { init: None, .. } => {}
+            HirStmtKind::Return(Some(e)) => self.recompute_expr_types(e, r, bindings),
+            HirStmtKind::Return(None) => {}
+            HirStmtKind::While { cond, body, .. } => {
+                self.recompute_expr_types(cond, r, bindings);
+                // 循环体是独立作用域
+                bindings.push(HashMap::new());
+                self.recompute_stmt_types(body, r, bindings);
+                bindings.pop();
+            }
+            HirStmtKind::DoWhile { body, cond, .. } => {
+                bindings.push(HashMap::new());
+                self.recompute_stmt_types(body, r, bindings);
+                bindings.pop();
+                self.recompute_expr_types(cond, r, bindings);
+            }
+            HirStmtKind::For { iter, body, .. } => {
+                self.recompute_expr_types(iter, r, bindings);
+                bindings.push(HashMap::new());
+                self.recompute_stmt_types(body, r, bindings);
+                bindings.pop();
+            }
+            HirStmtKind::Loop { body, .. } => {
+                bindings.push(HashMap::new());
+                for s in body.iter_mut() {
+                    self.recompute_stmt_types(s, r, bindings);
+                }
+                bindings.pop();
+            }
+            HirStmtKind::Break { value: Some(e), .. } => self.recompute_expr_types(e, r, bindings),
+            HirStmtKind::Break { value: None, .. } | HirStmtKind::Continue { .. } => {}
+        }
+    }
+
+    /// 纯 shape 校验（静态）：对不动点**精化后**的函数体重跑 lowering 期的 shape
+    /// 检查——方法（matmul/bmm 内侧/batch 维度）、二元广播、if/else 与 match arm
+    /// 分支兼容。新拦截「前向引用引发」的 shape 冲突（如 main 先于 make 定义时
+    /// `make(3,4).matmul(zeros(5,6))` 的内侧不匹配——此前调用点拿不到 make 的
+    /// body 精化 shape，检查保守通过、漏到运行时）。
+    ///
+    /// 只在函数体被精化（相对首轮有变化）后调用；震荡回退后函数体无变化则不调用
+    /// ——避免递归程序瞬时/顺序依赖的误报（论证报告「不引入新误报」原则）。
+    fn validate_refined_shape(expr: &HirExpr) -> TenthResult<()> {
+        match &expr.kind {
+            HirExprKind::MethodCall { receiver, method, args, .. } => {
+                Self::check_method_shape(&receiver.ty, method, args, &expr.span)?;
+                Self::validate_refined_shape(receiver)?;
+                for a in args {
+                    Self::validate_refined_shape(a)?;
+                }
+            }
+            HirExprKind::Binary { op, left, right, .. } => {
+                Self::check_binary_shape_compat(
+                    &Self::hir_binop_to_ast(op),
+                    &left.ty,
+                    &right.ty,
+                    &expr.span,
+                )?;
+                Self::validate_refined_shape(left)?;
+                Self::validate_refined_shape(right)?;
+            }
+            HirExprKind::Unary { expr: inner, .. } => {
+                Self::validate_refined_shape(inner)?;
+            }
+            HirExprKind::Call { func, args, .. } => {
+                Self::validate_refined_shape(func)?;
+                for a in args {
+                    Self::validate_refined_shape(a)?;
+                }
+            }
+            HirExprKind::GenericCall { func, args, .. } => {
+                Self::validate_refined_shape(func)?;
+                for a in args {
+                    Self::validate_refined_shape(a)?;
+                }
+            }
+            HirExprKind::Index { target, indices } => {
+                Self::validate_refined_shape(target)?;
+                for idx in indices {
+                    match idx {
+                        Index::Single(e) => Self::validate_refined_shape(e)?,
+                        Index::Range { start, end, .. } => {
+                            if let Some(s) = start {
+                                Self::validate_refined_shape(s)?;
+                            }
+                            if let Some(e) = end {
+                                Self::validate_refined_shape(e)?;
+                            }
+                        }
+                        Index::Colon => {}
+                    }
+                }
+            }
+            HirExprKind::Field { target, .. } => {
+                Self::validate_refined_shape(target)?;
+            }
+            HirExprKind::TensorLiteral { data, .. } => {
+                for row in data {
+                    for e in row {
+                        Self::validate_refined_shape(e)?;
+                    }
+                }
+            }
+            HirExprKind::ArrayLiteral { elements, .. } => {
+                for e in elements {
+                    Self::validate_refined_shape(e)?;
+                }
+            }
+            HirExprKind::Range { start, end, .. } => {
+                if let Some(s) = start {
+                    Self::validate_refined_shape(s)?;
+                }
+                if let Some(e) = end {
+                    Self::validate_refined_shape(e)?;
+                }
+            }
+            HirExprKind::If { cond, then_branch, else_branch, .. } => {
+                if let Some(eb) = else_branch {
+                    Self::check_branch_shape_compat(&then_branch.ty, &eb.ty, &expr.span, "if/else")?;
+                }
+                Self::validate_refined_shape(cond)?;
+                Self::validate_refined_shape(then_branch)?;
+                if let Some(eb) = else_branch {
+                    Self::validate_refined_shape(eb)?;
+                }
+            }
+            HirExprKind::Block { stmts, final_expr } => {
+                for s in stmts {
+                    Self::validate_refined_stmt(s)?;
+                }
+                if let Some(fe) = final_expr {
+                    Self::validate_refined_shape(fe)?;
+                }
+            }
+            // Closure：闭包体独立，不下钻（与 collect_return_tensor_dims 一致）
+            HirExprKind::Closure { .. } => {}
+            HirExprKind::Match { scrutinee, arms } => {
+                if let Some(first) = arms.first() {
+                    for arm in arms.iter().skip(1) {
+                        Self::check_branch_shape_compat(&first.body.ty, &arm.body.ty, &expr.span, "match arm")?;
+                    }
+                }
+                Self::validate_refined_shape(scrutinee)?;
+                for arm in arms {
+                    if let Some(g) = &arm.guard {
+                        Self::validate_refined_shape(g)?;
+                    }
+                    Self::validate_refined_shape(&arm.body)?;
+                }
+            }
+            HirExprKind::Ref(inner)
+            | HirExprKind::MutRef(inner)
+            | HirExprKind::Deref(inner)
+            | HirExprKind::Move(inner)
+            | HirExprKind::Lossy(inner)
+            | HirExprKind::TryBlock(inner)
+            | HirExprKind::Await(inner)
+            | HirExprKind::Spawn(inner) => {
+                Self::validate_refined_shape(inner)?;
+            }
+            HirExprKind::DerefAssign { target, value } => {
+                Self::validate_refined_shape(target)?;
+                Self::validate_refined_shape(value)?;
+            }
+            HirExprKind::DerefAssignOp { target, value, .. } => {
+                Self::validate_refined_shape(target)?;
+                Self::validate_refined_shape(value)?;
+            }
+            HirExprKind::Assign { value, .. } => {
+                Self::validate_refined_shape(value)?;
+            }
+            HirExprKind::AssignOp { value, .. } => {
+                Self::validate_refined_shape(value)?;
+            }
+            HirExprKind::Yield(Some(inner)) => {
+                Self::validate_refined_shape(inner)?;
+            }
+            HirExprKind::Yield(None) => {}
+            HirExprKind::Tuple(elements) => {
+                for e in elements {
+                    Self::validate_refined_shape(e)?;
+                }
+            }
+            HirExprKind::FieldAssign { target, value, .. } => {
+                Self::validate_refined_shape(target)?;
+                Self::validate_refined_shape(value)?;
+            }
+            HirExprKind::Literal(_)
+            | HirExprKind::Var(_)
+            | HirExprKind::StructLiteral { .. }
+            | HirExprKind::UnionLiteral { .. }
+            | HirExprKind::EnumLiteral { .. }
+            | HirExprKind::InterpolatedString { .. } => {}
+        }
+        Ok(())
+    }
+
+    fn validate_refined_stmt(stmt: &HirStmt) -> TenthResult<()> {
+        match &stmt.kind {
+            HirStmtKind::Expr(e) => Self::validate_refined_shape(e),
+            HirStmtKind::Let { init: Some(e), .. } => Self::validate_refined_shape(e),
+            HirStmtKind::Let { init: None, .. } => Ok(()),
+            HirStmtKind::Return(Some(e)) => Self::validate_refined_shape(e),
+            HirStmtKind::Return(None) => Ok(()),
+            HirStmtKind::While { cond, body, .. } => {
+                Self::validate_refined_shape(cond)?;
+                Self::validate_refined_stmt(body)
+            }
+            HirStmtKind::DoWhile { body, cond, .. } => {
+                Self::validate_refined_stmt(body)?;
+                Self::validate_refined_shape(cond)
+            }
+            HirStmtKind::For { iter, body, .. } => {
+                Self::validate_refined_shape(iter)?;
+                Self::validate_refined_stmt(body)
+            }
+            HirStmtKind::Loop { body, .. } => {
+                for s in body {
+                    Self::validate_refined_stmt(s)?;
+                }
+                Ok(())
+            }
+            HirStmtKind::Break { value: Some(e), .. } => Self::validate_refined_shape(e),
+            HirStmtKind::Break { value: None, .. } | HirStmtKind::Continue { .. } => Ok(()),
+        }
+    }
+
+    /// hir::BinOp → ast::BinOp（供 infer_binary_type 复用；与 lower_binop 互逆）。
+    fn hir_binop_to_ast(op: &BinOp) -> ast::BinOp {
+        match op {
+            BinOp::Add => ast::BinOp::Add,
+            BinOp::Sub => ast::BinOp::Sub,
+            BinOp::Mul => ast::BinOp::Mul,
+            BinOp::Div => ast::BinOp::Div,
+            BinOp::Mod => ast::BinOp::Mod,
+            BinOp::Eq => ast::BinOp::Eq,
+            BinOp::NotEq => ast::BinOp::NotEq,
+            BinOp::Lt => ast::BinOp::Lt,
+            BinOp::Gt => ast::BinOp::Gt,
+            BinOp::LtEq => ast::BinOp::LtEq,
+            BinOp::GtEq => ast::BinOp::GtEq,
+            BinOp::And => ast::BinOp::And,
+            BinOp::Or => ast::BinOp::Or,
+        }
     }
 
     /// 编译期 shape 检查：跨分支（if/else、match arms）返回 shape 是否兼容。
