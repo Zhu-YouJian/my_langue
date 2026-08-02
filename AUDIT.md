@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-08-03 | 版本：v0.3.3 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 + 异步 Phase 2（协程调度 + async I/O）+ 正则表达式 + 张量修复（f16/bf16 + 序列化 + 优化器修复）+ Problem 21（tenthc 全量追上 Rust 母编译器：Lexer/Parser/HIR/Shape/WASM/bridge 六批次同步）+ 泛型函数运行时修复 + 护城河系列（函子化 shape / 静默失败 or_die/assume_ok / lossy 格 M1/M2）| 1511 项测试通过（--release 模式，需 `RUST_MIN_STACK`≥32MB，见 AUDIT-11.4.19）
+> 日期：2026-08-03 | 版本：v0.4.0 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 + 异步 Phase 2（协程调度 + async I/O）+ 正则表达式 + 张量修复（f16/bf16 + 序列化 + 优化器修复）+ Problem 21（tenthc 全量追上 Rust 母编译器：Lexer/Parser/HIR/Shape/WASM/bridge 六批次同步）+ 泛型函数运行时修复 + 护城河系列（函子化 shape / 静默失败 or_die/assume_ok / lossy 格 M1/M2）| 1511 项测试通过（--release 模式，需 `RUST_MIN_STACK`≥32MB，见 AUDIT-11.4.19）
 
 ---
 

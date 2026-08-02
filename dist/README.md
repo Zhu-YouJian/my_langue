@@ -1,6 +1,6 @@
 # Tenth 语言工具
 
-> 版本: v0.3.3 | 字节码 VM (45 指令) + 树遍历 fallback | 自举验证通过 | 闭包捕获 + 文件级导入 + GPU/tenthpm/LSP 脚手架
+> 版本: v0.4.0 | 字节码 VM (45 指令) + 树遍历 fallback | 自举验证通过 | 闭包捕获 + 文件级导入 + GPU/tenthpm/LSP 脚手架
 
 ## 快速开始
 
