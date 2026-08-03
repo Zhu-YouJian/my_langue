@@ -21,6 +21,7 @@ use tenth::runtime::vm::Vm;
 use tenth::runtime::value::Value;
 use tenth::runtime::tensor::Tensor;
 use tenth::compile::bytecode::BytecodeCompiler;
+use tenth::compile::jit;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -403,4 +404,273 @@ fn typestate_chain_transition_no_false_positive() {
     expect_str(&result.unwrap(), "a.txt", "解释器");
     let result_vm = run_vm(CHAIN_TRANSITION_SRC).unwrap();
     expect_str(&result_vm, "a.txt", "VM");
+}
+
+// ── M3.3（G1+G2+G3 收尾）：三路径对拍（JIT）+ 覆盖断言 + 字面量状态推断 ──
+
+/// JIT 路径：lex → parse → lower → bytecode → jit::run_jit。
+/// run_jit 内部在 JIT 无法编译时自动回退 vm.call，因此总能产出结果
+/// （编译期错误在 lower 阶段即抛出，三路径共享 lowerer 天然一致）。
+fn run_jit(src: &str) -> Result<Value, String> {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().map_err(|e| e.to_string())?;
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).map_err(|e| e.to_string())?;
+
+    let mut vm = Vm::new();
+    vm.add_native("println".into(), |_vm, args| {
+        for a in args { print!("{a}"); }
+        println!();
+        Ok(Value::Unit)
+    });
+    vm.add_native("Vec::new".into(), |_vm, _args| {
+        Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))))
+    });
+    vm.add_native("zeros".into(), |_vm, args| {
+        let shape: Vec<usize> = args.iter().map(|a| a.as_int().unwrap_or(1) as usize).collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::zeros(&shape)))))
+    });
+    vm.add_native("ones".into(), |_vm, args| {
+        let shape: Vec<usize> = args.iter().map(|a| a.as_int().unwrap_or(1) as usize).collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::ones(&shape)))))
+    });
+
+    for func in &hir.functions {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile(func) {
+            Ok((chunk, closures)) => {
+                vm.add_fn(func.name.clone(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+                // 与 main.rs 对齐：函数注册为全局 FnRef（函数作值传递时按名解析）。
+                vm.set_global(func.name.clone(), Value::FnRef {
+                    name: func.name.clone(),
+                    params: func.params.clone(),
+                    return_type: func.return_type.clone(),
+                    captures: vec![],
+                });
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+    }
+
+    if let Some(ref expr) = hir.main_expr {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile_main(expr) {
+            Ok((chunk, closures)) => {
+                vm.add_fn("main".into(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+        jit::run_jit(&mut vm, "main").map_err(|e| e.to_string())
+    } else if vm.has_fn("main") {
+        jit::run_jit(&mut vm, "main").map_err(|e| e.to_string())
+    } else {
+        Ok(Value::Unit)
+    }
+}
+
+/// JIT 路径（保留 Vm 供覆盖断言：检查 mangled 方法是否真的被 JIT 编译）。
+fn run_jit_with_vm(src: &str) -> Result<(Value, Vm), String> {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().map_err(|e| e.to_string())?;
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).map_err(|e| e.to_string())?;
+
+    let mut vm = Vm::new();
+    vm.add_native("println".into(), |_vm, args| {
+        for a in args { print!("{a}"); }
+        println!();
+        Ok(Value::Unit)
+    });
+    vm.add_native("Vec::new".into(), |_vm, _args| {
+        Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))))
+    });
+    vm.add_native("zeros".into(), |_vm, args| {
+        let shape: Vec<usize> = args.iter().map(|a| a.as_int().unwrap_or(1) as usize).collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::zeros(&shape)))))
+    });
+    vm.add_native("ones".into(), |_vm, args| {
+        let shape: Vec<usize> = args.iter().map(|a| a.as_int().unwrap_or(1) as usize).collect();
+        Ok(Value::Tensor(Rc::new(RefCell::new(Tensor::ones(&shape)))))
+    });
+
+    for func in &hir.functions {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile(func) {
+            Ok((chunk, closures)) => {
+                vm.add_fn(func.name.clone(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+                vm.set_global(func.name.clone(), Value::FnRef {
+                    name: func.name.clone(),
+                    params: func.params.clone(),
+                    return_type: func.return_type.clone(),
+                    captures: vec![],
+                });
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+    }
+
+    if let Some(ref expr) = hir.main_expr {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile_main(expr) {
+            Ok((chunk, closures)) => {
+                vm.add_fn("main".into(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+        let r = jit::run_jit(&mut vm, "main").map_err(|e| e.to_string())?;
+        Ok((r, vm))
+    } else if vm.has_fn("main") {
+        let r = jit::run_jit(&mut vm, "main").map_err(|e| e.to_string())?;
+        Ok((r, vm))
+    } else {
+        Ok((Value::Unit, vm))
+    }
+}
+
+// ── M3.3 用例 8：合法状态链三路径（解释器/VM/JIT）一致 ──
+
+#[test]
+fn typestate_legal_chain_jit() {
+    // LEGAL_CHAIN_SRC（read → close → reopen → read）JIT 路径与解释器/VM 一致。
+    let result = run_jit(LEGAL_CHAIN_SRC).unwrap();
+    expect_str(&result, "a.txt", "JIT");
+}
+
+// ── M3.3 用例 9：状态互不覆盖三路径一致（open().read()=1, closed().read()=2）──
+
+#[test]
+fn typestate_state_specialization_no_override_jit() {
+    let result = run_jit(STATE_SPECIALIZATION_SRC).unwrap();
+    expect_int(&result, 12, "JIT");
+}
+
+// ── M3.3 用例 10：字面量状态推断——File<Open> 与 File<Closed> 字面量各携其状态 ──
+
+const LITERAL_STATE_INFERENCE_SRC: &str = r#"
+enum Open {}
+enum Closed {}
+struct File<S> { path: str }
+impl File<Open> {
+    fn read(self) -> i64 { 1 }
+}
+impl File<Closed> {
+    fn label(self) -> i64 { 2 }
+}
+File<Open> { path: "x" }.read() * 10 + File<Closed> { path: "y" }.label()
+"#;
+
+#[test]
+fn typestate_literal_state_inference_interpreter() {
+    // 字面量直接携带状态实参（G1）：File<Open>{...} → Open 专属 read；
+    // File<Closed>{...} → Closed 专属 label（非共享）。结果 1*10+2 = 12。
+    let result = run(LITERAL_STATE_INFERENCE_SRC).unwrap();
+    expect_int(&result.unwrap(), 12, "解释器");
+}
+
+#[test]
+fn typestate_literal_state_inference_vm() {
+    let result = run_vm(LITERAL_STATE_INFERENCE_SRC).unwrap();
+    expect_int(&result, 12, "VM");
+}
+
+#[test]
+fn typestate_literal_state_inference_jit() {
+    let result = run_jit(LITERAL_STATE_INFERENCE_SRC).unwrap();
+    expect_int(&result, 12, "JIT");
+}
+
+// ── M3.3 用例 11：字面量非法状态编译期报错——File<Closed> 字面量调 Open 专属方法 ──
+
+const LITERAL_ILLEGAL_STATE_SRC: &str = r#"
+enum Open {}
+enum Closed {}
+struct File<S> { path: str }
+impl File<Open> {
+    fn read(self) -> i64 { 1 }
+}
+File<Closed> { path: "x" }.read()
+"#;
+
+#[test]
+fn typestate_literal_illegal_state_compile_error() {
+    // 字面量状态在 lowering 即被限定：File<Closed> 字面量上调用 Open 专属 read
+    // → 编译期「没有方法 'read'」，三条路径（共享 lowerer）一致。
+    let err = run(LITERAL_ILLEGAL_STATE_SRC).unwrap_err();
+    assert!(
+        err.contains("没有方法 'read'"),
+        "解释器：应报「没有方法 'read'」，实际: {}",
+        err
+    );
+    let err_vm = run_vm(LITERAL_ILLEGAL_STATE_SRC).unwrap_err();
+    assert!(
+        err_vm.contains("没有方法 'read'"),
+        "VM：应报「没有方法 'read'」，实际: {}",
+        err_vm
+    );
+    let err_jit = run_jit(LITERAL_ILLEGAL_STATE_SRC).unwrap_err();
+    assert!(
+        err_jit.contains("没有方法 'read'"),
+        "JIT：应报「没有方法 'read'」，实际: {}",
+        err_jit
+    );
+}
+
+// ── M3.3 用例 12：覆盖断言——状态特化 mangled 方法真的被 JIT 编译（非静默回退）──
+
+#[test]
+fn typestate_jit_coverage_no_fallback() {
+    // 状态特化的 mangled 方法（__File_Open_read / __File_Open_close /
+    // __File_Closed_reopen）与 main 必须真的进入 JIT 编译集，而非整函数
+    // 静默回退解释器——三路径一致由「同一字节码 + JIT 直译」保证，非巧合。
+    let (result, vm) = run_jit_with_vm(LEGAL_CHAIN_SRC).unwrap();
+    expect_str(&result, "a.txt", "JIT");
+    let ctx = vm.jit_ctx.as_ref().expect("JIT 上下文应存在");
+    for fname in ["main", "__File_Open_read", "__File_Open_close", "__File_Closed_reopen"] {
+        let idx = vm.chunk_index_of(fname)
+            .unwrap_or_else(|| panic!("chunk '{}' 应存在", fname));
+        assert!(ctx.is_compiled(idx), "{} 应被 JIT 编译（非 fallback）", fname);
+        assert!(!ctx.is_failed(idx), "{} 不应整函数 fallback", fname);
+    }
+}
+
+// ── M3.3 用例 13：两状态同名方法 mangled 名互不覆盖（函数表级断言）──
+
+#[test]
+fn typestate_state_specialization_mangled_distinct() {
+    // STATE_SPECIALIZATION_SRC 中 Open/Closed 各定义 read → 函数表应同时含
+    // __File_Open_read 与 __File_Closed_read 两个独立 chunk（键分键注册的
+    // 函数级证据，防「同名方法互相覆盖」回归）。
+    let (result, vm) = run_jit_with_vm(STATE_SPECIALIZATION_SRC).unwrap();
+    expect_int(&result, 12, "JIT");
+    // 注册层：两状态同名方法各占独立 chunk（互不覆盖）。
+    for fname in ["__File_Open_read", "__File_Closed_read"] {
+        assert!(
+            vm.chunk_index_of(fname).is_some(),
+            "chunk '{}' 应存在（状态特化未互相覆盖）",
+            fname
+        );
+    }
+    // JIT 执行路径证据：main 被 JIT 编译（非整函数 fallback）。两个 read 的
+    // 体是平凡标量 `{ 1 }`/`{ 2 }`（≤16 条白名单指令）→ 被 A2 内联进 main，
+    // 不单独编译——内联同样是 JIT 执行，非解释器回退（三路径一致性由此保证）。
+    let ctx = vm.jit_ctx.as_ref().expect("JIT 上下文应存在");
+    let main_idx = vm.chunk_index_of("main").expect("main chunk 应存在");
+    assert!(ctx.is_compiled(main_idx), "main 应被 JIT 编译");
+    assert!(!ctx.is_failed(main_idx), "main 不应整函数 fallback");
 }
