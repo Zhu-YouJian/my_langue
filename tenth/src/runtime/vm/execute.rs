@@ -288,8 +288,9 @@ impl Vm {
                         let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
                             (Value::Int(x, dt), Value::Int(y, _)) => {
                                 // AUDIT-11.4.17：与 add_priv 完全一致（checked_add + 窄 dtype 检查，dtype 取左操作数）
-                                let r = x.checked_add(*y).ok_or_else(|| int_overflow_err(*dt))?;
-                                check_int_overflow(r, *dt)?;
+                                // M2-A5：溢出错误补行号（对齐 JIT 标量路径——此前 `?` 直接传播，行号为 None）
+                                let r = x.checked_add(*y).ok_or_else(|| int_overflow_err(*dt)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                                check_int_overflow(r, *dt).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                                 Some(Value::Int(r, *dt))
                             }
                             (Value::Float(x), Value::Float(y)) => Some(Value::Float(x + y)),
@@ -317,8 +318,9 @@ impl Vm {
                     if n >= 2 {
                         let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
                             (Value::Int(x, dt), Value::Int(y, _)) => {
-                                let r = x.checked_sub(*y).ok_or_else(|| int_overflow_err(*dt))?;
-                                check_int_overflow(r, *dt)?;
+                                // M2-A5：溢出错误补行号（对齐 JIT 标量路径）
+                                let r = x.checked_sub(*y).ok_or_else(|| int_overflow_err(*dt)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                                check_int_overflow(r, *dt).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                                 Some(Value::Int(r, *dt))
                             }
                             (Value::Float(x), Value::Float(y)) => Some(Value::Float(x - y)),
@@ -346,8 +348,9 @@ impl Vm {
                     if n >= 2 {
                         let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
                             (Value::Int(x, dt), Value::Int(y, _)) => {
-                                let r = x.checked_mul(*y).ok_or_else(|| int_overflow_err(*dt))?;
-                                check_int_overflow(r, *dt)?;
+                                // M2-A5：溢出错误补行号（对齐 JIT 标量路径）
+                                let r = x.checked_mul(*y).ok_or_else(|| int_overflow_err(*dt)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                                check_int_overflow(r, *dt).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                                 Some(Value::Int(r, *dt))
                             }
                             (Value::Float(x), Value::Float(y)) => Some(Value::Float(x * y)),
@@ -378,8 +381,9 @@ impl Vm {
                                 if *y == 0 {
                                     return Err(self.err_here(chunk_idx, ip, "整数除零".into()));
                                 }
-                                let r = x.checked_div(*y).ok_or_else(|| int_overflow_err(*dt))?;
-                                check_int_overflow(r, *dt)?;
+                                // M2-A5：checked_div 溢出（i64::MIN/-1）补行号（对齐 JIT 标量路径）
+                                let r = x.checked_div(*y).ok_or_else(|| int_overflow_err(*dt)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                                check_int_overflow(r, *dt).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                                 Some(Value::Int(r, *dt))
                             }
                             (Value::Float(x), Value::Float(y)) => Some(Value::Float(x / y)),
@@ -408,7 +412,8 @@ impl Vm {
                         return Err(self.err_here(chunk_idx, ip, "整数取模除零".into()));
                     }
                     // AUDIT-11.4.17：checked_rem 拦截 i64::MIN % -1 等溢出（overflow-checks=true 下直接 % 会 panic）
-                    let r = a.checked_rem(b).ok_or_else(|| int_overflow_err(BaseType::I32))?;
+                    // M2-A5：溢出错误补行号（对齐 JIT 标量路径）
+                    let r = a.checked_rem(b).ok_or_else(|| int_overflow_err(BaseType::I32)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                     self.stack.push(Value::Int(r, BaseType::I32));
                     // 注：Mod 指令通过 pop_int 获取值，丢失 dtype，默认 I32
                 }
@@ -417,8 +422,9 @@ impl Vm {
                     match v {
                         Value::Int(n, dt) => {
                             // AUDIT-11.4.17：checked_neg 拦截 i64::MIN 取负溢出
-                            let r = n.checked_neg().ok_or_else(|| int_overflow_err(dt))?;
-                            check_int_overflow(r, dt)?;
+                            // M2-A5：溢出错误补行号（对齐 JIT 标量路径）
+                            let r = n.checked_neg().ok_or_else(|| int_overflow_err(dt)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                            check_int_overflow(r, dt).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                             self.stack.push(Value::Int(r, dt));
                         }
                         Value::Float(n) => self.stack.push(Value::Float(-n)),

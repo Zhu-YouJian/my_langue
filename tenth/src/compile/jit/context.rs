@@ -125,13 +125,20 @@ impl JitContext {
         // 长期方案见 P2 任务：根本修复循环 JIT 的 leader block 密封策略。
         // A2：传入 all_chunks（调用点内联读被调函数字节码）。用字段拆借避免
         // 闭包内 `&mut self.module` 与 `&self.all_chunks` 的整 self 借用冲突。
+        // M2-A5：把 **整个编译链路**（translate + finalize_definitions 低化 +
+        // get_finalized_function）纳入 catch_unwind——此前只包 translate，
+        // Cranelift 低化阶段（如 tuple 模式 + guard 触发的 TryFromIntError）在
+        // finalize_definitions 内 panic 会**逃逸出 JIT**（进程级 panic，红线）。
+        // 现在统一转为 Err → 既有 fallback 路径（mod.rs 降级到 VM 解释执行）。
         let module = &mut self.module;
         let all_chunks = &self.all_chunks;
-        let translate_result = catch_unwind(AssertUnwindSafe(|| {
-            super::translator::translate(module, chunk_idx, chunk, &name_to_chunk, all_chunks)
+        let compile_result = catch_unwind(AssertUnwindSafe(|| -> Result<usize, String> {
+            let fn_id = super::translator::translate(module, chunk_idx, chunk, &name_to_chunk, all_chunks)?;
+            module.finalize_definitions();
+            Ok(module.get_finalized_function(fn_id) as usize)
         }));
-        let fn_id = match translate_result {
-            Ok(Ok(id)) => id,
+        let raw_ptr: *const u8 = match compile_result {
+            Ok(Ok(p)) => p as *const u8,
             Ok(Err(e)) => {
                 self.failed.insert(chunk_idx);
                 return Err(e);
@@ -143,13 +150,11 @@ impl JitContext {
                 } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
                     s.to_string()
                 } else {
-                    "JIT 编译期间发生 panic（可能是 Cranelift 内部断言失败，如循环回边触发的 is_sealed）".to_string()
+                    "JIT 编译期间发生 panic（可能是 Cranelift 内部断言/低化失败，如循环回边触发的 is_sealed、tuple+guard 的 TryFromIntError）".to_string()
                 };
-                return Err(format!("JIT translate panic: {}", msg));
+                return Err(format!("JIT compile panic: {}", msg));
             }
         };
-        self.module.finalize_definitions();
-        let raw_ptr = self.module.get_finalized_function(fn_id);
         // SAFETY: `get_finalized_function` 返回 `*const u8`，我们将其 transmute
         // 为类型化函数指针。安全性依赖于以下不变量：
         // 1. `raw_ptr` 非空且指向可执行内存（由 `finalize_definitions` 保证）
