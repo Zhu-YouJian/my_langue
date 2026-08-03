@@ -57,6 +57,67 @@ impl Lowerer {
         ));
     }
 
+    /// 阶段1-静默失败（层2-"误用"）：Result/Option 值被**当作普通值使用**。
+    ///
+    /// 触发上下文（调用方传入 context 描述）：
+    /// - 方法调用（非白名单方法，如 `db_query().len()`）
+    /// - 索引访问（`db_query()[0]`）
+    /// - 字段访问（`db_query().field`）
+    /// - 算术运算（`db_query() + 1`）
+    ///
+    /// 保守原则（宁可少报不可误伤，纯编译期检查不改变运行语义）：
+    /// - 仅对"真实" Result/Option 类型触发（`result_option_name`）：
+    ///   * `Type::Generic`（base 为 Enum/TypeParam 的 Result/Option）——构造
+    ///     （`Result::Ok(x)`）与注解（`-> Result<i64, str>`）产生，一定真实；
+    ///   * 裸 `Type::Enum("Result")`——read_line/env_get/tcp_*/http_*/regex_compile/
+    ///     udp_* 等 native 返回，一定真实；
+    ///   * 裸 `Type::TypeParam{name: Result|Option}`——裸注解（`-> Result`）产生；
+    ///   * **跳过裸 `Type::Enum("Option")`**——`Vec.get()/pop()` 静态误标为 Option
+    ///     但运行时返回裸元素（toml.th `parts.get(i).trim()` 依赖此行为，属类型
+    ///     系统误标而非误用）；parse_int/parse_float 也返回裸 Enum("Option")，为
+    ///     保守放行而一并跳过，代价可接受（AUDIT 候选）。
+    /// - 不触发（合法消费/传输，天然不在本检查上下文）：
+    ///   * match scrutinee（Match 节点不同上下文）
+    ///   * `?`（UnaryOp::Try 节点不同上下文）
+    ///   * try 块内（TryBlock 节点）
+    ///   * or_die/assume_ok 参数（其形参即 Result，语义就是消费）
+    ///   * 函数返回 / let 绑定 / 容器存储（传输，合法）
+    ///   * 调用实参（具体类型不匹配已是编译期 TypeError；Unknown 形参是合法传输）
+    ///   * 比较/逻辑运算（`==`/`!=`/`<` 等，语义模糊，保守放行）
+    pub(super) fn check_silent_failure_misuse(&mut self, ty: &Type, context: &str, span: &Span) {
+        let Some(name) = result_option_name(ty) else { return };
+        self.warnings.push(TenthWarning::new(
+            span.line,
+            span.col,
+            format!(
+                "{} 值被当作普通值使用（{}），可能掩盖错误——请用 ? / or_die / match 消费",
+                name, context
+            ),
+        ));
+    }
+
+    /// 阶段1-静默失败（层2-"误用"）——方法调用专用入口：
+    /// Result/Option 接收者上调用非白名单方法 → 编译期 warning。
+    pub(super) fn check_silent_failure_misuse_method(
+        &mut self,
+        recv_ty: &Type,
+        method: &str,
+        span: &Span,
+    ) {
+        let Some(name) = result_option_name(recv_ty) else { return };
+        if RESULT_OPTION_CONSUMING_METHODS.contains(&method) {
+            return;
+        }
+        self.warnings.push(TenthWarning::new(
+            span.line,
+            span.col,
+            format!(
+                "{} 值被当作普通值使用（方法 '{}'），可能掩盖错误——请用 ? / or_die / match 消费",
+                name, method
+            ),
+        ));
+    }
+
     /// M2.3：校验 `break 'x` / `continue 'x` 的标签。
     /// - 无标签（普通 break/continue）→ 不校验（沿用既有行为，循环外静默忽略）。
     /// - 带标签但完全不在任何循环内 → 报"标签形式必须位于循环体内"。
@@ -1461,5 +1522,35 @@ impl Lowerer {
             trait_impls: self.trait_impls.clone(),
             warnings: std::mem::take(&mut self.warnings),
         })
+    }
+}
+
+/// Result/Option 的合法消费方法白名单（M3.4）。
+/// 当前运行时 Result/Option 枚举**没有任何**方法（消费靠自由函数
+/// or_die/assume_ok、`?`、match、try 块）；白名单为空并预留——未来若新增
+/// is_ok/is_err/unwrap/ok_or 等 native 方法再补入。白名单外的任何方法调用
+/// 都是"误用"（运行时也无对应方法，会报「此类型不支持方法」）。
+const RESULT_OPTION_CONSUMING_METHODS: &[&str] = &[];
+
+/// 识别"真实"的 Result/Option 类型名（"Result"/"Option"），否则返回 None。
+/// 保守原则见 `check_silent_failure_misuse`：
+/// - `Type::Generic`（base 为 Enum/TypeParam 的 Result/Option）——构造与注解产生；
+/// - 裸 `Type::Enum("Result")`——read_line/env_get/tcp_*/http_*/regex_compile/udp_*
+///   等 native 返回，一定真实；裸 `Type::Enum("Option")` 不在此列（`Vec.get()/pop()`
+///   静态误标为 Option 但运行时返回裸元素，见 check_silent_failure_misuse 注释）；
+/// - 裸 `Type::TypeParam{name: Result|Option}`——裸注解（`-> Result`）产生。
+pub(super) fn result_option_name<'a>(ty: &'a Type) -> Option<&'a str> {
+    match ty {
+        Type::Generic { base, .. } => match base.as_ref() {
+            Type::Enum(name) | Type::TypeParam { name }
+                if name == "Result" || name == "Option" =>
+            {
+                Some(name.as_str())
+            }
+            _ => None,
+        },
+        Type::Enum(name) if name == "Result" => Some(name.as_str()),
+        Type::TypeParam { name } if name == "Result" || name == "Option" => Some(name.as_str()),
+        _ => None,
     }
 }

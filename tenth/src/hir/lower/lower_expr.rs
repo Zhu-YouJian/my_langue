@@ -247,6 +247,20 @@ impl Lowerer {
             ExprKind::Binary { op, left, right } => {
                 let l = self.lower_expr(left)?;
                 let r = self.lower_expr(right)?;
+                // M3.4：静默失败（层2-"误用"）——Result/Option 参与算术运算
+                // → 编译期 warning（`db_query() + 1` 把 Result 当成功值）。
+                // 仅拦 Add/Sub/Mul/Div/Mod；比较/逻辑运算语义模糊，保守放行。
+                if matches!(
+                    op,
+                    ast::BinOp::Add
+                        | ast::BinOp::Sub
+                        | ast::BinOp::Mul
+                        | ast::BinOp::Div
+                        | ast::BinOp::Mod
+                ) {
+                    self.check_silent_failure_misuse(&l.ty, "算术运算", &span);
+                    self.check_silent_failure_misuse(&r.ty, "算术运算", &span);
+                }
                 // 运算符重载检查：若左侧类型实现了对应运算符 trait，则转为方法调用
                 if let Some((trait_name, method_name)) = self.try_binary_op_overload(op, &l.ty) {
                     if self.has_trait_impl_for_type(&trait_name, &l.ty) {
@@ -377,19 +391,27 @@ impl Lowerer {
                         ast::UnaryOp::Not => UnaryOp::Not,
                         ast::UnaryOp::Try => UnaryOp::Try,
                     };
-                    // Try 操作符类型推断：Result<T> → T；其他类型保持不变（运行时处理）
+                    // Try 操作符类型推断：Result<T> → T；其他类型保持不变（运行时处理）。
+                    // M3.4：修复「? 后静态类型仍为 Result」的两个缺口（否则把 ? 解包
+                    // 结果当普通值使用会触发"误用"误报）：
+                    // - Generic base 为 TypeParam("Result")（注解 `-> Result<i64, str>`，
+                    //   from_annotation 的 Generic base 走 Named → TypeParam）→ 同 Enum
+                    //   展开为内部类型 args[0]；
+                    // - 裸 Type::Enum("Result")（read_line 等 resolve_builtin 注册，无内部
+                    //   类型信息）→ 保守 Unknown（不再保持 Result，避免后续使用误报）。
                     let ty = match (&hir_op, &e.ty) {
                         (UnaryOp::Try, Type::Generic { base, args }) => {
-                            if let Type::Enum(name) = base.as_ref() {
-                                if name == "Result" {
-                                    args.first().cloned().unwrap_or(Type::Unknown)
-                                } else {
-                                    e.ty.clone()
-                                }
+                            let base_name = match base.as_ref() {
+                                Type::Enum(name) | Type::TypeParam { name } => Some(name.as_str()),
+                                _ => None,
+                            };
+                            if base_name == Some("Result") {
+                                args.first().cloned().unwrap_or(Type::Unknown)
                             } else {
                                 e.ty.clone()
                             }
                         }
+                        (UnaryOp::Try, Type::Enum(name)) if name == "Result" => Type::Unknown,
                         (UnaryOp::Try, _) => e.ty.clone(),
                         _ => e.ty.clone(),
                     };
@@ -720,6 +742,11 @@ impl Lowerer {
 
             ExprKind::MethodCall { receiver, method, args } => {
                 let recv = self.lower_expr(receiver)?;
+                // M3.4：静默失败（层2-"误用"）——Result/Option 接收者上的方法调用
+                // （非白名单方法，如 `db_query().len()` 把 Result 当成功值）→ 编译期
+                // warning。Result/Option 在运行时无任何方法（白名单为空并预留），
+                // 消费靠 or_die/assume_ok / ? / match / try 块。
+                self.check_silent_failure_misuse_method(&recv.ty, &method.name, &span);
                 let lowered_args: Vec<_> = args.iter()
                     .map(|a| self.lower_expr(a))
                     .collect::<TenthResult<_>>()?;
@@ -894,6 +921,9 @@ impl Lowerer {
 
             ExprKind::Index { target, indices } => {
                 let t = self.lower_expr(target)?;
+                // M3.4：静默失败（层2-"误用"）——Result/Option 索引访问
+                // （`db_query()[0]` 把 Result 当可索引成功值）→ 编译期 warning。
+                self.check_silent_failure_misuse(&t.ty, "索引访问", &span);
                 let lowered_indices: Vec<_> = indices.iter()
                     .map(|idx| self.lower_index(idx))
                     .collect::<TenthResult<_>>()?;
@@ -909,6 +939,9 @@ impl Lowerer {
                     Type::Ref(inner, _) | Type::MutRef(inner, _) => inner.as_ref(),
                     other => other,
                 };
+                // M3.4：静默失败（层2-"误用"）——Result/Option 字段访问
+                // （`db_query().field` 把 Result 当普通结构体）→ 编译期 warning。
+                self.check_silent_failure_misuse(inner_ty, "字段访问", &span);
                 let field_ty = match inner_ty {
                     Type::Struct(name) | Type::TypeParam { name } => {
                         self.structs.get(name)

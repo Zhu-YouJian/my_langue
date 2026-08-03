@@ -521,3 +521,326 @@ fn test_or_die_recovers_error_then_continues_vm() {
         v => panic!("VM: 期望 Int(42), got {:?}", v),
     }
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// M3.4: "误用"拦截 warning — 触发场景（Result/Option 被当作普通值使用）
+// ══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_method_call_on_result_triggers_misuse_warning() {
+    // db_query().len() 把 Result 当成功值使用 → warning
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() -> i64 {
+            db_query().len()
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_has_warning(&warnings, "Result 值被当作普通值使用");
+    assert_has_warning(&warnings, "方法 'len'");
+}
+
+#[test]
+fn test_index_on_result_triggers_misuse_warning() {
+    // db_query()[0] 索引访问 Result → warning
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() -> i64 {
+            db_query()[0]
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_has_warning(&warnings, "Result 值被当作普通值使用");
+    assert_has_warning(&warnings, "索引访问");
+}
+
+#[test]
+fn test_field_access_on_result_triggers_misuse_warning() {
+    // db_query().field 字段访问 Result → warning
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() -> i64 {
+            db_query().field
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_has_warning(&warnings, "Result 值被当作普通值使用");
+    assert_has_warning(&warnings, "字段访问");
+}
+
+#[test]
+fn test_arithmetic_on_result_triggers_misuse_warning() {
+    // db_query() + 1 算术运算（Result 参与）→ warning
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() -> i64 {
+            db_query() + 1
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_has_warning(&warnings, "Result 值被当作普通值使用");
+    assert_has_warning(&warnings, "算术运算");
+}
+
+#[test]
+fn test_method_call_on_option_triggers_misuse_warning() {
+    // find().len()：Option 接收者方法调用 → warning
+    let src = r#"
+        fn find() -> Option<i64> {
+            Option::Some(1)
+        }
+        fn main() -> i64 {
+            find().len()
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_has_warning(&warnings, "Option 值被当作普通值使用");
+    assert_has_warning(&warnings, "方法 'len'");
+}
+
+#[test]
+fn test_method_call_on_read_line_result_triggers_misuse_warning() {
+    // read_line 返回裸 Type::Enum("Result")（resolve_builtin 注册）——同样拦截
+    let src = r#"
+        fn main() -> i64 {
+            read_line().len()
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_has_warning(&warnings, "Result 值被当作普通值使用");
+    assert_has_warning(&warnings, "方法 'len'");
+}
+
+#[test]
+fn test_misuse_warning_has_line_col() {
+    let src = r#"
+fn db_query() -> Result<i64, str> {
+    Result::Ok(42)
+}
+fn main() {
+    let a = 1;
+    db_query().len();
+    let b = 2;
+}
+"#;
+    let warnings = lower_warnings(src);
+    let w = warnings.iter().find(|w| w.message.contains("被当作普通值使用"))
+        .expect("应有误用 warning");
+    // 第 1 行为空；第 2 行 `fn db_query()...`，第 5 行 `fn main() {`，
+    // 第 6 行 `let a = 1;`，第 7 行 `db_query().len();` → warning 应定位到第 7 行
+    assert_eq!(w.line, 7, "warning 应定位到 db_query().len() 行，实际 line={}", w.line);
+    assert!(w.col >= 1, "warning 应有列号，实际 col={}", w.col);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// M3.4: "误用"拦截 warning — 不触发场景（合法消费/传输/保守放行）
+// ══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_consumed_by_try_no_misuse_warning() {
+    // `?` 消费 Result：不算误用
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() -> i64 {
+            let a = db_query()?;
+            a
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_no_warning_containing(&warnings, "被当作普通值使用");
+}
+
+#[test]
+fn test_consumed_by_or_die_no_misuse_warning() {
+    // or_die 消费 Result（其形参即 Result）：不算误用
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() -> i64 {
+            or_die(db_query(), "db fail")
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_no_warning_containing(&warnings, "被当作普通值使用");
+}
+
+#[test]
+fn test_consumed_by_assume_ok_no_misuse_warning() {
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() -> i64 {
+            assume_ok(db_query())
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_no_warning_containing(&warnings, "被当作普通值使用");
+}
+
+#[test]
+fn test_consumed_by_match_no_misuse_warning() {
+    // match scrutinee 消费 Result：不算误用
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() -> i64 {
+            match db_query() {
+                Result::Ok(v) => v,
+                Result::Err(_) => -1,
+            }
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_no_warning_containing(&warnings, "被当作普通值使用");
+}
+
+#[test]
+fn test_try_block_no_misuse_warning() {
+    // try 块内 `?` 消费：不算误用
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() -> Result<i64, str> {
+            try {
+                let a = db_query()?;
+                a + 1
+            }
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_no_warning_containing(&warnings, "被当作普通值使用");
+}
+
+#[test]
+fn test_return_transport_no_misuse_warning() {
+    // 函数返回 Result 是传输（合法），不算误用
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() -> Result<i64, str> {
+            db_query()
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_no_warning_containing(&warnings, "被当作普通值使用");
+}
+
+#[test]
+fn test_let_binding_transport_no_misuse_warning() {
+    // let 绑定 Result（保留值）是传输，不算误用
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() {
+            let r = db_query();
+            println("ok");
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_no_warning_containing(&warnings, "被当作普通值使用");
+}
+
+#[test]
+fn test_container_transport_no_misuse_warning() {
+    // Result 存入 Vec 是传输（合法），不算误用
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() {
+            let v = Vec::new();
+            v.push(db_query());
+            println("ok");
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_no_warning_containing(&warnings, "被当作普通值使用");
+}
+
+#[test]
+fn test_bare_enum_option_method_no_misuse_warning() {
+    // 保守放行：裸 Type::Enum("Option")（parse_int/get/pop 等静态误标）上的
+    // 方法调用不触发——`Vec.get(i).trim()` 依赖此行为，避免误报（宁可少报）
+    let src = r#"
+        fn main() -> str {
+            "123".parse_int().to_string()
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_no_warning_containing(&warnings, "被当作普通值使用");
+}
+
+#[test]
+fn test_comparison_on_result_no_misuse_warning() {
+    // 比较运算语义模糊，保守放行（不报）
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() -> bool {
+            db_query() == Result::Ok(42)
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_no_warning_containing(&warnings, "被当作普通值使用");
+}
+
+#[test]
+fn test_discard_warning_regression_still_fires() {
+    // 层1 丢弃 warning 回归：db_query(); 作为语句仍触发"被忽略"（非"误用"）
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() {
+            db_query();
+            println("ok");
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    assert_has_warning(&warnings, "Result 被忽略");
+    assert_no_warning_containing(&warnings, "被当作普通值使用");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// M3.4: 运行行为零变化对拍（VM + 解释器，合法消费程序结果一致）
+// ══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_misuse_legit_consumption_runtime_parity() {
+    // 合法消费（or_die + match）在 VM/解释器双侧运行行为一致：
+    // M3.4 是纯编译期检查，不改变运行语义。
+    let src = r#"
+        fn parse(s: str) -> Result<i64, str> {
+            if s == "42" { Result::Ok(42) } else { Result::Err("not 42") }
+        }
+        fn main() -> i64 {
+            let a = or_die(parse("42"), "parse failed");
+            a + 1
+        }
+    "#;
+    match run(src).unwrap() {
+        Some(Value::Int(43, _)) => {}
+        v => panic!("解释器: 期望 Int(43), got {:?}", v),
+    }
+    match run_vm(src).unwrap() {
+        Value::Int(43, _) => {}
+        v => panic!("VM: 期望 Int(43), got {:?}", v),
+    }
+}
