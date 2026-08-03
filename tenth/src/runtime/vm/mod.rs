@@ -454,12 +454,19 @@ impl Vm {
             // 无特化签名（native 之外的不可特化 chunk）→ 通用回退
             None => return self.call_with_args(name, args),
         };
-        // 特化 ABI 只承载 i64 标量——参数解包；类型不符 → 通用回退
+        // P3：特化 ABI 承载 i64 位模式（f64 经位打包塞 i64 寄存器）——参数按签名
+        // 种类逐个解包：I64 参：Int/Bool → i64；F64 参：Float → f64 位模式。类型
+        // 不符（Int→F64 参、Float→I64 参等）→ 通用回退（保守：不做静默类型迁移，
+        // 防与通用路径 dtype 漂移；快路径 gate 保证实参为对应标量槽，此严格检查
+        // 只作防御）。
+        use crate::compile::jit::context::ScalarAbiKind;
         let mut i64s: Vec<i64> = Vec::with_capacity(all_args.len());
-        for a in all_args {
-            match a {
-                Value::Int(i, _) => i64s.push(*i),
-                Value::Bool(b) => i64s.push(*b as i64),
+        for (i, a) in all_args.iter().enumerate() {
+            let kind = sig.param_kinds.get(i).copied().unwrap_or(ScalarAbiKind::I64);
+            match (kind, a) {
+                (ScalarAbiKind::I64, Value::Int(x, _)) => i64s.push(*x),
+                (ScalarAbiKind::I64, Value::Bool(b)) => i64s.push(*b as i64),
+                (ScalarAbiKind::F64, Value::Float(f)) => i64s.push(f.to_bits() as i64),
                 _ => return self.call_with_args(name, args),
             }
         }
@@ -501,7 +508,13 @@ impl Vm {
         if let Some((line, msg)) = self.take_last_error() {
             return Err(TenthError::RuntimeError { line, col: None, message: msg });
         }
-        Ok(Value::Int(ret_i64, BaseType::I32))
+        // P3：返回按签名返回种类——F64 → i64 位模式解回 Float；I64 → Int
+        match sig.ret_kind {
+            Some(crate::compile::jit::context::ScalarAbiKind::F64) => {
+                Ok(Value::Float(f64::from_bits(ret_i64 as u64)))
+            }
+            _ => Ok(Value::Int(ret_i64, BaseType::I32)),
+        }
     }
 
     // ── Public arithmetic/method wrappers (for JIT hostcalls) ──────────────

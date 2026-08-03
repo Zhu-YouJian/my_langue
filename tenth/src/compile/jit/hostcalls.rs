@@ -348,6 +348,26 @@ unsafe extern "C" fn host_value_to_i64(vm: *mut Vm, v: *const Value) -> i64 {
     }
 }
 
+/// P3：从 Value 解包 f64 载荷（特化 F64 返回/慢路径结果解包）。
+///
+/// 安全（静默错值红线，与 `host_value_to_i64` 同哲学）：
+/// - `Float` → 载荷
+/// - 其余类型（含 Int/Float32/Unit）→ 类型不符：若无待处理错误则显式报错，返回 0
+///   （不静默截断——f64 特化函数返回非 Float 是类型系统漏洞，响亮报错优于错值；
+///   不做 Int→f64 静默迁移，防与通用路径 dtype 漂移）
+unsafe extern "C" fn host_value_to_f64(vm: *mut Vm, v: *const Value) -> f64 {
+    let vm = unsafe { &mut *vm };
+    match unsafe { &*v } {
+        Value::Float(f) => *f,
+        other => {
+            if !vm.has_last_error() {
+                vm.set_last_error(format!("JIT 特化 ABI：期望 f64 标量，实际 {:?}", other));
+            }
+            0.0
+        }
+    }
+}
+
 unsafe extern "C" fn host_method_call(
     vm: *mut Vm, name_idx: u64, arg_count: u64, args_ptr: *const Value, out: *mut Value,
 ) {
@@ -912,6 +932,7 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
         ("host_jit_call", host_jit_call as usize),
         ("host_jit_call_spec", host_jit_call_spec as usize),
         ("host_value_to_i64", host_value_to_i64 as usize),
+        ("host_value_to_f64", host_value_to_f64 as usize),
         ("host_call_indirect", host_call_indirect as usize),
         ("host_method_call", host_method_call as usize),
         ("host_make_vec", host_make_vec as usize),

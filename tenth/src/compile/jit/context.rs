@@ -28,7 +28,11 @@ pub enum ScalarAbiKind {
 /// 函数特化签名（参数 + 返回的标量种类）。`None` = 非特化。
 ///
 /// v1 限定：仅纯 i64（含 `Int` 别名）参数 + i64 返回；参数数 ≤ `MAX_SPEC_ARGS`；
-/// 变参/默认参/其他类型 → 不推导（保守，f64 特化留待 v2 同机制扩展）。
+/// 变参/默认参/其他类型 → 不推导（保守）。
+/// P3（M2.6）：扩展 **f64 特化**（`ScalarAbiKind::F64` 启用）与 **`Int` 别名纳入**
+/// （`TypeParam("Int")` → I64）——参数/返回为 i64/Int/f64 混合标量即可推导。
+/// 特化 ABI 保持 `(vm, i64 x MAX_SPEC_ARGS) -> i64` 位打包（f64 经 bitcast 塞
+/// i64 寄存器），快/慢路径 ABI 统一，Rust 侧 JitFnSpec/invoke_jit_spec 不变。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChunkSig {
     pub param_kinds: Vec<ScalarAbiKind>,
@@ -39,16 +43,29 @@ impl ChunkSig {
     /// 从 HIR 函数签名推导标量 ABI 签名；不满足特化条件 → `None`。
     /// 调用方需先排除默认参数（`param_defaults` 非空）。
     ///
-    /// v1 限定：**仅显式 `i64` 注解**（`Type::Base(I64)`）。`Int` 别名在 HIR 为
-    /// `TypeParam("Int")`，语义上是 i64 但注解路径不同——保守不纳入（避免既有
-    /// `Int` 注解测试被特化改变行为；显式 `i64` 的基准/新代码才走特化）。
+    /// 种类推导（P3）：
+    /// - `i64`（`Type::Base(I64)`）→ `I64`（I32 标量槽，8B 原始 i64）
+    /// - `Int`（`Type::TypeParam("Int")`）→ `I64`——`Int` 在 HIR 为**未声明
+    ///   TypeParam**（`hir/types.rs` from_ident → TypeParam），运行时与 `i64` 同为
+    ///   `Value::Int`、同为 I32 标量槽、body 编译类型无关（动态）；调用点实参
+    ///   种类 gate + 慢路径严格检查保证非 Int 实参走通用 → 语义等价，纳入特化
+    ///   扩大 i64 类覆盖。
+    /// - `f64`（`Type::Base(F64)`）→ `F64`（F64 标量槽；P3 启用，位打包进 i64 寄存器）
+    /// - 其余（f32/Float32、泛型 T、用户类型、Unit 等）→ 不推导（None）
     pub fn from_hir(
         params: &[(String, crate::hir::types::Type)],
         return_type: &crate::hir::types::Type,
         variadic: &[bool],
     ) -> Option<ChunkSig> {
         use crate::hir::types::{BaseType, Type};
-        let is_i64_ty = |t: &Type| matches!(t, Type::Base(BaseType::I64));
+        let kind_of = |t: &Type| -> Option<ScalarAbiKind> {
+            match t {
+                Type::Base(BaseType::I64) => Some(ScalarAbiKind::I64),
+                Type::TypeParam { name } if name == "Int" => Some(ScalarAbiKind::I64),
+                Type::Base(BaseType::F64) => Some(ScalarAbiKind::F64),
+                _ => None,
+            }
+        };
         if variadic.iter().any(|v| *v) {
             return None;
         }
@@ -57,15 +74,9 @@ impl ChunkSig {
         }
         let mut param_kinds = Vec::with_capacity(params.len());
         for (_, t) in params {
-            if !is_i64_ty(t) {
-                return None;
-            }
-            param_kinds.push(ScalarAbiKind::I64);
+            param_kinds.push(kind_of(t)?);
         }
-        if !is_i64_ty(return_type) {
-            return None;
-        }
-        Some(ChunkSig { param_kinds, ret_kind: Some(ScalarAbiKind::I64) })
+        Some(ChunkSig { param_kinds, ret_kind: Some(kind_of(return_type)?) })
     }
 }
 

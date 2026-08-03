@@ -87,13 +87,42 @@ const INLINE_MAX_INSTR: usize = 16;
 
 /// CallN/Call 目标是否可走特化 ABI（**分析期与发射期共用**，防静默错值漂移）。
 ///
-/// v1 条件（保守）：
-/// - 目标 chunk 有特化签名（chunk_sigs[callee] = Some）且**纯 i64 参数 + i64 返回**
-/// - 实参个数 = 签名参数个数 = chunk 声明参数个数（防默认参数/可变参数错位）
+/// 条件（保守）：
+/// - 目标 chunk 有特化签名且参数个数 = 实参个数 = chunk 声明参数个数
+///   （防默认参数/可变参数错位）
 /// - 实参个数 ≤ MAX_SPEC_ARGS
+/// - 签名种类为 I64/F64 混合（v1 仅 I64；P3 扩展 F64，按参数顺序声明）
 ///
-/// 注意：此谓词只判「目标侧资格」；调用侧「实参是否全为 I32 标量槽」由
+/// 注意：此谓词只判「目标侧资格」；调用侧「实参是否全为对应标量槽」由
 /// 分析期/发射期各自的栈模型判定（二者对应同一运行时状态）。
+fn spec_target_sig<'a>(
+    name_to_chunk: &[Option<usize>],
+    chunk_sigs: &'a [Option<ChunkSig>],
+    all_chunks: &[Chunk],
+    name_i: usize,
+    n: usize,
+) -> Option<&'a ChunkSig> {
+    if n > MAX_SPEC_ARGS {
+        return None;
+    }
+    let callee_idx = match name_to_chunk.get(name_i).copied().flatten() {
+        Some(i) => i,
+        None => return None,
+    };
+    let sig = match chunk_sigs.get(callee_idx) {
+        Some(Some(s)) => s,
+        _ => return None,
+    };
+    if sig.param_kinds.len() != n {
+        return None;
+    }
+    // 参数个数与 chunk 声明一致（防默认参数调用点实参 < 声明参数数）
+    match all_chunks.get(callee_idx) {
+        Some(c) if c.num_args == n => Some(sig),
+        _ => None,
+    }
+}
+
 fn spec_target_qualifies(
     name_to_chunk: &[Option<usize>],
     chunk_sigs: &[Option<ChunkSig>],
@@ -101,32 +130,7 @@ fn spec_target_qualifies(
     name_i: usize,
     n: usize,
 ) -> bool {
-    if n > MAX_SPEC_ARGS {
-        return false;
-    }
-    let callee_idx = match name_to_chunk.get(name_i).copied().flatten() {
-        Some(i) => i,
-        None => return false,
-    };
-    let sig = match chunk_sigs.get(callee_idx) {
-        Some(Some(s)) => s,
-        _ => return false,
-    };
-    // v1：仅 i64 参数 + i64 返回（f64 特化留待 v2 同机制）
-    if sig.ret_kind != Some(ScalarAbiKind::I64) {
-        return false;
-    }
-    if sig.param_kinds.len() != n {
-        return false;
-    }
-    if !sig.param_kinds.iter().all(|k| *k == ScalarAbiKind::I64) {
-        return false;
-    }
-    // 参数个数与 chunk 声明一致（防默认参数调用点实参 < 声明参数数）
-    match all_chunks.get(callee_idx) {
-        Some(c) if c.num_args == n => true,
-        _ => false,
-    }
+    spec_target_sig(name_to_chunk, chunk_sigs, all_chunks, name_i, n).is_some()
 }
 
 /// A2：内联资格静态判定（**分析期与发射期共用**，防静默错值漂移）。
@@ -862,44 +866,74 @@ impl<'a, M: Module> Translator<'a, M> {
                         clear_stack(&mut stack);
                     }
                     Call(i) => {
-                        // M2.5-A6：目标可特化（0 参纯 i64 返回）→ 结果预测为 I32；
-                        // 否则 Unknown + 清栈（与发射端 host_call 失效一致）。
+                        // M2.5-A6/P3：目标可特化（0 参 i64/f64 返回）→ 结果预测按
+                        // ret_kind（I64→I32 / F64→F64）；否则 Unknown + 清栈
+                        // （与发射端 host_call 失效一致）。
                         // A2-11.4.35：可内联调用（内联优先于特化）→ 预测 Unknown。
                         let inline = match name_to_chunk.get(*i).copied().flatten() {
                             Some(ci) => inline_eligible(all_chunks, ci, 0),
                             None => false,
                         };
-                        let spec = !inline
-                            && spec_target_qualifies(name_to_chunk, chunk_sigs, all_chunks, *i, 0);
+                        let spec_sig = if inline {
+                            None
+                        } else {
+                            spec_target_sig(name_to_chunk, chunk_sigs, all_chunks, *i, 0)
+                        };
+                        let spec = spec_sig.is_some();
                         call_spec.insert(ip, spec);
                         if spec {
-                            stack.push(I32);
+                            let rk = spec_sig.unwrap().ret_kind.unwrap();
+                            stack.push(match rk {
+                                ScalarAbiKind::I64 => I32,
+                                ScalarAbiKind::F64 => F64,
+                            });
                         } else {
                             stack.push(Unknown);
                             clear_stack(&mut stack);
                         }
                     }
                     CallN(i, n) => {
-                        // M2.5-A6：实参全为 I32 且目标可特化 → 结果预测 I32（特化调用
-                        // 后接原生 Add 的关键）；否则 Unknown + 清栈。
+                        // M2.5-A6/P3：实参种类逐个匹配目标签名 param_kinds
+                        // （I64→实参须 I32、F64→实参须 F64）且目标可特化 → 结果预测
+                        // 按 ret_kind（I64→I32 / F64→F64，特化调用后接原生 fadd 的
+                        // 关键）；否则 Unknown + 清栈。
                         // A2-11.4.35：可内联调用（内联优先于特化）→ 预测 Unknown，
                         // 与发射端内联路径一致（否则循环回边 Load 读过期标量 → 静默错值）。
-                        let mut all_i32 = true;
+                        let mut arg_kinds: Vec<ScalarKind> = Vec::with_capacity(*n);
                         for _ in 0..*n {
-                            if stack.pop().unwrap_or(Unknown) != I32 {
-                                all_i32 = false;
-                            }
+                            arg_kinds.push(stack.pop().unwrap_or(Unknown));
                         }
+                        arg_kinds.reverse(); // 栈弹出逆序 → 还原为 [arg0..argN-1]
                         let inline = match name_to_chunk.get(*i).copied().flatten() {
                             Some(ci) => inline_eligible(all_chunks, ci, *n as usize),
                             None => false,
                         };
-                        let spec = all_i32
-                            && !inline
-                            && spec_target_qualifies(name_to_chunk, chunk_sigs, all_chunks, *i, *n as usize);
+                        let spec_sig = if inline {
+                            None
+                        } else {
+                            spec_target_sig(name_to_chunk, chunk_sigs, all_chunks, *i, *n as usize)
+                        };
+                        let mut args_match = true;
+                        if let Some(s) = spec_sig {
+                            for (pos, want) in s.param_kinds.iter().enumerate() {
+                                let need = match want {
+                                    ScalarAbiKind::I64 => I32,
+                                    ScalarAbiKind::F64 => F64,
+                                };
+                                if arg_kinds.get(pos).copied().unwrap_or(Unknown) != need {
+                                    args_match = false;
+                                    break;
+                                }
+                            }
+                        }
+                        let spec = spec_sig.is_some() && args_match;
                         call_spec.insert(ip, spec);
                         if spec {
-                            stack.push(I32);
+                            let rk = spec_sig.unwrap().ret_kind.unwrap();
+                            stack.push(match rk {
+                                ScalarAbiKind::I64 => I32,
+                                ScalarAbiKind::F64 => F64,
+                            });
                         } else {
                             stack.push(Unknown);
                             clear_stack(&mut stack);
@@ -1189,6 +1223,11 @@ impl<'a, M: Module> Translator<'a, M> {
         self.builder.ins().stack_store(v, slot, 0);
     }
 
+    /// P3：写 f64 到标量槽（8 字节位模式；特化 F64 返回/参数位打包）。
+    fn store_scalar_f64(&mut self, slot: StackSlot, v: Value_) {
+        self.builder.ins().stack_store(v, slot, 0);
+    }
+
     /// `fn(vm, *const Value) -> i64` — 从 Value 解包 i64（特化返回/慢路径结果）。
     fn call_hostcall_val_ret_i64(&mut self, name: &str, arg: Value_) -> Value_ {
         self.invalidate_stack_scalars();
@@ -1219,6 +1258,36 @@ impl<'a, M: Module> Translator<'a, M> {
         let sig = self.import_sig(&[self.ptr], Some(types::I64));
         let call = self.builder.ins().call_indirect(sig, callee, &[self.vm, arg]);
         self.builder.inst_results(call)[0]
+    }
+
+    /// P3：特化 F64 返回值解包（`host_value_to_f64`）。**失效栈标量**（同
+    /// `call_hostcall_val_ret_i64`）——用于特化入口 Ret 的 fallback 路径。
+    fn call_hostcall_val_ret_f64(&mut self, name: &str, arg: Value_) -> Value_ {
+        self.invalidate_stack_scalars();
+        self.emit_line_hint();
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[self.ptr], Some(types::F64));
+        let call = self.builder.ins().call_indirect(sig, callee, &[self.vm, arg]);
+        self.builder.inst_results(call)[0]
+    }
+
+    /// P3：特化 F64 返回值解包（`host_value_to_f64`）。**不失效栈标量**（同
+    /// `call_hostcall_val_ret_i64_noinv`）——特化调用慢路径用。
+    fn call_hostcall_val_ret_f64_noinv(&mut self, name: &str, arg: Value_) -> Value_ {
+        self.emit_line_hint();
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[self.ptr], Some(types::F64));
+        let call = self.builder.ins().call_indirect(sig, callee, &[self.vm, arg]);
+        self.builder.inst_results(call)[0]
+    }
+
+    /// P3：`fn(vm, f64, *mut Value)` — 写 f64 Value 到任意地址（特化入口 F64 参数物化）。
+    fn call_hostcall_f64_ptr(&mut self, name: &str, arg: Value_, out: Value_) {
+        self.invalidate_stack_scalars();
+        self.emit_line_hint();
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[types::F64, self.ptr], None);
+        self.builder.ins().call_indirect(sig, callee, &[self.vm, arg, out]);
     }
 
     /// A6：特化调用后的错误检查（`host_check_error`）。**不失效栈标量**（同上）。
@@ -1285,8 +1354,10 @@ impl<'a, M: Module> Translator<'a, M> {
                         self.call_hostcall_i64_ptr("host_make_int", reg, lval_addr);
                     }
                     ScalarKind::F64 => {
-                        // v2：f64 位模式 → host_make_float（v1 无 f64 特化，防御）
-                        self.call_hostcall_i64_ptr("host_make_float", reg, lval_addr);
+                        // P3：f64 参数——i64 寄存器位模式 bitcast 回 f64，经
+                        // host_make_float 物化 Value（特化 ABI 位打包）。
+                        let f = self.builder.ins().bitcast(types::F64, MemFlags::new(), reg);
+                        self.call_hostcall_f64_ptr("host_make_float", f, lval_addr);
                     }
                     _ => {}
                 }
@@ -1322,11 +1393,19 @@ impl<'a, M: Module> Translator<'a, M> {
     }
 
     /// 把当前栈顶（`self.sp` 处）值作为函数返回值返回：通用 → 写 out_ptr + ok=1；
-    /// 特化 → 解包 i64 寄存器返回。用于 TailCall/TailCallClosure/Try 提前返回路径。
+    /// 特化 → 解包按 ret_kind（I64→host_value_to_i64 / F64→host_value_to_f64 +
+    /// bitcast）i64 寄存器返回。用于 TailCall/TailCallClosure/Try 提前返回路径。
     fn emit_return_top(&mut self) {
         if self.spec_mode {
             let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
-            let v = self.call_hostcall_val_ret_i64("host_value_to_i64", addr);
+            let ret_kind = self.spec_sig.as_ref().and_then(|s| s.ret_kind);
+            let v = match ret_kind {
+                Some(ScalarAbiKind::F64) => {
+                    let f = self.call_hostcall_val_ret_f64("host_value_to_f64", addr);
+                    self.builder.ins().bitcast(types::I64, MemFlags::new(), f)
+                }
+                _ => self.call_hostcall_val_ret_i64("host_value_to_i64", addr),
+            };
             self.builder.ins().return_(&[v]);
         } else {
             self.copy_stack_to_ptr(self.sp, self.out_ptr, 0);
@@ -1689,7 +1768,8 @@ impl<'a, M: Module> Translator<'a, M> {
         let (akind, aslot) = self.stack_scalars[&a_off];
         let (bkind, bslot) = self.stack_scalars[&b_off];
         debug_assert!(akind == kind && bkind == kind);
-        let cond = match kind {
+        // (cond, invert)：invert=true 时结果 = !cond（F64 Neq 的 epsilon 翻转）。
+        let (cond, invert) = match kind {
             I32 => {
                 let a = self.builder.ins().stack_load(types::I64, aslot, 0);
                 let b = self.builder.ins().stack_load(types::I64, bslot, 0);
@@ -1702,28 +1782,44 @@ impl<'a, M: Module> Translator<'a, M> {
                     Op::Gte => IntCC::SignedGreaterThanOrEqual,
                     _ => return Err("native i32 cmp: unsupported".into()),
                 };
-                self.builder.ins().icmp(cc, a, b)
+                (self.builder.ins().icmp(cc, a, b), false)
             }
             F64 => {
                 let a = self.builder.ins().stack_load(types::F64, aslot, 0);
                 let b = self.builder.ins().stack_load(types::F64, bslot, 0);
-                let cc = match op {
-                    Op::Eq => FloatCC::Equal,
-                    Op::Neq => FloatCC::NotEqual,
-                    Op::Lt => FloatCC::LessThan,
-                    Op::Gt => FloatCC::GreaterThan,
-                    Op::Lte => FloatCC::LessThanOrEqual,
-                    Op::Gte => FloatCC::GreaterThanOrEqual,
+                // P3（静默错值修复）：VM/解释器浮点 `Eq`/`Neq` 为 **epsilon 比较**
+                // `(x-y).abs() < 1e-10`（runtime/vm/execute.rs 同型快路径、interpreter/
+                // binary.rs 一致）——JIT 原生此前用精确 FloatCC::Equal/NotEqual 会与
+                // 参考路径分歧（如 0.1+0.2 == 0.3）。现对齐：Eq = |a-b| < 1e-10；
+                // Neq = !(|a-b| < 1e-10)（select 翻转，NaN 语义与 VM 一致：
+                // NaN 下 |a-b| 比较为 false → Eq=false、Neq=true）。
+                // 注意 Neq 不能用 FloatCC::NotEqual（|a-b| == 1e-10 恰好时与
+                // !(<) 分歧；NaN 语义也不同）。Lt/Gt/Lte/Gte 保持精确有序比较（VM 同）。
+                match op {
+                    Op::Eq | Op::Neq => {
+                        let diff = self.builder.ins().fsub(a, b);
+                        let ad = self.builder.ins().fabs(diff);
+                        let eps = self.builder.ins().f64const(1e-10);
+                        let lt = self.builder.ins().fcmp(FloatCC::LessThan, ad, eps);
+                        (lt, op == Op::Neq)
+                    }
+                    Op::Lt => (self.builder.ins().fcmp(FloatCC::LessThan, a, b), false),
+                    Op::Gt => (self.builder.ins().fcmp(FloatCC::GreaterThan, a, b), false),
+                    Op::Lte => (self.builder.ins().fcmp(FloatCC::LessThanOrEqual, a, b), false),
+                    Op::Gte => (self.builder.ins().fcmp(FloatCC::GreaterThanOrEqual, a, b), false),
                     _ => return Err("native f64 cmp: unsupported".into()),
-                };
-                self.builder.ins().fcmp(cc, a, b)
+                }
             }
             _ => return Err("native cmp: bad kind".into()),
         };
-        // b1 → i8（0/1）
+        // b1 → i8（0/1）；Neq（invert）翻转选择分支
         let one = self.builder.ins().iconst(types::I8, 1);
         let zero = self.builder.ins().iconst(types::I8, 0);
-        let r = self.builder.ins().select(cond, one, zero);
+        let r = if invert {
+            self.builder.ins().select(cond, zero, one)
+        } else {
+            self.builder.ins().select(cond, one, zero)
+        };
         self.clear_stack_scalar_at(a_off);
         let rslot = self.stack_scalar_slot(a_off, Bool);
         let raddr = self.builder.ins().stack_addr(self.ptr, rslot, 0);
@@ -2097,30 +2193,55 @@ impl<'a, M: Module> Translator<'a, M> {
                     self.builder.ins().jump(cont, &[]);
                     self.terminated = true;
                 } else if self.spec_mode {
-                    // A6：特化入口——从栈顶读标量返回值（i64 寄存器返回，零装箱）。
-                    // 有 I32 标量槽 → 直接读 8B；否则物化 + host_value_to_i64 解包。
+                    // A6/P3：特化入口——从栈顶读标量返回值（i64 寄存器返回，零装箱）。
+                    // I64 返回：I32 标量槽直接读 8B；F64 返回：F64 标量槽直接读再
+                    // bitcast；无标量槽（通用 hostcall/内联结果/分析失败）→ 物化 +
+                    // 按 ret_kind 解包（host_value_to_i64 / host_value_to_f64）。
+                    let ret_kind = self.spec_sig.as_ref().and_then(|s| s.ret_kind);
                     let ret_off = self.sp;
-                    let ret: Value_ = if self.scalar_enabled {
-                        if let Some(&(kind, slot)) = self.stack_scalars.get(&ret_off) {
-                            if kind == ScalarKind::I32 {
-                                self.load_scalar_i64(slot)
+                    let ret: Value_ = match ret_kind {
+                        Some(ScalarAbiKind::F64) => {
+                            let scalar_f64 = self.scalar_enabled.then(|| {
+                                match self.stack_scalars.get(&ret_off) {
+                                    Some(&(ScalarKind::F64, slot)) => Some(self.builder.ins().stack_load(types::F64, slot, 0)),
+                                    _ => None,
+                                }
+                            }).flatten();
+                            match scalar_f64 {
+                                Some(f) => self.builder.ins().bitcast(types::I64, MemFlags::new(), f),
+                                None => {
+                                    self.materialize_stack_at(ret_off);
+                                    let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, ret_off);
+                                    let f = self.call_hostcall_val_ret_f64("host_value_to_f64", addr);
+                                    self.builder.ins().bitcast(types::I64, MemFlags::new(), f)
+                                }
+                            }
+                        }
+                        _ => {
+                            // 既有 I64 返回逻辑（I32 标量槽直接读；否则物化 + 解包）
+                            if self.scalar_enabled {
+                                if let Some(&(kind, slot)) = self.stack_scalars.get(&ret_off) {
+                                    if kind == ScalarKind::I32 {
+                                        self.load_scalar_i64(slot)
+                                    } else {
+                                        // 非 I32（如 F64 标量 / 通用结果）→ 物化 + 解包
+                                        self.materialize_stack_at(ret_off);
+                                        let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, ret_off);
+                                        self.call_hostcall_val_ret_i64("host_value_to_i64", addr)
+                                    }
+                                } else {
+                                    // 无标量槽（通用 hostcall/内联结果）→ 物化 + 解包
+                                    self.materialize_stack_at(ret_off);
+                                    let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, ret_off);
+                                    self.call_hostcall_val_ret_i64("host_value_to_i64", addr)
+                                }
                             } else {
-                                // 非 I32（如 F64 标量 / 通用结果）→ 物化 + 解包
+                                // 分析失败（全通用）→ 解包 Value 槽
                                 self.materialize_stack_at(ret_off);
                                 let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, ret_off);
                                 self.call_hostcall_val_ret_i64("host_value_to_i64", addr)
                             }
-                        } else {
-                            // 无标量槽（通用 hostcall/内联结果）→ 物化 + 解包
-                            self.materialize_stack_at(ret_off);
-                            let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, ret_off);
-                            self.call_hostcall_val_ret_i64("host_value_to_i64", addr)
                         }
-                    } else {
-                        // 分析失败（全通用）→ 解包 Value 槽
-                        self.materialize_stack_at(ret_off);
-                        let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, ret_off);
-                        self.call_hostcall_val_ret_i64("host_value_to_i64", addr)
                     };
                     self.builder.ins().return_(&[ret]);
                     self.terminated = true;
@@ -2730,14 +2851,26 @@ impl<'a, M: Module> Translator<'a, M> {
     ) -> Result<bool, String> {
         self.emit_line_hint();
         let n_usize = n as usize;
-        // A6：预读参数标量值（SSA 寄存器）。物化（下方）会移除栈标量跟踪，
-        // 但 SSA 值已捕获——特化路径直接以寄存器传参（零装箱）。
+        // A6/P3：预读参数标量值（SSA 寄存器）。按目标特化签名的参数种类逐个匹配
+        // 槽：I64 → I32 槽读 i64；F64 → F64 槽读 f64 再 bitcast 为 i64（特化 ABI
+        // 位打包）。槽种类与签名不符/无槽 → None（发射期 try_spec_call 据此回退/
+        // 报错，防漂移）。物化（下方）会移除栈标量跟踪，但 SSA 值已捕获——特化
+        // 路径直接以寄存器传参（零装箱）。
+        let callee_sig_kinds: Vec<ScalarAbiKind> = match self.chunk_sigs.get(callee_idx) {
+            Some(Some(s)) => s.param_kinds.clone(),
+            _ => Vec::new(),
+        };
         let mut arg_scalars: Vec<Option<Value_>> = Vec::with_capacity(n_usize);
         for i in 0..n_usize {
             let off = args_base_off + (i as i32) * (VALUE_SIZE as i32);
-            match self.stack_scalars.get(&off) {
-                Some(&(ScalarKind::I32, slot)) => {
+            let want = callee_sig_kinds.get(i).copied();
+            match (want, self.stack_scalars.get(&off)) {
+                (Some(ScalarAbiKind::I64), Some(&(ScalarKind::I32, slot))) => {
                     arg_scalars.push(Some(self.load_scalar_i64(slot)));
+                }
+                (Some(ScalarAbiKind::F64), Some(&(ScalarKind::F64, slot))) => {
+                    let f = self.builder.ins().stack_load(types::F64, slot, 0);
+                    arg_scalars.push(Some(self.builder.ins().bitcast(types::I64, MemFlags::new(), f)));
                 }
                 _ => arg_scalars.push(None),
             }
@@ -2812,16 +2945,20 @@ impl<'a, M: Module> Translator<'a, M> {
 
     // ── M2.5-A6：特化 ABI 调用（标量寄存器传递）──────────────────────────
 
-    /// A6：特化 ABI 调用。返回 `Ok(true)` = 已特化（结果在标量槽，跟踪已建立）；
+    /// A6/P3：特化 ABI 调用。返回 `Ok(true)` = 已特化（结果在标量槽，跟踪已建立）；
     /// `Ok(false)` = 回退通用；`Err` = 编译失败（整函数回退解释器）。
     ///
     /// 前提：`args` 已物化为 Value（慢路径 `host_jit_call_spec` 需要）；`arg_scalars`
-    /// 为物化前预读的 I32 标量值（快路径寄存器传参，零装箱）。
+    /// 为物化前预读的标量值（快路径寄存器传参，零装箱；I64 参= i64 SSA、F64 参=
+    /// f64 位打包后的 i64 SSA，特化 ABI 位打包统一为 i64 寄存器）。
     ///
-    /// 资格（与分析期共享 `spec_target_qualifies`，防静默错值漂移）：
-    /// - 目标有特化签名且纯 i64 参数 + i64 返回、实参个数匹配
-    /// - 调用侧实参全部有 I32 标量槽（否则回退通用）
+    /// 资格（与分析期共享 `spec_target_sig`，防静默错值漂移）：
+    /// - 目标有特化签名且参数个数匹配、种类为 I64/F64 混合、实参个数匹配
+    /// - 调用侧实参全部有对应标量槽（I64→I32 槽、F64→F64 槽；否则回退通用）
     /// - 分析期预测特化而发射期不可特化 → Err（整函数回退解释器，杜绝错值）
+    ///
+    /// 结果合并槽按 `ret_kind` 建立（I64→I32 槽、F64→F64 槽）——与分析期预测的
+    /// 结果种类一致（AUDIT-11.4.36 教训：分析/发射结果种类必须逐一对齐）。
     ///
     /// 错误路径（静默错值红线）：特化入口返回 i64 无法带错误标志——调用后必须
     /// `host_check_error`（B2 模式）：有错 → 立即按本函数返回约定中止（通用 ok=0 /
@@ -2838,13 +2975,18 @@ impl<'a, M: Module> Translator<'a, M> {
         arg_scalars: &[Option<Value_>],
     ) -> Result<bool, String> {
         let n_usize = n as usize;
-        if !spec_target_qualifies(self.name_to_chunk, self.chunk_sigs, self.all_chunks, name_idx, n_usize) {
-            // 防御：分析期预测特化而发射期不可 → 整函数回退解释器（静默错值红线）。
-            if self.call_spec_results.get(&op_start) == Some(&true) {
-                return Err("JIT A6: 特化资格预测不一致（发射期目标不可特化）".into());
+        let sig = match spec_target_sig(self.name_to_chunk, self.chunk_sigs, self.all_chunks, name_idx, n_usize) {
+            Some(s) => s,
+            None => {
+                // 防御：分析期预测特化而发射期不可 → 整函数回退解释器（静默错值红线）。
+                if self.call_spec_results.get(&op_start) == Some(&true) {
+                    return Err("JIT A6: 特化资格预测不一致（发射期目标不可特化）".into());
+                }
+                return Ok(false);
             }
-            return Ok(false);
-        }
+        };
+        // P3：发射端 arg_scalars 已按签名种类预读（emit_direct_call 按 param_kinds
+        // 逐个匹配槽），任一缺失/不符 → None → 回退/报错（防漂移）。
         if arg_scalars.iter().any(|a| a.is_none()) {
             // 防御：分析期预测特化而发射期缺标量槽 → 整函数回退解释器。
             if self.call_spec_results.get(&op_start) == Some(&true) {
@@ -2852,12 +2994,18 @@ impl<'a, M: Module> Translator<'a, M> {
             }
             return Ok(false);
         }
+        let ret_kind = sig.ret_kind.unwrap_or(ScalarAbiKind::I64);
         let vm = self.vm;
         // 慢路径地址（out 覆盖首个参数槽；参数已物化为 Value）
         let out_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, args_base_off);
         // 结果合并槽：快/慢路径都写 8B 结果，汇合块读取（避免块参数 phi——
         // 多次特化调用同块共存时块参数 phi 触发 Cranelift verifier 问题）。
-        let merge_slot = self.stack_scalar_slot(args_base_off, ScalarKind::I32);
+        // P3：种类按 ret_kind（I64→I32 槽 / F64→F64 槽）——与分析期预测一致。
+        let merge_kind = match ret_kind {
+            ScalarAbiKind::F64 => ScalarKind::F64,
+            _ => ScalarKind::I32,
+        };
+        let merge_slot = self.stack_scalar_slot(args_base_off, merge_kind);
         // 特化指针表：vm.jit_spec_table_ptr[callee_idx]（0 = 未编译 → 慢路径）
         let table_off = std::mem::offset_of!(Vm, jit_spec_table_ptr) as i64;
         let table_off_v = self.builder.ins().iconst(self.ptr, table_off);
@@ -2906,19 +3054,37 @@ impl<'a, M: Module> Translator<'a, M> {
         if let Some((saved_chunk, chunk_addr)) = saved_chunk {
             self.builder.ins().store(MemFlags::new(), saved_chunk, chunk_addr, 0);
         }
-        self.store_scalar_i64(merge_slot, ret_i64);
+        // P3：返回按 ret_kind 解包——I64 直接写 i64；F64 从 i64 位模式 bitcast 回
+        // f64 写 F64 槽（位打包 ABI）。
+        match ret_kind {
+            ScalarAbiKind::F64 => {
+                let ret_f = self.builder.ins().bitcast(types::F64, MemFlags::new(), ret_i64);
+                self.store_scalar_f64(merge_slot, ret_f);
+            }
+            _ => self.store_scalar_i64(merge_slot, ret_i64),
+        }
         self.builder.ins().jump(merge_blk, &[]);
 
         // 慢路径：trampoline（current_chunk_idx 仍为调用方 → name_idx 可正确解析；
-        // 编译特化入口 + 注册 + 调用；失败 → 通用回退）。结果 Value → 解包 i64。
+        // 编译特化入口 + 注册 + 调用；失败 → 通用回退）。结果 Value → 按 ret_kind
+        // 解包（I64→host_value_to_i64；F64→host_value_to_f64 再 bitcast）。
         // 注意：两条 hostcall 均**不失效栈标量**（被调方不触碰调用方标量槽；
         // 失效会清除其他活标量跟踪 → 后续通用消费者读陈旧 Value 槽 → 静默错值）。
         self.builder.switch_to_block(slow_blk);
         self.builder.seal_block(slow_blk);
         self.call_hostcall_spec_call("host_jit_call_spec", name_idx as u64, n, args_addr, out_addr);
         let v_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, args_base_off);
-        let slow_ret = self.call_hostcall_val_ret_i64_noinv("host_value_to_i64", v_addr);
-        self.store_scalar_i64(merge_slot, slow_ret);
+        match ret_kind {
+            ScalarAbiKind::F64 => {
+                let f = self.call_hostcall_val_ret_f64_noinv("host_value_to_f64", v_addr);
+                let bits = self.builder.ins().bitcast(types::I64, MemFlags::new(), f);
+                self.store_scalar_i64(merge_slot, bits);
+            }
+            _ => {
+                let slow_ret = self.call_hostcall_val_ret_i64_noinv("host_value_to_i64", v_addr);
+                self.store_scalar_i64(merge_slot, slow_ret);
+            }
+        }
         self.builder.ins().jump(merge_blk, &[]);
 
         // 汇合：错误检查（B2，静默错值红线）→ 结果已在合并槽（快/慢路径各写）。
