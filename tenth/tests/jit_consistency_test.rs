@@ -905,10 +905,12 @@ fn consistency_hot_functions_compiled_on_first_call() {
     // main 循环调用 hot2（hot2 调用 hot1）。hot1 含 PushStr → **不可内联**，
     // 必须以 chunk 形式编译（经 hot2 直接调用）；hot2 含调用不内联 → main 对 hot2
     // 为直接调用 → 首次调用编译。期望值 10100。
+    // P3 后 `Int` 已纳入特化（热函数走 spec 入口）——本用例守护**通用入口**的
+    // 按需编译，故用 `i32` 注解（无 scalar_sig → 通用路径）。
     let src = r#"
-        fn hot1(x: Int) -> Int { "n".len() + x }
-        fn hot2(x: Int) -> Int { hot1(x) * 2 }
-        fn main() -> Int {
+        fn hot1(x: i32) -> i32 { "n".len() + x }
+        fn hot2(x: i32) -> i32 { hot1(x) * 2 }
+        fn main() -> i32 {
             let mut acc = 0;
             let mut i = 0;
             while i < 100 {

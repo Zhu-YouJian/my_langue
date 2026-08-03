@@ -839,6 +839,69 @@ unsafe extern "C" fn host_call_indirect(
     }
 }
 
+/// P4：闭包/函数值间接调用的 **JIT-to-JIT** 变体（Op::CallClosure 的 JIT 直连）。
+///
+/// 语义与 `host_call_indirect` 完全一致（栈布局 [arg1..argN, callee]；letrec
+/// `Value::Shared` 解包；`FnRef` 按名解析；捕获值追加为额外实参；native 直名；
+/// 非可调用值报「期望可调用值」），但对**用户函数 chunk 且可 JIT 编译**的目标：
+/// 编译（或取缓存）→ 登记进函数指针表 → **直接调用 JIT 机器码**（不再逃逸
+/// 解释器）。以下情况完整回退 `call_value`（语义零变化，正确性优先）：
+/// - native / 未定义函数 / 非 FnRef 值
+/// - autodiff recording 中（`jit_call_chunk` 内部安全门）
+/// - 目标 chunk 编译失败 / 不可编译（静默错值红线：显式走原错误路径）
+///
+/// CallClosure opcode 不带函数名（callee 是运行期栈上 Value），无法用 A1 的
+/// 机器码 `call_indirect` 快路径（需编译期静态 chunk 索引）——本 trampoline 是
+/// 闭包路径的 A1 慢路径等价物：一次 hostcall + 闭包体跑 JIT 机器码。
+unsafe extern "C" fn host_jit_call_indirect(
+    vm: *mut Vm, arg_count: u64, args_ptr: *const Value, out: *mut Value,
+) {
+    let vm = &mut *vm;
+    let all = safe_slice(args_ptr, arg_count);
+    if all.is_empty() {
+        vm.set_last_error("CallClosure: 缺少 callee".into());
+        std::ptr::write(out, Value::Unit);
+        return;
+    }
+    let n = all.len();
+    let callee = all[n - 1].clone();
+    let args = &all[..n - 1];
+    // M1-S2（true letrec）：自引用 cell 解包（对齐 call_value / VM opcode 57）。
+    let callee = match callee {
+        Value::Shared(rc) => rc.borrow().clone(),
+        other => other,
+    };
+    match &callee {
+        Value::FnRef { name, captures, .. } => {
+            // 捕获值追加为额外实参（槽位 params..params+captures，闭包 chunk
+            // 以 params+captures 个槽位接收；与 call_value / VM opcode 57 一致）。
+            // 无捕获时零拷贝借用。name 恒为闭包 chunk 名或 native 名（非全局变量
+            // 名），故 `jit_call_chunk` 内部 globals-FnRef 解析不会二次追加捕获。
+            let mut owned: Vec<Value> = Vec::new();
+            let all_args: &[Value] = if captures.is_empty() {
+                args
+            } else {
+                owned = args.to_vec();
+                owned.extend(captures.iter().cloned());
+                &owned
+            };
+            match vm.jit_call_chunk(name, all_args) {
+                Ok(v) => std::ptr::write(out, v),
+                Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
+            }
+        }
+        _ => {
+            // 与 call_value 的「期望可调用值」报错一致（经 set_jit_error 补行号）。
+            vm.set_jit_error(&crate::error::TenthError::RuntimeError {
+                line: None,
+                col: None,
+                message: format!("期望可调用值，得到 {:?}", callee),
+            });
+            std::ptr::write(out, Value::Unit);
+        }
+    }
+}
+
 unsafe extern "C" fn host_load_global(vm: *mut Vm, name_idx: u64, out: *mut Value) {
     let vm = &mut *vm;
     let name = vm.string_at(name_idx as usize).unwrap_or_default();
@@ -934,6 +997,7 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
         ("host_value_to_i64", host_value_to_i64 as usize),
         ("host_value_to_f64", host_value_to_f64 as usize),
         ("host_call_indirect", host_call_indirect as usize),
+        ("host_jit_call_indirect", host_jit_call_indirect as usize),
         ("host_method_call", host_method_call as usize),
         ("host_make_vec", host_make_vec as usize),
         ("host_make_map", host_make_map as usize),

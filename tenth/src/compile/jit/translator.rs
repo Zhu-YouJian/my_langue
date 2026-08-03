@@ -2134,14 +2134,20 @@ impl<'a, M: Module> Translator<'a, M> {
             }
             CallClosure(n) => {
                 // a1 P1：间接调用闭包/函数值。栈上 [arg1..argN, callee]（N+1 个值），
-                // host_call_indirect 取最后一个为 callee，其余为参数（走 Vm::call_value）。
+                // 取最后一个为 callee，其余为参数。
+                // M2.6-P4：`host_jit_call_indirect`——闭包路径的 JIT-to-JIT（A1 慢路径
+                // 等价物）：FnRef 按名解析 + 捕获追加 → `jit_call_chunk` → 闭包体直接
+                // 执行 JIT 机器码（不再逃逸解释器）。CallClosure opcode 不带名字
+                // （callee 是运行期 Value），无法编译期静态解析 → 无 A1 call_indirect
+                // 机器码快路径，保持 hostcall trampoline（保守正确性优先）。
+                // 失败/编译失败 → `jit_call_chunk` 完整回退 `call_value` 语义（零变化）。
                 self.sp -= ((n + 1) as i32) * (VALUE_SIZE as i32);
                 self.materialize_stack_range(self.sp, (n + 1) as usize);
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
-                self.call_hostcall_make_n("host_call_indirect", (n + 1) as u64, args_addr, out);
+                self.call_hostcall_make_n("host_jit_call_indirect", (n + 1) as u64, args_addr, out);
                 self.bump_sp()?;
-                // B2: 检查 host_call_indirect 是否设置了错误（如「期望可调用值」/未定义函数）。
+                // B2: 检查 host_jit_call_indirect 是否设置了错误（如「期望可调用值」/未定义函数）。
                 // 若有错误，立即返回按约定中止（run_jit 读取 last_error 并触发 fallback/报错），
                 // 避免错误延迟到 run_jit 末尾才浮出（复用 MethodCall 的 B2 模式）。
                 let err_flag = self.call_hostcall_vm_ret_u8("host_check_error");

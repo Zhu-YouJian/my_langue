@@ -205,12 +205,12 @@ fn spec_nested_recursion() {
     assert!(!ctx.is_spec_failed(even) && !ctx.is_spec_failed(odd), "互递归特化不应失败");
 }
 
-// ── 4. 混合签名走通用路径（f64 参数不特化，零行为变化）────────────────────
+// ── 4. 混合签名（P3：f64 纳入特化；f32/其他类型仍走通用，零行为变化）─────────
 
 #[test]
 fn spec_mixed_signature_generic() {
-    // scale 含 f64 参数 → 非特化（特化入口不应编译）；含 to_float 调用 → 不可内联
-    // → 通用 A1 调用路径（真实覆盖「f64 参数 → 不特化」逻辑）。
+    // P3：scale 含 f64 参数 → **特化**（I64+F64 混合签名 [I64,F64]→I64）；含 to_float
+    // 调用 → 不可内联 → 特化 ABI 路径（真实覆盖「f64 参数 → 特化」逻辑）。
     let src = r#"
         fn scale(a: i64, k: f64) -> i64 {
             let f = to_float(a) * k;
@@ -222,9 +222,9 @@ fn spec_mixed_signature_generic() {
     assert_eq!(int_of(v, "scale"), 6);
     let ctx = vm.jit_ctx.as_ref().unwrap();
     let scale = chunk_idx(&vm, "scale");
-    // f64 参数 → 非特化：特化入口不应编译。
-    assert!(!ctx.is_spec_compiled(scale), "含 f64 参数不应编译特化入口");
-    assert!(!ctx.is_spec_failed(scale), "含 f64 参数不应特化失败（应走通用）");
+    // P3：f64 参数 → 特化入口编译（I64+F64 混合签名）。
+    assert!(ctx.is_spec_compiled(scale), "含 f64 参数的混合签名应编译特化入口（P3）");
+    assert!(!ctx.is_spec_failed(scale), "scale 特化不应失败");
 }
 
 #[test]

@@ -210,14 +210,16 @@ fn int_of(v: Value, label: &str) -> i64 {
 // 触发三条 JIT 路径的形态（与 emit_direct_call 顺序一致：内联 A2 → 特化 A6 → 通用 A1）：
 // - "inline" ：小 i64 函数（≤16 指令纯标量）→ 内联优先（分析预测 Unknown）
 // - "spec"   ：大 i64 函数（>16 指令纯标量）→ 不内联 → 特化 ABI
-// - "general"：大 Int 函数（无 scalar_sig、>16 指令）→ 不内联、不特化 → 通用 A1
+// - "general"：大 i32 函数（`i32` 注解无 scalar_sig、>16 指令）→ 不内联、不特化 → 通用 A1
+//   （P3 后 `Int` 已纳入特化——保留通用路径覆盖须用 `i32` 注解）
 
 fn i64_params(k: usize) -> String {
     (0..k).map(|i| format!("x{i}: i64")).collect::<Vec<_>>().join(", ")
 }
 
 fn int_params(k: usize) -> String {
-    (0..k).map(|i| format!("x{i}: Int")).collect::<Vec<_>>().join(", ")
+    // P3：`Int` 已纳入特化——通用路径覆盖须用 `i32`（无 scalar_sig）。
+    (0..k).map(|i| format!("x{i}: i32")).collect::<Vec<_>>().join(", ")
 }
 
 fn sum_body(k: usize) -> String {
@@ -351,11 +353,11 @@ fn combo_program(path: &str, k: usize, shape: &str, n: usize) -> String {
              fn f({}) -> i64 {{\n{}\n}}\nfn main() -> i64 {{\n    {}\n}}",
             i64_params(k), nested_slow_body(k), accum_main(k, n)),
         ("general", "accum") => format!(
-            "fn f({}) -> Int {{\n{}\n}}\nfn main() -> Int {{\n    {}\n}}",
+            "fn f({}) -> i32 {{\n{}\n}}\nfn main() -> i32 {{\n    {}\n}}",
             int_params(k), big_slow_body(k), accum_main(k, n)),
         ("general", "nested") => format!(
             "fn inner(a: i64, b: i64) -> i64 {{ a * b }}\n\
-             fn f({}) -> Int {{\n{}\n}}\nfn main() -> Int {{\n    {}\n}}",
+             fn f({}) -> i32 {{\n{}\n}}\nfn main() -> i32 {{\n    {}\n}}",
             int_params(k), nested_slow_body(k), accum_main(k, n)),
         _ => panic!("未知组合: path={path} shape={shape}"),
     }
@@ -585,8 +587,8 @@ fn audit_d5_spec_body_internal_loop() {
 
 #[test]
 fn audit_d5_general_body_spec_calls() {
-    // **对抗形态 C**：通用（Int）函数体内嵌 spec 调用（实参为 I32 标量 → 特化 ABI）。
-    // 通用入口 + 特化内层 + 标量生命周期交错。
+    // **对抗形态 C**：通用（i32 注解，无 scalar_sig）函数体内嵌 spec 调用
+    // （实参为 I32 标量 → 特化 ABI）。通用入口 + 特化内层 + 标量生命周期交错。
     assert_three_consistent(r#"
         fn f(x: i64) -> i64 {
             let a = x * 2;
@@ -610,13 +612,13 @@ fn audit_d5_general_body_spec_calls() {
             let z = w / 2;
             z * 2
         }
-        fn g(_x: Int) -> Int {
+        fn g(_x: i32) -> i32 {
             let t = 5;
             let a = f(t);
             let b = f(t + 1);
             a + b
         }
-        fn main() -> Int { g(3) }
+        fn main() -> i32 { g(3) }
     "#, "d5-general-spec-calls", true);
     // sanity：f(n)=4n+12；f(5)=32, f(6)=36 → 68
     let src = r#"
@@ -642,13 +644,13 @@ fn audit_d5_general_body_spec_calls() {
             let z = w / 2;
             z * 2
         }
-        fn g(_x: Int) -> Int {
+        fn g(_x: i32) -> i32 {
             let t = 5;
             let a = f(t);
             let b = f(t + 1);
             a + b
         }
-        fn main() -> Int { g(3) }
+        fn main() -> i32 { g(3) }
     "#;
     assert_eq!(int_of(run_interp(&src).unwrap(), "d5-general-spec"), 68);
 }
@@ -659,9 +661,10 @@ fn audit_d5_general_body_spec_calls() {
 
 #[test]
 fn audit_d3_pure_scalar_general_path() {
-    // 纯标量但 >16 指令的 Int 函数 → 通用 A1（无 spec 签名）。多语句 + 局部。
+    // 纯标量但 >16 指令的 i32 函数 → 通用 A1（无 scalar_sig；P3 后 `Int` 已纳入
+    // 特化，故用 `i32` 保留「无 spec 签名 → 通用」覆盖）。多语句 + 局部。
     assert_three_consistent(r#"
-        fn compute(x: Int, y: Int) -> Int {
+        fn compute(x: i32, y: i32) -> i32 {
             let a = x + y;
             let b = a * 2;
             let c = b - x;
@@ -676,21 +679,22 @@ fn audit_d3_pure_scalar_general_path() {
             let p = n / 3;
             p + a + d + h
         }
-        fn main() -> Int { compute(10, 4) }
+        fn main() -> i32 { compute(10, 4) }
     "#, "d3-general-big", true);
 }
 
 #[test]
 fn audit_d3_mutual_recursion() {
     // 互递归（非内联、非特化 → A1 通用直接调用）——调用路径跨 JIT 帧。
+    // P3 后 `Int` 已纳入特化 → 用 `i32` 保留「A1 通用互递归」覆盖。
     assert_three_consistent(r#"
-        fn is_even(n: Int) -> Int {
+        fn is_even(n: i32) -> i32 {
             if n == 0 { 1 } else { is_odd(n - 1) }
         }
-        fn is_odd(n: Int) -> Int {
+        fn is_odd(n: i32) -> i32 {
             if n == 0 { 0 } else { is_even(n - 1) }
         }
-        fn main() -> Int { is_even(10) * 100 + is_odd(7) }
+        fn main() -> i32 { is_even(10) * 100 + is_odd(7) }
     "#, "d3-mutual-recursion", true);
 }
 
@@ -1016,8 +1020,9 @@ fn audit_d4_overflow_spec_skip_chunk() {
 #[test]
 fn audit_d4_div_zero_loop_general() {
     // 除零在循环内（通用路径 + 回边），i 到某值触发——报错不得延迟/静默。
+    // P3 后 `Int` 已纳入特化 → 用 `i32` 保留「通用路径」覆盖。
     assert_three_consistent(r#"
-        fn big(x: Int) -> Int {
+        fn big(x: i32) -> i32 {
             let a = x + 1;
             let b = a * 2;
             let c = b - 3;
@@ -1031,7 +1036,7 @@ fn audit_d4_div_zero_loop_general() {
             let n = m * 2;
             n / (x - 10)
         }
-        fn main() -> Int {
+        fn main() -> i32 {
             let mut s = 0;
             let mut i = 0;
             while i < 30 {
