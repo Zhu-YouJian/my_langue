@@ -791,12 +791,38 @@ impl<'a, M: Module> Translator<'a, M> {
                         }
                         locals[*i] = k;
                     }
-                    Add | Sub | Mul | Div | Mod => {
+                    // P2-AUDIT-11.4.36：分析/发射专用化集合**逐 opcode 对齐**
+                    // （防 spec 预测漂移 → 发射端缺标量槽 → 整函数回退/潜在静默错值）。
+                    // 发射端 emit_binop 的 native_ok 集合：
+                    //   I32：Add/Sub/Div/Mod（Mul 不专用化——checked_mul 复杂，保 hostcall）
+                    //   F64：Add/Sub/Mul/Div（Mod 不专用化——VM 会报错）
+                    // 故分析只对「发射端会专用化」的组合预测标量，其余 Unknown。
+                    Add | Sub | Div => {
                         let b = stack.pop().unwrap_or(Unknown);
                         let a = stack.pop().unwrap_or(Unknown);
                         stack.push(match (a, b) {
                             (I32, I32) => I32,
                             (F64, F64) => F64,
+                            _ => Unknown,
+                        });
+                    }
+                    Mul => {
+                        let b = stack.pop().unwrap_or(Unknown);
+                        let a = stack.pop().unwrap_or(Unknown);
+                        stack.push(match (a, b) {
+                            // 发射端 F64 Mul 专用化 → 预测 F64
+                            (F64, F64) => F64,
+                            // 发射端 I32 Mul **不**专用化（hostcall 路径）→ Unknown
+                            _ => Unknown,
+                        });
+                    }
+                    Mod => {
+                        let b = stack.pop().unwrap_or(Unknown);
+                        let a = stack.pop().unwrap_or(Unknown);
+                        stack.push(match (a, b) {
+                            // 发射端 I32 Mod 专用化 → 预测 I32
+                            (I32, I32) => I32,
+                            // 发射端 F64 Mod **不**专用化（VM 报错）→ Unknown
                             _ => Unknown,
                         });
                     }
