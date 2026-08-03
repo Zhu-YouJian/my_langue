@@ -129,6 +129,159 @@ fn spec_target_qualifies(
     }
 }
 
+/// A2：内联资格静态判定（**分析期与发射期共用**，防静默错值漂移）。
+///
+/// 条件（与发射端 `try_inline_call` 的 `inline_analyze` 逐一对应）：
+/// - 参数个数匹配（`num_args == n`；发射端在 `try_inline_call` 单独检查同一条件）
+/// - `num_locals` ≤ 64（避免每内联点创建过多栈槽）
+/// - 指令数 ≤ `INLINE_MAX_INSTR`（16），且只含「平凡」opcode：纯标量构造/局部变量/
+///   算术/比较/控制流/Ret/MoveOp（**无任何调用** → 无递归/自引用；无 PushStr/
+///   LoadGlobal/StoreGlobal → 不依赖 `current_chunk_idx` 字符串表；无 Tuple/Struct/
+///   Try/async/闭包/引用/cell → 无复杂 hostcall 语义）
+///
+/// 内联体只含白名单 opcode → 其 hostcall（算术/比较/构造/`set_*_error`）均不依赖
+/// `current_chunk_idx` 字符串表（行号由 `vm.current_line` 携带）→ 内联到调用方
+/// chunk 上下文仍正确。此性质同时是 P1「跳过 chunk 切换」判定的基石。
+fn inline_eligible(all_chunks: &[Chunk], callee_idx: usize, n: usize) -> bool {
+    use Op::*;
+    let callee = match all_chunks.get(callee_idx) {
+        Some(c) => c,
+        None => return false,
+    };
+    if callee.num_args != n {
+        return false;
+    }
+    if callee.num_locals > 64 {
+        return false;
+    }
+    let mut ip = 0usize;
+    let mut count = 0usize;
+    while ip < callee.code.len() {
+        let op = callee.read_op(&mut ip);
+        count += 1;
+        if count > INLINE_MAX_INSTR {
+            return false;
+        }
+        let is_simple = matches!(op,
+            PushInt(_) | PushFloat(_) | PushFloat32(_) | PushBool(_) | PushChar(_) | PushUnit
+            | Pop | Dup | Load(_) | Store(_)
+            | Add | Sub | Mul | Div | Mod | Neg | Not
+            | Eq | Neq | Lt | Gt | Lte | Gte
+            | Jump(_) | JmpFalse(_) | JmpTrue(_) | Ret | MoveOp
+        );
+        if !is_simple {
+            return false;
+        }
+    }
+    true
+}
+
+/// P1：判定特化函数 body 是否「纯标量、绝不读取 `current_chunk_idx` 字符串表」。
+///
+/// 判定（静默错值红线，AUDIT-11.4.35 分析/发射共用精神）：
+/// - 全部 op 属安全白名单（= 内联白名单：纯标量构造/局部/算术/比较/控制流；
+///   `set_*_error` 错误链 hostcall 不依赖字符串表——行号由 `vm.current_line`
+///   携带，A2 已做）
+/// - 每个 Call/CallN 站点：目标可内联（内联体白名单保证不读 chunk ctx）**或**
+///   分析期预测走特化（`call_spec[ip] == true`）。特化调用**总是安全**：
+///   * 目标也为纯标量 → 嵌套站点也跳过切换 → 被调方不读 chunk ctx（归纳）
+///   * 目标非纯标量 → 嵌套站点自带 save/switch/restore（自洽，无论入口 chunk）
+///   * 慢路径 `host_jit_call_spec` → `Vm::jit_call_chunk_spec` 自带 save/switch/restore
+/// - 其余 op（PushStr/LoadGlobal/StoreGlobal/MethodCall/张量/闭包/引用/async 等）
+///   → 不跳过（保持现状，零变化）
+///
+/// 满足 → 特化调用点可跳过 current_chunk_idx 保存/切换/恢复（快路径零 chunk 读写）。
+fn spec_body_pure_scalar(
+    chunk: &Chunk,
+    name_to_chunk: &[Option<usize>],
+    all_chunks: &[Chunk],
+    call_spec: &HashMap<usize, bool>,
+) -> bool {
+    use Op::*;
+    let mut ip = 0usize;
+    let len = chunk.code.len();
+    while ip < len {
+        let start = ip;
+        let op = chunk.read_op(&mut ip);
+        let safe = matches!(op,
+            PushInt(_) | PushFloat(_) | PushFloat32(_) | PushBool(_) | PushChar(_) | PushUnit
+            | Pop | Dup | Load(_) | Store(_)
+            | Add | Sub | Mul | Div | Mod | Neg | Not
+            | Eq | Neq | Lt | Gt | Lte | Gte
+            | Jump(_) | JmpFalse(_) | JmpTrue(_) | Ret | MoveOp
+        );
+        if safe {
+            continue;
+        }
+        // Call/CallN：仅当（内联 OR 预测特化）时安全，否则不跳过。
+        let ok = match op {
+            Call(i) => {
+                let inline = match name_to_chunk.get(i).copied().flatten() {
+                    Some(ci) => inline_eligible(all_chunks, ci, 0),
+                    None => false,
+                };
+                inline || call_spec.get(&start).copied().unwrap_or(false)
+            }
+            CallN(i, n) => {
+                let inline = match name_to_chunk.get(i).copied().flatten() {
+                    Some(ci) => inline_eligible(all_chunks, ci, n),
+                    None => false,
+                };
+                inline || call_spec.get(&start).copied().unwrap_or(false)
+            }
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+/// P1：计算「纯标量、可跳过 current_chunk_idx 切换」的 chunk 集合。
+///
+/// 对每个带特化签名（`scalar_sig`）的 chunk，用与发射期**完全相同**的分析
+/// （`analyze_scalar_kinds`，含 spec seed）获取 `call_spec_results`，再按
+/// `spec_body_pure_scalar` 判定。判定是「chunk 自身字节码 + 静态信息」的纯函数
+/// （不依赖调用点/编译顺序/编译缓存）→ 分析期与发射期共用同一份数据，无漂移。
+///
+/// 返回 `skip_ctx[chunk_idx]`：true = 该 chunk 的特化调用点可跳过
+/// save/switch/restore（被调方体内不读字符串表）。
+pub fn compute_skip_chunk_ctx(
+    all_chunks: &[Chunk],
+    name_to_chunk: &HashMap<String, usize>,
+    chunk_sigs: &[Option<ChunkSig>],
+) -> Vec<bool> {
+    let n = all_chunks.len();
+    let mut skip = vec![false; n];
+    for i in 0..n {
+        let chunk = &all_chunks[i];
+        let sig = match &chunk.scalar_sig {
+            Some(s) => s.clone(),
+            None => continue,
+        };
+        // 与发射端 get_or_compile* 一致的 per-chunk 字符串表 → 目标 chunk 映射。
+        let name_to_chunk: Vec<Option<usize>> = chunk.strings.iter()
+            .map(|s| name_to_chunk.get(s).copied())
+            .collect();
+        // 与发射期 translate_body 完全相同的 spec seed（参数种类预置）。
+        let seed: Vec<ScalarKind> = sig.param_kinds.iter().map(|k| match k {
+            ScalarAbiKind::I64 => ScalarKind::I32,
+            ScalarAbiKind::F64 => ScalarKind::F64,
+        }).collect();
+        let analysis =
+            analyze_scalar_kinds(chunk, &name_to_chunk, chunk_sigs, all_chunks, Some(&seed));
+        let pure = match &analysis {
+            Some(a) => spec_body_pure_scalar(chunk, &name_to_chunk, all_chunks, &a.call_spec_results),
+            None => false,
+        };
+        if pure {
+            skip[i] = true;
+        }
+    }
+    skip
+}
+
 /// A2b 标量分析结果（块入口局部种类 + 各 CallN 是否预测走特化）。
 struct ScalarAnalysis {
     /// leader IP → 块入口处各局部种类（按局部索引）。
@@ -145,6 +298,7 @@ pub fn translate<M: Module>(
     all_chunks: &[Chunk],
     chunk_sigs: &[Option<ChunkSig>],
     spec: Option<&ChunkSig>,
+    skip_chunk_ctx: &[bool],
 ) -> Result<cranelift_module::FuncId, String> {
     let is_spec = spec.is_some();
     let mut ctx = module.make_context();
@@ -211,6 +365,7 @@ pub fn translate<M: Module>(
             name_to_chunk,
             all_chunks,
             chunk_sigs,
+            skip_chunk_ctx,
             sp: 0,
             stack_slot,
             locals: HashMap::new(),
@@ -255,6 +410,10 @@ struct Translator<'a, M: Module> {
     all_chunks: &'a [Chunk],
     /// M2.5-A6：chunk_idx → 特化签名（None = 非特化）。调用点判定特化 ABI 资格。
     chunk_sigs: &'a [Option<ChunkSig>],
+    /// P1：chunk_idx → 是否「纯标量、可跳过 current_chunk_idx 切换」（由
+    /// `compute_skip_chunk_ctx` 在 run_jit 设置，发射期只读）。特化调用点据此
+    /// 决定快路径是否省去 save/switch/restore 3 次内存操作。
+    skip_chunk_ctx: &'a [bool],
     /// Compile-time stack pointer (byte offset into `stack_slot`).
     sp: i32,
     /// Virtual stack area — one large slot holding up to MAX_STACK_DEPTH Values.
@@ -329,7 +488,9 @@ impl<'a, M: Module> Translator<'a, M> {
         } else {
             None
         };
-        if let Some(analysis) = self.analyze_scalar_kinds(seed.as_deref()) {
+        if let Some(analysis) = analyze_scalar_kinds(
+            self.chunk, self.name_to_chunk, self.chunk_sigs, self.all_chunks, seed.as_deref(),
+        ) {
             self.scalar_enabled = true;
             self.block_entry_kinds = analysis.entry_kinds;
             self.call_spec_results = analysis.call_spec_results;
@@ -447,8 +608,9 @@ impl<'a, M: Module> Translator<'a, M> {
         leaders.dedup();
         leaders
     }
+}
 
-    // ── A2b：标量专用化——跨块 must 分析 ──────────────────────────────────
+// ── A2b：标量专用化——跨块 must 分析 ─────────────────────────────────────
 
     /// A2b：跨块 must 分析——每个块入口处各局部变量的标量种类。
     /// 返回 leader IP → 入口种类（按局部索引）；`None` = 函数含分析未知 opcode
@@ -463,13 +625,18 @@ impl<'a, M: Module> Translator<'a, M> {
     /// M2.5-A6：`seed` 为特化入口的参数种类预置（块 0 前 num_args 个局部据此
     /// 初始化，其余 Unknown）。同时记录各 CallN/Call 是否预测走特化 ABI
     /// （`call_spec_results`，发射期防漂移护栏）。
+    ///
+    /// P1：已提升为自由函数（入参 = chunk + 静态上下文），供发射期（translate_body）
+    /// 与跳过判定（`compute_skip_chunk_ctx`）共用同一份代码——防分析/发射漂移。
     fn analyze_scalar_kinds(
-        &self,
+        chunk: &Chunk,
+        name_to_chunk: &[Option<usize>],
+        chunk_sigs: &[Option<ChunkSig>],
+        all_chunks: &[Chunk],
         seed: Option<&[ScalarKind]>,
     ) -> Option<ScalarAnalysis> {
         use ScalarKind::*;
         use Op::*;
-        let chunk = self.chunk;
         let num_locals = chunk.num_locals.max(chunk.num_args).max(1);
 
         // 解码全部指令：(ip, op, next_ip)
@@ -587,39 +754,8 @@ impl<'a, M: Module> Translator<'a, M> {
             // 其结果是 Value（非标量寄存器）——因此分析期必须把可内联调用预测为
             // Unknown。若仍预测 I32/spec，循环回边处分析把局部重置为 I32 而局部标量槽
             // 残留过期值（一般 Store 只写 Value 槽）→ Load 重专用化读过期标量 → 静默错值。
-            fn inline_eligible(all_chunks: &[Chunk], callee_idx: usize, n: usize) -> bool {
-                let callee = match all_chunks.get(callee_idx) {
-                    Some(c) => c,
-                    None => return false,
-                };
-                // 参数个数必须匹配（同 try_inline_call，防参数错位）。
-                if callee.num_args != n {
-                    return false;
-                }
-                if callee.num_locals > 64 {
-                    return false;
-                }
-                let mut ip = 0usize;
-                let mut count = 0usize;
-                while ip < callee.code.len() {
-                    let op = callee.read_op(&mut ip);
-                    count += 1;
-                    if count > INLINE_MAX_INSTR {
-                        return false;
-                    }
-                    let is_simple = matches!(op,
-                        PushInt(_) | PushFloat(_) | PushFloat32(_) | PushBool(_) | PushChar(_) | PushUnit
-                        | Pop | Dup | Load(_) | Store(_)
-                        | Add | Sub | Mul | Div | Mod | Neg | Not
-                        | Eq | Neq | Lt | Gt | Lte | Gte
-                        | Jump(_) | JmpFalse(_) | JmpTrue(_) | Ret | MoveOp
-                    );
-                    if !is_simple {
-                        return false;
-                    }
-                }
-                true
-            }
+            // P1：谓词已提升为模块级 `inline_eligible`（分析/发射/跳过判定三方共用，
+            // 单一来源防漂移）。
 
             let mut locals = entry.to_vec();
             let mut stack: Vec<ScalarKind> = Vec::new();
@@ -938,7 +1074,7 @@ impl<'a, M: Module> Translator<'a, M> {
             let entry = entry_kinds[bi].clone();
             let exit = match transfer(
                 &insns, &block_first, nblocks, bi, &entry,
-                &mut call_spec, self.name_to_chunk, self.chunk_sigs, self.all_chunks,
+                &mut call_spec, name_to_chunk, chunk_sigs, all_chunks,
             ) {
                 Some(e) => e,
                 None => return None,
@@ -973,8 +1109,9 @@ impl<'a, M: Module> Translator<'a, M> {
             entry_kinds: result,
             call_spec_results: call_spec,
         })
-    }
+}
 
+impl<'a, M: Module> Translator<'a, M> {
     // ── A2b：标量辅助（槽 / 清空 / 物化 / 原生运算）────────────────────────
 
     /// 获取栈偏移 `off` 的标量伴随槽（按需创建）。槽存 8 字节裸标量。
@@ -1065,6 +1202,19 @@ impl<'a, M: Module> Translator<'a, M> {
         let sig = self.import_sig(&[], Some(types::I8));
         let call = self.builder.ins().call_indirect(sig, callee, &[self.vm]);
         self.builder.inst_results(call)[0]
+    }
+
+    /// P1：`host_check_error` 内联化——直接 load `vm.jit_error_flag`（I8），
+    /// 返回错误标志（0 = 无错误）。与 `host_check_error`（= `has_last_error()`）
+    /// **语义恒等**：`jit_error_flag` 由 `set_last_error`/`set_jit_error` 置 1、
+    /// `take_last_error` 清 0，是 `last_error.is_some()` 的布尔镜像（last_error
+    /// 为私有字段，全部写入仅经这三方法）。省一次 call_indirect 函数调用；
+    /// 不做 emit_line_hint（行号仅 hostcall 报错时需要，检查本身不需要）。
+    fn inline_check_error_flag(&mut self) -> Value_ {
+        let off = std::mem::offset_of!(Vm, jit_error_flag) as i64;
+        let off_v = self.builder.ins().iconst(self.ptr, off);
+        let addr = self.builder.ins().iadd(self.vm, off_v);
+        self.builder.ins().load(types::I8, MemFlags::new(), addr, 0)
     }
 
     /// `fn(vm, i64, *mut Value)` — 写标量 Value 到任意地址（特化入口参数物化）。
@@ -2699,16 +2849,14 @@ impl<'a, M: Module> Translator<'a, M> {
         let merge_blk = self.builder.create_block();
         self.builder.ins().brif(is_zero, slow_blk, &[], fast_blk, &[]);
 
-        // 快路径：保存/切换 chunk_idx → 特化直接调用（签名 (vm, i64 x8) -> i64）→
-        // 恢复 chunk_idx → 结果写合并槽。
+        // 快路径：特化直接调用（签名 (vm, i64 x8) -> i64）→ 结果写合并槽。
+        // P1：`skip_chunk_ctx[callee_idx]`（被调方为纯标量、体内不读字符串表）→
+        // 省去 current_chunk_idx 保存/切换/恢复 3 次内存操作（save/store/restore）。
+        // 否则保持既有 save/switch/restore（被调方 hostcall 需按被调 chunk 解析
+        // 字符串表；慢路径 host_jit_call_spec 自带切换，不受本优化影响）。
         self.builder.switch_to_block(fast_blk);
         self.builder.seal_block(fast_blk);
-        let chunk_off = std::mem::offset_of!(Vm, current_chunk_idx) as i64;
-        let chunk_off_v = self.builder.ins().iconst(self.ptr, chunk_off);
-        let chunk_addr = self.builder.ins().iadd(vm, chunk_off_v);
-        let saved_chunk = self.builder.ins().load(self.ptr, MemFlags::new(), chunk_addr, 0);
-        let callee_idx_v = self.builder.ins().iconst(self.ptr, callee_idx as i64);
-        self.builder.ins().store(MemFlags::new(), callee_idx_v, chunk_addr, 0);
+        let skip_chunk = self.skip_chunk_ctx.get(callee_idx).copied().unwrap_or(false);
         let spec_sig = self.import_sig(&[types::I64; MAX_SPEC_ARGS], Some(types::I64));
         // 参数补足到 MAX_SPEC_ARGS（未用参数传 0，被调方忽略）
         let mut args8: Vec<Value_> = arg_scalars.iter().map(|a| a.unwrap()).collect();
@@ -2716,9 +2864,22 @@ impl<'a, M: Module> Translator<'a, M> {
             let z = self.builder.ins().iconst(types::I64, 0);
             args8.push(z);
         }
+        let saved_chunk = if skip_chunk {
+            None
+        } else {
+            let chunk_off = std::mem::offset_of!(Vm, current_chunk_idx) as i64;
+            let chunk_off_v = self.builder.ins().iconst(self.ptr, chunk_off);
+            let chunk_addr = self.builder.ins().iadd(vm, chunk_off_v);
+            let saved_chunk = self.builder.ins().load(self.ptr, MemFlags::new(), chunk_addr, 0);
+            let callee_idx_v = self.builder.ins().iconst(self.ptr, callee_idx as i64);
+            self.builder.ins().store(MemFlags::new(), callee_idx_v, chunk_addr, 0);
+            Some((saved_chunk, chunk_addr))
+        };
         let call = self.builder.ins().call_indirect(spec_sig, spec_ptr, &[vm, args8[0], args8[1], args8[2], args8[3], args8[4], args8[5], args8[6], args8[7]]);
         let ret_i64 = self.builder.inst_results(call)[0];
-        self.builder.ins().store(MemFlags::new(), saved_chunk, chunk_addr, 0);
+        if let Some((saved_chunk, chunk_addr)) = saved_chunk {
+            self.builder.ins().store(MemFlags::new(), saved_chunk, chunk_addr, 0);
+        }
         self.store_scalar_i64(merge_slot, ret_i64);
         self.builder.ins().jump(merge_blk, &[]);
 
@@ -2735,9 +2896,12 @@ impl<'a, M: Module> Translator<'a, M> {
         self.builder.ins().jump(merge_blk, &[]);
 
         // 汇合：错误检查（B2，静默错值红线）→ 结果已在合并槽（快/慢路径各写）。
+        // P1：host_check_error 内联化——直接 load `vm.jit_error_flag`（与
+        // `has_last_error()` 恒等：set_last_error/set_jit_error 置 1、take_last_error
+        // 清 0），省一次函数调用 + 一次内存读，语义完全不变（B2 红线保留）。
         self.builder.switch_to_block(merge_blk);
         self.builder.seal_block(merge_blk);
-        let err_flag = self.call_hostcall_check_error();
+        let err_flag = self.inline_check_error_flag();
         let has_err = self.builder.ins().icmp_imm(IntCC::NotEqual, err_flag, 0);
         let err_blk = self.builder.create_block();
         let cont_blk = self.builder.create_block();

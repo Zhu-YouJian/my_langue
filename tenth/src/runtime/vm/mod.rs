@@ -85,6 +85,11 @@ pub struct Vm {
     /// hostcall 前写入（直接从 chunk 行号表 `Chunk.lines` 查 `line_at(op_start)`），
     /// 供 hostcall 捕获运行时错误时补行号（对齐 VM err_here/with_line 行为）。
     pub current_line: usize,
+    /// P1：`last_error` 的布尔镜像（1 = 有待处理错误）。由 `set_last_error`/
+    /// `set_jit_error` 置 1、`take_last_error` 清 0——与 `has_last_error()` 恒等。
+    /// 供 JIT 内联错误检查（host_check_error 内联化）：直接按字段偏移 load 该字节
+    /// + 比较，省一次函数调用，语义完全不变（B2 红线保留）。
+    pub jit_error_flag: u8,
     /// 护城河 F：上一次 backward 失败时的根因说明列表（由 formal_explain 生成）。
     /// 由 `explain_error()` native 读取并清空。
     pub last_explanation: Vec<String>,
@@ -141,6 +146,7 @@ impl Vm {
             tape: None, recording: false,
             step_budget: None, deadline_ms: None, fs_sandbox: None,
             jit_ctx: None, last_error: None, current_chunk_idx: 0, current_line: 0,
+            jit_error_flag: 0,
             jit_table_ptr: std::ptr::null_mut(),
             jit_spec_table_ptr: std::ptr::null_mut(),
             last_explanation: Vec::new(), tcp_streams: Vec::new(),
@@ -180,7 +186,10 @@ impl Vm {
     pub fn stack_push(&mut self, v: Value) { self.stack.push(v); }
     pub fn stack_pop(&mut self) -> Value { self.stack.pop().unwrap_or(Value::Unit) }
     pub fn get_global(&self, name: &str) -> Option<Value> { self.globals.get(name).cloned() }
-    pub fn set_last_error(&mut self, msg: String) { self.last_error = Some((cur_line_opt(self.current_line), msg)); }
+    pub fn set_last_error(&mut self, msg: String) {
+        self.last_error = Some((cur_line_opt(self.current_line), msg));
+        self.jit_error_flag = 1;
+    }
     /// 9c：JIT hostcall 结构化报错——对齐 VM `with_line`：RuntimeError 无行号时
     /// 补当前指令行号（`current_line`），取裸 message（不含「运行时错误 — 」前缀，
     /// 避免双重前缀）；已有行号的原样保留。非 RuntimeError 按原 Display 透传。
@@ -192,8 +201,12 @@ impl Vm {
             }
             other => self.last_error = Some((cur_line_opt(self.current_line), other.to_string())),
         }
+        self.jit_error_flag = 1;
     }
-    pub fn take_last_error(&mut self) -> Option<(Option<usize>, String)> { self.last_error.take() }
+    pub fn take_last_error(&mut self) -> Option<(Option<usize>, String)> {
+        self.jit_error_flag = 0;
+        self.last_error.take()
+    }
     /// 检查是否有未处理的错误（不清除）。
     /// JIT translator 在 MethodCall 后调用此方法，若发现错误则提前中止。
     pub fn has_last_error(&self) -> bool { self.last_error.is_some() }
@@ -343,6 +356,9 @@ impl Vm {
             let chunk_sigs: Vec<Option<crate::compile::jit::context::ChunkSig>> =
                 self.chunks.iter().map(|c| c.scalar_sig.clone()).collect();
             ctx.set_chunk_sigs(chunk_sigs);
+            // P1：防御性确保 skip_chunk_ctx 同步（慢路径 trampoline 直接编译时
+            // translator 也能读到正确的跳过判定；run_jit 已算过则长度一致跳过）。
+            ctx.ensure_skip_chunk_ctx();
             ctx.ensure_spec_table(self.chunks.len());
             self.jit_spec_table_ptr = ctx.spec_table_data_ptr();
             ctx.ensure_table(self.chunks.len());
@@ -453,6 +469,8 @@ impl Vm {
             let chunk_sigs: Vec<Option<crate::compile::jit::context::ChunkSig>> =
                 self.chunks.iter().map(|c| c.scalar_sig.clone()).collect();
             ctx.set_chunk_sigs(chunk_sigs);
+            // P1：防御性确保 skip_chunk_ctx 同步（同 jit_call_chunk）。
+            ctx.ensure_skip_chunk_ctx();
             ctx.ensure_spec_table(self.chunks.len());
             self.jit_spec_table_ptr = ctx.spec_table_data_ptr();
             match ctx.get_or_compile_spec(chunk_idx, &chunk_view, &sig) {

@@ -74,6 +74,9 @@ pub fn run_jit(vm: &mut Vm, name: &str) -> TenthResult<Value> {
     ctx.set_name_to_chunk(function_map);
     ctx.set_all_chunks(all_chunks);
     ctx.set_chunk_sigs(chunk_sigs);
+    // P1：计算「纯标量、可跳过 current_chunk_idx 切换」的 chunk 集合（fib 热路径）。
+    // 判定是 chunk 字节码 + 静态信息的纯函数；无条件重算（name_to_chunk 刚刷新）。
+    ctx.recompute_skip_chunk_ctx();
     ctx.ensure_table(chunk_count);
     ctx.ensure_spec_table(chunk_count);
     vm.jit_table_ptr = ctx.table_data_ptr();

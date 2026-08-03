@@ -107,6 +107,10 @@ pub struct JitContext {
     spec_table: Vec<usize>,
     /// A6：特化编译失败集合（避免反复尝试）。
     spec_failed: HashSet<usize>,
+    /// P1：chunk_idx → 是否「纯标量、可跳过 current_chunk_idx 切换」。由
+    /// `compute_skip_chunk_ctx` 计算（`ensure_skip_chunk_ctx` 惰性保证与
+    /// all_chunks 同步），translator 发射期只读。
+    skip_chunk_ctx: Vec<bool>,
 }
 
 impl JitContext {
@@ -132,6 +136,7 @@ impl JitContext {
             spec_cache: HashMap::new(),
             spec_table: Vec::new(),
             spec_failed: HashSet::new(),
+            skip_chunk_ctx: Vec::new(),
         }
     }
 
@@ -176,6 +181,33 @@ impl JitContext {
     /// A6：标记 chunk 特化编译失败（慢路径后续直接走通用回退，不重复编译）。
     pub fn mark_spec_failed(&mut self, chunk_idx: usize) {
         self.spec_failed.insert(chunk_idx);
+    }
+
+    /// P1：确保 `skip_chunk_ctx` 与 `all_chunks`/`name_to_chunk`/`chunk_sigs`
+    /// 同步（在 run_jit / jit_call_chunk* 设置这些字段后调用）。长度不一致时
+    /// 重新计算。判定为「chunk 自身字节码 + 静态信息」的纯函数 → 各入口一致。
+    pub fn ensure_skip_chunk_ctx(&mut self) {
+        if self.all_chunks.is_empty() {
+            self.skip_chunk_ctx.clear();
+            return;
+        }
+        if self.skip_chunk_ctx.len() != self.all_chunks.len() {
+            self.recompute_skip_chunk_ctx();
+        }
+    }
+
+    /// P1：无条件重算 `skip_chunk_ctx`。run_jit 入口用（`name_to_chunk` 刚刷新，
+    /// 长度可能未变但内容可能不同——强制重算防陈旧）。
+    pub fn recompute_skip_chunk_ctx(&mut self) {
+        let skip = super::translator::compute_skip_chunk_ctx(
+            &self.all_chunks, &self.name_to_chunk, &self.chunk_sigs,
+        );
+        self.skip_chunk_ctx = skip;
+    }
+
+    /// P1：覆盖/调试用——chunk 是否判定为「可跳过 chunk 切换」。
+    pub fn skip_chunk_ctx_for(&self, chunk_idx: usize) -> bool {
+        self.skip_chunk_ctx.get(chunk_idx).copied().unwrap_or(false)
     }
 
     /// A6：chunk 是否已成功编译特化入口（spec_cache 命中）——覆盖验证用。
@@ -249,11 +281,14 @@ impl JitContext {
         // Cranelift 低化阶段（如 tuple 模式 + guard 触发的 TryFromIntError）在
         // finalize_definitions 内 panic 会**逃逸出 JIT**（进程级 panic，红线）。
         // 现在统一转为 Err → 既有 fallback 路径（mod.rs 降级到 VM 解释执行）。
+        // P1：确保 skip_chunk_ctx 与 all_chunks 同步（须在借用 module 之前）。
+        self.ensure_skip_chunk_ctx();
         let module = &mut self.module;
         let all_chunks = &self.all_chunks;
         let chunk_sigs = &self.chunk_sigs;
+        let skip_chunk_ctx = &self.skip_chunk_ctx;
         let compile_result = catch_unwind(AssertUnwindSafe(|| -> Result<usize, String> {
-            let fn_id = super::translator::translate(module, chunk_idx, chunk, &name_to_chunk, all_chunks, chunk_sigs, None)?;
+            let fn_id = super::translator::translate(module, chunk_idx, chunk, &name_to_chunk, all_chunks, chunk_sigs, None, skip_chunk_ctx)?;
             module.finalize_definitions();
             Ok(module.get_finalized_function(fn_id) as usize)
         }));
@@ -320,11 +355,14 @@ impl JitContext {
         let name_to_chunk: Vec<Option<usize>> = chunk.strings.iter()
             .map(|s| self.name_to_chunk.get(s).copied())
             .collect();
+        // P1：确保 skip_chunk_ctx 与 all_chunks 同步（须在借用 module 之前）。
+        self.ensure_skip_chunk_ctx();
         let module = &mut self.module;
         let all_chunks = &self.all_chunks;
         let chunk_sigs = &self.chunk_sigs;
+        let skip_chunk_ctx = &self.skip_chunk_ctx;
         let compile_result = catch_unwind(AssertUnwindSafe(|| -> Result<usize, String> {
-            let fn_id = super::translator::translate(module, chunk_idx, chunk, &name_to_chunk, all_chunks, chunk_sigs, Some(sig))?;
+            let fn_id = super::translator::translate(module, chunk_idx, chunk, &name_to_chunk, all_chunks, chunk_sigs, Some(sig), skip_chunk_ctx)?;
             module.finalize_definitions();
             Ok(module.get_finalized_function(fn_id) as usize)
         }));
