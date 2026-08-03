@@ -794,8 +794,14 @@ th_parse_test!(th_parse_optim_adam, "std/optim/adam.th");
 th_parse_test!(th_parse_optim_adagrad, "std/optim/adagrad.th");
 th_parse_test!(th_parse_optim_rmsprop, "std/optim/rmsprop.th");
 th_parse_test!(th_parse_optim_lr_schedule, "std/optim/lr_schedule.th");
+th_parse_test!(th_parse_optim_nadam, "std/optim/nadam.th");  // M4.3
+th_parse_test!(th_parse_optim_radam, "std/optim/radam.th");  // M4.3
+th_parse_test!(th_parse_optim_lion, "std/optim/lion.th");    // M4.3
 th_parse_test!(th_parse_init_initializers, "std/init/initializers.th");
 th_parse_test!(th_parse_data_dataloader, "std/data/dataloader.th");
+th_parse_test!(th_parse_data_csv, "std/data/csv.th");            // M4.3
+th_parse_test!(th_parse_data_sampler, "std/data/sampler.th");    // M4.3
+th_parse_test!(th_parse_distributed, "std/distributed/distributed.th");  // M4.3
 th_parse_test!(th_parse_utils_serialization, "std/utils/serialization.th");
 th_parse_test!(th_parse_time, "std/time/time.th");
 th_parse_test!(th_parse_random, "std/random/random.th");
@@ -819,6 +825,11 @@ th_parse_test!(th_parse_duration, "std/duration.th");  // 基本功核查第 49 
 th_lower_test!(th_lower_string, "std/string/string.th");
 th_lower_test!(th_lower_iter, "std/collections/iter.th");
 th_lower_test!(th_lower_math_utils, "std/utils/math.th");
+
+// M4.3：data/csv、data/sampler、distributed 的 lower 测试（无跨文件泛型限制）
+th_lower_test!(th_lower_data_csv, "std/data/csv.th");
+th_lower_test!(th_lower_data_sampler, "std/data/sampler.th");
+th_lower_test!(th_lower_distributed, "std/distributed/distributed.th");
 
 // Lower tests for nn/ modules — 验证 HIR 降低成功（不验证运行时数值）
 // 盲点修复：此前 th_parse_test! 只走 lexer+parser，nn 模块从未经过 lower，

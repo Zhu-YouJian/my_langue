@@ -88,6 +88,8 @@ fn one_hot(label: i32) -> Vec {
 }
 
 // Normalize pixel values to [0, 1] range
+// M4.3 修复：原实现 `p / 255` 是 i32 整数除法（p<255 全部返回 0），
+// 现改为 `to_float(p) / 255.0` 浮点除法（与 mnist_mlp.th 实例中的写法一致）。
 fn normalize_pixel(p: i32) -> f64 {
-    p / 255
+    to_float(p) / 255.0
 }

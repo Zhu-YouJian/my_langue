@@ -1,0 +1,151 @@
+// 数据采样器 — 随机/加权/分层采样（能力全梳理 §5.5 "数据采样器" ❌ → M4.3 补齐）
+//
+// 提供数据集训练的常用采样语义：
+//   - random_sample                    — 无放回随机采样（shuffle + 取前 n）
+//   - random_sample_with_replacement   — 有放回采样（choice）
+//   - weighted_sample                  — 加权有放回采样（累积权重 + rand_float）
+//   - shuffle_indices                  — 0..n 的随机排列（打乱训练顺序/epoch）
+//   - stratified_indices               — 分层索引（每类取 n 个，用于不均衡数据集）
+//
+// 用法：
+//   use std::data::sampler::*
+//   let batch_idx = shuffle_indices(num_samples);
+//   let sub = random_sample(dataset, 64);
+//   let stratified = stratified_indices(labels, 10);
+//
+// 配合内置 `random_int`/`random_float`（无需 use）与 `rand_seed` 可确定性复现。
+//
+// 实现注记（M4.3）：不使用 `use std::random::random::*`——编译器的 use 作用域
+// 在多模块通配导入时会互相污染内部 use 符号（M4.3 实测：先 use 的模块内部 use
+// 被后 use 模块覆盖，导致 shuffle 解析成 Unit 或未定义）。故此处直接调用
+// 内置 native `random_int`/`random_float` 内联实现 Fisher-Yates 与采样逻辑，
+// 与 std::random::random 中 shuffle/choice 语义一致（含端点、确定性 seed 复现）。
+
+// 内部 Fisher-Yates 就地洗牌（与 std::random::random::shuffle 语义一致）。
+// 用内置 native random_int（无需 use），避免模块间 use 符号污染。
+fn shuffle_vec(v: Vec) -> Vec {
+    let len = v.len();
+    let mut i = len - 1;
+    while i > 0 {
+        let j = random_int(0, i);
+        let tmp = v.get(i);
+        v.set(i, v.get(j));
+        v.set(j, tmp);
+        i = i - 1;
+    }
+    v
+}
+
+// 内部均匀随机索引（0-based 含端点；空 Vec 返回 -1）。
+fn choice_index(v: Vec) -> i32 {
+    let len = v.len();
+    if len == 0 {
+        return -1;
+    }
+    random_int(0, len - 1)
+}
+
+// 无放回随机采样：返回数据集的随机子集（前 n 个，不重复）。
+// n >= len 时返回整个打乱后的数据集。
+fn random_sample(data: Vec, n: i32) -> Vec {
+    let shuffled_data = shuffle_vec(data);
+    let take_n = if n < shuffled_data.len() { n } else { shuffled_data.len() };
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < take_n {
+        out.push(shuffled_data.get(i));
+        i = i + 1;
+    }
+    out
+}
+
+// 有放回随机采样：独立均匀抽取 n 个（同一元素可多次出现）。
+fn random_sample_with_replacement(data: Vec, n: i32) -> Vec {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let idx = choice_index(data);
+        out.push(data.get(idx));
+        i = i + 1;
+    }
+    out
+}
+
+// 加权有放回采样：按 weights 概率分布抽取 n 个（weights 需与 data 等长，非负）。
+// 实现：累计权重 + random_float 命中区间（与 numpy.random.choice(p=...) 语义一致）。
+fn weighted_sample(data: Vec, weights: Vec, n: i32) -> Vec {
+    let mut total = 0.0;
+    let mut wi = 0;
+    while wi < weights.len() {
+        total = total + weights.get(wi);
+        wi = wi + 1;
+    }
+    let mut out = Vec::new();
+    let mut k = 0;
+    while k < n {
+        let r = random_float() * total;
+        let mut acc = 0.0;
+        let mut i = 0;
+        while i < weights.len() {
+            acc = acc + weights.get(i);
+            if acc >= r {
+                out.push(data.get(i));
+                break;
+            }
+            i = i + 1;
+        }
+        k = k + 1;
+    }
+    out
+}
+
+// 生成 0..n-1 的随机排列（用于打乱样本索引 / 训练 epoch 顺序）。
+fn shuffle_indices(n: i32) -> Vec {
+    let mut idxs = Vec::new();
+    let mut i = 0;
+    while i < n {
+        idxs.push(i);
+        i = i + 1;
+    }
+    shuffle_vec(idxs)
+}
+
+// 分层采样：对每个类别（labels 中的不同值）各取 n_per_class 个索引。
+// 处理类别不均衡：每类等量抽取，保证 batch 类别均衡（stratified sampling）。
+// 返回索引 Vec（非样本值），调用方用 data.get(idx) 取样本。
+fn stratified_indices(labels: Vec, n_per_class: i32) -> Vec {
+    // 收集唯一类别
+    let mut classes = Vec::new();
+    let mut ci = 0;
+    while ci < labels.len() {
+        let lbl = labels.get(ci);
+        if !classes.contains(lbl) {
+            classes.push(lbl);
+        }
+        ci = ci + 1;
+    }
+    // 每类收集索引 → shuffle → 取前 n_per_class
+    let mut result = Vec::new();
+    let mut k = 0;
+    while k < classes.len() {
+        let cls = classes.get(k);
+        let mut idxs = Vec::new();
+        let mut i = 0;
+        while i < labels.len() {
+            if labels.get(i) == cls {
+                idxs.push(i);
+            }
+            i = i + 1;
+        }
+        let shuffled_idxs = shuffle_vec(idxs);
+        let take_n = if n_per_class < shuffled_idxs.len() { n_per_class } else { shuffled_idxs.len() };
+        let mut j = 0;
+        while j < take_n {
+            result.push(shuffled_idxs.get(j));
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    result
+}
+

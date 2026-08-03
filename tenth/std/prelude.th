@@ -161,14 +161,20 @@
 //   std::optim::adam::adam_step<T>
 //   std::optim::adamw::adamw_step<T>       // 解耦权重衰减（Transformer 训练推荐）
 //   std::optim::adamw::adamw_step_w<T>, adamw_step_m<T>, adamw_step_v<T>  // JIT 路径友好（单值返回，避免 tuple 解构）
+//   std::optim::nadam::nadam_step<T>       // M4.3：Nesterov-accelerated Adam（NAdam）
+//   std::optim::radam::radam_step<T>       // M4.3：Rectified Adam（RAdam，早期方差修正）
+//   std::optim::lion::lion_step<T>         // M4.3：Evolved Sign Momentum（Lion，sign 更新）
 //   std::optim::adagrad::adagrad_step<T>
 //   std::optim::rmsprop::rmsprop_step<T>
 //   std::optim::clip::clip_grad_by_value<T>, clip_grad_by_norm<T>  // 梯度裁剪（clip_grad_by_norm 已修复 JIT 路径 tensor-float 比较问题）
 //   std::optim::accumulate::accumulate_grad<T>  // 梯度累积辅助
 //   std::optim::accumulate::accumulate_loop<T>  // 梯度累积循环（高阶函数，对多个 micro_batch 自动 forward+backward）
 //   std::optim::lr_schedule::cosine_lr, step_lr, exp_lr, warmup_lr, warmup_cosine_lr, warmup_step_lr  // 学习率调度器（f64 标量，参考 PyTorch 语义）
-//   std::data::dataloader::new, has_next, next_batch, advance, reset, num_batches  // L2.2：新增 advance 手动推进 cursor
-//   std::data::mnist::parse_images, parse_labels, one_hot, normalize_pixel, read_i32_be
+//   std::data::dataloader::new, has_next, next_batch, advance, reset, num_batches, shuffled  // L2.2：新增 advance 手动推进 cursor；M4.3：新增 shuffled 打乱
+//   std::data::mnist::parse_images, parse_labels, one_hot, normalize_pixel, read_i32_be  // M4.3：normalize_pixel 修复整数除法 bug
+//   std::data::csv::parse_csv_line, parse_csv, load_csv, row_to_f64s, columns  // M4.3：CSV 数据加载（表格数据集）
+//   std::data::sampler::random_sample, random_sample_with_replacement, weighted_sample, shuffle_indices, stratified_indices  // M4.3：数据采样器（随机/加权/分层）
+//   std::distributed::distributed::make_replicas<T>, all_reduce_sum<T>, all_reduce_mean<T>, param_average<T>  // M4.3：分布式本地语义（DDP 梯度同步模拟；真实多设备暂缓）
 //   std::utils::serialization::save_model, load_model, save_checkpoint
 //   std::init::initializers::xavier_uniform<T>, xavier_normal<T>, he_normal<T>, he_uniform<T>, zeros_init<T>, constant_init<T>
 //   std::math::functions::abs, sqrt, sin, cos, ln, pow, exp

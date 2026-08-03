@@ -1,0 +1,47 @@
+// NAdam optimizer — Nesterov-accelerated Adam
+// Dozat, T. (2016). Incorporating Nesterov momentum into Adam.
+//
+// 与 std::optim::adam::adam_step 的区别：
+//   - 原 Adam：m_hat 直接用于更新（无前瞻）
+//   - NAdam  ：更新项加入 Nesterov 前瞻 —— m_bar = (1-beta1)*g + beta1*m_hat，
+//              等价于"先沿动量方向看一步"，收敛更快、对 lr 更鲁棒
+//
+// Usage (in training loop):
+//   stop_grad();
+//   let gw = grad(w);
+//   let (nw, nm, nv) = nadam_step<f64>(w, m, v, lr, beta1, beta2, eps, t);
+//   w = nw; m = nm; v = nv;
+//   t = t + 1.0;   // step 计数递增（t 从 1 开始）
+//
+// Hyperparams: lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8
+//   （参考 PyTorch torch.optim.NAdam 默认值；momentum_decay 固定为 beta1）
+
+// Single NAdam step for one parameter tensor.
+// Returns (updated_w, updated_m, updated_v).
+//
+// 泛型 <T>（f32/f64 通吃，同 adam_step 惯例）。
+// 注：1.0 - beta1 等标量运算在 T=f32 时会按 G4 规则提升到 f64（精度更高），
+// 但最终乘以 Tensor[T] 仍保持 Tensor[T] dtype。
+fn nadam_step<T>(
+    w: Tensor[T, ..],
+    m: Tensor[T, ..],
+    v: Tensor[T, ..],
+    lr: T,
+    beta1: T,
+    beta2: T,
+    eps: T,
+    t: T,
+) -> (Tensor[T, ..], Tensor[T, ..], Tensor[T, ..]) {
+    let gw = grad(w);
+    let new_m = beta1 * m + (1.0 - beta1) * gw;
+    let new_v = beta2 * v + (1.0 - beta2) * gw * gw;
+    // 偏差校正（decay^t 用标量 pow；t 从 1 计）
+    let bc1 = 1.0 - pow(beta1, t);
+    let bc2 = 1.0 - pow(beta2, t);
+    let m_hat = new_m / bc1;
+    let v_hat = new_v / bc2;
+    // Nesterov 前瞻动量项
+    let m_bar = (1.0 - beta1) * gw + beta1 * m_hat;
+    let new_w = w - lr * m_bar / (v_hat.sqrt() + eps);
+    (new_w, new_m, new_v)
+}

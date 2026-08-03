@@ -55,8 +55,8 @@
 | `collections/iter.th` | 15 | ✅ | `map/filter/reduce/any` 高阶函数 **a1 已修（2026-08-03）双路径可用**；`sum` 双路径可用（L2.3a-a2） |
 | `crypto/hash.th` | 3 | ✅ | `sha256_hex/sha512_hex/md5_hex` 双路径可用 |
 | `curry.th` | 3 | ✅ | `partial/curry/compose` **a1 已修（2026-08-03）双路径可用**（多实例独立 add5/add7 互不污染，VM=解释器对拍一致） |
-| `data/dataloader.th` | 6 | ⚠️ | **`next_batch` 不推进 cursor**（b）：注释声称"advances the cursor"但实现只返回切片不更新状态，`has_next` 恒真、迭代死循环。需改为返回新 DataLoader（值语义）或提供手动推进 API |
-| `data/mnist.th` | 5 | ⚠️ 条件 | `read_i32_be/one_hot/normalize_pixel` 可用；`parse_images/parse_labels` 需真实 MNIST 数据文件（条件） |
+| `data/dataloader.th` | 6 | ⚠️ | **`next_batch` 不推进 cursor**（b）：注释声称"advances the cursor"但实现只返回切片不更新状态，`has_next` 恒真、迭代死循环。需改为返回新 DataLoader（值语义）或提供手动推进 API。**M4.3（2026-08-04）**：`advance` 手动推进已落地（L2.2）+ 新增 `shuffled`（Fisher-Yates 打乱）✅ |
+| `data/mnist.th` | 5 | ⚠️ 条件 | `read_i32_be/one_hot/normalize_pixel` 可用；`parse_images/parse_labels` 需真实 MNIST 数据文件（条件）。**M4.3（2026-08-04）**：`normalize_pixel` 整数除法 bug 已修复（`to_float(p)/255.0`） |
 | `date.th` | 15 | ✅ | 官方 `test_date.th` 双路径全过（含闰年/跨年/边界） |
 | `duration.th` | 22 | ✅ | 双路径可用 |
 | `env.th` | 5 | ✅ | 规范路径 `use std::env::get` 等可用；**prelude 写的 `std::env::env::get` 不工作**（c） |
@@ -173,7 +173,7 @@
 | **`json`、`toml`** | **双路径 ✅**（L2.3a 修复 a3 后官方测试 VM/解释器全绿）；json API 名失实（c） | `test_json/toml` 双路径 exit 0 |
 | **`nn/*` 核心** | feedforward/layer_norm/multihead_attention/linear/loss/activations/dropout/batchnorm/pool/ops/positional_encoding **全部 ✅**；attention/conv/embedding/transformer ❌ | `call_nn.th` + `call_nn_mha.th` 双路径 exit 0；坏模块归因见 §三 |
 | **`optim/*`** | 全部 ✅（返回 tuple 需解构；accumulate_loop a1 已修 2026-08-03） | `call_optim.th` 双路径 exit 0 |
-| **`data/dataloader`、`data/mnist`** | dataloader ⚠️（next_batch 不推进 cursor）；mnist 基础函数 ✅ | 见 §三 |
+| **`data/dataloader`、`data/mnist`** | dataloader ⚠️（next_batch 不推进 cursor）；mnist 基础函数 ✅ | 见 §三。**M4.3（2026-08-04）**：新增 `data/csv.th`、`data/sampler.th`、`distributed/distributed.th`、`optim/{nadam,radam,lion}.th`，均 smoke 守护 |
 | **`crypto/hash`、`random`、`time`、`date`、`duration`、`fs`、`cli`、`process`、`env`、`io`、`http`、`net`、`async`、`autograd`、`runtime`、`curry`、`regex`、`utils/*`** | crypto/time/date/duration/fs/cli/process/env/io/http/net/runtime/regex/utils-math ✅；curry/autograd ⚠️；random ❌；async 空壳；serialization ❌ | 见 §三 |
 
 ---

@@ -1,0 +1,54 @@
+// Lion optimizer — Evolved Sign Momentum
+// Chen, X. et al. (2023). Symbolic Discovery of Optimization Algorithms.
+//
+// 核心：用 sign(momentum_interpolate) 代替梯度，参数更新只有符号（±1 或 0），
+// 内存占用比 Adam 少（只需 m，不需要 v 二阶矩），训练 Transformer/CNN 常更稳。
+//
+// 实现注记（M4.3）：sign 用**内置 native** `tensor_gt`/`tensor_lt`/`select`
+// 组合实现（与 std::nn::ops 的 gt/lt/where_ 语义一致，但无内部 use——
+// 规避 AUDIT-11.4.41 模块间 use 符号污染）。
+//
+// 公式：
+//   c     = beta1 * m + (1 - beta1) * gw         // 插值
+//   m_new = beta2 * m + (1 - beta2) * gw          // 动量更新
+//   w_new = w - lr * sign(c)                      // 符号更新
+//
+// sign(c) = +1 if c > 0, -1 if c < 0, 0 if c == 0 （逐元素）
+//
+// Usage (in training loop):
+//   stop_grad();
+//   let gw = grad(w);
+//   let (nw, nm) = lion_step<f64>(w, m, lr, beta1, beta2);
+//   w = nw; m = nm;
+//
+// Hyperparams: lr=0.0001（比 Adam 小一个量级）, beta1=0.9, beta2=0.99
+//   （参考原论文默认：lr=1e-4, beta1=0.9, beta2=0.99）
+//
+// 注意（dtype）：sign(c) 通过张量比较（gt/lt）与 where_（select）构造，
+// 比较掩码固定为 f64 张量 —— f32 输入 w 会提升为 f64 中间结果（G4 规则），
+// 返回 Tensor[f64, ..]。如需保持 f32，调用后自行 to_f32。
+
+// Single Lion step for one parameter tensor.
+// Returns (updated_w, updated_m).
+fn lion_step<T>(
+    w: Tensor[T, ..],
+    m: Tensor[T, ..],
+    lr: T,
+    beta1: T,
+    beta2: T,
+) -> (Tensor[T, ..], Tensor[T, ..]) {
+    let gw = grad(w);
+    // 插值与动量更新
+    let c = beta1 * m + (1.0 - beta1) * gw;
+    let new_m = beta2 * m + (1.0 - beta2) * gw;
+    // sign(c)：shape 无关的 ones/zeros 构造（c*0 保留 shape，标量广播）
+    let zeros_like = c * 0.0;
+    let ones_like = c * 0.0 + 1.0;
+    let neg_ones_like = c * 0.0 - 1.0;
+    let pos_mask = tensor_gt(c, zeros_like);
+    let neg_mask = tensor_lt(c, zeros_like);
+    let neg_part = select(neg_mask, neg_ones_like, zeros_like);
+    let sign_c = select(pos_mask, ones_like, neg_part);
+    let new_w = w - lr * sign_c;
+    (new_w, new_m)
+}

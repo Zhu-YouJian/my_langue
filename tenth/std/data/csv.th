@@ -1,0 +1,88 @@
+// CSV 数据加载 — 表格数据（能力全梳理 §5.5 "CSV 数据加载" ❌ → M4.3 补齐）
+//
+// 提供 CSV 文本/文件的解析与数值转换，用于表格型数据集加载。
+// 基于内置 String::split / trim 与 parse_float native 实现，无外部依赖。
+//
+// 支持：
+//   - parse_csv_line  — 单行 → 字段列表（按逗号切分 + trim）
+//   - parse_csv       — 文本 → 表格（Vec of rows，每行 Vec<String>）
+//   - load_csv        — 文件路径 → 表格（含表头时第一行是列名）
+//   - row_to_f64s     — 数值行 → Vec<f64>（跳过表头后对每行调用）
+//   - columns         — 表格按列提取（取第 col 列的所有行值）
+//
+// 限制（保守版，未做）：引号包裹字段/转义逗号、BOM 剥离、类型推断——
+// 需要时可在后续版本扩展（JSON 复杂字段可用 std::json::json::parse 单独处理）。
+//
+// 用法：
+//   use std::data::csv::*
+//   let rows = load_csv("data/train.csv");        // rows[0] = 表头
+//   let data_rows = rows.slice(1, rows.len());    // 跳过表头
+//   let x = row_to_f64s(data_rows.get(0));        // 首行数值化
+//   let labels = columns(data_rows, 0);           // 取第 0 列（标签列）
+
+// 解析单行 CSV：按逗号切分并 trim 每字段（支持空字段）。
+// 注（M4.3）：存局部变量再调用（解释器路径 native/方法参数需先解壳，链式直接传值有 bug）。
+fn parse_csv_line(line: String) -> Vec {
+    let parts = line.split(",");
+    let mut fields = Vec::new();
+    let mut i = 0;
+    while i < parts.len() {
+        let f = parts.get(i);
+        fields.push(f.trim());
+        i = i + 1;
+    }
+    fields
+}
+
+// 解析 CSV 文本为表格：每行一个 Vec<String>，跳过空行。
+// 首行（若含列名）由调用方按表头处理，本函数原样返回。
+fn parse_csv(text: String) -> Vec {
+    let lines = text.split("\n");
+    let mut rows = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines.get(i);
+        let trimmed = line.trim();
+        if trimmed.len() > 0 {
+            rows.push(parse_csv_line(line));
+        }
+        i = i + 1;
+    }
+    rows
+}
+
+// 从文件加载 CSV：read_file + parse_csv。
+fn load_csv(path: String) -> Vec {
+    let text = read_file(path);
+    parse_csv(text)
+}
+
+// 将一行的字符串字段转为数值（f64）。
+// 非数值字段（如表头/缺失标记）parse_float 返回 0.0（保守：调用方自行校验）。
+// 注（M4.3）：存局部变量再传 parse_float（解释器路径 native 参数需先解壳）。
+fn row_to_f64s(row: Vec) -> Vec {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < row.len() {
+        let f = row.get(i);
+        out.push(parse_float(f));
+        i = i + 1;
+    }
+    out
+}
+
+// 提取表格第 col 列：返回该列所有行的值（Vec<String>）。
+// 与 row_to_f64s 组合可得到数值列（如标签列）。
+fn columns(rows: Vec, col: i32) -> Vec {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < rows.len() {
+        let row = rows.get(i);
+        if col < row.len() {
+            let v = row.get(col);
+            out.push(v);
+        }
+        i = i + 1;
+    }
+    out
+}

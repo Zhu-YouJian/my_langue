@@ -1,0 +1,60 @@
+// RAdam optimizer — Rectified Adam
+// Liu, L. et al. (2019). On the Variance of the Adaptive Learning Rate and Beyond.
+//
+// 与 std::optim::adam::adam_step 的区别：
+//   - 原 Adam：早期 step（方差估计不可靠）直接用二阶矩，lr 被放大幅度失真
+//   - RAdam  ：引入 rectification term l_t —— rho_t <= 4 时退化为 SGD（无矩自适应），
+//              rho_t > 4 时用 l_t 修正自适应步长，避免 Adam 早期发散
+//
+// Usage (in training loop):
+//   stop_grad();
+//   let gw = grad(w);
+//   let (nw, nm, nv) = radam_step<f64>(w, m, v, lr, beta1, beta2, eps, t);
+//   w = nw; m = nm; v = nv;
+//   t = t + 1.0;   // step 计数递增（t 从 1 开始）
+//
+// Hyperparams: lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8
+//   （参考 PyTorch torch.optim.RAdam 默认值）
+
+// Single RAdam step for one parameter tensor.
+// Returns (updated_w, updated_m, updated_v).
+//
+// 泛型 <T>（f32/f64 通吃，同 adam_step 惯例）。
+// rho_t / l_t 为标量（f64 提升语义下精度更高），v_hat / m_hat 为张量。
+fn radam_step<T>(
+    w: Tensor[T, ..],
+    m: Tensor[T, ..],
+    v: Tensor[T, ..],
+    lr: T,
+    beta1: T,
+    beta2: T,
+    eps: T,
+    t: T,
+) -> (Tensor[T, ..], Tensor[T, ..], Tensor[T, ..]) {
+    let gw = grad(w);
+    let new_m = beta1 * m + (1.0 - beta1) * gw;
+    let new_v = beta2 * v + (1.0 - beta2) * gw * gw;
+    let bc1 = 1.0 - pow(beta1, t);
+    let bc2 = 1.0 - pow(beta2, t);
+    let m_hat = new_m / bc1;
+    let v_hat_uncorrected = new_v / bc2;
+
+    // rectification：rho_inf / rho_t（标量）
+    let rho_inf = 2.0 / (1.0 - beta2) - 1.0;
+    let beta2_t = pow(beta2, t);
+    let rho_t = rho_inf - 2.0 * t * beta2_t / (1.0 - beta2_t);
+
+    if rho_t > 4.0 {
+        // 自适应阶段：l_t rectification term
+        let num = (rho_t - 4.0) * (rho_t - 2.0) * rho_inf;
+        let den = (rho_inf - 4.0) * (rho_inf - 2.0) * rho_t;
+        let l_t = sqrt(num / den);
+        let v_hat = v_hat_uncorrected.sqrt() + eps;
+        let new_w = w - lr * m_hat * l_t / v_hat;
+        (new_w, new_m, new_v)
+    } else {
+        // 退化为 SGD（无矩自适应，参考 PyTorch RAdam 论文实现）
+        let new_w = w - lr * m_hat;
+        (new_w, new_m, new_v)
+    }
+}

@@ -721,6 +721,131 @@ ok1 && ok2 && log_level == 1
 "#;
 
 // ══════════════════════════════════════════════════════════════════
+// M4.3：优化器 NAdam/RAdam/Lion（解析解数值断言，参考 .trae/tmp/m43_probe/probe5.th）
+// ══════════════════════════════════════════════════════════════════
+// f(x)=0.5*(x-1)^2 在 x=3 处梯度 g=2；m0=v0=0，beta1=0.9, beta2=0.999, lr=0.1, t=1
+//   NAdam: m1=0.2, v1=0.004 → m_hat=2, v_hat=4 → w1 = 3 - 0.1*2.0/2.0 ≈ 2.9
+//   RAdam: t=1 时 rho_t = rho_inf - 2*0.999/0.001 = 1.0 <= 4 → 退化 SGD → w1 = 3-0.1*2.0 = 2.8
+//   Lion : c = 0.1*2 = 0.2 > 0 → sign=1 → w1 = 3 - 0.1*1 = 2.9
+const M57_OPTIM_NADAM: &str = r#"
+use std::optim::nadam::nadam_step
+
+new_grad();
+let x = param(tensor[[3.0]]);
+let loss = 0.5 * (x - 1.0) * (x - 1.0);
+backward(loss);
+stop_grad();
+let m0 = tensor[[0.0]];
+let v0 = tensor[[0.0]];
+let (nw, nm, nv) = nadam_step<f64>(x, m0, v0, 0.1, 0.9, 0.999, 1e-8, 1.0);
+let w1 = nw.sum();
+let m1 = nm.sum();
+let v1 = nv.sum();
+w1 > 2.89 && w1 < 2.91 && m1 > 0.199 && m1 < 0.201 && v1 > 0.0039 && v1 < 0.0041
+"#;
+
+const M58_OPTIM_RADAM: &str = r#"
+use std::optim::radam::radam_step
+
+new_grad();
+let x = param(tensor[[3.0]]);
+let loss = 0.5 * (x - 1.0) * (x - 1.0);
+backward(loss);
+stop_grad();
+let m0 = tensor[[0.0]];
+let v0 = tensor[[0.0]];
+let (rw, rm, rv) = radam_step<f64>(x, m0, v0, 0.1, 0.9, 0.999, 1e-8, 1.0);
+let w1 = rw.sum();
+let m1 = rm.sum();
+w1 > 2.79 && w1 < 2.81 && m1 > 0.199 && m1 < 0.201
+"#;
+
+const M59_OPTIM_LION: &str = r#"
+use std::optim::lion::lion_step
+
+new_grad();
+let x = param(tensor[[3.0]]);
+let loss = 0.5 * (x - 1.0) * (x - 1.0);
+backward(loss);
+stop_grad();
+let m0 = tensor[[0.0]];
+let (lw, lm) = lion_step<f64>(x, m0, 0.1, 0.9, 0.99);
+let w1 = lw.sum();
+let m1 = lm.sum();
+w1 > 2.89 && w1 < 2.91 && m1 > 0.019 && m1 < 0.021
+"#;
+
+// ══════════════════════════════════════════════════════════════════
+// M4.3：data/csv、data/sampler、distributed
+// ══════════════════════════════════════════════════════════════════
+const M60_DATA_CSV: &str = r#"
+use std::data::csv::*
+
+write_file("smoke_m43_tmp.csv", "a,b\n1.0,2.0\n3.0,4.0\n");
+let rows = load_csv("smoke_m43_tmp.csv");
+let r1 = row_to_f64s(rows.get(1));
+let r2 = row_to_f64s(rows.get(2));
+let a1 = r1.get(0);
+let b1 = r1.get(1);
+let a2 = r2.get(0);
+let b2 = r2.get(1);
+rows.len() == 3 && a1 == 1.0 && b1 == 2.0 && a2 == 3.0 && b2 == 4.0
+"#;
+
+// sampler：VM 下交换后元素间 == 比较有已知限制（见 MEMO M4.3），
+// 用 sum（对 0..n-1 排列恒为 n(n-1)/2）与 len 断言。
+const M61_DATA_SAMPLER: &str = r#"
+use std::data::sampler::*
+use std::random::random::rand_seed
+
+rand_seed(42);
+let perm = shuffle_indices(5);
+let mut s = 0;
+let mut i = 0;
+while i < perm.len() {
+    s = s + perm.get(i);
+    i = i + 1;
+}
+let sub = random_sample([10, 20, 30, 40, 50], 3);
+let sl = sub.len();
+let repl = random_sample_with_replacement([10, 20, 30], 5);
+let rl = repl.len();
+let wsub = weighted_sample([10, 20, 30], [0.0, 0.0, 1.0], 4);
+let mut wsub_ok = wsub.len() == 4;
+let mut wi = 0;
+while wi < wsub.len() {
+    let wv = wsub.get(wi);
+    if wv != 30 {
+        wsub_ok = false;
+    }
+    wi = wi + 1;
+}
+let strat = stratified_indices([0, 0, 1, 1, 2, 2, 2], 1);
+let stl = strat.len();
+s == 10 && sl == 3 && rl == 5 && wsub_ok && stl == 3
+"#;
+
+const M62_DISTRIBUTED: &str = r#"
+use std::distributed::distributed::*
+
+let g1 = tensor[[1.0, 2.0]];
+let g2 = tensor[[3.0, 4.0]];
+let g3 = tensor[[5.0, 6.0]];
+let gsum = all_reduce_sum<f64>([g1, g2, g3]);
+let gmean = all_reduce_mean<f64>([g1, g2, g3]);
+// VM 下 `gsum[0].sum()` 链式方法调用受限（索引结果方法分派问题），用 [i][j] 索引取标量。
+let s00 = gsum[0][0];
+let s01 = gsum[0][1];
+let m00 = gmean[0][0];
+let m01 = gmean[0][1];
+let reps = make_replicas<f64>(g1, 3);
+let rl = reps.len();
+let avg = param_average<f64>([g1, g1, g1]);
+let av00 = avg[0][0];
+s00 == 9.0 && s01 == 12.0 && m00 == 3.0 && m01 == 4.0 && rl == 3 && av00 == 1.0
+"#;
+
+// ══════════════════════════════════════════════════════════════════
 // 测试函数（每模块一个，便于定位回归）
 // ══════════════════════════════════════════════════════════════════
 
@@ -908,3 +1033,23 @@ fn smoke_autograd() { smoke_interp("autograd(use 编译检查)", M55_AUTAGRAD); 
 
 #[test]
 fn smoke_logging() { smoke_vm("logging/logging", M56_LOGGING); }
+
+// ── M4.3：优化器 NAdam/RAdam/Lion ──
+#[test]
+fn smoke_optim_nadam() { smoke_vm("optim/nadam", M57_OPTIM_NADAM); }
+
+#[test]
+fn smoke_optim_radam() { smoke_vm("optim/radam", M58_OPTIM_RADAM); }
+
+#[test]
+fn smoke_optim_lion() { smoke_vm("optim/lion", M59_OPTIM_LION); }
+
+// ── M4.3：data/csv、data/sampler、distributed ──
+#[test]
+fn smoke_data_csv() { smoke_vm("data/csv", M60_DATA_CSV); }
+
+#[test]
+fn smoke_data_sampler() { smoke_vm("data/sampler", M61_DATA_SAMPLER); }
+
+#[test]
+fn smoke_distributed() { smoke_vm("distributed/distributed", M62_DISTRIBUTED); }

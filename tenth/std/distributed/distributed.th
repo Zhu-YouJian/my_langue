@@ -1,0 +1,65 @@
+// 分布式训练 API — 本地多张量并行语义（能力全梳理 §5.7 分布式）
+//
+// M4.3 评估结论：Tenth 当前为**单线程**执行模型（VM / 解释器 / JIT 均单线程，
+// 无多线程并行、无 GPU 后端）；Tensor 尚无 concat/slice 等分片原语；
+// lexer 虽有 `shard`/`node` 关键字占位但 parser/lower 未实现（见 §5.7 现状）。
+// 因此**真实分布式（DDP 跨进程 / 模型并行 / NCCL 集合通信）暂缓**，记录于
+// 能力全梳理与 MEMO。
+//
+// 本模块提供**最小可行语义**：数据并行（DDP）的核心 —— 多 replica 梯度
+// 同步（all-reduce）与参数广播 —— 在单机单线程下的本地模拟。全部用既有
+// 张量运算实现，语义与 PyTorch DDP / 联邦平均对齐，未来接入 GPU/多设备时
+// 同名 native 可无缝替换（本模块为纯 Tenth 实现，接口即契约）。
+//
+// 语义说明（DDP 训练循环本地模拟）：
+//   1. make_replicas(param, n)        — 复制 n 份参数副本（n 个 worker）
+//   2. 每 replica 独立前向/反向得到梯度 grads[i]（形状一致）
+//   3. all_reduce_mean(grads)         — 梯度逐元素平均（标准 DDP 梯度同步）
+//   4. 用平均梯度更新每个 replica 的参数
+//   5. param_average(replicas)        — 可选：训练末期参数平均（联邦语义）
+//
+// 真实多设备并行（多进程、GPU、集合通信 native）见能力全梳理 §5.6/§5.7，
+// 暂缓清单：DDP 跨进程、张量/流水线并行、All-Reduce native、RPC、参数服务器。
+
+// 复制 n 份参数副本（数据并行 worker 模拟）。
+// 返回 Vec<Tensor[T,..]>，每个元素是同一参数的独立值引用。
+// n <= 0 时返回空 Vec（响亮报错由调用方检查）。
+fn make_replicas<T>(param: Tensor[T, ..], n: i32) -> Vec {
+    let mut replicas = Vec::new();
+    let mut i = 0;
+    while i < n {
+        replicas.push(param);
+        i = i + 1;
+    }
+    replicas
+}
+
+// All-reduce SUM：N 个 replica 梯度逐元素求和（DDP all-reduce 的 SUM 模式）。
+// grads 需等长且形状一致（调用方保证）；空 Vec 返回第 0 个（保守）。
+fn all_reduce_sum<T>(grads: Vec) -> Tensor[T, ..] {
+    let mut sum = grads.get(0);
+    let mut i = 1;
+    while i < grads.len() {
+        sum = sum + grads.get(i);
+        i = i + 1;
+    }
+    sum
+}
+
+// All-reduce MEAN：N 个 replica 梯度逐元素平均（标准 DDP 梯度同步语义）。
+// 即 all_reduce_sum / N。grads 长度即 world_size。
+fn all_reduce_mean<T>(grads: Vec) -> Tensor[T, ..] {
+    let mut sum = grads.get(0);
+    let mut i = 1;
+    while i < grads.len() {
+        sum = sum + grads.get(i);
+        i = i + 1;
+    }
+    sum / to_float(grads.len())
+}
+
+// 参数平均：对 N 份参数张量逐元素平均（联邦学习 / 模型平均语义）。
+// 与 all_reduce_mean 等价，语义上用于"参数"而非"梯度"。
+fn param_average<T>(params: Vec) -> Tensor[T, ..] {
+    all_reduce_mean<T>(params)
+}

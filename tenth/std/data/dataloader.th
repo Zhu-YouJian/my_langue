@@ -12,6 +12,13 @@
 //       let loader = advance(loader);   // 值语义：返回推进后的新 DataLoader
 //       // 处理 batch ...
 //   }
+//
+// M4.3 增强：shuffled() 打乱数据顺序（Fisher-Yates，需随机种子可复现）。
+// 实现注记（M4.3）：不使用 `use std::random::random::shuffle`——编译器的 use
+// 作用域在多模块通配导入时会互相污染内部 use 符号（M4.3 实测：先 use 的模块
+// 内部 use 被后 use 模块覆盖，导致 shuffle 解析成 Unit 或未定义）。故此处直接
+// 调用内置 native `random_int` 内联实现 Fisher-Yates，与 std::random::random
+// 中 shuffle 语义一致（含端点、确定性 seed 复现）。
 
 // Create a DataLoader struct with dataset and batch configuration.
 // Fields:
@@ -93,4 +100,28 @@ fn reset(loader: DataLoader) -> DataLoader {
 // Get the number of batches
 fn num_batches(loader: DataLoader) -> i32 {
     (loader.len + loader.batch_sz - 1) / loader.batch_sz
+}
+
+// Shuffle the dataset order (Fisher-Yates, via 内置 native random_int).
+// Returns a NEW DataLoader with shuffled data and cursor reset to 0.
+// M4.3 新增：每 epoch 前调用实现随机 batch 顺序（配合 rand_seed 可复现）。
+// 注：就地打乱传入副本（值语义）避免影响原 loader。
+fn shuffled(loader: DataLoader) -> DataLoader {
+    // 内部 Fisher-Yates（与 std::random::random::shuffle 语义一致，避免 use 符号污染）
+    let data = loader.data;
+    let len = data.len();
+    let mut i = len - 1;
+    while i > 0 {
+        let j = random_int(0, i);
+        let tmp = data.get(i);
+        data.set(i, data.get(j));
+        data.set(j, tmp);
+        i = i - 1;
+    }
+    DataLoader {
+        data: data,
+        batch_sz: loader.batch_sz,
+        cursor: 0,
+        len: loader.len,
+    }
 }
