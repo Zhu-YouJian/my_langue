@@ -129,7 +129,7 @@
 
 | 能力 | 目标签名 | 依赖 | 实现要点 | 优先级 |
 |------|---------|------|---------|--------|
-| JIT 编译 | Cranelift 热点编译 | Cranelift 后端 | 脚手架已存在；热点函数编译为原生码 | B |
+| JIT 编译 | Cranelift 热点编译 | Cranelift 后端 | 脚手架已存在；热点函数编译为原生码。**P 系列遗留（2026-08-04 M2.6-P5 登记，见 AUDIT-11.4.38）**：Await/Yield JIT 挂起（对应 §1.4 async/await A 级）、深递归栈（stack probe/堆栈切换）、递归闭包 MakeCell/BindSelfCapture JIT、P1 每次调用 ~5ns 开销、f32 特化 | B |
 | AOT 编译到原生码 | `tenth compile --target=native` -> `.exe`/ELF | Cranelift 后端 | 全程序编译 + 链接 | C |
 | GPU 编译 | `tenth compile --target=cuda` -> CUDA kernel | CUDA 后端 + 算子融合 | 脚手架已存在；MIR->CUDA 算子映射 + kernel 融合 | A |
 | 跨编译 | 平台 A 编译平台 B 产物 | 条件编译 | target 三元组配置 | C |
