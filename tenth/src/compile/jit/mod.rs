@@ -25,7 +25,7 @@ pub mod hostcalls;
 
 use crate::error::{TenthError, TenthResult};
 use crate::runtime::value::Value;
-use crate::runtime::vm::Vm;
+use crate::runtime::vm::{Chunk, Vm};
 use context::JitContext;
 
 /// Entry point: run the function `name` on `vm` via JIT, falling back to
@@ -63,10 +63,13 @@ pub fn run_jit(vm: &mut Vm, name: &str) -> TenthResult<Value> {
     // 所有 chunk（函数 + 闭包）在编译期已注册（main.rs），此处一次性建表，
     // 运行期不扩容——`vm.jit_table_ptr` 指向表数据区保持稳定。
     // 先克隆/计数再借用 ctx（避免与 `vm.jit_ctx` 的可变借用冲突）。
+    // A2：同时克隆全部 chunk（浅拷贝，Rc 共享）供调用点内联读取被调函数字节码。
     let function_map = vm.functions.clone();
     let chunk_count = vm.chunk_count();
+    let all_chunks: Vec<Chunk> = (0..chunk_count).map(|i| vm.chunk_at(i).clone()).collect();
     let ctx = vm.jit_ctx.as_mut().unwrap();
     ctx.set_name_to_chunk(function_map);
+    ctx.set_all_chunks(all_chunks);
     ctx.ensure_table(chunk_count);
     vm.jit_table_ptr = ctx.table_data_ptr();
     let fn_ptr = match ctx.get_or_compile(chunk_idx, &chunk_view) {

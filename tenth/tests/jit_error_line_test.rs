@@ -115,6 +115,50 @@ fn test_jit_mod_zero_error_has_line() {
 }
 
 #[test]
+fn test_jit_inline_function_error_has_line() {
+    // A2：被调小函数（divide，≤16 指令）被内联，除零发生在函数体内——
+    // 行号应为**被调函数体内**的行（内联期 cur_line 取自被调 chunk 行号表）。
+    let src = r#"fn divide(a: Int, b: Int) -> Int {
+    let r = a / b;
+    r
+}
+fn main() -> Int {
+    let x = divide(10, 0);
+    x
+}
+"#;
+    let err = run_jit_err(src).unwrap_err();
+    assert_eq!(
+        runtime_line(&err),
+        Some(2),
+        "内联除零应定位到被调函数体内第 2 行，实际 {:?}",
+        err
+    );
+    assert_display_has_line(&err, 2);
+}
+
+#[test]
+fn test_jit_scalar_overflow_error_has_line() {
+    // A2：标量专用化路径的 I32 溢出——原生溢出检查 + host_set_int_range_error，
+    // 行号应为算术指令所在行。
+    let src = r#"fn main() {
+    let a = 2000000000;
+    let b = 2000000000;
+    let c = a + b;
+    print(c);
+}
+"#;
+    let err = run_jit_err(src).unwrap_err();
+    assert_eq!(
+        runtime_line(&err),
+        Some(4),
+        "标量溢出应定位到第 4 行（a + b），实际 {:?}",
+        err
+    );
+    assert_display_has_line(&err, 4);
+}
+
+#[test]
 fn test_jit_call_non_callable_has_line() {
     // 调用非函数值（整数）→ host_call_indirect（走 Vm::call_value），应带行号。
     let src = r#"fn main() {

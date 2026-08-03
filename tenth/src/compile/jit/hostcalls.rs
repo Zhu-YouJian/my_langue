@@ -697,6 +697,34 @@ unsafe extern "C" fn host_check_error(vm: *mut Vm) -> u8 {
     if vm.has_last_error() { 1 } else { 0 }
 }
 
+// ── A2b：原生 I32 算术错误设置（消息与 VM 逐字一致）────────────────────────
+
+/// i64 层溢出（checked_* 失败）：`整数运算结果溢出 i32 范围`。
+/// 与 `int_overflow_err(I32)` 一致（int_dtype_name(I32) = "i32"）。
+unsafe extern "C" fn host_set_int_overflow(vm: *mut Vm) {
+    let vm = &mut *vm;
+    vm.set_last_error("整数运算结果溢出 i32 范围".into());
+}
+
+/// I32 窄 dtype 范围溢出：`整数运算结果 {r} 溢出 i32 范围`。
+/// 与 `check_int_overflow(r, I32)` 一致。
+unsafe extern "C" fn host_set_int_range_error(vm: *mut Vm, r: i64) {
+    let vm = &mut *vm;
+    vm.set_last_error(format!("整数运算结果 {} 溢出 i32 范围", r));
+}
+
+/// 整数除零（VM `err("整数除零")`）。
+unsafe extern "C" fn host_set_div_zero(vm: *mut Vm) {
+    let vm = &mut *vm;
+    vm.set_last_error("整数除零".into());
+}
+
+/// 整数取模除零（VM `err("整数取模除零")`）。
+unsafe extern "C" fn host_set_mod_zero(vm: *mut Vm) {
+    let vm = &mut *vm;
+    vm.set_last_error("整数取模除零".into());
+}
+
 // ── Symbol table ───────────────────────────────────────────────────────────
 
 pub fn hostcall_addr(name: &str) -> Option<usize> {
@@ -745,6 +773,10 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
         ("host_load_global", host_load_global as usize),
         ("host_store_global", host_store_global as usize),
         ("host_check_error", host_check_error as usize),
+        ("host_set_int_overflow", host_set_int_overflow as usize),
+        ("host_set_int_range_error", host_set_int_range_error as usize),
+        ("host_set_div_zero", host_set_div_zero as usize),
+        ("host_set_mod_zero", host_set_mod_zero as usize),
     ];
     map.iter().find(|(n, _)| *n == name).map(|(_, a)| *a)
 }

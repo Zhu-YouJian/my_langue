@@ -27,6 +27,11 @@ pub struct JitContext {
     table: Vec<usize>,
     /// A1：编译失败/不可编译的 chunk 集合（避免每个调用点反复尝试编译）。
     failed: HashSet<usize>,
+    /// A2：全部 chunk 副本（`Vm.chunks` 的浅拷贝——Chunk 内 code/strings/lines
+    /// 为 Rc 共享，克隆仅引用计数 +1）。供 translator 调用点内联时读取被调函数
+    /// 字节码（chunk 索引与 `functions` 映射一致）。run_jit/jit_call_chunk 一次性
+    /// 设置，运行期不扩容（编译全部发生在执行前）。
+    all_chunks: Vec<Chunk>,
 }
 
 impl JitContext {
@@ -47,6 +52,7 @@ impl JitContext {
             name_to_chunk: HashMap::new(),
             table: Vec::new(),
             failed: HashSet::new(),
+            all_chunks: Vec::new(),
         }
     }
 
@@ -55,6 +61,12 @@ impl JitContext {
     /// 建立 name→chunk 映射（run_jit 入口一次性设置；含全部函数与闭包 chunk）。
     pub fn set_name_to_chunk(&mut self, map: HashMap<String, usize>) {
         self.name_to_chunk = map;
+    }
+
+    /// A2：设置全部 chunk 副本（调用点内联读取被调函数字节码用）。
+    /// 浅拷贝（Rc 共享）开销低；与 `name_to_chunk` 同步设置一次即可。
+    pub fn set_all_chunks(&mut self, chunks: Vec<Chunk>) {
+        self.all_chunks = chunks;
     }
 
     /// 确保函数指针表至少覆盖 `n` 个 chunk（0 填充 = 未编译）。
@@ -101,8 +113,12 @@ impl JitContext {
         // 断言失败（如循环回边触发的 is_sealed panic），转为 Err 触发既有
         // fallback 路径（mod.rs:62-65 降级到 VM 解释执行）。
         // 长期方案见 P2 任务：根本修复循环 JIT 的 leader block 密封策略。
+        // A2：传入 all_chunks（调用点内联读被调函数字节码）。用字段拆借避免
+        // 闭包内 `&mut self.module` 与 `&self.all_chunks` 的整 self 借用冲突。
+        let module = &mut self.module;
+        let all_chunks = &self.all_chunks;
         let translate_result = catch_unwind(AssertUnwindSafe(|| {
-            super::translator::translate(&mut self.module, chunk_idx, chunk, &name_to_chunk)
+            super::translator::translate(module, chunk_idx, chunk, &name_to_chunk, all_chunks)
         }));
         let fn_id = match translate_result {
             Ok(Ok(id)) => id,

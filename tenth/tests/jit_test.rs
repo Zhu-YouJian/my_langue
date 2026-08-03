@@ -664,3 +664,182 @@ fn test_jit_direct_call_method_fallback() {
     assert_eq!(vm_int, 5, "VM s.len() = 5, got {}", vm_int);
     assert_eq!(jit_int, 5, "JIT s.len() = 5, got {}", jit_int);
 }
+
+// ── M2-A2：小函数内联 + 标量专用化对拍 ─────────────────────────────────────
+//
+// A2 在 A1 基础上新增：
+// 1. **调用点内联**：被调 chunk 满足内联条件（≤16 指令、纯标量/控制流、无递归/
+//    调用/字符串/复杂类型）时，把 body 直插调用方机器码（不 emit call）；不满足
+//    则静默回退 A1 直接调用。
+// 2. **标量专用化**：跨块 must 分析证明局部恒为 Int/F64/Bool 时，Load/Store/
+//    算术/比较走原生路径（伴随标量槽），Value 槽延迟物化/双写保持正确。
+// 以下用例对拍 VM=JIT，覆盖：
+// - 小函数内联正确性（多参数、带 if/else、连续多次调用）
+// - 内联失败回退（大函数/含调用/字符串 → 静默走 A1 直接调用）
+// - 内联与直接调用混用（同一函数部分调用点内联、部分不内联）
+// - 内联函数返回被调用方后续消费（Store/Load/算术链）
+// - 标量 loop（Int 局部：sum/i 跨回边——must 分析 + 原生算术）
+// - 浮点标量 loop（F64 局部）
+// - 溢出/除零在标量路径下报错且与 VM 一致
+
+#[test]
+fn test_jit_inline_small_function() {
+    // 小纯函数 add（4 指令）被内联：add(3,4) 与 add(x,5) 均内联。结果 127。
+    assert_vm_jit_int(r#"
+        fn add(a: Int, b: Int) -> Int { a + b }
+        fn main() -> Int {
+            let x = add(3, 4);
+            let y = add(x, 5);
+            y * 10 + x
+        }
+    "#, 127, "inline-small-function");
+}
+
+#[test]
+fn test_jit_inline_with_control_flow() {
+    // 含 if/else 的小函数被内联：max(3,5)=5, max(7,2)=7。覆盖内联体控制流。
+    assert_vm_jit_int(r#"
+        fn max(a: Int, b: Int) -> Int { if a > b { a } else { b } }
+        fn main() -> Int {
+            let x = max(3, 5);
+            let y = max(7, 2);
+            x * 10 + y
+        }
+    "#, 57, "inline-with-control-flow");
+}
+
+#[test]
+fn test_jit_inline_fallback_large() {
+    // 大函数（>16 指令）不满足内联条件 → 静默回退 A1 直接调用（正确性优先）。
+    // 多分支求和，结果 55。
+    assert_vm_jit_int(r#"
+        fn big_sum(n: Int) -> Int {
+            let s = 0;
+            let i = 0;
+            while i < n {
+                s = s + i;
+                i = i + 1;
+            };
+            s
+        }
+        fn main() -> Int { big_sum(11) }
+    "#, 55, "inline-fallback-large");
+}
+
+#[test]
+fn test_jit_inline_fallback_string() {
+    // 含字符串的小函数不内联（PushStr 依赖 current_chunk_idx 字符串表）→ 回退。
+    assert_vm_jit_int(r#"
+        fn greet() -> Int { "hi".len() }
+        fn main() -> Int { greet() }
+    "#, 2, "inline-fallback-string");
+}
+
+#[test]
+fn test_jit_inline_mixed_with_direct() {
+    // 同一函数 double：main 内联调用点 + 非内联路径（其他函数直接调用）。
+    // 内联与直接调用混用结果一致。
+    assert_vm_jit_int(r#"
+        fn double(x: Int) -> Int { x * 2 }
+        fn use_direct(x: Int) -> Int { double(x) + 1 }
+        fn main() -> Int {
+            let a = double(5);       // 内联（main 内）
+            let b = use_direct(5);   // use_direct 内调用 double——可能内联或直接
+            a * 100 + b
+        }
+    "#, 1011, "inline-mixed-direct");
+}
+
+#[test]
+fn test_jit_inline_result_consumed() {
+    // 内联结果被调用方后续 Store/Load/算术链消费（回归：A2 曾因物化保留旧标量
+    // 跟踪导致内联结果读错——静默错值红线）。
+    assert_vm_jit_int(r#"
+        fn combo(a: Int, b: Int) -> Int { a * 100 + b }
+        fn main() -> Int {
+            let r = combo(3, 4);
+            let s = combo(r, 5);
+            s
+        }
+    "#, 30405, "inline-result-consumed");
+}
+
+#[test]
+fn test_jit_scalar_loop_int() {
+    // 标量 loop：Int 局部 sum/i 跨回边（must 分析证明恒为 Int），原生算术。
+    // 1..=100 求和 = 5050；再加 i%7 的部分。
+    // sum(0..100)=4950；sum(i%7, 0..100)=14*21+1=295；合计 5245（VM 实测一致）。
+    assert_vm_jit_int(r#"
+        fn main() -> Int {
+            let mut sum = 0;
+            let mut i = 0;
+            while i < 100 {
+                sum = sum + i + (i % 7);
+                i = i + 1;
+            };
+            sum
+        }
+    "#, 5245, "scalar-loop-int");
+}
+
+#[test]
+fn test_jit_scalar_loop_float() {
+    // 标量 loop：Float 局部走 F64 原生路径。sum += 0.5 × 10 = 5.0。
+    let src = r#"
+        fn main() -> Float {
+            let mut sum = 0.0;
+            let mut i = 0;
+            while i < 10 {
+                sum = sum + 0.5;
+                i = i + 1;
+            };
+            sum
+        }
+    "#;
+    let vm_res = run_vm(src).unwrap();
+    let jit_res = run_jit(src).unwrap();
+    let vm_f = match vm_res { Value::Float(f) => f, v => panic!("VM 期望 Float，实际 {:?}", v) };
+    let jit_f = match jit_res { Value::Float(f) => f, v => panic!("JIT 期望 Float，实际 {:?}", v) };
+    assert!((vm_f - 5.0).abs() < 1e-9, "VM = {}, want 5.0", vm_f);
+    assert!((jit_f - 5.0).abs() < 1e-9, "JIT = {}, want 5.0", jit_f);
+    assert!((vm_f - jit_f).abs() < 1e-9, "VM/JIT 不一致: {} != {}", vm_f, jit_f);
+}
+
+#[test]
+fn test_jit_scalar_loop_overflow_consistent() {
+    // 标量路径溢出检查与 VM 一致：I32 范围溢出（loop 累加超过 i32::MAX）。
+    let src = r#"
+        fn main() -> Int {
+            let mut sum = 2147483640;
+            let mut i = 0;
+            while i < 10 {
+                sum = sum + i;
+                i = i + 1;
+            };
+            sum
+        }
+    "#;
+    let vm_res = run_vm(src);
+    let jit_res = run_jit(src);
+    assert_eq!(vm_res.is_err(), jit_res.is_err(), "VM/JIT 溢出成功性不一致: {:?} vs {:?}", vm_res, jit_res);
+}
+
+#[test]
+fn test_jit_inline_div_zero_error() {
+    // 内联函数内除零：报错与 VM 一致（错误消息「整数除零」）。
+    let src = r#"
+        fn div(a: Int, b: Int) -> Int { a / b }
+        fn main() -> Int {
+            let x = div(10, 0);
+            x
+        }
+    "#;
+    let vm_res = run_vm(src);
+    let jit_res = run_jit(src);
+    assert!(vm_res.is_err(), "VM 应报除零错误");
+    assert!(jit_res.is_err(), "JIT 应报除零错误");
+    let vm_msg = vm_res.unwrap_err();
+    let jit_msg = jit_res.unwrap_err();
+    assert!(vm_msg.contains("整数除零"), "VM 消息: {}", vm_msg);
+    assert!(jit_msg.contains("整数除零"), "JIT 消息: {}", jit_msg);
+}

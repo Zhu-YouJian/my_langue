@@ -330,6 +330,9 @@ impl Vm {
         let chunk_view = self.chunks[chunk_idx].clone();
         let fptr: Option<crate::compile::jit::context::JitFn> = {
             let ctx = self.jit_ctx.as_mut().unwrap();
+            // A2：设置全部 chunk 副本（浅拷贝，Rc 共享）供调用点内联读取被调函数字节码。
+            // run_jit 已在入口设置，此处防御性重设（慢路径 trampoline 直接编译时保证可用）。
+            ctx.set_all_chunks(self.chunks.clone());
             ctx.ensure_table(self.chunks.len());
             self.jit_table_ptr = ctx.table_data_ptr();
             match ctx.get_or_compile(chunk_idx, &chunk_view) {
