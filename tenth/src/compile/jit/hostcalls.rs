@@ -243,6 +243,27 @@ unsafe extern "C" fn host_call(
     }
 }
 
+/// A1：JIT-to-JIT 直接调用的慢路径 trampoline（目标函数尚未编译时）。
+///
+/// 语义与 `host_call` 完全一致（native / globals-FnRef 别名 / 用户函数的完整
+/// 解析，错误走 `set_jit_error` 带行号），但对**用户函数 chunk 且可 JIT 编译**
+/// 的目标 → 编译并**直接调用 JIT 机器码**（不再逃逸解释器）；编译失败 → 回退
+/// 解释器（正确性优先，静默错值红线：任何失败都显式 set_jit_error 或走原语义）。
+///
+/// 快速路径（目标已编译）由 translator 的 `emit_direct_call` 直接 `call_indirect`，
+/// 不经过本 trampoline；本 trampoline 只承担「首次遇到未编译函数」的编译注册。
+unsafe extern "C" fn host_jit_call(
+    vm: *mut Vm, name_idx: u64, arg_count: u64, args_ptr: *const Value, out: *mut Value,
+) {
+    let vm = &mut *vm;
+    let name = vm.string_at(name_idx as usize).unwrap_or_default();
+    let args = safe_slice(args_ptr, arg_count);
+    match vm.jit_call_chunk(&name, args) {
+        Ok(v) => std::ptr::write(out, v),
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
+    }
+}
+
 unsafe extern "C" fn host_method_call(
     vm: *mut Vm, name_idx: u64, arg_count: u64, args_ptr: *const Value, out: *mut Value,
 ) {
@@ -701,6 +722,7 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
         ("host_lte", host_lte as usize),
         ("host_gte", host_gte as usize),
         ("host_call", host_call as usize),
+        ("host_jit_call", host_jit_call as usize),
         ("host_call_indirect", host_call_indirect as usize),
         ("host_method_call", host_method_call as usize),
         ("host_make_vec", host_make_vec as usize),

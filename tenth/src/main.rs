@@ -26,11 +26,31 @@ fn main() {
         }
         SetConsoleOutputCP(65001);
     }
-    if let Err(e) = run_main() {
-        // Errors from lexer/parser/runtime are already formatted by run_file.
-        // For other errors (e.g. file-not-found), print a plain message.
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
+
+    // M2-A1：JIT-to-JIT 直接调用后，递归在原生栈上展开（不再逃逸解释器的堆栈）。
+    // 每个 JIT 帧含虚拟栈槽（64 值 × 112 字节 ≈ 7KB），Cranelift 不生成 stack
+    // probe，跨 guard page 会以 0xC0000005（访问冲突）而非干净的栈溢出失败。
+    // 主线程在 256MB 栈的工作线程中执行，为深递归（fib(28) 级）提供充足头寸。
+    // 线程返回类型须为 Send：错误就地转 String（TenthResult 含 Rc，非 Send）。
+    let result = std::thread::Builder::new()
+        .name("tenth-main".to_string())
+        .stack_size(256 * 1024 * 1024)
+        .spawn(move || run_main().map_err(|e| e.to_string()))
+        .expect("无法创建主执行线程")
+        .join();
+
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(msg)) => {
+            // Errors from lexer/parser/runtime are already formatted by run_file.
+            // For other errors (e.g. file-not-found), print a plain message.
+            eprintln!("Error: {}", msg);
+            std::process::exit(1);
+        }
+        Err(panic_payload) => {
+            // 工作线程 panic → 恢复默认 unwind 行为（打印 panic 信息并退出）。
+            std::panic::resume_unwind(panic_payload);
+        }
     }
 }
 

@@ -30,12 +30,20 @@ const VALUE_SIZE: u32 = size_of::<Value>() as u32;
 
 /// Maximum virtual-stack depth (number of Values). Functions exceeding
 /// this will need a larger area.
-const MAX_STACK_DEPTH: u32 = 256;
+///
+/// A1 调为 64（原 256）：每 JIT 帧的虚拟栈槽 = VALUE_SIZE × 该值（VALUE_SIZE
+/// = size_of::<Value>() = 112 字节，256 时每帧 28KB）。JIT-to-JIT 直接调用后
+/// 递归在原生栈上展开（不再逃逸解释器的堆栈），28KB/帧 + Cranelift 无 stack
+/// probe → 跨 guard page 直接 0xC0000005（原生栈溢出）。64 = 7KB/帧，fib(28)
+/// 约 196KB，普通 1MB 栈即可承载；需要更深的虚拟栈（罕见：大量参数/深层嵌套
+/// 表达式/大张量字面量）的函数经 bump_sp 报错优雅回退解释器（既有机制）。
+const MAX_STACK_DEPTH: u32 = 64;
 
 pub fn translate<M: Module>(
     module: &mut M,
     chunk_idx: usize,
     chunk: &Chunk,
+    name_to_chunk: &[Option<usize>],
 ) -> Result<cranelift_module::FuncId, String> {
     let mut ctx = module.make_context();
     let mut fn_ctx = FunctionBuilderContext::new();
@@ -76,6 +84,7 @@ pub fn translate<M: Module>(
             builder,
             vm: vm_param,
             chunk,
+            name_to_chunk,
             sp: 0,
             stack_slot,
             locals: HashMap::new(),
@@ -88,7 +97,6 @@ pub fn translate<M: Module>(
             terminated: false,
             cur_line: 0,
         };
-
         t.translate_body()?;
         // translate_body calls builder.finalize() internally (consuming it).
     }
@@ -103,6 +111,8 @@ struct Translator<'a, M: Module> {
     builder: FunctionBuilder<'a>,
     vm: Value_,
     chunk: &'a Chunk,
+    /// A1：字符串表索引 → 函数 chunk 索引（本 chunk 内的直接调用目标；None = 不可直接调用）。
+    name_to_chunk: &'a [Option<usize>],
     /// Compile-time stack pointer (byte offset into `stack_slot`).
     sp: i32,
     /// Virtual stack area — one large slot holding up to MAX_STACK_DEPTH Values.
@@ -358,7 +368,12 @@ impl<'a, M: Module> Translator<'a, M> {
             Call(i) => {
                 let out = self.stack_addr_at_sp();
                 let null_ptr = self.builder.ins().iconst(self.ptr, 0);
-                self.call_hostcall_call("host_call", i as u64, 0, null_ptr, out);
+                // A1：目标为已注册用户函数 → JIT-to-JIT 直接调用（不再逃逸解释器）。
+                if let Some(callee_idx) = self.name_to_chunk.get(i).copied().flatten() {
+                    self.emit_direct_call(callee_idx, i, 0, null_ptr, out)?;
+                } else {
+                    self.call_hostcall_call("host_call", i as u64, 0, null_ptr, out);
+                }
                 self.bump_sp()?;
             }
             CallN(i, n) => {
@@ -366,7 +381,12 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.sp -= (n as i32) * (VALUE_SIZE as i32);
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
-                self.call_hostcall_call("host_call", i as u64, n as u64, args_addr, out);
+                // A1：目标为已注册用户函数 → JIT-to-JIT 直接调用（不再逃逸解释器）。
+                if let Some(callee_idx) = self.name_to_chunk.get(i).copied().flatten() {
+                    self.emit_direct_call(callee_idx, i, n as u64, args_addr, out)?;
+                } else {
+                    self.call_hostcall_call("host_call", i as u64, n as u64, args_addr, out);
+                }
                 self.bump_sp()?;
             }
             CallClosure(n) => {
@@ -832,6 +852,80 @@ impl<'a, M: Module> Translator<'a, M> {
         let a1 = self.builder.ins().iconst(types::I64, name_idx as i64);
         let a2 = self.builder.ins().iconst(types::I64, arg_count as i64);
         self.builder.ins().call_indirect(sig, callee, &[self.vm, a1, a2, args, out]);
+    }
+
+    /// A1：JIT-to-JIT 直接调用（`Call`/`CallN` 的用户函数目标）。
+    ///
+    /// 目标函数 `callee_idx` 若已在函数指针表（`vm.jit_table_ptr[callee_idx]`）
+    /// 注册（非 0）→ Cranelift `call_indirect` **直接调用**已编译机器码（参数从
+    /// JIT 栈传、结果写 `out`，不逃逸 VM/解释器）；否则 → `host_jit_call`
+    /// trampoline（运行时编译目标 chunk → 注册进表 → 直接调用；编译失败回退
+    /// 解释器）。未编译函数保持既有 `host_call` 语义（正确性优先）。
+    ///
+    /// 正确性关键（两处）：
+    /// 1. 被调函数内 hostcall（如 `PushStr`→`host_make_str`）依赖
+    ///    `vm.current_chunk_idx` 定位字符串表——快路径在调用前保存调用方
+    ///    chunk_idx、写入被调 chunk_idx，调用后恢复；递归/多级嵌套安全。
+    /// 2. 慢路径 trampoline 需用调用方 chunk 的字符串表解析函数名（name_idx
+    ///    是调用方字符串表索引），因此调用前**不得**切换 current_chunk_idx；
+    ///    trampoline 内部自行保存/切换/恢复后再调被调函数。
+    fn emit_direct_call(
+        &mut self,
+        callee_idx: usize,
+        name_idx: usize,
+        n: u64,
+        args_addr: Value_,
+        out: Value_,
+    ) -> Result<(), String> {
+        self.emit_line_hint();
+        let vm = self.vm;
+
+        // ── 从函数指针表加载 callee 指针（0 = 未编译 → 慢路径）──
+        let table_off = std::mem::offset_of!(Vm, jit_table_ptr) as i64;
+        let table_off_v = self.builder.ins().iconst(self.ptr, table_off);
+        let table_addr = self.builder.ins().iadd(vm, table_off_v);
+        let table_base = self.builder.ins().load(self.ptr, MemFlags::new(), table_addr, 0);
+        let entry_off_v = self.builder.ins().iconst(
+            self.ptr,
+            (callee_idx * std::mem::size_of::<usize>()) as i64,
+        );
+        let entry_addr = self.builder.ins().iadd(table_base, entry_off_v);
+        let callee_ptr = self.builder.ins().load(self.ptr, MemFlags::new(), entry_addr, 0);
+
+        let is_zero = self.builder.ins().icmp_imm(IntCC::Equal, callee_ptr, 0);
+        let slow_blk = self.builder.create_block();
+        let fast_blk = self.builder.create_block();
+        let merge_blk = self.builder.create_block();
+        self.builder.ins().brif(is_zero, slow_blk, &[], fast_blk, &[]);
+
+        // 快路径：保存 chunk_idx → 切换为被调 chunk → 直接调用（JitFn 签名
+        // (vm, args, n, out) -> bool）→ 恢复调用方 chunk_idx。
+        self.builder.switch_to_block(fast_blk);
+        self.builder.seal_block(fast_blk);
+        let chunk_off = std::mem::offset_of!(Vm, current_chunk_idx) as i64;
+        let chunk_off_v = self.builder.ins().iconst(self.ptr, chunk_off);
+        let chunk_addr = self.builder.ins().iadd(vm, chunk_off_v);
+        let saved_chunk = self.builder.ins().load(self.ptr, MemFlags::new(), chunk_addr, 0);
+        let callee_idx_v = self.builder.ins().iconst(self.ptr, callee_idx as i64);
+        self.builder.ins().store(MemFlags::new(), callee_idx_v, chunk_addr, 0);
+        let sig = self.import_sig(&[self.ptr, self.ptr, self.ptr], Some(types::I8));
+        let n_v = self.builder.ins().iconst(self.ptr, n as i64);
+        self.builder.ins().call_indirect(sig, callee_ptr, &[vm, args_addr, n_v, out]);
+        self.builder.ins().store(MemFlags::new(), saved_chunk, chunk_addr, 0);
+        self.builder.ins().jump(merge_blk, &[]);
+
+        // 慢路径：trampoline（current_chunk_idx 仍为调用方 → name_idx 可正确
+        // 解析函数名；编译 + 注册 + 直接调用；失败 → 解释器回退）。
+        self.builder.switch_to_block(slow_blk);
+        self.builder.seal_block(slow_blk);
+        self.call_hostcall_call("host_jit_call", name_idx as u64, n, args_addr, out);
+        self.builder.ins().jump(merge_blk, &[]);
+
+        // 汇合：继续执行。
+        self.builder.switch_to_block(merge_blk);
+        self.builder.seal_block(merge_blk);
+        self.terminated = false;
+        Ok(())
     }
 
     /// `fn(vm, u64, *const Value, *mut Value)` — e.g. host_make_vec.

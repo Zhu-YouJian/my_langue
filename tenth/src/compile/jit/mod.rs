@@ -59,11 +59,20 @@ pub fn run_jit(vm: &mut Vm, name: &str) -> TenthResult<Value> {
     let chunk_view = vm.chunk_at(chunk_idx).clone();
 
     let ctx = vm.jit_ctx.as_mut().unwrap();
+    // A1：建立 name→chunk 映射 + 函数指针表（JIT-to-JIT 直接调用基础设施）。
+    // 所有 chunk（函数 + 闭包）在编译期已注册（main.rs），此处一次性建表，
+    // 运行期不扩容——`vm.jit_table_ptr` 指向表数据区保持稳定。
+    // 先克隆/计数再借用 ctx（避免与 `vm.jit_ctx` 的可变借用冲突）。
+    let function_map = vm.functions.clone();
+    let chunk_count = vm.chunk_count();
+    let ctx = vm.jit_ctx.as_mut().unwrap();
+    ctx.set_name_to_chunk(function_map);
+    ctx.ensure_table(chunk_count);
+    vm.jit_table_ptr = ctx.table_data_ptr();
     let fn_ptr = match ctx.get_or_compile(chunk_idx, &chunk_view) {
         Ok(p) => p,
         Err(_) => return vm.call(name), // compilation failed → fallback
     };
-
     // Marshal arguments: the VM convention is that args are already pushed
     // onto `vm.stack` right-to-left. Pop them into a flat slice, run the JIT
     // function, then push the result back.

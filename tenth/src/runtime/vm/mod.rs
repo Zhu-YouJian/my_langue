@@ -67,6 +67,10 @@ pub struct Vm {
     pub fs_sandbox: Option<crate::runtime::limits::FsSandbox>,
     /// Lazily-initialised Cranelift JIT context. `None` until first JIT use.
     pub jit_ctx: Option<crate::compile::jit::context::JitContext>,
+    /// A1：JIT 函数指针表基址（chunk_idx → 已编译函数指针，0 = 未编译）。
+    /// 指向 `JitContext.table` 数据区；JIT 机器码按 chunk_idx 索引读取做
+    /// 直接调用。表在编译期注册完毕后一次性定容，运行期不扩容，指针稳定。
+    pub jit_table_ptr: *mut usize,
     /// 9c：JIT hostcall 报错时携带的行号（`(line, message)`）。
     /// line 由 `set_last_error`/`set_jit_error` 从 `current_line`（JIT translator
     /// 在每个 hostcall 前设置的当前指令源码行号）补入——对齐 VM 的 err_here/with_line。
@@ -133,6 +137,7 @@ impl Vm {
             tape: None, recording: false,
             step_budget: None, deadline_ms: None, fs_sandbox: None,
             jit_ctx: None, last_error: None, current_chunk_idx: 0, current_line: 0,
+            jit_table_ptr: std::ptr::null_mut(),
             last_explanation: Vec::new(), tcp_streams: Vec::new(),
             tcp_listeners: Vec::new(),
             udp_sockets: Vec::new(),
@@ -192,6 +197,8 @@ impl Vm {
         self.functions.get(name).copied()
     }
     pub fn chunk_at(&self, idx: usize) -> &Chunk { &self.chunks[idx] }
+    /// A1：已注册 chunk 总数（JIT 函数指针表定容用）。
+    pub fn chunk_count(&self) -> usize { self.chunks.len() }
     pub fn string_at(&self, idx: usize) -> Option<String> {
         self.chunks.get(self.current_chunk_idx)
             .and_then(|c| c.strings.get(idx).cloned())
@@ -270,6 +277,96 @@ impl Vm {
                 col: None,
                 message: format!("期望可调用值，得到 {:?}", callee),
             }),
+        }
+    }
+
+    /// A1：JIT-to-JIT 直接调用的宿主侧分派（`host_jit_call` trampoline 调用）。
+    ///
+    /// 语义 = `call_with_args` 的完整解析（native 直名 / globals-FnRef 别名 +
+    /// 捕获 / 用户函数），但对**用户函数 chunk 且可 JIT 编译**的目标：
+    /// 编译（或取缓存）→ 登记进函数指针表 → **直接调用 JIT 机器码**（不再
+    /// 逃逸解释器）。以下情况完整回退 `call_with_args`（语义零变化）：
+    /// - native / 闭包别名 / 未定义函数
+    /// - autodiff recording 中（tape 语义不破坏，与 `run_jit` 安全门一致）
+    /// - 目标 chunk 编译失败 / 不可编译（静默错值红线：显式走原错误路径）
+    pub fn jit_call_chunk(&mut self, name: &str, args: &[Value]) -> TenthResult<Value> {
+        // native 直名（与 call_with_args 对齐）
+        if self.natives.contains_key(name) {
+            return self.call_with_args(name, args);
+        }
+        // globals-FnRef 别名解析（与 call_with_args 对齐；捕获值追加为额外实参）
+        let mut extra_captures: Vec<Value> = Vec::new();
+        let callee_name: String = match self.globals.get(name) {
+            Some(Value::FnRef { name: fname, captures, .. }) => {
+                extra_captures = captures.clone();
+                fname.clone()
+            }
+            _ => name.to_string(),
+        };
+        if self.natives.contains_key(&callee_name) {
+            return self.call_with_args(name, args);
+        }
+        let chunk_idx = match self.functions.get(&callee_name) {
+            Some(i) => *i,
+            None => return self.call_with_args(name, args), // 未定义 → 原错误路径
+        };
+        if self.is_recording() {
+            return self.call_with_args(name, args);
+        }
+        if self.jit_ctx.is_none() {
+            self.jit_ctx = Some(crate::compile::jit::context::JitContext::new());
+        }
+
+        // 组装最终实参（闭包捕获追加；无捕获时零拷贝借用）
+        let mut owned_args: Vec<Value> = Vec::new();
+        let all_args: &[Value] = if extra_captures.is_empty() {
+            args
+        } else {
+            owned_args = args.to_vec();
+            owned_args.extend(extra_captures.iter().cloned());
+            &owned_args
+        };
+
+        let chunk_view = self.chunks[chunk_idx].clone();
+        let fptr: Option<crate::compile::jit::context::JitFn> = {
+            let ctx = self.jit_ctx.as_mut().unwrap();
+            ctx.ensure_table(self.chunks.len());
+            self.jit_table_ptr = ctx.table_data_ptr();
+            match ctx.get_or_compile(chunk_idx, &chunk_view) {
+                Ok(f) => {
+                    ctx.set_table_entry(chunk_idx, f as usize);
+                    Some(f)
+                }
+                Err(_) => {
+                    ctx.mark_failed(chunk_idx);
+                    None
+                }
+            }
+        };
+        let fptr = match fptr {
+            Some(f) => f,
+            None => return self.call_with_args(name, args), // 编译失败 → 解释器回退
+        };
+
+        // 直接调用已编译函数（invoke_jit 内部 catch_unwind，防 panic 跨 FFI）。
+        // current_chunk_idx 已由调用点的 emit_direct_call 置为 callee_idx，
+        // 此处保存/恢复以自洽（慢路径 trampoline 语义与快路径一致）。
+        let saved_chunk = self.current_chunk_idx;
+        self.current_chunk_idx = chunk_idx;
+        let mut out = Value::Unit;
+        let ok = unsafe {
+            crate::compile::jit::hostcalls::invoke_jit(fptr, self as *mut Vm, all_args, &mut out)
+        };
+        self.current_chunk_idx = saved_chunk;
+        if ok {
+            // B2 安全网：即使返回 ok=true，也检查 hostcall 是否设置了 last_error。
+            if let Some((line, msg)) = self.take_last_error() {
+                return Err(TenthError::RuntimeError { line, col: None, message: msg });
+            }
+            Ok(out)
+        } else {
+            let (line, msg) = self.take_last_error().unwrap_or((None, "JIT 调用失败".into()));
+            Err(TenthError::RuntimeError { line, col: None, message: msg })
         }
     }
 

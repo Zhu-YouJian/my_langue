@@ -561,3 +561,106 @@ fn test_recursive_closure_with_capture() {
         }
     "#, 762, "recursive-closure-capture");
 }
+
+// ── M2-A1：JIT-to-JIT 直接调用对拍 ────────────────────────────────────────
+//
+// 背景：A1 前任何 Call/CallN/MethodCall 都经 host_call 逃逸回 VM/解释器，
+// 递归零收益（fib(28) ≈ 180ms）。A1 后 translator 对已注册用户函数生成
+// **直接调用**（快路径 call_indirect 已编译机器码；首次遇未编译函数走
+// host_jit_call trampoline 编译注册）。以下用例对拍 VM=JIT，覆盖：
+// - 递归 fib（自引用，快路径递归展开）
+// - 同一函数二次调用（先慢后快：验证 trampoline 编译注册后走快路径）
+// - 非递归多层嵌套直接调用链（跨函数快路径）
+// - 递归 + 调用后运算（曾触发原生栈溢出的形态，见 MAX_STACK_DEPTH 注释）
+// - 中等深度线性递归（栈回归守护：JIT 帧 7KB，深度 100 ≈ 700KB < 测试线程栈）
+
+#[test]
+fn test_jit_recursive_fib_direct() {
+    // 递归 fib 经 JIT 直接调用：fib(20) = 6765。VM=JIT 对拍一致。
+    // A1 前此用例 JIT 路径每次调用都逃逸解释器（仍正确但慢）；
+    // A1 后走快路径 call_indirect，fib(28) 实测 ~28ms（<50ms 验收线）。
+    assert_vm_jit_int(r#"
+        fn fib(n: Int) -> Int {
+            if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+        }
+        fn main() -> Int { fib(20) }
+    "#, 6765, "recursive-fib-direct");
+}
+
+#[test]
+fn test_jit_direct_call_fast_path() {
+    // 同一函数二次调用：第一次 host_jit_call trampoline 编译注册，
+    // 第二次直接 call_indirect（快路径）。两路径结果一致 + VM 对拍。
+    assert_vm_jit_int(r#"
+        fn add(a: Int, b: Int) -> Int { a + b }
+        fn main() -> Int {
+            let x = add(3, 4);
+            let y = add(x, 5);
+            y * 10 + x
+        }
+    "#, 127, "direct-call-fast-path");
+}
+
+#[test]
+fn test_jit_nested_multi_level_direct() {
+    // 非递归 6 层嵌套直接调用链：a→b→c→d→e→f，每层 +1。结果 6。
+    // 覆盖跨函数快路径链（非自引用）。
+    assert_vm_jit_int(r#"
+        fn f1() -> Int { 1 }
+        fn f2() -> Int { f1() + 1 }
+        fn f3() -> Int { f2() + 1 }
+        fn f4() -> Int { f3() + 1 }
+        fn f5() -> Int { f4() + 1 }
+        fn f6() -> Int { f5() + 1 }
+        fn main() -> Int { f6() }
+    "#, 6, "nested-multi-level-direct");
+}
+
+#[test]
+fn test_jit_recursive_accumulate_after_call() {
+    // 递归 + 调用后运算（A1 调试期触发原生栈溢出的形态）：
+    // f(n) = n<=1 ? 1 : f(n-1)*2 + n。f(15) 精确值。
+    // 覆盖「快路径调用返回后继续 hostcall 运算」的正确性。
+    let expected: i64 = {
+        let mut v = 1i64;
+        for n in 2..=15 { v = v * 2 + n; }
+        v
+    };
+    assert_vm_jit_int(r#"
+        fn f(n: Int) -> Int {
+            if n <= 1 { 1 } else { f(n - 1) * 2 + n }
+        }
+        fn main() -> Int { f(15) }
+    "#, expected, "recursive-accumulate");
+}
+
+#[test]
+fn test_jit_linear_recursion_depth_guard() {
+    // 深度 100 线性递归（每层一帧）：守护 MAX_STACK_DEPTH 回归——
+    // 若帧恢复到 256（28KB），深度 100 ≈ 2.8MB 会压垮测试线程栈。
+    // sum(n) = n<=0 ? 0 : sum(n-1) + n，sum(100) = 5050。
+    assert_vm_jit_int(r#"
+        fn sum(n: Int) -> Int {
+            if n <= 0 { 0 } else { sum(n - 1) + n }
+        }
+        fn main() -> Int { sum(100) }
+    "#, 5050, "linear-recursion-depth");
+}
+
+#[test]
+fn test_jit_direct_call_method_fallback() {
+    // MethodCall 目标为 native（VM 不把用户方法编译为 chunk）→ 保持
+    // host_method_call fallback，语义与 VM 一致。String::len 对拍。
+    let src = r#"
+        fn main() -> Int {
+            let s = "hello";
+            s.len()
+        }
+    "#;
+    let vm_res = run_vm(src).unwrap();
+    let jit_res = run_jit(src).unwrap();
+    let vm_int = match vm_res { Value::Int(n, _) => n, v => panic!("VM 期望 Int，实际 {:?}", v) };
+    let jit_int = match jit_res { Value::Int(n, _) => n, v => panic!("JIT 期望 Int，实际 {:?}", v) };
+    assert_eq!(vm_int, 5, "VM s.len() = 5, got {}", vm_int);
+    assert_eq!(jit_int, 5, "JIT s.len() = 5, got {}", jit_int);
+}
