@@ -59,9 +59,9 @@ fn compute_semantic_tokens(source: &str) -> Vec<u32> {
             None => continue,
         };
 
-        // LSP positions are 0-based, lexer spans are 1-based
+        // LSP positions are 0-based; lexer span cols are normalized via span.rs
         let line = token.span.line.saturating_sub(1) as u32;
-        let char_pos = token.span.col.saturating_sub(1) as u32;
+        let char_pos = crate::span::token_start_col0(token) as u32;
 
         // Delta encoding: relative to previous token
         let delta_line = line - prev_line;
@@ -87,7 +87,7 @@ fn compute_semantic_tokens(source: &str) -> Vec<u32> {
 fn classify_token(token: &Token) -> Option<(u32, u32)> {
     let text_len = match &token.kind {
         TokenKind::Identifier(s) => s.len() as u32,
-        TokenKind::IntLiteral(n) => n.to_string().len() as u32,
+        TokenKind::IntLiteral(n, _) => n.to_string().len() as u32,
         TokenKind::FloatLiteral(n, _) => n.to_string().len() as u32,
         TokenKind::StringLiteral(s) => (s.len() + 2) as u32, // +2 for quotes
         TokenKind::CharLiteral(c) => (c.len_utf8() + 3) as u32, // 'c'
@@ -168,7 +168,7 @@ fn classify_token(token: &Token) -> Option<(u32, u32)> {
         }
 
         // Literals
-        TokenKind::IntLiteral(_) | TokenKind::FloatLiteral(_, _) => TYPE_NUMBER,
+        TokenKind::IntLiteral(..) | TokenKind::FloatLiteral(_, _) => TYPE_NUMBER,
         TokenKind::StringLiteral(_) => TYPE_STRING,
         TokenKind::CharLiteral(_) => TYPE_STRING,
 

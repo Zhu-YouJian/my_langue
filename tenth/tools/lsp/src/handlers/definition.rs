@@ -57,9 +57,9 @@ fn find_definition(uri: &str, line: u32, character: u32) -> Vec<Location> {
         Err(_) => return Vec::new(),
     };
 
-    // LSP positions are 0-based; lexer spans are 1-based
+    // LSP positions are 0-based; lexer span lines are 1-based.
     let target_line = (line + 1) as usize;
-    let target_col = (character + 1) as usize;
+    let target_col = character as usize;
 
     let identifier = find_token_at_position(&tokens, target_line, target_col);
     let identifier = match identifier {
@@ -76,14 +76,14 @@ fn find_definition(uri: &str, line: u32, character: u32) -> Vec<Location> {
     resolve_via_source_scan(&content, uri, &identifier)
 }
 
-/// Find the identifier token at the given (1-based) line and column.
-fn find_token_at_position(tokens: &[Token], target_line: usize, target_col: usize) -> Option<String> {
+/// Find the identifier token at the given position.
+/// `target_line` is 1-based (lexer), `target_col0` is 0-based (LSP).
+fn find_token_at_position(tokens: &[Token], target_line: usize, target_col0: usize) -> Option<String> {
     for token in tokens {
         if token.kind == TokenKind::Eof {
             continue;
         }
         let token_line = token.span.line;
-        let token_col = token.span.col;
 
         // Check if cursor is within this token's span
         if token_line == target_line {
@@ -97,13 +97,35 @@ fn find_token_at_position(tokens: &[Token], target_line: usize, target_col: usiz
                 _ => continue,
             };
 
-            // Token spans store the start column; the token extends for name.len() chars
-            if target_col >= token_col && target_col < token_col + name.len() {
+            // Lexer span.col 对标识符/关键字 token 是 2-based；用归一化 helper
+            // 还原 0-based 起始列，再判断光标是否落在 [start, start+len) 内。
+            let start0 = crate::span::token_start_col0(token);
+            let end0 = start0 + name.len();
+            if target_col0 >= start0 && target_col0 < end0 {
                 return Some(name);
             }
         }
     }
     None
+}
+
+/// Build a `Location` from an HIR function-definition span.
+/// HIR fn spans come from identifier spans (lexer col is 2-based) and
+/// lines are 1-based; convert to LSP 0-based positions.
+fn hir_fn_location(uri: &str, line: usize, col: usize, name_len: usize) -> Location {
+    Location {
+        uri: uri.to_string(),
+        range: Range {
+            start: Position {
+                line: line.saturating_sub(1) as u32,
+                character: col.saturating_sub(2) as u32,
+            },
+            end: Position {
+                line: line.saturating_sub(1) as u32,
+                character: col.saturating_sub(2) as u32 + name_len as u32,
+            },
+        },
+    }
 }
 
 /// Try to resolve the identifier using the HIR (parse + lower).
@@ -119,19 +141,7 @@ fn resolve_via_hir(content: &str, uri: &str, identifier: &str) -> Option<Locatio
     for fn_def in &hir_program.functions {
         if fn_def.name == identifier {
             let (line, col) = (fn_def.span.line, fn_def.span.col);
-            return Some(Location {
-                uri: uri.to_string(),
-                range: Range {
-                    start: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32,
-                    },
-                    end: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32 + identifier.len() as u32,
-                    },
-                },
-            });
+            return Some(hir_fn_location(uri, line, col, identifier.len()));
         }
     }
 
@@ -139,19 +149,7 @@ fn resolve_via_hir(content: &str, uri: &str, identifier: &str) -> Option<Locatio
     for fn_def in &hir_program.generic_funcs {
         if fn_def.name == identifier {
             let (line, col) = (fn_def.span.line, fn_def.span.col);
-            return Some(Location {
-                uri: uri.to_string(),
-                range: Range {
-                    start: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32,
-                    },
-                    end: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32 + identifier.len() as u32,
-                    },
-                },
-            });
+            return Some(hir_fn_location(uri, line, col, identifier.len()));
         }
     }
 
@@ -180,19 +178,7 @@ fn resolve_via_hir(content: &str, uri: &str, identifier: &str) -> Option<Locatio
     for (_type_name, method_map) in &hir_program.methods {
         if let Some(fn_def) = method_map.get(identifier) {
             let (line, col) = (fn_def.span.line, fn_def.span.col);
-            return Some(Location {
-                uri: uri.to_string(),
-                range: Range {
-                    start: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32,
-                    },
-                    end: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32 + identifier.len() as u32,
-                    },
-                },
-            });
+            return Some(hir_fn_location(uri, line, col, identifier.len()));
         }
     }
 
@@ -201,19 +187,7 @@ fn resolve_via_hir(content: &str, uri: &str, identifier: &str) -> Option<Locatio
         for (_type_name, method_map) in type_map {
             if let Some(fn_def) = method_map.get(identifier) {
                 let (line, col) = (fn_def.span.line, fn_def.span.col);
-                return Some(Location {
-                    uri: uri.to_string(),
-                    range: Range {
-                        start: Position {
-                            line: line.saturating_sub(1) as u32,
-                            character: col.saturating_sub(1) as u32,
-                        },
-                        end: Position {
-                            line: line.saturating_sub(1) as u32,
-                            character: col.saturating_sub(1) as u32 + identifier.len() as u32,
-                        },
-                    },
-                });
+                return Some(hir_fn_location(uri, line, col, identifier.len()));
             }
         }
     }
@@ -233,57 +207,21 @@ fn resolve_in_hir_program(hir_program: &tenth::hir::hir::HirProgram, uri: &str, 
     for fn_def in &hir_program.functions {
         if fn_def.name == identifier {
             let (line, col) = (fn_def.span.line, fn_def.span.col);
-            return Some(Location {
-                uri: uri.to_string(),
-                range: Range {
-                    start: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32,
-                    },
-                    end: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32 + identifier.len() as u32,
-                    },
-                },
-            });
+            return Some(hir_fn_location(uri, line, col, identifier.len()));
         }
     }
 
     for fn_def in &hir_program.generic_funcs {
         if fn_def.name == identifier {
             let (line, col) = (fn_def.span.line, fn_def.span.col);
-            return Some(Location {
-                uri: uri.to_string(),
-                range: Range {
-                    start: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32,
-                    },
-                    end: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32 + identifier.len() as u32,
-                    },
-                },
-            });
+            return Some(hir_fn_location(uri, line, col, identifier.len()));
         }
     }
 
     for (_type_name, method_map) in &hir_program.methods {
         if let Some(fn_def) = method_map.get(identifier) {
             let (line, col) = (fn_def.span.line, fn_def.span.col);
-            return Some(Location {
-                uri: uri.to_string(),
-                range: Range {
-                    start: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32,
-                    },
-                    end: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32 + identifier.len() as u32,
-                    },
-                },
-            });
+            return Some(hir_fn_location(uri, line, col, identifier.len()));
         }
     }
 
@@ -291,19 +229,7 @@ fn resolve_in_hir_program(hir_program: &tenth::hir::hir::HirProgram, uri: &str, 
         for (_type_name, method_map) in type_map {
             if let Some(fn_def) = method_map.get(identifier) {
                 let (line, col) = (fn_def.span.line, fn_def.span.col);
-                return Some(Location {
-                    uri: uri.to_string(),
-                    range: Range {
-                        start: Position {
-                            line: line.saturating_sub(1) as u32,
-                            character: col.saturating_sub(1) as u32,
-                        },
-                        end: Position {
-                            line: line.saturating_sub(1) as u32,
-                            character: col.saturating_sub(1) as u32 + identifier.len() as u32,
-                        },
-                    },
-                });
+                return Some(hir_fn_location(uri, line, col, identifier.len()));
             }
         }
     }
@@ -409,4 +335,71 @@ fn find_let_name(line: &str, name: &str) -> Option<usize> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const URI: &str = "file:///C:/tmp/def_test.th";
+
+    #[test]
+    fn test_find_definition_function_jump() {
+        // 调用点 → 函数定义跳转（HIR 解析）
+        let src = "fn helper(x: i32) -> i32 { x }\nfn main() -> i32 { helper(1) }";
+        let uri = "file:///C:/tmp/def_fn_test.th";
+        crate::document_store::global().open(uri, 1, src);
+        // 光标在 main 中的 `helper` 调用处（第 1 行）
+        let locs = find_definition(uri, 1, 19);
+        assert_eq!(locs.len(), 1, "应解析到唯一函数定义，实际: {locs:?}");
+        assert_eq!(
+            locs[0].range.start.line,
+            0,
+            "fn helper 定义应在第 0 行，实际: {:?}",
+            locs[0]
+        );
+        assert_eq!(locs[0].uri, uri);
+    }
+
+    #[test]
+    fn test_find_definition_local_variable_jump() {
+        // let 局部变量 → 定义跳转（源码扫描 fallback）
+        let src = "fn main() -> i32 {\n    let value = 42;\n    value\n}";
+        let uri = "file:///C:/tmp/def_let_test.th";
+        crate::document_store::global().open(uri, 2, src);
+        // 光标在 return 处的 `value`（第 2 行第 8 列：4 空格 + "let "）
+        let locs = find_definition(uri, 2, 8);
+        assert!(
+            !locs.is_empty(),
+            "value 应能跳转到定义，实际: {locs:?}"
+        );
+        assert_eq!(locs[0].range.start.line, 1, "let value 定义应在第 1 行");
+        assert_eq!(locs[0].range.start.character, 8);
+    }
+
+    #[test]
+    fn test_find_definition_unknown_identifier_empty() {
+        // 光标落在字面量（非标识符）上 → 无跳转结果（不静默返回错误位置）
+        let src = "fn main() -> i32 { 0 }";
+        let uri = "file:///C:/tmp/def_unknown_test.th";
+        crate::document_store::global().open(uri, 3, src);
+        // `0` 字面量在 0-based 19
+        let locs = find_definition(uri, 0, 19);
+        assert!(locs.is_empty(), "字面量不应有定义，实际: {locs:?}");
+    }
+
+    #[test]
+    fn test_find_definition_struct_jump_via_source_scan() {
+        // struct 定义跳转（源码扫描；HIR struct 无 span 走 fallback）
+        let src = "struct Point { x: i32, y: i32 }\nfn make() -> Point { Point { x: 1, y: 2 } }";
+        let uri = "file:///C:/tmp/def_struct_test.th";
+        crate::document_store::global().open(uri, 4, src);
+        // 光标在第二行 `Point {` 类型处
+        let locs = find_definition(uri, 1, 15);
+        assert!(
+            !locs.is_empty(),
+            "Point 应能跳转到 struct 定义，实际: {locs:?}"
+        );
+        assert_eq!(locs[0].range.start.line, 0, "struct Point 定义应在第 0 行");
+    }
 }

@@ -47,7 +47,8 @@ fn extract_symbols(source: &str) -> Vec<DocumentSymbol> {
 fn item_to_symbol(item: &tenth::parser::ast::Item) -> Option<DocumentSymbol> {
     let span = &item.span;
     let line = span.line.saturating_sub(1) as u32;
-    let col = span.col.saturating_sub(1) as u32;
+    // item.span 是 item 起始关键字（identifier-like，lexer col 2-based）
+    let col = span.col.saturating_sub(2) as u32;
 
     let range = Range {
         start: Position { line, character: col },
@@ -78,7 +79,7 @@ fn item_to_symbol(item: &tenth::parser::ast::Item) -> Option<DocumentSymbol> {
             let children: Vec<DocumentSymbol> = match kind {
                 StructKind::Named(fields) => fields.iter().map(|f| {
                     let fline = f.name.span.line.saturating_sub(1) as u32;
-                    let fcol = f.name.span.col.saturating_sub(1) as u32;
+                    let fcol = f.name.span.col.saturating_sub(2) as u32;
                     DocumentSymbol {
                         name: f.name.name.clone(),
                         kind: SymbolKind::Field,
@@ -98,26 +99,30 @@ fn item_to_symbol(item: &tenth::parser::ast::Item) -> Option<DocumentSymbol> {
                     DocumentSymbol {
                         name: format!("_{}", i),
                         kind: SymbolKind::Field,
-                        range,
-                        selection_range,
+                        range: range.clone(),
+                        selection_range: selection_range.clone(),
                         detail: Some(type_ann_str(ty)),
                         children: Vec::new(),
                     }
                 }).collect(),
+            };
+            let field_count = match kind {
+                StructKind::Named(fields) => fields.len(),
+                StructKind::Tuple(types) => types.len(),
             };
             Some(DocumentSymbol {
                 name: name.name.clone(),
                 kind: SymbolKind::Struct,
                 range,
                 selection_range,
-                detail: Some(format!("{} fields", fields.len())),
+                detail: Some(format!("{} fields", field_count)),
                 children,
             })
         }
         ItemKind::EnumDef { name, variants, .. } => {
             let children: Vec<DocumentSymbol> = variants.iter().map(|v| {
                 let vline = v.name.span.line.saturating_sub(1) as u32;
-                let vcol = v.name.span.col.saturating_sub(1) as u32;
+                let vcol = v.name.span.col.saturating_sub(2) as u32;
                 DocumentSymbol {
                     name: v.name.name.clone(),
                     kind: SymbolKind::EnumMember,
@@ -145,7 +150,7 @@ fn item_to_symbol(item: &tenth::parser::ast::Item) -> Option<DocumentSymbol> {
         ItemKind::Trait { name, methods, .. } => {
             let children: Vec<DocumentSymbol> = methods.iter().map(|m| {
                 let mline = m.name.span.line.saturating_sub(1) as u32;
-                let mcol = m.name.span.col.saturating_sub(1) as u32;
+                let mcol = m.name.span.col.saturating_sub(2) as u32;
                 DocumentSymbol {
                     name: m.name.name.clone(),
                     kind: SymbolKind::Method,
@@ -181,7 +186,7 @@ fn item_to_symbol(item: &tenth::parser::ast::Item) -> Option<DocumentSymbol> {
             let children: Vec<DocumentSymbol> = functions.iter().filter_map(|f| {
                 if let ItemKind::Function { name, params, return_type, .. } = &f.kind {
                     let fline = name.span.line.saturating_sub(1) as u32;
-                    let fcol = name.span.col.saturating_sub(1) as u32;
+                    let fcol = name.span.col.saturating_sub(2) as u32;
                     Some(DocumentSymbol {
                         name: name.name.clone(),
                         kind: SymbolKind::Method,
@@ -237,6 +242,36 @@ fn item_to_symbol(item: &tenth::parser::ast::Item) -> Option<DocumentSymbol> {
                 children,
             })
         }
+        ItemKind::Union { name, fields, .. } => {
+            Some(DocumentSymbol {
+                name: name.name.clone(),
+                kind: SymbolKind::Struct,
+                range,
+                selection_range,
+                detail: Some(format!("union {} fields", fields.len())),
+                children: Vec::new(),
+            })
+        }
+        ItemKind::Operator { op, .. } => {
+            Some(DocumentSymbol {
+                name: format!("operator {}", op),
+                kind: SymbolKind::Function,
+                range,
+                selection_range,
+                detail: Some("custom operator".to_string()),
+                children: Vec::new(),
+            })
+        }
+        ItemKind::MacroDef { name, .. } => {
+            Some(DocumentSymbol {
+                name: name.name.clone(),
+                kind: SymbolKind::Function,
+                range,
+                selection_range,
+                detail: Some("macro".to_string()),
+                children: Vec::new(),
+            })
+        }
         ItemKind::Use { .. } => None,
     }
 }
@@ -258,7 +293,11 @@ fn type_ann_str(t: &tenth::parser::ast::TypeAnnotation) -> String {
             }).collect::<Vec<_>>().join(", ");
             format!("Tensor[{}, {}]", dtype_str, dims_str)
         }
-        TypeAnnotation::Array(inner) => format!("[{}]", type_ann_str(inner)),
+        TypeAnnotation::Array { inner, .. } => format!("[{}]", type_ann_str(inner)),
+        TypeAnnotation::Ref { inner, mutable, .. } => {
+            let prefix = if *mutable { "&mut " } else { "&" };
+            format!("{}{}", prefix, type_ann_str(inner))
+        }
         TypeAnnotation::FnType { params, ret } => {
             let params_str = params.iter().map(type_ann_str).collect::<Vec<_>>().join(", ");
             format!("fn({}) -> {}", params_str, type_ann_str(ret))

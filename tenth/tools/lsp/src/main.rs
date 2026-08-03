@@ -2,6 +2,7 @@ mod document_store;
 mod handlers;
 mod io;
 mod lsp_types;
+mod span;
 
 use handlers::{
     completion::CompletionHandler,

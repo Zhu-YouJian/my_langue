@@ -21,12 +21,12 @@ impl Handler for DiagnosticHandler {
     }
 }
 
-/// Diagnose a file by URI. Reads from disk (for pull diagnostics).
+/// Diagnose a file by URI. Uses the in-memory document store first (open
+/// buffers), falling back to disk — so pull diagnostics reflect live edits.
 pub fn diagnose_uri(uri: &str) -> Vec<Diagnostic> {
-    let path = crate::document_store::uri_to_path(uri);
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
+    let content = match crate::document_store::get_content_or_disk_global(uri) {
+        Some(c) => c,
+        None => return Vec::new(),
     };
     diagnose_source(&content)
 }
@@ -111,11 +111,13 @@ mod tests {
             !diags.is_empty(),
             "expected at least one diagnostic for undefined variable"
         );
-        // 至少有一条诊断包含 "undefined variable"
-        let has_undef = diags.iter().any(|d| d.message.contains("undefined variable"));
+        // 至少有一条诊断包含 "未定义变量"（编译器实际消息为中文）
+        let has_undef = diags
+            .iter()
+            .any(|d| d.message.contains("未定义变量") || d.message.contains("undefined variable"));
         assert!(
             has_undef,
-            "expected 'undefined variable' in diagnostics, got: {:?}",
+            "expected '未定义变量' in diagnostics, got: {:?}",
             diags.iter().map(|d| &d.message).collect::<Vec<_>>()
         );
     }
@@ -180,5 +182,41 @@ fn bad() -> Tensor[f64, ..] {
         for d in &diags {
             assert_eq!(d.source.as_deref(), Some("tenth"));
         }
+    }
+
+    #[test]
+    fn test_diagnose_shape_mismatch_matmul() {
+        // 护城河 A：MatMul 内侧 K 不匹配应在编译期产生 shape 诊断
+        let src = r#"
+fn bad() -> Tensor[f64, ..] {
+    let a = ones(2, 3);
+    let b = ones(4, 5);
+    a.matmul(b)
+}
+"#;
+        let diags = diagnose_source(src);
+        assert!(
+            !diags.is_empty(),
+            "matmul 内侧 K 不匹配应产生 shape 诊断"
+        );
+        let joined: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert!(
+            joined
+                .iter()
+                .any(|m| m.contains("shape") || m.contains("形状") || m.contains("matmul") || m.contains("K")),
+            "shape 诊断应提及 shape/matmul/K，实际: {:?}",
+            joined
+        );
+    }
+
+    #[test]
+    fn test_diagnose_multiple_parse_errors_collected() {
+        // 错误恢复应收集多条 parse 错误（不止第一条）
+        let src = "fn a( { }\nfn b( { }";
+        let diags = diagnose_source(src);
+        assert!(
+            !diags.is_empty(),
+            "损坏的源码应产生诊断"
+        );
     }
 }

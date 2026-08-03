@@ -218,7 +218,11 @@ fn type_ann_str(t: &tenth::parser::ast::TypeAnnotation) -> String {
             }).collect::<Vec<_>>().join(", ");
             format!("Tensor[{}, {}]", dtype_str, dims_str)
         }
-        TypeAnnotation::Array(inner) => format!("[{}]", type_ann_str(inner)),
+        TypeAnnotation::Array { inner, .. } => format!("[{}]", type_ann_str(inner)),
+        TypeAnnotation::Ref { inner, mutable, .. } => {
+            let prefix = if *mutable { "&mut " } else { "&" };
+            format!("{}{}", prefix, type_ann_str(inner))
+        }
         TypeAnnotation::FnType { params, ret } => {
             let params_str = params.iter().map(type_ann_str).collect::<Vec<_>>().join(", ");
             format!("fn({}) -> {}", params_str, type_ann_str(ret))

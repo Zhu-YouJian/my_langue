@@ -27,12 +27,33 @@ pub struct Diagnostic {
     pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// LSP `DiagnosticSeverity`。按规范序列化为**数字**（1=Error..4=Hint），
+/// 而非默认的变体名字符串（serde derive 对 fieldless enum 的默认行为）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticSeverity {
     Error = 1,
     Warning = 2,
     Information = 3,
     Hint = 4,
+}
+
+impl Serialize for DiagnosticSeverity {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_i32(*self as i32)
+    }
+}
+
+impl<'de> Deserialize<'de> for DiagnosticSeverity {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let n = i32::deserialize(deserializer)?;
+        match n {
+            1 => Ok(DiagnosticSeverity::Error),
+            2 => Ok(DiagnosticSeverity::Warning),
+            3 => Ok(DiagnosticSeverity::Information),
+            4 => Ok(DiagnosticSeverity::Hint),
+            _ => Err(serde::de::Error::custom("invalid diagnostic severity")),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +81,7 @@ pub struct CompletionItem {
     pub insert_text: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CompletionItemKind {
     Text = 1,
     Method = 2,

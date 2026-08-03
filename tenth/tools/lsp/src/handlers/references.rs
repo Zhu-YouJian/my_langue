@@ -46,7 +46,7 @@ fn find_references(uri: &str, line: u32, character: u32) -> Vec<Location> {
 
     // Find the identifier at the cursor position
     let target_line = (line + 1) as usize;
-    let target_col = (character + 1) as usize;
+    let target_col = character as usize;
 
     let identifier = find_token_at_position(&tokens, target_line, target_col);
     let identifier = match identifier {
@@ -60,7 +60,7 @@ fn find_references(uri: &str, line: u32, character: u32) -> Vec<Location> {
         if let TokenKind::Identifier(ref name) = token.kind {
             if name == &identifier {
                 let tok_line = token.span.line.saturating_sub(1) as u32;
-                let tok_col = token.span.col.saturating_sub(1) as u32;
+                let tok_col = crate::span::token_start_col0(token) as u32;
                 locations.push(Location {
                     uri: uri.to_string(),
                     range: Range {
@@ -75,20 +75,19 @@ fn find_references(uri: &str, line: u32, character: u32) -> Vec<Location> {
     locations
 }
 
-fn find_token_at_position(tokens: &[Token], target_line: usize, target_col: usize) -> Option<String> {
+fn find_token_at_position(tokens: &[Token], target_line: usize, target_col0: usize) -> Option<String> {
     for token in tokens {
         if token.kind == TokenKind::Eof {
             continue;
         }
         let token_line = token.span.line;
-        let token_col = token.span.col;
 
         if let TokenKind::Identifier(ref name) = token.kind {
-            if token_line == target_line
-                && target_col >= token_col
-                && target_col < token_col + name.len()
-            {
-                return Some(name.clone());
+            if token_line == target_line {
+                let start0 = crate::span::token_start_col0(token);
+                if target_col0 >= start0 && target_col0 < start0 + name.len() {
+                    return Some(name.clone());
+                }
             }
         }
     }

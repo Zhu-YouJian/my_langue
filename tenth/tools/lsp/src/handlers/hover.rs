@@ -42,7 +42,7 @@ impl Handler for HoverHandler {
 
         // Find the token at the cursor position
         let target_line = (pos.line + 1) as usize; // LSP lines are 0-based, lexer is 1-based
-        let target_col = (pos.character + 1) as usize; // LSP chars are 0-based, lexer is 1-based
+        let target_col = pos.character as usize; // LSP chars are 0-based
 
         let token = find_token_at_position(&tokens, target_line, target_col);
 
@@ -113,19 +113,24 @@ fn percent_decode(s: &str) -> String {
 }
 
 /// Find the token at the given line and column position.
-/// The lexer uses 1-based line/col, LSP uses 0-based (already converted by caller).
-fn find_token_at_position(tokens: &[Token], line: usize, col: usize) -> Option<Token> {
+/// `line` is 1-based (lexer), `col0` is 0-based (LSP).
+fn find_token_at_position(tokens: &[Token], line: usize, col0: usize) -> Option<Token> {
     for token in tokens {
         if token.kind == TokenKind::Eof {
             continue;
         }
 
-        let token_line = token.span.line;
-        let token_col = token.span.col;
-        let token_text = token_to_text(token);
-        let token_end_col = token_col + token_text.len();
+        if token.span.line != line {
+            continue;
+        }
 
-        if token_line == line && col >= token_col && col <= token_end_col {
+        let token_text = token_to_text(token);
+        // Lexer span.col 对标识符/关键字/数字 token 是 2-based；归一化为 0-based。
+        let start0 = crate::span::token_start_col0(token);
+        let end0 = start0 + token_text.len();
+
+        // 光标落在 [start, end] 内（end 含，允许光标紧贴 token 末尾）
+        if col0 >= start0 && col0 <= end0 {
             return Some(token.clone());
         }
     }
@@ -136,7 +141,7 @@ fn find_token_at_position(tokens: &[Token], line: usize, col: usize) -> Option<T
 fn token_to_text(token: &Token) -> String {
     match &token.kind {
         TokenKind::Identifier(s) => s.clone(),
-        TokenKind::IntLiteral(n) => n.to_string(),
+        TokenKind::IntLiteral(n, _) => n.to_string(),
         TokenKind::FloatLiteral(n, _) => n.to_string(),
         TokenKind::StringLiteral(s) => s.clone(),
         TokenKind::CharLiteral(c) => c.to_string(),
