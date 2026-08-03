@@ -2,6 +2,7 @@ target/
 .reasonix/
 .vscode/
 .agents/
+dist/
 *.exe
 *.wasm
 *.thw
@@ -26,3 +27,4 @@ docs/编译到机器码方案.md
 基本功核查.md
 程序张量探索/
 test_errors.txt
+smoke_m43_tmp.csv

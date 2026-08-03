@@ -1,0 +1,90 @@
+# release.yml — Tenth 跨平台发布构建（M5.3）
+#
+# 三平台 matrix（ubuntu-latest / macos-latest / windows-latest）：
+#   1. release 构建 5 个产物（tenth / tenthpm / tenth-debug / tenth-prof / tenth-lsp）
+#   2. 冒烟验证：自举 [OK]（tenthc_full.wasm）+ 关键测试套件
+#   3. 打包（zip / tar.gz）+ SHA256 checksum → 上传 artifacts
+#
+# 触发：push tag v*（如 v0.5.0）或 workflow_dispatch 手动。
+# 说明：tenth 主 crate 依赖 wasmtime/cranelift（JIT 引擎），无法编译到 wasm32
+#       target，故 matrix 只覆盖原生三平台；WASM 产物 tenthc_full.wasm 由自举
+#       步骤在每平台生成并随包发布。
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: "1"
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            tenth/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('tenth/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build tenth (release)
+        run: cargo build --release -j 2 --manifest-path tenth/Cargo.toml
+
+      - name: Build toolchain (release)
+        run: |
+          cargo build --release -j 2 --manifest-path tenth/tools/tenthpm/Cargo.toml
+          cargo build --release -j 2 --manifest-path tenth/tools/debugger/Cargo.toml
+          cargo build --release -j 2 --manifest-path tenth/tools/profiler/Cargo.toml
+          cargo build --release -j 2 --manifest-path tenth/tools/lsp/Cargo.toml
+        shell: bash
+
+      - name: Self-host bootstrap (tenthc_full.wasm)
+        run: |
+          cargo run --release --manifest-path tenth/Cargo.toml -- run tenthc/main.th 2>&1 | tee /tmp/boot.log
+          grep -q "\[OK\] Full compiler compiled to tenthc_full.wasm" /tmp/boot.log
+        shell: bash
+
+      - name: Key test suites
+        run: |
+          cargo test --release --manifest-path tenth/Cargo.toml --test stdlib_smoke_test --test integration_test --test wasm_backend_minimal_test
+        shell: bash
+
+      - name: Package artifacts
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            powershell -ExecutionPolicy Bypass -File scripts/release/package.ps1 -SkipBuild
+          else
+            bash scripts/release/package.sh --skip-build
+          fi
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tenth-dist-${{ matrix.os }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
