@@ -192,6 +192,27 @@ impl Lowerer {
                 let arg_types: Vec<Type> = args.iter().map(|a| a.ty.clone()).collect();
                 match self.scope.resolve_fn_overload(name, &arg_types, span) {
                     Ok((params, ret)) => {
+                        // M3.1：tensor 字面量 shape 追踪（战略方向 B）——`tensor` 是
+                        // Lowerer::new 预注册的构造器（签名返回 Tensor[..]，故 tensor(...)
+                        // 不回落 resolve_builtin），调用 `tensor[[...]]` 时参数已是精确
+                        // Tensor（TensorLiteral 已推断 Known 维度），调用点**直通参数类型**，
+                        // 使 matmul/广播编译期 shape 检查对字面量张量生效（此前恒返回
+                        // Tensor[..] = [Any]，shape 被清零漏到运行时）。
+                        // `tensor<f64>([...])` 走 GenericCall 不在此列（ArrayLiteral 参数
+                        // 非 Tensor 类型，直通不命中，保持保守 Any）。
+                        let ret = if name == "tensor" {
+                            if let Some(arg) = args.first() {
+                                if let Type::Tensor { .. } = &arg.ty {
+                                    arg.ty.clone()
+                                } else {
+                                    ret
+                                }
+                            } else {
+                                ret
+                            }
+                        } else {
+                            ret
+                        };
                         // G6（审计缺口）：调用点参数类型检查——单签名函数也校验实参类型。
                         // 仅对单签名执行严格检查：多重载的解析（精确匹配/兼容回退）与
                         // 歧义报告已由 resolve_fn_overload 处理，此处不叠加，避免改变
@@ -751,7 +772,21 @@ impl Lowerer {
             "regex_find" | "regex_replace" => Ok(Type::str_()),
             "regex_find_all" | "regex_split" => Ok(Type::Array { inner: Box::new(Type::Unknown), size: None }),
             // Tensor 构造函数：dtype 从参数推断（若无 f32 线索则默认 F64）
-            "tensor" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),
+            // M3.1：tensor 字面量 shape 追踪（战略方向 B）——`tensor[[1,2],[3,4]]`
+            // 由 parser 解析为 tensor(TensorLiteral(...)) 调用，参数已在 lower_expr
+            // 推断为精确 `Tensor[dtype, Known, Known]`，此处**直通其类型**，使 matmul/
+            // 广播编译期 shape 检查对字面量张量生效（此前 shape_from_int_args 对字面量
+            // 参数返回 [Any]，shape 被清零漏到运行时）。
+            // `tensor<f64>([1.0, 2.0])`（ArrayLiteral 参数，Type::Array）不命中直通，
+            // 保守走 shape_from_int_args（运行时 array_to_tensor 转 1D，编译期 Any）。
+            "tensor" => {
+                if let Some(arg) = args.first() {
+                    if let Type::Tensor { .. } = &arg.ty {
+                        return Ok(arg.ty.clone());
+                    }
+                }
+                Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args)))
+            },
             "rand" | "randn" => Ok(Type::tensor(Self::infer_tensor_dtype(args), Self::shape_from_int_args(args))),
             "randn_f32" => Ok(Type::tensor(BaseType::F32, vec![Dim::Any])),
             // Phase 5.5：补全 f32 构造函数 native 注册
@@ -911,7 +946,13 @@ impl Lowerer {
                     None => Ok(Type::Unknown),
                 }
             },
-            "start_grad" | "new_grad" | "stop_grad" | "param" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
+            "start_grad" | "new_grad" | "stop_grad" => Ok(Type::tensor(Self::infer_tensor_dtype(args), vec![Dim::Any])),
+            // M3.1：param 类型直通（战略方向 B，shape 黑洞修复）——param(x) 运行时恒等
+            // （注册 tape input 后原样返回，见 runtime/natives.rs 与 interpreter/natives.rs
+            // 的 "param" native），类型也直通：param(zeros(3,4)) → Tensor[f64, 3, 4]，
+            // shape 不再被清零为 [Any]，matmul/广播编译期检查对 param 包裹的张量恢复生效。
+            // 非张量参数：直通其类型（编译期不拦截，运行时照旧报 "param() 需要一个张量参数"）。
+            "param" => Ok(args.first().map(|a| a.ty.clone()).unwrap_or(Type::Unknown)),
             "backward" => Ok(Type::unit()),
             "grad" | "zero_grad" => Ok(Type::Unknown),
             "path_join" => Ok(Type::str_()),
@@ -2641,8 +2682,8 @@ impl Lowerer {
         }
     }
 
-    /// matmul FLOPs 预估：(M,K)@(K,N) → M*K*N 乘加。
-    /// 阈值：1 GFLOP（10^9 乘加）。仅在两侧 shape 都 2D Known 时预估。
+    /// matmul FLOPs 预估：(M,K)@(K,N) → M*K*N 乘加（每乘加算 2 FLOP，与 bmm 口径一致）。
+    /// 阈值：1 GFLOP（10^9）。仅在两侧 shape 都 2D Known 时预估。
     pub(super) fn emit_matmul_flop_estimate(
         &mut self,
         recv_ty: &Type,
@@ -2655,10 +2696,13 @@ impl Lowerer {
                     (&rdims[0], &rdims[1], &adims[0], &adims[1])
                 {
                     if k1 == k2 {
-                        if let Some(flops) = (*m as u64)
+                        if let Some(mul_add) = (*m as u64)
                             .checked_mul(*k1 as u64)
                             .and_then(|x| x.checked_mul(*n as u64))
                         {
+                            // M3.1：修正 FLOPs 少 ×2 因子——每个乘加 = 1 mul + 1 add = 2 FLOP
+                            //（与 emit_bmm_flop_estimate 的 ×2 口径对齐；此前报 8 GFLOP 实为 16）
+                            let flops = mul_add.saturating_mul(2);
                             const GFLOP: u64 = 1_000_000_000;
                             if flops >= GFLOP {
                                 let msg = format!(

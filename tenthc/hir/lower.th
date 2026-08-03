@@ -347,8 +347,10 @@ fn emit_memory_estimate(p: &mut HirProgram, ty_idx: i64, context: str) {
     };
 }
 
-// Emit FLOPs estimate for matmul: (M,K)@(K,N) → M*K*N FLOPs.
+// Emit FLOPs estimate for matmul: (M,K)@(K,N) → M*K*N 乘加（每乘加算 2 FLOP）。
 // Threshold: 1 GFLOP (10^9).
+// M3.1：matmul ×2 因子修正（与 Rust 侧 types.rs::emit_matmul_flop_estimate 对齐；
+// 每个乘加 = 1 mul + 1 add = 2 FLOP，与 emit_bmm_flop_estimate 的 ×2 口径一致）。
 fn emit_matmul_flop_estimate(p: &mut HirProgram, recv_lty: i64, arg_lty: i64) {
     if recv_lty <= 0 || recv_lty > p.type_nodes.len() { return; };
     if arg_lty <= 0 || arg_lty > p.type_nodes.len() { return; };
@@ -363,7 +365,9 @@ fn emit_matmul_flop_estimate(p: &mut HirProgram, recv_lty: i64, arg_lty: i64) {
     if m <= 0 || k1 <= 0 || k2 <= 0 || n <= 0 { return; };
     if k1 != k2 { return; };
     if m > 1000000 || k1 > 1000000 || n > 1000000 { return; };
-    let flops = m * k1 * n;
+    // 溢出保护：m,k1,n < 10^6 → m*k1*n < 10^18，×2 < 2×10^18 ≪ i64 max。
+    let mul_add = m * k1 * n;
+    let flops = mul_add * 2;
     let gflop = 1000000000;
     if flops >= gflop {
         let msg = "matmul 约 " + int_to_str(flops / gflop) + " GFLOPs（" + int_to_str(m) + "×" + int_to_str(k1) + " @ " + int_to_str(k2) + "×" + int_to_str(n) + "，编译期预估）";

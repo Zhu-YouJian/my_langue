@@ -453,7 +453,7 @@ impl Tensor {
         let a = self.data.as_f32().expect("zip_f32 self requires F32");
         let b = other.data.as_f32().expect("zip_f32 other requires F32");
         let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-            .ok_or_else(|| format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))?;
+            .ok_or_else(|| format!("广播失败：无法广播 shape {:?} 与 {:?}（元素级运算）", self.shape(), other.shape()))?;
         let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
         let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
         let mut out = ArrayD::zeros(IxDyn(&out_shape));
@@ -468,7 +468,7 @@ impl Tensor {
         let a = self.data.as_f64().expect("zip_f64 self requires F64");
         let b = other.data.as_f64().expect("zip_f64 other requires F64");
         let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-            .ok_or_else(|| format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))?;
+            .ok_or_else(|| format!("广播失败：无法广播 shape {:?} 与 {:?}（元素级运算）", self.shape(), other.shape()))?;
         let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
         let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
         let mut out = ArrayD::zeros(IxDyn(&out_shape));
@@ -484,7 +484,7 @@ impl Tensor {
         let a = self.data.as_f16().expect("zip_f16 self requires F16");
         let b = other.data.as_f16().expect("zip_f16 other requires F16");
         let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-            .ok_or_else(|| format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))?;
+            .ok_or_else(|| format!("广播失败：无法广播 shape {:?} 与 {:?}（元素级运算）", self.shape(), other.shape()))?;
         let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
         let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
         let mut out: ArrayD<f16> = ArrayD::from_elem(IxDyn(&out_shape), f16::from_f32(0.0));
@@ -500,7 +500,7 @@ impl Tensor {
         let a = self.data.as_bf16().expect("zip_bf16 self requires BF16");
         let b = other.data.as_bf16().expect("zip_bf16 other requires BF16");
         let out_shape = Self::broadcast_shape(a.shape(), b.shape())
-            .ok_or_else(|| format!("cannot broadcast shapes {:?} + {:?}", self.shape(), other.shape()))?;
+            .ok_or_else(|| format!("广播失败：无法广播 shape {:?} 与 {:?}（元素级运算）", self.shape(), other.shape()))?;
         let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
         let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
         let mut out: ArrayD<bf16> = ArrayD::from_elem(IxDyn(&out_shape), bf16::from_f32(0.0));
@@ -685,7 +685,7 @@ impl Tensor {
         let a_shape = self.data.shape();
         let b_shape = other.data.shape();
         let out_shape = Self::broadcast_shape(a_shape, b_shape)
-            .ok_or_else(|| format!("cannot broadcast shapes {:?} {} {:?}", self.shape(), op_symbol, other.shape()))?;
+            .ok_or_else(|| format!("广播失败：无法广播 shape {:?} 与 {:?}（运算符 {}）", self.shape(), other.shape(), op_symbol))?;
 
         match result_dtype {
             BaseType::F64 => {
@@ -797,7 +797,7 @@ impl Tensor {
                     .map_err(|_| "matmul: other must be 2D")?;
                 if a.shape()[1] != b.shape()[0] {
                     return Err(format!(
-                        "matmul shape mismatch: {:?} @ {:?}",
+                        "matmul shape 不匹配：{:?} @ {:?}（内侧维度必须相等）",
                         a.shape(), b.shape()
                     ));
                 }
@@ -809,7 +809,7 @@ impl Tensor {
                 let b = b_view.view().into_dimensionality::<ndarray::Ix2>()
                     .map_err(|_| "matmul: other must be 2D")?;
                 if a.shape()[0] != b.shape()[0] {
-                    return Err(format!("matmul shape mismatch: {:?} @ {:?}", a.shape(), b.shape()));
+                    return Err(format!("matmul shape 不匹配：{:?} @ {:?}（内侧维度必须相等）", a.shape(), b.shape()));
                 }
                 let a_2d = a.insert_axis(ndarray::Axis(0));
                 let result = a_2d.dot(&b);
@@ -821,7 +821,7 @@ impl Tensor {
                 let b = b_view.view().into_dimensionality::<ndarray::Ix1>()
                     .map_err(|_| "matmul: other must be 1D")?;
                 if a.shape()[1] != b.shape()[0] {
-                    return Err(format!("matmul shape mismatch: {:?} @ {:?}", a.shape(), b.shape()));
+                    return Err(format!("matmul shape 不匹配：{:?} @ {:?}（内侧维度必须相等）", a.shape(), b.shape()));
                 }
                 let result = a.dot(&b);
                 Ok(Tensor::from_data(result.into_dyn()))
@@ -1655,7 +1655,7 @@ impl Tensor {
         let a_shape = self.data.shape();
         let b_shape = other.data.shape();
         let out_shape = Self::broadcast_shape(a_shape, b_shape)
-            .ok_or_else(|| format!("cannot broadcast shapes {:?} {} {:?}", self.shape(), op_symbol, other.shape()))?;
+            .ok_or_else(|| format!("广播失败：无法广播 shape {:?} 与 {:?}（运算符 {}）", self.shape(), other.shape(), op_symbol))?;
         let a = self.data.as_f64_view();
         let b = other.data.as_f64_view();
         let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();

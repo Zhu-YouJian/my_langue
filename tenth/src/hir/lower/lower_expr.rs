@@ -938,13 +938,37 @@ impl Lowerer {
                 let lowered: Vec<Vec<HirExpr>> = data.iter()
                     .map(|row| row.iter().map(|e| self.lower_expr(e)).collect())
                     .collect::<TenthResult<_>>()?;
+                // M3.1：不规则字面量（行长度不一致）编译期报错——字面量结构静态可知，
+                // 无需等到运行时 array_to_tensor 兜底（护城河：编译期抓住 shape 错误）。
+                // 空字面量（tensor[[]]）保持现状（rows=1, cols=0，运行时兜底报"空数组"）。
+                if let Some(first_len) = lowered.first().map(|r| r.len()) {
+                    for (i, row) in lowered.iter().enumerate() {
+                        if row.len() != first_len {
+                            return Err(TenthError::TypeError {
+                                line: data[i].first().map(|e| e.span.line).unwrap_or(expr.span.line),
+                                col: data[i].first().map(|e| e.span.col).unwrap_or(expr.span.col),
+                                message: format!(
+                                    "张量字面量行长度不一致：第 {} 行 {} 个元素，第 1 行 {} 个（tensor 字面量必须是矩形）",
+                                    i + 1, row.len(), first_len
+                                ),
+                            });
+                        }
+                    }
+                }
                 let rows = lowered.len() as i64;
                 let cols = lowered.first().map_or(0, |r| r.len() as i64);
                 // 按元素字面量 dtype 推断 Tensor dtype：任一元素为 F32 → F32，否则 F64
                 let dtype = lowered.iter().flatten().find_map(|e| {
                     if matches!(e.ty, Type::Base(BaseType::F32)) { Some(BaseType::F32) } else { None }
                 }).unwrap_or(BaseType::F64);
-                let ty = Type::tensor(dtype, vec![Dim::Known(rows), Dim::Known(cols)]);
+                // M3.1：嵌套字面量（任一元素是 Tensor，即 3D+ 如 tensor[[[1],[2]],[[3],[4]]]）
+                // 编译期无法静态推断完整 rank → 保守退化为 [Any]（不误报 2D，运行时 array_to_tensor
+                // 支持任意深度嵌套，照常可用）。
+                let ty = if lowered.iter().flatten().any(|e| matches!(e.ty, Type::Tensor { .. })) {
+                    Type::tensor(dtype, vec![Dim::Any])
+                } else {
+                    Type::tensor(dtype, vec![Dim::Known(rows), Dim::Known(cols)])
+                };
                 (HirExprKind::TensorLiteral { data: lowered, ty: ty.clone() }, ty)
             }
 
