@@ -131,7 +131,9 @@ use std::nn::linear::linear
 
 let x = tensor[[-2.0, -1.0, 0.0, 1.0, 2.0]];
 let w = tensor[[1.0, 0.5, 0.0, 1.0, 1.0], [0.5, 0.5, 0.0, 0.0, 1.0]];
-let b = tensor[[0.0, 1.0]];
+// M3.1：bias 用 tensor([...]) 构造 1D [N]（tensor[[...]] 是 2D 1×N，
+// 不再被编译期 shape 直通放行——linear 签名 b: Tensor[T, N] 是 1D）
+let b = tensor([0.0, 1.0]);
 let out = linear<f64>(x, w, b);
 out.numel() == 2
 "#;
@@ -154,9 +156,10 @@ use std::nn::feedforward::feedforward
 
 let x = tensor[[1.0, 0.0]];
 let w1 = tensor[[0.5, 0.0, 1.0], [0.0, 0.5, 1.0]];
-let b1 = tensor[[0.0, 0.0, 0.0]];
+// M3.1：bias 用 tensor([...]) 构造 1D（feedforward 签名 b1: Tensor[T, D_ff] 是 1D）
+let b1 = tensor([0.0, 0.0, 0.0]);
 let w2 = tensor[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
-let b2 = tensor[[0.0, 0.0]];
+let b2 = tensor([0.0, 0.0]);
 let y = feedforward<f64>(x, w1, b1, w2, b2);
 y.numel() == 2
 "#;

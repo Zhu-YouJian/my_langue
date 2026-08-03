@@ -350,3 +350,57 @@ fn typestate_regression_trait_method() {
     let result = run(TRAIT_METHOD_SRC).unwrap();
     expect_int(&result.unwrap(), 46, "解释器");
 }
+
+// ── 用例 6（G4+M3.2）：状态转换消费后，变量作为函数实参也报 moved ──
+
+const USE_AFTER_CLOSE_AS_ARG_SRC: &str = r#"
+enum Open {}
+enum Closed {}
+struct File<S> { path: str }
+impl File<Open> {
+    fn read(self) -> str { self.path }
+    fn close(self) -> File<Closed> { File<Closed> { path: self.path } }
+}
+fn is_open(f: File<Open>) -> bool { true }
+let f = File<Open> { path: "a.txt" };
+let c = f.close();
+is_open(f)
+"#;
+
+#[test]
+fn typestate_use_after_close_as_arg_moved() {
+    // G4：close 是状态转换（File<Open> → File<Closed>），消费 f；
+    // 之后把 f 当函数实参传入（变量引用位置 check_use 生效）→ 报 moved。
+    let err = run(USE_AFTER_CLOSE_AS_ARG_SRC).unwrap_err();
+    assert!(
+        err.contains("使用了已移动的值 'f'"),
+        "close 后传 f 给函数应报 moved，实际: {}",
+        err
+    );
+}
+
+// ── 用例 7（G4）：状态转换在链式临时值上不误报（receiver 非变量不标记）──
+
+const CHAIN_TRANSITION_SRC: &str = r#"
+enum Open {}
+enum Closed {}
+struct File<S> { path: str }
+impl File<Open> {
+    fn read(self) -> str { self.path }
+    fn close(self) -> File<Closed> { File<Closed> { path: self.path } }
+}
+impl File<Closed> {
+    fn reopen(self) -> File<Open> { File<Open> { path: self.path } }
+}
+File<Open> { path: "a.txt" }.close().reopen().read()
+"#;
+
+#[test]
+fn typestate_chain_transition_no_false_positive() {
+    // G4 边界：状态转换 receiver 是临时值（非变量）时不标记任何变量，
+    // 链式 close → reopen → read 编译通过、双路径运行一致。
+    let result = run(CHAIN_TRANSITION_SRC).unwrap();
+    expect_str(&result.unwrap(), "a.txt", "解释器");
+    let result_vm = run_vm(CHAIN_TRANSITION_SRC).unwrap();
+    expect_str(&result_vm, "a.txt", "VM");
+}

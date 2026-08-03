@@ -292,11 +292,14 @@ fn big() -> Tensor[f64, ..] {
 #[test]
 fn huge_result_tensor_triggers_memory_warning() {
     // matmul 结果 (15000, 15000) = 1.8GB → 内存 warning
-    // 输入 (15000, 4) @ (4, 15000) = 9×10^8 FLOPs < 1 GFLOP（无 FLOPs warning）
+    // 输入 (15000, 2) @ (2, 15000)：乘加 = 4.5×10^8，×2 FLOP = 9×10^8 < 1 GFLOP（无 FLOPs warning）
+    // M3.1 起 matmul FLOPs 按每乘加 2 FLOP 计算（与 bmm 口径一致，见 emit_matmul_flop_estimate）：
+    // 此前的 (15000,4)@(4,15000) = 9×10^8 乘加 ×2 = 1.8×10^9 ≥ 1 GFLOP 会触发 FLOPs warning，
+    // 故改用 K=2 使乘加减半，保持"结果内存 warning 触发 + FLOPs warning 不触发"的断言意图。
     let src = r#"
 fn wide_result() -> Tensor[f64, ..] {
-    let a = zeros(15000, 4);
-    let b = zeros(4, 15000);
+    let a = zeros(15000, 2);
+    let b = zeros(2, 15000);
     a.matmul(b)
 }
 "#;

@@ -509,3 +509,63 @@ fn vm_path_mismatch_compile_error() {
         err
     );
 }
+
+// ── 7. M3.2：多重载兼容回退也校验实参类型（G6 缺口修复）──
+
+const OVERLOAD_COMPAT_MISMATCH_SRC: &str = r#"
+fn g(x: i64, y: i64) -> i64 { x + y }
+fn g(x: str) -> str { "s" }
+g(1, "x")
+"#;
+
+#[test]
+fn overload_compat_fallback_mismatch_compile_error() {
+    // M3.2 修复：多重载兼容回退（参数数量唯一匹配 (i64,i64)，但第 2 实参
+    // "x" 确定不兼容）也走 types_compatible 校验。此前该路径不检查，
+    // `g(1, "x")` 编译通过且运行时 VM（HashMap 后注册覆盖）/解释器（取
+    // 第一条同名）两路径行为不一致——现在编译期报「类型不兼容」，双路径统一。
+    let err = run(OVERLOAD_COMPAT_MISMATCH_SRC).unwrap_err();
+    assert!(
+        err.contains("类型不兼容") && err.contains("g"),
+        "多重载兼容回退应报类型不兼容，实际: {}",
+        err
+    );
+}
+
+const OVERLOAD_COMPAT_MISMATCH_VM_SRC: &str = r#"
+fn g(x: i64, y: i64) -> i64 { x + y }
+fn g(x: str) -> str { "s" }
+g(1, "x")
+"#;
+
+#[test]
+fn overload_compat_fallback_mismatch_vm_compile_error() {
+    // 报错在 lowering 阶段，VM 入口同样拦截（与单签名场景一致）。
+    let err = run_vm(OVERLOAD_COMPAT_MISMATCH_VM_SRC).unwrap_err();
+    assert!(
+        err.contains("类型不兼容"),
+        "VM 路径多重载兼容回退应编译期报错，实际: {}",
+        err
+    );
+}
+
+// ── 8. M3.2：参数数量不同的重载按实参数量选签名（配套修复）──
+
+const OVERLOAD_DIFFERENT_ARITY_OK_SRC: &str = r#"
+fn g(x: i64, y: i64) -> i64 { x + y }
+fn g(x: str) -> str { "s" }
+let a = g(1, 2);
+let b = g("hi");
+a + 1
+"#;
+
+#[test]
+fn overload_different_arity_compile_ok() {
+    // M3.2 配套修复：process_call_args 此前用「第一个同名签名」处理
+    // 默认/变参/命名参数，导致参数数量不同的重载（`g("hi")` 应匹配 1 参
+    // g(str)）误报「缺少必需参数」。现按实参数量选签名，编译期放行。
+    // （运行时重载分派 VM/解释器不一致为既有缺陷，另行登记；此处只验证
+    // 编译期不再误报。）
+    lower_only(OVERLOAD_DIFFERENT_ARITY_OK_SRC)
+        .expect("参数数量不同的重载调用应编译通过（G6 不误报）");
+}

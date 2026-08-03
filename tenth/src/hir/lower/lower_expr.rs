@@ -1899,19 +1899,19 @@ impl Lowerer {
         };
 
         // Look up function definition info (clone to avoid borrow conflicts)
+        // M3.2（G6 配套）：多重载感知——同名多签名时按「参数数量与实参一致」
+        // 选择签名，避免用第一个签名处理导致参数数量不同的重载
+        // （如 `fn g(x: i64, y: i64)` + `fn g(x: str)` 下 `g("hi")`）误报缺参数。
         let fn_param_names: Vec<String> = fn_name.as_ref()
-            .and_then(|name| self.functions.iter().find(|f| f.name == *name)
-                .or_else(|| self.generic_funcs.get(name)))
+            .and_then(|name| self.find_fn_def_for_call(name, args.len()))
             .map(|def| def.params.iter().map(|(n, _)| n.clone()).collect())
             .unwrap_or_default();
         let fn_param_defaults: Vec<Option<HirExpr>> = fn_name.as_ref()
-            .and_then(|name| self.functions.iter().find(|f| f.name == *name)
-                .or_else(|| self.generic_funcs.get(name)))
+            .and_then(|name| self.find_fn_def_for_call(name, args.len()))
             .map(|def| def.param_defaults.clone())
             .unwrap_or_default();
         let fn_param_variadic: Vec<bool> = fn_name.as_ref()
-            .and_then(|name| self.functions.iter().find(|f| f.name == *name)
-                .or_else(|| self.generic_funcs.get(name)))
+            .and_then(|name| self.find_fn_def_for_call(name, args.len()))
             .map(|def| def.param_variadic.clone())
             .unwrap_or_default();
         let has_def = fn_name.as_ref()
@@ -2085,6 +2085,23 @@ impl Lowerer {
             }
             return Ok(lowered);
         }
+    }
+
+    /// 查找调用点的函数定义（多重载感知，M3.2 G6 配套）：
+    /// 同一函数名有多个签名时，优先选择「参数数量与调用实参一致」的签名，
+    /// 使 process_call_args 对参数数量不同的重载（如 `fn g(i64,i64)` +
+    /// `fn g(str)` 下 `g("hi")`）正确处理默认/变参/命名参数，不再误报缺参数。
+    /// 无同名定义返回 None；无数量匹配时回退第一个签名（保持既有行为，
+    /// 默认参数/变参的单签名调用不受影响）。
+    fn find_fn_def_for_call(&self, name: &str, arg_count: usize) -> Option<HirFnDef> {
+        let same: Vec<&HirFnDef> = self.functions.iter().filter(|f| f.name == name).collect();
+        if let Some(d) = same.iter().find(|f| f.params.len() == arg_count) {
+            return Some((*d).clone());
+        }
+        if let Some(d) = same.first() {
+            return Some((*d).clone());
+        }
+        self.generic_funcs.get(name).cloned()
     }
 
     /// 运算符重载：二元运算符 → trait 方法名称映射。

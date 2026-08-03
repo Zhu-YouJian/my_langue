@@ -4,8 +4,9 @@
 fn main() {
     // 3 个样本，每个 2 维特征
     let x = tensor[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
-    // 标签：0, 1, 2
-    let labels = tensor[[0.0], [1.0], [2.0]];
+    // 标签：0, 1, 2（cross_entropy target 应为 1D [B] 标签索引或 [B, V] one-hot；
+    // M3.1 字面量 shape 追踪后，[3,1] 2D 不再被 rank-通配放行——用 tensor([...]) 构造 1D）
+    let labels = tensor([0.0, 1.0, 2.0]);
 
     // 权重矩阵 2x3，偏置 1x3
     let mut w = tensor[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]];

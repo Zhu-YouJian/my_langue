@@ -213,15 +213,20 @@ impl Lowerer {
                         } else {
                             ret
                         };
-                        // G6（审计缺口）：调用点参数类型检查——单签名函数也校验实参类型。
-                        // 仅对单签名执行严格检查：多重载的解析（精确匹配/兼容回退）与
-                        // 歧义报告已由 resolve_fn_overload 处理，此处不叠加，避免改变
-                        // 既有重载行为。typestate 场景（`File<Closed>` 传 `File<Open>`）
-                        // 由此拦截，实现"非法状态表达不出来"的最终保障。
-                        if let Some(all) = self.scope.lookup_fn_all(name) {
-                            if all.len() == 1 {
-                                self.check_call_arg_types(name, &params, args, span)?;
-                            }
+                        // G6（审计缺口）：调用点参数类型检查——单签名与多重载统一校验。
+                        // resolve_fn_overload 已选中唯一签名：
+                        // - 单签名：直接校验实参类型（此前只覆盖此路径）；
+                        // - 多重载精确匹配：实参与形参 `==`，校验天然通过，无副作用；
+                        // - 多重载兼容回退（参数数量唯一匹配但类型不精确）：用
+                        //   types_compatible 保守拦截「确定不兼容」——例如
+                        //   `fn g(x: i64, y: i64)` + `fn g(x: str)` 下 `g(1, "x")`
+                        //   兼容回退选中 (i64,i64)，实参 "x" 确定不兼容，此前漏到
+                        //   运行时且 VM（HashMap 后注册覆盖）/解释器（取第一条同名）
+                        //   两路径行为不一致；统一校验后编译期拦截，两路径一致。
+                        // typestate 场景（`File<Closed>` 传 `File<Open>`）同样由此拦截，
+                        // 实现"非法状态表达不出来"的最终保障。
+                        if let Some(_all) = self.scope.lookup_fn_all(name) {
+                            self.check_call_arg_types(name, &params, args, span)?;
                         }
                         // 跨函数 shape 求解：若 self.functions 中有更精确的 return_type（body lower 后合并的），用它
                         let ret = if let Some(fn_def) = self.functions.iter().find(|f| f.name == name.as_str()) {
