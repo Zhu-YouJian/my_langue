@@ -64,14 +64,20 @@ pub fn run_jit(vm: &mut Vm, name: &str) -> TenthResult<Value> {
     // 运行期不扩容——`vm.jit_table_ptr` 指向表数据区保持稳定。
     // 先克隆/计数再借用 ctx（避免与 `vm.jit_ctx` 的可变借用冲突）。
     // A2：同时克隆全部 chunk（浅拷贝，Rc 共享）供调用点内联读取被调函数字节码。
+    // M2.5-A6：特化签名表（chunk_idx → scalar_sig）与特化指针表。
     let function_map = vm.functions.clone();
     let chunk_count = vm.chunk_count();
     let all_chunks: Vec<Chunk> = (0..chunk_count).map(|i| vm.chunk_at(i).clone()).collect();
+    let chunk_sigs: Vec<Option<context::ChunkSig>> =
+        (0..chunk_count).map(|i| vm.chunk_at(i).scalar_sig.clone()).collect();
     let ctx = vm.jit_ctx.as_mut().unwrap();
     ctx.set_name_to_chunk(function_map);
     ctx.set_all_chunks(all_chunks);
+    ctx.set_chunk_sigs(chunk_sigs);
     ctx.ensure_table(chunk_count);
+    ctx.ensure_spec_table(chunk_count);
     vm.jit_table_ptr = ctx.table_data_ptr();
+    vm.jit_spec_table_ptr = ctx.spec_table_data_ptr();
     let fn_ptr = match ctx.get_or_compile(chunk_idx, &chunk_view) {
         Ok(p) => p,
         Err(_) => return vm.call(name), // compilation failed → fallback

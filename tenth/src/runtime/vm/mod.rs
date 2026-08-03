@@ -71,6 +71,10 @@ pub struct Vm {
     /// 指向 `JitContext.table` 数据区；JIT 机器码按 chunk_idx 索引读取做
     /// 直接调用。表在编译期注册完毕后一次性定容，运行期不扩容，指针稳定。
     pub jit_table_ptr: *mut usize,
+    /// M2.5-A6：JIT 特化函数指针表基址（chunk_idx → 特化入口指针，0 = 未编译）。
+    /// 指向 `JitContext.spec_table` 数据区；特化调用点按 chunk_idx 索引读取做
+    /// 标量寄存器直接调用。与 `jit_table_ptr` 独立——特化入口只被特化调用点使用。
+    pub jit_spec_table_ptr: *mut usize,
     /// 9c：JIT hostcall 报错时携带的行号（`(line, message)`）。
     /// line 由 `set_last_error`/`set_jit_error` 从 `current_line`（JIT translator
     /// 在每个 hostcall 前设置的当前指令源码行号）补入——对齐 VM 的 err_here/with_line。
@@ -138,6 +142,7 @@ impl Vm {
             step_budget: None, deadline_ms: None, fs_sandbox: None,
             jit_ctx: None, last_error: None, current_chunk_idx: 0, current_line: 0,
             jit_table_ptr: std::ptr::null_mut(),
+            jit_spec_table_ptr: std::ptr::null_mut(),
             last_explanation: Vec::new(), tcp_streams: Vec::new(),
             tcp_listeners: Vec::new(),
             udp_sockets: Vec::new(),
@@ -333,6 +338,13 @@ impl Vm {
             // A2：设置全部 chunk 副本（浅拷贝，Rc 共享）供调用点内联读取被调函数字节码。
             // run_jit 已在入口设置，此处防御性重设（慢路径 trampoline 直接编译时保证可用）。
             ctx.set_all_chunks(self.chunks.clone());
+            // A6：特化签名表 + 特化指针表（编译含特化调用点的函数时 translator 读取；
+            // 特化调用点机器码读取 spec 表）。防御性重设，与 run_jit 入口一致。
+            let chunk_sigs: Vec<Option<crate::compile::jit::context::ChunkSig>> =
+                self.chunks.iter().map(|c| c.scalar_sig.clone()).collect();
+            ctx.set_chunk_sigs(chunk_sigs);
+            ctx.ensure_spec_table(self.chunks.len());
+            self.jit_spec_table_ptr = ctx.spec_table_data_ptr();
             ctx.ensure_table(self.chunks.len());
             self.jit_table_ptr = ctx.table_data_ptr();
             match ctx.get_or_compile(chunk_idx, &chunk_view) {
@@ -371,6 +383,107 @@ impl Vm {
             let (line, msg) = self.take_last_error().unwrap_or((None, "JIT 调用失败".into()));
             Err(TenthError::RuntimeError { line, col: None, message: msg })
         }
+    }
+
+    /// M2.5-A6：JIT **特化入口**的宿主侧分派（`host_jit_call_spec` trampoline 调用）。
+    ///
+    /// 语义 = `jit_call_chunk` 的完整解析（native 直名 / globals-FnRef 别名 + 捕获 /
+    /// 用户函数），但对**带标量签名的用户函数 chunk**：编译（或取缓存）**特化入口**
+    /// → 登记进特化指针表 → 参数解包为 i64 → **直接调用特化机器码** → 结果物化为
+    /// Value。以下情况完整回退 `call_with_args`（语义零变化）：
+    /// - native / 闭包别名 / 未定义函数 / 无特化签名（scalar_sig = None）
+    /// - autodiff recording 中（与 run_jit 安全门一致）
+    /// - 参数含非 Int/Bool 值（特化 ABI 只承载 i64，类型不符 → 通用）
+    /// - 特化入口编译失败 / 不可编译（静默错值红线：显式走原错误路径）
+    pub fn jit_call_chunk_spec(&mut self, name: &str, args: &[Value]) -> TenthResult<Value> {
+        // native 直名（与 call_with_args / jit_call_chunk 对齐）
+        if self.natives.contains_key(name) {
+            return self.call_with_args(name, args);
+        }
+        // globals-FnRef 别名解析（与 jit_call_chunk 对齐；捕获值追加为额外实参）
+        let mut extra_captures: Vec<Value> = Vec::new();
+        let callee_name: String = match self.globals.get(name) {
+            Some(Value::FnRef { name: fname, captures, .. }) => {
+                extra_captures = captures.clone();
+                fname.clone()
+            }
+            _ => name.to_string(),
+        };
+        if self.natives.contains_key(&callee_name) {
+            return self.call_with_args(name, args);
+        }
+        let chunk_idx = match self.functions.get(&callee_name) {
+            Some(i) => *i,
+            None => return self.call_with_args(name, args),
+        };
+        if self.is_recording() {
+            return self.call_with_args(name, args);
+        }
+        if self.jit_ctx.is_none() {
+            self.jit_ctx = Some(crate::compile::jit::context::JitContext::new());
+        }
+        // 组装最终实参（闭包捕获追加；无捕获时零拷贝借用）
+        let mut owned_args: Vec<Value> = Vec::new();
+        let all_args: &[Value] = if extra_captures.is_empty() {
+            args
+        } else {
+            owned_args = args.to_vec();
+            owned_args.extend(extra_captures.iter().cloned());
+            &owned_args
+        };
+
+        let chunk_view = self.chunks[chunk_idx].clone();
+        let sig = match chunk_view.scalar_sig.clone() {
+            Some(s) => s,
+            // 无特化签名（native 之外的不可特化 chunk）→ 通用回退
+            None => return self.call_with_args(name, args),
+        };
+        // 特化 ABI 只承载 i64 标量——参数解包；类型不符 → 通用回退
+        let mut i64s: Vec<i64> = Vec::with_capacity(all_args.len());
+        for a in all_args {
+            match a {
+                Value::Int(i, _) => i64s.push(*i),
+                Value::Bool(b) => i64s.push(*b as i64),
+                _ => return self.call_with_args(name, args),
+            }
+        }
+        let fptr: Option<crate::compile::jit::context::JitFnSpec> = {
+            let ctx = self.jit_ctx.as_mut().unwrap();
+            ctx.set_all_chunks(self.chunks.clone());
+            let chunk_sigs: Vec<Option<crate::compile::jit::context::ChunkSig>> =
+                self.chunks.iter().map(|c| c.scalar_sig.clone()).collect();
+            ctx.set_chunk_sigs(chunk_sigs);
+            ctx.ensure_spec_table(self.chunks.len());
+            self.jit_spec_table_ptr = ctx.spec_table_data_ptr();
+            match ctx.get_or_compile_spec(chunk_idx, &chunk_view, &sig) {
+                Ok(f) => {
+                    ctx.set_spec_table_entry(chunk_idx, f as usize);
+                    Some(f)
+                }
+                Err(_) => {
+                    ctx.mark_spec_failed(chunk_idx);
+                    None
+                }
+            }
+        };
+        let fptr = match fptr {
+            Some(f) => f,
+            None => return self.call_with_args(name, args), // 特化编译失败 → 通用回退
+        };
+        // 直接调用特化入口（invoke_jit_spec 内部 catch_unwind，防 panic 跨 FFI）。
+        // current_chunk_idx 已由调用点 try_spec_call 置为 callee_idx，此处保存/恢复
+        // 以自洽（慢路径 trampoline 语义与快路径一致）。
+        let saved_chunk = self.current_chunk_idx;
+        self.current_chunk_idx = chunk_idx;
+        let ret_i64 = unsafe {
+            crate::compile::jit::hostcalls::invoke_jit_spec(fptr, self as *mut Vm, &i64s)
+        };
+        self.current_chunk_idx = saved_chunk;
+        // 特化入口错误经 last_error 传播（调用点 host_check_error 拦截；此处兜底）
+        if let Some((line, msg)) = self.take_last_error() {
+            return Err(TenthError::RuntimeError { line, col: None, message: msg });
+        }
+        Ok(Value::Int(ret_i64, BaseType::I32))
     }
 
     // ── Public arithmetic/method wrappers (for JIT hostcalls) ──────────────

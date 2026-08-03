@@ -87,6 +87,17 @@ impl BytecodeCompiler {
         self.fn_name = func.name.clone();
         self.chunk.num_args = func.params.len();
         self.current_fn_args = func.params.len();
+        // M2.5-A6：标量 ABI 签名推导（纯 i64 标量函数 → 特化入口）。默认参数
+        // 会导致调用点实参个数 < 声明参数个数（特化 ABI 无法表达），保守排除。
+        self.chunk.scalar_sig = if func.param_defaults.iter().any(|d| d.is_some()) {
+            None
+        } else {
+            crate::compile::jit::context::ChunkSig::from_hir(
+                &func.params,
+                &func.return_type,
+                &func.param_variadic,
+            )
+        };
         for (name, _) in &func.params {
             self.locals.push(name.clone());
         }

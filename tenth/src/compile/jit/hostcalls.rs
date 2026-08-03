@@ -62,6 +62,47 @@ pub unsafe fn invoke_jit(
     }
 }
 
+/// A6：调用已编译的**特化入口**函数指针。
+///
+/// # Safety
+/// `fn_ptr` 必须指向签名 `extern "C" fn(*mut Vm, i64 x 8) -> i64` 的合法函数。
+///
+/// 用 `catch_unwind` 包裹（防 hostcall panic 跨 FFI）；捕获到 panic → 写
+/// `vm.last_error` 并返回 0（调用点 `host_check_error` 会拦截）。
+pub unsafe fn invoke_jit_spec(
+    fn_ptr: crate::compile::jit::context::JitFnSpec,
+    vm: *mut Vm,
+    args: &[i64],
+) -> i64 {
+    let mut a = [0i64; 8];
+    for (i, v) in args.iter().enumerate() {
+        if i < 8 {
+            a[i] = *v;
+        }
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        unsafe {
+            fn_ptr(vm, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7])
+        }
+    }));
+    match result {
+        Ok(r) => r,
+        Err(payload) => {
+            let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                (*s).to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "JIT spec hostcall panic (non-string payload)".to_string()
+            };
+            if !vm.is_null() {
+                unsafe { (*vm).set_last_error(format!("JIT panic: {}", msg)); }
+            }
+            0
+        }
+    }
+}
+
 /// 安全地从裸指针构造切片。若 `count` 超过 `MAX_HOSTCALL_ARGS` 或 `ptr` 为空，
 /// 返回空切片（调用方应已写好错误处理路径）。
 ///
@@ -261,6 +302,49 @@ unsafe extern "C" fn host_jit_call(
     match vm.jit_call_chunk(&name, args) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
+    }
+}
+
+/// A6：特化 ABI 慢路径 trampoline（目标特化入口尚未编译时）。
+///
+/// 语义 = `host_jit_call` 的特化变体：目标须为带标量签名的用户函数 chunk——
+/// 编译（或取缓存）**特化入口** → 登记进特化指针表 → 直接调用特化机器码
+/// （参数解包为 i64 寄存器、返回物化为 Value）→ 写 out。编译失败/无签名/
+/// native/闭包别名 → 完整回退 `call_with_args`（语义零变化，正确性优先）。
+///
+/// 快速路径（特化入口已编译）由 translator 的 `try_spec_call` 直接
+/// `call_indirect`，不经过本 trampoline。
+unsafe extern "C" fn host_jit_call_spec(
+    vm: *mut Vm, name_idx: u64, arg_count: u64, args_ptr: *const Value, out: *mut Value,
+) {
+    let vm = unsafe { &mut *vm };
+    let name = vm.string_at(name_idx as usize).unwrap_or_default();
+    let args = unsafe { safe_slice(args_ptr, arg_count) };
+    match vm.jit_call_chunk_spec(&name, args) {
+        Ok(v) => std::ptr::write(out, v),
+        Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
+    }
+}
+
+/// A6：从 Value 解包 i64 载荷（特化函数返回值/参数解包）。
+///
+/// 安全（静默错值红线）：
+/// - `Int` → 载荷；`Bool` → 0/1
+/// - `Unit` → 0（错误路径：被调方已 set last_error，调用点 host_check_error 会拦截）
+/// - 其余类型（含 Float）→ 类型不符：若无待处理错误则显式报错，返回 0
+///   （不静默截断——i64 特化函数返回 Float 是类型系统漏洞，响亮报错优于错值）
+unsafe extern "C" fn host_value_to_i64(vm: *mut Vm, v: *const Value) -> i64 {
+    let vm = unsafe { &mut *vm };
+    match unsafe { &*v } {
+        Value::Int(i, _) => *i,
+        Value::Bool(b) => *b as i64,
+        Value::Unit => 0,
+        other => {
+            if !vm.has_last_error() {
+                vm.set_last_error(format!("JIT 特化 ABI：期望 i64 标量，实际 {:?}", other));
+            }
+            0
+        }
     }
 }
 
@@ -826,6 +910,8 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
         ("host_gte", host_gte as usize),
         ("host_call", host_call as usize),
         ("host_jit_call", host_jit_call as usize),
+        ("host_jit_call_spec", host_jit_call_spec as usize),
+        ("host_value_to_i64", host_value_to_i64 as usize),
         ("host_call_indirect", host_call_indirect as usize),
         ("host_method_call", host_method_call as usize),
         ("host_make_vec", host_make_vec as usize),

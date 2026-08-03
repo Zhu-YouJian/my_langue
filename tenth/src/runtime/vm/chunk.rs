@@ -27,10 +27,23 @@ pub struct Chunk {
     pub lines: Rc<Vec<(u32, u32)>>,
     pub num_locals: usize,
     pub num_args: usize,
+    /// M2.5-A6：函数标量 ABI 签名（JIT 特化调用用；None = 非特化）。
+    /// 由 BytecodeCompiler 编译时从 HIR 签名推导（纯 i64 标量函数）；闭包/
+    /// main_expr/globals chunk 保持 None。运行期只读。
+    pub scalar_sig: Option<crate::compile::jit::context::ChunkSig>,
 }
 
 impl Chunk {
-    pub fn new() -> Self { Chunk { code: Rc::new(vec![]), strings: Rc::new(vec![]), lines: Rc::new(vec![]), num_locals: 0, num_args: 0 } }
+    pub fn new() -> Self {
+        Chunk {
+            code: Rc::new(vec![]),
+            strings: Rc::new(vec![]),
+            lines: Rc::new(vec![]),
+            num_locals: 0,
+            num_args: 0,
+            scalar_sig: None,
+        }
+    }
 
     /// 记录当前指令偏移对应的源码行号（供运行时错误定位）。
     /// 去重：与最后一条行号相同则跳过（同一行内的连续语句/表达式只记一条）。

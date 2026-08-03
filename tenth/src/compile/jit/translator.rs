@@ -18,6 +18,7 @@ use cranelift_module::{Linkage, Module};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem::size_of;
 
+use crate::compile::jit::context::{ChunkSig, ScalarAbiKind, MAX_SPEC_ARGS};
 use crate::runtime::vm::{Chunk, Op, Vm};
 use crate::runtime::value::Value;
 
@@ -82,25 +83,95 @@ const MAX_STACK_DEPTH: u32 = 64;
 /// 该值同时作为内联栈槽数的上界（每个 push 类指令至多使栈深 +1）。
 const INLINE_MAX_INSTR: usize = 16;
 
+// ── M2.5-A6：特化 ABI（scalar-specialized call）────────────────────────────
+
+/// CallN/Call 目标是否可走特化 ABI（**分析期与发射期共用**，防静默错值漂移）。
+///
+/// v1 条件（保守）：
+/// - 目标 chunk 有特化签名（chunk_sigs[callee] = Some）且**纯 i64 参数 + i64 返回**
+/// - 实参个数 = 签名参数个数 = chunk 声明参数个数（防默认参数/可变参数错位）
+/// - 实参个数 ≤ MAX_SPEC_ARGS
+///
+/// 注意：此谓词只判「目标侧资格」；调用侧「实参是否全为 I32 标量槽」由
+/// 分析期/发射期各自的栈模型判定（二者对应同一运行时状态）。
+fn spec_target_qualifies(
+    name_to_chunk: &[Option<usize>],
+    chunk_sigs: &[Option<ChunkSig>],
+    all_chunks: &[Chunk],
+    name_i: usize,
+    n: usize,
+) -> bool {
+    if n > MAX_SPEC_ARGS {
+        return false;
+    }
+    let callee_idx = match name_to_chunk.get(name_i).copied().flatten() {
+        Some(i) => i,
+        None => return false,
+    };
+    let sig = match chunk_sigs.get(callee_idx) {
+        Some(Some(s)) => s,
+        _ => return false,
+    };
+    // v1：仅 i64 参数 + i64 返回（f64 特化留待 v2 同机制）
+    if sig.ret_kind != Some(ScalarAbiKind::I64) {
+        return false;
+    }
+    if sig.param_kinds.len() != n {
+        return false;
+    }
+    if !sig.param_kinds.iter().all(|k| *k == ScalarAbiKind::I64) {
+        return false;
+    }
+    // 参数个数与 chunk 声明一致（防默认参数调用点实参 < 声明参数数）
+    match all_chunks.get(callee_idx) {
+        Some(c) if c.num_args == n => true,
+        _ => false,
+    }
+}
+
+/// A2b 标量分析结果（块入口局部种类 + 各 CallN 是否预测走特化）。
+struct ScalarAnalysis {
+    /// leader IP → 块入口处各局部种类（按局部索引）。
+    entry_kinds: HashMap<usize, Vec<ScalarKind>>,
+    /// CallN/Call 指令偏移 → 分析期是否预测特化（发射期防漂移护栏）。
+    call_spec_results: HashMap<usize, bool>,
+}
+
 pub fn translate<M: Module>(
     module: &mut M,
     chunk_idx: usize,
     chunk: &Chunk,
     name_to_chunk: &[Option<usize>],
     all_chunks: &[Chunk],
+    chunk_sigs: &[Option<ChunkSig>],
+    spec: Option<&ChunkSig>,
 ) -> Result<cranelift_module::FuncId, String> {
+    let is_spec = spec.is_some();
     let mut ctx = module.make_context();
     let mut fn_ctx = FunctionBuilderContext::new();
 
     let ptr = module.target_config().pointer_type();
     ctx.func.signature.params.push(AbiParam::new(ptr)); // vm
-    ctx.func.signature.params.push(AbiParam::new(ptr)); // args
-    ctx.func.signature.params.push(AbiParam::new(ptr)); // n (usize, pointer-sized)
-    ctx.func.signature.params.push(AbiParam::new(ptr)); // out
-    ctx.func.signature.returns.push(AbiParam::new(types::I8)); // bool
+    if is_spec {
+        // M2.5-A6：特化入口签名 `(vm, i64 x MAX_SPEC_ARGS) -> i64`——参数/返回走寄存器。
+        for _ in 0..MAX_SPEC_ARGS {
+            ctx.func.signature.params.push(AbiParam::new(types::I64));
+        }
+        ctx.func.signature.returns.push(AbiParam::new(types::I64)); // 标量返回
+    } else {
+        ctx.func.signature.params.push(AbiParam::new(ptr)); // args
+        ctx.func.signature.params.push(AbiParam::new(ptr)); // n (usize, pointer-sized)
+        ctx.func.signature.params.push(AbiParam::new(ptr)); // out
+        ctx.func.signature.returns.push(AbiParam::new(types::I8)); // bool
+    }
 
+    let func_name = if is_spec {
+        format!("__tenth_jit_spec_{}", chunk_idx)
+    } else {
+        format!("__tenth_jit_chunk_{}", chunk_idx)
+    };
     let func_id = module.declare_function(
-        &format!("__tenth_jit_chunk_{}", chunk_idx),
+        &func_name,
         Linkage::Local,
         &ctx.func.signature,
     ).map_err(|e| format!("declare_function: {e}"))?;
@@ -113,9 +184,18 @@ pub fn translate<M: Module>(
         builder.seal_block(entry);
 
         let vm_param = builder.block_params(entry)[0];
-        let args_ptr = builder.block_params(entry)[1];
-        let _args_n = builder.block_params(entry)[2];
-        let out_ptr = builder.block_params(entry)[3];
+        let (args_ptr, out_ptr, spec_args) = if is_spec {
+            // 特化入口：参数走寄存器；args/out 指针未用（占位 0）。
+            let zero = builder.ins().iconst(ptr, 0);
+            let spec_args: Vec<Value_> =
+                (0..MAX_SPEC_ARGS).map(|i| builder.block_params(entry)[1 + i]).collect();
+            (zero, zero, spec_args)
+        } else {
+            let args_ptr = builder.block_params(entry)[1];
+            let _args_n = builder.block_params(entry)[2];
+            let out_ptr = builder.block_params(entry)[3];
+            (args_ptr, out_ptr, Vec::new())
+        };
 
         let stack_slot = builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
@@ -130,6 +210,7 @@ pub fn translate<M: Module>(
             chunk,
             name_to_chunk,
             all_chunks,
+            chunk_sigs,
             sp: 0,
             stack_slot,
             locals: HashMap::new(),
@@ -148,6 +229,10 @@ pub fn translate<M: Module>(
             local_scalars: HashMap::new(),
             block_entry_kinds: HashMap::new(),
             cur_local_kinds: Vec::new(),
+            spec_mode: is_spec,
+            spec_args,
+            spec_sig: spec.cloned(),
+            call_spec_results: HashMap::new(),
         };
         t.translate_body()?;
         // translate_body calls builder.finalize() internally (consuming it).
@@ -168,6 +253,8 @@ struct Translator<'a, M: Module> {
     /// A2：全部 chunk（调用点内联时读取被调函数字节码）。chunk 索引与
     /// `name_to_chunk` 解析出的索引对齐（即 `Vm.chunks` 索引，`functions` 映射一致）。
     all_chunks: &'a [Chunk],
+    /// M2.5-A6：chunk_idx → 特化签名（None = 非特化）。调用点判定特化 ABI 资格。
+    chunk_sigs: &'a [Option<ChunkSig>],
     /// Compile-time stack pointer (byte offset into `stack_slot`).
     sp: i32,
     /// Virtual stack area — one large slot holding up to MAX_STACK_DEPTH Values.
@@ -204,6 +291,16 @@ struct Translator<'a, M: Module> {
     block_entry_kinds: HashMap<usize, Vec<ScalarKind>>,
     /// A2b：当前块内的局部种类（块入口设为该块 entry kinds，块内 Store 演化）。
     cur_local_kinds: Vec<ScalarKind>,
+    /// M2.5-A6：本函数是否为特化入口（签名 `(vm, i64 x MAX_SPEC_ARGS) -> i64`）。
+    /// 特化模式：入口参数走寄存器、Ret/错误返回哨兵 i64。
+    spec_mode: bool,
+    /// M2.5-A6：特化入口的寄存器参数（长度 = MAX_SPEC_ARGS，未用参数为 0）。
+    spec_args: Vec<Value_>,
+    /// M2.5-A6：本函数特化签名（spec_mode 时 Some）。
+    spec_sig: Option<ChunkSig>,
+    /// M2.5-A6：分析期预测各 CallN/Call 是否走特化（发射期防漂移护栏：预测特化
+    /// 而发射期不可特化 → Err → 整函数回退解释器，杜绝静默错值）。
+    call_spec_results: HashMap<usize, bool>,
 }
 
 // Cranelift re-exports — `Value` clashes with our runtime `Value`, so alias.
@@ -218,7 +315,29 @@ impl<'a, M: Module> Translator<'a, M> {
             self.blocks.insert(ip, blk);
         }
 
-        // ── Initialise locals: copy args from args_ptr ─────────────────────
+        // ── A2b/A6：局部变量标量种类分析（跨块 must 分析）先行 ──────
+        // 分析成功 → 启用标量专用化（Load/Store/算术/比较走原生路径）；
+        // 失败（含分析未知 opcode）→ 全函数保持既有通用路径（零行为变化）。
+        // A6 特化入口：参数种类**预置**（seed）——i64 参数视为 I32 标量 →
+        // 函数体参数 Load/算术走原生路径（fib 递归全链路标量的关键）。
+        let seed: Option<Vec<ScalarKind>> = if self.spec_mode {
+            let sig = self.spec_sig.as_ref().unwrap();
+            Some(sig.param_kinds.iter().map(|k| match k {
+                ScalarAbiKind::I64 => ScalarKind::I32,
+                ScalarAbiKind::F64 => ScalarKind::F64,
+            }).collect())
+        } else {
+            None
+        };
+        if let Some(analysis) = self.analyze_scalar_kinds(seed.as_deref()) {
+            self.scalar_enabled = true;
+            self.block_entry_kinds = analysis.entry_kinds;
+            self.call_spec_results = analysis.call_spec_results;
+            let n = self.chunk.num_locals.max(self.chunk.num_args);
+            self.cur_local_kinds = vec![ScalarKind::Unknown; n];
+        }
+
+        // ── Initialise locals ─────────────────────────────────────────────
         let num_args = self.chunk.num_args;
         let num_locals = self.chunk.num_locals.max(num_args);
         for i in 0..num_locals {
@@ -229,20 +348,15 @@ impl<'a, M: Module> Translator<'a, M> {
             ));
             self.locals.insert(i, slot);
         }
-        for i in 0..num_args {
-            let dst = self.locals[&i];
-            let src_off = (i as i32) * (VALUE_SIZE as i32);
-            self.copy_ptr_to_slot(self.args_ptr, src_off, dst, 0);
-        }
-
-        // ── A2b：局部变量标量种类分析（跨块 must 分析）──────────────
-        // 分析成功 → 启用标量专用化（Load/Store/算术/比较走原生路径）；
-        // 失败（含分析未知 opcode）→ 全函数保持既有通用路径（零行为变化）。
-        if let Some(kinds) = self.analyze_scalar_kinds() {
-            self.scalar_enabled = true;
-            self.block_entry_kinds = kinds;
-            let n = self.chunk.num_locals.max(self.chunk.num_args);
-            self.cur_local_kinds = vec![ScalarKind::Unknown; n];
+        if self.spec_mode {
+            // A6 特化入口：寄存器参数 → 局部标量槽（8B）+ 按需物化 Value 槽。
+            self.init_spec_args();
+        } else {
+            for i in 0..num_args {
+                let dst = self.locals[&i];
+                let src_off = (i as i32) * (VALUE_SIZE as i32);
+                self.copy_ptr_to_slot(self.args_ptr, src_off, dst, 0);
+            }
         }
 
         // ── Emit code for each instruction ─────────────────────────────────
@@ -315,15 +429,18 @@ impl<'a, M: Module> Translator<'a, M> {
         let mut ip = 0usize;
         let len = self.chunk.code.len();
         while ip < len {
-            let _start = ip;
+            let start = ip;
             let op = self.chunk.read_op(&mut ip);
             if let Op::Jump(o) | Op::JmpFalse(o) | Op::JmpTrue(o) = op {
                 let target = ((ip as i64) + (o as i64)) as usize;
                 leaders.push(target);
                 leaders.push(ip); // instruction after the jump is a leader
             }
+            // A6 修复：Ret 的 leader 应为其**起始偏移**（此前记录结束偏移 → emit 循环
+            // 在 Ret 起始处查不到块 → TailCall 后的尾 Ret 被发射进已终止块 → verifier
+            // 双重 return 错误；通用路径被整函数 fallback 掩盖）。
             if matches!(op, Op::Ret) {
-                leaders.push(ip);
+                leaders.push(start);
             }
         }
         leaders.sort();
@@ -342,7 +459,14 @@ impl<'a, M: Module> Translator<'a, M> {
     /// 顶 Top 出发，经 meet（跨前驱求交）收敛到最大不动点（GFP）。栈值在块内按
     /// 确定性模拟；通用 opcode 清空栈标量信息（与发射端 `call_hostcall_*` 清栈
     /// 一致）；块入口的栈值不可知（视 Unknown，安全保守）。
-    fn analyze_scalar_kinds(&self) -> Option<HashMap<usize, Vec<ScalarKind>>> {
+    ///
+    /// M2.5-A6：`seed` 为特化入口的参数种类预置（块 0 前 num_args 个局部据此
+    /// 初始化，其余 Unknown）。同时记录各 CallN/Call 是否预测走特化 ABI
+    /// （`call_spec_results`，发射期防漂移护栏）。
+    fn analyze_scalar_kinds(
+        &self,
+        seed: Option<&[ScalarKind]>,
+    ) -> Option<ScalarAnalysis> {
         use ScalarKind::*;
         use Op::*;
         let chunk = self.chunk;
@@ -360,7 +484,7 @@ impl<'a, M: Module> Translator<'a, M> {
             return None;
         }
 
-        // leaders（与 find_leaders 一致）
+        // leaders（与 find_leaders 一致；A6 修复：Ret 的 leader 为起始偏移）
         let mut leaders = vec![0usize];
         for &(ip, ref op, next) in &insns {
             if let Jump(o) | JmpFalse(o) | JmpTrue(o) = op {
@@ -372,7 +496,7 @@ impl<'a, M: Module> Translator<'a, M> {
                 leaders.push(next);
             }
             if matches!(op, Ret) {
-                leaders.push(next);
+                leaders.push(ip);
             }
         }
         // 仅保留「指令起点」的 leader：Ret 后的 `next` 可能为 code.len()（函数末尾），
@@ -442,12 +566,17 @@ impl<'a, M: Module> Translator<'a, M> {
         }
 
         // 转移函数：模拟块 bi（入口种类 → 出口种类）。None = 分析未知 opcode。
+        #[allow(clippy::too_many_arguments)]
         fn transfer(
             insns: &[(usize, Op, usize)],
             block_first: &[usize],
             nblocks: usize,
             bi: usize,
             entry: &[ScalarKind],
+            call_spec: &mut HashMap<usize, bool>,
+            name_to_chunk: &[Option<usize>],
+            chunk_sigs: &[Option<ChunkSig>],
+            all_chunks: &[Chunk],
         ) -> Option<Vec<ScalarKind>> {
             use ScalarKind::*;
             use Op::*;
@@ -456,7 +585,7 @@ impl<'a, M: Module> Translator<'a, M> {
             let end = if bi + 1 < nblocks { block_first[bi + 1] } else { insns.len() };
             let start = block_first[bi];
             for idx in start..end {
-                let (_, ref op, _) = insns[idx];
+                let (ip, ref op, _) = insns[idx];
                 match op {
                     PushInt(_) => stack.push(I32),
                     PushFloat(_) => stack.push(F64),
@@ -529,16 +658,36 @@ impl<'a, M: Module> Translator<'a, M> {
                         stack.pop();
                         clear_stack(&mut stack);
                     }
-                    Call(_) => {
-                        stack.push(Unknown);
-                        clear_stack(&mut stack);
-                    }
-                    CallN(_, n) => {
-                        for _ in 0..*n {
-                            stack.pop();
+                    Call(i) => {
+                        // M2.5-A6：目标可特化（0 参纯 i64 返回）→ 结果预测为 I32；
+                        // 否则 Unknown + 清栈（与发射端 host_call 失效一致）。
+                        let spec = spec_target_qualifies(name_to_chunk, chunk_sigs, all_chunks, *i, 0);
+                        call_spec.insert(ip, spec);
+                        if spec {
+                            stack.push(I32);
+                        } else {
+                            stack.push(Unknown);
+                            clear_stack(&mut stack);
                         }
-                        stack.push(Unknown);
-                        clear_stack(&mut stack);
+                    }
+                    CallN(i, n) => {
+                        // M2.5-A6：实参全为 I32 且目标可特化 → 结果预测 I32（特化调用
+                        // 后接原生 Add 的关键）；否则 Unknown + 清栈。
+                        let mut all_i32 = true;
+                        for _ in 0..*n {
+                            if stack.pop().unwrap_or(Unknown) != I32 {
+                                all_i32 = false;
+                            }
+                        }
+                        let spec = all_i32
+                            && spec_target_qualifies(name_to_chunk, chunk_sigs, all_chunks, *i, *n as usize);
+                        call_spec.insert(ip, spec);
+                        if spec {
+                            stack.push(I32);
+                        } else {
+                            stack.push(Unknown);
+                            clear_stack(&mut stack);
+                        }
                     }
                     MethodCall(_, n) => {
                         for _ in 0..(*n + 1) {
@@ -715,15 +864,28 @@ impl<'a, M: Module> Translator<'a, M> {
             Unknown
         }
 
-        // GFP：block0 = Unknown（参数/未初始化）；其余 = Top（乐观顶）
+        // GFP：block0 = seed（特化入口预置参数种类）或 Unknown（参数/未初始化）；
+        // 其余 = Top（乐观顶）
         let mut entry_kinds: Vec<Vec<ScalarKind>> = vec![vec![Top; num_locals]; nblocks];
-        entry_kinds[0] = vec![Unknown; num_locals];
+        let mut e0 = vec![Unknown; num_locals];
+        if let Some(seed) = seed {
+            for (i, k) in seed.iter().enumerate() {
+                if i < num_locals {
+                    e0[i] = *k;
+                }
+            }
+        }
+        entry_kinds[0] = e0;
+        let mut call_spec: HashMap<usize, bool> = HashMap::new();
         let mut worklist: VecDeque<usize> = (0..nblocks).collect();
         let mut in_work = vec![true; nblocks];
         while let Some(bi) = worklist.pop_front() {
             in_work[bi] = false;
             let entry = entry_kinds[bi].clone();
-            let exit = match transfer(&insns, &block_first, nblocks, bi, &entry) {
+            let exit = match transfer(
+                &insns, &block_first, nblocks, bi, &entry,
+                &mut call_spec, self.name_to_chunk, self.chunk_sigs, self.all_chunks,
+            ) {
                 Some(e) => e,
                 None => return None,
             };
@@ -753,7 +915,10 @@ impl<'a, M: Module> Translator<'a, M> {
         for (bi, &lip) in leaders.iter().enumerate() {
             result.insert(lip, entry_kinds[bi].clone());
         }
-        Some(result)
+        Some(ScalarAnalysis {
+            entry_kinds: result,
+            call_spec_results: call_spec,
+        })
     }
 
     // ── A2b：标量辅助（槽 / 清空 / 物化 / 原生运算）────────────────────────
@@ -793,6 +958,152 @@ impl<'a, M: Module> Translator<'a, M> {
     /// 清空单个栈偏移的标量跟踪。
     fn clear_stack_scalar_at(&mut self, off: i32) {
         self.stack_scalars.remove(&off);
+    }
+
+    // ── M2.5-A6：特化 ABI 辅助 ──────────────────────────────────────────────
+
+    /// 从标量槽读 8 字节为 i64（I32 种类槽；特化 ABI 以 i64 寄存器传参）。
+    fn load_scalar_i64(&mut self, slot: StackSlot) -> Value_ {
+        self.builder.ins().stack_load(types::I64, slot, 0)
+    }
+
+    /// 写 i64 到标量槽（8 字节；特化返回/参数）。
+    fn store_scalar_i64(&mut self, slot: StackSlot, v: Value_) {
+        self.builder.ins().stack_store(v, slot, 0);
+    }
+
+    /// `fn(vm, *const Value) -> i64` — 从 Value 解包 i64（特化返回/慢路径结果）。
+    fn call_hostcall_val_ret_i64(&mut self, name: &str, arg: Value_) -> Value_ {
+        self.invalidate_stack_scalars();
+        self.emit_line_hint();
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[self.ptr], Some(types::I64));
+        let call = self.builder.ins().call_indirect(sig, callee, &[self.vm, arg]);
+        self.builder.inst_results(call)[0]
+    }
+
+    /// A6：特化慢路径 hostcall（`host_jit_call_spec`）。**不失效栈标量**——
+    /// 被调方只写 out 槽/VM 内部，不触碰调用方标量槽。失效会清除**其他活标量**
+    /// 的跟踪 → 后续通用消费者读陈旧 Value 槽 → 静默错值（A6 递归调试发现：
+    /// 递归第 1 个 fib 结果在第二次调用后跟踪被清 → Add 读错值）。
+    fn call_hostcall_spec_call(&mut self, name: &str, name_idx: u64, arg_count: u64, args: Value_, out: Value_) {
+        self.emit_line_hint();
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[types::I64, types::I64, self.ptr, self.ptr], None);
+        let a1 = self.builder.ins().iconst(types::I64, name_idx as i64);
+        let a2 = self.builder.ins().iconst(types::I64, arg_count as i64);
+        self.builder.ins().call_indirect(sig, callee, &[self.vm, a1, a2, args, out]);
+    }
+
+    /// A6：特化返回值解包（`host_value_to_i64`）。**不失效栈标量**（同 `call_hostcall_spec_call`）。
+    fn call_hostcall_val_ret_i64_noinv(&mut self, name: &str, arg: Value_) -> Value_ {
+        self.emit_line_hint();
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[self.ptr], Some(types::I64));
+        let call = self.builder.ins().call_indirect(sig, callee, &[self.vm, arg]);
+        self.builder.inst_results(call)[0]
+    }
+
+    /// A6：特化调用后的错误检查（`host_check_error`）。**不失效栈标量**（同上）。
+    fn call_hostcall_check_error(&mut self) -> Value_ {
+        self.emit_line_hint();
+        let callee = self.hostcall_addr("host_check_error").unwrap();
+        let sig = self.import_sig(&[], Some(types::I8));
+        let call = self.builder.ins().call_indirect(sig, callee, &[self.vm]);
+        self.builder.inst_results(call)[0]
+    }
+
+    /// `fn(vm, i64, *mut Value)` — 写标量 Value 到任意地址（特化入口参数物化）。
+    fn call_hostcall_i64_ptr(&mut self, name: &str, arg: Value_, out: Value_) {
+        self.invalidate_stack_scalars();
+        self.emit_line_hint();
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[types::I64, self.ptr], None);
+        self.builder.ins().call_indirect(sig, callee, &[self.vm, arg, out]);
+    }
+
+    /// A6：特化入口——寄存器参数写入局部标量槽（8B）+ 按需物化 Value 槽。
+    ///
+    /// Value 槽物化条件（静默错值红线）：标量分析失败（全通用）或任一块入口
+    /// 该局部为 Unknown（存在经通用路径读取的可能）→ 必须物化；全部块入口
+    /// 均为标量 → 只写标量槽（Value 槽永不读取，零 hostcall）。
+    fn init_spec_args(&mut self) {
+        // 先克隆参数种类（避免与后续 &mut self 调用冲突）
+        let kinds: Vec<ScalarKind> = {
+            let sig = self.spec_sig.as_ref().unwrap();
+            sig.param_kinds.iter().map(|k| match k {
+                ScalarAbiKind::I64 => ScalarKind::I32,
+                ScalarAbiKind::F64 => ScalarKind::F64,
+            }).collect()
+        };
+        let num_args = self.chunk.num_args.min(self.spec_args.len());
+        for i in 0..num_args {
+            let reg = self.spec_args[i];
+            let kind = match kinds.get(i) {
+                Some(k) => *k,
+                None => continue, // 防御：签名参数数异常
+            };
+            if self.scalar_enabled {
+                let lslot = self.local_scalar_slot(i, kind);
+                self.store_scalar_i64(lslot, reg);
+            }
+            if self.spec_param_needs_value(i) {
+                let lval = self.locals[&i];
+                let lval_addr = self.builder.ins().stack_addr(self.ptr, lval, 0);
+                match kind {
+                    ScalarKind::I32 => {
+                        self.call_hostcall_i64_ptr("host_make_int", reg, lval_addr);
+                    }
+                    ScalarKind::F64 => {
+                        // v2：f64 位模式 → host_make_float（v1 无 f64 特化，防御）
+                        self.call_hostcall_i64_ptr("host_make_float", reg, lval_addr);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// A6：特化入口参数 i 的 Value 槽是否需要物化。
+    fn spec_param_needs_value(&self, i: usize) -> bool {
+        if !self.scalar_enabled {
+            return true; // 分析失败 → 全通用 → 所有参数 Value 槽必须有效
+        }
+        for (_, entry) in self.block_entry_kinds.iter() {
+            match entry.get(i) {
+                Some(k) if matches!(k, ScalarKind::I32 | ScalarKind::F64 | ScalarKind::Bool) => {}
+                _ => return true, // Unknown/Top/缺失 → 保守物化
+            }
+        }
+        false
+    }
+
+    /// 按本函数返回约定返回「错误标志」：通用 → ok=0（I8）；特化 → 哨兵 0（I64）。
+    /// 用于所有错误提前中止路径（B2 / 溢出 / 除零等），last_error 由 run_jit surface。
+    fn emit_fn_return_error(&mut self) {
+        if self.spec_mode {
+            let v = self.builder.ins().iconst(types::I64, 0);
+            self.builder.ins().return_(&[v]);
+        } else {
+            let ok = self.builder.ins().iconst(types::I8, 0);
+            self.builder.ins().return_(&[ok]);
+        }
+        self.terminated = true;
+    }
+
+    /// 把当前栈顶（`self.sp` 处）值作为函数返回值返回：通用 → 写 out_ptr + ok=1；
+    /// 特化 → 解包 i64 寄存器返回。用于 TailCall/TailCallClosure/Try 提前返回路径。
+    fn emit_return_top(&mut self) {
+        if self.spec_mode {
+            let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
+            let v = self.call_hostcall_val_ret_i64("host_value_to_i64", addr);
+            self.builder.ins().return_(&[v]);
+        } else {
+            self.copy_stack_to_ptr(self.sp, self.out_ptr, 0);
+            let ok = self.builder.ins().iconst(types::I8, 1);
+            self.builder.ins().return_(&[ok]);
+        }
+        self.terminated = true;
     }
 
     /// 低层物化单个栈偏移（写 Value 槽，若为标量）。用**非失效**的原始调用发射
@@ -1071,8 +1382,8 @@ impl<'a, M: Module> Translator<'a, M> {
                 NativeErr::DivZero => self.call_hostcall_err_set("host_set_div_zero"),
                 NativeErr::ModZero => self.call_hostcall_err_set("host_set_mod_zero"),
             }
-            let ok_false = self.builder.ins().iconst(types::I8, 0);
-            self.builder.ins().return_(&[ok_false]);
+            // 按本函数返回约定中止（通用 ok=0 / 特化哨兵 0）；last_error 由 run_jit surface
+            self.emit_fn_return_error();
             self.builder.switch_to_block(cont_blk);
             self.builder.seal_block(cont_blk);
         }
@@ -1455,31 +1766,39 @@ impl<'a, M: Module> Translator<'a, M> {
                 let out = self.stack_addr_at_sp();
                 let null_ptr = self.builder.ins().iconst(self.ptr, 0);
                 // A1：目标为已注册用户函数 → JIT-to-JIT 直接调用（不再逃逸解释器）。
-                if let Some(callee_idx) = self.name_to_chunk.get(i).copied().flatten() {
-                    self.emit_direct_call(callee_idx, i, 0, null_ptr, out)?;
+                let spec = if let Some(callee_idx) = self.name_to_chunk.get(i).copied().flatten() {
+                    self.emit_direct_call(callee_idx, i, 0, null_ptr, out, self.sp, op_start)?
                 } else {
                     self.call_hostcall_call("host_call", i as u64, 0, null_ptr, out);
-                }
+                    false
+                };
                 // A2b：调用结果写 `out`（Value）——清除该偏移的标量跟踪（参数物化
                 // 保留了旧标量跟踪，调用后指向过期值 → 静默错值红线）。
-                self.clear_stack_scalar_at(self.sp);
+                // A6：特化路径结果在标量槽（8B），跟踪已建立——不清除。
+                if !spec {
+                    self.clear_stack_scalar_at(self.sp);
+                }
                 self.bump_sp()?;
             }
             CallN(i, n) => {
                 // Args are at [sp - n*VS, sp). Pop them, then out is at sp.
                 self.sp -= (n as i32) * (VALUE_SIZE as i32);
-                // A2b：物化参数（Value 槽有效供被调函数读取）。
-                self.materialize_stack_range(self.sp, n as usize);
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 // A1：目标为已注册用户函数 → JIT-to-JIT 直接调用（不再逃逸解释器）。
-                if let Some(callee_idx) = self.name_to_chunk.get(i).copied().flatten() {
-                    self.emit_direct_call(callee_idx, i, n as u64, args_addr, out)?;
+                let spec = if let Some(callee_idx) = self.name_to_chunk.get(i).copied().flatten() {
+                    self.emit_direct_call(callee_idx, i, n as u64, args_addr, out, self.sp, op_start)?
                 } else {
+                    // A2b：物化参数（Value 槽有效供被调函数读取）。
+                    self.materialize_stack_range(self.sp, n as usize);
                     self.call_hostcall_call("host_call", i as u64, n as u64, args_addr, out);
-                }
+                    false
+                };
                 // A2b：调用结果写 `out`（Value）——清除该偏移的标量跟踪。
-                self.clear_stack_scalar_at(self.sp);
+                // A6：特化路径结果在标量槽（8B），跟踪已建立——不清除。
+                if !spec {
+                    self.clear_stack_scalar_at(self.sp);
+                }
                 self.bump_sp()?;
             }
             CallClosure(n) => {
@@ -1492,18 +1811,17 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.call_hostcall_make_n("host_call_indirect", (n + 1) as u64, args_addr, out);
                 self.bump_sp()?;
                 // B2: 检查 host_call_indirect 是否设置了错误（如「期望可调用值」/未定义函数）。
-                // 若有错误，立即返回 ok=false，让 run_jit 读取 last_error 并触发 fallback/报错，
+                // 若有错误，立即返回按约定中止（run_jit 读取 last_error 并触发 fallback/报错），
                 // 避免错误延迟到 run_jit 末尾才浮出（复用 MethodCall 的 B2 模式）。
                 let err_flag = self.call_hostcall_vm_ret_u8("host_check_error");
                 let has_err = self.builder.ins().icmp_imm(IntCC::NotEqual, err_flag, 0);
                 let err_blk = self.builder.create_block();
                 let cont_blk = self.builder.create_block();
                 self.builder.ins().brif(has_err, err_blk, &[], cont_blk, &[]);
-                // 错误路径：返回 ok=0（run_jit 会 take_last_error 并返回 Err）
+                // 错误路径：按约定中止（通用 ok=0 / 特化哨兵 0）
                 self.builder.switch_to_block(err_blk);
                 self.builder.seal_block(err_blk);
-                let ok_false = self.builder.ins().iconst(types::I8, 0);
-                self.builder.ins().return_(&[ok_false]);
+                self.emit_fn_return_error();
                 // 继续路径
                 self.builder.switch_to_block(cont_blk);
                 self.builder.seal_block(cont_blk);
@@ -1519,33 +1837,61 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.call_hostcall_call("host_method_call", i as u64, (n + 1) as u64, args_addr, out);
                 self.bump_sp()?;
                 // B2: 检查 host_method_call 是否设置了错误（如 matmul shape mismatch）。
-                // 若有错误，立即返回 ok=false，让 run_jit 读取 last_error 并触发 fallback。
-                // 这避免了"静默 push Unit + 后续 println 输出 ()"的问题。
+                // 若有错误，立即按约定中止（通用 ok=0 / 特化哨兵 0），让 run_jit 读取
+                // last_error 并触发 fallback。这避免了"静默 push Unit + 后续 println 输出 ()"的问题。
                 let err_flag = self.call_hostcall_vm_ret_u8("host_check_error");
                 let has_err = self.builder.ins().icmp_imm(IntCC::NotEqual, err_flag, 0);
                 let err_blk = self.builder.create_block();
                 let cont_blk = self.builder.create_block();
                 self.builder.ins().brif(has_err, err_blk, &[], cont_blk, &[]);
-                // 错误路径：返回 ok=0（run_jit 会 take_last_error 并返回 Err）
+                // 错误路径：按约定中止
                 self.builder.switch_to_block(err_blk);
                 self.builder.seal_block(err_blk);
-                let ok_false = self.builder.ins().iconst(types::I8, 0);
-                self.builder.ins().return_(&[ok_false]);
+                self.emit_fn_return_error();
                 // 继续路径
                 self.builder.switch_to_block(cont_blk);
                 self.builder.seal_block(cont_blk);
                 self.terminated = false;
             }
             Ret => {
-                // A2b：终止符——物化栈标量（含返回值，Value 槽有效供拷贝）。
-                self.materialize_all_stack();
                 self.sp -= VALUE_SIZE as i32;
                 if let (Some(out), Some(cont)) = (self.inline_out, self.inline_cont) {
                     // A2：内联模式——结果写调用方 out 槽，跳汇合块（不返回整个函数）。
+                    self.materialize_all_stack();
                     self.copy_stack_to_ptr(self.sp, out, 0);
                     self.builder.ins().jump(cont, &[]);
                     self.terminated = true;
+                } else if self.spec_mode {
+                    // A6：特化入口——从栈顶读标量返回值（i64 寄存器返回，零装箱）。
+                    // 有 I32 标量槽 → 直接读 8B；否则物化 + host_value_to_i64 解包。
+                    let ret_off = self.sp;
+                    let ret: Value_ = if self.scalar_enabled {
+                        if let Some(&(kind, slot)) = self.stack_scalars.get(&ret_off) {
+                            if kind == ScalarKind::I32 {
+                                self.load_scalar_i64(slot)
+                            } else {
+                                // 非 I32（如 F64 标量 / 通用结果）→ 物化 + 解包
+                                self.materialize_stack_at(ret_off);
+                                let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, ret_off);
+                                self.call_hostcall_val_ret_i64("host_value_to_i64", addr)
+                            }
+                        } else {
+                            // 无标量槽（通用 hostcall/内联结果）→ 物化 + 解包
+                            self.materialize_stack_at(ret_off);
+                            let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, ret_off);
+                            self.call_hostcall_val_ret_i64("host_value_to_i64", addr)
+                        }
+                    } else {
+                        // 分析失败（全通用）→ 解包 Value 槽
+                        self.materialize_stack_at(ret_off);
+                        let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, ret_off);
+                        self.call_hostcall_val_ret_i64("host_value_to_i64", addr)
+                    };
+                    self.builder.ins().return_(&[ret]);
+                    self.terminated = true;
                 } else {
+                    // 通用路径：物化栈标量（含返回值，Value 槽有效供拷贝）。
+                    self.materialize_all_stack();
                     self.copy_stack_to_ptr(self.sp, self.out_ptr, 0);
                     let ok = self.builder.ins().iconst(types::I8, 1);
                     self.builder.ins().return_(&[ok]);
@@ -1761,13 +2107,11 @@ impl<'a, M: Module> Translator<'a, M> {
                 let err_blk = self.builder.create_block();
                 let cont_blk = self.builder.create_block();
                 self.builder.ins().brif(is_err_b, err_blk, &[], cont_blk, &[]);
-                // Err 路径：out 槽已是完整 Result::Err——复制到函数 out_ptr 并返回 ok=1
-                // （调用方收到该 Err 作为函数结果，与 VM 早退一致）。
+                // Err 路径：out 槽已是完整 Result::Err——按约定作为函数返回值返回
+                // （通用：复制到 out_ptr + ok=1；特化：解包 i64；与 VM 早退一致）。
                 self.builder.switch_to_block(err_blk);
                 self.builder.seal_block(err_blk);
-                self.copy_stack_to_ptr(self.sp, self.out_ptr, 0);
-                let ok = self.builder.ins().iconst(types::I8, 1);
-                self.builder.ins().return_(&[ok]);
+                self.emit_return_top();
                 // 继续路径：值已写 out 槽 → bump_sp 继续。
                 self.builder.switch_to_block(cont_blk);
                 self.builder.seal_block(cont_blk);
@@ -1785,10 +2129,9 @@ impl<'a, M: Module> Translator<'a, M> {
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_call("host_call", i as u64, n as u64, args_addr, out);
-                // 结果已在 out 槽 → 返回（host_call 失败时 last_error 由 run_jit surface）。
-                self.copy_stack_to_ptr(self.sp, self.out_ptr, 0);
-                let ok = self.builder.ins().iconst(types::I8, 1);
-                self.builder.ins().return_(&[ok]);
+                // 结果已在 out 槽 → 按约定作为函数返回值返回（通用：out_ptr + ok=1；
+                // 特化：解包 i64；host_call 失败时 last_error 由 run_jit surface）。
+                self.emit_return_top();
                 self.terminated = true;
             }
             TailCallClosure(n) => {
@@ -1799,7 +2142,7 @@ impl<'a, M: Module> Translator<'a, M> {
                 let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_make_n("host_call_indirect", (n + 1) as u64, args_addr, out);
-                // B2：host_call_indirect 设置错误 → 立即返回 ok=0（run_jit surface）。
+                // B2：host_call_indirect 设置错误 → 立即按约定中止（run_jit surface）。
                 let err_flag = self.call_hostcall_vm_ret_u8("host_check_error");
                 let has_err = self.builder.ins().icmp_imm(IntCC::NotEqual, err_flag, 0);
                 let err_blk = self.builder.create_block();
@@ -1807,14 +2150,11 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.builder.ins().brif(has_err, err_blk, &[], cont_blk, &[]);
                 self.builder.switch_to_block(err_blk);
                 self.builder.seal_block(err_blk);
-                let ok_false = self.builder.ins().iconst(types::I8, 0);
-                self.builder.ins().return_(&[ok_false]);
-                // 无错误：返回被调闭包结果。
+                self.emit_fn_return_error();
+                // 无错误：按约定返回被调闭包结果（通用：out_ptr + ok=1；特化：解包 i64）。
                 self.builder.switch_to_block(cont_blk);
                 self.builder.seal_block(cont_blk);
-                self.copy_stack_to_ptr(self.sp, self.out_ptr, 0);
-                let ok = self.builder.ins().iconst(types::I8, 1);
-                self.builder.ins().return_(&[ok]);
+                self.emit_return_top();
                 self.terminated = true;
             }
             Await | Yield => {
@@ -1843,6 +2183,13 @@ impl<'a, M: Module> Translator<'a, M> {
     // ── Return helper ──────────────────────────────────────────────────────
 
     fn emit_return(&mut self) {
+        if self.spec_mode {
+            // A6：特化入口——fall-through/未填充块的防御性返回（哨兵 0）。
+            let v = self.builder.ins().iconst(types::I64, 0);
+            self.builder.ins().return_(&[v]);
+            self.terminated = true;
+            return;
+        }
         // A2b：终止符——物化栈标量（含返回值，Value 槽有效供拷贝）。
         self.materialize_all_stack();
         if self.sp >= VALUE_SIZE as i32 {
@@ -2132,6 +2479,10 @@ impl<'a, M: Module> Translator<'a, M> {
     /// 2. 慢路径 trampoline 需用调用方 chunk 的字符串表解析函数名（name_idx
     ///    是调用方字符串表索引），因此调用前**不得**切换 current_chunk_idx；
     ///    trampoline 内部自行保存/切换/恢复后再调被调函数。
+    ///
+    /// M2.5-A6：内联（A2）优先 → 特化 ABI（标量寄存器传递）→ 通用 A1。
+    /// 返回 `Ok(true)` = 走了特化路径（结果在标量槽，调用方不清除跟踪）；
+    /// `Ok(false)` = 内联或通用路径（结果在 `out` Value 槽，调用方清除跟踪）。
     fn emit_direct_call(
         &mut self,
         callee_idx: usize,
@@ -2139,16 +2490,41 @@ impl<'a, M: Module> Translator<'a, M> {
         n: u64,
         args_addr: Value_,
         out: Value_,
-    ) -> Result<(), String> {
+        args_base_off: i32,
+        op_start: usize,
+    ) -> Result<bool, String> {
         self.emit_line_hint();
+        let n_usize = n as usize;
+        // A6：预读参数标量值（SSA 寄存器）。物化（下方）会移除栈标量跟踪，
+        // 但 SSA 值已捕获——特化路径直接以寄存器传参（零装箱）。
+        let mut arg_scalars: Vec<Option<Value_>> = Vec::with_capacity(n_usize);
+        for i in 0..n_usize {
+            let off = args_base_off + (i as i32) * (VALUE_SIZE as i32);
+            match self.stack_scalars.get(&off) {
+                Some(&(ScalarKind::I32, slot)) => {
+                    arg_scalars.push(Some(self.load_scalar_i64(slot)));
+                }
+                _ => arg_scalars.push(None),
+            }
+        }
+        // A2：内联 + A1 通用路径需要物化参数（Value 槽有效供被调方读取）。
+        self.materialize_stack_range(args_base_off, n_usize);
+
         // A2：内联快路径——callee 满足内联条件时把 body 直插调用点（不 emit call）。
-        // Ok(true) = 已内联；Ok(false) = 不满足条件 → 静默回退下方 A1 直接调用
+        // Ok(true) = 已内联；Ok(false) = 不满足条件 → 静默回退下方 A6/A1
         // （不报错、不改变行为）；Err = 内联中途失败（静态过滤后不应发生）→
         // 整个函数回退解释器（正确性优先）。
         match self.try_inline_call(callee_idx, n, args_addr, out)? {
-            true => return Ok(()),
-            false => { /* 静默回退 A1 */ }
+            true => return Ok(false),
+            false => { /* 静默回退 */ }
         }
+
+        // M2.5-A6：特化 ABI（标量寄存器传递）。
+        if self.try_spec_call(callee_idx, name_idx, n, args_addr, out, args_base_off, op_start, &arg_scalars)? {
+            return Ok(true);
+        }
+
+        // ── A1：通用直接调用（参数已物化）──
         let vm = self.vm;
 
         // ── 从函数指针表加载 callee 指针（0 = 未编译 → 慢路径）──
@@ -2196,7 +2572,128 @@ impl<'a, M: Module> Translator<'a, M> {
         self.builder.switch_to_block(merge_blk);
         self.builder.seal_block(merge_blk);
         self.terminated = false;
-        Ok(())
+        Ok(false)
+    }
+
+    // ── M2.5-A6：特化 ABI 调用（标量寄存器传递）──────────────────────────
+
+    /// A6：特化 ABI 调用。返回 `Ok(true)` = 已特化（结果在标量槽，跟踪已建立）；
+    /// `Ok(false)` = 回退通用；`Err` = 编译失败（整函数回退解释器）。
+    ///
+    /// 前提：`args` 已物化为 Value（慢路径 `host_jit_call_spec` 需要）；`arg_scalars`
+    /// 为物化前预读的 I32 标量值（快路径寄存器传参，零装箱）。
+    ///
+    /// 资格（与分析期共享 `spec_target_qualifies`，防静默错值漂移）：
+    /// - 目标有特化签名且纯 i64 参数 + i64 返回、实参个数匹配
+    /// - 调用侧实参全部有 I32 标量槽（否则回退通用）
+    /// - 分析期预测特化而发射期不可特化 → Err（整函数回退解释器，杜绝错值）
+    ///
+    /// 错误路径（静默错值红线）：特化入口返回 i64 无法带错误标志——调用后必须
+    /// `host_check_error`（B2 模式）：有错 → 立即按本函数返回约定中止（通用 ok=0 /
+    /// 特化哨兵 0），last_error 由 run_jit surface。
+    fn try_spec_call(
+        &mut self,
+        callee_idx: usize,
+        name_idx: usize,
+        n: u64,
+        args_addr: Value_,
+        _out: Value_,
+        args_base_off: i32,
+        op_start: usize,
+        arg_scalars: &[Option<Value_>],
+    ) -> Result<bool, String> {
+        let n_usize = n as usize;
+        if !spec_target_qualifies(self.name_to_chunk, self.chunk_sigs, self.all_chunks, name_idx, n_usize) {
+            // 防御：分析期预测特化而发射期不可 → 整函数回退解释器（静默错值红线）。
+            if self.call_spec_results.get(&op_start) == Some(&true) {
+                return Err("JIT A6: 特化资格预测不一致（发射期目标不可特化）".into());
+            }
+            return Ok(false);
+        }
+        if arg_scalars.iter().any(|a| a.is_none()) {
+            // 防御：分析期预测特化而发射期缺标量槽 → 整函数回退解释器。
+            if self.call_spec_results.get(&op_start) == Some(&true) {
+                return Err("JIT A6: 特化参数预测不一致（发射期缺标量槽）".into());
+            }
+            return Ok(false);
+        }
+        let vm = self.vm;
+        // 慢路径地址（out 覆盖首个参数槽；参数已物化为 Value）
+        let out_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, args_base_off);
+        // 结果合并槽：快/慢路径都写 8B 结果，汇合块读取（避免块参数 phi——
+        // 多次特化调用同块共存时块参数 phi 触发 Cranelift verifier 问题）。
+        let merge_slot = self.stack_scalar_slot(args_base_off, ScalarKind::I32);
+        // 特化指针表：vm.jit_spec_table_ptr[callee_idx]（0 = 未编译 → 慢路径）
+        let table_off = std::mem::offset_of!(Vm, jit_spec_table_ptr) as i64;
+        let table_off_v = self.builder.ins().iconst(self.ptr, table_off);
+        let table_addr = self.builder.ins().iadd(vm, table_off_v);
+        let table_base = self.builder.ins().load(self.ptr, MemFlags::new(), table_addr, 0);
+        let entry_off_v = self.builder.ins().iconst(
+            self.ptr,
+            (callee_idx * std::mem::size_of::<usize>()) as i64,
+        );
+        let entry_addr = self.builder.ins().iadd(table_base, entry_off_v);
+        let spec_ptr = self.builder.ins().load(self.ptr, MemFlags::new(), entry_addr, 0);
+        let is_zero = self.builder.ins().icmp_imm(IntCC::Equal, spec_ptr, 0);
+        let slow_blk = self.builder.create_block();
+        let fast_blk = self.builder.create_block();
+        let merge_blk = self.builder.create_block();
+        self.builder.ins().brif(is_zero, slow_blk, &[], fast_blk, &[]);
+
+        // 快路径：保存/切换 chunk_idx → 特化直接调用（签名 (vm, i64 x8) -> i64）→
+        // 恢复 chunk_idx → 结果写合并槽。
+        self.builder.switch_to_block(fast_blk);
+        self.builder.seal_block(fast_blk);
+        let chunk_off = std::mem::offset_of!(Vm, current_chunk_idx) as i64;
+        let chunk_off_v = self.builder.ins().iconst(self.ptr, chunk_off);
+        let chunk_addr = self.builder.ins().iadd(vm, chunk_off_v);
+        let saved_chunk = self.builder.ins().load(self.ptr, MemFlags::new(), chunk_addr, 0);
+        let callee_idx_v = self.builder.ins().iconst(self.ptr, callee_idx as i64);
+        self.builder.ins().store(MemFlags::new(), callee_idx_v, chunk_addr, 0);
+        let spec_sig = self.import_sig(&[types::I64; MAX_SPEC_ARGS], Some(types::I64));
+        // 参数补足到 MAX_SPEC_ARGS（未用参数传 0，被调方忽略）
+        let mut args8: Vec<Value_> = arg_scalars.iter().map(|a| a.unwrap()).collect();
+        while args8.len() < MAX_SPEC_ARGS {
+            let z = self.builder.ins().iconst(types::I64, 0);
+            args8.push(z);
+        }
+        let call = self.builder.ins().call_indirect(spec_sig, spec_ptr, &[vm, args8[0], args8[1], args8[2], args8[3], args8[4], args8[5], args8[6], args8[7]]);
+        let ret_i64 = self.builder.inst_results(call)[0];
+        self.builder.ins().store(MemFlags::new(), saved_chunk, chunk_addr, 0);
+        self.store_scalar_i64(merge_slot, ret_i64);
+        self.builder.ins().jump(merge_blk, &[]);
+
+        // 慢路径：trampoline（current_chunk_idx 仍为调用方 → name_idx 可正确解析；
+        // 编译特化入口 + 注册 + 调用；失败 → 通用回退）。结果 Value → 解包 i64。
+        // 注意：两条 hostcall 均**不失效栈标量**（被调方不触碰调用方标量槽；
+        // 失效会清除其他活标量跟踪 → 后续通用消费者读陈旧 Value 槽 → 静默错值）。
+        self.builder.switch_to_block(slow_blk);
+        self.builder.seal_block(slow_blk);
+        self.call_hostcall_spec_call("host_jit_call_spec", name_idx as u64, n, args_addr, out_addr);
+        let v_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, args_base_off);
+        let slow_ret = self.call_hostcall_val_ret_i64_noinv("host_value_to_i64", v_addr);
+        self.store_scalar_i64(merge_slot, slow_ret);
+        self.builder.ins().jump(merge_blk, &[]);
+
+        // 汇合：错误检查（B2，静默错值红线）→ 结果已在合并槽（快/慢路径各写）。
+        self.builder.switch_to_block(merge_blk);
+        self.builder.seal_block(merge_blk);
+        let err_flag = self.call_hostcall_check_error();
+        let has_err = self.builder.ins().icmp_imm(IntCC::NotEqual, err_flag, 0);
+        let err_blk = self.builder.create_block();
+        let cont_blk = self.builder.create_block();
+        self.builder.ins().brif(has_err, err_blk, &[], cont_blk, &[]);
+        // 错误路径：立即按本函数返回约定中止（last_error 由 run_jit surface）
+        self.builder.switch_to_block(err_blk);
+        self.builder.seal_block(err_blk);
+        self.emit_fn_return_error();
+        // 继续路径：结果在合并槽（args_base_off 的 I32 标量槽），跟踪已由
+        // stack_scalar_slot 注册——后续原生/通用消费者均正确（通用消费者经
+        // materialize_stack_at 从标量槽物化 Value）。
+        self.builder.switch_to_block(cont_blk);
+        self.builder.seal_block(cont_blk);
+        self.terminated = false;
+        Ok(true)
     }
 
     // ── A2：调用点内联（小函数）─────────────────────────────────────────────
@@ -2509,20 +3006,20 @@ impl<'a, M: Module> Translator<'a, M> {
 
     // ── Binop / unop ───────────────────────────────────────────────────────
 
-    /// hostcall 报错检查：若 `host_check_error` 非零，立即返回 ok=0（run_jit 读取
-    /// last_error 触发 fallback）。与 MethodCall 分支的 B2 模式一致——避免 binop
-    /// 报错（如整数溢出）后继续执行、错误被后续操作覆盖。AUDIT-11.4.17。
+    /// hostcall 报错检查：若 `host_check_error` 非零，立即按约定中止（通用返回 ok=0，
+    /// 特化返回哨兵 0——run_jit 读取 last_error 触发 fallback）。与 MethodCall 分支的
+    /// B2 模式一致——避免 binop 报错（如整数溢出）后继续执行、错误被后续操作覆盖。
+    /// AUDIT-11.4.17。
     fn emit_err_check_abort(&mut self) {
         let err_flag = self.call_hostcall_vm_ret_u8("host_check_error");
         let has_err = self.builder.ins().icmp_imm(IntCC::NotEqual, err_flag, 0);
         let err_blk = self.builder.create_block();
         let cont_blk = self.builder.create_block();
         self.builder.ins().brif(has_err, err_blk, &[], cont_blk, &[]);
-        // 错误路径：返回 ok=0（run_jit 会 take_last_error 并返回 Err）
+        // 错误路径：按约定中止（通用 ok=0 / 特化哨兵 0）
         self.builder.switch_to_block(err_blk);
         self.builder.seal_block(err_blk);
-        let ok_false = self.builder.ins().iconst(types::I8, 0);
-        self.builder.ins().return_(&[ok_false]);
+        self.emit_fn_return_error();
         // 继续路径
         self.builder.switch_to_block(cont_blk);
         self.builder.seal_block(cont_blk);
