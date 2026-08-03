@@ -93,6 +93,16 @@ impl JitContext {
         self.failed.insert(chunk_idx);
     }
 
+    /// M2-A3：chunk 是否编译失败（含显式 Err 与 panic 捕获）——覆盖验证用。
+    pub fn is_failed(&self, chunk_idx: usize) -> bool {
+        self.failed.contains(&chunk_idx)
+    }
+
+    /// M2-A3：chunk 是否已成功编译（cache 命中）——覆盖验证用。
+    pub fn is_compiled(&self, chunk_idx: usize) -> bool {
+        self.cache.contains_key(&chunk_idx)
+    }
+
     /// Compile (or fetch from cache) the JIT function for `chunk_idx`.
     pub fn get_or_compile(&mut self, chunk_idx: usize, chunk: &Chunk) -> Result<JitFn, String> {
         if let Some(f) = self.cache.get(&chunk_idx) {

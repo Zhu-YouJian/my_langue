@@ -414,6 +414,18 @@ unsafe extern "C" fn host_store_field(vm: *mut Vm, field_idx: u64, recv: *mut Va
     }
 }
 
+/// M2-A3：IsStruct hostcall——与 VM opcode 46 一致：
+/// 弹值，若是 Struct 且 name == struct_name → Bool(true)，否则 Bool(false)。
+unsafe extern "C" fn host_is_struct(vm: *mut Vm, name_idx: u64, val: *const Value, out: *mut Value) {
+    let vm = &mut *vm;
+    let struct_name = vm.string_at(name_idx as usize).unwrap_or_default();
+    let matches = match &*val {
+        Value::Struct { name, .. } => name == &struct_name,
+        _ => false,
+    };
+    std::ptr::write(out, Value::Bool(matches));
+}
+
 unsafe extern "C" fn host_index_get(vm: *mut Vm, target: *const Value, idx: *const Value, out: *mut Value) {
     let vm = &mut *vm;
     match vm.index_get(&*target, &*idx) {
@@ -491,6 +503,69 @@ unsafe extern "C" fn host_enum_get_field(vm: *mut Vm, field_idx: u64, recv: *con
         }
         _ => std::ptr::write(out, Value::Unit),
     }
+}
+
+// ── M2-A3：Tuple / Try / Spawn hostcall（与 VM opcode 49-52/48 语义一致）────────
+
+/// MakeTuple：栈上 n 个值 → Value::Tuple（顺序与 VM opcode 49 一致：
+/// 弹 n 个逆序装回，即保持源码从左到右顺序）。与 host_make_vec 同签名。
+unsafe extern "C" fn host_make_tuple(_vm: *mut Vm, count: u64, args_ptr: *const Value, out: *mut Value) {
+    let items = safe_slice(args_ptr, count).to_vec();
+    std::ptr::write(out, Value::Tuple(items));
+}
+
+/// IsTuple(expected_len)：val 是 Tuple 且长度 == expected_len → Bool(true)，否则 Bool(false)。
+/// 与 VM opcode 50 一致（弹值 + 压 Bool）。
+unsafe extern "C" fn host_is_tuple(_vm: *mut Vm, expected_len: u64, val: *const Value, out: *mut Value) {
+    let matches = match &*val {
+        Value::Tuple(items) => items.len() == expected_len as usize,
+        _ => false,
+    };
+    std::ptr::write(out, Value::Bool(matches));
+}
+
+/// TupleGet(index)：val 为 Tuple → 取 index 元素（越界 → Unit）；非 Tuple → Unit。
+/// 与 VM opcode 51 一致（弹值 + 压元素）。
+unsafe extern "C" fn host_tuple_get(_vm: *mut Vm, index: u64, val: *const Value, out: *mut Value) {
+    let elem = match &*val {
+        Value::Tuple(items) => items.get(index as usize).cloned().unwrap_or(Value::Unit),
+        _ => Value::Unit,
+    };
+    std::ptr::write(out, elem);
+}
+
+/// Try：`expr?` 单点——写 `out` 供继续/早退用的值，返回 u8 标志（1 = 应 early return）。
+/// 与 VM opcode 52 一致：Err → 写**完整 Result::Err** 到 out 并返回 1（函数返回该 Err）；
+/// Ok → 写内层值到 out 返回 0；非 Result → 写原值返回 0。解释器 UnaryOp::Try 的
+/// TryPropagate 语义等价（函数边界 unwrap_return 直接透传完整 Result::Err，单层）。
+unsafe extern "C" fn host_try_pop(_vm: *mut Vm, val: *const Value, out: *mut Value) -> u8 {
+    match &*val {
+        Value::Enum { enum_name, variant, fields } if enum_name == "Result" => {
+            if variant == "Ok" {
+                let inner = fields.borrow().first().map(|(_, v)| v.clone()).unwrap_or(Value::Unit);
+                std::ptr::write(out, inner);
+                0
+            } else if variant == "Err" {
+                // 早退：原样返回完整 Result::Err（VM/解释器均不 double-wrap）。
+                std::ptr::write(out, (*val).clone());
+                1
+            } else {
+                // Result 的其他变体（理论不存在）：透传。
+                std::ptr::write(out, (*val).clone());
+                0
+            }
+        }
+        _ => {
+            std::ptr::write(out, (*val).clone());
+            0
+        }
+    }
+}
+
+/// Spawn：eager spawn——弹值包装为 Ready Future（Value::future_ready）。
+/// 与 VM opcode 48 一致：纯构造、不涉及调度器挂起，JIT 安全。
+unsafe extern "C" fn host_spawn(_vm: *mut Vm, val: *const Value, out: *mut Value) {
+    std::ptr::write(out, Value::future_ready((*val).clone()));
 }
 
 unsafe extern "C" fn host_push_range(_vm: *mut Vm, start: i64, end: i64, inclusive: u8, out: *mut Value) {
@@ -759,6 +834,12 @@ pub fn hostcall_addr(name: &str) -> Option<usize> {
         ("host_new_union", host_new_union as usize),
         ("host_load_field", host_load_field as usize),
         ("host_store_field", host_store_field as usize),
+        ("host_is_struct", host_is_struct as usize),
+        ("host_make_tuple", host_make_tuple as usize),
+        ("host_is_tuple", host_is_tuple as usize),
+        ("host_tuple_get", host_tuple_get as usize),
+        ("host_try_pop", host_try_pop as usize),
+        ("host_spawn", host_spawn as usize),
         ("host_index_get", host_index_get as usize),
         ("host_slice_str", host_slice_str as usize),
         ("host_make_enum", host_make_enum as usize),

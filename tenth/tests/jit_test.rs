@@ -764,6 +764,394 @@ fn test_jit_inline_result_consumed() {
     "#, 30405, "inline-result-consumed");
 }
 
+// ── M2-A3：opcode 覆盖扩展（Tuple / Try / Struct-IsStruct / Spawn / TailCall）──
+//
+// A3 目标：把 MakeTuple/IsTuple/TupleGet/Try/IsStruct/Spawn 从「整函数 fallback
+// 解释器」推进到「JIT 可编译」（hostcall 单点，语义与 VM opcode 逐一对齐）；
+// TailCall/TailCallClosure 按 D2 保守走 host_call + 立即返回结果（不再整函数
+// fallback，但保留 VM 帧增长语义，不做激进 TCO 帧复用）。每条 VM=JIT 对拍。
+
+/// 断言 VM 与 JIT 对同一源码产出 Debug（→Display）一致的值（结构化对拍）。
+/// Value::Debug 转发 Display 且无地址/时序不变量，适合 Tuple/Struct/Result/Future 比较。
+fn assert_vm_jit_debug(src: &str, label: &str) {
+    let vm_res = run_vm(src).unwrap_or_else(|e| panic!("[{}] VM 执行失败: {}", label, e));
+    let jit_res = run_jit(src).unwrap_or_else(|e| panic!("[{}] JIT 执行失败: {}", label, e));
+    let vm_db = format!("{:?}", vm_res);
+    let jit_db = format!("{:?}", jit_res);
+    assert_eq!(vm_db, jit_db, "[{}] VM/JIT Debug 不一致: VM={} JIT={}", label, vm_db, jit_db);
+}
+
+// ── Tuple：MakeTuple / TupleGet / IsTuple ───────────────────────────────────
+
+#[test]
+fn test_jit_tuple_construct_destructure() {
+    // MakeTuple 构造 + let (a,b,c) 解构（TupleGet）→ 123
+    assert_vm_jit_int(r#"
+        fn main() -> Int {
+            let t = (1, 2, 3);
+            let (a, b, c) = t;
+            a * 100 + b * 10 + c
+        }
+    "#, 123, "tuple-destructure");
+}
+
+#[test]
+fn test_jit_tuple_match_is_tuple() {
+    // match tuple 模式 → IsTuple（长度检查）+ TupleGet → 708
+    assert_vm_jit_int(r#"
+        fn main() -> Int {
+            let t = (7, 8);
+            match t {
+                (a, b) => a * 100 + b,
+                _ => -1,
+            }
+        }
+    "#, 708, "tuple-match");
+}
+
+#[test]
+fn test_jit_tuple_match_wrong_len() {
+    // 长度不匹配 → IsTuple false → fallthrough 到 wildcard → -1
+    assert_vm_jit_int(r#"
+        fn main() -> Int {
+            let t = (7, 8, 9);
+            match t {
+                (a, b) => a * 100 + b,
+                _ => -1,
+            }
+        }
+    "#, -1, "tuple-match-wrong-len");
+}
+
+#[test]
+fn test_jit_tuple_in_function() {
+    // 函数返回 Tuple + 调用方解构（跨函数 Tuple 值传递）→ 304
+    assert_vm_jit_int(r#"
+        fn make() -> (Int, Int) { (3, 4) }
+        fn main() -> Int {
+            let (a, b) = make();
+            a * 100 + b
+        }
+    "#, 304, "tuple-in-fn");
+}
+
+#[test]
+fn test_jit_tuple_nested() {
+    // 嵌套 tuple：(1, (2, 3)) → 外层解构得内层 → 再解构 → 123
+    assert_vm_jit_int(r#"
+        fn main() -> Int {
+            let t = (1, (2, 3));
+            let (a, inner) = t;
+            let (b, c) = inner;
+            a * 100 + b * 10 + c
+        }
+    "#, 123, "tuple-nested");
+}
+
+#[test]
+fn test_jit_tuple_oob_debug() {
+    // 解构越界（TupleGet 越界 → Unit）VM/JIT Debug 一致（结构化对拍）
+    assert_vm_jit_debug(r#"
+        fn main() -> (Int, Int) {
+            let t = (1, 2);
+            let (a, b, c) = t;
+            (a, b)
+        }
+    "#, "tuple-oob");
+}
+
+// ── Struct：NewStruct/LoadField/StoreField（既有）+ IsStruct（A3 新增）──────
+
+#[test]
+fn test_jit_struct_field_rw() {
+    // 结构体构造 + 字段读 + 字段写（StoreField 回写 p）→ 703
+    assert_vm_jit_int(r#"
+        struct Point { x: Int, y: Int }
+        fn main() -> Int {
+            let mut p = Point { x: 3, y: 4 };
+            p.y = p.y + p.x;
+            p.y * 100 + p.x
+        }
+    "#, 703, "struct-rw");
+}
+
+#[test]
+fn test_jit_struct_is_struct_match() {
+    // match 结构体模式 → IsStruct（Struct 名匹配）+ LoadField → 304
+    assert_vm_jit_int(r#"
+        struct Point { x: Int, y: Int }
+        fn main() -> Int {
+            let p = Point { x: 3, y: 4 };
+            match p {
+                Point { x, y } => x * 100 + y,
+                _ => -1,
+            }
+        }
+    "#, 304, "struct-match");
+}
+
+#[test]
+fn test_jit_struct_is_struct_wrong() {
+    // 名不匹配 → IsStruct false → wildcard → -1
+    assert_vm_jit_int(r#"
+        struct Point { x: Int, y: Int }
+        struct Other { z: Int }
+        fn main() -> Int {
+            let o = Other { z: 99 };
+            match o {
+                Point { x, y } => x * 100 + y,
+                _ => -1,
+            }
+        }
+    "#, -1, "struct-match-wrong");
+}
+
+// ── Try（`?` 操作符）：Ok 解包 / Err 早退 / 多层传播 / try 块 ───────────────
+
+#[test]
+fn test_jit_try_ok_unwrap() {
+    // Result::Ok(42)? → 解包 42
+    assert_vm_jit_int(r#"
+        fn main() -> Int {
+            let x = Result::Ok(42)?;
+            x
+        }
+    "#, 42, "try-ok");
+}
+
+#[test]
+fn test_jit_try_err_early_return() {
+    // Result::Err("boom")? → 早退返回完整 Result::Err（单层，Debug 对拍）
+    assert_vm_jit_debug(r#"
+        fn main() -> Int {
+            let x = Result::Err("boom")?;
+            x
+        }
+    "#, "try-err");
+}
+
+#[test]
+fn test_jit_try_err_propagate_through_fn() {
+    // inner 内 ? 早退 → main 的 inner()? 再传播——两层后仍单层 Result::Err("deep")
+    assert_vm_jit_debug(r#"
+        fn inner() -> Result<Int, str> {
+            Result::Err("deep")?
+        }
+        fn main() -> Int {
+            let x = inner()?;
+            x
+        }
+    "#, "try-multilayer");
+}
+
+#[test]
+fn test_jit_try_chain_success() {
+    // 链式 ? 成功：parse("42")? 两次 → 84
+    assert_vm_jit_int(r#"
+        fn parse(s: str) -> Result<Int, str> {
+            if s == "42" { Result::Ok(42) } else { Result::Err("not 42") }
+        }
+        fn main() -> Int {
+            let a = parse("42")?;
+            let b = parse("42")?;
+            a + b
+        }
+    "#, 84, "try-chain-ok");
+}
+
+#[test]
+fn test_jit_try_block_success() {
+    // try 块内 ? 走 IsEnumVariant+JmpFalse 路径（非 Op::Try），成功包装 Result::Ok
+    assert_vm_jit_debug(r#"
+        fn parse(s: str) -> Result<Int, str> {
+            if s == "42" { Result::Ok(42) } else { Result::Err("not 42") }
+        }
+        fn main() -> Result<Int, str> {
+            try { parse("42")? }
+        }
+    "#, "try-block-ok");
+}
+
+#[test]
+fn test_jit_try_block_catch() {
+    // try 块内 ? 遇 Err → 捕获包装为 Result::Err（错误路径不被 JIT 当作整体 fallback）
+    assert_vm_jit_int(r#"
+        fn parse(s: str) -> Result<Int, str> {
+            if s == "42" { Result::Ok(42) } else { Result::Err("not 42") }
+        }
+        fn main() -> Int {
+            let r = try { parse("10")? };
+            let msg = match r { Result::Err(m) => m, _ => "?" };
+            if msg == "not 42" { 1 } else { 0 }
+        }
+    "#, 1, "try-block-catch");
+}
+
+// ── Spawn（eager Future；解释器不支持 async，此处 VM=JIT 对拍）──────────────
+
+#[test]
+fn test_jit_spawn_eager_future() {
+    // spawn 42 → Future<42>（Ready，eager）——VM/JIT Debug 结构化一致
+    assert_vm_jit_debug(r#"
+        fn main() {
+            let f = spawn 42;
+            f
+        }
+    "#, "spawn-eager");
+}
+
+// ── TailCall / TailCallClosure（D2 保守：host_call + 立即返回）──────────────
+
+#[test]
+fn test_jit_tailcall_named() {
+    // fn f 尾位置调用 g（TailCall）→ 结果 = g 结果（21*2=42）
+    assert_vm_jit_int(r#"
+        fn g(x: Int) -> Int { x * 2 }
+        fn f(n: Int) -> Int { g(n) }
+        fn main() -> Int { f(21) }
+    "#, 42, "tailcall-named");
+}
+
+#[test]
+fn test_jit_tailcall_recursive() {
+    // 尾递归：sum_tail(10, 0) → 55（TailCall 走 host_call，VM=JIT 一致）
+    assert_vm_jit_int(r#"
+        fn sum_tail(n: Int, acc: Int) -> Int {
+            if n <= 0 { acc } else { sum_tail(n - 1, acc + n) }
+        }
+        fn main() -> Int { sum_tail(10, 0) }
+    "#, 55, "tailcall-recursive");
+}
+
+#[test]
+fn test_jit_tailcall_closure() {
+    // 闭包尾调用（TailCallClosure）：apply 内 f(n) 尾位置 → 42
+    assert_vm_jit_int(r#"
+        fn apply(n: Int) -> Int {
+            let f = |x: Int| x * 2;
+            f(n)
+        }
+        fn main() -> Int { apply(21) }
+    "#, 42, "tailcall-closure");
+}
+
+// ── M2-A3：覆盖验证——含 Tuple/Struct/Try 的函数必须真的被 JIT 编译 ─────────
+
+/// 编译并执行源码，返回 (结果, vm)——供覆盖断言（chunk 是否被 JIT 编译/失败）。
+/// 与 `run_jit` 同构但保留 Vm 引用（jit_ctx 的 failed/compiled 状态）。
+fn run_jit_with_vm(src: &str) -> Result<(Value, Vm), String> {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program().map_err(|e| e.to_string())?;
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program).map_err(|e| e.to_string())?;
+
+    let mut vm = Vm::new();
+    register_all_natives(&mut vm);
+
+    for func in &hir.functions {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile(func) {
+            Ok((chunk, closures)) => {
+                vm.add_fn(func.name.clone(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+                vm.set_global(func.name.clone(), Value::FnRef {
+                    name: func.name.clone(),
+                    params: func.params.clone(),
+                    return_type: func.return_type.clone(),
+                    captures: vec![],
+                });
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+    }
+
+    if let Some(ref expr) = hir.main_expr {
+        let compiler = BytecodeCompiler::new();
+        match compiler.compile_main(expr) {
+            Ok((chunk, closures)) => {
+                vm.add_fn("main".into(), chunk);
+                for (name, closure_chunk) in closures {
+                    vm.add_fn(name, closure_chunk);
+                }
+            }
+            Err(e) => return Err(format!("compile error: {}", e)),
+        }
+        let r = jit::run_jit(&mut vm, "main").map_err(|e| e.to_string())?;
+        Ok((r, vm))
+    } else if vm.has_fn("main") {
+        let r = jit::run_jit(&mut vm, "main").map_err(|e| e.to_string())?;
+        Ok((r, vm))
+    } else {
+        Ok((Value::Unit, vm))
+    }
+}
+
+#[test]
+fn test_jit_no_fallback_tuple_struct_try() {
+    // 覆盖验证：含 MakeTuple/IsTuple/TupleGet/Try/NewStruct/LoadField/StoreField/
+    // IsStruct 的 main **必须真的被 JIT 编译**（不在 failed 集），而非整函数
+    // fallback 解释器。期望 = classify(1,2)=102 + check(Point{3,4})=7 + may_fail()?=42
+    // = 151。
+    let src = r#"
+        struct Point { x: Int, y: Int }
+        fn classify(t: (Int, Int)) -> Int {
+            match t {
+                (a, b) => a * 100 + b,
+                _ => -1,
+            }
+        }
+        fn check(p: Point) -> Int {
+            match p {
+                Point { x, y } => x + y,
+                _ => -999,
+            }
+        }
+        fn may_fail(ok: Bool) -> Result<Int, str> {
+            if ok { Result::Ok(42) } else { Result::Err("nope") }
+        }
+        fn main() -> Int {
+            let t = (1, 2);
+            let c = classify(t);
+            let p = Point { x: 3, y: 4 };
+            let s = check(p);
+            let v = may_fail(true)?;
+            c + s + v
+        }
+    "#;
+    let (result, vm) = run_jit_with_vm(src).unwrap();
+    match result {
+        Value::Int(n, _) => assert_eq!(n, 151, "期望 151，实际 {}", n),
+        v => panic!("期望 Int, 实际 {:?}", v),
+    }
+    let ctx = vm.jit_ctx.as_ref().expect("JIT 上下文应存在");
+    let main_idx = vm.chunk_index_of("main").expect("main chunk 应存在");
+    assert!(ctx.is_compiled(main_idx), "main 应被 JIT 编译（A3 覆盖 Tuple/Struct/Try）");
+    assert!(!ctx.is_failed(main_idx), "main 不应整函数 fallback");
+}
+
+#[test]
+fn test_jit_await_still_fallback() {
+    // async 挂起（Await）语义需要 VM 调度器（Pending Future 保存/恢复整栈），
+    // JIT 保守保持整函数 fallback——断言含 Await 的 main 不在编译集（is_failed）、
+    // 结果仍正确（走 VM 调度器）。
+    let src = r#"
+        fn main() {
+            let f = spawn 42;
+            let n = await f;
+            print(n)
+        }
+    "#;
+    let (result, vm) = run_jit_with_vm(src).unwrap();
+    assert!(matches!(result, Value::Unit), "期望 Unit, 实际 {:?}", result);
+    let ctx = vm.jit_ctx.as_ref().expect("JIT 上下文应存在");
+    let main_idx = vm.chunk_index_of("main").expect("main chunk 应存在");
+    assert!(ctx.is_failed(main_idx), "含 Await 的 main 应整函数 fallback（保守）");
+}
+
 #[test]
 fn test_jit_scalar_loop_int() {
     // 标量 loop：Int 局部 sum/i 跨回边（must 分析证明恒为 Int），原生算术。

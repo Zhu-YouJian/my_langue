@@ -525,8 +525,8 @@ impl<'a, M: Module> Translator<'a, M> {
                         clear_stack(&mut stack);
                     }
                     StoreGlobal(_) => {
+                        // M2-A3：与发射端对齐——消费栈值（VM opcode 10 语义，不推回）。
                         stack.pop();
-                        stack.push(Unknown);
                         clear_stack(&mut stack);
                     }
                     Call(_) => {
@@ -635,9 +635,57 @@ impl<'a, M: Module> Translator<'a, M> {
                         stack.push(Unknown);
                         clear_stack(&mut stack);
                     }
+                    // M2-A3：新覆盖 opcode——pop 对应槽 + push Unknown + 清栈
+                    // （与发射端 hostcall 的 invalidate_stack_scalars 清栈一致）。
+                    MakeTuple(n) => {
+                        for _ in 0..*n {
+                            stack.pop();
+                        }
+                        stack.push(Unknown);
+                        clear_stack(&mut stack);
+                    }
+                    IsTuple(_) => {
+                        stack.pop();
+                        stack.push(Unknown);
+                        clear_stack(&mut stack);
+                    }
+                    TupleGet(_) => {
+                        stack.pop();
+                        stack.push(Unknown);
+                        clear_stack(&mut stack);
+                    }
+                    IsStruct(_) => {
+                        stack.pop();
+                        stack.push(Unknown);
+                        clear_stack(&mut stack);
+                    }
+                    Try => {
+                        // 弹值；Err 早退（终止）或 Ok 解包/非 Result 透传——结果种类不可知。
+                        stack.pop();
+                        stack.push(Unknown);
+                        clear_stack(&mut stack);
+                    }
+                    Spawn => {
+                        stack.pop();
+                        stack.push(Unknown);
+                        clear_stack(&mut stack);
+                    }
+                    TailCall(_, n) => {
+                        for _ in 0..*n {
+                            stack.pop();
+                        }
+                        stack.push(Unknown);
+                        clear_stack(&mut stack);
+                    }
+                    TailCallClosure(n) => {
+                        for _ in 0..(*n + 1) {
+                            stack.pop();
+                        }
+                        stack.push(Unknown);
+                        clear_stack(&mut stack);
+                    }
                     // 不可 JIT / 分析未知 → 禁用专用化
-                    IsStruct(_) | Await | Spawn | Yield | MakeTuple(_) | IsTuple(_) | TupleGet(_)
-                    | Try | TailCall(..) | TailCallClosure(_) | CallClosure(_)
+                    Await | Yield | CallClosure(_)
                     | MakeRef | MakeMutRef(_) | Deref | DerefStore | MakeCell
                     | BindSelfCapture(_) => {
                         return None;
@@ -1334,13 +1382,18 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.bump_sp()?;
             }
             StoreGlobal(i) => {
+                // M2-A3 修复：与 VM opcode 10 对齐——StoreGlobal **消费**栈值（pop 不推回）。
+                // 此前 JIT 推回结果，与 VM 不一致：字节码在需要值保留的上下文（Assign 表达式）
+                // 用 `Dup` 前置，let/解构上下文期待消费。推回导致 tuple 解构
+                // （`let (a,b)=t`）后续 TupleGet 读到残留错位值（nm/nv 静默变 Unit）。
+                // 该 bug 在 A3 前被「含 TupleGet 的函数整体 fallback」掩盖。
                 self.sp -= VALUE_SIZE as i32;
                 let val_off = self.sp;
                 self.materialize_stack_at(val_off);
+                self.clear_stack_scalar_at(val_off);
                 let val_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, val_off);
-                let out_addr = val_addr; // result = stored value, same slot
+                let out_addr = val_addr; // 结果写回原槽（已弹栈消费，无害；签名需 out）
                 self.call_hostcall_u64_val("host_store_global", i as u64, val_addr, out_addr);
-                self.bump_sp()?; // push result back
             }
             Add => self.emit_binop(Op::Add, "host_add")?,
             Sub => self.emit_binop(Op::Sub, "host_sub")?,
@@ -1646,28 +1699,141 @@ impl<'a, M: Module> Translator<'a, M> {
                 );
                 self.bump_sp()?;
             }
-            IsStruct(_) => {
-                // Struct pattern matching not JIT-compiled; fallback to VM.
-                return Err(format!("JIT: IsStruct not supported, fallback to VM"));
+            IsStruct(name_i) => {
+                // M2-A3：IsStruct → host_is_struct（VM opcode 46 语义：Struct 名匹配 → Bool）。
+                // 结构体构造/字段读写（NewStruct/LoadField/StoreField）此前已 JIT。
+                self.sp -= VALUE_SIZE as i32;
+                self.materialize_stack_at(self.sp);
+                let recv_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
+                let out = self.stack_addr_at_sp();
+                self.call_hostcall_u64_val("host_is_struct", name_i as u64, recv_addr, out);
+                self.bump_sp()?;
             }
-            Await | Spawn | Yield => {
-                // Async opcodes not JIT-compiled; fallback to VM.
-                // Yield（Phase 2 Step 3-4 协作式调度）同样需要调度器支持，JIT 不支持。
-                return Err(format!("JIT: async opcode not supported, fallback to VM"));
+            Spawn => {
+                // M2-A3：Spawn → host_spawn（eager future_ready，VM opcode 48 语义；
+                // 纯构造不涉及调度器挂起，JIT 安全）。
+                self.sp -= VALUE_SIZE as i32;
+                self.materialize_stack_at(self.sp);
+                let val_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
+                let out = self.stack_addr_at_sp();
+                self.call_hostcall_1_val("host_spawn", val_addr, out);
+                self.bump_sp()?;
             }
-            MakeTuple(_) | IsTuple(_) | TupleGet(_) | Try | TailCall(..) | TailCallClosure(..) => {
-                // Tuple / Try / TailCall opcodes not JIT-compiled; fallback to VM.
-                // a1 P1：TailCallClosure（闭包尾调用）与 TailCall 同策略——不 JIT 编译，整体 fallback VM。
-                return Err(format!("JIT: tuple/try/tailcall opcode not supported, fallback to VM"));
+            MakeTuple(n) => {
+                // M2-A3：MakeTuple → host_make_tuple（VM opcode 49 语义：弹 n 个值装 Tuple）。
+                self.sp -= (n as i32) * (VALUE_SIZE as i32);
+                self.materialize_stack_range(self.sp, n as usize);
+                let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
+                let out = self.stack_addr_at_sp();
+                self.call_hostcall_make_n("host_make_tuple", n as u64, args_addr, out);
+                self.bump_sp()?;
+            }
+            IsTuple(expected_len) => {
+                // M2-A3：IsTuple → host_is_tuple（VM opcode 50 语义：长度匹配 → Bool）。
+                self.sp -= VALUE_SIZE as i32;
+                self.materialize_stack_at(self.sp);
+                let recv_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
+                let out = self.stack_addr_at_sp();
+                self.call_hostcall_u64_val("host_is_tuple", expected_len as u64, recv_addr, out);
+                self.bump_sp()?;
+            }
+            TupleGet(i) => {
+                // M2-A3：TupleGet → host_tuple_get（VM opcode 51 语义：取 index 元素，越界 Unit）。
+                self.sp -= VALUE_SIZE as i32;
+                self.materialize_stack_at(self.sp);
+                let recv_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
+                let out = self.stack_addr_at_sp();
+                self.call_hostcall_u64_val("host_tuple_get", i as u64, recv_addr, out);
+                self.bump_sp()?;
+            }
+            Try => {
+                // M2-A3：Try → host_try_pop（VM opcode 52 语义）。Err → 把完整 Result::Err
+                // 作为函数返回值 early return（对齐 VM 的 frame 早退 / 解释器 unwrap_return
+                // 单层透传）；Ok → 解包 push；非 Result → 透传 push。
+                // 注意：`?` 在 try 块内编译为 IsEnumVariant+JmpFalse+EnumGetField（非本指令），
+                // 因此 Try 的 early return 语义在单 chunk 内自洽，无需跨帧传播。
+                self.sp -= VALUE_SIZE as i32;
+                self.materialize_stack_at(self.sp);
+                let val_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
+                let out = self.stack_addr_at_sp();
+                let is_err = self.call_hostcall_val_ret_u8_out("host_try_pop", val_addr, out);
+                let is_err_b = self.builder.ins().icmp_imm(IntCC::NotEqual, is_err, 0);
+                let err_blk = self.builder.create_block();
+                let cont_blk = self.builder.create_block();
+                self.builder.ins().brif(is_err_b, err_blk, &[], cont_blk, &[]);
+                // Err 路径：out 槽已是完整 Result::Err——复制到函数 out_ptr 并返回 ok=1
+                // （调用方收到该 Err 作为函数结果，与 VM 早退一致）。
+                self.builder.switch_to_block(err_blk);
+                self.builder.seal_block(err_blk);
+                self.copy_stack_to_ptr(self.sp, self.out_ptr, 0);
+                let ok = self.builder.ins().iconst(types::I8, 1);
+                self.builder.ins().return_(&[ok]);
+                // 继续路径：值已写 out 槽 → bump_sp 继续。
+                self.builder.switch_to_block(cont_blk);
+                self.builder.seal_block(cont_blk);
+                self.bump_sp()?;
+                self.terminated = false;
+            }
+            TailCall(i, n) => {
+                // M2-A3 + D2（保守）：TailCall 不激进帧复用——语义等价实现 = 弹出 n 个参数 →
+                // host_call（VM call_with_args）→ 立即把结果作为函数返回值返回。
+                // 注意：**不内联、不走 A1 直接调用**——TailCall 是函数终止指令（其后无继续
+                // 代码），内联会错误地继续执行调用方（TailCall 后即 chunk 末尾）。
+                // 深尾递归会随普通调用增长 VM 帧栈（优雅报错而非静默错值；与 CallN 行为一致）。
+                self.sp -= (n as i32) * (VALUE_SIZE as i32);
+                self.materialize_stack_range(self.sp, n as usize);
+                let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
+                let out = self.stack_addr_at_sp();
+                self.call_hostcall_call("host_call", i as u64, n as u64, args_addr, out);
+                // 结果已在 out 槽 → 返回（host_call 失败时 last_error 由 run_jit surface）。
+                self.copy_stack_to_ptr(self.sp, self.out_ptr, 0);
+                let ok = self.builder.ins().iconst(types::I8, 1);
+                self.builder.ins().return_(&[ok]);
+                self.terminated = true;
+            }
+            TailCallClosure(n) => {
+                // M2-A3 + D2（保守）：闭包尾调用同样走 host_call_indirect + 立即返回结果
+                // （语义等价：结果 = 被调闭包结果）。B2 错误立即中断（复用 CallClosure 模式）。
+                self.sp -= ((n + 1) as i32) * (VALUE_SIZE as i32);
+                self.materialize_stack_range(self.sp, (n + 1) as usize);
+                let args_addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, self.sp);
+                let out = self.stack_addr_at_sp();
+                self.call_hostcall_make_n("host_call_indirect", (n + 1) as u64, args_addr, out);
+                // B2：host_call_indirect 设置错误 → 立即返回 ok=0（run_jit surface）。
+                let err_flag = self.call_hostcall_vm_ret_u8("host_check_error");
+                let has_err = self.builder.ins().icmp_imm(IntCC::NotEqual, err_flag, 0);
+                let err_blk = self.builder.create_block();
+                let cont_blk = self.builder.create_block();
+                self.builder.ins().brif(has_err, err_blk, &[], cont_blk, &[]);
+                self.builder.switch_to_block(err_blk);
+                self.builder.seal_block(err_blk);
+                let ok_false = self.builder.ins().iconst(types::I8, 0);
+                self.builder.ins().return_(&[ok_false]);
+                // 无错误：返回被调闭包结果。
+                self.builder.switch_to_block(cont_blk);
+                self.builder.seal_block(cont_blk);
+                self.copy_stack_to_ptr(self.sp, self.out_ptr, 0);
+                let ok = self.builder.ins().iconst(types::I8, 1);
+                self.builder.ins().return_(&[ok]);
+                self.terminated = true;
+            }
+            Await | Yield => {
+                // M2-A3：async 挂起语义（Await 对 Pending Future 保存整个 VM 调度器栈并挂起；
+                // Yield 保存调用栈让出控制权）——JIT 机器码帧无法序列化/恢复，**保守保持整函数
+                // fallback**（语义正确优先；不做运行期 hostcall 混合——那会把合法挂起变成错误）。
+                return Err(format!("JIT: async suspend opcode (await/yield) not supported, fallback to VM"));
             }
             MakeRef | MakeMutRef(_) | Deref | DerefStore => {
                 // AUDIT-11.4.21：引用语义 opcodes 不 JIT 编译；整体 fallback VM。
+                // M2-A3 评估：MakeMutRef 需写回 JIT 局部槽（跨边界），DerefStore 含写穿+行号报错；
+                // 非本次优先级（Tuple/Try/Struct），保守保持 fallback 与 VM 语义一致。
                 return Err(format!("JIT: ref/deref opcode not supported, fallback to VM"));
             }
             MakeCell | BindSelfCapture(_) => {
                 // M1-S2（true letrec）：自引用 cell opcodes 不 JIT 编译；整体 fallback VM。
                 // 闭包体本身（Load + CallClosure）仍可 JIT——host_call_indirect 走
                 // Vm::call_value（已支持 Shared cell 解包），letrec 语义保持正确。
+                // M2-A3 评估：仅闭包创建点（顶层 let 递归闭包）含此二指令，非本次优先级。
                 return Err(format!("JIT: letrec cell opcode not supported, fallback to VM"));
             }
         }
@@ -1889,6 +2055,26 @@ impl<'a, M: Module> Translator<'a, M> {
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[], Some(types::I8));
         let call = self.builder.ins().call_indirect(sig, callee, &[self.vm]);
+        self.builder.inst_results(call)[0]
+    }
+
+    /// `fn(vm, *const Value, *mut Value)` — e.g. host_spawn（单值消费 + 写结果）。
+    fn call_hostcall_1_val(&mut self, name: &str, arg: Value_, out: Value_) {
+        self.invalidate_stack_scalars();
+        self.emit_line_hint();
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[self.ptr, self.ptr], None);
+        self.builder.ins().call_indirect(sig, callee, &[self.vm, arg, out]);
+    }
+
+    /// `fn(vm, *const Value, *mut Value) -> u8` — hostcall 写 out 同时返回 u8 标志
+    /// （如 host_try_pop：写继续/早退用的值到 out，返回 1 = 应 early return）。
+    fn call_hostcall_val_ret_u8_out(&mut self, name: &str, arg: Value_, out: Value_) -> Value_ {
+        self.invalidate_stack_scalars();
+        self.emit_line_hint();
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[self.ptr, self.ptr], Some(types::I8));
+        let call = self.builder.ins().call_indirect(sig, callee, &[self.vm, arg, out]);
         self.builder.inst_results(call)[0]
     }
 

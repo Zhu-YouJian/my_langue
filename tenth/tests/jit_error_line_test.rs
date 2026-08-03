@@ -232,3 +232,52 @@ fn test_jit_normal_execution_unaffected() {
         v => panic!("期望 Int(9)，实际 {:?}", v),
     }
 }
+
+// ─── M2-A3：新覆盖 opcode（Tuple/Struct/Try）的错误行号与语义对拍 ─────────
+
+#[test]
+fn test_jit_tuple_destructure_then_error_has_line() {
+    // 含 MakeTuple/TupleGet 的函数内运行时错误（整数除零）——A3 后该函数被 JIT
+    // 编译，错误行号应与 VM 一致（第 4 行 a / b）。
+    let src = r#"fn main() {
+    let t = (10, 0);
+    let (a, b) = t;
+    let c = a / b;
+    print(c);
+}
+"#;
+    let err = run_jit_err(src).unwrap_err();
+    assert_eq!(runtime_line(&err), Some(4), "tuple 解构后除零应定位到第 4 行，实际 {:?}", err);
+    assert_display_has_line(&err, 4);
+}
+
+#[test]
+fn test_jit_struct_field_then_error_has_line() {
+    // 含 NewStruct/LoadField 的函数内运行时错误（字段除零）——行号应为错误所在行。
+    let src = r#"struct P { x: Int, y: Int }
+fn main() {
+    let p = P { x: 10, y: 0 };
+    let c = p.x / p.y;
+    print(c);
+}
+"#;
+    let err = run_jit_err(src).unwrap_err();
+    assert_eq!(runtime_line(&err), Some(4), "struct 字段除零应定位到第 4 行，实际 {:?}", err);
+    assert_display_has_line(&err, 4);
+}
+
+#[test]
+fn test_jit_try_err_early_return_not_error() {
+    // `?` 遇 Result::Err 是 **early return**（非错误）——JIT 正常返回完整 Result::Err，
+    // 不进入错误链路。与 VM opcode 52 / 解释器 unwrap_return 单层语义一致。
+    let src = r#"fn main() -> Int {
+    let x = Result::Err("boom")?;
+    x
+}
+"#;
+    let result = run_jit_err(src).unwrap();
+    match &result {
+        Value::Enum { enum_name, variant, .. } if enum_name == "Result" && variant == "Err" => {}
+        v => panic!("期望 Result::Err（早退非错误），实际 {:?}", v),
+    }
+}
