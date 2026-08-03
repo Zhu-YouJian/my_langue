@@ -852,6 +852,16 @@ impl super::Interpreter {
 
     pub(super) fn eval_stmt(&mut self, stmt: &HirStmt) -> TenthResult<()> {
         self.tick()?;
+        // M4.4 调试器：每个语句执行前调用调试钩子（None 时零开销）。
+        // 用 take 模式避免 `&mut self.debug_hook` 与 `&mut self` 的双重可变借用：
+        // 先把钩子移出，调用完放回。钩子可阻塞等待用户命令（同步交互式调试）。
+        if self.debug_hook.is_some() {
+            let hook = std::mem::take(&mut self.debug_hook);
+            let mut hook = hook.expect("debug_hook 已检查 is_some");
+            let result = hook(self, stmt);
+            self.debug_hook = Some(hook);
+            result?;
+        }
         match &stmt.kind {
             HirStmtKind::Expr(e) => {
                 self.eval_expr(e)?;

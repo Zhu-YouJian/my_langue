@@ -94,6 +94,12 @@ pub struct Interpreter {
     /// register_custom_op 通过 `borrow_mut()` 修改；查询通过 `borrow()`。
     /// 与 `vm::Vm::custom_ops` 字段对齐（双重注册一致性）。
     pub custom_ops: Rc<RefCell<CustomOpRegistry>>,
+    /// M4.4 调试器：调试钩子。每个语句执行前调用（tree-walk 逐步的基础）。
+    ///
+    /// - 钩子可阻塞等待用户命令（CLI 调试器同步交互），读 `self.vars` 查看变量；
+    /// - `None`（默认）时零行为变化、零开销——仅调试器工具设置；
+    /// - 钩子出错时返回 `Err` 立即中止执行（错误响亮）。
+    pub debug_hook: Option<Box<dyn FnMut(&mut Interpreter, &HirStmt) -> TenthResult<()>>>,
 }
 
 impl Interpreter {
@@ -123,6 +129,7 @@ impl Interpreter {
             regexes: Vec::new(),
             commands: Vec::new(),
             custom_ops: Rc::new(RefCell::new(CustomOpRegistry::new())),
+            debug_hook: None,
         }
     }
 
@@ -238,6 +245,17 @@ impl Interpreter {
         interp.limits = Some(limits);
         interp.arena = Arena::new(arena_cap);
         interp
+    }
+
+    /// M4.4 调试器：设置调试钩子（每个语句执行前调用）。
+    ///
+    /// 钩子闭包可阻塞等待用户命令、读取 `self.vars` 查看变量值、检查
+    /// `stmt.span.line` 决定断点/单步。`None` 时解释器行为完全不变。
+    pub fn set_debug_hook(
+        &mut self,
+        hook: Option<Box<dyn FnMut(&mut Interpreter, &HirStmt) -> TenthResult<()>>>,
+    ) {
+        self.debug_hook = hook;
     }
 
     /// 注册自定义可微算子（PROJ-006）。

@@ -29,6 +29,24 @@ pub use op::Op;
 /// Native Rust function callable from VM bytecode.
 pub type NativeFn = fn(&mut Vm, &[Value]) -> TenthResult<Value>;
 
+/// M4.4 剖析器：VM 剖析事件（函数入口/出口，按 chunk 标识）。
+///
+/// 由 `run_until_yield` 执行循环在 chunk 切换时发出（一个检查点 + 帧深度启发式）：
+/// - `Enter`：进入 chunk（普通 Call/CallN/TailCall/闭包调用，或 TCO 帧复用）；
+/// - `Exit`：离开 chunk（Ret/Try 提前返回/回退 Ret）。
+/// `chunk_idx` 可用 `Vm::chunk_name_at` 查函数名。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmProfileEvent {
+    pub kind: VmProfileKind,
+    pub chunk_idx: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VmProfileKind {
+    Enter,
+    Exit,
+}
+
 use op::{Frame, TaskId};
 
 // ── Vm ─────────────────────────────────────────────────────────────────────
@@ -135,6 +153,12 @@ pub struct Vm {
     /// 拿到 Rc 副本，使 backward 能访问用户的 `CustomBackward` 实现。
     /// register_custom_op 通过 `borrow_mut()` 修改；查询通过 `borrow()`。
     pub custom_ops: Rc<RefCell<CustomOpRegistry>>,
+    /// M4.4 剖析器：剖析钩子。执行循环在函数入口/出口（chunk 切换）时调用。
+    ///
+    /// - `None`（默认）时零行为变化：`run_until_yield` 只在钩子存在时做
+    ///   每指令一次的 chunk 切换检查（一次整数比较，开销可忽略）；
+    /// - 钩子出错时返回 `Err` 立即中止执行（错误响亮）。
+    pub profile_hook: Option<Box<dyn FnMut(&mut Vm, VmProfileEvent) -> TenthResult<()>>>,
 }
 
 impl Vm {
@@ -161,6 +185,7 @@ impl Vm {
             task_futures: HashMap::new(),
             current_task: 0,
             custom_ops: Rc::new(RefCell::new(CustomOpRegistry::new())),
+            profile_hook: None,
         }
     }
 
@@ -170,6 +195,17 @@ impl Vm {
     /// 若同名算子已注册，返回 `Err`。
     pub fn register_custom_op(&mut self, op: Box<dyn CustomBackward>) -> Result<usize, String> {
         self.custom_ops.borrow_mut().register(op)
+    }
+
+    /// M4.4 剖析器：设置剖析钩子（函数入口/出口时调用）。
+    ///
+    /// 钩子收到 `VmProfileEvent`（Enter/Exit + chunk_idx），可用
+    /// `vm.chunk_name_at(idx)` 查函数名。`None` 时 VM 行为完全不变。
+    pub fn set_profile_hook(
+        &mut self,
+        hook: Option<Box<dyn FnMut(&mut Vm, VmProfileEvent) -> TenthResult<()>>>,
+    ) {
+        self.profile_hook = hook;
     }
 
     /// 自定义算子注册表访问器（PROJ-006）。

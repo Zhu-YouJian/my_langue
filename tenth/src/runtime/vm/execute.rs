@@ -15,6 +15,7 @@ use crate::runtime::async_io::ASYNC_IO;
 use super::Vm;
 use super::err;
 use super::op::{Frame, YieldReason};
+use super::{VmProfileEvent, VmProfileKind};
 
 /// R4 操作数栈复用池上限：防止极端深递归/深调用链时池内空闲栈无限累积。
 /// 池内每个栈初始容量 64（Value 约 32-40 字节，单栈约 2.5KB），
@@ -161,6 +162,17 @@ impl Vm {
         // 不依赖 step_budget（用户可能只设 --timeout 而不设步数预算）。
         let mut loop_counter: u64 = 0;
 
+        // M4.4 剖析器：函数入口/出口检测状态。
+        // profile_enabled 在循环外判定一次（钩子存在时每指令做两次整数比较，
+        // 开销可忽略；钩子不存在时完全零成本）。检测条件 = chunk 切换 OR 帧深度
+        // 变化（后者覆盖递归：fib→fib 时 chunk 索引不变但压帧/弹帧）。
+        // last_seen_chunk 初始化为 usize::MAX 使首条指令发出 Enter（入口 chunk）。
+        // 判定：帧深度增加→Enter（当前 chunk）；减少→Exit（离开 last_seen_chunk）；
+        // 不变且 chunk 切换→TCO 帧复用→Enter。
+        let profile_enabled = self.profile_hook.is_some();
+        let mut last_seen_chunk = usize::MAX;
+        let mut prev_frames_len = self.frames.len();
+
         // R1 每指令预算检查轻量化：循环外判定一次，循环内用寄存器内计数器，
         // 避免每条指令的 Option match。语义与旧实现完全一致：
         // - 步数预算耗尽仍报 Timeout("VM 步数预算耗尽")
@@ -179,6 +191,42 @@ impl Vm {
                     });
                 }
                 budget_left -= 1;
+            }
+            // M4.4 剖析器：函数入口/出口检测（唯一挂钩点）。
+            // 条件 = chunk 切换 OR 帧深度变化（覆盖递归调用同一 chunk 的情况）。
+            // chunk_idx 与 self.frames 是本地/字段状态，仅在调用/返回指令处变化，
+            // 此处比较上一次迭代即可捕获所有函数入口/出口。
+            if profile_enabled {
+                let depth_now = self.frames.len();
+                let switched = chunk_idx != last_seen_chunk;
+                let depth_changed = depth_now != prev_frames_len;
+                if switched || depth_changed {
+                    let kind = if depth_now > prev_frames_len {
+                        VmProfileKind::Enter // 压帧：进入当前 chunk
+                    } else if depth_now < prev_frames_len {
+                        VmProfileKind::Exit // 弹帧：离开 last_seen_chunk
+                    } else {
+                        VmProfileKind::Enter // TCO 帧复用：进入当前 chunk
+                    };
+                    let event_chunk = if kind == VmProfileKind::Exit {
+                        last_seen_chunk
+                    } else {
+                        chunk_idx
+                    };
+                    last_seen_chunk = chunk_idx;
+                    prev_frames_len = depth_now;
+                    let event = VmProfileEvent {
+                        kind,
+                        chunk_idx: event_chunk,
+                    };
+                    // take 模式：把钩子移出再放回，避免双重可变借用。
+                    let hook = std::mem::take(&mut self.profile_hook);
+                    if let Some(mut h) = hook {
+                        let r = h(self, event);
+                        self.profile_hook = Some(h);
+                        r?;
+                    }
+                }
             }
             // 每隔 4096 次循环检查一次墙钟 deadline，开销可忽略。
             // 用独立计数器避免依赖 step_budget（step_budget 可能未设）。

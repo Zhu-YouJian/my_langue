@@ -1,0 +1,12 @@
+[package]
+name = "tenth-debug"
+version = "0.1.0"
+edition = "2024"
+description = "Tenth debugger (CLI, interpreter-based): breakpoints, single-step, variable inspection"
+
+[[bin]]
+name = "tenth-debug"
+path = "src/main.rs"
+
+[dependencies]
+tenth = { path = "../.." }
