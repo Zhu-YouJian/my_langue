@@ -1,6 +1,9 @@
 mod commands;
 mod engine;
 mod manifest;
+mod pkg;
+mod resolver;
+mod version;
 
 use std::env;
 use std::process;
@@ -20,19 +23,39 @@ fn print_help() {
     println!("    remove <PKG>          Remove a dependency");
     println!("    list                  List all dependencies");
     println!("    clean [--deps|--all]  Remove build artifacts");
-    println!("    publish               Package the project into .tenthpkg");
-    println!("    install <PKG>         Install a package (git-url/local-path)");
+    println!("    publish [--registry <dir>]  Package into .tenthpkg (optionally publish to a local registry dir)");
+    println!("    install <PKG> [--registry <dir>]  Install a package (git-url/local-path/.tenthpkg/registry-name)");
     println!();
     println!("OPTIONS:");
     println!("    -h, --help            Print this help message");
     println!("    --deps                Also clean deps/ (with clean)");
     println!("    --all                 Clean everything (with clean)");
+    println!("    --registry <dir>      Local registry directory (with publish/install)");
     println!();
     println!("DEPENDENCY FORMATS:");
     println!("    tenthpm add mylib           Registry dependency (version *)");
     println!("    tenthpm add mylib 1.0.0     Registry dependency (version 1.0.0)");
     println!("    tenthpm add ./mylib         Local path dependency");
     println!("    tenthpm add https://...     Git dependency (cloned to deps/)");
+    println!();
+    println!("VERSION CONSTRAINTS:");
+    println!("    *                        Any version");
+    println!("    1.2.3                    Exact version");
+    println!("    ^1.2.3                   >=1.2.3 <2.0.0 (caret)");
+    println!("    >=1.2.0,<2.0.0           Range (comma = AND)");
+    println!();
+    println!("RESOLUTION:");
+    println!("    Transitive dependencies are resolved from path/git deps' Tenth.toml.");
+    println!("    Conflicts and missing deps are reported loudly (never silently).");
+    println!("    The resolved graph is locked in Tenth.lock.");
+}
+
+/// 从参数中提取 `--registry <dir>` 的值。
+fn registry_arg(args: &[String]) -> Option<String> {
+    args.iter()
+        .position(|a| a == "--registry")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn main() {
@@ -76,14 +99,18 @@ fn main() {
             let all = args.iter().any(|a| a == "--all");
             commands::clean::clean(deps_too, all)
         }
-        "publish" => commands::publish::publish(),
+        "publish" => {
+            let registry = registry_arg(&args);
+            commands::publish::publish(registry.as_deref())
+        }
         "install" => {
             let package = args.get(2);
             if package.is_none() {
-                eprintln!("Error: `install` requires a package name or git URL");
+                eprintln!("Error: `install` requires a package name, git URL, or .tenthpkg file");
                 process::exit(1);
             }
-            commands::install::install(package.unwrap())
+            let registry = registry_arg(&args);
+            commands::install::install(package.unwrap(), registry.as_deref())
         }
         "-h" | "--help" => {
             print_help();

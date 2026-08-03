@@ -5,6 +5,24 @@ use crate::manifest::{
     ensure_within, is_git_url, safe_package_name_from_git, safe_to_remove_dir, Dependency,
     Lockfile, Manifest,
 };
+use crate::resolver;
+
+/// 保存 manifest 并依据解析结果写入锁文件（M4.1）。
+///
+/// 先做依赖解析（传递依赖 + 冲突检测）；失败时**响亮报错且不落盘**
+/// （保持原子性，避免留下半成品 manifest/锁文件状态）。
+fn save_and_lock(
+    manifest: &Manifest,
+    manifest_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resolution = resolver::resolve(manifest, Path::new("."))
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    manifest.save_to_file(manifest_path)?;
+    let lock_path = Path::new("Tenth.lock");
+    let lockfile = Lockfile::from_resolution(&resolution);
+    lockfile.save_to_file(lock_path)?;
+    Ok(())
+}
 
 /// Check if a string looks like a local path.
 fn is_local_path(package: &str) -> bool {
@@ -114,15 +132,8 @@ fn add_git_dependency(
         git: Some(url.to_string()),
     };
 
-    manifest
-        .dependencies
-        .insert(package_name.clone(), dependency);
-    manifest.save_to_file(manifest_path)?;
-
-    // Update lock file
-    let lock_path = Path::new("Tenth.lock");
-    let lockfile = Lockfile::from_manifest(manifest);
-    let _ = lockfile.save_to_file(lock_path);
+    manifest.dependencies.insert(package_name.clone(), dependency);
+    save_and_lock(&manifest, manifest_path)?;
 
     println!("Added dependency `{}` (git: {})", package_name, url);
     Ok(())
@@ -158,12 +169,7 @@ fn add_path_dependency(
     };
 
     manifest.dependencies.insert(package_name.clone(), dependency);
-    manifest.save_to_file(manifest_path)?;
-
-    // Update lock file
-    let lock_path = Path::new("Tenth.lock");
-    let lockfile = Lockfile::from_manifest(manifest);
-    let _ = lockfile.save_to_file(lock_path);
+    save_and_lock(&manifest, manifest_path)?;
 
     println!("Added dependency `{}` (path: {})", package_name, path);
     Ok(())
@@ -186,12 +192,7 @@ fn add_registry_dependency(
     };
 
     manifest.dependencies.insert(name.to_string(), dependency);
-    manifest.save_to_file(manifest_path)?;
-
-    // Update lock file
-    let lock_path = Path::new("Tenth.lock");
-    let lockfile = Lockfile::from_manifest(manifest);
-    let _ = lockfile.save_to_file(lock_path);
+    save_and_lock(&manifest, manifest_path)?;
 
     println!("Added dependency `{}`", name);
     Ok(())

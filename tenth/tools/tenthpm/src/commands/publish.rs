@@ -1,18 +1,20 @@
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 
 use crate::engine;
 use crate::manifest::Manifest;
+use crate::pkg;
+use crate::resolver;
 
-/// Publish the project: validate, compile-check, and package into a
-/// .tenthpkg archive (a simple tar-like format).
+/// Publish the project: validate (incl. dependency resolution), compile-check,
+/// and package into a `.tenthpkg` archive. Optionally publish to a local
+/// registry directory (`--registry <dir>`).
 ///
 /// The archive format is:
 /// ```
 /// TENTHPKG\0          (8-byte magic)
 /// <manifest_len:u32>  (little-endian)
-/// <manifest_json>     (Tenth.toml content)
+/// <manifest_toml>     (Tenth.toml content)
 /// <file_count:u32>    (little-endian)
 /// For each file:
 ///   <path_len:u32>    (little-endian)
@@ -20,7 +22,7 @@ use crate::manifest::Manifest;
 ///   <data_len:u32>    (little-endian)
 ///   <data_bytes>      (file content)
 /// ```
-pub fn publish() -> Result<(), Box<dyn std::error::Error>> {
+pub fn publish(registry: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let manifest_path = Path::new("Tenth.toml");
     if !manifest_path.exists() {
         return Err("当前目录未找到 Tenth.toml".into());
@@ -29,12 +31,24 @@ pub fn publish() -> Result<(), Box<dyn std::error::Error>> {
     let manifest = Manifest::load_from_file(manifest_path)?;
 
     // Validate for publishing
-    manifest.validate(true).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    manifest
+        .validate(true)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     println!(
         "Publishing `{}` v{} ...",
         manifest.package.name, manifest.package.version
     );
+
+    // Step 0: 依赖解析（M4.1）——冲突/缺失依赖在发布前响亮报错
+    let resolution = resolver::resolve(&manifest, Path::new("."))
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    if !resolution.packages.is_empty() {
+        println!(
+            "  Resolved {} dependency package(s).",
+            resolution.packages.len()
+        );
+    }
 
     // Step 1: Validate — compile-check all source files
     println!("  Validating package...");
@@ -82,38 +96,31 @@ pub fn publish() -> Result<(), Box<dyn std::error::Error>> {
     );
     let archive_path = Path::new(&archive_name);
 
-    let mut buf = Vec::new();
-
-    // Magic
-    buf.extend_from_slice(b"TENTHPKG\0");
-
-    // Manifest content
-    let manifest_bytes = fs::read_to_string(manifest_path)?;
-    let manifest_bytes = manifest_bytes.as_bytes();
-    buf.extend_from_slice(&(manifest_bytes.len() as u32).to_le_bytes());
-    buf.extend_from_slice(manifest_bytes);
-
-    // File count
-    buf.extend_from_slice(&(files_to_pack.len() as u32).to_le_bytes());
-
-    // Each file
-    for (path, data) in &files_to_pack {
-        let path_bytes = path.as_bytes();
-        buf.extend_from_slice(&(path_bytes.len() as u32).to_le_bytes());
-        buf.extend_from_slice(path_bytes);
-        buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        buf.extend_from_slice(data);
-    }
-
-    let mut file = fs::File::create(archive_path)?;
-    file.write_all(&buf)?;
+    pkg::write_archive(&manifest, &files_to_pack, archive_path)?;
+    let size = fs::metadata(archive_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
 
     println!(
         "  Packaged {} file(s) into {} ({} bytes)",
         files_to_pack.len(),
         archive_name,
-        buf.len()
+        size
     );
+
+    // Step 4: 可选——发布到本地 registry 目录
+    if let Some(reg) = registry {
+        let reg_dir = Path::new(reg);
+        fs::create_dir_all(reg_dir).map_err(|e| -> Box<dyn std::error::Error> {
+            format!("创建 registry 目录 {} 失败: {}", reg_dir.display(), e).into()
+        })?;
+        let target = reg_dir.join(&archive_name);
+        fs::copy(archive_path, &target).map_err(|e| -> Box<dyn std::error::Error> {
+            format!("复制归档到 registry 失败: {}", e).into()
+        })?;
+        println!("  Published to local registry: {}", target.display());
+    }
+
     println!(
         "  Published `{}` v{} successfully!",
         manifest.package.name, manifest.package.version
@@ -121,7 +128,8 @@ pub fn publish() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("Note: Remote registry is not yet implemented.");
     println!("      The package archive has been created locally.");
-    println!("      To distribute, share the .tenthpkg file or push to a git repository.");
+    println!("      To distribute, share the .tenthpkg file, publish to a");
+    println!("      local registry dir (`publish --registry <dir>`), or push to a git repository.");
 
     Ok(())
 }

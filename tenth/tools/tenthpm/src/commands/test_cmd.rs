@@ -2,12 +2,16 @@ use std::path::Path;
 
 use crate::engine;
 use crate::manifest::Manifest;
+use crate::resolver;
 
 /// Run all test files under tests/.
 ///
 /// Each .th file in tests/ is executed in-process. A test passes if the
 /// program exits without error. Test files can use `assert(condition, message)`
 /// or simply panic/error to signal failure.
+///
+/// M4.1：运行前先做依赖解析（传递依赖 + 冲突检测），冲突 / 缺失依赖
+/// 响亮报错。
 pub fn test() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_path = Path::new("Tenth.toml");
     if !manifest_path.exists() {
@@ -15,6 +19,10 @@ pub fn test() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let manifest = Manifest::load_from_file(manifest_path)?;
+
+    // M4.1：依赖解析检查
+    resolver::resolve(&manifest, Path::new("."))
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     let tests_dir = Path::new("tests");
     if !tests_dir.exists() {

@@ -1,13 +1,32 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::manifest::{
     ensure_within, is_git_url, safe_package_name_from_git, safe_to_remove_dir, Dependency,
     Lockfile, Manifest,
 };
+use crate::resolver;
+use crate::version::Version;
 
-/// Install a package from a git URL or local path into deps/ and add it
-/// to the project's Tenth.toml.
+/// 保存 manifest 并依据解析结果写入锁文件（M4.1）。
+///
+/// 先做依赖解析（传递依赖 + 冲突检测）；失败时**响亮报错且不落盘**
+/// （保持原子性，避免留下半成品 manifest/锁文件状态）。
+fn save_and_lock(
+    manifest: &Manifest,
+    manifest_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resolution = resolver::resolve(manifest, Path::new("."))
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    manifest.save_to_file(manifest_path)?;
+    let lock_path = Path::new("Tenth.lock");
+    let lockfile = Lockfile::from_resolution(&resolution);
+    lockfile.save_to_file(lock_path)?;
+    Ok(())
+}
+
+/// Install a package from a git URL, local path, `.tenthpkg` file, or a local
+/// registry directory into deps/ and add it to the project's Tenth.toml.
 ///
 /// This is similar to `add` but is the primary way to fetch a package
 /// that you want to use as a dependency. The difference from `add`:
@@ -16,7 +35,25 @@ use crate::manifest::{
 ///
 /// In practice both do the same thing for now. `install` also supports
 /// installing without a project (global install to ~/.tenth/packages/).
-pub fn install(package: &str) -> Result<(), Box<dyn std::error::Error>> {
+///
+/// M4.1 新增：
+/// - `install <file>.tenthpkg` —— 从本地归档安装（发布→安装闭环）
+/// - `install <name> --registry <dir>` —— 从本地 registry 目录安装
+pub fn install(package: &str, registry: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    // 1. .tenthpkg 文件安装（发布→安装闭环）
+    if package.ends_with(".tenthpkg") {
+        let p = Path::new(package);
+        if p.exists() {
+            return install_from_pkg(p);
+        }
+        return Err(format!("找不到 .tenthpkg 文件: {}", package).into());
+    }
+
+    // 2. 从本地 registry 目录安装
+    if let Some(reg) = registry {
+        return install_from_registry(package, reg);
+    }
+
     let manifest_path = Path::new("Tenth.toml");
 
     if manifest_path.exists() {
@@ -28,6 +65,103 @@ pub fn install(package: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// 从本地 `.tenthpkg` 归档安装：解包到 deps/<name>/ 并登记为 path 依赖。
+fn install_from_pkg(pkg_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let archive = crate::pkg::read_archive(pkg_path)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    // read_archive 已校验包名合法
+    let package_name = archive.manifest.package.name.clone();
+    let package_version = archive.manifest.package.version.clone();
+
+    let manifest_path = Path::new("Tenth.toml");
+    if !manifest_path.exists() {
+        return Err("当前目录未找到 Tenth.toml — 请在项目目录内安装包".into());
+    }
+    let mut manifest = Manifest::load_from_file(manifest_path)?;
+
+    // 解包到 deps/<name>/
+    let deps_dir = Path::new("deps");
+    if !deps_dir.exists() {
+        fs::create_dir(deps_dir)?;
+    }
+    let target_dir = deps_dir.join(&package_name);
+    ensure_within(deps_dir, &target_dir).map_err(|e| -> Box<dyn std::error::Error> {
+        e.into()
+    })?;
+    if target_dir.exists() {
+        safe_to_remove_dir(&target_dir)?;
+        fs::remove_dir_all(&target_dir)?;
+    }
+    for (rel, content) in &archive.files {
+        let dest = target_dir.join(rel);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(dest, content)?;
+    }
+
+    let dependency = Dependency {
+        version: package_version.clone(),
+        path: Some(format!("deps/{}", package_name)),
+        git: None,
+    };
+    manifest.dependencies.insert(package_name.clone(), dependency);
+    save_and_lock(&manifest, manifest_path)?;
+
+    println!(
+        "Installed `{}` v{} from {}!",
+        package_name,
+        package_version,
+        pkg_path.display()
+    );
+    Ok(())
+}
+
+/// 从本地 registry 目录安装：扫描 `*.tenthpkg`，取匹配包名的最高版本。
+fn install_from_registry(name: &str, registry: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // 安全：包名必须合法
+    crate::manifest::validate_package_name(name)?;
+
+    let reg_dir = Path::new(registry);
+    if !reg_dir.is_dir() {
+        return Err(format!("registry 目录不存在: {}", reg_dir.display()).into());
+    }
+
+    let mut best: Option<(Version, PathBuf)> = None;
+    for entry in fs::read_dir(reg_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|e| e == "tenthpkg") {
+            let archive = match crate::pkg::read_archive(&path) {
+                Ok(a) => a,
+                Err(_) => continue, // 损坏的归档跳过（registry 目录里可能有无关文件）
+            };
+            if archive.manifest.package.name != name {
+                continue;
+            }
+            if let Some(v) = Version::parse(&archive.manifest.package.version) {
+                let is_better = match &best {
+                    Some((bv, _)) => v > *bv,
+                    None => true,
+                };
+                if is_better {
+                    best = Some((v, path));
+                }
+            }
+        }
+    }
+
+    let (_, pkg_path) = best.ok_or_else(|| {
+        format!(
+            "本地 registry `{}` 中未找到包 `{}`（缺失依赖必须响亮报错）",
+            reg_dir.display(),
+            name
+        )
+    })?;
+
+    install_from_pkg(&pkg_path)
 }
 
 fn install_local(package: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -93,11 +227,7 @@ fn install_local(package: &str) -> Result<(), Box<dyn std::error::Error>> {
         };
 
         manifest.dependencies.insert(package_name.clone(), dependency);
-        manifest.save_to_file(manifest_path)?;
-
-        let lock_path = Path::new("Tenth.lock");
-        let lockfile = Lockfile::from_manifest(&manifest);
-        let _ = lockfile.save_to_file(lock_path);
+        save_and_lock(&manifest, manifest_path)?;
 
         println!("Installed `{}` successfully!", package_name);
     } else if Path::new(package).exists() {
@@ -132,11 +262,7 @@ fn install_local(package: &str) -> Result<(), Box<dyn std::error::Error>> {
         };
 
         manifest.dependencies.insert(package_name.clone(), dependency);
-        manifest.save_to_file(manifest_path)?;
-
-        let lock_path = Path::new("Tenth.lock");
-        let lockfile = Lockfile::from_manifest(&manifest);
-        let _ = lockfile.save_to_file(lock_path);
+        save_and_lock(&manifest, manifest_path)?;
 
         println!("Installed `{}` from local path!", package_name);
     } else {

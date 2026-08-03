@@ -73,6 +73,9 @@ pub struct LockPackage {
     pub version: String,
     pub source: Option<String>,
     pub checksum: Option<String>,
+    /// 该包的直接依赖名列表（M4.1 传递依赖锁定）。
+    #[serde(default)]
+    pub dependencies: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -115,14 +118,7 @@ impl Lockfile {
 
                 let checksum = dep.path.as_ref().and_then(|p| {
                     let dep_path = Path::new(p);
-                    let dep_manifest = dep_path.join("Tenth.toml");
-                    if dep_manifest.exists() {
-                        fs::read_to_string(&dep_manifest)
-                            .ok()
-                            .map(|content| fnv1a_64(content.as_bytes()))
-                    } else {
-                        None
-                    }
+                    checksum_of_file(&dep_path.join("Tenth.toml"))
                 });
 
                 LockPackage {
@@ -130,6 +126,7 @@ impl Lockfile {
                     version: dep.version.clone(),
                     source,
                     checksum,
+                    dependencies: Vec::new(),
                 }
             })
             .collect();
@@ -240,13 +237,23 @@ fn is_valid_version(v: &str) -> bool {
 }
 
 /// FNV-1a 64-bit hash, returned as hex string.
-fn fnv1a_64(data: &[u8]) -> String {
+pub(crate) fn fnv1a_64(data: &[u8]) -> String {
     let mut hash: u64 = 0xcbf29ce484222325;
     for &byte in data {
         hash ^= byte as u64;
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("{:016x}", hash)
+}
+
+/// 计算文件的 FNV-1a 64 位 checksum（hex 字符串）；文件不存在/不可读返回 `None`。
+pub(crate) fn checksum_of_file(path: &Path) -> Option<String> {
+    if !path.exists() {
+        return None;
+    }
+    fs::read_to_string(path)
+        .ok()
+        .map(|content| fnv1a_64(content.as_bytes()))
 }
 
 // ── 包名 / git URL 安全校验（避免路径穿越）──────────────────────────────────

@@ -5,6 +5,7 @@ use tenth::hir::lower::Lowerer;
 use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::runtime::interpreter::Interpreter;
+use tenth::hir::types::BaseType;
 use tenth::runtime::value::Value;
 use tenth::runtime::vm::Vm;
 use tenth::compile::bytecode::BytecodeCompiler;
@@ -265,7 +266,7 @@ fn register_natives(vm: &mut Vm) {
         }
     });
     vm.add_native("abs".into(), |_vm, args| match args.first() {
-        Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
+        Some(Value::Int(n, dt)) => Ok(Value::Int(n.abs(), *dt)),
         Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
         _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: "abs() 需要一个数值参数".into(),
@@ -273,13 +274,13 @@ fn register_natives(vm: &mut Vm) {
     });
     vm.add_native("sqrt".into(), |_vm, args| match args.first() {
         Some(Value::Float(f)) => Ok(Value::Float(f.sqrt())),
-        Some(Value::Int(n)) => Ok(Value::Float((*n as f64).sqrt())),
+        Some(Value::Int(n, _)) => Ok(Value::Float((*n as f64).sqrt())),
         _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: "sqrt() 需要一个数值参数".into(),
         }),
     });
     vm.add_native("to_float".into(), |_vm, args| match args.first() {
-        Some(Value::Int(n)) => Ok(Value::Float(*n as f64)),
+        Some(Value::Int(n, _)) => Ok(Value::Float(*n as f64)),
         Some(Value::Float(f)) => Ok(Value::Float(*f)),
         _ => Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
             message: "to_float() 需要一个数值参数".into(),
