@@ -580,6 +580,47 @@ impl<'a, M: Module> Translator<'a, M> {
         ) -> Option<Vec<ScalarKind>> {
             use ScalarKind::*;
             use Op::*;
+
+            // A2-AUDIT-11.4.35：内联资格静态判定（与发射端 `inline_analyze`/
+            // `try_inline_call` 条件逐一对应，防分析/发射漂移）。可内联调用在发射端
+            // **优先于** A6 特化（`emit_direct_call` 先 try_inline_call 再 try_spec_call），
+            // 其结果是 Value（非标量寄存器）——因此分析期必须把可内联调用预测为
+            // Unknown。若仍预测 I32/spec，循环回边处分析把局部重置为 I32 而局部标量槽
+            // 残留过期值（一般 Store 只写 Value 槽）→ Load 重专用化读过期标量 → 静默错值。
+            fn inline_eligible(all_chunks: &[Chunk], callee_idx: usize, n: usize) -> bool {
+                let callee = match all_chunks.get(callee_idx) {
+                    Some(c) => c,
+                    None => return false,
+                };
+                // 参数个数必须匹配（同 try_inline_call，防参数错位）。
+                if callee.num_args != n {
+                    return false;
+                }
+                if callee.num_locals > 64 {
+                    return false;
+                }
+                let mut ip = 0usize;
+                let mut count = 0usize;
+                while ip < callee.code.len() {
+                    let op = callee.read_op(&mut ip);
+                    count += 1;
+                    if count > INLINE_MAX_INSTR {
+                        return false;
+                    }
+                    let is_simple = matches!(op,
+                        PushInt(_) | PushFloat(_) | PushFloat32(_) | PushBool(_) | PushChar(_) | PushUnit
+                        | Pop | Dup | Load(_) | Store(_)
+                        | Add | Sub | Mul | Div | Mod | Neg | Not
+                        | Eq | Neq | Lt | Gt | Lte | Gte
+                        | Jump(_) | JmpFalse(_) | JmpTrue(_) | Ret | MoveOp
+                    );
+                    if !is_simple {
+                        return false;
+                    }
+                }
+                true
+            }
+
             let mut locals = entry.to_vec();
             let mut stack: Vec<ScalarKind> = Vec::new();
             let end = if bi + 1 < nblocks { block_first[bi + 1] } else { insns.len() };
@@ -661,7 +702,13 @@ impl<'a, M: Module> Translator<'a, M> {
                     Call(i) => {
                         // M2.5-A6：目标可特化（0 参纯 i64 返回）→ 结果预测为 I32；
                         // 否则 Unknown + 清栈（与发射端 host_call 失效一致）。
-                        let spec = spec_target_qualifies(name_to_chunk, chunk_sigs, all_chunks, *i, 0);
+                        // A2-11.4.35：可内联调用（内联优先于特化）→ 预测 Unknown。
+                        let inline = match name_to_chunk.get(*i).copied().flatten() {
+                            Some(ci) => inline_eligible(all_chunks, ci, 0),
+                            None => false,
+                        };
+                        let spec = !inline
+                            && spec_target_qualifies(name_to_chunk, chunk_sigs, all_chunks, *i, 0);
                         call_spec.insert(ip, spec);
                         if spec {
                             stack.push(I32);
@@ -673,13 +720,20 @@ impl<'a, M: Module> Translator<'a, M> {
                     CallN(i, n) => {
                         // M2.5-A6：实参全为 I32 且目标可特化 → 结果预测 I32（特化调用
                         // 后接原生 Add 的关键）；否则 Unknown + 清栈。
+                        // A2-11.4.35：可内联调用（内联优先于特化）→ 预测 Unknown，
+                        // 与发射端内联路径一致（否则循环回边 Load 读过期标量 → 静默错值）。
                         let mut all_i32 = true;
                         for _ in 0..*n {
                             if stack.pop().unwrap_or(Unknown) != I32 {
                                 all_i32 = false;
                             }
                         }
+                        let inline = match name_to_chunk.get(*i).copied().flatten() {
+                            Some(ci) => inline_eligible(all_chunks, ci, *n as usize),
+                            None => false,
+                        };
                         let spec = all_i32
+                            && !inline
                             && spec_target_qualifies(name_to_chunk, chunk_sigs, all_chunks, *i, *n as usize);
                         call_spec.insert(ip, spec);
                         if spec {
@@ -1682,6 +1736,11 @@ impl<'a, M: Module> Translator<'a, M> {
                     let dst = self.locals[&i];
                     self.copy_stack_to_slot(src_off, dst, 0);
                     self.set_local_kind(i, ScalarKind::Unknown);
+                    // 静默错值红线（A2-AUDIT-11.4.35）：一般路径 Store 只写 Value 槽，
+                    // **必须同时失效 local_scalars[i]**——否则循环回边处分析把该局部重置为
+                    // I32（分析预测 spec 而发射走了内联→Value 结果），后续 Load(i) 重新
+                    // 专用化会读到上一轮残留的过期标量槽（静默 0，溢出检查失效）。
+                    self.local_scalars.remove(&i);
                     // 同标量路径：弹栈消费后清除残留标量跟踪。
                     self.clear_stack_scalar_at(src_off);
                 }

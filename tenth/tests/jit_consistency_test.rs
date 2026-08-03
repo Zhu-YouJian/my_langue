@@ -282,6 +282,113 @@ fn consistency_inline_nested_small_calls() {
     "#, 808, "inline-nested-small");
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// A2-AUDIT-11.4.35 回归：i64 注解小函数（可内联 + A6 可特化）在循环内被内联。
+// 背景：发射端内联（A2）**优先于**特化（A6），内联结果是 Value 而非标量寄存器；
+// 但标量分析只建模 spec 路径（结果 I32）。分析预测 I32/spec → 循环回边处分析把
+// 该局部重置为 I32，而上一轮一般路径 Store 只写 Value 槽、局部标量槽残留过期值
+// → 下一轮 Load 重专用化读过期标量 → 静默 0（溢出检查失效）。修复：分析期把
+// 「可内联调用」预测为 Unknown（与发射端内联路径一致）+ 一般 Store 失效 local_scalars。
+// 既有测试用 `Int`（无 spec 签名）未覆盖此路径——本组用显式 `i64` 注解触发。
+// ───────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn consistency_inline_i64_3param_loop_accumulate() {
+    // 3 参小函数循环内联累加（i64 注解，触发 spec 分析路径）：s/t 分别累加 →
+    // s=5050、t=5150 → 5055150。修复前 JIT 静默 0。
+    assert_vm_jit_int(r#"
+        fn f3(a: i64, b: i64, c: i64) -> i64 { a + b + c }
+        fn main() -> i64 {
+            let mut s = 0;
+            let mut t = 0;
+            let mut i = 0;
+            while i < 100 {
+                s = f3(s, i, 1);
+                t = f3(t, i, 2);
+                i = i + 1;
+            };
+            s * 1000 + t
+        }
+    "#, 5055150, "inline-i64-3param-loop-accumulate");
+}
+
+#[test]
+fn consistency_inline_i64_4param_loop_accumulate() {
+    // 4 参小函数循环内联累加：add4(s,i,1,2) → s += i+3 → 5250。
+    assert_vm_jit_int(r#"
+        fn add4(a: i64, b: i64, c: i64, d: i64) -> i64 { a + b + c + d }
+        fn main() -> i64 {
+            let mut s = 0;
+            let mut i = 0;
+            while i < 100 {
+                s = add4(s, i, 1, 2);
+                i = i + 1;
+            };
+            s
+        }
+    "#, 5250, "inline-i64-4param-loop-accumulate");
+}
+
+#[test]
+fn consistency_inline_i64_2param_1param_loop_accumulate() {
+    // 2 参/1 参小函数循环内联回归：s += i（4950）、t += 1（100）→ 104950。
+    assert_vm_jit_int(r#"
+        fn g2(a: i64, b: i64) -> i64 { a + b }
+        fn h1(a: i64) -> i64 { a + 1 }
+        fn main() -> i64 {
+            let mut s = 0;
+            let mut t = 0;
+            let mut i = 0;
+            while i < 100 {
+                s = g2(s, i);
+                t = h1(t);
+                i = i + 1;
+            };
+            s + t * 1000
+        }
+    "#, 104950, "inline-i64-2param-1param-loop");
+}
+
+#[test]
+fn consistency_inline_i64_3param_loop_overflow() {
+    // 3 参小函数循环累加至溢出：JIT 与 VM 一致报「溢出 i32 范围」（修复前 JIT
+    // 静默 0 无报错——静默错值红线）。行号均指向被调函数体内（第 2 行）。
+    assert_vm_jit_err_line_parity(r#"fn f3(a: i64, b: i64, c: i64) -> i64 {
+    a + b + c
+}
+fn main() -> i64 {
+    let mut s = 0;
+    let mut i = 0;
+    while i < 3000000 {
+        s = f3(s, i, 1);
+        i = i + 1;
+    };
+    s
+}
+"#, 2, "err-inline-i64-3param-loop-overflow");
+}
+
+#[test]
+fn consistency_inline_i64_multi_param_mixed_string_arg() {
+    // 混合：≥3 参 + 字符串实参 → 含 PushStr/MethodCall 不内联（A6 特化也不适用，
+    // 因非纯 i64）→ 走 A1 直接调用。对照：不内联路径保持正确 → 5050。
+    assert_vm_jit_int(r#"
+        fn f3mix(a: i64, b: i64, tag: str) -> i64 {
+            let n = tag.len();
+            a + b + n
+        }
+        fn main() -> i64 {
+            let mut s = 0;
+            let mut i = 0;
+            while i < 100 {
+                s = f3mix(s, i, "v");
+                i = i + 1;
+            };
+            s
+        }
+    "#, 5050, "inline-i64-multi-param-mixed-string");
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // C. 标量专用化（A2b）——I32 全比较集/F64 混合/Bool 逻辑/溢出/除零/取模/取负
 // ═══════════════════════════════════════════════════════════════════════════
