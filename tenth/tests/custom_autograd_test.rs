@@ -765,7 +765,7 @@ fn test_custom_op_f32_dtype_forward_backward() {
     // 这里仅验证不 panic 且 shape 正确。
     let src = r#"
         new_grad();
-        let x = param(tensor[[1.0_f32, 2.0_f32, 3.0_f32]]);
+        let x = param(tensor[1.0_f32, 2.0_f32, 3.0_f32]);
         let y = __call_custom_op(0, x);
         let loss = y.sum();
         backward(loss);

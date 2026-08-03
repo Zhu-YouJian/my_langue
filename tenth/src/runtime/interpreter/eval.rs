@@ -658,12 +658,23 @@ impl super::Interpreter {
                         }))
                     }
                     Err(TenthError::TryPropagate(err_val)) => {
-                        // Caught a ? propagation: wrap in Result::Err
-                        Ok(Some(Value::Enum {
-                            enum_name: "Result".to_string(),
-                            variant: "Err".to_string(),
-                            fields: Rc::new(RefCell::new(vec![("_0".to_string(), err_val)])),
-                        }))
+                        // Caught a ? propagation: wrap in Result::Err.
+                        // 注意：`?` 传播的 err_val 已是完整 `Result::Err(e)` 值
+                        // （binary.rs UnaryOp::Try 原样携带 val），此处若再包一层会得到
+                        // `Result::Err(Result::Err(e))` double-wrap——与 VM Op::Try 的
+                        // 单层语义不一致（对齐 core.rs::unwrap_return 的处理）。
+                        match &err_val {
+                            Value::Enum { enum_name, variant, .. }
+                                if enum_name == "Result" && variant == "Err" =>
+                            {
+                                Ok(Some(err_val))
+                            }
+                            _ => Ok(Some(Value::Enum {
+                                enum_name: "Result".to_string(),
+                                variant: "Err".to_string(),
+                                fields: Rc::new(RefCell::new(vec![("_0".to_string(), err_val)])),
+                            })),
+                        }
                     }
                     Err(other) => Err(other),
                 }

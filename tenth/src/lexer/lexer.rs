@@ -224,7 +224,8 @@ impl Lexer {
 
         if let Some(dt) = suffix_dtype {
             // 有 f32/f64 后缀 → 浮点字面量（即使数字部分无小数点，如 `3f32`）
-            let n: f64 = s.parse().map_err(|_| TenthError::LexerError {
+            // 下划线在收集时已并入 s（如 `1_000.5f32`），parse 前剥离（与进制路径一致）
+            let n: f64 = s.replace('_', "").parse().map_err(|_| TenthError::LexerError {
                 line: span.line,
                 col: span.col,
                 message: format!("无效的浮点数：{}", s),
@@ -234,7 +235,7 @@ impl Lexer {
                 span,
             })
         } else if is_float {
-            let n: f64 = s.parse().map_err(|_| TenthError::LexerError {
+            let n: f64 = s.replace('_', "").parse().map_err(|_| TenthError::LexerError {
                 line: span.line,
                 col: span.col,
                 message: format!("无效的浮点数：{}", s),
@@ -269,7 +270,8 @@ impl Lexer {
                 }
             }
 
-            let n: i64 = s.parse().map_err(|_| TenthError::LexerError {
+            // 十进制路径收集时下划线并入 s（如 `1_000_000`），parse 前剥离（与进制路径一致）
+            let n: i64 = s.replace('_', "").parse().map_err(|_| TenthError::LexerError {
                 line: span.line,
                 col: span.col,
                 message: format!("无效的整数：{}", s),

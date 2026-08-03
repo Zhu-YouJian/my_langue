@@ -31,6 +31,16 @@ impl Parser {
             TokenKind::StringLiteral(s) => ExprKind::Literal(Literal::String(s.clone())),
             TokenKind::RawString(s) => ExprKind::Literal(Literal::String(s.clone())),
             TokenKind::MultiLineString(s) => ExprKind::Literal(Literal::String(s.clone())),
+            // 字节串 `b"..."`（词法层已产出 ByteString token）降为整数数组字面量：
+            // 每个字节 → Int(b, I32)，复用既有 ArrayLiteral 全管线（HIR/lower/解释器/VM），
+            // 运行时为字节数组（Vec<i64>），可直接用于 write_bytes/base64_encode/hex_encode。
+            TokenKind::ByteString(bytes) => {
+                let elements: Vec<Expr> = bytes.iter().map(|b| Expr {
+                    kind: ExprKind::Literal(Literal::Int(*b as i64, BaseType::I32)),
+                    span: span.clone(),
+                }).collect();
+                ExprKind::ArrayLiteral(elements)
+            }
             TokenKind::CharLiteral(c) => ExprKind::Literal(Literal::Char(*c)),
             TokenKind::InterpolatedString(parts) => {
                 let interp_parts: Vec<InterpPart> = parts.iter().map(|p| match p {
