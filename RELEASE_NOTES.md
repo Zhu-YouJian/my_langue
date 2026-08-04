@@ -53,8 +53,8 @@ CI 基准门槛（`bench_gate_test -- --ignored`）：fib <100ms / loop <200ms /
 
 | 限制 | 性质 | 绕行 / 排期 |
 |------|------|------------|
-| **AUDIT-11.4.39 重载分派**：VM/解释器对「类型正确、参数数量/签名不同」的重载调用可能选中不同签名（静默错值风险） | 🔴 静默错值红线（建议 1.0 前修，已报总师） | 避免同一函数名混用不同参数数量的重载签名；编译期已拦截类型确定不兼容的调用；1.0.1+ 根治 |
-| **AUDIT-11.4.34 VM match tuple + guard**：guard 失败后不试下一条 tuple 臂直接落 wildcard（静默错值） | 🔴 静默错值红线（建议 1.0 前修，已报总师） | tuple 多臂避免与 guard 混用（单 guard 臂 + wildcard 或 if 链）；1.0.1+ 根治 |
+> **1.0 前红线修复（2026-08-04 已落地）**：AUDIT-11.4.39（重载运行时分派不一致）与 AUDIT-11.4.34（VM match tuple guard 回退错乱）两项静默错值红线已在 1.0 发布前修复——重载改为编译期确定性 mangling（`__ovl_<name>_<idx>`，三后端按名天然一致）；VM match tuple 臂 guard 失败正确试下一条臂（对齐 EnumVariant/Struct）。新增 `redline_overload_match_test` 14 项三路径对拍守护。
+
 | **AUDIT-11.1 借用 B6 unsoundness**：语句粒度借用检查剩余 3 类变量转义（B7-1/2/3） | ⚠️ 语义健全性缺口（非内存安全；Tenth 无 unsafe/FFI/并发，B6' 条件健全性已论证） | 常规借用用法不受影响；1.0.1+ NLL 根治 |
 | **远程 registry**：tenthpm 无中央仓库 | ⚠️ 纯功能缺口 | 本地 registry / git / `.tenthpkg` 发布安装闭环可用 |
 | **AUDIT-11.4.43 JIT Union 字段修改**：触发 Cranelift 低化 panic（stderr 噪音），功能由 fallback 兜底正确 | ⚠️ 功能正确仅噪音 | 输出正确可忽略噪音；1.0.1+ 修复 |
@@ -103,8 +103,7 @@ cd dist && sha256sum -c SHA256SUMS.txt
 **产物哈希（SHA-256）**：见 `dist/SHA256SUMS.txt`（本机 Windows 打包 2026-08-04 实测）：
 
 ```
-4ff0c4d4458b1837da4e609553c601de6efc44585686b53820b04bd478e7b52e  tenth-1.0.0-windows-x86_64.zip
-```
+f4273a67cae9d01c71be11ef591dfaacc03f49107feb7c584c9cc1e1ac8a2e64  tenth-1.0.0-windows-x86_64.zip```
 
 **发布流程**：见 `scripts/release/README.md`（构建 → 冒烟 → 全量测试 → 打包 → 校验 → `git tag v1.0.0 && git push origin v1.0.0` 触发 CI 三平台构建）。
 
