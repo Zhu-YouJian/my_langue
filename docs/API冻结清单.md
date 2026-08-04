@@ -1,8 +1,8 @@
-# Tenth API 冻结清单与版本策略（M5.1）
+# Tenth API 冻结清单与版本策略
 
 > **版本**：v1.0.0（已发布）| **日期**：2026-08-04
 > **定位**：Tenth 对外 API 的**权威冻结清单**与 **semver 版本承诺**。语言语法与语义的正式定义在 `docs/语言规范.md`（§1.4.1 规范定稿声明）；本清单只负责「**哪些 API 被冻结、冻结到什么程度、版本号如何承诺**」。
-> **真理源关系**：语言语法 → `docs/语言规范.md`；用法与 API 详情 → `docs/语言参考手册.md`；native 权威符号清单 → `tenth/std/prelude.th`；能力状态 → `能力梳理/能力全梳理.md`。本清单**不重复搬运**这些内容，只做冻结状态与版本承诺的登记。
+> **文档关系**：语言语法 → `docs/语言规范.md`；用法与 API 详情 → `docs/语言参考手册.md`；native 权威符号清单 → `tenth/std/prelude.th`。本清单**不重复搬运**这些内容，只做冻结状态与版本承诺的登记。
 
 ---
 
@@ -19,9 +19,9 @@
 规则：
 
 1. **破坏性变更必须 bump major**，且在发布说明中显式列出「破坏性变更清单」；
-2. **兼容性新增只 bump minor**；新增 API 必须同步 `语言规范.md` + `语言参考手册.md` + `能力全梳理.md`；
-3. **0.x 阶段（历史，v0.5.0 及以前）**：曾允许 minor 位包含破坏性修订（SemVer 0.x 规则），破坏性变更均已在 MEMO 与手册/规范中显式登记；**v1.0.0 起该规则失效**，按第 1/2 条执行；
-4. **护城河红线**：shape 检查 / 静默失败防护 / lossy 格 / 零除数检测 / 内存预估的**收紧**（拦截更多错误）视为行为改进（minor 内合法），**放宽**（放行更多）视为破坏性变更（须 major）；
+2. **兼容性新增只 bump minor**；新增 API 必须同步 `语言规范.md` + `语言参考手册.md`；
+3. **0.x 阶段（历史，v0.5.0 及以前）**：曾允许 minor 位包含破坏性修订（SemVer 0.x 规则），破坏性变更均已在《语言参考手册》相应章节与发布说明中显式登记；**v1.0.0 起该规则失效**，按第 1/2 条执行；
+4. **核心特性边界**：shape 检查 / 静默失败防护 / lossy 格 / 零除数检测 / 内存预估的**收紧**（拦截更多错误）视为行为改进（minor 内合法），**放宽**（放行更多）视为破坏性变更（须 major）；
 5. 编译器/运行时内部结构（HIR、VM 指令集、JIT 内部、tenthc 内部模块）**不属公开 API**，可在 minor/patch 内自由演进，但**不得改变可观察的程序行为**（输出 / 错误 / 行号语义）。
 
 ## 2. 冻结范围与状态
@@ -37,7 +37,7 @@
 | 表达式 | 运算符与优先级表（§2.7）、短路、块表达式、闭包与捕获（含 true letrec）、运算符重载、声明式宏、自定义运算符、async/await/spawn、yield、try 块与 `?`、`lossy` | 规范 §2.7–2.8、§5 |
 | 所有权 | let 绑定（含无 init 语义）、`move`、Copy 自动派生、借用规则（语句粒度近似）、Drop/RAII、顶层全局 let、已移动值检测 | 规范 §4 |
 | 错误模型 | 错误分类（Lexer/Parse/Type/Runtime/ShapeMismatch/Relation/Timeout）、`Result` 优先、or_die/assume_ok、丢弃+误用 warning、lossy 污点格、编译期零除数、行号定位 | 规范 §6 |
-| 护城河 | 编译期 shape 检查、静默失败防护、typestate、内存/算力预估、运行时 autodiff shape 校验、FormalExplain | 规范 §1.3、§3.3、§6.7 |
+| 差异化能力 | 编译期 shape 检查、静默失败防护、typestate、内存/算力预估、运行时 autodiff shape 校验、FormalExplain | 规范 §1.3、§3.3、§6.7 |
 
 > 冻结含义：v1.0.0 起以上条目的**语法与可观察语义为稳定契约**；`docs/语言规范.md` §1.4.1 为对应声明。远期/未实现特性（HKT、GAT、秩多态等）不属冻结范围，见规范 §7。
 
@@ -81,8 +81,8 @@
 | `tenth` REPL | `:q` / `:h` / `:vars` / `:clear` / `:mem` / `:print <var>` |
 | `tenthc` | `tenthc/main.th`（自举编译器入口，`cargo run ... run tenthc/main.th`） |
 | `tenthpm` | `init` / `build` / `test` / `run` / `add` / `remove`(rm) / `list`(ls) / `clean` / `publish`（含 `--registry <dir>`）/ `install`（git/path/`.tenthpkg`/`--registry <dir>`） |
-| `tenth-debug`（M4.4） | 调试器 CLI：`--bp N`（预置断点）+ 交互 `b [line]`/`d <line>`/`n`/`p <var>`/`c`/`l`/`q`/`h` |
-| `tenth-prof`（M4.4） | 剖析器 CLI：`--top N`（top-N 热点报告） |
+| `tenth-debug` | 调试器 CLI：`--bp N`（预置断点）+ 交互 `b [line]`/`d <line>`/`n`/`p <var>`/`c`/`l`/`q`/`h` |
+| `tenth-prof` | 剖析器 CLI：`--top N`（top-N 热点报告） |
 | LSP（tenth/tools/lsp） | 13 项能力（文档同步/diagnostics/hover/completion/definition/documentSymbol/references/rename/signatureHelp/foldingRange/semanticTokens/formatting） |
 
 > 冻结含义：命令名、参数、退出码约定在 v1.0.0 起冻结；新增子命令/参数走 minor；移除/改义 = major。
@@ -110,36 +110,36 @@
 ```
 提议变更
   ├─ 破坏性（语法/语义/符号/命令移除或改义）
-  │     → 总师评审 → major bump → 发布说明「破坏性变更清单」
-  │     → 同步：语言规范 + 语言参考手册 + 能力全梳理 + MEMO
+  │     → 维护者评审 → major bump → 发布说明「破坏性变更清单」
+  │     → 同步：语言规范 + 语言参考手册 + prelude
   └─ 兼容新增（新符号/模块/命令/语法糖）
-        → minor bump → 同步：语言规范 + 语言参考手册 + 能力全梳理 + MEMO + prelude（如 native）
+        → minor bump → 同步：语言规范 + 语言参考手册 + prelude（如 native）
 ```
 
-1. **任何 API 变更先查能力全梳理现状**（改代码前），改完同步 MEMO + 能力全梳理（AGENTS.md 铁律）；
-2. 新增 native 必须 **VM + 解释器双侧注册** + prelude.th 索引 + 三处 HIR 白名单同步（编译器部纪律）；
-3. 破坏性变更必须**先登记**（AUDIT 或提案），评审通过才实施；
-4. 版本号由总师统一 bump（`tenth/Cargo.toml`），文档不自行改版本。
+1. **任何 API 变更须同步本清单与《语言参考手册》**；
+2. 新增 native 必须 **VM + 解释器双侧注册** + prelude.th 索引同步；
+3. 破坏性变更必须**先登记**（缺陷跟踪或变更提案），评审通过才实施；
+4. 版本号统一在 `tenth/Cargo.toml` 中 bump，文档不自行改版本。
 
-## 5. v1.0.0 门槛检查（M5.1 登记，M5.4 决策）
+## 5. v1.0.0 发布门槛检查
 
-以下为 M1–M5.1 如实登记的 1.0 门槛遗留项。**M5.4（2026-08-04）完成逐项决策**：`✅ 满足` = 已关闭；`🔴 建议 1.0 前修` = 静默错值/崩溃红线项（已报总师，由总师决定是否加一轮修复）；`⚠️ 已知限制（1.0 后）` = 可 1.0 后处理，已在 `RELEASE_NOTES.md` 已知限制节如实披露并登记 1.0.1+ 排期。
+以下为 1.0 发布前登记的门槛检查项，**已于 2026-08-04 逐项决策**：`✅ 满足` = 已关闭；`🔴 建议 1.0 前修` = 静默错值/崩溃关键项；`⚠️ 已知限制（1.0 后）` = 可 1.0 后处理，已在 `RELEASE_NOTES.md` 已知限制节如实披露并登记 1.0.1+ 排期。
 
-| # | 事项 | M5.4 判定 | 依据（证据） |
+| # | 事项 | 判定 | 依据（证据） |
 |---|------|----------|-------------|
-| 1 | 手册/规范版本统一对齐 v1.0.0 | ✅ 满足 | M5.4 全量 bump（5 crate + 8 文档） |
-| 2 | `db_query().len()` 误用拦截（M3.4） | ✅ 满足 | `silent_failure_test` 44 项守护 |
-| 3 | tenthpm/LSP 完整实现（M4.1/M4.2） | ✅ 满足 | tenthpm 112 项 / LSP 63 项测试 |
-| 4 | AUDIT-11.4.34（VM match tuple 模式 + guard 回退错乱） | ✅ 已修复（2026-08-04，1.0 前红线修复轮） | **静默错值红线**：guard 失败后不试下一条 tuple 臂直接落 wildcard（VM 返回 `_ =>` 分支而解释器正确）——已修复（`bytecode.rs` tuple 臂有 guard 时保留 scrutinee 副本供下一条臂重试），解释器=VM=JIT 三路径一致；② JIT panic 逃逸已根治（M2-A5）。守护：`redline_overload_match_test` 6 项（AUDIT.md §11.4.34） |
-| 5 | AUDIT-11.1（借用检查语句粒度 B6 unsoundness） | ⚠️ 已知限制（1.0 后） | B6 原始反例已堵（borrow_holders）；剩余 B7-1/2/3 为**语义健全性缺口非内存安全**（Tenth 无 unsafe/FFI/并发，B6' 条件健全性已论证）；根治需 NLL（大工程）→ 1.0.1+ 排期（AUDIT.md §11.1） |
-| 6 | 远程 registry（tenthpm 中央仓库） | ⚠️ 已知限制（1.0 后） | 纯功能缺口；本地 registry / git / `.tenthpkg` 发布安装闭环可用（M4.1） |
-| 7 | AUDIT-11.4.39（重载运行时 VM/解释器分派不一致） | ✅ 已修复（2026-08-04，1.0 前红线修复轮） | **静默错值红线**：VM HashMap 后注册覆盖 vs 解释器取第一条同名 → 同一重载调用两路径可能选中不同签名（`g(1,2)` 在 VM 返回 `"ONE_PARAM"` 错误值）——已修复（编译期确定性 mangling `__ovl_<name>_<idx>`：定义改名 + 调用点按实参类型选中签名 + 函数值引用取首签名，三后端按 mangled 名解析一致；配套修复 resolve_call_type 静态返回类型被第一个同名函数覆盖）。守护：`redline_overload_match_test` 8 项（AUDIT.md §11.4.39） |
+| 1 | 手册/规范版本统一对齐 v1.0.0 | ✅ 满足 | 发布前全量 bump（5 crate + 8 文档） |
+| 2 | `db_query().len()` 误用拦截 | ✅ 满足 | `silent_failure_test` 44 项守护 |
+| 3 | tenthpm/LSP 完整实现 | ✅ 满足 | tenthpm 112 项 / LSP 63 项测试 |
+| 4 | VM match tuple 模式 + guard 回退错乱（内部缺陷跟踪编号 AUDIT-11.4.34） | ✅ 已修复（2026-08-04） | **静默错值类缺陷**：guard 失败后不试下一条 tuple 臂直接落 wildcard（VM 返回 `_ =>` 分支而解释器正确）——已修复（`bytecode.rs` tuple 臂有 guard 时保留 scrutinee 副本供下一条臂重试），解释器=VM=JIT 三路径一致；② JIT panic 逃逸已根治。守护：`redline_overload_match_test` 6 项 |
+| 5 | 借用检查语句粒度 B6 unsoundness（内部缺陷跟踪编号 AUDIT-11.1） | ⚠️ 已知限制（1.0 后） | B6 原始反例已堵（borrow_holders）；剩余 B7-1/2/3 为**语义健全性缺口非内存安全**（Tenth 无 unsafe/FFI/并发，B6' 条件健全性已论证）；根治需 NLL（大工程）→ 1.0.1+ 排期 |
+| 6 | 远程 registry（tenthpm 中央仓库） | ⚠️ 已知限制（1.0 后） | 纯功能缺口；本地 registry / git / `.tenthpkg` 发布安装闭环可用 |
+| 7 | 重载运行时 VM/解释器分派不一致（内部缺陷跟踪编号 AUDIT-11.4.39） | ✅ 已修复（2026-08-04） | **静默错值类缺陷**：VM HashMap 后注册覆盖 vs 解释器取第一条同名 → 同一重载调用两路径可能选中不同签名（`g(1,2)` 在 VM 返回 `"ONE_PARAM"` 错误值）——已修复（编译期确定性 mangling `__ovl_<name>_<idx>`：定义改名 + 调用点按实参类型选中签名 + 函数值引用取首签名，三后端按 mangled 名解析一致；配套修复 resolve_call_type 静态返回类型被第一个同名函数覆盖）。守护：`redline_overload_match_test` 8 项 |
 | 8 | 错误消息文本本身不冻结（属可改进项），但**错误类别/行号语义**冻结 | ✅ 满足 | 约定 |
-| 9 | AUDIT-11.4.43（JIT Union 字段修改 Cranelift 低化 panic） | ⚠️ 已知限制（1.0 后） | 功能正确（catch_unwind fallback 兜底，exit=0 + 输出正确）；仅 stderr panic 噪音（脚本解析 stderr 会误判失败）→ 1.0.1+ 修复后移除 `KNOWN_JIT_PANIC_STDERR` 分类（AUDIT.md §11.4.43） |
+| 9 | JIT Union 字段修改 Cranelift 低化 panic（内部缺陷跟踪编号 AUDIT-11.4.43） | ⚠️ 已知限制（1.0 后） | 功能正确（catch_unwind fallback 兜底，exit=0 + 输出正确）；仅 stderr panic 噪音（脚本解析 stderr 会误判失败）→ 1.0.1+ 修复后移除 `KNOWN_JIT_PANIC_STDERR` 分类 |
 
-**M5.4 决策**：
+**决策结论**：
 
-- **建议 1.0 前修（2 项，2026-08-04 均已修复）**：AUDIT-11.4.39（重载分派）+ AUDIT-11.4.34（VM match guard）——均为**静默错值红线**（护城河红线），触发面覆盖语言常用特性（重载 / tuple match + guard）。**已报总师并加一轮修复**（1.0 前红线修复轮）：两项已修复并新增 `redline_overload_match_test` 14 项三路径对拍守护（详见 AUDIT.md §11.4.34/§11.4.39）。
+- **建议 1.0 前修（2 项，2026-08-04 均已修复）**：AUDIT-11.4.39（重载分派）+ AUDIT-11.4.34（VM match guard）——均为**静默错值类缺陷**，触发面覆盖语言常用特性（重载 / tuple match + guard）。**已加一轮修复**（1.0 发布前关键修复）：两项已修复并新增 `redline_overload_match_test` 14 项三路径对拍守护（详见上表第 4/7 行）。
 - **可 1.0 后（3 项）**：AUDIT-11.1（B6，语义健全性缺口非内存安全）、远程 registry（纯功能缺口）、AUDIT-11.4.43（JIT Union panic，功能正确仅噪音）——登记 1.0.1+ 排期。
 
 **绕行方式（1.0 发布有效期内，供用户参考）**：
@@ -150,4 +150,4 @@
 
 ---
 
-> 本文档随 M 系列演进持续更新；状态变更同步 MEMO + 能力全梳理。
+> 本文档随版本演进持续更新。
