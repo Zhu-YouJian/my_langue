@@ -78,6 +78,7 @@ if (Test-Path "tenth/std") {
 # 文档
 $docs = @(
     @{ Name = "README.md";               Src = "README.md" },
+    @{ Name = "RELEASE_NOTES.md";        Src = "RELEASE_NOTES.md" },
     @{ Name = "语言参考手册.md";          Src = "docs/语言参考手册.md" },
     @{ Name = "API冻结清单.md";           Src = "docs/API冻结清单.md" },
     @{ Name = "语言规范.md";              Src = "docs/语言规范.md" }

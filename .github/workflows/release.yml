@@ -67,7 +67,7 @@ jobs:
 
       - name: Key test suites
         run: |
-          cargo test --release --manifest-path tenth/Cargo.toml --test stdlib_smoke_test --test integration_test --test wasm_backend_minimal_test
+          cargo test --release --manifest-path tenth/Cargo.toml --test stdlib_smoke_test --test integration_test --test wasm_backend_minimal
         shell: bash
 
       - name: Package artifacts

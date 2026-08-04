@@ -2,6 +2,7 @@
 
 > 代号 Tenth = Tensor + Zenith，意为「张量之巅」
 >
+> [![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-blue.svg)](RELEASE_NOTES.md)
 > [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 > [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 > [![Rust: 1.95+](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org/)
@@ -49,9 +50,9 @@ Tenth 是**一种新的可能性**：一门语言同时覆盖通用编程和 AI 
 - LSP 服务器：hover/completion/definition/references/rename/formatting 等 13 项能力
 - GPU 后端脚手架：CudaKernel 模板 + Device 抽象 + 算子融合/并行分解
 
-**标准库**：36 个源文件覆盖 nn/optim/data/init/collections/string/utils/fs/json/toml/cli/logging/time/random/math
+**标准库**：65 模块（63 用户模块 + prelude，71 个 `.th` 文件）覆盖 nn/optim/data/init/collections/string/utils/fs/json/toml/cli/logging/time/random/math/crypto/regex/net/http/process/distributed 等
 
-**测试**：700+ 项测试，全部通过
+**测试**：2377 项测试全部通过（0 failed）；62 个实例双路径可运行；自举验证 `[OK]`
 
 ## Quick Start
 
@@ -70,6 +71,13 @@ cargo test --manifest-path tenth/Cargo.toml
 ```
 
 依赖：Rust ≥ 1.95（所有 crate 依赖自动下载，详见 `DEPS.md`）。
+
+### 发布产物（v1.0.0）
+
+- **从源码构建**（推荐，任一平台）：`cargo build --release --manifest-path tenth/Cargo.toml`
+- **GitHub Releases**（CI 三平台原生构建，tag `v1.0.0`）：下载 `tenth-1.0.0-<windows-x86_64.zip | linux-x86_64.tar.gz | macos-x86_64.tar.gz>`，解压后 `bin/` 含 5 个可执行产物（`tenth` / `tenthpm` / `tenth-debug` / `tenth-prof` / `tenth-lsp`），`std/` 为运行时必需标准库，`docs/` 含手册/规范/API 冻结清单
+- 校验：`sha256sum -c SHA256SUMS.txt`（Windows 用 `scripts/release/verify.ps1`）
+- 发布说明：`RELEASE_NOTES.md`；发布流程：`scripts/release/README.md`
 
 ## Examples
 
@@ -130,7 +138,7 @@ fn main() {
 }
 ```
 
-更多示例见 `Tenth实例/` 目录（49 个）和 `tenth/std/` 标准库（36 个源文件）。
+更多示例见 `Tenth实例/` 目录（62 个）和 `tenth/std/` 标准库（65 模块）。
 
 ## 自动微分
 
@@ -190,6 +198,7 @@ Tenth 编译器由 Tenth 自身编写（`tenthc/`），三条自举路径通过�
 
 | 文档 | 内容 |
 |------|------|
+| `RELEASE_NOTES.md` | 1.0 发布说明（里程碑回顾/关键能力/已知限制/升级指引） |
 | `CODE_WIKI.md` | 模块架构、编译管线、依赖关系 |
 | `MEMO.md` | 逐版变更记录、已知限制演化、重大决策 |
 | `能力梳理/能力全梳理.md` | 479 项能力的逐条完成状态（✅/⚠️/❌） |

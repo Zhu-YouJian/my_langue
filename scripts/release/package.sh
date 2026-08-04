@@ -86,7 +86,7 @@ if [[ -d "tenth/std" ]]; then
 fi
 
 mkdir -p "$STAGING/docs"
-for d in "README.md" "docs/语言参考手册.md" "docs/API冻结清单.md" "docs/语言规范.md"; do
+for d in "README.md" "RELEASE_NOTES.md" "docs/语言参考手册.md" "docs/API冻结清单.md" "docs/语言规范.md"; do
   if [[ -f "$d" ]]; then cp "$d" "$STAGING/docs/"; fi
 done
 echo "[package]   + docs/ (手册/规范/冻结清单)"

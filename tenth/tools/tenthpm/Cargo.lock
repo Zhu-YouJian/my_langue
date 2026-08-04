@@ -1613,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "tenth"
-version = "0.5.0"
+version = "1.0.0"
 dependencies = [
  "base64",
  "cranelift",
@@ -1639,7 +1639,7 @@ dependencies = [
 
 [[package]]
 name = "tenthpm"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",

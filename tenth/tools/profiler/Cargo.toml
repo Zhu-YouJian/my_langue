@@ -1,6 +1,6 @@
 [package]
 name = "tenth-prof"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "Tenth profiler (CLI, VM-based): function-level timing & call counts, hot spot report"
 

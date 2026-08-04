@@ -2,7 +2,7 @@
 #
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File scripts/release/verify.ps1            # 校验 dist/ 下最新 zip
-#   powershell -ExecutionPolicy Bypass -File scripts/release/verify.ps1 -Zip dist\tenth-0.5.0-windows-x86_64.zip
+#   powershell -ExecutionPolicy Bypass -File scripts/release/verify.ps1 -Zip dist\tenth-1.0.0-windows-x86_64.zip
 #
 # 行为：校验 SHA256SUMS.txt 中的 checksum 与 zip 实际值一致，并核对 zip 内含
 # bin/ 5 个产物 + std/ + docs/。
