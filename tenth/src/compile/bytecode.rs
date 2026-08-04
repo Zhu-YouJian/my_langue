@@ -750,6 +750,13 @@ impl BytecodeCompiler {
                                 self.chunk.emit(Op::JmpFalse(0));
                                 self.patch_jump(next_label); // [scrut]
                                 self.push_scope(); // 臂绑定子作用域（AUDIT #18 族）
+                                // AUDIT-11.4.34：有 guard 时保留一份 scrutinee 副本供
+                                // 下一条臂重试（与 EnumVariant/Struct 臂同模式）——否则
+                                // guard 失败后 scrutinee 已被 Pop，下一条 tuple 臂的
+                                // IsTuple 拿到空栈（Unit），直接错落 wildcard（静默错值）。
+                                if has_guard {
+                                    self.chunk.emit(Op::Dup); // [scrut, scrut]
+                                }
                                 // Bind each sub-pattern
                                 for (i, sub_pat) in patterns.iter().enumerate() {
                                     if let HirPattern::Binding(name) = sub_pat {
@@ -767,6 +774,7 @@ impl BytecodeCompiler {
                                     self.compile_expr(guard)?;
                                     self.chunk.emit(Op::JmpFalse(0));
                                     self.patch_jump(next_label);
+                                    self.chunk.emit(Op::Pop); // drop the extra scrutinee copy
                                 }
                                 self.compile_expr(&arm.body)?;
                                 self.chunk.emit(Op::Jump(0));

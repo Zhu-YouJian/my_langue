@@ -229,7 +229,17 @@ impl Lowerer {
                             self.check_call_arg_types(name, &params, args, span)?;
                         }
                         // 跨函数 shape 求解：若 self.functions 中有更精确的 return_type（body lower 后合并的），用它
-                        let ret = if let Some(fn_def) = self.functions.iter().find(|f| f.name == name.as_str()) {
+                        // AUDIT-11.4.39 配套修复：只匹配「与已解析签名同参」的函数定义——否则
+                        // 多重载下 `find(|f| f.name == name)` 取第一个同名函数（可能不是本次
+                        // 解析选中的签名），`merge_return_shape` 非 Tensor 分支直接返回其返回
+                        // 类型，导致调用点静态返回类型被错误覆盖（如 m(i64) 被 m(str) 覆盖为
+                        // Str → 下游 G6 类型检查误报/静态类型错误）。与运行时分派（编译期
+                        // mangling 已按签名唯一化）保持一致：静态类型也取已解析签名。
+                        let ret = if let Some(fn_def) = self.functions.iter().find(|f| {
+                            f.name == name.as_str()
+                                && f.params.len() == params.len()
+                                && f.params.iter().zip(params.iter()).all(|(a, b)| a.1 == b.1)
+                        }) {
                             Self::merge_return_shape(&ret, &fn_def.return_type)
                         } else {
                             ret

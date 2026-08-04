@@ -1505,7 +1505,12 @@ impl Lowerer {
             return Err(first_err);
         }
 
-        Ok(HirProgram {
+        // AUDIT-11.4.39：重载函数运行时分派三路径一致性（编译期改写）。
+        // 在全部 lowering/shape/taint pass 完成后对顶层 HirProgram 做确定性
+        // 重载 mangling（定义改名 + 调用点/函数值改写），使 VM/解释器/JIT/WASM
+        // 按 mangled 名解析，消除「编译期选中签名 vs 运行时实际调用签名不一致」。
+        // 详见 overload_mangle.rs。
+        let mut program = HirProgram {
             functions: self.functions.clone(),
             generic_funcs: self.generic_funcs.values().cloned().collect(),
             globals: self.globals.clone(),
@@ -1521,7 +1526,9 @@ impl Lowerer {
             trait_defs: self.trait_defs.clone(),
             trait_impls: self.trait_impls.clone(),
             warnings: std::mem::take(&mut self.warnings),
-        })
+        };
+        super::overload_mangle::mangle_overloads(&mut program);
+        Ok(program)
     }
 }
 

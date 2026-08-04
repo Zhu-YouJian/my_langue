@@ -14,6 +14,9 @@ mod types;
 mod closures;
 mod backward_shapes;
 mod backward_shape_pass;
+/// AUDIT-11.4.39：重载函数运行时分派三路径一致性（编译期改写 pass）。
+/// lowering 完成后对顶层 HirProgram 做确定性 mangling（定义改名 + 调用点/函数值改写）。
+mod overload_mangle;
 /// 层 3 lossy lattice 污点旁路分析（方案 C，M2）：`lossy` 关键字 + 污点传播 + 使用点检查。
 mod taint;
 
