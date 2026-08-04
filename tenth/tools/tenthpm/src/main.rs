@@ -9,7 +9,7 @@ use std::env;
 use std::process;
 
 fn print_help() {
-    println!("Tenth Package Manager (tenthpm) v0.2.0");
+    println!("Tenth Package Manager (tenthpm) v1.0.0");
     println!();
     println!("USAGE:");
     println!("    tenthpm <COMMAND> [OPTIONS]");

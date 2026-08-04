@@ -18,7 +18,7 @@ pub fn run_repl() -> TenthResult<()> {
 pub fn run_repl_with_limits(config: MemoryConfig) -> TenthResult<()> {
     let limits = RuntimeLimits::new(config);
     let mut rl = DefaultEditor::new().unwrap();
-    println!("Tenth v0.3.0 REPL");
+    println!("Tenth v1.0.0 REPL");
     println!("Type expressions, ':q' to quit, ':h' for help");
     println!();
 
