@@ -2,8 +2,7 @@
 //!
 //! 从 `interpreter.rs` 第 1142-1330 行迁移而来。包含：
 //! - `eval_field`：结构体/枚举字段访问（自动解引用 Ref/MutRef/Shared）
-//! - `pattern_matches` / `bind_pattern` / `unbind_pattern`：match 表达式的
-//!   模式测试、变量绑定与解绑
+//! - `pattern_matches` / `bind_pattern`：match 表达式的模式测试与变量绑定
 
 use crate::error::{TenthError, TenthResult};
 use crate::hir::types::BaseType;
@@ -187,34 +186,6 @@ impl super::Interpreter {
                             self.insert_var(bind_name.clone(), v.clone());
                         }
                     }
-                }
-            }
-            HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Range { .. } => {}
-        }
-    }
-
-    /// Remove variables bound by a pattern from the current scope.
-    pub(super) fn unbind_pattern(&mut self, pattern: &HirPattern) {
-        match pattern {
-            HirPattern::Binding(name) => {
-                self.remove_var(name);
-            }
-            HirPattern::EnumVariant { field_bind, tuple_binds, .. } => {
-                if let Some((_, bname)) = field_bind {
-                    self.remove_var(bname);
-                }
-                for (_, bind_name) in tuple_binds {
-                    self.remove_var(bind_name);
-                }
-            }
-            HirPattern::Tuple(patterns) => {
-                for p in patterns {
-                    self.unbind_pattern(p);
-                }
-            }
-            HirPattern::Struct { fields, .. } => {
-                for (_, bind_name) in fields {
-                    self.remove_var(bind_name);
                 }
             }
             HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Range { .. } => {}

@@ -3,7 +3,7 @@
 //! 从 `mod.rs` 拆出（架构重构 T3e），包含：
 //! - `Interpreter` 结构体定义
 //! - 构造函数 `new` / `with_limits`
-//! - 作用域管理 `push_scope` / `pop_scope` / `insert_var` / `remove_var` /
+//! - 作用域管理 `push_scope` / `pop_scope` / `insert_var` /
 //!   `extend_globals` / `globals_clone` / `resolve_var` / `set_var`
 //! - 执行入口 `execute_program`（含 native FnRef 注入）
 //! - 资源/时间预算 `tick`
@@ -172,25 +172,6 @@ impl Interpreter {
                 scope.push(name);
             }
         }
-    }
-
-    /// AUDIT-11.4.3: 从当前 scope 移除变量（用于模式绑定清理）。
-    pub(super) fn remove_var(&mut self, name: &str) -> Option<Value> {
-        let mut removed = None;
-        if let Some(stack) = self.vars.get_mut(name) {
-            if stack.last().map_or(false, |(d, _)| *d == self.scope_depth) {
-                removed = stack.pop().map(|(_, v)| v);
-                if stack.is_empty() {
-                    self.vars.remove(name);
-                }
-            }
-        }
-        if removed.is_some() {
-            if let Some(scope) = self.scope_vars.get_mut(self.scope_depth) {
-                scope.retain(|n| n != name);
-            }
-        }
-        removed
     }
 
     /// AUDIT-11.4.3: REPL 注入全局变量（在 scope_depth==0 时调用）。

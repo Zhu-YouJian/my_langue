@@ -9,7 +9,7 @@
 
 use crate::error::{TenthError, TenthResult};
 use crate::hir::types::BaseType;
-use crate::lexer::token::{Span, Token, TokenKind};
+use crate::lexer::token::TokenKind;
 use super::ast::*;
 use super::parser::Parser;
 

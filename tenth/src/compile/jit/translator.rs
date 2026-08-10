@@ -13,7 +13,6 @@
 //! `extern "C" fn(vm: *mut u8, args: *const u8, n: usize, out: *mut u8) -> bool`
 
 use cranelift::prelude::*;
-use crate::hir::types::BaseType;
 use cranelift_module::{Linkage, Module};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem::size_of;
@@ -121,16 +120,6 @@ fn spec_target_sig<'a>(
         Some(c) if c.num_args == n => Some(sig),
         _ => None,
     }
-}
-
-fn spec_target_qualifies(
-    name_to_chunk: &[Option<usize>],
-    chunk_sigs: &[Option<ChunkSig>],
-    all_chunks: &[Chunk],
-    name_i: usize,
-    n: usize,
-) -> bool {
-    spec_target_sig(name_to_chunk, chunk_sigs, all_chunks, name_i, n).is_some()
 }
 
 /// A2：内联资格静态判定（**分析期与发射期共用**，防静默错值漂移）。
@@ -361,7 +350,7 @@ pub fn translate<M: Module>(
             8,
         ));
 
-        let mut t = Translator {
+        let t = Translator {
             module,
             builder,
             vm: vm_param,
@@ -1288,15 +1277,6 @@ impl<'a, M: Module> Translator<'a, M> {
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::F64, self.ptr], None);
         self.builder.ins().call_indirect(sig, callee, &[self.vm, arg, out]);
-    }
-
-    /// A6：特化调用后的错误检查（`host_check_error`）。**不失效栈标量**（同上）。
-    fn call_hostcall_check_error(&mut self) -> Value_ {
-        self.emit_line_hint();
-        let callee = self.hostcall_addr("host_check_error").unwrap();
-        let sig = self.import_sig(&[], Some(types::I8));
-        let call = self.builder.ins().call_indirect(sig, callee, &[self.vm]);
-        self.builder.inst_results(call)[0]
     }
 
     /// P1：`host_check_error` 内联化——直接 load `vm.jit_error_flag`（I8），
@@ -3220,7 +3200,7 @@ impl<'a, M: Module> Translator<'a, M> {
         let saved_blocks = std::mem::take(&mut self.blocks);
         let saved_block_sp = std::mem::take(&mut self.block_sp);
         let saved_visited = std::mem::take(&mut self.visited);
-        let saved_terminated = self.terminated;
+        let _saved_terminated = self.terminated;
         let saved_inline = (self.inline_out, self.inline_cont);
         let saved_cur_line = self.cur_line;
         // A2b：内联体禁用标量专用化（被调函数未做种类分析；调用方标量状态

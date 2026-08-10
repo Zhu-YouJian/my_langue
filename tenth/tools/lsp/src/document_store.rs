@@ -11,6 +11,9 @@ pub struct DocumentStore {
     documents: Arc<Mutex<HashMap<String, Document>>>,
 }
 
+/// 文档元数据。`uri` 字段当前仅被测试（document_store.rs 内 #[cfg(test)]）与 get_content_or_disk 路径读取，
+/// 保留以维持 Document 完整结构。
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Document {
     pub uri: String,
@@ -98,12 +101,16 @@ impl DocumentStore {
     }
 
     /// Get a document's metadata.
+    /// 当前仅被单元测试使用（非 cfg(test) 无调用点），保留以支持 store 完整查询接口。
+    #[allow(dead_code)]
     pub fn get_document(&self, uri: &str) -> Option<Document> {
         let docs = self.documents.lock().unwrap();
         docs.get(uri).cloned()
     }
 
     /// Check if a document is open.
+    /// 当前仅被单元测试使用，保留以支持 store 完整查询接口。
+    #[allow(dead_code)]
     pub fn is_open(&self, uri: &str) -> bool {
         let docs = self.documents.lock().unwrap();
         docs.contains_key(uri)

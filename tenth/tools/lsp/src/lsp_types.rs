@@ -98,6 +98,9 @@ pub struct TextEdit {
     pub new_text: String,
 }
 
+// LSP 协议契约类型：当前 JSON-RPC 层用 serde_json::Value 透传 params，这些结构体保留以
+// 供后续强类型化解析，且为协议文档对照物（构造告警非契约问题）。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextDocumentIdentifier {
     pub uri: String,
@@ -139,6 +142,8 @@ pub struct LspNotification {
     pub params: Option<serde_json::Value>,
 }
 
+// LSP 协议契约类型（同 TextDocumentIdentifier）：保留供强类型化解析与协议对照。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitializeParams {
     pub capabilities: serde_json::Value,
@@ -303,6 +308,7 @@ pub struct SemanticTokens {
 
 // ============ Rename ============
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenameParams {
     pub new_name: String,

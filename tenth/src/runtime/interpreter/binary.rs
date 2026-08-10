@@ -6,7 +6,6 @@
 //! - `values_eq` / `value_to_string`：值比较与字符串化
 
 use std::rc::Rc;
-use crate::hir::types::BaseType;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;

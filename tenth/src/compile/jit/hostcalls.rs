@@ -36,7 +36,7 @@ pub unsafe fn invoke_jit(
     vm: *mut Vm,
     args: &[Value],
     out: &mut Value,
-) -> bool {
+) -> bool { unsafe {
     // SAFETY: 调用方保证 fn_ptr 来自合法 JIT 模块；vm 非空且未被移动。
     // catch_unwind 用于防止 hostcall panic 跨 FFI 边界。
     let result = catch_unwind(AssertUnwindSafe(|| {
@@ -60,7 +60,7 @@ pub unsafe fn invoke_jit(
             false
         }
     }
-}
+}}
 
 /// A6：调用已编译的**特化入口**函数指针。
 ///
@@ -107,7 +107,7 @@ pub unsafe fn invoke_jit_spec(
 /// 返回空切片（调用方应已写好错误处理路径）。
 ///
 /// 这是 JIT hostcall 中所有 `from_raw_parts` 的统一闸门。
-unsafe fn safe_slice<'a>(ptr: *const Value, count: u64) -> &'a [Value] {
+unsafe fn safe_slice<'a>(ptr: *const Value, count: u64) -> &'a [Value] { unsafe {
     if ptr.is_null() {
         return &[];
     }
@@ -117,40 +117,40 @@ unsafe fn safe_slice<'a>(ptr: *const Value, count: u64) -> &'a [Value] {
         c => c as usize,
     };
     std::slice::from_raw_parts(ptr, n)
-}
+}}
 
 // ── Value construction trampolines ─────────────────────────────────────────
 
-unsafe extern "C" fn host_make_int(_vm: *mut Vm, n: i64, out: *mut Value) {
+unsafe extern "C" fn host_make_int(_vm: *mut Vm, n: i64, out: *mut Value) { unsafe {
     std::ptr::write(out, Value::Int(n, BaseType::I32));
-}
+}}
 
-unsafe extern "C" fn host_make_float(_vm: *mut Vm, f: f64, out: *mut Value) {
+unsafe extern "C" fn host_make_float(_vm: *mut Vm, f: f64, out: *mut Value) { unsafe {
     std::ptr::write(out, Value::Float(f));
-}
+}}
 
 /// 真正的 f32 hostcall：保留 dtype 信息到运行时（不再降级为 f64）。
 /// 阶段 6（f32/f64 parity roadmap）补齐。
-unsafe extern "C" fn host_make_float32(_vm: *mut Vm, f: f32, out: *mut Value) {
+unsafe extern "C" fn host_make_float32(_vm: *mut Vm, f: f32, out: *mut Value) { unsafe {
     std::ptr::write(out, Value::Float32(f));
-}
+}}
 
-unsafe extern "C" fn host_make_bool(_vm: *mut Vm, b: u8, out: *mut Value) {
+unsafe extern "C" fn host_make_bool(_vm: *mut Vm, b: u8, out: *mut Value) { unsafe {
     std::ptr::write(out, Value::Bool(b != 0));
-}
+}}
 
-unsafe extern "C" fn host_make_str(vm: *mut Vm, idx: u64, out: *mut Value) {
+unsafe extern "C" fn host_make_str(vm: *mut Vm, idx: u64, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     let s = vm.string_at(idx as usize).unwrap_or_default();
     std::ptr::write(out, Value::String(s));
-}
+}}
 
-unsafe extern "C" fn host_make_unit(_vm: *mut Vm, out: *mut Value) {
+unsafe extern "C" fn host_make_unit(_vm: *mut Vm, out: *mut Value) { unsafe {
     std::ptr::write(out, Value::Unit);
-}
+}}
 
 /// Extract truthiness of a `Value` as a `u8` (1 = true, 0 = false).
-unsafe extern "C" fn host_truthy(_vm: *mut Vm, v: *const Value) -> u8 {
+unsafe extern "C" fn host_truthy(_vm: *mut Vm, v: *const Value) -> u8 { unsafe {
     let v = &*v;
     match v {
         Value::Bool(b) => *b as u8,
@@ -160,121 +160,121 @@ unsafe extern "C" fn host_truthy(_vm: *mut Vm, v: *const Value) -> u8 {
         Value::String(s) => (!s.is_empty()) as u8,
         _ => 1, // any heap-allocated value is truthy
     }
-}
+}}
 
 // ── Arithmetic trampolines ─────────────────────────────────────────────────
 
-unsafe extern "C" fn host_add(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_add(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.add(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_sub(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_sub(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.sub(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_mul(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_mul(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.mul(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_div(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_div(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.div(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_mod(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_mod(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.rem(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_neg(vm: *mut Vm, a: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_neg(vm: *mut Vm, a: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.neg(&*a) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_not(vm: *mut Vm, a: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_not(vm: *mut Vm, a: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.not(&*a) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
 // ── Comparison trampolines ─────────────────────────────────────────────────
 
-unsafe extern "C" fn host_eq(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_eq(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.eq(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_neq(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_neq(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.neq(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_lt(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_lt(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.lt(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_gt(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_gt(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.gt(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_lte(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_lte(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.lte(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_gte(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_gte(vm: *mut Vm, a: *const Value, b: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.gte(&*a, &*b) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
 // ── Call trampolines ───────────────────────────────────────────────────────
 
 unsafe extern "C" fn host_call(
     vm: *mut Vm, name_idx: u64, arg_count: u64, args_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     let vm = &mut *vm;
     let name = vm.string_at(name_idx as usize).unwrap_or_default();
     let args = safe_slice(args_ptr, arg_count);
@@ -282,7 +282,7 @@ unsafe extern "C" fn host_call(
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
 /// A1：JIT-to-JIT 直接调用的慢路径 trampoline（目标函数尚未编译时）。
 ///
@@ -295,7 +295,7 @@ unsafe extern "C" fn host_call(
 /// 不经过本 trampoline；本 trampoline 只承担「首次遇到未编译函数」的编译注册。
 unsafe extern "C" fn host_jit_call(
     vm: *mut Vm, name_idx: u64, arg_count: u64, args_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     let vm = &mut *vm;
     let name = vm.string_at(name_idx as usize).unwrap_or_default();
     let args = safe_slice(args_ptr, arg_count);
@@ -303,7 +303,7 @@ unsafe extern "C" fn host_jit_call(
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
 /// A6：特化 ABI 慢路径 trampoline（目标特化入口尚未编译时）。
 ///
@@ -316,15 +316,15 @@ unsafe extern "C" fn host_jit_call(
 /// `call_indirect`，不经过本 trampoline。
 unsafe extern "C" fn host_jit_call_spec(
     vm: *mut Vm, name_idx: u64, arg_count: u64, args_ptr: *const Value, out: *mut Value,
-) {
-    let vm = unsafe { &mut *vm };
+) { unsafe {
+    let vm = &mut *vm;
     let name = vm.string_at(name_idx as usize).unwrap_or_default();
-    let args = unsafe { safe_slice(args_ptr, arg_count) };
+    let args = safe_slice(args_ptr, arg_count);
     match vm.jit_call_chunk_spec(&name, args) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
 /// A6：从 Value 解包 i64 载荷（特化函数返回值/参数解包）。
 ///
@@ -370,7 +370,7 @@ unsafe extern "C" fn host_value_to_f64(vm: *mut Vm, v: *const Value) -> f64 {
 
 unsafe extern "C" fn host_method_call(
     vm: *mut Vm, name_idx: u64, arg_count: u64, args_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     let vm = &mut *vm;
     let method = vm.string_at(name_idx as usize).unwrap_or_default();
     let all = safe_slice(args_ptr, arg_count);
@@ -385,16 +385,16 @@ unsafe extern "C" fn host_method_call(
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
 // ── Heap-allocating trampolines ────────────────────────────────────────────
 
-unsafe extern "C" fn host_make_vec(_vm: *mut Vm, count: u64, args_ptr: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_make_vec(_vm: *mut Vm, count: u64, args_ptr: *const Value, out: *mut Value) { unsafe {
     let items = safe_slice(args_ptr, count).to_vec();
     std::ptr::write(out, Value::Vec(Rc::new(RefCell::new(items))));
-}
+}}
 
-unsafe extern "C" fn host_make_map(_vm: *mut Vm, count: u64, args_ptr: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_make_map(_vm: *mut Vm, count: u64, args_ptr: *const Value, out: *mut Value) { unsafe {
     // 安全：用 checked_mul 防止 count * 2 溢出（count = u64::MAX/2+1 时会回绕）
     let pair_count = match (count as usize).checked_mul(2) {
         Some(n) if n <= MAX_HOSTCALL_ARGS * 2 => n,
@@ -417,11 +417,11 @@ unsafe extern "C" fn host_make_map(_vm: *mut Vm, count: u64, args_ptr: *const Va
         i += 2;
     }
     std::ptr::write(out, Value::Map(Rc::new(RefCell::new(map))));
-}
+}}
 
 unsafe extern "C" fn host_new_struct(
     vm: *mut Vm, name_idx: u64, field_count: u64, args_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     let vm = &mut *vm;
     let name = vm.string_at(name_idx as usize).unwrap_or_default();
     // 安全：field_count * 2 用 checked_mul
@@ -453,21 +453,21 @@ unsafe extern "C" fn host_new_struct(
         i -= 2;
     }
     std::ptr::write(out, Value::Struct { name, fields: Rc::new(RefCell::new(fields)) });
-}
+}}
 
 // M1.2：union 构造 hostcall — 与 VM 的 NewUnion 一致：
 // 栈顶单个 value → Value::Union { name, active_field, value }
 unsafe extern "C" fn host_new_union(
     vm: *mut Vm, name_idx: u64, field_idx: u64, val_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     let vm = &mut *vm;
     let name = vm.string_at(name_idx as usize).unwrap_or_default();
     let active_field = vm.string_at(field_idx as usize).unwrap_or_default();
     let value = (*val_ptr).clone();
     std::ptr::write(out, Value::Union { name, active_field, value: Box::new(value) });
-}
+}}
 
-unsafe extern "C" fn host_load_field(vm: *mut Vm, field_idx: u64, recv: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_load_field(vm: *mut Vm, field_idx: u64, recv: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     let fname = vm.string_at(field_idx as usize).unwrap_or_default();
     match &*recv {
@@ -488,9 +488,9 @@ unsafe extern "C" fn host_load_field(vm: *mut Vm, field_idx: u64, recv: *const V
         }
         _ => std::ptr::write(out, Value::Unit),
     }
-}
+}}
 
-unsafe extern "C" fn host_store_field(vm: *mut Vm, field_idx: u64, recv: *mut Value, val: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_store_field(vm: *mut Vm, field_idx: u64, recv: *mut Value, val: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     let fname = vm.string_at(field_idx as usize).unwrap_or_default();
     match &*recv {
@@ -516,11 +516,11 @@ unsafe extern "C" fn host_store_field(vm: *mut Vm, field_idx: u64, recv: *mut Va
         }
         _ => std::ptr::write(out, (*recv).clone()),
     }
-}
+}}
 
 /// M2-A3：IsStruct hostcall——与 VM opcode 46 一致：
 /// 弹值，若是 Struct 且 name == struct_name → Bool(true)，否则 Bool(false)。
-unsafe extern "C" fn host_is_struct(vm: *mut Vm, name_idx: u64, val: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_is_struct(vm: *mut Vm, name_idx: u64, val: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     let struct_name = vm.string_at(name_idx as usize).unwrap_or_default();
     let matches = match &*val {
@@ -528,27 +528,27 @@ unsafe extern "C" fn host_is_struct(vm: *mut Vm, name_idx: u64, val: *const Valu
         _ => false,
     };
     std::ptr::write(out, Value::Bool(matches));
-}
+}}
 
-unsafe extern "C" fn host_index_get(vm: *mut Vm, target: *const Value, idx: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_index_get(vm: *mut Vm, target: *const Value, idx: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.index_get(&*target, &*idx) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
-unsafe extern "C" fn host_slice_str(vm: *mut Vm, target: *const Value, start: *const Value, end: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_slice_str(vm: *mut Vm, target: *const Value, start: *const Value, end: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     match vm.slice_str(&*target, &*start, &*end) {
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
 unsafe extern "C" fn host_make_enum(
     vm: *mut Vm, name_idx: u64, variant_idx: u64, field_count: u64, args_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     let vm = &mut *vm;
     let enum_name = vm.string_at(name_idx as usize).unwrap_or_default();
     let variant = vm.string_at(variant_idx as usize).unwrap_or_default();
@@ -583,18 +583,18 @@ unsafe extern "C" fn host_make_enum(
         i -= 2;
     }
     std::ptr::write(out, Value::Enum { enum_name, variant, fields: Rc::new(RefCell::new(fields)) });
-}
+}}
 
-unsafe extern "C" fn host_is_enum_variant(vm: *mut Vm, variant_idx: u64, recv: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_is_enum_variant(vm: *mut Vm, variant_idx: u64, recv: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     let target = vm.string_at(variant_idx as usize).unwrap_or_default();
     match &*recv {
         Value::Enum { variant, .. } => std::ptr::write(out, Value::Bool(variant == &target)),
         _ => std::ptr::write(out, Value::Bool(false)),
     }
-}
+}}
 
-unsafe extern "C" fn host_enum_get_field(vm: *mut Vm, field_idx: u64, recv: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_enum_get_field(vm: *mut Vm, field_idx: u64, recv: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     let fname = vm.string_at(field_idx as usize).unwrap_or_default();
     match &*recv {
@@ -607,42 +607,42 @@ unsafe extern "C" fn host_enum_get_field(vm: *mut Vm, field_idx: u64, recv: *con
         }
         _ => std::ptr::write(out, Value::Unit),
     }
-}
+}}
 
 // ── M2-A3：Tuple / Try / Spawn hostcall（与 VM opcode 49-52/48 语义一致）────────
 
 /// MakeTuple：栈上 n 个值 → Value::Tuple（顺序与 VM opcode 49 一致：
 /// 弹 n 个逆序装回，即保持源码从左到右顺序）。与 host_make_vec 同签名。
-unsafe extern "C" fn host_make_tuple(_vm: *mut Vm, count: u64, args_ptr: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_make_tuple(_vm: *mut Vm, count: u64, args_ptr: *const Value, out: *mut Value) { unsafe {
     let items = safe_slice(args_ptr, count).to_vec();
     std::ptr::write(out, Value::Tuple(items));
-}
+}}
 
 /// IsTuple(expected_len)：val 是 Tuple 且长度 == expected_len → Bool(true)，否则 Bool(false)。
 /// 与 VM opcode 50 一致（弹值 + 压 Bool）。
-unsafe extern "C" fn host_is_tuple(_vm: *mut Vm, expected_len: u64, val: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_is_tuple(_vm: *mut Vm, expected_len: u64, val: *const Value, out: *mut Value) { unsafe {
     let matches = match &*val {
         Value::Tuple(items) => items.len() == expected_len as usize,
         _ => false,
     };
     std::ptr::write(out, Value::Bool(matches));
-}
+}}
 
 /// TupleGet(index)：val 为 Tuple → 取 index 元素（越界 → Unit）；非 Tuple → Unit。
 /// 与 VM opcode 51 一致（弹值 + 压元素）。
-unsafe extern "C" fn host_tuple_get(_vm: *mut Vm, index: u64, val: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_tuple_get(_vm: *mut Vm, index: u64, val: *const Value, out: *mut Value) { unsafe {
     let elem = match &*val {
         Value::Tuple(items) => items.get(index as usize).cloned().unwrap_or(Value::Unit),
         _ => Value::Unit,
     };
     std::ptr::write(out, elem);
-}
+}}
 
 /// Try：`expr?` 单点——写 `out` 供继续/早退用的值，返回 u8 标志（1 = 应 early return）。
 /// 与 VM opcode 52 一致：Err → 写**完整 Result::Err** 到 out 并返回 1（函数返回该 Err）；
 /// Ok → 写内层值到 out 返回 0；非 Result → 写原值返回 0。解释器 UnaryOp::Try 的
 /// TryPropagate 语义等价（函数边界 unwrap_return 直接透传完整 Result::Err，单层）。
-unsafe extern "C" fn host_try_pop(_vm: *mut Vm, val: *const Value, out: *mut Value) -> u8 {
+unsafe extern "C" fn host_try_pop(_vm: *mut Vm, val: *const Value, out: *mut Value) -> u8 { unsafe {
     match &*val {
         Value::Enum { enum_name, variant, fields } if enum_name == "Result" => {
             if variant == "Ok" {
@@ -664,21 +664,21 @@ unsafe extern "C" fn host_try_pop(_vm: *mut Vm, val: *const Value, out: *mut Val
             0
         }
     }
-}
+}}
 
 /// Spawn：eager spawn——弹值包装为 Ready Future（Value::future_ready）。
 /// 与 VM opcode 48 一致：纯构造、不涉及调度器挂起，JIT 安全。
-unsafe extern "C" fn host_spawn(_vm: *mut Vm, val: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_spawn(_vm: *mut Vm, val: *const Value, out: *mut Value) { unsafe {
     std::ptr::write(out, Value::future_ready((*val).clone()));
-}
+}}
 
-unsafe extern "C" fn host_push_range(_vm: *mut Vm, start: i64, end: i64, inclusive: u8, out: *mut Value) {
+unsafe extern "C" fn host_push_range(_vm: *mut Vm, start: i64, end: i64, inclusive: u8, out: *mut Value) { unsafe {
     std::ptr::write(out, Value::Range { start, end, inclusive: inclusive != 0 });
-}
+}}
 
 unsafe extern "C" fn host_make_tensor(
     _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     // 安全：rows * cols 用 checked_mul 防止溢出，并设上限防止 OOM
     let count = match (rows as usize).checked_mul(cols as usize) {
         Some(n) if n <= MAX_HOSTCALL_ARGS => n,
@@ -701,13 +701,13 @@ unsafe extern "C" fn host_make_tensor(
     use crate::runtime::tensor::Tensor;
     let shape = if cols == 0 { vec![rows as usize] } else { vec![rows as usize, cols as usize] };
     std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec(data, shape)))));
-}
+}}
 
 /// f32 Tensor 构造：保留 dtype=F32，元素提取保持 f32 精度。
 /// 阶段 6（f32/f64 parity roadmap）补齐。
 unsafe extern "C" fn host_make_tensor_f32(
     _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     // 安全：rows * cols 用 checked_mul 防止溢出，并设上限防止 OOM
     let count = match (rows as usize).checked_mul(cols as usize) {
         Some(n) if n <= MAX_HOSTCALL_ARGS => n,
@@ -730,14 +730,14 @@ unsafe extern "C" fn host_make_tensor_f32(
     use crate::runtime::tensor::Tensor;
     let shape = if cols == 0 { vec![rows as usize] } else { vec![rows as usize, cols as usize] };
     std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec_f32(data, shape)))));
-}
+}}
 
 /// f16 Tensor 构造：保留 dtype=F16，元素从栈上 Value 转换为 f16。
 /// VM Value 无 F16 变体，栈上元素以 f64/f32 形式存在，此处转换为 f16。
 /// Phase 2 缺口 1：F16/BF16 JIT 路径补齐。
 unsafe extern "C" fn host_make_tensor_f16(
     _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     // 安全：rows * cols 用 checked_mul 防止溢出，并设上限防止 OOM
     let count = match (rows as usize).checked_mul(cols as usize) {
         Some(n) if n <= MAX_HOSTCALL_ARGS => n,
@@ -761,13 +761,13 @@ unsafe extern "C" fn host_make_tensor_f16(
     use crate::runtime::tensor::Tensor;
     let shape = if cols == 0 { vec![rows as usize] } else { vec![rows as usize, cols as usize] };
     std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec_f16(data, shape)))));
-}
+}}
 
 /// bf16 Tensor 构造：保留 dtype=BF16，元素从栈上 Value 转换为 bf16。
 /// Phase 2 缺口 1：F16/BF16 JIT 路径补齐。
 unsafe extern "C" fn host_make_tensor_bf16(
     _vm: *mut Vm, rows: u64, cols: u64, args_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     // 安全：rows * cols 用 checked_mul 防止溢出，并设上限防止 OOM
     let count = match (rows as usize).checked_mul(cols as usize) {
         Some(n) if n <= MAX_HOSTCALL_ARGS => n,
@@ -791,11 +791,11 @@ unsafe extern "C" fn host_make_tensor_bf16(
     use crate::runtime::tensor::Tensor;
     let shape = if cols == 0 { vec![rows as usize] } else { vec![rows as usize, cols as usize] };
     std::ptr::write(out, Value::Tensor(Rc::new(RefCell::new(Tensor::from_vec_bf16(data, shape)))));
-}
+}}
 
 unsafe extern "C" fn host_make_closure(
-    vm: *mut Vm, params: u64, captures_count: u64, name_idx: u64, args_ptr: *const Value, out: *mut Value,
-) {
+    vm: *mut Vm, _params: u64, captures_count: u64, name_idx: u64, args_ptr: *const Value, out: *mut Value,
+) { unsafe {
     let vm = &mut *vm;
     // a1 P1：第二个操作数在 bytecode 里是「字符串表索引」（与 VM opcode 44 MakeClosure 对齐），
     // 不是 chunk 位置索引。此前误用 `chunk_name_at`（chunk_names 表），两张表只在巧合下相等，
@@ -814,7 +814,7 @@ unsafe extern "C" fn host_make_closure(
         return_type: crate::hir::types::Type::Base(crate::hir::types::BaseType::Unit),
         captures,
     });
-}
+}}
 
 /// a1 P1：间接调用栈上闭包/函数值（Op::CallClosure 的 JIT hostcall）。
 /// 栈布局 [arg1..argN, callee]（arg_count = N+1 个值，最后一个为 callee）。
@@ -822,7 +822,7 @@ unsafe extern "C" fn host_make_closure(
 /// 错误写入 last_error 并写 Unit（翻译器随后紧跟 host_check_error 立即中断，B2 模式）。
 unsafe extern "C" fn host_call_indirect(
     vm: *mut Vm, arg_count: u64, args_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     let vm = &mut *vm;
     let all = safe_slice(args_ptr, arg_count);
     if all.is_empty() {
@@ -837,7 +837,7 @@ unsafe extern "C" fn host_call_indirect(
         Ok(v) => std::ptr::write(out, v),
         Err(e) => { vm.set_jit_error(&e); std::ptr::write(out, Value::Unit); }
     }
-}
+}}
 
 /// P4：闭包/函数值间接调用的 **JIT-to-JIT** 变体（Op::CallClosure 的 JIT 直连）。
 ///
@@ -855,7 +855,7 @@ unsafe extern "C" fn host_call_indirect(
 /// 闭包路径的 A1 慢路径等价物：一次 hostcall + 闭包体跑 JIT 机器码。
 unsafe extern "C" fn host_jit_call_indirect(
     vm: *mut Vm, arg_count: u64, args_ptr: *const Value, out: *mut Value,
-) {
+) { unsafe {
     let vm = &mut *vm;
     let all = safe_slice(args_ptr, arg_count);
     if all.is_empty() {
@@ -877,7 +877,7 @@ unsafe extern "C" fn host_jit_call_indirect(
             // 以 params+captures 个槽位接收；与 call_value / VM opcode 57 一致）。
             // 无捕获时零拷贝借用。name 恒为闭包 chunk 名或 native 名（非全局变量
             // 名），故 `jit_call_chunk` 内部 globals-FnRef 解析不会二次追加捕获。
-            let mut owned: Vec<Value> = Vec::new();
+            let mut owned;
             let all_args: &[Value] = if captures.is_empty() {
                 args
             } else {
@@ -900,9 +900,9 @@ unsafe extern "C" fn host_jit_call_indirect(
             std::ptr::write(out, Value::Unit);
         }
     }
-}
+}}
 
-unsafe extern "C" fn host_load_global(vm: *mut Vm, name_idx: u64, out: *mut Value) {
+unsafe extern "C" fn host_load_global(vm: *mut Vm, name_idx: u64, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     let name = vm.string_at(name_idx as usize).unwrap_or_default();
     // 9a：native 别名 fallback（与 VM opcode 9 LoadGlobal 对齐）——`let p = println; p("x")`
@@ -921,114 +921,114 @@ unsafe extern "C" fn host_load_global(vm: *mut Vm, name_idx: u64, out: *mut Valu
         }
     });
     std::ptr::write(out, v);
-}
+}}
 
-unsafe extern "C" fn host_store_global(vm: *mut Vm, name_idx: u64, val: *const Value, out: *mut Value) {
+unsafe extern "C" fn host_store_global(vm: *mut Vm, name_idx: u64, val: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     let name = vm.string_at(name_idx as usize).unwrap_or_default();
     let v = (*val).clone();
     vm.set_global(name, v.clone());
     std::ptr::write(out, v);
-}
+}}
 
 /// 检查 VM 是否有未处理的错误（如 matmul shape mismatch）。
 /// 返回 1 表示有错误（JIT 应提前中止并返回 false），0 表示无错误。
 /// 不清除错误——`run_jit` 在 JIT 返回 false 后通过 `take_last_error` 取走。
-unsafe extern "C" fn host_check_error(vm: *mut Vm) -> u8 {
+unsafe extern "C" fn host_check_error(vm: *mut Vm) -> u8 { unsafe {
     let vm = &mut *vm;
     if vm.has_last_error() { 1 } else { 0 }
-}
+}}
 
 // ── A2b：原生 I32 算术错误设置（消息与 VM 逐字一致）────────────────────────
 
 /// i64 层溢出（checked_* 失败）：`整数运算结果溢出 i32 范围`。
 /// 与 `int_overflow_err(I32)` 一致（int_dtype_name(I32) = "i32"）。
-unsafe extern "C" fn host_set_int_overflow(vm: *mut Vm) {
+unsafe extern "C" fn host_set_int_overflow(vm: *mut Vm) { unsafe {
     let vm = &mut *vm;
     vm.set_last_error("整数运算结果溢出 i32 范围".into());
-}
+}}
 
 /// I32 窄 dtype 范围溢出：`整数运算结果 {r} 溢出 i32 范围`。
 /// 与 `check_int_overflow(r, I32)` 一致。
-unsafe extern "C" fn host_set_int_range_error(vm: *mut Vm, r: i64) {
+unsafe extern "C" fn host_set_int_range_error(vm: *mut Vm, r: i64) { unsafe {
     let vm = &mut *vm;
     vm.set_last_error(format!("整数运算结果 {} 溢出 i32 范围", r));
-}
+}}
 
 /// 整数除零（VM `err("整数除零")`）。
-unsafe extern "C" fn host_set_div_zero(vm: *mut Vm) {
+unsafe extern "C" fn host_set_div_zero(vm: *mut Vm) { unsafe {
     let vm = &mut *vm;
     vm.set_last_error("整数除零".into());
-}
+}}
 
 /// 整数取模除零（VM `err("整数取模除零")`）。
-unsafe extern "C" fn host_set_mod_zero(vm: *mut Vm) {
+unsafe extern "C" fn host_set_mod_zero(vm: *mut Vm) { unsafe {
     let vm = &mut *vm;
     vm.set_last_error("整数取模除零".into());
-}
+}}
 
 // ── Symbol table ───────────────────────────────────────────────────────────
 
 pub fn hostcall_addr(name: &str) -> Option<usize> {
     let map: &[(&str, usize)] = &[
-        ("host_make_int", host_make_int as usize),
-        ("host_make_float", host_make_float as usize),
-        ("host_make_float32", host_make_float32 as usize),
-        ("host_make_bool", host_make_bool as usize),
-        ("host_make_str", host_make_str as usize),
-        ("host_make_unit", host_make_unit as usize),
-        ("host_truthy", host_truthy as usize),
-        ("host_add", host_add as usize),
-        ("host_sub", host_sub as usize),
-        ("host_mul", host_mul as usize),
-        ("host_div", host_div as usize),
-        ("host_mod", host_mod as usize),
-        ("host_neg", host_neg as usize),
-        ("host_not", host_not as usize),
-        ("host_eq", host_eq as usize),
-        ("host_neq", host_neq as usize),
-        ("host_lt", host_lt as usize),
-        ("host_gt", host_gt as usize),
-        ("host_lte", host_lte as usize),
-        ("host_gte", host_gte as usize),
-        ("host_call", host_call as usize),
-        ("host_jit_call", host_jit_call as usize),
-        ("host_jit_call_spec", host_jit_call_spec as usize),
-        ("host_value_to_i64", host_value_to_i64 as usize),
-        ("host_value_to_f64", host_value_to_f64 as usize),
-        ("host_call_indirect", host_call_indirect as usize),
-        ("host_jit_call_indirect", host_jit_call_indirect as usize),
-        ("host_method_call", host_method_call as usize),
-        ("host_make_vec", host_make_vec as usize),
-        ("host_make_map", host_make_map as usize),
-        ("host_new_struct", host_new_struct as usize),
-        ("host_new_union", host_new_union as usize),
-        ("host_load_field", host_load_field as usize),
-        ("host_store_field", host_store_field as usize),
-        ("host_is_struct", host_is_struct as usize),
-        ("host_make_tuple", host_make_tuple as usize),
-        ("host_is_tuple", host_is_tuple as usize),
-        ("host_tuple_get", host_tuple_get as usize),
-        ("host_try_pop", host_try_pop as usize),
-        ("host_spawn", host_spawn as usize),
-        ("host_index_get", host_index_get as usize),
-        ("host_slice_str", host_slice_str as usize),
-        ("host_make_enum", host_make_enum as usize),
-        ("host_is_enum_variant", host_is_enum_variant as usize),
-        ("host_enum_get_field", host_enum_get_field as usize),
-        ("host_push_range", host_push_range as usize),
-        ("host_make_tensor", host_make_tensor as usize),
-        ("host_make_tensor_f32", host_make_tensor_f32 as usize),
-        ("host_make_tensor_f16", host_make_tensor_f16 as usize),
-        ("host_make_tensor_bf16", host_make_tensor_bf16 as usize),
-        ("host_make_closure", host_make_closure as usize),
-        ("host_load_global", host_load_global as usize),
-        ("host_store_global", host_store_global as usize),
-        ("host_check_error", host_check_error as usize),
-        ("host_set_int_overflow", host_set_int_overflow as usize),
-        ("host_set_int_range_error", host_set_int_range_error as usize),
-        ("host_set_div_zero", host_set_div_zero as usize),
-        ("host_set_mod_zero", host_set_mod_zero as usize),
+        ("host_make_int", host_make_int as *const () as usize),
+        ("host_make_float", host_make_float as *const () as usize),
+        ("host_make_float32", host_make_float32 as *const () as usize),
+        ("host_make_bool", host_make_bool as *const () as usize),
+        ("host_make_str", host_make_str as *const () as usize),
+        ("host_make_unit", host_make_unit as *const () as usize),
+        ("host_truthy", host_truthy as *const () as usize),
+        ("host_add", host_add as *const () as usize),
+        ("host_sub", host_sub as *const () as usize),
+        ("host_mul", host_mul as *const () as usize),
+        ("host_div", host_div as *const () as usize),
+        ("host_mod", host_mod as *const () as usize),
+        ("host_neg", host_neg as *const () as usize),
+        ("host_not", host_not as *const () as usize),
+        ("host_eq", host_eq as *const () as usize),
+        ("host_neq", host_neq as *const () as usize),
+        ("host_lt", host_lt as *const () as usize),
+        ("host_gt", host_gt as *const () as usize),
+        ("host_lte", host_lte as *const () as usize),
+        ("host_gte", host_gte as *const () as usize),
+        ("host_call", host_call as *const () as usize),
+        ("host_jit_call", host_jit_call as *const () as usize),
+        ("host_jit_call_spec", host_jit_call_spec as *const () as usize),
+        ("host_value_to_i64", host_value_to_i64 as *const () as usize),
+        ("host_value_to_f64", host_value_to_f64 as *const () as usize),
+        ("host_call_indirect", host_call_indirect as *const () as usize),
+        ("host_jit_call_indirect", host_jit_call_indirect as *const () as usize),
+        ("host_method_call", host_method_call as *const () as usize),
+        ("host_make_vec", host_make_vec as *const () as usize),
+        ("host_make_map", host_make_map as *const () as usize),
+        ("host_new_struct", host_new_struct as *const () as usize),
+        ("host_new_union", host_new_union as *const () as usize),
+        ("host_load_field", host_load_field as *const () as usize),
+        ("host_store_field", host_store_field as *const () as usize),
+        ("host_is_struct", host_is_struct as *const () as usize),
+        ("host_make_tuple", host_make_tuple as *const () as usize),
+        ("host_is_tuple", host_is_tuple as *const () as usize),
+        ("host_tuple_get", host_tuple_get as *const () as usize),
+        ("host_try_pop", host_try_pop as *const () as usize),
+        ("host_spawn", host_spawn as *const () as usize),
+        ("host_index_get", host_index_get as *const () as usize),
+        ("host_slice_str", host_slice_str as *const () as usize),
+        ("host_make_enum", host_make_enum as *const () as usize),
+        ("host_is_enum_variant", host_is_enum_variant as *const () as usize),
+        ("host_enum_get_field", host_enum_get_field as *const () as usize),
+        ("host_push_range", host_push_range as *const () as usize),
+        ("host_make_tensor", host_make_tensor as *const () as usize),
+        ("host_make_tensor_f32", host_make_tensor_f32 as *const () as usize),
+        ("host_make_tensor_f16", host_make_tensor_f16 as *const () as usize),
+        ("host_make_tensor_bf16", host_make_tensor_bf16 as *const () as usize),
+        ("host_make_closure", host_make_closure as *const () as usize),
+        ("host_load_global", host_load_global as *const () as usize),
+        ("host_store_global", host_store_global as *const () as usize),
+        ("host_check_error", host_check_error as *const () as usize),
+        ("host_set_int_overflow", host_set_int_overflow as *const () as usize),
+        ("host_set_int_range_error", host_set_int_range_error as *const () as usize),
+        ("host_set_div_zero", host_set_div_zero as *const () as usize),
+        ("host_set_mod_zero", host_set_mod_zero as *const () as usize),
     ];
     map.iter().find(|(n, _)| *n == name).map(|(_, a)| *a)
 }

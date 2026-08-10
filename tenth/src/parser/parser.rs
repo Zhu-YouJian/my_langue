@@ -140,14 +140,6 @@ impl Parser {
         }
     }
 
-    /// Record a parse error and attempt to recover by synchronizing.
-    /// Returns a placeholder item so parsing can continue.
-    fn record_error_and_recover(&mut self, err: TenthError) -> Option<Item> {
-        self.errors.push(err);
-        self.synchronize();
-        None
-    }
-
     /// Parse the program with error recovery, collecting multiple errors.
     /// Returns the successfully parsed items and any errors encountered.
     pub fn parse_program_with_recovery(&mut self) -> (Program, Vec<TenthError>) {

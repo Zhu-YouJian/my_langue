@@ -5,7 +5,6 @@ use tenth::hir::lower::Lowerer;
 use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
 use tenth::runtime::interpreter::Interpreter;
-use tenth::hir::types::BaseType;
 use tenth::runtime::value::Value;
 use tenth::runtime::vm::Vm;
 use tenth::compile::bytecode::BytecodeCompiler;

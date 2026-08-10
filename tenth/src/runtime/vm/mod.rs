@@ -15,7 +15,6 @@ use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use super::value::{Value, FutureState, check_int_overflow};
 use super::autodiff::{Tape, CustomOpRegistry, CustomBackward};
-use super::async_io::ASYNC_IO;
 
 mod chunk;
 mod execute;
@@ -128,6 +127,8 @@ pub struct Vm {
     pub commands: Vec<Option<std::process::Command>>,
     /// 下一个协程任务 ID 生成器。0 保留给主任务；从此字段递增分配。
     /// Phase 2 Step 1-2 仅初始化，不使用（spawn 仍走同步路径）。
+    /// 预留接口：Phase 2 调度器启用后由任务创建路径读取。
+    #[allow(dead_code)]
     next_task_id: TaskId,
     /// Phase 2 调度器：就绪任务队列。`run_scheduler` 循环 `pop_front` 取任务执行。
     ready_queue: VecDeque<TaskId>,
@@ -372,7 +373,7 @@ impl Vm {
         }
 
         // 组装最终实参（闭包捕获追加；无捕获时零拷贝借用）
-        let mut owned_args: Vec<Value> = Vec::new();
+        let mut owned_args;
         let all_args: &[Value] = if extra_captures.is_empty() {
             args
         } else {
@@ -475,7 +476,7 @@ impl Vm {
             self.jit_ctx = Some(crate::compile::jit::context::JitContext::new());
         }
         // 组装最终实参（闭包捕获追加；无捕获时零拷贝借用）
-        let mut owned_args: Vec<Value> = Vec::new();
+        let mut owned_args;
         let all_args: &[Value] = if extra_captures.is_empty() {
             args
         } else {

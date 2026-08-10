@@ -12,7 +12,6 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use super::tensor::Tensor;
-use crate::hir::types::BaseType;
 
 mod tape_op;
 mod grad;

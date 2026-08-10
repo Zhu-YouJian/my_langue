@@ -5,7 +5,7 @@
 //!
 //! 说明：`CARGO_BIN_EXE_tenth-lsp` 由 cargo 在集成测试中注入，指向构建出的二进制。
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;

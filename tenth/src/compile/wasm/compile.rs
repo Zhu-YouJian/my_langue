@@ -409,7 +409,7 @@ impl WasmCompiler {
                     // 左操作数提升到结果类型
                     let left_is_int = matches!(&left.ty, Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64));
                     let left_is_f32 = matches!(&left.ty, Type::Base(BaseType::F32));
-                    let left_is_f64 = matches!(&left.ty, Type::Base(BaseType::F64));
+                    let _left_is_f64 = matches!(&left.ty, Type::Base(BaseType::F64));
                     if left_is_int && result_is_f32 {
                         body.instruction(&Instruction::F32ConvertI64S);
                     } else if left_is_int && result_is_f64 {
@@ -1611,9 +1611,6 @@ impl WasmCompiler {
                     }),
                 }
             }
-            _ => return Err(TenthError::RuntimeError { line: None, col: None,
-                message: format!("WASM: 不支持的语句 {:?}", stmt.kind),
-            }),
         }
         Ok(())
     }
@@ -1704,10 +1701,6 @@ impl WasmCompiler {
             BinOp::Or => { body.instruction(&Instruction::I32Or); }
         }
         Ok(())
-    }
-
-    pub(super) fn emit_if(&self, body: &mut Function, cond: bool, then_i: Instruction<'_>, else_i: Instruction<'_>) {
-        if cond { body.instruction(&then_i); } else { body.instruction(&else_i); }
     }
 
     pub(super) fn compile_unary(&self, body: &mut Function, op: &UnaryOp, ty: &Type) -> TenthResult<()> {

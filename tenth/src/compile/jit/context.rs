@@ -1,9 +1,7 @@
 //! Owns the Cranelift `JITModule` and caches compiled function pointers.
 
 use cranelift::prelude::*;
-use crate::hir::types::BaseType;
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{Linkage, Module};
 use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -300,7 +298,7 @@ impl JitContext {
         let skip_chunk_ctx = &self.skip_chunk_ctx;
         let compile_result = catch_unwind(AssertUnwindSafe(|| -> Result<usize, String> {
             let fn_id = super::translator::translate(module, chunk_idx, chunk, &name_to_chunk, all_chunks, chunk_sigs, None, skip_chunk_ctx)?;
-            module.finalize_definitions();
+            module.finalize_definitions().map_err(|e| e.to_string())?;
             Ok(module.get_finalized_function(fn_id) as usize)
         }));
         let raw_ptr: *const u8 = match compile_result {
@@ -374,7 +372,7 @@ impl JitContext {
         let skip_chunk_ctx = &self.skip_chunk_ctx;
         let compile_result = catch_unwind(AssertUnwindSafe(|| -> Result<usize, String> {
             let fn_id = super::translator::translate(module, chunk_idx, chunk, &name_to_chunk, all_chunks, chunk_sigs, Some(sig), skip_chunk_ctx)?;
-            module.finalize_definitions();
+            module.finalize_definitions().map_err(|e| e.to_string())?;
             Ok(module.get_finalized_function(fn_id) as usize)
         }));
         let raw_ptr: *const u8 = match compile_result {

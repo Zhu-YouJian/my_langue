@@ -21,8 +21,6 @@ pub(super) trait FloatElem: 'static + Copy + Send + Sync +
     PartialOrd +
     std::iter::Sum<Self> {
     fn from_f64(x: f64) -> Self;
-    fn to_f64(self) -> f64;
-    fn sqrt_(self) -> Self;
     fn tanh_(self) -> Self;
     fn from_tensor_data(td: &TensorData) -> ArrayD<Self>;
     fn into_tensor_data(arr: ArrayD<Self>) -> TensorData;
@@ -30,8 +28,6 @@ pub(super) trait FloatElem: 'static + Copy + Send + Sync +
 
 impl FloatElem for f32 {
     fn from_f64(x: f64) -> Self { x as f32 }
-    fn to_f64(self) -> f64 { self as f64 }
-    fn sqrt_(self) -> Self { self.sqrt() }
     fn tanh_(self) -> Self { self.tanh() }
     fn from_tensor_data(td: &TensorData) -> ArrayD<f32> {
         match td {
@@ -47,8 +43,6 @@ impl FloatElem for f32 {
 
 impl FloatElem for f64 {
     fn from_f64(x: f64) -> Self { x }
-    fn to_f64(self) -> f64 { self }
-    fn sqrt_(self) -> Self { self.sqrt() }
     fn tanh_(self) -> Self { self.tanh() }
     fn from_tensor_data(td: &TensorData) -> ArrayD<f64> {
         match td {

@@ -34,16 +34,6 @@ impl Handler for DefinitionHandler {
     }
 }
 
-fn uri_to_path(uri: &str) -> String {
-    if let Some(stripped) = uri.strip_prefix("file:///") {
-        stripped.to_string()
-    } else if let Some(stripped) = uri.strip_prefix("file://") {
-        stripped.to_string()
-    } else {
-        uri.to_string()
-    }
-}
-
 fn find_definition(uri: &str, line: u32, character: u32) -> Vec<Location> {
     let content = match crate::document_store::get_content_or_disk_global(uri) {
         Some(c) => c,

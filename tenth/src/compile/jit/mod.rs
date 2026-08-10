@@ -58,7 +58,7 @@ pub fn run_jit(vm: &mut Vm, name: &str) -> TenthResult<Value> {
     // compilation cost.
     let chunk_view = vm.chunk_at(chunk_idx).clone();
 
-    let ctx = vm.jit_ctx.as_mut().unwrap();
+    let _ctx = vm.jit_ctx.as_mut().unwrap();
     // A1：建立 name→chunk 映射 + 函数指针表（JIT-to-JIT 直接调用基础设施）。
     // 所有 chunk（函数 + 闭包）在编译期已注册（main.rs），此处一次性建表，
     // 运行期不扩容——`vm.jit_table_ptr` 指向表数据区保持稳定。

@@ -23,16 +23,21 @@ impl Handler for SemanticTokensHandler {
     }
 }
 
-// Token type indices (must match the legend in initialize.rs)
+// Token type indices (must match the legend in initialize.rs)。
+// 以下类型暂未在 compute_semantic_tokens 中发射，保留以对齐协议 legend 的完整编号表。
 const TYPE_KEYWORD: u32 = 0;
+#[allow(dead_code)]
 const TYPE_FUNCTION: u32 = 1;
 const TYPE_VARIABLE: u32 = 2;
 const TYPE_TYPE: u32 = 3;
 const TYPE_STRING: u32 = 4;
 const TYPE_NUMBER: u32 = 5;
 const TYPE_OPERATOR: u32 = 6;
+#[allow(dead_code)]
 const TYPE_COMMENT: u32 = 7;
+#[allow(dead_code)]
 const TYPE_ENUM_MEMBER: u32 = 8;
+#[allow(dead_code)]
 const TYPE_STRUCT: u32 = 9;
 
 fn compute_semantic_tokens(source: &str) -> Vec<u32> {

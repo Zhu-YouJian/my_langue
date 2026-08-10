@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use crate::error::TenthError;
 use crate::hir::hir::*;
-use crate::hir::types::{Dim, Type, BaseType};
+use crate::hir::types::{Dim, Type};
 use crate::lexer::token::Span;
 use super::backward_shapes::backward_shape;
 use super::types::{has_static_info, fmt_dims};
@@ -303,7 +303,7 @@ fn try_consume_region_stmt(stmt: &HirStmt, region: &mut GradRegion) -> Option<bo
 
     // 2. let w = param(init) — 注册可训练参数
     if let HirStmtKind::Let { names, init: Some(init_expr), .. } = &stmt.kind {
-        if let HirExprKind::Call { func, args, .. } = &init_expr.kind {
+        if let HirExprKind::Call { func, args: _, .. } = &init_expr.kind {
             if let HirExprKind::Var(name) = &func.kind {
                 if name == "param" {
                     // param(init)：w 的 shape 来自 init_expr.ty（即 init 的 shape）

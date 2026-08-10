@@ -233,6 +233,9 @@ impl Tape {
 
     /// BFS 反向可达集合（C1）：从 v_err 出发，沿 inputs 反向遍历，返回所有可达节点。
     /// 复杂度 O(|V|+|E|)。
+    /// 仅被同文件单元测试 `test_bfs_reverse_reachable` 直接调用（非 cfg(test)），
+    /// 保留以维护该测试。
+    #[allow(dead_code)]
     fn bfs_reverse_reachable(&self, v_err: usize) -> HashSet<usize> {
         let mut visited: HashSet<usize> = HashSet::new();
         let mut queue: Vec<usize> = vec![v_err];

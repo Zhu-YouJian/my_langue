@@ -281,14 +281,14 @@ impl Lexer {
             // 无后缀（默认 I32）时：超出 i32 范围自动提升为 I64，不报错
             if int_dtype == BaseType::I32 && (n < -2147483648 || n > 2147483647) { int_dtype = BaseType::I64; }
             let range_ok = match int_dtype {
-                BaseType::I8 => (n >= -128 && n <= 127),
-                BaseType::I16 => (n >= -32768 && n <= 32767),
-                BaseType::I32 => (n >= -2147483648 && n <= 2147483647),
+                BaseType::I8 => n >= -128 && n <= 127 ,
+                BaseType::I16 => n >= -32768 && n <= 32767 ,
+                BaseType::I32 => n >= -2147483648 && n <= 2147483647 ,
                 BaseType::I64 => true,
-                BaseType::U8 => (n >= 0 && n <= 255),
-                BaseType::U16 => (n >= 0 && n <= 65535),
-                BaseType::U32 => (n >= 0 && n <= 4294967295),
-                BaseType::U64 => (n >= 0),
+                BaseType::U8 => n >= 0 && n <= 255 ,
+                BaseType::U16 => n >= 0 && n <= 65535 ,
+                BaseType::U32 => n >= 0 && n <= 4294967295 ,
+                BaseType::U64 => n >= 0 ,
                 _ => true,
             };
             if !range_ok {

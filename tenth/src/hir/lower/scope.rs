@@ -260,7 +260,7 @@ impl Scope {
 
         if matches.is_empty() {
             // 没有精确匹配，尝试兼容匹配（参数类型可统一）
-            let mut compatible: Vec<&(Vec<(String, Type)>, Type)> = all.iter()
+            let compatible: Vec<&(Vec<(String, Type)>, Type)> = all.iter()
                 .filter(|(params, _)| params.len() == arg_types.len())
                 .collect();
             if compatible.is_empty() {

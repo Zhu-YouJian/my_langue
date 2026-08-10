@@ -74,43 +74,7 @@ impl Handler for HoverHandler {
     }
 }
 
-/// Convert a URI string to a file system path.
-/// Strips "file://" prefix and handles URL-encoded characters.
-fn uri_to_path(uri: &str) -> String {
-    let path = if let Some(stripped) = uri.strip_prefix("file:///") {
-        stripped.to_string()
-    } else if let Some(stripped) = uri.strip_prefix("file://") {
-        stripped.to_string()
-    } else {
-        uri.to_string()
-    };
-
-    // On Windows, forward slashes in file URIs need to be converted
-    let path = path.replace('/', "\\");
-
-    // Decode percent-encoded characters
-    percent_decode(&path)
-}
-
-/// Simple percent-decode for common URL-encoded characters.
-fn percent_decode(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            let hex: String = chars.by_ref().take(2).collect();
-            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                result.push(byte as char);
-            } else {
-                result.push('%');
-                result.push_str(&hex);
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
+/// Path/URI 转换统一走 `crate::document_store::uri_to_path`（磁盘读取用全局 store 兜底）。
 
 /// Find the token at the given line and column position.
 /// `line` is 1-based (lexer), `col0` is 0-based (LSP).

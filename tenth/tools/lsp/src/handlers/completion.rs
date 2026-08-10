@@ -40,27 +40,6 @@ impl Handler for CompletionHandler {
     }
 }
 
-/// Read the source file content from a file URI.
-/// Returns empty string if the file cannot be read.
-fn read_source(uri: &str) -> String {
-    // Handle file:// URIs
-    let path = if let Some(rest) = uri.strip_prefix("file:///") {
-        // On Windows, the path after file:/// is like /C:/...
-        // strip the leading slash if it looks like a drive letter
-        if rest.len() > 2 && rest.chars().nth(1) == Some(':') {
-            &rest[1..]
-        } else {
-            rest
-        }
-    } else if let Some(rest) = uri.strip_prefix("file://") {
-        rest
-    } else {
-        uri
-    };
-
-    std::fs::read_to_string(path).unwrap_or_default()
-}
-
 /// Check if the cursor position is immediately after a `.` character,
 /// indicating a method call or field access context.
 fn is_after_dot(source: &str, position: Position) -> bool {

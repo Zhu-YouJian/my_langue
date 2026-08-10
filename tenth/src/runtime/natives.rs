@@ -210,11 +210,11 @@ fn format_placeholder(
     }
 }
 
-/// —— 可种子 RNG（M1-S4a 新增）——
-/// 默认 `random_int` / `random_float` 使用 CSPRNG（thread_rng，不可预测种子）。
-/// `random_seed(n)` 设置后，本线程后续随机数走确定性 `StdRng` 序列（可复现实验 /
-/// 确定性测试）；未设置时回退 thread_rng（原行为不变）。VM 与解释器共用本状态，
-/// 保证双路径同 seed 结果一致。
+// 可种子 RNG（M1-S4a 新增）：
+// 默认 `random_int` / `random_float` 使用 CSPRNG（thread_rng，不可预测种子）。
+// `random_seed(n)` 设置后，本线程后续随机数走确定性 `StdRng` 序列（可复现实验 /
+// 确定性测试）；未设置时回退 thread_rng（原行为不变）。VM 与解释器共用本状态，
+// 保证双路径同 seed 结果一致。
 thread_local! {
     static SEEDED_RNG: RefCell<Option<StdRng>> = RefCell::new(None);
 }
@@ -3623,14 +3623,14 @@ pub(crate) fn decimal_div_str(a: &str, b: &str) -> String {
     let b_padded = format!("{}{:0<width$}", b_int, b_frac, width = max_frac);
     // 长除法：求商到 10 位小数
     let precision = 10;
-    let mut dividend = bigint_sub_str_unsigned(&a_padded, &"0"); // just clone
-    let divisor = bigint_sub_str_unsigned(&b_padded, &"0");
+    let _dividend = bigint_sub_str_unsigned(&a_padded, &"0"); // just clone
+    let _divisor = bigint_sub_str_unsigned(&b_padded, &"0");
     // 简单长除法
     let dividend_val: String = a_padded.clone();
     let divisor_val: String = b_padded.clone();
     let mut quotient = String::new();
     let mut remainder = String::new();
-    for (i, c) in dividend_val.chars().enumerate() {
+    for (_i, c) in dividend_val.chars().enumerate() {
         remainder.push(c);
         let rem_trimmed = remainder.trim_start_matches('0');
         if rem_trimmed.is_empty() { remainder = "0".to_string(); }
