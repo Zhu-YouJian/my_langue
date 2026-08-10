@@ -4,34 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Find the tenthpm binary path.
+/// `CARGO_BIN_EXE_tenthpm` 由 cargo 在编译集成测试时注入，指向实际构建出的二进制
+/// （与 profile 无关，debug/release 均可），与 lsp 的 protocol_smoke_test 同款模式。
 fn tenthpm_binary() -> PathBuf {
-    // The binary is at tenth/tools/tenthpm/target/debug/tenthpm[.exe]
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let target_dir = manifest_dir.join("target").join("debug");
-    
-    #[cfg(windows)]
-    let bin = target_dir.join("tenthpm.exe");
-    #[cfg(not(windows))]
-    let bin = target_dir.join("tenthpm");
-    
-    if bin.exists() {
-        return bin;
-    }
-    
-    // Fallback: check workspace target
-    let workspace_target = manifest_dir
-        .join("..")
-        .join("..")
-        .join("..")
-        .join("target")
-        .join("debug");
-    
-    #[cfg(windows)]
-    let bin = workspace_target.join("tenthpm.exe");
-    #[cfg(not(windows))]
-    let bin = workspace_target.join("tenthpm");
-    
-    bin
+    PathBuf::from(env!("CARGO_BIN_EXE_tenthpm"))
 }
 
 /// Create a temporary test directory.
