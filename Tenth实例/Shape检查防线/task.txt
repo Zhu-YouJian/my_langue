@@ -1,0 +1,30 @@
+# Shape 检查防线
+
+展示 Tenth 编译期 shape 检查的三层防线与边界（护城河 A / D 的基础）：静态字面量 shape 精确拦截、符号 shape（randn 维度）编译期可验证、动态 shape 保守跳过后交给运行时，以及 `explain_error()`（FormalExplain）作为 backward 失败时的最后安全网。
+
+## 文件
+
+- `shape_check_layers.th` — 主演示（可正常运行的用例 + 三层防线说明 + explain_error API）
+- `err_matmul_inner_dim.th` — 错误演示：matmul 内侧维度不匹配（**编译期拦截**）
+- `err_broadcast_incompatible.th` — 错误演示：广播 shape 不兼容（**编译期拦截**）
+- `err_reshape_element_count.th` — 错误演示：reshape 元素数不一致（**编译期拦截**）
+
+错误演示文件**预期编译期报错**（非运行时崩溃），单独运行验证：
+
+```
+tenth run err_matmul_inner_dim.th
+```
+
+## 覆盖
+
+- 静态 shape：字面量张量的 shape 编译期精确跟踪
+- 符号 shape：`randn(n, 4)` 的维度以符号跟踪，函数参数间一致性仍可验证
+- 动态 shape：编译期无法确定时保守跳过，交给运行时兜底
+- 三层防线：编译期（TypeError）→ 运行时 forward → backward FormalExplain
+- 编译错误输出：行列号 + 双方 shape + 脱字符标注
+
+## 运行
+
+```
+tenth run shape_check_layers.th
+```

@@ -43,6 +43,10 @@ fn instances_dir() -> PathBuf {
 const EXPECT_COMPILE_FAIL: &[&str] = &[
     "typestate_illegal.th",
     "typestate_arg_illegal.th",
+    // Shape检查防线/ 错误演示（编译期 shape 拦截，exit!=0 为预期）
+    "err_matmul_inner_dim.th",
+    "err_broadcast_incompatible.th",
+    "err_reshape_element_count.th",
 ];
 
 /// VM 后端缺口（VM 路径运行时错误，非 panic；解释器路径必须可运行）。

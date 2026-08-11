@@ -1,0 +1,62 @@
+// Shape 检查防线：编译期 shape 拦截的三层防线与符号 shape 分析
+//
+// 本示例展示 Tenth 编译期 shape 检查的层次与边界（护城河 A / D 的基础）：
+//   1. 静态 shape：字面量张量的 shape 编译期精确已知，错误直接拦截
+//   2. 符号 shape：randn(n, 4) 的维度以符号跟踪，函数参数间的一致性
+//      编译期仍可验证，无需等运行时
+//   3. 动态 shape：编译期无法确定时保守跳过，交给运行时兜底
+//   4. explain_error()：FormalExplain 是 backward 失败时的最后一道安全网
+//
+// 错误演示文件（单独运行，预期编译期拦截，而非运行时崩溃）：
+//   err_matmul_inner_dim.th         matmul 内侧维度不匹配
+//   err_broadcast_incompatible.th   广播 shape 不兼容
+//   err_reshape_element_count.th    reshape 元素数不一致
+//
+// 运行：tenth run shape_check_layers.th
+
+// 符号 shape：n 是运行时参数，但 randn(n, 4) 与 randn(5, n) 的内侧维度
+// 都来自同一个符号 n，编译期可验证 n == n，无需运行时兜底。
+fn dynamic_layer(n: Int) {
+    new_grad();
+    let w = param(randn(n, 4));   // [n, 4]
+    let x = param(randn(5, n));   // [5, n]
+    let pred = x.matmul(w);       // [5, n] @ [n, 4]，内维 n == n ✓
+    let loss = pred.mean();
+    backward(loss);
+    println("  ✅ dynamic_layer(", n, ") 符号 shape 反向传播通过，loss = ", loss.sum());
+}
+
+fn main() {
+    println("=== Shape 检查防线：编译期三层拦截 ===");
+    println("");
+
+    // ── 第 1 层：静态 shape ──
+    println("第 1 层：静态 shape —— 字面量张量的 shape 编译期精确已知");
+
+    // 案例 1：静态 shape 正确，编译期通过
+    let a = tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];                       // [2, 3]
+    let b = tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]];      // [3, 3]
+    let c = a.matmul(b);  // [2, 3] @ [3, 3]，编译期验证内侧 K=3 == K'=3 ✓
+    println("  ✅ [2,3] @ [3,3] 编译期通过，c.sum() = ", c.sum());
+
+    println("");
+
+    // ── 第 2 层：符号 shape ──
+    println("第 2 层：符号 shape —— randn 的维度以符号跟踪，一致性仍可验证");
+    dynamic_layer(4);
+
+    println("");
+
+    // ── 第 3 层：explain_error()（FormalExplain 安全网）──
+    println("第 3 层：explain_error() —— FormalExplain 安全网（API 始终可用）");
+    let causes = explain_error();
+    println("  未发生 backward 错误时 explain_error() 返回长度 = ", causes.len());
+    println("  （backward 失败时此 API 返回根因分析，见 docs/语言参考手册.md §11.9）");
+
+    println("");
+    println("=== 边界说明 ===");
+    println("编译期拦截的是 shape 可静态确定的错误；无法确定时保守跳过给运行时。");
+    println("错误演示（编译期拦截、非运行时崩溃）见同目录 err_*.th 文件，");
+    println("运行任一文件都会在编译期报精确错误（行列号 + 双方 shape + 脱字符），");
+    println("而非像 PyTorch 那样等运行时前向传播才崩溃。");
+}

@@ -88,6 +88,7 @@ Tenth实例/
 | Drop 与 Copy | `Drop与Copy/` | Drop/RAII、Copy 自动派生、Phantom 类型 |
 | 宏与自定义运算符 | `宏与自定义运算符/` | 声明式宏（嵌套/0参/if体/循环中）、自定义运算符（`@` `$` `~` 组合、优先级、绑定函数）、struct 运算符重载（`impl Add`） |
 | Shape 检查演示 | `Shape检查演示/` | shape 检查、matmul 维度 |
+| Shape 检查防线 | `Shape检查防线/` | 编译期拦截层次（静态/符号/动态 shape）、explain_error 安全网、编译期错误演示 |
 | Transformer 示例 | `Transformer示例/` | Self-Attention、GELU、FFN、残差连接 |
 | 标准库使用示例 | `标准库使用示例/` | nn::activations、init::initializers、AdamW 公式 |
 | 梯度裁剪与累积 | `梯度裁剪与累积/` | clip_grad_by_value、梯度累积概念 |
@@ -114,4 +115,4 @@ Tenth实例/
 
 ---
 
-*最后更新：2026-08-03*
+*最后更新：2026-08-11*（新增 `Shape检查防线/`：编译期 shape 拦截层次演示 + 3 个预期编译拦截错误演示）
