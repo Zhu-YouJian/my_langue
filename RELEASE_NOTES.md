@@ -57,7 +57,7 @@ CI 基准门槛（`bench_gate_test -- --ignored`）：fib <100ms / loop <200ms /
 
 | **AUDIT-11.1 借用 B6 unsoundness**：语句粒度借用检查剩余 3 类变量转义（B7-1/2/3） | ⚠️ 语义健全性缺口（非内存安全；Tenth 无 unsafe/FFI/并发，B6' 条件健全性已论证） | 常规借用用法不受影响；1.0.1+ NLL 根治 |
 | **远程 registry**：tenthpm 无中央仓库 | ⚠️ 纯功能缺口 | 本地 registry / git / `.tenthpkg` 发布安装闭环可用 |
-| **AUDIT-11.4.43 JIT Union 字段修改**：触发 Cranelift 低化 panic（stderr 噪音），功能由 fallback 兜底正确 | ⚠️ 功能正确仅噪音 | 输出正确可忽略噪音；1.0.1+ 修复 |
+| **AUDIT-11.4.43 JIT Union 字段修改**：触发 Cranelift 低化 panic（stderr 噪音），功能由 fallback 兜底正确 | ⚠️ 功能正确仅噪音 | ~~输出正确可忽略噪音；1.0.1+ 修复~~ **已于 2026-08-31 修复**（JIT `Pop` 空栈钳 0，直接编译执行无 panic，见 `AUDIT.md` 11.4.43 与 `MEMO.md` 2026-08-31 条目） |
 | **JIT 边界（既有）**：Await/Yield、递归闭包创建、MakeCell/BindSelfCapture 整函数 fallback VM；>8 参不特化；深递归栈受原生栈限制（~36000 层） | ⚠️ 设计取舍 | 功能完整（fallback 正确执行） |
 | **WASM 宿主定位**：`tenth build` 生成 .wasm + wasmi/wasmtime 宿主执行；tenth 主 crate 无法编译到 wasm32 target（cranelift 无 wasm32 ISA） | ⚠️ 平台边界 | 浏览器端运行属远期路线图 |
 

@@ -470,23 +470,16 @@ unsafe extern "C" fn host_new_union(
 unsafe extern "C" fn host_load_field(vm: *mut Vm, field_idx: u64, recv: *const Value, out: *mut Value) { unsafe {
     let vm = &mut *vm;
     let fname = vm.string_at(field_idx as usize).unwrap_or_default();
-    match &*recv {
-        Value::Struct { fields, .. } => {
-            let fields = fields.borrow();
-            std::ptr::write(out, fields.iter()
-                .find(|(n, _)| n == &fname)
-                .map(|(_, v)| v.clone())
-                .unwrap_or(Value::Unit));
+    // QA-20260831：与 VM opcode 34 完全同语义（此前 JIT 侧只认 Struct/Union 且
+    // 失配静默 Unit——枚举字段访问返回 Unit 毒化后续逻辑，linked_list/bst 的
+    // JIT 路径错值根因）。委托 VM get_field：Ref/MutRef/Shared 解包 + Struct/
+    // Enum/Union + 失配报错（错误经 set_jit_error 由 run_jit surface）。
+    match vm.get_field(&*recv, &fname) {
+        Ok(v) => std::ptr::write(out, v),
+        Err(e) => {
+            vm.set_jit_error(&e);
+            std::ptr::write(out, Value::Unit);
         }
-        // M1.2：Union 字段访问（tagged union）——只读当前 active 字段
-        Value::Union { active_field, value, .. } => {
-            if active_field == &fname {
-                std::ptr::write(out, (**value).clone());
-            } else {
-                std::ptr::write(out, Value::Unit);
-            }
-        }
-        _ => std::ptr::write(out, Value::Unit),
     }
 }}
 
@@ -494,13 +487,6 @@ unsafe extern "C" fn host_store_field(vm: *mut Vm, field_idx: u64, recv: *mut Va
     let vm = &mut *vm;
     let fname = vm.string_at(field_idx as usize).unwrap_or_default();
     match &*recv {
-        Value::Struct { fields, .. } => {
-            let mut fields = fields.borrow_mut();
-            if let Some(slot) = fields.iter_mut().find(|(n, _)| n == &fname) {
-                slot.1 = (*val).clone();
-            }
-            std::ptr::write(out, (*recv).clone());
-        }
         // M1.2：Union 字段修改（tagged union）——只允许修改 active 字段，
         // 写回新构造的 Union（bytecode 对 Union 目标随后 Store 写回变量槽）。
         Value::Union { name, active_field, .. } => {
@@ -514,7 +500,19 @@ unsafe extern "C" fn host_store_field(vm: *mut Vm, field_idx: u64, recv: *mut Va
                 std::ptr::write(out, (*recv).clone());
             }
         }
-        _ => std::ptr::write(out, (*recv).clone()),
+        // QA-20260831：非 Union 目标委托 VM set_field（Struct 原地改 + Shared/
+        // Ref/MutRef 写穿 + 失配报错），与 VM opcode 35 同语义。此前 JIT 侧
+        // 只认 Struct 且静默失败——经 &mut 引用设置字段（queue 实例
+        // `q.front = ...`）在 JIT 路径静默丢写。out 保持写回 recv（JIT 侧
+        // StoreField 的栈协议：结果弹回 + 语句级 Pop 平衡，Struct 为原地改
+        // 共享 Rc，写回值无害）。
+        _ => match vm.set_field(&*recv, &fname, (*val).clone()) {
+            Ok(()) => std::ptr::write(out, (*recv).clone()),
+            Err(e) => {
+                vm.set_jit_error(&e);
+                std::ptr::write(out, (*recv).clone());
+            }
+        },
     }
 }}
 

@@ -121,6 +121,16 @@
 3. 破坏性变更必须**先登记**（缺陷跟踪或变更提案），评审通过才实施；
 4. 版本号统一在 `tenth/Cargo.toml` 中 bump，文档不自行改版本。
 
+### 4.1 冻结后变更记录
+
+> 冻结（v1.0.0，2026-08-04）后发生的 API 变更逐条登记于此。按 §1 规则判定 semver 类型；版本号 bump 与否由维护者在 `tenth/Cargo.toml` 统一执行。
+
+| 日期 | semver 判定 | 变更内容 | 出处 |
+|------|------------|---------|------|
+| 2026-08-31 | MINOR 兼容新增 | `Tensor::shape() -> Vec<i64>`——张量方法，返回形状（VM + 解释器双侧注册；`shape_tensor()` 保留不变；配套撤销 AUDIT-11.4.12 编译期拦截，`types.rs` 恢复 `"shape" => Array<i64>` 推断） | QA-20260831 修复轮，详见 MEMO.md 2026-08-31 条目 |
+| 2026-08-31 | MINOR 兼容新增 | `Tensor::to_vec()`——张量方法，按行主序展平为一维 `Vec`（元素类型跟随 dtype：f64→Float / f32→Float32；VM + 解释器双侧注册） | QA-20260831 修复轮，详见 MEMO.md 2026-08-31 条目 |
+| 2026-08-31 | MINOR 兼容新增（VM 端补齐既有解释器能力） | `HashMap::merge(other)`——VM 端补齐（解释器已有；语义逐字对齐：合并另一 Map、后者键覆盖、返回 `()`、原地修改）；无既有 API 语义变化 | QA-20260831 修复轮，详见 MEMO.md 2026-08-31 条目 |
+
 ## 5. v1.0.0 发布门槛检查
 
 以下为 1.0 发布前登记的门槛检查项，**已于 2026-08-04 逐项决策**：`✅ 满足` = 已关闭；`🔴 建议 1.0 前修` = 静默错值/崩溃关键项；`⚠️ 已知限制（1.0 后）` = 可 1.0 后处理，已在 `RELEASE_NOTES.md` 已知限制节如实披露并登记 1.0.1+ 排期。
@@ -135,18 +145,18 @@
 | 6 | 远程 registry（tenthpm 中央仓库） | ⚠️ 已知限制（1.0 后） | 纯功能缺口；本地 registry / git / `.tenthpkg` 发布安装闭环可用 |
 | 7 | 重载运行时 VM/解释器分派不一致（内部缺陷跟踪编号 AUDIT-11.4.39） | ✅ 已修复（2026-08-04） | **静默错值类缺陷**：VM HashMap 后注册覆盖 vs 解释器取第一条同名 → 同一重载调用两路径可能选中不同签名（`g(1,2)` 在 VM 返回 `"ONE_PARAM"` 错误值）——已修复（编译期确定性 mangling `__ovl_<name>_<idx>`：定义改名 + 调用点按实参类型选中签名 + 函数值引用取首签名，三后端按 mangled 名解析一致；配套修复 resolve_call_type 静态返回类型被第一个同名函数覆盖）。守护：`redline_overload_match_test` 8 项 |
 | 8 | 错误消息文本本身不冻结（属可改进项），但**错误类别/行号语义**冻结 | ✅ 满足 | 约定 |
-| 9 | JIT Union 字段修改 Cranelift 低化 panic（内部缺陷跟踪编号 AUDIT-11.4.43） | ⚠️ 已知限制（1.0 后） | 功能正确（catch_unwind fallback 兜底，exit=0 + 输出正确）；仅 stderr panic 噪音（脚本解析 stderr 会误判失败）→ 1.0.1+ 修复后移除 `KNOWN_JIT_PANIC_STDERR` 分类 |
+| 9 | JIT Union 字段修改 Cranelift 低化 panic（内部缺陷跟踪编号 AUDIT-11.4.43） | ✅ 已修复（2026-08-31） | 根因：Union `FieldAssign` 表达式净 0 后的 ExprStmt `Pop` 在 VM 是空栈 no-op，JIT 静态 sp 却减到负偏移 → ISLE `u32::try_from` panic；修复：JIT translator `Pop` 发射钳 0（镜像 VM 帧栈基 0 不可下穿），union_demo 不再 fallback（stderr 无 panic，JIT 直接编译执行）；`KNOWN_JIT_PANIC_STDERR` 分类已移除（详见 AUDIT.md 11.4.43） |
 
 **决策结论**：
 
 - **建议 1.0 前修（2 项，2026-08-04 均已修复）**：AUDIT-11.4.39（重载分派）+ AUDIT-11.4.34（VM match guard）——均为**静默错值类缺陷**，触发面覆盖语言常用特性（重载 / tuple match + guard）。**已加一轮修复**（1.0 发布前关键修复）：两项已修复并新增 `redline_overload_match_test` 14 项三路径对拍守护（详见上表第 4/7 行）。
-- **可 1.0 后（3 项）**：AUDIT-11.1（B6，语义健全性缺口非内存安全）、远程 registry（纯功能缺口）、AUDIT-11.4.43（JIT Union panic，功能正确仅噪音）——登记 1.0.1+ 排期。
+- **可 1.0 后（2 项）**：AUDIT-11.1（B6，语义健全性缺口非内存安全）、远程 registry（纯功能缺口）——登记 1.0.1+ 排期。**原列于此的 AUDIT-11.4.43（JIT Union panic）已于 2026-08-31 QA-20260831 修复轮关闭**（Pop 空栈钳 0，不再需要绕行，见上表第 9 行）。
 
 **绕行方式（1.0 发布有效期内，供用户参考）**：
 
 - **重载**：避免同一函数名混用不同参数数量的重载签名（编译期 `resolve_fn_overload` 已拦截类型确定不兼容的调用）；跨路径（VM/解释器）行为差异期间以默认 JIT/VM 路径为准，关键重载场景加单测断言。
 - **match tuple + guard**：tuple 多臂避免与 guard 混用——用「单 guard 臂 + wildcard」或 if 链 / let 解构替代。
-- **JIT Union 字段修改**：功能可用（fallback 保证正确输出），可忽略 stderr panic 噪音；或改用 `let mut` + 重建 Union 值。
+- **JIT Union 字段修改**：~~功能可用（fallback 保证正确输出），可忽略 stderr panic 噪音~~——**已于 2026-08-31 修复**（JIT Pop 空栈钳 0，直接编译执行，无 panic 噪音），无需绕行。
 
 ---
 

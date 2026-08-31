@@ -898,6 +898,23 @@ impl Vm {
                 36 => {
                     let idx = self.stack.pop().unwrap_or(Value::Unit);
                     let target = self.stack.pop().unwrap_or(Value::Unit);
+                    // QA-20260831：`&mut vec` / `&vec` 之后变量槽为 Shared/Ref/
+                    // MutRef 包裹值——索引前解包（与 mod.rs index_get 一致，
+                    // JIT host_index_get 经此语义）。
+                    let derefed;
+                    let target = match &target {
+                        Value::Shared(rc) | Value::Ref(rc) => {
+                            derefed = rc.borrow().clone();
+                            &derefed
+                        }
+                        Value::MutRef(w) => {
+                            derefed = w.upgrade()
+                                .map(|rc| rc.borrow().clone())
+                                .unwrap_or(Value::Moved);
+                            &derefed
+                        }
+                        other => other,
+                    };
                     match target {
                         Value::Vec(items) => {
                             let i = idx.as_int().unwrap_or(0) as usize;
@@ -1913,7 +1930,7 @@ impl Vm {
         })
     }
 
-    fn set_field(&self, val: &Value, field: &str, new_val: Value) -> TenthResult<()> {
+    pub fn set_field(&self, val: &Value, field: &str, new_val: Value) -> TenthResult<()> {
         match val {
             Value::Struct { fields, .. } => {
                 for (n, v) in fields.borrow_mut().iter_mut() {
@@ -1923,11 +1940,20 @@ impl Vm {
             }
             Value::Shared(rc) => self.set_field(&rc.borrow(), field, new_val),
             Value::Ref(rc) => self.set_field(&rc.borrow(), field, new_val),
+            // QA-20260831：MutRef 写穿（与 get_field 的解包对称）——经 &mut 引用
+            // 设置字段此前静默丢写（queue 实例 `q.front = ...` 根因）。
+            Value::MutRef(w) => {
+                if let Some(rc) = w.upgrade() {
+                    self.set_field(&rc.borrow(), field, new_val)
+                } else {
+                    err("悬垂的 &mut 引用")
+                }
+            }
             _ => err("无法设置字段"),
         }
     }
 
-    fn get_field(&self, val: &Value, field: &str) -> TenthResult<Value> {
+    pub fn get_field(&self, val: &Value, field: &str) -> TenthResult<Value> {
         let v = match val {
             Value::Ref(rc) => return self.get_field(&rc.borrow(), field),
             Value::MutRef(w) => {

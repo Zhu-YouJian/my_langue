@@ -173,6 +173,16 @@ impl BytecodeCompiler {
         // B 批（VM 报错行号）：在表达式边界记录源码行号到 chunk 行号表，
         // 供 VM 运行时错误按指令偏移定位行号。去重由 Chunk::note_line 处理。
         self.chunk.note_line(expr.span.line);
+        // QA-20260831（TCO 泄漏系统性修复）：入口消费尾位置标记——`tail_here`
+        // 表示「本表达式」处于尾位置；进入后立即清零，使**一切子表达式**默认
+        // 非尾（容器构造 StructLiteral/ArrayLiteral/MethodCall/Field/... 的
+        // 字段、元素、receiver 里出现的 Call 不再被误判为尾调用编译成
+        // TailCall 终止指令——如 `Holder { inner: HashMap::new() }`（参数
+        // 个数恰与外层函数相同）整段后续指令变不可达，函数返回错值）。
+        // 真正的尾位置转发者（If/Block 分支、函数体 compile）在编译子表达式
+        // 前显式 `self.tail_call_ok = tail_here` 重新置位。
+        let tail_here = self.tail_call_ok;
+        self.tail_call_ok = false;
         match &expr.kind {
             Literal(lit) => match lit {
                 crate::hir::hir::Literal::Int(n, _) => self.chunk.emit(Op::PushInt(*n)),
@@ -201,9 +211,7 @@ impl BytecodeCompiler {
             }
 
             Binary { op, left, right, .. } => {
-                // Children of a binary op are not in tail position
-                let saved_tail = self.tail_call_ok;
-                self.tail_call_ok = false;
+                // 子操作数非尾位置（compile_expr 入口已统一消费 tail_call_ok）。
                 self.compile_expr(left)?;
                 // 短路逻辑运算符（And/Or）的右操作数**不能**在此急切编译：
                 // 其短路分支内部会再次 compile_expr(right)，此前无条件编译右操作数
@@ -212,7 +220,6 @@ impl BytecodeCompiler {
                 if !matches!(op, BinOp::And | BinOp::Or) {
                     self.compile_expr(right)?;
                 }
-                self.tail_call_ok = saved_tail;
                 use crate::hir::hir::BinOp::*;
                 self.chunk.emit(match op {
                     Add => Op::Add, Sub => Op::Sub, Mul => Op::Mul, Div => Op::Div,
@@ -245,10 +252,7 @@ impl BytecodeCompiler {
             }
 
             Unary { op, expr: inner, .. } => {
-                let saved_tail = self.tail_call_ok;
-                self.tail_call_ok = false;
                 self.compile_expr(inner)?;
-                self.tail_call_ok = saved_tail;
                 use crate::hir::hir::UnaryOp::*;
                 match op {
                     Neg => self.chunk.emit(Op::Neg),
@@ -279,14 +283,11 @@ impl BytecodeCompiler {
             }
 
             Call { func, args, .. } => {
-                // Push args left-to-right; VM pops in reverse into locals
-                // Arguments are not in tail position — only the call itself might be
-                let saved_tail = self.tail_call_ok;
-                self.tail_call_ok = false;
+                // Push args left-to-right; VM pops in reverse into locals.
+                // 实参非尾位置（入口已统一清零）；仅本 Call 自身按 tail_here 判定 TCO。
                 for a in args.iter() {
                     self.compile_expr(a)?;
                 }
-                self.tail_call_ok = saved_tail;
                 match &func.kind {
                     Var(name) => {
                         let i = self.chunk.add_string(name);
@@ -295,12 +296,12 @@ impl BytecodeCompiler {
                         // 无法按名解析 local 闭包）。未命中 local → 保持按名直调（顶层函数/全局闭包）。
                         if let Some(pos) = self.locals.iter().rposition(|n| n == name) {
                             self.chunk.emit(Op::Load(pos));
-                            if self.tail_call_ok && args.len() == self.current_fn_args {
+                            if tail_here && args.len() == self.current_fn_args {
                                 self.chunk.emit(Op::TailCallClosure(args.len()));
                             } else {
                                 self.chunk.emit(Op::CallClosure(args.len()));
                             }
-                        } else if self.tail_call_ok && args.len() == self.current_fn_args {
+                        } else if tail_here && args.len() == self.current_fn_args {
                             // Tail call optimization: reuse current frame when in tail position
                             // and arg count matches the current function's param count.
                             self.chunk.emit(Op::TailCall(i, args.len()));
@@ -313,7 +314,7 @@ impl BytecodeCompiler {
                         // 编译 func 压入函数值，再发 CallClosure/TailCallClosure。
                         // 此前是「无调用占位」（值悬栈、后续栈错乱），此处从占位改为真调用。
                         self.compile_expr(func)?;
-                        if self.tail_call_ok && args.len() == self.current_fn_args {
+                        if tail_here && args.len() == self.current_fn_args {
                             self.chunk.emit(Op::TailCallClosure(args.len()));
                         } else {
                             self.chunk.emit(Op::CallClosure(args.len()));
@@ -323,46 +324,42 @@ impl BytecodeCompiler {
             }
 
             If { cond, then_branch, else_branch, .. } => {
-                // Condition is not in tail position
-                let saved_tail = self.tail_call_ok;
-                self.tail_call_ok = false;
+                // 条件非尾位置（入口已统一清零）；分支继承本表达式的尾位置。
                 self.compile_expr(cond)?;
                 let else_label = self.new_label();
                 let end_label = self.new_label();
                 self.chunk.emit(Op::JmpFalse(0));
                 self.patch_jump(else_label);
                 // Then branch inherits tail position
-                self.tail_call_ok = saved_tail;
+                self.tail_call_ok = tail_here;
                 self.compile_expr(then_branch)?;
                 self.chunk.emit(Op::Jump(0));
                 self.patch_jump(end_label);
                 self.label(else_label);
                 // Else branch inherits tail position
-                self.tail_call_ok = saved_tail;
+                self.tail_call_ok = tail_here;
                 if let Some(eb) = else_branch {
                     self.compile_expr(eb)?;
                 } else {
                     self.chunk.emit(Op::PushUnit);
                 }
-                self.tail_call_ok = saved_tail;
+                self.tail_call_ok = false;
                 self.label(end_label);
             }
 
             Block { stmts, final_expr } => {
-                let saved_tail = self.tail_call_ok;
-                // Statements are not in tail position
-                self.tail_call_ok = false;
+                // Statements are not in tail position（入口已清零，语句编译不再继承）
                 for s in stmts {
                     self.compile_stmt(s)?;
                 }
                 // Only final_expr is in tail position
-                self.tail_call_ok = saved_tail;
+                self.tail_call_ok = tail_here;
                 if let Some(e) = final_expr {
                     self.compile_expr(e)?;
                 } else {
                     self.chunk.emit(Op::PushUnit);
                 }
-                self.tail_call_ok = saved_tail;
+                self.tail_call_ok = false;
             }
 
             Assign { target, value } => {

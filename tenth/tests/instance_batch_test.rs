@@ -4,13 +4,15 @@
 //! 本次（M5.2）固化为自动化测试：每次 cargo test 自动重跑全部实例，
 //! 任何实例"崩溃 / 回归 / 从预期拦截变成静默通过"都会立即暴露。
 //!
-//! 分类（基于 2026-08-04 M5.2 基线实测）：
+//! 分类（基于 2026-08-04 M5.2 基线实测；QA-20260831 更新）：
 //!   - 默认（正常）：默认路径（VM/JIT）exit==0 且 stderr 无 panic
 //!   - EXPECT_COMPILE_FAIL：编译期预期拦截（typestate 非法状态），exit!=0 且 stderr 无 panic
-//!   - VM_GAP：VM 后端缺口（bintree/queue），VM 路径运行时错误（非 panic），
-//!     解释器路径（TENTH_NO_VM=1）必须 exit==0 —— 守护"解释器兜底可运行"
-//!   - KNOWN_JIT_PANIC_STDERR：已知 JIT 低化 panic（AUDIT-11.4.43），功能靠
-//!     catch_unwind fallback 正确（exit==0 + 输出正确），stderr 有 panic 噪音容忍
+//!   - VM_GAP：VM 后端缺口（历史：bintree/queue）——QA-20260831 已修复
+//!     （JIT/VM 侧 IndexGet 解包 Shared + set_field MutRef 写穿），bintree/
+//!     queue 现按「正常」守护（从缺口清单移出）
+//!   - KNOWN_JIT_PANIC_STDERR：已移除——AUDIT-11.4.43（union 字段修改低化
+//!     TryFromIntError）已于 QA-20260831 修复（JIT Pop 空栈钳 0，对齐 VM
+//!     pop 容忍语义），union_demo 现按「正常」守护
 //!
 //! 约定：新增实例默认按「正常」守护；新增"预期拦截"实例必须加入对应清单。
 
@@ -50,14 +52,9 @@ const EXPECT_COMPILE_FAIL: &[&str] = &[
 ];
 
 /// VM 后端缺口（VM 路径运行时错误，非 panic；解释器路径必须可运行）。
+/// QA-20260831：bintree/queue 缺口已修复（IndexGet 解包 Shared + set_field
+/// MutRef 写穿），清单清空——两者现按「正常」守护。
 const VM_GAP: &[&str] = &[
-    "bintree.th",
-    "queue.th",
-];
-
-/// 已知 JIT 低化 panic（AUDIT-11.4.43）：stderr 有 panic 噪音，功能靠 fallback 正确。
-const KNOWN_JIT_PANIC_STDERR: &[&str] = &[
-    "union_demo.th",
 ];
 
 fn classify(file_name: &str) -> &'static str {
@@ -65,8 +62,6 @@ fn classify(file_name: &str) -> &'static str {
         "expect-compile-fail"
     } else if VM_GAP.contains(&file_name) {
         "vm-gap"
-    } else if KNOWN_JIT_PANIC_STDERR.contains(&file_name) {
-        "known-jit-panic"
     } else {
         "normal"
     }
@@ -181,15 +176,6 @@ fn guard_instance(rel: &str, file_name: &str) {
             assert!(!has_panic(&istd),
                 "[{rel}] 解释器路径不应 panic\nstderr: {istd}");
         }
-        "known-jit-panic" => {
-            // 功能正确（fallback），容忍 stderr panic 噪音（AUDIT-11.4.43）
-            assert_eq!(code, 0,
-                "[{rel}] 已知 JIT panic 实例功能应 exit 0（fallback 兜底），实际 {code}");
-            let (_, stdout, _) = run_with_timeout(
-                Path::new(TENTH_EXE), &file, &root, false, timeout);
-            assert!(stdout.contains("100"),
-                "[{rel}] 已知 JIT panic 实例输出应含 '100'（功能正确），实际: {stdout}");
-        }
         other => panic!("未知分类: {other}"),
     }
 }
@@ -236,7 +222,7 @@ fn instance_classify_lists_are_valid() {
         .iter()
         .map(|f| f.file_name().unwrap_or_default().to_string_lossy().to_string())
         .collect();
-    for name in EXPECT_COMPILE_FAIL.iter().chain(VM_GAP).chain(KNOWN_JIT_PANIC_STDERR) {
+    for name in EXPECT_COMPILE_FAIL.iter().chain(VM_GAP) {
         assert!(names.iter().any(|n| n == name),
             "分类清单引用了不存在的实例文件: {name}");
     }

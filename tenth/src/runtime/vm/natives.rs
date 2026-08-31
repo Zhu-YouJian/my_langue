@@ -317,6 +317,24 @@ impl Vm {
                     Ok(Value::Vec(Rc::new(RefCell::new(values))))
                 }
                 "is_empty" => Ok(Value::Bool(m.borrow().is_empty())),
+                // QA-20260831（黑板留言 5-①）：merge 此前仅解释器支持（interpreter/
+                // methods.rs eval_map_method），VM 路径报「Map 没有方法 'merge'」。
+                // 现双侧对齐：合并另一个 HashMap（后者键覆盖前者），返回 Unit——
+                // 语义与解释器逐字一致（原地改 receiver 的共享 Rc）。
+                "merge" => {
+                    if args.len() != 1 { return err("merge() 需要 1 个参数 (HashMap)"); }
+                    match &args[0] {
+                        Value::Map(other) => {
+                            let other_map = other.borrow().clone();
+                            let mut map = m.borrow_mut();
+                            for (k, v) in other_map {
+                                map.insert(k, v);
+                            }
+                            Ok(Value::Unit)
+                        }
+                        _ => err("merge() 参数必须是 HashMap"),
+                    }
+                }
                 // AUDIT-11.4.28：Map.entries（语义对齐解释器 methods.rs eval_map_method）——
                 // 返回 [[key, value], ...] 的 Vec。阻塞 map_values/filter_map 的根因。
                 "entries" => {
@@ -449,6 +467,29 @@ impl Vm {
                         Ok(Value::Int(n * bytes_per_elem, BaseType::I32))
                     }
                     "ndim" | "rank" => Ok(Value::Int(tensor.data.ndim() as i64, BaseType::I32)),
+                    // shape()：返回 Vec<i64>（最直觉的形状查询，MINOR 兼容新增）。
+                    // 与解释器 methods.rs 侧一致；shape_tensor() 保留（f64 张量形式）。
+                    "shape" => {
+                        let shape: Vec<Value> = tensor.shape().iter()
+                            .map(|&d| Value::Int(d as i64, BaseType::I32))
+                            .collect();
+                        Ok(Value::Vec(Rc::new(RefCell::new(shape))))
+                    }
+                    // QA-20260831（黑板留言 5-②）：to_vec() 此前仅类型推断存在
+                    // （types.rs `"to_vec" => Array<dtype>`），VM/解释器双侧均未
+                    // 注册——类型检查通过、运行时报「未知的张量方法」
+                    // （AUDIT-11.4.12 同款模式）。现双侧注册：展平（行主序）为
+                    // 一维 Vec，元素按 dtype（f64→Float / f32→Float32）。
+                    "to_vec" => {
+                        let flat: Vec<Value> = if let Some(a) = tensor.data_f32() {
+                            a.iter().map(|&v| Value::Float32(v)).collect()
+                        } else if let Some(a) = tensor.data_f64() {
+                            a.iter().map(|&v| Value::Float(v)).collect()
+                        } else {
+                            Vec::new()
+                        };
+                        Ok(Value::Vec(Rc::new(RefCell::new(flat))))
+                    }
                     "shape_tensor" => {
                         // 返回 shape 作为 f64 tensor（便于运行时查询）
                         let shape: Vec<f64> = tensor.data.shape().iter().map(|&d| d as f64).collect();

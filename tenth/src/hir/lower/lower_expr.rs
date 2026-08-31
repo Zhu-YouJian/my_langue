@@ -881,20 +881,11 @@ impl Lowerer {
                     }
                 }
 
-                // AUDIT-11.4.12：张量 `.shape()` 是类型系统误标——运行时无该
-                // native（`x.shape()` 类型检查曾能通过但运行时崩溃），正确路径是
-                // `.shape_tensor()`（返回 `Tensor[f64, ndim]`）。编译期直接报错
-                // 引导用户，避免"类型检查通过、运行时崩溃"。仅对 Tensor receiver
-                // 生效；用户 struct/trait 自定义 `shape` 方法不受影响。
-                if matches!(&recv.ty, Type::Tensor { .. }) && method.name == "shape" {
-                    return Err(TenthError::TypeError {
-                        line: span.line,
-                        col: span.col,
-                        message: format!(
-                            "张量没有方法 'shape()'——取形状请用 'shape_tensor()'（返回 Tensor[f64, ndim]）"
-                        ),
-                    });
-                }
+                // AUDIT-11.4.12 历史注记：此处曾有张量 `.shape()` 的编译期
+                // TypeError 拦截（当时运行时无该 native，防"类型检查通过、
+                // 运行时崩溃"）。现 `.shape()` 已在 VM 与解释器双侧注册
+                // （返回 Vec<i64>，MINOR 兼容新增），拦截撤销；类型推断见
+                // types.rs 的 `"shape"` 分支，`.shape_tensor()` 保留。
                 let ret_ty = self.resolve_method_type(&recv.ty, &method.name, &lowered_args);
                 // 编译期 shape 检查（如 matmul 的内侧维度）
                 Self::check_method_shape(&recv.ty, &method.name, &lowered_args, &span)?;

@@ -604,6 +604,22 @@ impl Vm {
         Ok(Value::Bool(self.compare(a, b, |x, y| x >= y, |x, y| x >= y)?))
     }
     pub fn index_get(&mut self, target: &Value, idx: &Value) -> TenthResult<Value> {
+        // QA-20260831：`&mut vec` 之后变量槽为 Shared 包裹值（MakeMutRef 回写）——
+        // 索引前解包（与 VM opcode 36 一致；JIT host_index_get 经此路径）。
+        let derefed;
+        let target = match target {
+            Value::Shared(rc) | Value::Ref(rc) => {
+                derefed = rc.borrow().clone();
+                &derefed
+            }
+            Value::MutRef(w) => {
+                derefed = w.upgrade()
+                    .map(|rc| rc.borrow().clone())
+                    .unwrap_or(Value::Moved);
+                &derefed
+            }
+            other => other,
+        };
         match target {
             Value::Vec(items) => {
                 let i = idx.as_int().unwrap_or(0) as usize;

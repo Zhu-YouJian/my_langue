@@ -6,8 +6,9 @@
 fn main() {
     println("=== 文件系统操作演示 ===");
 
-    // 路径操作
-    let base = "/tmp";
+    // 路径操作（用当前目录作为基准——跨平台，Windows/Linux 均可写；
+    // 此前硬编码 "/tmp" 在 Windows 上会报 os error 5 拒绝访问）
+    let base = ".";
     let filepath = path_join(base, "tenth_demo.txt");
     println("拼接路径:");
     println(filepath);
@@ -36,14 +37,15 @@ fn main() {
     copy_file(filepath, copy_path);
     println("文件已复制");
 
-    // 列出目录
+    // 列出目录（当前目录条目较多，只显示 tenth_demo 相关文件）
     let entries = list_dir(base);
-    println("目录内容:");
+    println("目录内容(仅 tenth_demo 相关):");
     let mut i = 0;
     while i < entries.len() {
         let entry = entries.get(i);
-        // 只显示 tenth_demo 相关文件
-        println(entry);
+        if entry.contains("tenth_demo") {
+            println(entry);
+        }
         i = i + 1;
     }
 

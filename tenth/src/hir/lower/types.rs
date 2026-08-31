@@ -659,12 +659,12 @@ impl Lowerer {
                     }
                     "to_vec" => Type::Array { inner: Box::new(dtype.as_ref().clone()), size: None },
                     "len" | "size" | "dim" => Type::Base(BaseType::I64),
-                    // AUDIT-11.4.12：原 `"shape" => Array<i64>` 分支已删除——
-                    // 运行时无 `.shape()` native（`x.shape()` 类型检查通过但运行时
-                    // 崩溃），正确路径是 `.shape_tensor()`（返回 Tensor[f64, ndim]）。
-                    // 现在 `.shape()` 落到 `_ => Type::Unknown`，并由 lower_expr.rs
-                    // MethodCall 处对 Tensor receiver 的 `shape` 方法直接报编译期
-                    // TypeError，引导用户改用 `.shape_tensor()`。
+                    // `.shape()`：返回 Vec<i64>——MINOR 兼容新增（v1.0.0 后）。
+                    // AUDIT-11.4.12 历史注记：该分支曾被删除，因当时运行时无
+                    // `.shape()` native（类型检查通过但运行时崩溃）；现已在
+                    // VM（vm/natives.rs）与解释器（interpreter/methods.rs）双侧
+                    // 注册，恢复类型推断。`.shape_tensor()`（f64 张量）保留。
+                    "shape" => Type::Array { inner: Box::new(Type::Base(BaseType::I64)), size: None },
                     _ => Type::Unknown,
                 }
             }

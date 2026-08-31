@@ -1,4 +1,4 @@
-﻿//! Cranelift-based JIT compiler for Tenth bytecode.
+//! Cranelift-based JIT compiler for Tenth bytecode.
 //!
 //! Strategy (conservative JIT):
 //! - Compiles a single `Chunk` into a Cranelift function with signature

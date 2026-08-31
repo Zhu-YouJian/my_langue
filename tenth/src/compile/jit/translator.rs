@@ -462,6 +462,27 @@ impl<'a, M: Module> Translator<'a, M> {
     fn translate_body(mut self) -> Result<(), String> {
         // ── Create blocks for all leaders ──────────────────────────────────
         let leaders = self.find_leaders();
+        // QA-20260831（M2-A7）：预计算「后向跳转目标」集合（循环回边目标块）。
+        // 这些块的入口 seal 必须延迟（回边前驱在入口之后才发射，提前 seal 会
+        // 触发 Cranelift `!is_sealed` 断言 ssa.rs:349 panic → catch_unwind 整
+        // 函数回退）；其余块保持「入口即 seal」（全量延迟 seal 会改变 Cranelift
+        // 跨块 SSA 值的合并时机，在含 hostcall 中间块的函数上产生错误代码）。
+        // 末尾 seal_all_blocks 对延迟块兜底（对已 seal 块幂等）。
+        let backedge_targets: std::collections::HashSet<usize> = {
+            let mut s = std::collections::HashSet::new();
+            let mut ip = 0usize;
+            let len = self.chunk.code.len();
+            while ip < len {
+                let start = ip;
+                if let Op::Jump(o) | Op::JmpFalse(o) | Op::JmpTrue(o) = self.chunk.read_op(&mut ip) {
+                    let target = ((ip as i64) + (o as i64)) as usize;
+                    if target <= start {
+                        s.insert(target);
+                    }
+                }
+            }
+            s
+        };
         for &ip in &leaders {
             let blk = self.builder.create_block();
             self.blocks.insert(ip, blk);
@@ -492,6 +513,32 @@ impl<'a, M: Module> Translator<'a, M> {
         }
 
         // ── Initialise locals ─────────────────────────────────────────────
+        // DEBUG（TENTH_JIT_POISON）：入口毒化虚拟栈区 + 全部局部槽（参数复制前）。
+        if std::env::var("TENTH_JIT_POISON").is_ok() {
+            let poison = self.builder.ins().iconst(self.ptr, 0xAAAA_AAAA_AAAA_AAAA_u64 as i64);
+            let total = (VALUE_SIZE * MAX_STACK_DEPTH) as i32;
+            let mut off = 0i32;
+            while off < total {
+                let addr = self.builder.ins().stack_addr(self.ptr, self.stack_slot, off);
+                self.builder.ins().store(MemFlags::new(), poison, addr, 0);
+                off += self.ptr.bytes() as i32;
+            }
+            let n_loc = self.chunk.num_locals.max(self.chunk.num_args);
+            for i in 0..n_loc {
+                let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    VALUE_SIZE,
+                    8,
+                ));
+                self.locals.insert(i, slot);
+                let mut loff = 0i32;
+                while loff < VALUE_SIZE as i32 {
+                    let addr = self.builder.ins().stack_addr(self.ptr, slot, loff);
+                    self.builder.ins().store(MemFlags::new(), poison, addr, 0);
+                    loff += self.ptr.bytes() as i32;
+                }
+            }
+        }
         let num_args = self.chunk.num_args;
         let num_locals = self.chunk.num_locals.max(num_args);
         for i in 0..num_locals {
@@ -528,7 +575,11 @@ impl<'a, M: Module> Translator<'a, M> {
                     self.builder.ins().jump(blk, &[]);
                 }
                 self.builder.switch_to_block(blk);
-                self.builder.seal_block(blk);
+                // QA-20260831（M2-A7）：仅循环回边目标块延迟 seal（回边前驱在
+                // 入口之后才发射）；其余块入口即 seal（与既有行为一致）。
+                if !backedge_targets.contains(&ip) {
+                    self.builder.seal_block(blk);
+                }
                 self.visited.insert(blk);
                 if let Some(&sp) = self.block_sp.get(&blk) {
                     self.sp = sp;
@@ -550,6 +601,15 @@ impl<'a, M: Module> Translator<'a, M> {
                     self.cur_local_kinds = vec![ScalarKind::Unknown; n];
                 }
                 self.terminated = false;
+            } else if self.terminated {
+                // QA-20260831（M2-A7）：死代码跳过。bytecode.rs 的 if 编译在
+                // then 分支提前 Ret 后仍发射 Jump 占位（不可达）；向已填充
+                // 终结指令的块追加指令会触发 Cranelift "block already filled"
+                // 断言（frontend.rs:626 panic）。此处跳过发射（ip 照常推进），
+                // 到达下一个 leader 时 sp 由 block_sp 恢复、块状态整体重置。
+                // 跳过的指令不可达，不发射不影响语义。
+                let _op = self.chunk.read_op(&mut ip);
+                continue;
             }
 
             let op_start = ip;
@@ -564,16 +624,23 @@ impl<'a, M: Module> Translator<'a, M> {
 
         // ── Fill any unfilled merge blocks (e.g. end-of-if/else labels) ────
         let all_blocks: Vec<(usize, Block)> = self.blocks.iter().map(|(&k, &v)| (k, v)).collect();
-        for (_ip, blk) in all_blocks {
+        for (ip, blk) in all_blocks {
             if !self.visited.contains(&blk) {
                 self.sp = self.block_sp.get(&blk).copied().unwrap_or(0);
                 self.builder.switch_to_block(blk);
-                self.builder.seal_block(blk);
+                if !backedge_targets.contains(&ip) {
+                    self.builder.seal_block(blk);
+                }
                 self.visited.insert(blk);
                 self.emit_return();
             }
         }
 
+        // QA-20260831（M2-A7）：兜底 seal——此刻全部前驱（含循环回边、continue、
+        // 死代码区跳转）均已发射完毕。seal_all_blocks 对已 seal 块幂等
+        // （Sealed::Yes → no-op），对中段 err_blk/cont_blk/fast/slow/merge 等
+        // 即时 seal 的块无副作用。
+        self.builder.seal_all_blocks();
         self.builder.finalize();
         Ok(())
     }
@@ -835,9 +902,29 @@ impl<'a, M: Module> Translator<'a, M> {
                         });
                     }
                     Eq | Neq | Lt | Gt | Lte | Gte => {
-                        stack.pop();
-                        stack.pop();
-                        stack.push(Bool);
+                        // QA-20260831（静默错值根因修复）：对齐发射端 emit_binop 的
+                        // 比较专用化资格——**仅当两操作数均为同类 I32/F64 标量**时
+                        // 走原生比较（emit_native_cmp 只支持 I32/F64），结果才是
+                        // Bool 标量；否则发射端走通用 hostcall（结果 Value::Bool，
+                        // 无标量跟踪）。此前分析端无条件 push(Bool) 是分析/发射
+                        // 漂移源头：如 `wsub.len() == 4`（len 为 MethodCall 结果，
+                        // 无标量跟踪）——分析预测 Bool 而发射走通用 → Store(8)
+                        // 通用路径（local_scalars.remove），但块入口分析仍说该
+                        // 局部恒 Bool → 后续 Load(8) 专用化读 local_scalars[8]
+                        // ——该槽可能只由「运行期未执行的分支」内的专用化 Store
+                        // 创建（发射期建槽）→ 读未初始化槽（宿主栈残留，随二进制
+                        // 布局在 true/false 间翻转）。现对齐：非同类 I32/F64 →
+                        // Unknown + 清栈（与发射端通用 hostcall 的 invalidate 一致）。
+                        let b = stack.pop().unwrap_or(Unknown);
+                        let a = stack.pop().unwrap_or(Unknown);
+                        let r = match (a, b) {
+                            (I32, I32) | (F64, F64) => Bool,
+                            _ => {
+                                clear_stack(&mut stack);
+                                Unknown
+                            }
+                        };
+                        stack.push(r);
                     }
                     Jump(_) => {}
                     JmpFalse(_) | JmpTrue(_) => {
@@ -1889,7 +1976,15 @@ impl<'a, M: Module> Translator<'a, M> {
                 self.bump_sp()?;
             }
             Pop => {
-                self.sp -= VALUE_SIZE as i32;
+                // QA-20260831（AUDIT-11.4.43 根因）：对齐 VM 的空栈 pop 容忍。
+                // Union FieldAssign 语句的字节码为 StoreField(净 -1)+Store(净 -1)
+                // + ExprStmt Pop——表达式净 0，随后的 Pop 在 VM 里是对空栈的
+                // no-op（Vec::pop 空返回 None）；JIT 的静态 sp 却会减到负偏移，
+                // 低化 stack_addr 负 offset → Cranelift TryFromIntError panic。
+                // 钳到 0 精确镜像 VM 语义（帧栈基 = 0，不可下穿）。
+                if self.sp >= VALUE_SIZE as i32 {
+                    self.sp -= VALUE_SIZE as i32;
+                }
                 self.clear_stack_scalar_at(self.sp);
             }
             Dup => {
@@ -1914,6 +2009,9 @@ impl<'a, M: Module> Translator<'a, M> {
                 if specialized {
                     self.bump_sp()?;
                 } else {
+                    // QA-20260831：清目的偏移残留的陈旧标量跟踪（同 Load 通用路径）——
+                    // 否则后续物化会把陈旧标量写回该偏移，覆盖刚复制的 Value。
+                    self.clear_stack_scalar_at(dst_off);
                     self.copy_within_stack(src_off, dst_off);
                     self.bump_sp()?;
                 }
@@ -1941,6 +2039,13 @@ impl<'a, M: Module> Translator<'a, M> {
                 } else {
                     let src = self.locals.get(&i).copied().ok_or("Load: bad local")?;
                     let dst_off = self.sp;
+                    // QA-20260831：清除该偏移可能残留的陈旧栈标量跟踪。消费型
+                    // 指令（如原生 Sub）弹出右操作数后，其偏移的跟踪未被清除；
+                    // 若随后在此偏移压入**非标量** Value（本处拷贝局部值）而不
+                    // 清跟踪，下一次物化会把陈旧标量写回该偏移、覆盖刚压入的
+                    // 值（adam 实例 `(1.0 - 0.9) * gw` 物化出 0.1*0.9 的静默
+                    // 错值根因；PushStr/PushUnit 已清，Load 通用路径遗漏）。
+                    self.clear_stack_scalar_at(dst_off);
                     self.copy_slot_to_stack(src, 0, dst_off);
                     self.bump_sp()?;
                 }
@@ -3261,12 +3366,19 @@ impl<'a, M: Module> Translator<'a, M> {
                     self.builder.ins().jump(blk, &[]);
                 }
                 self.builder.switch_to_block(blk);
-                self.builder.seal_block(blk);
+                // QA-20260831（M2-A7）：同 translate_body——回边目标延迟 seal
+                // （防 `!is_sealed` 断言），其余入口即 seal。下方统一 seal。
                 self.visited.insert(blk);
                 if let Some(&sp) = self.block_sp.get(&blk) {
                     self.sp = sp;
                 }
                 self.terminated = false;
+            } else if self.terminated {
+                // QA-20260831（M2-A7）：死代码跳过（同 translate_body）——
+                // 内联体中 if-then 提前 Ret 后的死 Jump 等，不可发射进已
+                // 填充块（frontend.rs:626 断言）。
+                let _op = self.chunk.read_op(&mut ip);
+                continue;
             }
             let op_start = ip;
             let op = self.chunk.read_op(&mut ip);
@@ -3284,10 +3396,18 @@ impl<'a, M: Module> Translator<'a, M> {
             if !self.visited.contains(&blk) {
                 self.sp = self.block_sp.get(&blk).copied().unwrap_or(0);
                 self.builder.switch_to_block(blk);
-                self.builder.seal_block(blk);
                 self.visited.insert(blk);
                 self.emit_inline_fallthrough(out);
             }
+        }
+
+        // QA-20260831（M2-A7）：统一 seal 本内联体全部 leader 块（此刻其前驱
+        // ——含后向跳转——均已发射）。注意不能用 seal_all_blocks：那会把
+        // **调用方**尚未走完的待 seal leader 块一并提前 seal，调用方后续的
+        // 循环回边会再次触发 `!is_sealed` 断言。
+        let inline_blks: Vec<Block> = self.blocks.values().copied().collect();
+        for blk in inline_blks {
+            self.builder.seal_block(blk);
         }
 
         // ── 切到汇合块（内联 Ret 的跳转目标），恢复调用方状态 ──
