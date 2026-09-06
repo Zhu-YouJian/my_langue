@@ -15,7 +15,7 @@
 | **M2.6-P 系列** | P1 纯标量固定开销消除 / P2 JIT 静默错值 5 维审计 / P3 f64+Int 特化 / P4 CallClosure JIT-to-JIT | fib **8ms**（每次调用 ~9.6ns）；f64 特化 fp_fib ~3ms / fp_poly ~7ms；closure-heavy **~6×**；修 AUDIT-11.4.36/11.4.37 |
 | **M3 护城河** | shape 参数一致化 / typestate（G1-G6）/ 静默失败防护（丢弃 + 误用拦截）/ lossy 格 / 内存·算力预估 | 编译期 + 运行时**双层 shape 防御**；typestate 状态参数 + 调用点检查；`db_query().len()` 等误用编译期 warning |
 | **M4 生态工具链** | tenthpm（M4.1）/ LSP（M4.2）/ 标准库 AI 生态（M4.3）/ 调试器·剖析器（M4.4） | 包管理器（传递依赖/锁文件/本地 registry）、语言服务器 13 项能力、3 优化器 + datasets + 分布式本地语义、CLI 调试器 + 热点剖析器 |
-| **M5 稳定化与 1.0** | M5.1 API 冻结 + 规范定稿 / M5.2 fuzz + 大规模回归 / M5.3 跨平台产物 / M5.4 1.0 release | **API 冻结**（语法/标准库/CLI/native 四面）；fuzz 6 项 + 实例批量守护；Windows 5 产物 + CI matrix（Win/Linux/macOS）+ WASM 自举；**2377 passed / 0 failed**（当前记录，以全新 `cargo test --release` 实测为准） |
+| **M5 稳定化与 1.0** | M5.1 API 冻结 + 规范定稿 / M5.2 fuzz + 大规模回归 / M5.3 跨平台产物 / M5.4 1.0 release | **API 冻结**（语法/标准库/CLI/native 四面）；fuzz 6 项 + 实例批量守护；Windows 5 产物 + CI matrix（Win/Linux/macOS）+ WASM 自举；**2416 passed / 0 failed / 17 ignored**（实测，`cargo test --release`） |
 
 ## 二、关键能力
 

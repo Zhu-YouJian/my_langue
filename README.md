@@ -52,7 +52,7 @@ Tenth 是**一种新的可能性**：一门语言同时覆盖通用编程和 AI 
 
 **标准库**：以 `tenth/std/` + `prelude.th` 索引为准（`.th` 71 个 / 命名空间约 29）覆盖 nn/optim/data/init/collections/string/utils/fs/json/toml/cli/logging/time/random/math/crypto/regex/net/http/process/distributed 等
 
-**测试**：当前记录 2377（以全新 `cargo test --release` 实测为准，0 failed）；63 个可运行实例（另有 .th 文件 72 个，不同口径）双路径可运行；自举验证 `[OK]`
+**测试**：2416 passed / 0 failed / 17 ignored（实测，`cargo test --release`）；63 个可运行实例（另有 .th 文件 72 个，不同口径）双路径可运行；自举验证 `[OK]`
 
 ## Quick Start
 
