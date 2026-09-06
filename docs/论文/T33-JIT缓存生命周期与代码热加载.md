@@ -29,7 +29,7 @@ Tenth 语言的 JIT 子系统（基于 Cranelift）采取了一条与上述系�
 
 ### 1.2 Tenth JIT 缓存的工程现状
 
-Tenth JIT 的核心数据结构 `JitContext` 定义于 [`tenth/src/compile/jit/context.rs:14-18`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)：
+Tenth JIT 的核心数据结构 `JitContext` 定义于 [`tenth/src/compile/jit/context.rs:14-18`](../../tenth/src/compile/jit/context.rs)：
 
 ```rust
 pub struct JitContext {
@@ -39,7 +39,7 @@ pub struct JitContext {
 }
 ```
 
-缓存键为 `chunk_idx: usize`，即字节码 chunk 在 `Vm::chunks: Vec<Chunk>` 中的下标（[`runtime/vm.rs:150`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。`Drop` 实现于 [`context.rs:61-69`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)：
+缓存键为 `chunk_idx: usize`，即字节码 chunk 在 `Vm::chunks: Vec<Chunk>` 中的下标（[`runtime/vm.rs:150`](../../tenth/src/runtime/vm.rs)）。`Drop` 实现于 [`context.rs:61-69`](../../tenth/src/compile/jit/context.rs)：
 
 ```rust
 impl Drop for JitContext {
@@ -49,11 +49,11 @@ impl Drop for JitContext {
 }
 ```
 
-Cranelift 编译标志中 `is_pic` 被显式置为 `false`（[`context.rs:27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)），其注释明确说明动机：
+Cranelift 编译标志中 `is_pic` 被显式置为 `false`（[`context.rs:27`](../../tenth/src/compile/jit/context.rs)），其注释明确说明动机：
 
 > PIC must be disabled for `call_indirect` to work correctly with absolute hostcall addresses on Windows x64.
 
-与之配套，translator 通过 `hostcall_addr` 将 hostcall 函数的绝对地址以 `iconst` 指令硬编码进 JIT 机器码（[`translator.rs:583-587`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），随后由 `call_indirect` 经该绝对地址发起间接调用（[`translator.rs:606`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 等共 21 处）。
+与之配套，translator 通过 `hostcall_addr` 将 hostcall 函数的绝对地址以 `iconst` 指令硬编码进 JIT 机器码（[`translator.rs:583-587`](../../tenth/src/compile/jit/translator.rs)），随后由 `call_indirect` 经该绝对地址发起间接调用（[`translator.rs:606`](../../tenth/src/compile/jit/translator.rs) 等共 21 处）。
 
 ### 1.3 两条隐含假设
 
@@ -62,7 +62,7 @@ Cranelift 编译标志中 `is_pic` 被显式置为 `false`（[`context.rs:27`](f
 - **不动点假设（Fixed-Point Assumption, FPA）**：`chunk_idx` 一经分配即永不回收。若 `chunk_idx` 被回收并重新分配给新 chunk，缓存命中将返回指向旧机器码的指针，而旧机器码对应已不存在的字节码——语义断裂。
 - **不可重定位性假设（Non-Relocatability Assumption, NRA）**：JIT 机器码一旦生成就与加载地址绑定，无法迁移到其他地址空间。若强制迁移，内嵌的绝对地址将指向无效位置——调用即崩溃。
 
-这两条假设在 T9 论文（[`docs/论文/T9-JIT特化语义保持证明.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T9-JIT特化语义保持证明.md)）的 §11 局限章节中被首次披露（局限 L2、L3），但未展开分析。本文承接 T9，对 FPA 与 NRA 进行完整的形式化建模、正确性证明与对比分析。
+这两条假设在 T9 论文（[`docs/论文/T9-JIT特化语义保持证明.md`](T9-JIT特化语义保持证明.md)）的 §11 局限章节中被首次披露（局限 L2、L3），但未展开分析。本文承接 T9，对 FPA 与 NRA 进行完整的形式化建模、正确性证明与对比分析。
 
 ### 1.4 研究问题
 
@@ -131,7 +131,7 @@ HotSpot 的 unloading barrier 是关键：**卸载 nmethod 前必须 patch 所�
 
 ### 2.4 T9 论文的局限披露
 
-T9 论文（[`docs/论文/T9-JIT特化语义保持证明.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T9-JIT特化语义保持证明.md)）在 §11 局限章节首次披露：
+T9 论文（[`docs/论文/T9-JIT特化语义保持证明.md`](T9-JIT特化语义保持证明.md)）在 §11 局限章节首次披露：
 
 > **局限 L2**：JIT 缓存的不动点假设——`chunk_idx` 永不回收，未来若引入 chunk 淘汰机制需重新审视。
 >
@@ -168,7 +168,7 @@ T9 论文（[`docs/论文/T9-JIT特化语义保持证明.md`](file:///d:/史蒂�
 1. $\mathcal{C}$ 单调增长；
 2. 对任意 $i \in \mathcal{C}$，$\text{chunks}(i)$ 在 $i$ 被分配后不再变更（即 $\text{chunks}_t(i) = \text{chunks}_{t'}(i)$ 对所有 $t' > t$ 成立，其中 $t$ 是 $i$ 被分配的时刻）。
 
-**定义 3.3（地址嵌入）**：JIT 机器码 $m$ 的地址嵌入函数 $\text{embed}(a)$ 生成将地址 $a \in \mathcal{F}$ 作为立即数嵌入的指令序列。在 Cranelift IR 层面表现为 `iconst $ptr, a`（[`translator.rs:586`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。
+**定义 3.3（地址嵌入）**：JIT 机器码 $m$ 的地址嵌入函数 $\text{embed}(a)$ 生成将地址 $a \in \mathcal{F}$ 作为立即数嵌入的指令序列。在 Cranelift IR 层面表现为 `iconst $ptr, a`（[`translator.rs:586`](../../tenth/src/compile/jit/translator.rs)）。
 
 **定义 3.4（可重定位性）**：称机器码 $m$ 在迁移 $\rho: \mathcal{F} \to \mathcal{F}$（地址重映射）下可重定位，若存在有效算法 $R$ 使得 $R(m, \rho)$ 产生新机器码 $m'$，且 $m'$ 在 $\rho$ 后的地址空间中执行语义等价于 $m$ 在原地址空间中的执行。即：
 $$\forall \rho.\ \exists R.\ \text{sem}(R(m, \rho)) = \text{sem}(m) \circ \rho^{-1}$$
@@ -187,7 +187,7 @@ $$\forall \rho.\ \exists R.\ \text{sem}(R(m, \rho)) = \text{sem}(m) \circ \rho^{
 
 $$\text{JitContext} = (\text{module}: \text{JITModule},\ \text{cache}: \mathcal{K} \rightharpoonup \mathcal{F},\ \text{flags}: \text{Settings})$$
 
-其中 $\text{flags}$ 包含 `is_pic = false`、`use_colocated_libcalls = false` 两个关键设置（[`context.rs:24-27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）。
+其中 $\text{flags}$ 包含 `is_pic = false`、`use_colocated_libcalls = false` 两个关键设置（[`context.rs:24-27`](../../tenth/src/compile/jit/context.rs)）。
 
 ### 4.2 状态迁移语义
 
@@ -197,23 +197,23 @@ JIT 缓存的状态迁移由以下三条规则定义：
 
 $$\frac{\text{chunk\_idx} \notin \text{dom}(\text{cache}) \quad \text{translate}(\text{chunk}) = f \quad \text{finalize}(f) = a}{(\text{cache}, \text{chunks}, \text{module}) \to (\text{cache}[\text{chunk\_idx} \mapsto a], \text{chunks}, \text{module})}$$
 
-对应源码 `get_or_compile`（[`context.rs:36-58`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）：若 `chunk_idx` 不在缓存中，调用 `translator::translate` 编译，`finalize_definitions` 后通过 `get_finalized_function` 获取函数指针，插入缓存。
+对应源码 `get_or_compile`（[`context.rs:36-58`](../../tenth/src/compile/jit/context.rs)）：若 `chunk_idx` 不在缓存中，调用 `translator::translate` 编译，`finalize_definitions` 后通过 `get_finalized_function` 获取函数指针，插入缓存。
 
 **规则 T2（缓存命中）**：
 
 $$\frac{\text{chunk\_idx} \in \text{dom}(\text{cache})}{(\text{cache}, \text{chunks}, \text{module}) \to (\text{cache}, \text{chunks}, \text{module})}$$
 
-对应源码 `if let Some(f) = self.cache.get(&chunk_idx) { return Ok(*f); }`（[`context.rs:37-39`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）：直接返回缓存的函数指针，状态不变。
+对应源码 `if let Some(f) = self.cache.get(&chunk_idx) { return Ok(*f); }`（[`context.rs:37-39`](../../tenth/src/compile/jit/context.rs)）：直接返回缓存的函数指针，状态不变。
 
 **规则 T3（Drop 释放）**：
 
 $$\frac{}{(\text{cache}, \text{chunks}, \text{module}) \to_{\text{drop}} (\emptyset, \text{chunks}, \bot)}$$
 
-对应源码 `Drop::drop`（[`context.rs:61-69`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）：先 `cache.clear()` 清空缓存，再由 `JITModule` 的隐式 Drop 释放机器码内存。
+对应源码 `Drop::drop`（[`context.rs:61-69`](../../tenth/src/compile/jit/context.rs)）：先 `cache.clear()` 清空缓存，再由 `JITModule` 的隐式 Drop 释放机器码内存。
 
 ### 4.3 chunk 索引空间的形式化
 
-`Vm::chunks` 是 `Vec<Chunk>`（[`runtime/vm.rs:150`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），其索引空间 $\mathcal{C} = \{0, 1, \dots, |\text{chunks}| - 1\}$。索引分配的唯一入口是 `add_fn`（[`runtime/vm.rs:297-302`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：
+`Vm::chunks` 是 `Vec<Chunk>`（[`runtime/vm.rs:150`](../../tenth/src/runtime/vm.rs)），其索引空间 $\mathcal{C} = \{0, 1, \dots, |\text{chunks}| - 1\}$。索引分配的唯一入口是 `add_fn`（[`runtime/vm.rs:297-302`](../../tenth/src/runtime/vm.rs)）：
 
 ```rust
 pub fn add_fn(&mut self, name: String, chunk: Chunk) {
@@ -228,7 +228,7 @@ pub fn add_fn(&mut self, name: String, chunk: Chunk) {
 
 ### 4.4 地址嵌入的形式化
 
-`hostcall_addr` 函数（[`translator.rs:583-587`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）将 hostcall 函数地址嵌入 JIT 机器码：
+`hostcall_addr` 函数（[`translator.rs:583-587`](../../tenth/src/compile/jit/translator.rs)）将 hostcall 函数地址嵌入 JIT 机器码：
 
 ```rust
 fn hostcall_addr(&mut self, name: &str) -> Result<Value_, String> {
@@ -240,7 +240,7 @@ fn hostcall_addr(&mut self, name: &str) -> Result<Value_, String> {
 
 形式化：$\text{embed}(\text{addr}(h)) = \text{iconst}(\text{ptr}, \text{addr}(h))$，其中 $h \in \text{Hostcall}$。生成的机器码包含立即数 $\text{addr}(h)$，这是一个绝对地址（在 `is_pic = false` 下）。
 
-后续 `call_indirect`（[`translator.rs:606`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 等共 21 处）以该绝对地址为 callee 发起间接调用。形式化：$\text{call\_indirect}(\text{sig}, \text{embed}(\text{addr}(h)), \text{args})$。
+后续 `call_indirect`（[`translator.rs:606`](../../tenth/src/compile/jit/translator.rs) 等共 21 处）以该绝对地址为 callee 发起间接调用。形式化：$\text{call\_indirect}(\text{sig}, \text{embed}(\text{addr}(h)), \text{args})$。
 
 ---
 
@@ -256,7 +256,7 @@ fn hostcall_addr(&mut self, name: &str) -> Result<Value_, String> {
 
 **Part 1（$\mathcal{C}$ 单调增长）**：
 
-`Vm::chunks` 的类型为 `Vec<Chunk>`（[`runtime/vm.rs:150`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。`Vec` 的语义保证：`push` 操作使 `len` 单调递增，且不改变既有元素的索引与值。`add_fn` 是唯一向 `chunks` 添加元素的方法（搜索证据：`Grep "chunks\.push|chunks\.remove|chunks\.swap_remove"` 在 `vm.rs` 中仅匹配到 `chunks.push(chunk)` 一处，[`runtime/vm.rs:299`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。
+`Vm::chunks` 的类型为 `Vec<Chunk>`（[`runtime/vm.rs:150`](../../tenth/src/runtime/vm.rs)）。`Vec` 的语义保证：`push` 操作使 `len` 单调递增，且不改变既有元素的索引与值。`add_fn` 是唯一向 `chunks` 添加元素的方法（搜索证据：`Grep "chunks\.push|chunks\.remove|chunks\.swap_remove"` 在 `vm.rs` 中仅匹配到 `chunks.push(chunk)` 一处，[`runtime/vm.rs:299`](../../tenth/src/runtime/vm.rs)）。
 
 形式化：设 $\sigma_t = (\text{cache}_t, \text{chunks}_t, \text{module}_t)$ 为时刻 $t$ 的状态。`add_fn` 执行迁移 $\sigma_t \to \sigma_{t+1}$，其中 $\text{chunks}_{t+1} = \text{chunks}_t \cup \{|\text{chunks}_t| \mapsto \text{chunk}\}$，故 $\text{dom}(\text{chunks}_t) \subseteq \text{dom}(\text{chunks}_{t+1})$。由归纳法，$\mathcal{C}_t = \text{dom}(\text{chunks}_t)$ 单调增长。$\square$
 
@@ -272,15 +272,15 @@ fn hostcall_addr(&mut self, name: &str) -> Result<Value_, String> {
 
 ### 5.2 定理 K2（不可重定位性）
 
-**定理 K2**：在 `is_pic = false` 的设置下（[`context.rs:27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)），Tenth JIT 生成的机器码 $m$ 对 hostcall 地址不可重定位。即存在地址迁移 $\rho: \mathcal{F} \to \mathcal{F}$，使得不存在有效算法 $R$ 满足定义 3.4 的可重定位性条件。
+**定理 K2**：在 `is_pic = false` 的设置下（[`context.rs:27`](../../tenth/src/compile/jit/context.rs)），Tenth JIT 生成的机器码 $m$ 对 hostcall 地址不可重定位。即存在地址迁移 $\rho: \mathcal{F} \to \mathcal{F}$，使得不存在有效算法 $R$ 满足定义 3.4 的可重定位性条件。
 
-具体地，设 $m$ 通过 $\text{call\_indirect}(\text{sig}, \text{embed}(\text{addr}(h)), \text{args})$ 调用 hostcall $h$（[`translator.rs:606`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。若 hostcall $h$ 的地址从 $\text{addr}(h)$ 迁移至 $\rho(\text{addr}(h)) \neq \text{addr}(h)$，则未重定位的 $m$ 在原地址空间执行时将调用 $\text{addr}(h)$（已失效），触发未定义行为。
+具体地，设 $m$ 通过 $\text{call\_indirect}(\text{sig}, \text{embed}(\text{addr}(h)), \text{args})$ 调用 hostcall $h$（[`translator.rs:606`](../../tenth/src/compile/jit/translator.rs)）。若 hostcall $h$ 的地址从 $\text{addr}(h)$ 迁移至 $\rho(\text{addr}(h)) \neq \text{addr}(h)$，则未重定位的 $m$ 在原地址空间执行时将调用 $\text{addr}(h)$（已失效），触发未定义行为。
 
 **证明**：
 
 **Step 1（地址嵌入是绝对地址）**：
 
-`is_pic = false`（[`context.rs:27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）使 Cranelift 生成非 PIC 机器码。在非 PIC 模式下，`iconst $ptr, addr`（[`translator.rs:586`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）将 `addr` 作为**绝对地址**立即数嵌入机器码，而非 PC 相对偏移或 GOT 间接引用。
+`is_pic = false`（[`context.rs:27`](../../tenth/src/compile/jit/context.rs)）使 Cranelift 生成非 PIC 机器码。在非 PIC 模式下，`iconst $ptr, addr`（[`translator.rs:586`](../../tenth/src/compile/jit/translator.rs)）将 `addr` 作为**绝对地址**立即数嵌入机器码，而非 PC 相对偏移或 GOT 间接引用。
 
 形式化：$\text{embed}(\text{addr}(h))$ 生成的机器码字节序列包含 $\text{addr}(h)$ 的二进制表示，且该表示与加载地址无关（即非 PIC）。
 
@@ -320,7 +320,7 @@ $$\nexists R.\ \forall \rho.\ \text{sem}(R(m, \rho)) = \text{sem}(m) \circ \rho^
 - (iii) 无法实现代码热重载（hot reload）——新版本函数必须生成新机器码而非替换旧机器码；
 - (iv) 无法支持 mmap 区域重映射（mremap）以压缩内存。
 
-**边界说明**：K2 仅断言"对 hostcall 地址不可重定位"。chunk 内部的相对跳转（如 `jump` 指令生成的 PC 相对分支）在 `is_pic = false` 下仍是 PC 相对的，理论上可随 mcode 区整体迁移。但由于 hostcall 地址嵌入的绝对性，整体迁移仍不可行——除非 chunk 完全不调用 hostcall，但 Tenth JIT 的所有复杂操作（call、tensor、autodiff、堆分配）均经 hostcall（[`mod.rs:7-11`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)），故实际所有 chunk 均受 K2 约束。
+**边界说明**：K2 仅断言"对 hostcall 地址不可重定位"。chunk 内部的相对跳转（如 `jump` 指令生成的 PC 相对分支）在 `is_pic = false` 下仍是 PC 相对的，理论上可随 mcode 区整体迁移。但由于 hostcall 地址嵌入的绝对性，整体迁移仍不可行——除非 chunk 完全不调用 hostcall，但 Tenth JIT 的所有复杂操作（call、tensor、autodiff、堆分配）均经 hostcall（[`mod.rs:7-11`](../../tenth/src/compile/jit/mod.rs)），故实际所有 chunk 均受 K2 约束。
 
 ### 5.3 定理 K3（Drop 的正确性）
 
@@ -328,7 +328,7 @@ $$\nexists R.\ \forall \rho.\ \text{sem}(R(m, \rho)) = \text{sem}(m) \circ \rho^
 
 **证明**：
 
-`Drop::drop` 的实现（[`context.rs:61-69`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）：
+`Drop::drop` 的实现（[`context.rs:61-69`](../../tenth/src/compile/jit/context.rs)）：
 
 ```rust
 fn drop(&mut self) {
@@ -344,7 +344,7 @@ fn drop(&mut self) {
 
 **Step 2（JITModule 的隐式 Drop）**：
 
-`JitContext` 的字段顺序为 `module: JITModule` 在前，`cache: HashMap` 在后（[`context.rs:14-18`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）。Rust 的 Drop 顺序是**字段声明逆序**：先 `cache.drop()`（即 `Drop::drop` 中的 `cache.clear()`），再 `module.drop()`（`JITModule` 的隐式 Drop，释放机器码内存）。
+`JitContext` 的字段顺序为 `module: JITModule` 在前，`cache: HashMap` 在后（[`context.rs:14-18`](../../tenth/src/compile/jit/context.rs)）。Rust 的 Drop 顺序是**字段声明逆序**：先 `cache.drop()`（即 `Drop::drop` 中的 `cache.clear()`），再 `module.drop()`（`JITModule` 的隐式 Drop，释放机器码内存）。
 
 **Step 3（无悬垂指针的保证）**：
 
@@ -356,7 +356,7 @@ fn drop(&mut self) {
 
 **Step 4（防御性编程的语义）**：
 
-注释（[`context.rs:63-66`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）说明：
+注释（[`context.rs:63-66`](../../tenth/src/compile/jit/context.rs)）说明：
 
 > 显式释放编译产物与代码映射，避免依赖 JITModule 的隐式 Drop 语义（未来 cranelift 版本变更 Drop 行为时不易察觉）。
 
@@ -366,7 +366,7 @@ fn drop(&mut self) {
 
 **综合**：K3 成立。$\blacksquare$
 
-**局限说明**：K3 仅证明"`cache.clear()` + `JITModule` Drop"在当前 Rust 语义下无悬垂指针。但 `Module::finish` 的注释（[`context.rs:65`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）提及"`Module::finish` 消费 self，这里只能尽力清理"——这暗示 `JITModule::drop` 可能未完整释放机器码内存，存在内存泄漏风险（详见局限 L2）。
+**局限说明**：K3 仅证明"`cache.clear()` + `JITModule` Drop"在当前 Rust 语义下无悬垂指针。但 `Module::finish` 的注释（[`context.rs:65`](../../tenth/src/compile/jit/context.rs)）提及"`Module::finish` 消费 self，这里只能尽力清理"——这暗示 `JITModule::drop` 可能未完整释放机器码内存，存在内存泄漏风险（详见局限 L2）。
 
 ### 5.4 定理 K4（与 V8/LuaJIT 对比）
 
@@ -381,7 +381,7 @@ fn drop(&mut self) {
 
 V8 的 code aging 机制允许 Major GC 时 flush 年龄超过阈值的 Code 对象（§2.1）。flush 后，该函数下次调用经 deoptimization 回退到解释器，重新触发 JIT。
 
-Tenth 的缓存淘汰策略：**无**。`JitContext::cache` 仅在 `Drop` 时清空（[`context.rs:67`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)），运行期间缓存只增不减。形式化：对任意时刻 $t$，$\text{dom}(\text{cache}_t) \subseteq \text{dom}(\text{cache}_{t+1})$（缓存键集单调增长）。
+Tenth 的缓存淘汰策略：**无**。`JitContext::cache` 仅在 `Drop` 时清空（[`context.rs:67`](../../tenth/src/compile/jit/context.rs)），运行期间缓存只增不减。形式化：对任意时刻 $t$，$\text{dom}(\text{cache}_t) \subseteq \text{dom}(\text{cache}_{t+1})$（缓存键集单调增长）。
 
 形式化对比：设 $f$ 为某 chunk 对应的 JIT 函数。在 V8 中，存在时刻 $t$ 使 $f \notin \text{dom}(\text{cache}_t)$（被 flush）。在 Tenth 中，对任意 $t$，$f \in \text{dom}(\text{cache}_t) \Rightarrow f \in \text{dom}(\text{cache}_{t+1})$（永不淘汰）。故 Tenth 的热加载能力严格弱于 V8。$\square$
 
@@ -389,13 +389,13 @@ Tenth 的缓存淘汰策略：**无**。`JitContext::cache` 仅在 `Drop` 时清
 
 LuaJIT 在 x64 上默认生成 PIC 机器码（§2.2），通过 GOT 间接引用外部符号。GOT 是数据段中的指针表，迁移时仅需更新 GOT 项，机器码本身不变。故 LuaJIT 的 mcode 区可整体迁移。
 
-Tenth 的 `is_pic = false`（[`context.rs:27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）使机器码内嵌绝对地址（K2），无 GOT 间接层。迁移需重写机器码中的立即数，但不存在有效重定位算法（K2 Step 3）。故 Tenth 的 mcode 区不可迁移。$\square$
+Tenth 的 `is_pic = false`（[`context.rs:27`](../../tenth/src/compile/jit/context.rs)）使机器码内嵌绝对地址（K2），无 GOT 间接层。迁移需重写机器码中的立即数，但不存在有效重定位算法（K2 Step 3）。故 Tenth 的 mcode 区不可迁移。$\square$
 
 **Part 3（deoptimization 回退）**：
 
 V8 的 deoptimization 在 flush 触发时将栈帧从 JIT 代码回退到解释器（Ignition）。这要求：(i) 栈帧携带足够元数据以重建解释器状态；(ii) 调用方检查目标函数是否已 flush。
 
-Tenth 的 JIT 调用经 `hostcalls::invoke_jit`（[`hostcalls.rs:33`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）直接调用函数指针，无 deoptimization 检查。形式化：调用路径为 `run_jit → get_or_compile → invoke_jit(fn_ptr, ...)`（[`mod.rs:62-81`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)），其中 `fn_ptr` 是缓存命中的指针，无中间检查。
+Tenth 的 JIT 调用经 `hostcalls::invoke_jit`（[`hostcalls.rs:33`](../../tenth/src/compile/jit/hostcalls.rs)）直接调用函数指针，无 deoptimization 检查。形式化：调用路径为 `run_jit → get_or_compile → invoke_jit(fn_ptr, ...)`（[`mod.rs:62-81`](../../tenth/src/compile/jit/mod.rs)），其中 `fn_ptr` 是缓存命中的指针，无中间检查。
 
 若实现 deoptimization，需在 `get_or_compile` 后插入"目标函数是否有效"检查，但这与"缓存命中即有效"的不动点假设冲突——FPA 保证缓存命中即有效，故无需检查。反之，若要支持 deoptimization，必须先破坏 FPA。$\square$
 
@@ -422,7 +422,7 @@ $$\text{cache}: \mathcal{K} \rightharpoonup \text{Arc}^{\text{weak}}(\mathcal{F}
 
 **Step 3（未解决的并发难题）**：
 
-1. **Frame 引用计数维护**：`Frame`（[`runtime/vm.rs:515`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）需携带 `Arc<Chunk>` 以维持强引用。但 `Frame` 是栈帧，频繁创建销毁，Arc 的原子操作开销可能抵消 JIT 收益。
+1. **Frame 引用计数维护**：`Frame`（[`runtime/vm.rs:515`](../../tenth/src/runtime/vm.rs)）需携带 `Arc<Chunk>` 以维持强引用。但 `Frame` 是栈帧，频繁创建销毁，Arc 的原子操作开销可能抵消 JIT 收益。
 2. **TOCTOU 竞态**：`upgrade` 成功后、`invoke_jit` 调用前，若另一线程回收该 chunk，将调用已释放机器码。需引入锁或 hazard pointer，但 Tenth VM 当前是单线程模型（`Vm: !Sync`），多线程扩展需重构。
 3. **JITModule 释放顺序**：`JITModule` 持有所有机器码的所有权。单函数回收要求 `JITModule` 支持细粒度释放（`free_function`），但 Cranelift 的 `JITModule` 不提供此 API（仅支持 `finish` 整体释放）。
 
@@ -436,13 +436,13 @@ $$\text{cache}: \mathcal{K} \rightharpoonup \text{Arc}^{\text{weak}}(\mathcal{F}
 
 ### 6.1 生命周期的五阶段
 
-**阶段 1（初始化）**：`JitContext::new()`（[`context.rs:20-33`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）创建空的 `JITModule` 与空 `cache`。状态：$\sigma_0 = (\emptyset, \text{chunks}_0, \text{module}_0)$。
+**阶段 1（初始化）**：`JitContext::new()`（[`context.rs:20-33`](../../tenth/src/compile/jit/context.rs)）创建空的 `JITModule` 与空 `cache`。状态：$\sigma_0 = (\emptyset, \text{chunks}_0, \text{module}_0)$。
 
-**阶段 2（按需编译）**：首次调用 `get_or_compile(chunk_idx, chunk)`（[`context.rs:36-58`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）触发规则 T1，编译并缓存。
+**阶段 2（按需编译）**：首次调用 `get_or_compile(chunk_idx, chunk)`（[`context.rs:36-58`](../../tenth/src/compile/jit/context.rs)）触发规则 T1，编译并缓存。
 
 **阶段 3（缓存命中）**：后续调用同一 `chunk_idx` 触发规则 T2，直接返回缓存指针。
 
-**阶段 4（持续增长）**：新 chunk 经 `add_fn` 加入 `Vm::chunks`（[`runtime/vm.rs:297-302`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），其首次 JIT 调用触发规则 T1。cache 单调增长。
+**阶段 4（持续增长）**：新 chunk 经 `add_fn` 加入 `Vm::chunks`（[`runtime/vm.rs:297-302`](../../tenth/src/runtime/vm.rs)），其首次 JIT 调用触发规则 T1。cache 单调增长。
 
 **阶段 5（Drop 释放）**：`JitContext` 被丢弃时触发规则 T3，`cache.clear()` 后 `JITModule` 释放。
 
@@ -498,7 +498,7 @@ $$\text{cache}: \mathcal{K} \rightharpoonup \text{Arc}^{\text{weak}}(\mathcal{F}
 K1 的证明依赖"源码搜索无 chunks 删除操作"的实证证据。这一证据的强度分析：
 
 **支持证据**：
-- `Grep "chunks\.push|chunks\.remove|chunks\.swap_remove"` 在 `vm.rs` 中仅匹配 `chunks.push(chunk)`（[`runtime/vm.rs:299`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。
+- `Grep "chunks\.push|chunks\.remove|chunks\.swap_remove"` 在 `vm.rs` 中仅匹配 `chunks.push(chunk)`（[`runtime/vm.rs:299`](../../tenth/src/runtime/vm.rs)）。
 - `add_fn` 是 `Vm` 的公开 API 中唯一向 `chunks` 添加元素的方法。
 - Tenth 的 chunk 模型是"编译期确定 + 运行期不可变"，无动态卸载需求。
 
@@ -536,7 +536,7 @@ K1 的证明依赖"源码搜索无 chunks 删除操作"的实证证据。这一�
 
 ### 8.1 影响范围
 
-K2 的不可重定位性影响所有调用 hostcall 的 JIT 机器码。搜索证据：`translator.rs` 中 `hostcall_addr` 被调用 19 处（[`translator.rs:583-587`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 等），`call_indirect` 被调用 21 处（[`translator.rs:606`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 等）。覆盖的 opcode 包括：
+K2 的不可重定位性影响所有调用 hostcall 的 JIT 机器码。搜索证据：`translator.rs` 中 `hostcall_addr` 被调用 19 处（[`translator.rs:583-587`](../../tenth/src/compile/jit/translator.rs) 等），`call_indirect` 被调用 21 处（[`translator.rs:606`](../../tenth/src/compile/jit/translator.rs) 等）。覆盖的 opcode 包括：
 - 字面量构造（`host_make_int`、`host_make_float`、`host_make_bool`、`host_make_str`、`host_make_unit`）
 - 全局变量（`host_load_global`、`host_store_global`）
 - 控制流（`host_truthy`、`host_call`、`host_method_call`）
@@ -624,7 +624,7 @@ Tenth 的策略在以下场景下不足：
 
 **权衡 2（性能 vs 内存）**：永不回收策略在稳态性能上最优（无 flush 后重新 JIT 的开销），但内存累积。短期进程受益于性能，长期进程受害于内存。
 
-**权衡 3（绝对地址 vs PIC）**：`is_pic = false` 使 `call_indirect` 能直接用绝对地址（[`context.rs:25-27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs) 注释），避免一次 GOT 间接引用。在 Windows x64 上，PIC 的 GOT 引用与 `call_indirect` 的兼容性存在问题（注释明示）。绝对地址方案在性能上略优，但牺牲可重定位性。
+**权衡 3（绝对地址 vs PIC）**：`is_pic = false` 使 `call_indirect` 能直接用绝对地址（[`context.rs:25-27`](../../tenth/src/compile/jit/context.rs) 注释），避免一次 GOT 间接引用。在 Windows x64 上，PIC 的 GOT 引用与 `call_indirect` 的兼容性存在问题（注释明示）。绝对地址方案在性能上略优，但牺牲可重定位性。
 
 ### 10.2 开放问题
 
@@ -714,11 +714,11 @@ Tenth 的策略在以下场景下不足：
 
 本文对 Tenth 语言 JIT 编译子系统的缓存生命周期与代码热加载能力进行了完整的形式化分析。核心结论：
 
-1. **K1（不动点假设实证性成立）**：`chunk_idx` 在当前 v0.3.3 源码中永不回收，`Vm::chunks` 仅追加不删除（[`runtime/vm.rs:297-302`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。FPA 是实证性成立，非逻辑必然。
+1. **K1（不动点假设实证性成立）**：`chunk_idx` 在当前 v0.3.3 源码中永不回收，`Vm::chunks` 仅追加不删除（[`runtime/vm.rs:297-302`](../../tenth/src/runtime/vm.rs)）。FPA 是实证性成立，非逻辑必然。
 
-2. **K2（不可重定位性）**：`is_pic = false`（[`context.rs:27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）+ `hostcall_addr` 的 `iconst` 嵌入（[`translator.rs:583-587`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）共同导致 JIT 机器码对 hostcall 地址不可重定位。影响包括：不支持 mcode 迁移、fork 后子进程复用、代码热重载、mmap 重映射、跨进程共享。
+2. **K2（不可重定位性）**：`is_pic = false`（[`context.rs:27`](../../tenth/src/compile/jit/context.rs)）+ `hostcall_addr` 的 `iconst` 嵌入（[`translator.rs:583-587`](../../tenth/src/compile/jit/translator.rs)）共同导致 JIT 机器码对 hostcall 地址不可重定位。影响包括：不支持 mcode 迁移、fork 后子进程复用、代码热重载、mmap 重映射、跨进程共享。
 
-3. **K3（Drop 正确性）**：`cache.clear()` 先于 `JITModule` 隐式 Drop（[`context.rs:61-69`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）保证无悬垂指针。`cache.clear()` 提供"防御性编程"语义，对未来 cranelift 版本变更 Drop 行为具有韧性。
+3. **K3（Drop 正确性）**：`cache.clear()` 先于 `JITModule` 隐式 Drop（[`context.rs:61-69`](../../tenth/src/compile/jit/context.rs)）保证无悬垂指针。`cache.clear()` 提供"防御性编程"语义，对未来 cranelift 版本变更 Drop 行为具有韧性。
 
 4. **K4（与 V8/LuaJIT 对比）**：Tenth 在单函数级缓存淘汰、mcode 区迁移、deoptimization 回退三个功能维度上严格弱于 V8/LuaJIT。这是"保守 JIT"路线的必然代价。
 
@@ -749,7 +749,7 @@ Tenth 的策略在以下场景下不足：
 
 [7] Tenth 项目数理部. *T3-HIR约束求解NP完全性归约*. `docs/论文/T3-HIR约束求解NP完全性归约.md`, 2026.
 
-[8] Tenth 项目. *工作规范 v1.1*. `.trae/rules/工作规范.md`, 2026.
+[8] Tenth 项目. *工作规范 v1.1*. `.agents/rules/工作规范.md`, 2026.
 
 [9] Tenth 项目. *MEMO.md：逐版变更记录*. `MEMO.md`, 2026.
 
@@ -761,9 +761,9 @@ Tenth 的策略在以下场景下不足：
 
 | 定理 | 名称 | 核心结论 | 源码引用 |
 |------|------|---------|---------|
-| K1 | 不动点假设实证性 | `chunk_idx` 永不回收 | [`runtime/vm.rs:297-302`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| K2 | 不可重定位性 | `is_pic=false` 导致 JIT 代码不可重定位 | [`context.rs:27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs), [`translator.rs:583-587`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) |
-| K3 | Drop 正确性 | `cache.clear()` + `JITModule` Drop 无悬垂指针 | [`context.rs:61-69`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs) |
+| K1 | 不动点假设实证性 | `chunk_idx` 永不回收 | [`runtime/vm.rs:297-302`](../../tenth/src/runtime/vm.rs) |
+| K2 | 不可重定位性 | `is_pic=false` 导致 JIT 代码不可重定位 | [`context.rs:27`](../../tenth/src/compile/jit/context.rs), [`translator.rs:583-587`](../../tenth/src/compile/jit/translator.rs) |
+| K3 | Drop 正确性 | `cache.clear()` + `JITModule` Drop 无悬垂指针 | [`context.rs:61-69`](../../tenth/src/compile/jit/context.rs) |
 | K4 | 与 V8/LuaJIT 对比 | Tenth 热加载能力严格弱于 V8/LuaJIT | （对比分析，无单一源码引用） |
 | K5 | 引用计数回收方案 | 形式化骨架，并发难题未解决 | （未来工作，无源码引用） |
 

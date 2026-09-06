@@ -23,17 +23,17 @@
 
 JIT（Just-In-Time）编译是现代语言运行时提升性能的核心技术。但 JIT 引入了一个根本的语义张力：**编译产物在原生机器码上执行，而参考语义定义在解释器中——二者必须在所有可观察行为上等价**。这种等价性一旦被破坏，将导致难以调试的"JIT 与解释器结果不一致"幽灵 bug，Java HotSpot、JavaScript V8、LuaJIT 等工业级运行时都曾深受其害。
 
-Tenth 语言的 JIT 基于 Cranelift（[`tenth/src/compile/jit/mod.rs:1-21`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)），采用与上述系统不同的"保守特化"路线：**不做激进优化、不做投机假设、不做栈上替换（OSR）**，而是在编译期显式枚举所有支持的 opcode，对每个 opcode 生成调用 hostcall trampoline 的代码，将复杂操作委派回 VM。任何不确定场景一律回退到 VM 解释执行。这种"宁可慢不可错"的策略为形式化证明提供了清晰边界。
+Tenth 语言的 JIT 基于 Cranelift（[`tenth/src/compile/jit/mod.rs:1-21`](../../tenth/src/compile/jit/mod.rs)），采用与上述系统不同的"保守特化"路线：**不做激进优化、不做投机假设、不做栈上替换（OSR）**，而是在编译期显式枚举所有支持的 opcode，对每个 opcode 生成调用 hostcall trampoline 的代码，将复杂操作委派回 VM。任何不确定场景一律回退到 VM 解释执行。这种"宁可慢不可错"的策略为形式化证明提供了清晰边界。
 
 ### 1.2 Tenth JIT 的三重保守策略
 
 Tenth JIT 的保守性体现在三个层次（详见 §3）：
 
-1. **L1 — Autodiff 安全门**：函数入口处检查 `vm.is_recording()`，若为真立即回退 VM（[`mod.rs:41-43`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)）。autodiff 录制时 Tape 写入发生在解释器内部，JIT 编译的标量算术可能跳过这些写入，因此 L1 是关键安全闸门。
-2. **L2 — 不支持的 opcode**：translator 对全部 46 个 Op 显式处理，无默认 fallback 分支（[`translator.rs:221-483`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。当前仅 `IsStruct` 因结构模式匹配未 JIT 化而显式返回 `Err("JIT: IsStruct not supported, fallback to VM")`（[`translator.rs:483-486`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。无默认分支意味着新增 Op 而不同步 translator 会立即触发 L2 回退，而非静默生成错误代码。
-3. **L3 — 编译失败**：Cranelift `translate` 或 `define_function` 返回 `Err` 时（如 StackSlot 过大、`declare_function` 失败），`get_or_compile` 返回 `Err`，触发 `Err(_) => return vm.call(name)`（[`mod.rs:62-65`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)）。
+1. **L1 — Autodiff 安全门**：函数入口处检查 `vm.is_recording()`，若为真立即回退 VM（[`mod.rs:41-43`](../../tenth/src/compile/jit/mod.rs)）。autodiff 录制时 Tape 写入发生在解释器内部，JIT 编译的标量算术可能跳过这些写入，因此 L1 是关键安全闸门。
+2. **L2 — 不支持的 opcode**：translator 对全部 46 个 Op 显式处理，无默认 fallback 分支（[`translator.rs:221-483`](../../tenth/src/compile/jit/translator.rs)）。当前仅 `IsStruct` 因结构模式匹配未 JIT 化而显式返回 `Err("JIT: IsStruct not supported, fallback to VM")`（[`translator.rs:483-486`](../../tenth/src/compile/jit/translator.rs)）。无默认分支意味着新增 Op 而不同步 translator 会立即触发 L2 回退，而非静默生成错误代码。
+3. **L3 — 编译失败**：Cranelift `translate` 或 `define_function` 返回 `Err` 时（如 StackSlot 过大、`declare_function` 失败），`get_or_compile` 返回 `Err`，触发 `Err(_) => return vm.call(name)`（[`mod.rs:62-65`](../../tenth/src/compile/jit/mod.rs)）。
 
-此外，所有 hostcall trampoline 经 `catch_unwind` 包裹（[`hostcalls.rs:41-61`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)），构成第四道（隐式）安全网，防止 panic 跨 FFI 边界（Rust 中跨 FFI unwind 是 UB）。
+此外，所有 hostcall trampoline 经 `catch_unwind` 包裹（[`hostcalls.rs:41-61`](../../tenth/src/compile/jit/hostcalls.rs)），构成第四道（隐式）安全网，防止 panic 跨 FFI 边界（Rust 中跨 FFI unwind 是 UB）。
 
 ### 1.3 研究问题
 
@@ -59,8 +59,8 @@ Tenth JIT 的保守性体现在三个层次（详见 §3）：
 | 轮次 | 原始断言 | 修正 |
 |------|---------|------|
 | 第 1 轮（结构） | E1 初稿声称"强双模拟" | 修正为"弱双模拟"——JIT 与 VM 的内部状态表示不同构（虚拟栈 vs `vm.stack`），仅可观察行为等价 |
-| 第 2 轮（证明） | E2 初稿未注意 arg marshaling 修改 `vm.stack` | 验证 L1/L2/L3 均在 marshaling 之前回退（[`mod.rs:41-65`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)），状态保持成立 |
-| 第 3 轮（边界） | 未处理"未知函数名"边界 | 补充 L0（[`mod.rs:45-48`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)），证明其与 L2/L3 同构 |
+| 第 2 轮（证明） | E2 初稿未注意 arg marshaling 修改 `vm.stack` | 验证 L1/L2/L3 均在 marshaling 之前回退（[`mod.rs:41-65`](../../tenth/src/compile/jit/mod.rs)），状态保持成立 |
+| 第 3 轮（边界） | 未处理"未知函数名"边界 | 补充 L0（[`mod.rs:45-48`](../../tenth/src/compile/jit/mod.rs)），证明其与 L2/L3 同构 |
 | 第 4 轮（诚实） | E5 初稿声称"完全 Galois 连接" | 修正：仅构成"弱 Galois 连接"——`is_pic = false` 与 chunk 生命周期假设破坏了完全性（局限 L2、L3） |
 
 ---
@@ -84,7 +84,7 @@ Tenth JIT 的视角是**退化版的第一投影**：以 VM 解释器为 $\mathr
 - **V8**（[Cheng et al. 2017]）：基于类型反馈（type feedback）生成投机代码，运行时若类型假设失败则 deoptimize——将栈帧从优化形式"反卷"为解释器形式。deopt 复杂度源于 V8 进行了大量投机（hidden classes、inline caches、bounds check elimination），需要为每个投机点构造 deopt 点。
 - **PyPy**（[Bolz, Tratt 2013]）：通过 guards 表达投机假设。运行时 guard 失败时跳回解释器（称为"bridge"）。PyPy 的 trace 模型将热路径提取为线性 trace，guard 失败频率决定性能。
 
-**Tenth 与二者的关键差异**：Tenth **不做任何投机**。translator 生成的代码是 VM 语义的"逐字翻译"——每个 opcode 调用一个 hostcall trampoline，trampoline 内部直接调用 `vm.add_priv`、`vm.sub_priv` 等 VM 私有方法（[`hostcalls.rs:119-125`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。因此 Tenth 没有 deoptimization 概念，只有 fallback——fallback 不是"撤销投机"，而是"从未尝试投机"。
+**Tenth 与二者的关键差异**：Tenth **不做任何投机**。translator 生成的代码是 VM 语义的"逐字翻译"——每个 opcode 调用一个 hostcall trampoline，trampoline 内部直接调用 `vm.add_priv`、`vm.sub_priv` 等 VM 私有方法（[`hostcalls.rs:119-125`](../../tenth/src/compile/jit/hostcalls.rs)）。因此 Tenth 没有 deoptimization 概念，只有 fallback——fallback 不是"撤销投机"，而是"从未尝试投机"。
 
 ### 2.3 双模拟在编译器验证中的应用
 
@@ -94,7 +94,7 @@ CompCert（[Leroy 2009]）使用 simulation（单向模拟）证明 C 编译器�
 
 ### 2.4 与 Tenth 战略定位的关系
 
-[`docs/shape-check-roadmap/战略规划.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md) 中护城河 E 评估为"⭐⭐⭐（综合 ROI）"，理由是"JIT 改造大、可行性低"。本文的形式化证明为该护城河的"理论可行性"维度提供支撑：现有保守 JIT 的语义保持已严格证明，未来向 shape 驱动特化（E 方向）演进时，可在此基础上扩展特化边界。
+[`docs/shape-check-roadmap/战略规划.md`](../shape-check-roadmap/战略规划.md) 中护城河 E 评估为"⭐⭐⭐（综合 ROI）"，理由是"JIT 改造大、可行性低"。本文的形式化证明为该护城河的"理论可行性"维度提供支撑：现有保守 JIT 的语义保持已严格证明，未来向 shape 驱动特化（E 方向）演进时，可在此基础上扩展特化边界。
 
 ---
 
@@ -104,9 +104,9 @@ CompCert（[Leroy 2009]）使用 simulation（单向模拟）证明 C 编译器�
 
 **定义 3.1（chunk 与可特化性）**。设 $\mathcal{C}$ 为所有 chunk 的集合，$\mathcal{O} = \{\mathrm{Op}_1, \ldots, \mathrm{Op}_{46}\}$ 为 46 个 opcode 的集合。定义 **可特化 opcode 子集** $\mathcal{O}_{\mathrm{jit}} \subset \mathcal{O}$ 为 translator 显式生成 Cranelift IR 而非返回 `Err` 的 opcode 集合。
 
-**实现对应**：[`translator.rs:221-487`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 的 `emit_op` 函数中，45 个 opcode 走 `match` 臂生成 IR，仅 `IsStruct(_)` 显式返回 `Err`（[`translator.rs:483-486`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。因此 $|\mathcal{O}_{\mathrm{jit}}| = 45$，$|\mathcal{O} \setminus \mathcal{O}_{\mathrm{jit}}| = 1$。
+**实现对应**：[`translator.rs:221-487`](../../tenth/src/compile/jit/translator.rs) 的 `emit_op` 函数中，45 个 opcode 走 `match` 臂生成 IR，仅 `IsStruct(_)` 显式返回 `Err`（[`translator.rs:483-486`](../../tenth/src/compile/jit/translator.rs)）。因此 $|\mathcal{O}_{\mathrm{jit}}| = 45$，$|\mathcal{O} \setminus \mathcal{O}_{\mathrm{jit}}| = 1$。
 
-**注意（局限 L4）**：`PushFloat32` 在 $\mathcal{O}_{\mathrm{jit}}$ 中，但其翻译降级为 `host_make_float`（f64）而非保留 f32 精度（[`translator.rs:232-237`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。这是"语法支持但语义有偏差"的情况，详见 §11.4。
+**注意（局限 L4）**：`PushFloat32` 在 $\mathcal{O}_{\mathrm{jit}}$ 中，但其翻译降级为 `host_make_float`（f64）而非保留 f32 精度（[`translator.rs:232-237`](../../tenth/src/compile/jit/translator.rs)）。这是"语法支持但语义有偏差"的情况，详见 §11.4。
 
 **定义 3.2（三层 fallback）**。对 chunk $C \in \mathcal{C}$ 与初始 VM 状态 $\sigma$，定义 fallback 触发函数 $\mathcal{F}: \mathcal{C} \times \Sigma \to \{L_0, L_1, L_2, L_3, \mathrm{JIT}\}$：
 
@@ -120,9 +120,9 @@ L_3 & \text{if } \mathrm{translate}(C) \text{ returns } \mathrm{Err} \\
 \end{cases}
 $$
 
-其中 $L_0$（未知函数名）在 [`mod.rs:45-48`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) 处理，优先级在 L1 之后。
+其中 $L_0$（未知函数名）在 [`mod.rs:45-48`](../../tenth/src/compile/jit/mod.rs) 处理，优先级在 L1 之后。
 
-**实现对应**：[`mod.rs:41-65`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) 严格按 $L_1 \to L_0 \to (\text{init JitContext}) \to L_2/L_3 \to \mathrm{JIT}$ 顺序检查。检查顺序的语义含义：L1 优先于一切，确保 recording 时绝不进入 JIT 路径。
+**实现对应**：[`mod.rs:41-65`](../../tenth/src/compile/jit/mod.rs) 严格按 $L_1 \to L_0 \to (\text{init JitContext}) \to L_2/L_3 \to \mathrm{JIT}$ 顺序检查。检查顺序的语义含义：L1 优先于一切，确保 recording 时绝不进入 JIT 路径。
 
 **定义 3.3（fallback 后状态保持）**。记 $\sigma.\mathrm{stack}$、$\sigma.\mathrm{globals}$、$\sigma.\mathrm{tape}$、$\sigma.\mathrm{recording}$ 为 VM 状态的可观察字段。定义 **fallback 触发点状态** $\sigma_{\mathrm{fb}}$ 为：fallback 触发瞬间（即 `vm.call(name)` 调用前）的 VM 状态。
 
@@ -136,7 +136,7 @@ $$
 
 其中 $\alpha_i \in \{\mathrm{i64}, \mathrm{f64}, \mathrm{u8}, *\!\mathrm{const}\ \mathrm{Value}, *\!\mathrm{mut}\ \mathrm{Value}\}$。最后一个参数 `*mut Value` 是 out-pointer。
 
-**实现对应**：[`hostcalls.rs:82-115`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) 等共 36 个 hostcall 函数，全部 `unsafe extern "C"`。
+**实现对应**：[`hostcalls.rs:82-115`](../../tenth/src/compile/jit/hostcalls.rs) 等共 36 个 hostcall 函数，全部 `unsafe extern "C"`。
 
 **定义 3.5（hostcall 错误传播协议）**。hostcall $h$ 的执行 $\rho(h, \mathrm{vm}, \vec{\alpha}, \mathrm{out})$ 满足以下三条之一：
 
@@ -144,7 +144,7 @@ $$
 - **(C2) 错误路径**：调用 `vm.set_last_error(msg)`，写 `Value::Unit` 到 `*out`。
 - **(C3) panic 路径**：被 `catch_unwind` 捕获，写 `Value::Unit` 到 `*out`，写 `"JIT panic: ..."` 到 `vm.last_error`，返回 `false` 给上层 `invoke_jit`。
 
-**实现对应**：(C1)/(C2) 在每个 hostcall 内部体现为 `match vm.add(...) { Ok(v) => write(out, v), Err(e) => { vm.set_last_error(...); write(out, Value::Unit) } }` 模式（[`hostcalls.rs:119-125`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) 等）。(C3) 由 [`hostcalls.rs:41-61`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) 的 `invoke_jit` 包装实现。
+**实现对应**：(C1)/(C2) 在每个 hostcall 内部体现为 `match vm.add(...) { Ok(v) => write(out, v), Err(e) => { vm.set_last_error(...); write(out, Value::Unit) } }` 模式（[`hostcalls.rs:119-125`](../../tenth/src/compile/jit/hostcalls.rs) 等）。(C3) 由 [`hostcalls.rs:41-61`](../../tenth/src/compile/jit/hostcalls.rs) 的 `invoke_jit` 包装实现。
 
 **定义 3.6（safe_slice 闸门）**。所有接受 `(*const Value, count: u64)` 的 hostcall 必须经 `safe_slice` 构造切片：
 
@@ -155,9 +155,9 @@ $$
 \end{cases}
 $$
 
-其中 $\mathrm{MAX\_HOSTCALL\_ARGS} = 2^{20} = 1\,048\,576$（[`hostcalls.rs:23`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
+其中 $\mathrm{MAX\_HOSTCALL\_ARGS} = 2^{20} = 1\,048\,576$（[`hostcalls.rs:23`](../../tenth/src/compile/jit/hostcalls.rs)）。
 
-**实现对应**：[`hostcalls.rs:68-78`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)。
+**实现对应**：[`hostcalls.rs:68-78`](../../tenth/src/compile/jit/hostcalls.rs)。
 
 ### 3.3 JitContext 缓存生命周期
 
@@ -165,15 +165,15 @@ $$
 
 **定义 3.8（缓存不动点假设）**。JitContext 假设：对同一 `chunk_idx` 多次查询 `get_or_compile` 返回相同函数指针。这要求 chunk 的字节码在多次调用间不变。
 
-**实现对应**：[`context.rs:36-58`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs) 的 `get_or_compile` 直接返回缓存项或编译新项并缓存。无失效机制。
+**实现对应**：[`context.rs:36-58`](../../tenth/src/compile/jit/context.rs) 的 `get_or_compile` 直接返回缓存项或编译新项并缓存。无失效机制。
 
 **注意（局限 L1）**：Tenth 当前不支持运行时函数重定义，因此缓存不动点假设事实上成立。但若未来引入 REPL 或热重载，缓存将引用陈旧字节码。详见 §11.1。
 
-**定义 3.9（is_pic 设置）**。Cranelift 编译标志 `is_pic = false`（[`context.rs:27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)），意味着生成代码使用绝对地址而非位置无关代码。
+**定义 3.9（is_pic 设置）**。Cranelift 编译标志 `is_pic = false`（[`context.rs:27`](../../tenth/src/compile/jit/context.rs)），意味着生成代码使用绝对地址而非位置无关代码。
 
 **注意（局限 L2）**：`is_pic = false` 是 Windows x64 上 `call_indirect` 与绝对 hostcall 地址兼容性的要求。代价是生成的 JIT 代码**不可重定位**——若 `JITModule` 的内部内存映射被移动（如堆重分配），所有缓存指针失效。详见 §11.2。
 
-**定义 3.10（Drop 语义）**。`JitContext::drop` 先清空 `cache`，再让 `JITModule` 隐式 drop（[`context.rs:61-68`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）。清空 cache 保证所有函数指针在模块释放前不再被引用。
+**定义 3.10（Drop 语义）**。`JitContext::drop` 先清空 `cache`，再让 `JITModule` 隐式 drop（[`context.rs:61-68`](../../tenth/src/compile/jit/context.rs)）。清空 cache 保证所有函数指针在模块释放前不再被引用。
 
 ---
 
@@ -194,7 +194,7 @@ $$
 
 **定义 5.1（VM 状态）**。VM 状态 $\sigma = (\mathrm{stack}, \mathrm{locals}, \mathrm{globals}, \mathrm{ip}, \mathrm{chunk\_idx}, \mathrm{recording}, \mathrm{tape}, \mathrm{frames}, \mathrm{step\_budget}, \mathrm{deadline\_ms})$。
 
-各字段对应 [`vm.rs:155-182`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 的 `Vm` 结构体。本文证明仅依赖前 7 个字段。
+各字段对应 [`vm.rs:155-182`](../../tenth/src/runtime/vm.rs) 的 `Vm` 结构体。本文证明仅依赖前 7 个字段。
 
 **定义 5.2（VM 可观察状态）**。$\sigma$ 的可观察投影 $\mathrm{obs}(\sigma) = (\mathrm{stack}, \mathrm{globals}, \mathrm{recording}, \mathrm{tape})$。内部表示（如 `frames`、`locals` 的具体 Vec）被抽象掉。
 
@@ -209,7 +209,7 @@ $$
 \sigma = (\mathrm{stack}, \ldots, \mathrm{ip}, \ldots) \quad \mathrm{op} = \mathrm{PushInt}(n) \\
 \sigma' = (\mathrm{stack} \cdot n, \ldots, \mathrm{ip}+9, \ldots)
 $$
-（`PushInt(i64)` 占 1 字节 opcode + 8 字节立即数 = 9 字节，[`vm.rs:84`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）
+（`PushInt(i64)` 占 1 字节 opcode + 8 字节立即数 = 9 字节，[`vm.rs:84`](../../tenth/src/runtime/vm.rs)）
 
 **规则 R2（Add — 标量路径）**：
 $$
@@ -223,7 +223,7 @@ $$
 \sigma' = (\mathrm{stack} \cdot \mathrm{result}, \ldots, \mathrm{recording}, \mathrm{tape} \oplus \mathrm{node}(\mathrm{Add}, t_1, t_2, \mathrm{result}))
 $$
 
-其中 $\mathrm{tape} \oplus \mathrm{node}$ 表示追加 TapeNode（[`autodiff.rs:128-137`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 `binary` 方法）。
+其中 $\mathrm{tape} \oplus \mathrm{node}$ 表示追加 TapeNode（[`autodiff.rs:128-137`](../../tenth/src/runtime/autodiff.rs) 的 `binary` 方法）。
 
 **规则 R4（Ret）**：
 $$
@@ -257,8 +257,8 @@ $$
 
 **定义 6.1（JIT 抽象状态）**。JIT 执行的抽象状态 $\hat{\sigma} = (\mathrm{vstack}, \mathrm{locals}, \mathrm{block}, \mathrm{sp}, \mathrm{vm})$，其中：
 
-- $\mathrm{vstack}$：虚拟栈（Cranelift StackSlot 中的 `Value` 序列，[`translator.rs:67-71`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）
-- $\mathrm{locals}$：局部变量槽（[`translator.rs:108-109`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）
+- $\mathrm{vstack}$：虚拟栈（Cranelift StackSlot 中的 `Value` 序列，[`translator.rs:67-71`](../../tenth/src/compile/jit/translator.rs)）
+- $\mathrm{locals}$：局部变量槽（[`translator.rs:108-109`](../../tenth/src/compile/jit/translator.rs)）
 - $\mathrm{block}$：当前 Cranelift Block（对应 VM 的 ip）
 - $\mathrm{sp}$：编译时栈指针（字节偏移）
 - $\mathrm{vm}$：`*mut Vm` 指针，所有副作用经此回流到 VM
@@ -283,22 +283,22 @@ $$
 
 其中 $\mathrm{vm}'$ 是 $h$ 执行后的 VM 状态（可能修改 `stack`、`globals`、`tape`、`last_error`）。
 
-**关键引理 6.1（hostcall 透传性）**。对所有算术类 hostcall $h \in \{\mathrm{host\_add}, \mathrm{host\_sub}, \mathrm{host\_mul}, \mathrm{host\_div}, \mathrm{host\_mod}, \mathrm{host\_neg}, \mathrm{host\_not}, \mathrm{host\_eq}, \ldots\}$，$h$ 内部直接调用 `vm.add_priv(a, b)` 等 VM 私有方法（[`hostcalls.rs:121`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。因此：
+**关键引理 6.1（hostcall 透传性）**。对所有算术类 hostcall $h \in \{\mathrm{host\_add}, \mathrm{host\_sub}, \mathrm{host\_mul}, \mathrm{host\_div}, \mathrm{host\_mod}, \mathrm{host\_neg}, \mathrm{host\_not}, \mathrm{host\_eq}, \ldots\}$，$h$ 内部直接调用 `vm.add_priv(a, b)` 等 VM 私有方法（[`hostcalls.rs:121`](../../tenth/src/compile/jit/hostcalls.rs)）。因此：
 
 $$
 \mathrm{exec\_hostcall}(\mathrm{host\_add}, \mathrm{vm}, [a, b]) = (\mathrm{vm.add\_priv}(a, b), \mathrm{vm}')
 $$
 
-其中 $\mathrm{vm.add\_priv}$ 即 VM 的 `Op::Add` 派发函数（[`vm.rs:818-872`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。
+其中 $\mathrm{vm.add\_priv}$ 即 VM 的 `Op::Add` 派发函数（[`vm.rs:818-872`](../../tenth/src/runtime/vm.rs)）。
 
-**证明**：直接代码对应。`host_add` 函数体为 `match vm.add(&*a, &*b) { ... }`（[`hostcalls.rs:119-125`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)），而 `vm.add` 是 `add_priv` 的公开包装（[`vm.rs:224`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。$\square$
+**证明**：直接代码对应。`host_add` 函数体为 `match vm.add(&*a, &*b) { ... }`（[`hostcalls.rs:119-125`](../../tenth/src/compile/jit/hostcalls.rs)），而 `vm.add` 是 `add_priv` 的公开包装（[`vm.rs:224`](../../tenth/src/runtime/vm.rs)）。$\square$
 
 **引理 6.1 的推论**：当 $\mathrm{vm.recording} = \mathrm{true}$ 且 $a, b$ 为 Tensor 时，`host_add` 同样会触发 `record_binary(TapeOp::Add, ...)`。理论上 L1 安全门并非严格必要——hostcall 路径已保留 Tape 录制。
 
 **重要（局限 L5）**：尽管引理 6.1 表明 hostcall 路径已透传 recording 副作用，L1 安全门仍是必要的，原因有二：
 
 1. **未来内联风险**：若后续优化将标量算术内联到 Cranelift IR（绕过 hostcall），将破坏 Tape 一致性。L1 闸门防止这一潜在 bug。
-2. **PushFloat32 降级**：JIT 路径将 `PushFloat32(f)` 降级为 `Value::Float(f as f64)`（[`translator.rs:232-237`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），与 VM 的 `Value::Float32(f)` 表示不同。若 recording 时此值与 Tensor 运算，Tape 节点将记录错误 dtype的标量。L1 闸门消除这一漂移。
+2. **PushFloat32 降级**：JIT 路径将 `PushFloat32(f)` 降级为 `Value::Float(f as f64)`（[`translator.rs:232-237`](../../tenth/src/compile/jit/translator.rs)），与 VM 的 `Value::Float32(f)` 表示不同。若 recording 时此值与 Tensor 运算，Tape 节点将记录错误 dtype的标量。L1 闸门消除这一漂移。
 
 ### 6.3 fallback 触发的操作语义
 
@@ -316,10 +316,10 @@ $$
 \mathrm{obs}(\sigma_{\mathrm{fb}}) = \mathrm{obs}(\sigma_0)
 $$
 
-**证明**：分析 [`mod.rs:37-65`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) 的执行序列：
+**证明**：分析 [`mod.rs:37-65`](../../tenth/src/compile/jit/mod.rs) 的执行序列：
 
 - **L1**（line 41-43）：`if vm.is_recording() { return vm.call(name); }`——立即返回，无任何 VM 字段修改。$\sigma_{\mathrm{fb}} = \sigma_0$。
-- **L0**（line 45-48）：`vm.chunk_index_of(name)` 是只读查询（[`vm.rs:199-201`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。$\sigma_{\mathrm{fb}} = \sigma_0$。
+- **L0**（line 45-48）：`vm.chunk_index_of(name)` 是只读查询（[`vm.rs:199-201`](../../tenth/src/runtime/vm.rs)）。$\sigma_{\mathrm{fb}} = \sigma_0$。
 - **JitContext 初始化**（line 51-53）：`vm.jit_ctx = Some(JitContext::new())`——仅修改 `jit_ctx` 字段，不属于 $\mathrm{obs}$ 投影。$\mathrm{obs}(\sigma_{\mathrm{fb}}) = \mathrm{obs}(\sigma_0)$。
 - **chunk 克隆**（line 59）：`vm.chunk_at(chunk_idx).clone()`——只读操作。$\sigma_{\mathrm{fb}} = \sigma_0$。
 - **L2/L3**（line 62-65）：`get_or_compile` 返回 `Err` 时立即 `return vm.call(name)`。`get_or_compile` 内部仅修改 `JitContext.module` 与 `JitContext.cache`，不修改 VM 状态。$\sigma_{\mathrm{fb}} = \sigma_0$。
@@ -341,7 +341,7 @@ $$
 其中：
 
 - $\mathrm{vm\_of}(\hat{\sigma})$：$\hat{\sigma}$ 中 `*mut Vm` 解引用得到的 VM 状态。
-- $\mathrm{ip\_map}$：字节码 IP 到 Cranelift Block 的映射（[`translator.rs:128-133`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 的 `find_leaders` 建立）。
+- $\mathrm{ip\_map}$：字节码 IP 到 Cranelift Block 的映射（[`translator.rs:128-133`](../../tenth/src/compile/jit/translator.rs) 的 `find_leaders` 建立）。
 - $\mathrm{stack\_equiv}$：栈内容等价——`vm.stack` 顶部 $n$ 个元素与 `vstack` 的 $n$ 个槽位一一对应，值相等。
 
 ### 7.2 定理 E1（特化健全性）
@@ -371,7 +371,7 @@ $$
 
 VM 侧：$\sigma_{n+1}.\mathrm{stack} = \sigma_n.\mathrm{stack} \cdot \mathrm{Value::Int}(n)$，$\sigma_{n+1}.\mathrm{ip} = \sigma_n.\mathrm{ip} + 9$。
 
-JIT 侧：translator 生成 `call_hostcall_i64("host_make_int", n, out)`（[`translator.rs:222-226`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），`host_make_int` 直接 `std::ptr::write(out, Value::Int(n))`（[`hostcalls.rs:82-84`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。$\hat{\sigma}_{n+1}.\mathrm{vstack}$ 在 $\hat{\sigma}_n.\mathrm{sp}$ 处写入 `Value::Int(n)`，$\hat{\sigma}_{n+1}.\mathrm{sp} = \hat{\sigma}_n.\mathrm{sp} + \mathrm{VALUE\_SIZE}$。
+JIT 侧：translator 生成 `call_hostcall_i64("host_make_int", n, out)`（[`translator.rs:222-226`](../../tenth/src/compile/jit/translator.rs)），`host_make_int` 直接 `std::ptr::write(out, Value::Int(n))`（[`hostcalls.rs:82-84`](../../tenth/src/compile/jit/hostcalls.rs)）。$\hat{\sigma}_{n+1}.\mathrm{vstack}$ 在 $\hat{\sigma}_n.\mathrm{sp}$ 处写入 `Value::Int(n)`，$\hat{\sigma}_{n+1}.\mathrm{sp} = \hat{\sigma}_n.\mathrm{sp} + \mathrm{VALUE\_SIZE}$。
 
 由 $\mathrm{stack\_equiv}$ 定义，$\hat{\sigma}_{n+1}.\mathrm{vstack}$ 顶部为 `Value::Int(n)`，与 $\sigma_{n+1}.\mathrm{stack}$ 顶部一致。$\mathrm{vm}$ 字段未修改（`host_make_int` 不调用 `vm.add_priv` 等修改方法）。$(\sigma_{n+1}, \hat{\sigma}_{n+1}) \in \mathcal{R}$。$\checkmark$
 
@@ -379,7 +379,7 @@ JIT 侧：translator 生成 `call_hostcall_i64("host_make_int", n, out)`（[`tra
 
 VM 侧：$\sigma_{n+1}.\mathrm{stack} = \sigma_n.\mathrm{stack}[:-2] \cdot \mathrm{add\_priv}(a, b)$，其中 $a, b$ 为栈顶两元素。
 
-JIT 侧：translator 生成 `emit_binop("host_add")`（[`translator.rs:293`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），后者调用 `host_add(vm, &a, &b, out)`（[`translator.rs:737-749`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 的 `emit_binop`）。
+JIT 侧：translator 生成 `emit_binop("host_add")`（[`translator.rs:293`](../../tenth/src/compile/jit/translator.rs)），后者调用 `host_add(vm, &a, &b, out)`（[`translator.rs:737-749`](../../tenth/src/compile/jit/translator.rs) 的 `emit_binop`）。
 
 由 **引理 6.1**，`host_add` 内部调用 `vm.add_priv(a, b)`，与 VM 侧的 `add_priv(a, b)` 完全相同。因此 $\hat{\sigma}_{n+1}.\mathrm{vstack}$ 顶部为 $\mathrm{add\_priv}(a, b)$，与 $\sigma_{n+1}.\mathrm{stack}$ 顶部一致。
 
@@ -391,7 +391,7 @@ $(\sigma_{n+1}, \hat{\sigma}_{n+1}) \in \mathcal{R}$。$\checkmark$
 
 VM 侧：执行函数调用或全局变量访问，修改 `stack`/`globals`/`frames`。
 
-JIT 侧：translator 生成 `call_hostcall_call("host_call", ...)` 等（[`translator.rs:344-357`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），`host_call` 内部调用 `vm.call_with_args(name, args)`（[`hostcalls.rs:227-237`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)），即 VM 的函数调用路径。
+JIT 侧：translator 生成 `call_hostcall_call("host_call", ...)` 等（[`translator.rs:344-357`](../../tenth/src/compile/jit/translator.rs)），`host_call` 内部调用 `vm.call_with_args(name, args)`（[`hostcalls.rs:227-237`](../../tenth/src/compile/jit/hostcalls.rs)），即 VM 的函数调用路径。
 
 因此 VM 与 JIT 在函数调用上的执行路径完全相同（都走 `vm.call`），副作用一致。$(\sigma_{n+1}, \hat{\sigma}_{n+1}) \in \mathcal{R}$。$\checkmark$
 
@@ -399,17 +399,17 @@ JIT 侧：translator 生成 `call_hostcall_call("host_call", ...)` 等（[`trans
 
 VM 侧：修改 `ip` 或返回。
 
-JIT 侧：translator 生成 Cranelift `jump`/`brif`/`return_`（[`translator.rs:306-373`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。`find_leaders` 保证每个 VM 跳转目标对应一个 Cranelift Block，`block_sp` 保证跳转后 sp 一致。
+JIT 侧：translator 生成 Cranelift `jump`/`brif`/`return_`（[`translator.rs:306-373`](../../tenth/src/compile/jit/translator.rs)）。`find_leaders` 保证每个 VM 跳转目标对应一个 Cranelift Block，`block_sp` 保证跳转后 sp 一致。
 
-`Ret` 的情形：VM 弹栈顶并返回；JIT 调用 `copy_stack_to_ptr` 写入 `out_ptr`（[`translator.rs:367-373`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），返回 `ok=1`。`out_ptr` 内容等于 VM 弹栈顶的值。$(\sigma_{n+1}, \hat{\sigma}_{n+1}) \in \mathcal{R}$。$\checkmark$
+`Ret` 的情形：VM 弹栈顶并返回；JIT 调用 `copy_stack_to_ptr` 写入 `out_ptr`（[`translator.rs:367-373`](../../tenth/src/compile/jit/translator.rs)），返回 `ok=1`。`out_ptr` 内容等于 VM 弹栈顶的值。$(\sigma_{n+1}, \hat{\sigma}_{n+1}) \in \mathcal{R}$。$\checkmark$
 
 **情形 5：$\mathrm{op}$ 为 `MakeTensor`、`MakeVec`、`MakeMap`、`NewStruct`、`MakeEnum` 等堆分配类**。
 
 VM 侧：构造 `Value::Vec`/`Value::Map`/`Value::Struct`/`Value::Tensor` 等。
 
-JIT 侧：translator 调用对应 `host_make_vec`、`host_make_tensor` 等 hostcall，hostcall 内部直接构造相同的 `Value` 变体（[`hostcalls.rs:260-263`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) 等）。
+JIT 侧：translator 调用对应 `host_make_vec`、`host_make_tensor` 等 hostcall，hostcall 内部直接构造相同的 `Value` 变体（[`hostcalls.rs:260-263`](../../tenth/src/compile/jit/hostcalls.rs) 等）。
 
-**注意**：`host_make_tensor` 在 JIT 路径将所有元素强制转为 f64（[`hostcalls.rs:421-425`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)），且 shape 推导与 VM 略有差异（`cols == 0` 时退化为一维）。这是潜在语义偏差（局限 L6），但本定理假设 $\sigma_0.\mathrm{recording} = \mathrm{false}$，且偏差仅影响 dtype 表示，不影响可观察的浮点值（在 f64 表达精度内）。$(\sigma_{n+1}, \hat{\sigma}_{n+1}) \in \mathcal{R}$ 在弱意义上成立。$\checkmark$
+**注意**：`host_make_tensor` 在 JIT 路径将所有元素强制转为 f64（[`hostcalls.rs:421-425`](../../tenth/src/compile/jit/hostcalls.rs)），且 shape 推导与 VM 略有差异（`cols == 0` 时退化为一维）。这是潜在语义偏差（局限 L6），但本定理假设 $\sigma_0.\mathrm{recording} = \mathrm{false}$，且偏差仅影响 dtype 表示，不影响可观察的浮点值（在 f64 表达精度内）。$(\sigma_{n+1}, \hat{\sigma}_{n+1}) \in \mathcal{R}$ 在弱意义上成立。$\checkmark$
 
 **归纳完成**：所有 opcode 情形均保持 $\mathcal{R}$，故 $\mathcal{R}$ 是弱双模拟。$\square$
 
@@ -429,7 +429,7 @@ $$
 
 由 **引理 6.2**，所有四类 fallback 触发时 $\mathrm{obs}(\sigma_{\mathrm{fb}}) = \mathrm{obs}(\sigma_0)$ 成立。
 
-`run_jit` 在 fallback 路径上直接调用 `vm.call(name)`（[`mod.rs:42, 47, 64`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)），即 VM 的标准函数调用入口（[`vm.rs:325-329`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。因此：
+`run_jit` 在 fallback 路径上直接调用 `vm.call(name)`（[`mod.rs:42, 47, 64`](../../tenth/src/compile/jit/mod.rs)），即 VM 的标准函数调用入口（[`vm.rs:325-329`](../../tenth/src/runtime/vm.rs)）。因此：
 
 $$
 \mathrm{run\_jit}(C, \sigma_0) = \mathrm{vm.call}(\mathrm{name}(C), \sigma_{\mathrm{fb}}) = \mathrm{vm.call}(\mathrm{name}(C), \sigma_0)
@@ -449,11 +449,11 @@ $$
 
 **证明**：
 
-**部分 (1)**：[`mod.rs:41-43`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) 的 L1 闸门在函数入口立即检查 `vm.is_recording()`，若为真直接 `return vm.call(name)`。控制流不进入后续的 `chunk_index_of`、`JitContext::new`、`get_or_compile`、`invoke_jit` 等任何 JIT 路径。因此无 JIT 编译产物代码被执行。$\square$
+**部分 (1)**：[`mod.rs:41-43`](../../tenth/src/compile/jit/mod.rs) 的 L1 闸门在函数入口立即检查 `vm.is_recording()`，若为真直接 `return vm.call(name)`。控制流不进入后续的 `chunk_index_of`、`JitContext::new`、`get_or_compile`、`invoke_jit` 等任何 JIT 路径。因此无 JIT 编译产物代码被执行。$\square$
 
 **部分 (2)**：由 (1)，`run_jit` 直接调用 `vm.call(name)`，与 VM 标准调用相同。结合 **引理 6.2** 的 L1 情形，$\sigma_{\mathrm{fb}} = \sigma_0$，故 $\mathrm{run\_jit}(C, \sigma_0) = \mathrm{vm.call}(\mathrm{name}(C), \sigma_0)$。$\square$
 
-**部分 (3)**：由 (2)，执行路径与纯 VM 执行完全相同。VM 在 `recording = true` 时，所有 Tensor 算术的 `add_priv`/`sub_priv`/`mul_priv`/`div_priv` 分支（[`vm.rs:832-836, 840-842, 849-851, 857-859, 867, 888-898, 925, 946-958, 983, 1009-1038, 1048`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）调用 `record_binary`/`record_unary` 追加 TapeNode。Tape 状态由执行序列完全决定，故 $\mathrm{tape}' = \mathrm{tape}_{\mathrm{vm\ only}}$。$\square$
+**部分 (3)**：由 (2)，执行路径与纯 VM 执行完全相同。VM 在 `recording = true` 时，所有 Tensor 算术的 `add_priv`/`sub_priv`/`mul_priv`/`div_priv` 分支（[`vm.rs:832-836, 840-842, 849-851, 857-859, 867, 888-898, 925, 946-958, 983, 1009-1038, 1048`](../../tenth/src/runtime/vm.rs)）调用 `record_binary`/`record_unary` 追加 TapeNode。Tape 状态由执行序列完全决定，故 $\mathrm{tape}' = \mathrm{tape}_{\mathrm{vm\ only}}$。$\square$
 
 **注意（局限 L5 重申）**：定理 E3 证明 L1 闸门**充分**保证 Tape 一致性，但未证明 L1 闸门**必要**。如引理 6.1 所示，hostcall 路径理论上已透传 recording 副作用。L1 的必要性在于：(a) 防御未来 JIT 内联标量算术的潜在 bug；(b) 消除 `PushFloat32` 降级导致的 dtype 漂移。这两点是"防御性"而非"当前必要"。
 
@@ -469,9 +469,9 @@ $$
 
 **部分 (1)：UB 自由性**。
 
-- **空指针解引用**：所有接受 `*const Value` 的 hostcall 经 `safe_slice` 闸门（定义 3.6），`safe_slice` 在 `ptr.is_null()` 时返回空切片（[`hostcalls.rs:69-71`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。`vm: *mut Vm` 的解引用在 `&mut *vm` 时若 `vm` 为空会触发 UB，但调用方 `invoke_jit` 保证 `vm` 来自 `&mut Vm` 的合法借用（[`mod.rs:81`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)）。
-- **越界访问**：所有 `from_raw_parts` 调用经 `safe_slice`，`count` 上限为 $2^{20}$（[`hostcalls.rs:23, 73-74`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。`field_count * 2`、`rows * cols` 等乘法经 `checked_mul` 防溢出（[`hostcalls.rs:267, 296, 409`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
-- **FFI unwind**：所有 hostcall 标记为 `extern "C"`，Rust ABI 保证不通过 FFI 边界 unwind。即便 hostcall 内部 panic，外层 `invoke_jit` 的 `catch_unwind`（[`hostcalls.rs:41`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）捕获 panic，写 `Value::Unit` 到 `out`，返回 `false`。
+- **空指针解引用**：所有接受 `*const Value` 的 hostcall 经 `safe_slice` 闸门（定义 3.6），`safe_slice` 在 `ptr.is_null()` 时返回空切片（[`hostcalls.rs:69-71`](../../tenth/src/compile/jit/hostcalls.rs)）。`vm: *mut Vm` 的解引用在 `&mut *vm` 时若 `vm` 为空会触发 UB，但调用方 `invoke_jit` 保证 `vm` 来自 `&mut Vm` 的合法借用（[`mod.rs:81`](../../tenth/src/compile/jit/mod.rs)）。
+- **越界访问**：所有 `from_raw_parts` 调用经 `safe_slice`，`count` 上限为 $2^{20}$（[`hostcalls.rs:23, 73-74`](../../tenth/src/compile/jit/hostcalls.rs)）。`field_count * 2`、`rows * cols` 等乘法经 `checked_mul` 防溢出（[`hostcalls.rs:267, 296, 409`](../../tenth/src/compile/jit/hostcalls.rs)）。
+- **FFI unwind**：所有 hostcall 标记为 `extern "C"`，Rust ABI 保证不通过 FFI 边界 unwind。即便 hostcall 内部 panic，外层 `invoke_jit` 的 `catch_unwind`（[`hostcalls.rs:41`](../../tenth/src/compile/jit/hostcalls.rs)）捕获 panic，写 `Value::Unit` 到 `out`，返回 `false`。
 
 **部分 (2)：终态满足 (C1)/(C2)/(C3) 之一**。
 
@@ -484,7 +484,7 @@ match vm.add(&*a, &*b) {
 }
 ```
 
-若 `vm.add` 内部 panic（如 `Rc` 借用冲突），panic 在 `invoke_jit` 的 `catch_unwind` 中被捕获，进入 (C3) 路径（[`hostcalls.rs:46-61`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
+若 `vm.add` 内部 panic（如 `Rc` 借用冲突），panic 在 `invoke_jit` 的 `catch_unwind` 中被捕获，进入 (C3) 路径（[`hostcalls.rs:46-61`](../../tenth/src/compile/jit/hostcalls.rs)）。
 
 (C1)/(C2)/(C3) 三条路径互斥且穷尽（Rust `Result` 的两臂 + panic 路径）。$\square$
 
@@ -494,7 +494,7 @@ match vm.add(&*a, &*b) {
 
 - (C1)：`std::ptr::write(out, v)`，$v$ 为合法 `Value`。
 - (C2)：`std::ptr::write(out, Value::Unit)`。
-- (C3)：`std::ptr::write(out, Value::Unit)`（[`hostcalls.rs:58`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
+- (C3)：`std::ptr::write(out, Value::Unit)`（[`hostcalls.rs:58`](../../tenth/src/compile/jit/hostcalls.rs)）。
 
 因此 `*out` 在 hostcall 返回前必然被写入合法 `Value`。$\square$
 
@@ -555,7 +555,7 @@ $$
 运行时若 fallback 触发（如 $L_1$ 因 $\sigma_0.\mathrm{recording} = \mathrm{true}$ 触发，或运行时 panic 触发 (C3) 路径），由 **定理 E2/E3**：
 
 - $L_1$ 触发：$\mathrm{Deg}(\mathrm{JIT}(C)) = \mathrm{vm.call}(C, \sigma_0) = \mathrm{VMCode}(C)$。$\checkmark$
-- panic 触发：`invoke_jit` 返回 `false`，`run_jit` 报错（[`mod.rs:86-89`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)）。此情形下 $\mathrm{Deg}$ 不是恒等，而是错误信号。但此情形不属于"正常执行"，是 panic 路径的失败语义。
+- panic 触发：`invoke_jit` 返回 `false`，`run_jit` 报错（[`mod.rs:86-89`](../../tenth/src/compile/jit/mod.rs)）。此情形下 $\mathrm{Deg}$ 不是恒等，而是错误信号。但此情形不属于"正常执行"，是 panic 路径的失败语义。
 
 **弱 Galois 连接的"弱"在于**：在 panic 路径上，$\mathrm{Deg}(\mathrm{Spec}(C))$ 不是 $\mathrm{VMCode}(C)$，而是错误。这是 $\mathrm{Spec}$ 与 $\mathrm{Deg}$ 不构成完全 Galois 连接的根源。$\square$
 
@@ -646,7 +646,7 @@ JIT 时根据 effect 标注决定是否特化：
 
 ### 10.1 JIT 缓存生命周期 vs chunk 生命周期（参考 T33）
 
-**问题**：JitContext 的 `cache: HashMap<usize, JitFn>` 以 `chunk_idx` 为键（[`context.rs:17`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）。若未来 Tenth 引入运行时函数重定义（REPL、热重载），`chunk_idx` 复用将导致缓存命中陈旧函数指针。
+**问题**：JitContext 的 `cache: HashMap<usize, JitFn>` 以 `chunk_idx` 为键（[`context.rs:17`](../../tenth/src/compile/jit/context.rs)）。若未来 Tenth 引入运行时函数重定义（REPL、热重载），`chunk_idx` 复用将导致缓存命中陈旧函数指针。
 
 **当前状态**：Tenth 不支持运行时重定义，缓存不动点假设成立（局限 L1）。
 
@@ -654,23 +654,23 @@ JIT 时根据 effect 标注决定是否特化：
 
 ### 10.2 `is_pic = false` 的不可重定位问题
 
-**问题**：Cranelift 标志 `is_pic = false`（[`context.rs:27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）使生成代码使用绝对地址。若 `JITModule` 的内存映射被移动（如某些 OS 的堆碎片整理），缓存指针失效。
+**问题**：Cranelift 标志 `is_pic = false`（[`context.rs:27`](../../tenth/src/compile/jit/context.rs)）使生成代码使用绝对地址。若 `JITModule` 的内存映射被移动（如某些 OS 的堆碎片整理），缓存指针失效。
 
-**当前缓解**：`JitContext::drop` 显式清空 cache（[`context.rs:67`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)），保证模块释放前无悬垂指针。
+**当前缓解**：`JitContext::drop` 显式清空 cache（[`context.rs:67`](../../tenth/src/compile/jit/context.rs)），保证模块释放前无悬垂指针。
 
 **未来工作**：评估 `is_pic = true` 的性能开销。若开销可接受，切换到 PIC 可获得可重定位性。
 
 ### 10.3 PushFloat32 的精度漂移
 
-**问题**：JIT 将 `PushFloat32(f)` 降级为 `Value::Float(f as f64)`（[`translator.rs:232-237`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。在 recording 期间与 Tensor 运算时，Tape 节点会记录 f64 标量而非 f32（[`vm.rs:847-854`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。
+**问题**：JIT 将 `PushFloat32(f)` 降级为 `Value::Float(f as f64)`（[`translator.rs:232-237`](../../tenth/src/compile/jit/translator.rs)）。在 recording 期间与 Tensor 运算时，Tape 节点会记录 f64 标量而非 f32（[`vm.rs:847-854`](../../tenth/src/runtime/vm.rs)）。
 
 **当前缓解**：L1 闸门保证 recording 期间不走 JIT（定理 E3）。
 
-**未来工作**：Phase 5 补齐真正的 f32 JIT 路径（[`translator.rs:233`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 注释）。
+**未来工作**：Phase 5 补齐真正的 f32 JIT 路径（[`translator.rs:233`](../../tenth/src/compile/jit/translator.rs) 注释）。
 
 ### 10.4 MAX_STACK_DEPTH 的静默溢出
 
-**问题**：translator 假设虚拟栈深度不超过 256（[`translator.rs:32`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），但无运行时检查。深度超过 256 的函数会越界写入 StackSlot 之后的内存。
+**问题**：translator 假设虚拟栈深度不超过 256（[`translator.rs:32`](../../tenth/src/compile/jit/translator.rs)），但无运行时检查。深度超过 256 的函数会越界写入 StackSlot 之后的内存。
 
 **当前缓解**：Tenth 程序的栈深度通常远小于 256（受 HIR 类型检查限制）。
 
@@ -688,7 +688,7 @@ JIT 时根据 effect 标注决定是否特化：
 
 **影响范围**：若未来引入运行时函数重定义，缓存将引用陈旧字节码，导致 JIT 执行旧语义而 VM 执行新语义，双模拟关系破坏。
 
-**当前缓解**：Tenth 不支持运行时重定义（[`vm.rs:297-302`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 的 `add_fn` 仅在初始化时调用）。
+**当前缓解**：Tenth 不支持运行时重定义（[`vm.rs:297-302`](../../tenth/src/runtime/vm.rs) 的 `add_fn` 仅在初始化时调用）。
 
 **证明漏洞**：本文未形式化"chunk 不可变性"不变量，仅依赖工程现状。未来引入 REPL 时需补充。
 
@@ -714,14 +714,14 @@ JIT 时根据 effect 标注决定是否特化：
 
 ### 11.4 局限 L4：PushFloat32 降级为 f64
 
-**陈述**：JIT 路径将 `PushFloat32(f)` 翻译为 `host_make_float(f as f64)`（[`translator.rs:232-237`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），而非保留 f32 精度。
+**陈述**：JIT 路径将 `PushFloat32(f)` 翻译为 `host_make_float(f as f64)`（[`translator.rs:232-237`](../../tenth/src/compile/jit/translator.rs)），而非保留 f32 精度。
 
 **影响范围**：
 
-- 非 recording 场景：f32 与 f64 在 `add_priv` 等函数中走不同分支（[`vm.rs:824-828`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），结果类型不同（`Value::Float32` vs `Value::Float`）。这是可观察的语义偏差。
+- 非 recording 场景：f32 与 f64 在 `add_priv` 等函数中走不同分支（[`vm.rs:824-828`](../../tenth/src/runtime/vm.rs)），结果类型不同（`Value::Float32` vs `Value::Float`）。这是可观察的语义偏差。
 - recording 场景：由 L1 闸门保证不触发（定理 E3）。
 
-**当前缓解**：注释标记为"Phase 5 补齐"（[`translator.rs:233`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。
+**当前缓解**：注释标记为"Phase 5 补齐"（[`translator.rs:233`](../../tenth/src/compile/jit/translator.rs)）。
 
 **证明漏洞**：定理 E1 在情形 1（值构造类）的证明中假设 `host_make_int(n)` 写入 `Value::Int(n)`，与 VM 一致。但 `PushFloat32` 不满足此假设——JIT 写入 `Value::Float(f as f64)`，VM 写入 `Value::Float32(f)`。**严格意义上定理 E1 在 `PushFloat32` 情形不成立**。本文将此作为已知局限披露，不掩盖。
 
@@ -737,7 +737,7 @@ JIT 时根据 effect 标注决定是否特化：
 
 ### 11.6 局限 L6：host_make_tensor 的 dtype 与 shape 偏差
 
-**陈述**：`host_make_tensor` 强制将所有元素转为 f64（[`hostcalls.rs:421-425`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)），且 `cols == 0` 时退化为一维 shape（[`hostcalls.rs:427`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
+**陈述**：`host_make_tensor` 强制将所有元素转为 f64（[`hostcalls.rs:421-425`](../../tenth/src/compile/jit/hostcalls.rs)），且 `cols == 0` 时退化为一维 shape（[`hostcalls.rs:427`](../../tenth/src/compile/jit/hostcalls.rs)）。
 
 **影响范围**：JIT 路径构造的 Tensor 与 VM 路径的 dtype/shape 可能不同。
 
@@ -747,7 +747,7 @@ JIT 时根据 effect 标注决定是否特化：
 
 ### 11.7 局限 L7：MAX_STACK_DEPTH 静默溢出
 
-**陈述**：translator 假设虚拟栈深度 $\le 256$（[`translator.rs:32`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），无运行时检查。
+**陈述**：translator 假设虚拟栈深度 $\le 256$（[`translator.rs:32`](../../tenth/src/compile/jit/translator.rs)），无运行时检查。
 
 **影响范围**：深度超过 256 的函数在 JIT 路径下越界写入，触发 UB。
 

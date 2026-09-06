@@ -37,17 +37,17 @@ Tenth 语言的闭包转换依赖一个约 190 行 Rust 实现的递归自由变
 - 若**欠近似**（漏掉真自由变量）：闭包运行时访问未捕获的变量，导致未定义行为或崩溃。
 - 若**过近似**（多收集非自由变量）：捕获冗余，内存浪费，但不破坏语义。
 
-因此，工业级编译器通常选择**过近似**策略以保证健全性。Tenth 的 `collect_free_vars`（[tenth/src/hir/lower/closures.rs:17-162](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)）采用了**精确匹配 + retain 移除**的混合策略，在大多数场景下既健全又完备，但存在若干边界场景下的失效（详见第 7 章局限分析）。
+因此，工业级编译器通常选择**过近似**策略以保证健全性。Tenth 的 `collect_free_vars`（[tenth/src/hir/lower/closures.rs:17-162](../../tenth/src/hir/lower/closures.rs)）采用了**精确匹配 + retain 移除**的混合策略，在大多数场景下既健全又完备，但存在若干边界场景下的失效（详见第 7 章局限分析）。
 
 ### 1.3 Tenth 的 collect_free_vars 实现
 
-Tenth 的自由变量分析实现于 [tenth/src/hir/lower/closures.rs:9-189](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)。其调用点为 [tenth/src/hir/lower/lower_expr.rs:511](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)：
+Tenth 的自由变量分析实现于 [tenth/src/hir/lower/closures.rs:9-189](../../tenth/src/hir/lower/closures.rs)。其调用点为 [tenth/src/hir/lower/lower_expr.rs:511](../../tenth/src/hir/lower/lower_expr.rs)：
 
 ```rust
 let captures = Self::free_vars_in(&b);
 ```
 
-该调用将闭包体 `b` 的自由变量收集为 `captures` 列表，存入 `HirExprKind::Closure { params, body, captures }`（[tenth/src/hir/hir.rs:74-78](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）。
+该调用将闭包体 `b` 的自由变量收集为 `captures` 列表，存入 `HirExprKind::Closure { params, body, captures }`（[tenth/src/hir/hir.rs:74-78](../../tenth/src/hir/hir.rs)）。
 
 算法的核心结构：
 
@@ -441,7 +441,7 @@ $$\text{captures}(c_\text{inner}) \setminus p_o \subseteq \text{captures}(c_\tex
 
 **证明**：
 
-算法对 `c_outer` 的处理（[closures.rs:107-114](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)）：
+算法对 `c_outer` 的处理（[closures.rs:107-114](../../tenth/src/hir/lower/closures.rs)）：
 
 ```rust
 HirExprKind::Closure { params, body, .. } => {
@@ -568,7 +568,7 @@ Tenth 选择 `Vec<String>` 的工程动机：
 
 ### 5.1 Let 绑定的作用域处理
 
-**源码**（[closures.rs:92-106](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)）：
+**源码**（[closures.rs:92-106](../../tenth/src/hir/lower/closures.rs)）：
 
 ```rust
 HirExprKind::Block { stmts, final_expr } => {
@@ -598,7 +598,7 @@ HirExprKind::Block { stmts, final_expr } => {
 
 ### 5.2 For 循环变量的处理
 
-**源码**（[closures.rs:177-183](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)）：
+**源码**（[closures.rs:177-183](../../tenth/src/hir/lower/closures.rs)）：
 
 ```rust
 HirStmtKind::For { var, iter, body } => {
@@ -622,7 +622,7 @@ HirStmtKind::For { var, iter, body } => {
 
 ### 5.3 Closure 参数遮蔽的处理
 
-**源码**（[closures.rs:107-114](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)）：
+**源码**（[closures.rs:107-114](../../tenth/src/hir/lower/closures.rs)）：
 
 ```rust
 HirExprKind::Closure { params, body, .. } => {
@@ -668,7 +668,7 @@ HirExprKind::Closure { params, body, .. } => {
 
 ### 5.6 Assign 目标的处理
 
-**源码**（[closures.rs:115-124](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)）：
+**源码**（[closures.rs:115-124](../../tenth/src/hir/lower/closures.rs)）：
 
 ```rust
 HirExprKind::Assign { target, value } => {
@@ -689,7 +689,7 @@ HirExprKind::Assign { target, value } => {
 
 ### 5.7 内置名称的过滤
 
-**源码**（[closures.rs:22-35](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)）：
+**源码**（[closures.rs:22-35](../../tenth/src/hir/lower/closures.rs)）：
 
 ```rust
 match name.as_str() {
@@ -713,7 +713,7 @@ match name.as_str() {
 
 ### 5.8 Match 分支的处理
 
-**源码**（[closures.rs:131-134](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)）：
+**源码**（[closures.rs:131-134](../../tenth/src/hir/lower/closures.rs)）：
 
 ```rust
 HirExprKind::Match { scrutinee, arms } => {
@@ -830,7 +830,7 @@ let f = |x| {
 
 **严重性**：**中**（仅影响使用守卫的闭包）。
 
-**根源**：[closures.rs:131-134](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs) 的 Match 分支未调用 `collect_free_vars` 对 `arm.guard`。
+**根源**：[closures.rs:131-134](../../tenth/src/hir/lower/closures.rs) 的 Match 分支未调用 `collect_free_vars` 对 `arm.guard`。
 
 **缓解**：在 Match 分支添加 `if let Some(g) = &arm.guard { Self::collect_free_vars(g, vars); }`。
 
@@ -857,7 +857,7 @@ let f = |opt| {
 
 **严重性**：**中**（过近似，不破坏语义但浪费内存）。但若 `v` 在外层不存在，捕获会失败。
 
-**根源**：[closures.rs:131-134](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs) 未提取 `arm.pattern` 的绑定变量并 retain 移除。
+**根源**：[closures.rs:131-134](../../tenth/src/hir/lower/closures.rs) 未提取 `arm.pattern` 的绑定变量并 retain 移除。
 
 **缓解**：实现 `pattern_binders(pattern) -> Vec<String>`，在 Match 分支对每个 arm 的 body 使用独立 inner_vars 并 retain 移除 pattern_binders。
 
@@ -884,7 +884,7 @@ let f = |xs| {
 
 **严重性**：**中**（过近似，不破坏语义但捕获冗余）。
 
-**根源**：[closures.rs:185-187](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs) 的 `Loop` 分支和 [closures.rs:173-176](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs) 的 `While` 分支未跟踪 body 中的 Let 绑定。
+**根源**：[closures.rs:185-187](../../tenth/src/hir/lower/closures.rs) 的 `Loop` 分支和 [closures.rs:173-176](../../tenth/src/hir/lower/closures.rs) 的 `While` 分支未跟踪 body 中的 Let 绑定。
 
 **缓解**：为 `While`、`Loop` 添加类似 `Block` 的 `bound` 跟踪，或要求 body 必须是 Block。
 
@@ -896,7 +896,7 @@ let f = |xs| {
 
 **严重性**：**极低**（builtin 名称不能作为赋值目标或插值变量，语义限制保证不触发）。
 
-**根源**：[closures.rs:115-124](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs) 和 [closures.rs:141-147](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs) 未调用 builtin 过滤。
+**根源**：[closures.rs:115-124](../../tenth/src/hir/lower/closures.rs) 和 [closures.rs:141-147](../../tenth/src/hir/lower/closures.rs) 未调用 builtin 过滤。
 
 **缓解**：对 `target` 和 `name` 添加 builtin 检查。
 
@@ -1031,10 +1031,10 @@ Haskell GHC 的 set-level analysis 不仅分析自由变量，还分析闭包的
 4. Jung, R., Jourdan, J.-H., Krebbers, R., & Dreyer, D. (2018). *RustBelt: Securing the foundations of the Rust programming language*. POPL.
 5. Jung, R., Dang, H.-H., Kang, J., & Dreyer, D. (2017). *Stacked borrows: an aliasing model for Rust*. POPL.
 6. Rust Reference. (2024). *Closure types: Fn, FnMut, FnOnce*. https://doc.rust-lang.org/reference/types/closure.html
-7. Tenth 项目. (2026). *HIR 数据结构定义*. [tenth/src/hir/hir.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)
-8. Tenth 项目. (2026). *collect_free_vars 实现*. [tenth/src/hir/lower/closures.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)
-9. Tenth 项目. (2026). *闭包转换调用点*. [tenth/src/hir/lower/lower_expr.rs:511](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)
-10. Tenth 项目. (2026). *工作规范 v1.1*. `.trae/rules/工作规范.md`
+7. Tenth 项目. (2026). *HIR 数据结构定义*. [tenth/src/hir/hir.rs](../../tenth/src/hir/hir.rs)
+8. Tenth 项目. (2026). *collect_free_vars 实现*. [tenth/src/hir/lower/closures.rs](../../tenth/src/hir/lower/closures.rs)
+9. Tenth 项目. (2026). *闭包转换调用点*. [tenth/src/hir/lower/lower_expr.rs:511](../../tenth/src/hir/lower/lower_expr.rs)
+10. Tenth 项目. (2026). *工作规范 v1.1*. `.agents/rules/工作规范.md`
 
 ---
 
@@ -1095,4 +1095,4 @@ Haskell GHC 的 set-level analysis 不仅分析自由变量，还分析闭包的
 
 ---
 
-> **数理部声明**：本文的理论结论基于对 [tenth/src/hir/lower/closures.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)（v0.3.3+）的源码分析。所有源码引用均使用 `file://` 链接标注。局限章节诚实披露了证明的漏洞与假设的强度，未掩盖任何已知问题。实施建议附录将理论结论转化为可执行指导，但未实施任何代码修改——实施由编译器部负责。
+> **数理部声明**：本文的理论结论基于对 [tenth/src/hir/lower/closures.rs](../../tenth/src/hir/lower/closures.rs)（v0.3.3+）的源码分析。所有源码引用均使用 `file://` 链接标注。局限章节诚实披露了证明的漏洞与假设的强度，未掩盖任何已知问题。实施建议附录将理论结论转化为可执行指导，但未实施任何代码修改——实施由编译器部负责。

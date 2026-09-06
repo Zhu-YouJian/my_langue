@@ -300,7 +300,7 @@ fn test_jit_loop_fallback_no_panic() {
 // 背景：a1 引入 Op::CallClosure（opcode 57，间接调用栈上闭包/函数值）后，
 // VM 与 JIT 对「闭包值调用」必须产出一致结果。此前闭包值调用在两条路径
 // 都失败（VM 无调用指令；JIT call_with_args 不解析 FnRef）——见
-// `.trae/tmp/a1_closure_call_plan.md`。以下用例逐个对拍，覆盖：
+// 当时 `.trae` 临时规划文档。以下用例逐个对拍，覆盖：
 // - 单闭包无捕获（let f = |x| x+1; f(5)）
 // - 多捕获（|x| x*scale+base）
 // - 闭包作参数传入函数、函数体内调用闭包值（HOF）

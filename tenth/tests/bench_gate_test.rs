@@ -7,7 +7,7 @@
 //!   基准只在 release 有意义）。
 //! - **阈值带裕量**（防 CI 抖动误报）：阈值 = 本机实测中位数的 3× 左右。
 //!
-//! 基准方法（与 `.trae/tmp/perf_bench3.th` 一致）：release 构建，JIT 默认路径
+//! 基准方法（与当时 `.trae` 临时基准脚本一致）：release 构建，JIT 默认路径
 //! （不设 TENTH_NO_VM），`time_now_ms` 在 main 内部计时（JIT 编译发生在计时
 //! 之前，计时不含编译开销），取 3 次中位数。基准源码内嵌于本文件（镜像
 //! perf_bench3.th，输出改为 `FIB=<ms>` / `LOOP=<ms>` / `MATMUL=<ms>` 便于断言）。
@@ -29,7 +29,7 @@ const FIB_THRESHOLD_MS: u64 = 100;   // 28ms × 3.5
 const LOOP_THRESHOLD_MS: u64 = 200;  // 66ms × 3.0
 const MATMUL_THRESHOLD_MS: u64 = 20; // 1ms × 20（张量在 Rust 层，裕量最大）
 
-/// 基准源码（镜像 `.trae/tmp/perf_bench3.th`；输出改为 FIB=/LOOP=/MATMUL=）。
+/// 基准源码（镜像当时 `.trae` 临时基准脚本；输出改为 FIB=/LOOP=/MATMUL=）。
 const BENCH_SRC: &str = r#"
 fn fib(n: Int) -> Int {
     if n < 2 { n } else { fib(n - 1) + fib(n - 2) }

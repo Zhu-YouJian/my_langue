@@ -11,7 +11,7 @@
 
 ## 摘要
 
-NumPy 风格的广播规则在现代张量语言中被普遍采用：前向执行时，形状互补的两个张量通过"维度右对齐 + 大小为 1 的轴复制"被提升到共同的广播形状。然而，**广播的非对称性**使得反向传播成为非平凡问题——前向的"复制"在反向必须是"求和归约"，否则链式法则无法保持梯度形状与参数形状一致。Tenth 语言的 `unbroadcast` 函数（[autodiff.rs:836-883](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）实现了这一对偶归约：从右往左对齐维度、对目标为 1 的轴求和、最后 reshape 校验。
+NumPy 风格的广播规则在现代张量语言中被普遍采用：前向执行时，形状互补的两个张量通过"维度右对齐 + 大小为 1 的轴复制"被提升到共同的广播形状。然而，**广播的非对称性**使得反向传播成为非平凡问题——前向的"复制"在反向必须是"求和归约"，否则链式法则无法保持梯度形状与参数形状一致。Tenth 语言的 `unbroadcast` 函数（[autodiff.rs:836-883](../../tenth/src/runtime/autodiff.rs)）实现了这一对偶归约：从右往左对齐维度、对目标为 1 的轴求和、最后 reshape 校验。
 
 本文将广播与 unbroadcast 提升到范畴论 / 线性代数的双重抽象，证明五条主定理：
 
@@ -48,7 +48,7 @@ NumPy 的广播规则（[NumPy docs, Broadcasting](https://numpy.org/doc/stable/
 
 ### 1.2 unbroadcast 的角色
 
-Tenth 的 `unbroadcast` 函数（[autodiff.rs:836-883](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）正是这一对偶归约的实现：
+Tenth 的 `unbroadcast` 函数（[autodiff.rs:836-883](../../tenth/src/runtime/autodiff.rs)）正是这一对偶归约的实现：
 
 ```rust
 fn unbroadcast(grad: &ArrayD<f64>, target_shape: &[usize])
@@ -70,7 +70,7 @@ fn unbroadcast(grad: &ArrayD<f64>, target_shape: &[usize])
 }
 ```
 
-它在 `Add`/`Sub`/`Mul`/`Div` 四个二元算子的反向分支中被调用（[autodiff.rs:301-337](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），将输出梯度的形状归约到每个输入的形状。
+它在 `Add`/`Sub`/`Mul`/`Div` 四个二元算子的反向分支中被调用（[autodiff.rs:301-337](../../tenth/src/runtime/autodiff.rs)），将输出梯度的形状归约到每个输入的形状。
 
 ### 1.3 贡献
 
@@ -126,7 +126,7 @@ def _sum_to(x, shape):
     return x.sum(dim=sum_dims, keepdim=True).reshape(shape)
 ```
 
-差异：PyTorch 的 `_sum_to` 在形状不匹配时**会静默 reshape**（依赖 `reshape` 的容错），而 Tenth 的方向 A 强制 reshape 失败时返回 `Err`（[autodiff.rs:873-879](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。这是定理 U5 的核心差异。
+差异：PyTorch 的 `_sum_to` 在形状不匹配时**会静默 reshape**（依赖 `reshape` 的容错），而 Tenth 的方向 A 强制 reshape 失败时返回 `Err`（[autodiff.rs:873-879](../../tenth/src/runtime/autodiff.rs)）。这是定理 U5 的核心差异。
 
 ### 2.3 JAX 的 vmap 与 broadcast 对偶
 
@@ -136,8 +136,8 @@ JAX 的优势在于**显式 IR**：每个广播在 JAXPR 中是独立节点，�
 
 ### 2.4 与 T17 / T38(T39) 的联动
 
-- **T17**（[dtype 提升格](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T17-dtype提升格与混合dtype算术.md)）：T17 定理 P5 证明"broadcast + promotion 复合代数在张量层级保持格性质"。本文聚焦于 **shape 维度**的对偶，与 T17 的 **dtype 维度**正交。两者的复合（broadcast shape + promote dtype + unbroadcast shape）在 §10 工程权衡中讨论。
-- **T38/T39**（[autodiff tape 多路径一致性](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T38-autodiff-tape多路径一致性.md)）：T38 证明 tape 节点的多路径同构性，但未深入单个算子反向的形状正确性。本文 U3 定理补全了 Add/Sub/Mul/Div 在 tape 反向阶段的形状守恒证明，是 T38 的细化。
+- **T17**（[dtype 提升格](T17-dtype提升格与混合dtype算术.md)）：T17 定理 P5 证明"broadcast + promotion 复合代数在张量层级保持格性质"。本文聚焦于 **shape 维度**的对偶，与 T17 的 **dtype 维度**正交。两者的复合（broadcast shape + promote dtype + unbroadcast shape）在 §10 工程权衡中讨论。
+- **T38/T39**（[autodiff tape 多路径一致性](T38-autodiff-tape多路径一致性.md)）：T38 证明 tape 节点的多路径同构性，但未深入单个算子反向的形状正确性。本文 U3 定理补全了 Add/Sub/Mul/Div 在 tape 反向阶段的形状守恒证明，是 T38 的细化。
 
 ---
 
@@ -188,7 +188,7 @@ $$
 2. 对每个 $s'_k = 1$ 且 $t_k > 1$ 的轴 $k$，沿轴 $k$ 求和；
 3. reshape 到 $s$。
 
-**注 4.2**：$\upsilon_{t \to s}$ 由 Tenth 的 `unbroadcast` 函数实现（[autodiff.rs:836-883](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。注意 $\upsilon$ 只在 $s \preceq t$ 时良定义；否则求和后的元素数与 $s$ 不一致，触发 reshape 失败（方向 A 返回 `Err`）。
+**注 4.2**：$\upsilon_{t \to s}$ 由 Tenth 的 `unbroadcast` 函数实现（[autodiff.rs:836-883](../../tenth/src/runtime/autodiff.rs)）。注意 $\upsilon$ 只在 $s \preceq t$ 时良定义；否则求和后的元素数与 $s$ 不一致，触发 reshape 失败（方向 A 返回 `Err`）。
 
 ### 4.3 形状偏序集上的伴随关系
 
@@ -220,7 +220,7 @@ $$
 
 **等价表述**：在向量空间范畴上，$\upsilon = \beta^\top$（矩阵转置）；在偏序集范畴上，$\upsilon \dashv \beta$（Galois 连接）。
 
-源码锚点：[autodiff.rs:836-883](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。
+源码锚点：[autodiff.rs:836-883](../../tenth/src/runtime/autodiff.rs)。
 
 ### 定理 U2（任意维度广播代数完备性）
 
@@ -232,7 +232,7 @@ $$
 
 则 `unbroadcast` 在所有三种情形下均能正确归约，且 $\mathcal{B}$ 的三种情形互斥完备。
 
-源码锚点：[autodiff.rs:838-857](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。
+源码锚点：[autodiff.rs:838-857](../../tenth/src/runtime/autodiff.rs)。
 
 ### 定理 U3（Add/Sub/Mul 反向正确性）
 
@@ -245,7 +245,7 @@ $$
 
 满足 $\partial L / \partial a$ 的形状为 $s_a$，$\partial L / \partial b$ 的形状为 $s_b$，且数值正确。
 
-源码锚点：[autodiff.rs:301-337](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。
+源码锚点：[autodiff.rs:301-337](../../tenth/src/runtime/autodiff.rs)。
 
 ### 定理 U4（与 PyTorch/JAX 对比）
 
@@ -255,13 +255,13 @@ $$
 - PyTorch：reshape 失败静默 squeeze（依赖 view 容错），可能掩盖 shape bug；
 - JAX：广播显式 IR，无需重建对齐，但要求显式 `broadcast_to`。
 
-源码锚点：[autodiff.rs:861-879](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。
+源码锚点：[autodiff.rs:861-879](../../tenth/src/runtime/autodiff.rs)。
 
 ### 定理 U5（shape 校验的代数升级）
 
 **陈述**。方向 A 之前，`unbroadcast` 的 reshape 失败被静默处理（返回错误 shape 或零张量），使伴随关系 $\upsilon \dashv \beta$ 在运行时可能被违反而无人察觉。方向 A 之后，reshape 失败返回 `TenthError::RuntimeError`，等价于在运行时**强制执行**伴随关系的前提条件 $s \preceq t$。这使得 `unbroadcast` 从"工程兜底"升级为"代数对偶的运行时守护"。
 
-源码锚点：[autodiff.rs:861-879](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)、[autodiff.rs:270-272](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)（`backward` 签名返回 `Result`）。
+源码锚点：[autodiff.rs:861-879](../../tenth/src/runtime/autodiff.rs)、[autodiff.rs:270-272](../../tenth/src/runtime/autodiff.rs)（`backward` 签名返回 `Result`）。
 
 ---
 
@@ -338,7 +338,7 @@ $$
 
 这意味着 $\upsilon \circ \beta \ne \text{id}$，而是带标量因子的 id。
 
-**v3 修正（关键）**：重新审视 unbroadcast 的定义。Tenth 实现中（[autodiff.rs:853-857](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+**v3 修正（关键）**：重新审视 unbroadcast 的定义。Tenth 实现中（[autodiff.rs:853-857](../../tenth/src/runtime/autodiff.rs)）：
 
 ```rust
 for axis in (0..g_ndim).rev() {
@@ -424,9 +424,9 @@ $$
 \frac{\partial c_i}{\partial a_j} = \begin{cases} 1 & \text{若 } \pi_a(i) = j \\ 0 & \text{否则} \end{cases}
 $$
 
-即 $J_a = B_{s_a \to s_c}$。故 $\bar{a} = J_a^\top \bar{c} = B_{s_a \to s_c}^\top \bar{c} = \upsilon(\bar{c})$。这与 [autodiff.rs:308](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 一致。
+即 $J_a = B_{s_a \to s_c}$。故 $\bar{a} = J_a^\top \bar{c} = B_{s_a \to s_c}^\top \bar{c} = \upsilon(\bar{c})$。这与 [autodiff.rs:308](../../tenth/src/runtime/autodiff.rs) 一致。
 
-**Sub**：$c = a - b$，$J_b = -B_{s_b \to s_c}$，故 $\bar{b} = -B_{s_b \to s_c}^\top \bar{c} = -\upsilon(\bar{c})$。这与 [autodiff.rs:310](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 一致（`unbroadcast(&grad, input_shape)?.mapv(|v| v * sign)`，`sign = -1.0` for Sub）。
+**Sub**：$c = a - b$，$J_b = -B_{s_b \to s_c}$，故 $\bar{b} = -B_{s_b \to s_c}^\top \bar{c} = -\upsilon(\bar{c})$。这与 [autodiff.rs:310](../../tenth/src/runtime/autodiff.rs) 一致（`unbroadcast(&grad, input_shape)?.mapv(|v| v * sign)`，`sign = -1.0` for Sub）。
 
 **Mul**：$c = a \odot b$（逐元素乘，含广播）。$c_i = a_{\pi_a(i)} \cdot b_{\pi_b(i)}$。
 
@@ -436,11 +436,11 @@ $$
 
 故 $\bar{a}_j = \sum_i \bar{c}_i \cdot b_{\pi_b(i)} \cdot \mathbb{1}[\pi_a(i) = j] = \sum_{i: \pi_a(i) = j} (\bar{c} \odot \beta(b))_i = \upsilon(\bar{c} \odot \beta_{s_b \to s_c}(b))_j$。
 
-注意：[autodiff.rs:322](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 中 `&grad * &b_data` 是逐元素乘，但 `b_data` 的形状是 $s_b$ 而非 $s_c$。这里需要 NumPy 的隐式广播——`grad * b_data` 会自动广播到 $s_c$。因此 $\bar{a} = \upsilon(\bar{c} \odot \beta_{s_b \to s_c}(b))$，与理论一致。
+注意：[autodiff.rs:322](../../tenth/src/runtime/autodiff.rs) 中 `&grad * &b_data` 是逐元素乘，但 `b_data` 的形状是 $s_b$ 而非 $s_c$。这里需要 NumPy 的隐式广播——`grad * b_data` 会自动广播到 $s_c$。因此 $\bar{a} = \upsilon(\bar{c} \odot \beta_{s_b \to s_c}(b))$，与理论一致。
 
 **Div**：$c = a \oslash b$。$\partial c_i / \partial a_j = (1/b_{\pi_b(i)}) \mathbb{1}[\pi_a(i)=j]$，$\partial c_i / \partial b_j = (-a_{\pi_a(i)}/b_{\pi_b(i)}^2) \mathbb{1}[\pi_b(i)=j]$。
 
-故 $\bar{a} = \upsilon(\bar{c} \oslash \beta(b))$, $\bar{b} = \upsilon(-\bar{c} \odot \beta(a) \oslash \beta(b)^{\odot 2})$。这与 [autodiff.rs:333-334](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 一致。
+故 $\bar{a} = \upsilon(\bar{c} \oslash \beta(b))$, $\bar{b} = \upsilon(-\bar{c} \odot \beta(a) \oslash \beta(b)^{\odot 2})$。这与 [autodiff.rs:333-334](../../tenth/src/runtime/autodiff.rs) 一致。
 
 **形状守恒**：由推论 7.2.1，$\upsilon$ 的输出形状为 $s_a$（或 $s_b$），满足链式法则的形状守恒。$\square$
 
@@ -460,7 +460,7 @@ $$
 
 **方向 A 之前**：`unbroadcast` 的 reshape 失败被静默处理（返回零张量或保留错误 shape）。等价地，当 $s \not\preceq t$ 时，$\upsilon$ 仍"返回某个值"，但该值不满足伴随关系 $\upsilon = \beta^\top$。这导致链式法则在运行时被**静默违反**——梯度错误但无报错。
 
-**方向 A 之后**：[autodiff.rs:873-879](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 中 reshape 失败返回 `TenthError::RuntimeError`：
+**方向 A 之后**：[autodiff.rs:873-879](../../tenth/src/runtime/autodiff.rs) 中 reshape 失败返回 `TenthError::RuntimeError`：
 
 ```rust
 } else {
@@ -477,7 +477,7 @@ $$
 
 **代数升级**：方向 A 之前，`unbroadcast` 是"工程兜底"——它尽力而为，但不保证代数合法性。方向 A 之后，`unbroadcast` 是"代数对偶的运行时守护"——它要求 $s \preceq t$，否则拒绝执行。这使得定理 U1 的前提条件在运行时被强制维护，伴随关系 $\upsilon = \beta^\top$ 在所有执行的代码路径上成立。
 
-**连锁效应**：由定理 U3，Add/Sub/Mul/Div 的反向正确性依赖 $\upsilon = \beta^\top$。方向 A 之前，若 $s \not\preceq t$（前向广播非法但被静默执行），反向 $\bar{a}$ 的形状可能错误但无人察觉。方向 A 之后，这种情况在反向阶段被 `unbroadcast` 的 reshape 校验捕获，返回 `Err`，由 [autodiff.rs:295-299](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 `acc_grad` 错误传播进一步在 `Input` 叶节点校验梯度形状。这构成了**双重校验**：unbroadcast 校验中间梯度形状，acc_grad 校验叶梯度形状。$\square$
+**连锁效应**：由定理 U3，Add/Sub/Mul/Div 的反向正确性依赖 $\upsilon = \beta^\top$。方向 A 之前，若 $s \not\preceq t$（前向广播非法但被静默执行），反向 $\bar{a}$ 的形状可能错误但无人察觉。方向 A 之后，这种情况在反向阶段被 `unbroadcast` 的 reshape 校验捕获，返回 `Err`，由 [autodiff.rs:295-299](../../tenth/src/runtime/autodiff.rs) 的 `acc_grad` 错误传播进一步在 `Input` 叶节点校验梯度形状。这构成了**双重校验**：unbroadcast 校验中间梯度形状，acc_grad 校验叶梯度形状。$\square$
 
 ---
 
@@ -506,8 +506,8 @@ $$
 
 **unbroadcast 在三种情形下的正确性**：
 
-- **情形一**：[autodiff.rs:838-840](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的快路径 `if grad_shape == target_shape { return Ok(grad.clone()); }` 直接返回，正确。
-- **情形二**：补 1 后 $s' = t$（元素数相同），`padded_target[axis] == 1 && grad_shape[axis] > 1` 永远不成立（因为 $s'_k = 1 \implies t_k = 1 \implies \text{grad\_shape}[k] = 1$）。循环不执行，result 保持 grad 形状 $t$。然后 reshape 到 $s$（[autodiff.rs:860-871](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），元素数相同故 reshape 成功。正确。
+- **情形一**：[autodiff.rs:838-840](../../tenth/src/runtime/autodiff.rs) 的快路径 `if grad_shape == target_shape { return Ok(grad.clone()); }` 直接返回，正确。
+- **情形二**：补 1 后 $s' = t$（元素数相同），`padded_target[axis] == 1 && grad_shape[axis] > 1` 永远不成立（因为 $s'_k = 1 \implies t_k = 1 \implies \text{grad\_shape}[k] = 1$）。循环不执行，result 保持 grad 形状 $t$。然后 reshape 到 $s$（[autodiff.rs:860-871](../../tenth/src/runtime/autodiff.rs)），元素数相同故 reshape 成功。正确。
 - **情形三**：循环对所有 $s'_k = 1, t_k > 1$ 的轴求和。求和后该轴尺寸变为 1，与 $s'_k = 1$ 一致。最终 result 形状 = $s'$（所有轴与 $s'$ 一致）。reshape 到 $s$（去掉前导 1），元素数 $\prod s' = \prod s$（前导 1 不影响元素数），故 reshape 成功。正确。
 
 $\square$
@@ -528,7 +528,7 @@ PyTorch 的 `_sum_to(x, shape)`（`torch/_refs/__init__.py` 与 `torch/csrc/auto
 
 **数学等价性**：步骤 2-3 等价于 Tenth 的"对齐 + 求和 + reshape"。两者都实现 $\beta^\top$。
 
-**差异**：PyTorch 的 `reshape` 在元素数不匹配时会**抛出 RuntimeError**，与方向 A 一致。但 PyTorch 的 `_sum_to` 在反向阶段被调用时，前向广播可能已经隐式发生，PyTorch 依赖 `grad_fn` 的元数据记录原始形状——这与 Tenth 的 tape 节点 `input_tensors[i].borrow().shape()`（[autodiff.rs:303-305](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）等价。
+**差异**：PyTorch 的 `reshape` 在元素数不匹配时会**抛出 RuntimeError**，与方向 A 一致。但 PyTorch 的 `_sum_to` 在反向阶段被调用时，前向广播可能已经隐式发生，PyTorch 依赖 `grad_fn` 的元数据记录原始形状——这与 Tenth 的 tape 节点 `input_tensors[i].borrow().shape()`（[autodiff.rs:303-305](../../tenth/src/runtime/autodiff.rs)）等价。
 
 ### 9.2 JAX `reduce_sum(broadcast)`
 
@@ -536,7 +536,7 @@ JAX 在 JAXPR 中显式记录广播原语 `jax.lax.broadcast`，反向时其 VJP
 
 **数学等价性**：`reduce_sum(g, axes)` 沿 `axes` 求和，等价于 $\beta^\top$。
 
-**差异**：JAX 的 `broadcast_axes` 是显式记录的，而 Tenth 与 PyTorch 一样需要从形状差异中**重建**广播轴。Tenth 重建的方式是"右对齐 + 比较 padded_target 与 grad_shape"（[autodiff.rs:844-857](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），这与 PyTorch 一致，与 JAX 不同。
+**差异**：JAX 的 `broadcast_axes` 是显式记录的，而 Tenth 与 PyTorch 一样需要从形状差异中**重建**广播轴。Tenth 重建的方式是"右对齐 + 比较 padded_target 与 grad_shape"（[autodiff.rs:844-857](../../tenth/src/runtime/autodiff.rs)），这与 PyTorch 一致，与 JAX 不同。
 
 ### 9.3 对比表
 
@@ -649,7 +649,7 @@ T17 定理 P3 的整数 fallback 破坏交换性。当 unbroadcast 与整数 fal
 
 **影响**：reshape 失败的语义（元素数不匹配 vs 形状不匹配）未被代数化，可能掩盖更深的错误。
 
-**缓解**：[autodiff.rs:873-879](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 区分了"reshape 失败"与"元素数不匹配"两种错误，提供不同的错误信息。
+**缓解**：[autodiff.rs:873-879](../../tenth/src/runtime/autodiff.rs) 区分了"reshape 失败"与"元素数不匹配"两种错误，提供不同的错误信息。
 
 **未解决**：reshape 是否应被建模为额外的 functor？
 
@@ -659,7 +659,7 @@ T17 定理 P3 的整数 fallback 破坏交换性。当 unbroadcast 与整数 fal
 
 **影响**：涉及 `i64` 与 `f32` 混合的反向传播可能存在精度问题（前向 `i64 → f32` 损失精度，反向 unbroadcast 求和在 `f32` 上进行）。
 
-**缓解**：autodiff 当前仅在 `f64` 上运行（[autodiff.rs:836](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 `ArrayD<f64>`），故整数 fallback 不影响 autodiff。
+**缓解**：autodiff 当前仅在 `f64` 上运行（[autodiff.rs:836](../../tenth/src/runtime/autodiff.rs) 的 `ArrayD<f64>`），故整数 fallback 不影响 autodiff。
 
 **未解决**：若 autodiff 扩展到 `f32`，复合代数的精度分析需重新进行。
 
@@ -675,7 +675,7 @@ T17 定理 P3 的整数 fallback 破坏交换性。当 unbroadcast 与整数 fal
 
 ### L5：二元算子反向证明假设隐式广播
 
-**是什么**：定理 U3 证明中，Mul 反向的 `&grad * &b_data`（[autodiff.rs:322](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）依赖 ndarray 的隐式广播将 `b_data`（形状 $s_b$）广播到 $s_c$。这一隐式广播未被形式化。
+**是什么**：定理 U3 证明中，Mul 反向的 `&grad * &b_data`（[autodiff.rs:322](../../tenth/src/runtime/autodiff.rs)）依赖 ndarray 的隐式广播将 `b_data`（形状 $s_b$）广播到 $s_c$。这一隐式广播未被形式化。
 
 **影响**：若 ndarray 的隐式广播规则与 NumPy 不一致，证明失效。
 
@@ -699,7 +699,7 @@ T17 定理 P3 的整数 fallback 破坏交换性。当 unbroadcast 与整数 fal
 
 **影响**：`unbroadcast` 的代数合法性仅在 Add/Sub/Mul/Div 上得到证明。
 
-**缓解**：MatMul 等算子的反向有专门的形状逻辑（如 `matmul_2d` [autodiff.rs:887-899](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），不依赖 unbroadcast。
+**缓解**：MatMul 等算子的反向有专门的形状逻辑（如 `matmul_2d` [autodiff.rs:887-899](../../tenth/src/runtime/autodiff.rs)），不依赖 unbroadcast。
 
 **未解决**：其他算子的反向形状归约是否也能表示为某个 $\beta^\top$？
 
@@ -731,11 +731,11 @@ T17 定理 P3 的整数 fallback 破坏交换性。当 unbroadcast 与整数 fal
 
 | 定理 | 陈述 | 证明 | 源码锚点 |
 |------|------|------|---------|
-| U1 | $\upsilon = \beta^\top$ | §7.1, §7.2 | [autodiff.rs:836-883](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| U2 | 任意维度完备性 | §8 | [autodiff.rs:838-857](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| U3 | Add/Sub/Mul/Div 反向正确性 | §7.3 | [autodiff.rs:301-337](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| U4 | 与 PyTorch/JAX 对比 | §9 | [autodiff.rs:861-879](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| U5 | shape 校验的代数升级 | §7.5 | [autodiff.rs:861-879, 270-272](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
+| U1 | $\upsilon = \beta^\top$ | §7.1, §7.2 | [autodiff.rs:836-883](../../tenth/src/runtime/autodiff.rs) |
+| U2 | 任意维度完备性 | §8 | [autodiff.rs:838-857](../../tenth/src/runtime/autodiff.rs) |
+| U3 | Add/Sub/Mul/Div 反向正确性 | §7.3 | [autodiff.rs:301-337](../../tenth/src/runtime/autodiff.rs) |
+| U4 | 与 PyTorch/JAX 对比 | §9 | [autodiff.rs:861-879](../../tenth/src/runtime/autodiff.rs) |
+| U5 | shape 校验的代数升级 | §7.5 | [autodiff.rs:861-879, 270-272](../../tenth/src/runtime/autodiff.rs) |
 
 ## 附录 B：与现有文档的对应
 
@@ -766,9 +766,9 @@ T17 定理 P3 的整数 fallback 破坏交换性。当 unbroadcast 与整数 fal
 4. Wengert, R. (1964). *A simple automatic derivative evaluation program*. Communications of the ACM, 7(8), 463-464.
 5. Griewank, A., & Walther, A. (2008). *Evaluating derivatives: principles and techniques of algorithmic differentiation*. SIAM.
 6. Mac Lane, S. (1971). *Categories for the working mathematician*. Springer.
-7. Tenth 项目. *T17: dtype 提升格与混合 dtype 算术*. [本地文档](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T17-dtype提升格与混合dtype算术.md)
-8. Tenth 项目. *T38: autodiff tape 多路径一致性*. [本地文档](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T38-autodiff-tape多路径一致性.md)
-9. Tenth 项目. *autodiff.rs 源码*. [本地文件](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)
+7. Tenth 项目. *T17: dtype 提升格与混合 dtype 算术*. [本地文档](T17-dtype提升格与混合dtype算术.md)
+8. Tenth 项目. *T38: autodiff tape 多路径一致性*. [本地文档](T38-autodiff-tape多路径一致性.md)
+9. Tenth 项目. *autodiff.rs 源码*. [本地文件](../../tenth/src/runtime/autodiff.rs)
 10. Bradbury, J., et al. (2018). *JAX: composable transformations of Python+NumPy programs*. NeurIPS Autodiff Workshop.
 
 ---

@@ -18,7 +18,7 @@
 | **Tier-2 调用层** | 对每个模块写实际调用程序，覆盖重点疑点模块的全部关键函数；VM 与解释器（`TENTH_NO_VM=1`）双路径各跑一遍 | 30 个程序 × 2 路径 |
 | **官方测试** | 运行 `tenth/std/` 下 9 个 `test_*.th` 官方测试 | 9 个 |
 
-验证脚本/临时文件在 `.trae/tmp/L21_audit/`（不入库）。**未修改任何标准库代码，未提交**。
+验证脚本/临时文件在 `.trae/tmp/L21_audit/`（不入库，该目录已清理）。**未修改任何标准库代码，未提交**。
 
 ---
 
@@ -225,5 +225,5 @@
 
 - 单文件：`cargo test --release --test stdlib_smoke_test` → **56 passed，0 failed**（~2.5s）
 - 全量：`cargo test --release -j 4` → **1902 passed，0 failed，0 回归**（基线 1846 + 56 新增）
-- 未修改任何标准库代码；临时探针在 `.trae/tmp/smoke_probe/`（不入库）。
+- 未修改任何标准库代码；临时探针在 `.trae/tmp/smoke_probe/`（不入库，该目录已清理）。
 - **L2.5 更新（2026-08-02）**：`leaky_relu` 符号、`choice` 语义两缺陷已修复（见 §四 b）；smoke 断言已加强（M03 leaky_relu 数值 sum、M37 choice 返回元素/`choice_index` 返回索引）；`stdlib_test` 新增 6 项语义测试；全量 **1908 passed，0 failed**（基线 1902 + 6 新增），自举 `tenthc/main.th` exit 0。

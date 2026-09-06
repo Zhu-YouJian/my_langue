@@ -43,10 +43,10 @@ WebAssembly（WASM）作为目标平台，对闭包转换施加了若干独特�
 
 ### 1.3 env_ptr + call_indirect 方案
 
-Tenth 在 WASM 中实现闭包采用"env_ptr + call_indirect"方案（[tenth/src/compile/wasm/closures.rs:124-161](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/closures.rs)、[tenth/src/compile/wasm/compile.rs:686-730](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)）：
+Tenth 在 WASM 中实现闭包采用"env_ptr + call_indirect"方案（[tenth/src/compile/wasm/closures.rs:124-161](../../tenth/src/compile/wasm/closures.rs)、[tenth/src/compile/wasm/compile.rs:686-730](../../tenth/src/compile/wasm/compile.rs)）：
 
 - **闭包值表示**：单个 `i64`，高 32 位为 `table_idx`（闭包体函数在 table 中的索引），低 32 位为 `env_ptr`（捕获环境在线性内存中的指针）。
-- **闭包类型签名**：`(i64 env_ptr, i64 param1, ..., i64 paramN) -> i64`，所有参数与返回值统一为 `i64`（[tenth/src/compile/wasm/sections.rs:52-63](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)）。
+- **闭包类型签名**：`(i64 env_ptr, i64 param1, ..., i64 paramN) -> i64`，所有参数与返回值统一为 `i64`（[tenth/src/compile/wasm/sections.rs:52-63](../../tenth/src/compile/wasm/sections.rs)）。
 - **闭包创建**：通过 `tenth_alloc(captures_count * 8)` 分配 env 结构，按捕获顺序写入每个变量；打包 `(table_idx << 32) | env_ptr` 为 `i64`。
 - **闭包调用**：解包 `i64` 为 `fn_ptr` 与 `env_ptr`，按 `[env_ptr, args..., fn_ptr]` 顺序压栈，`call_indirect type_idx 0` 调用。
 - **捕获变量读取**：闭包体内通过 `local.get 0`（env_ptr）+ `i32.const ci*8` + `i64.load` 读取第 `ci` 个捕获变量。
@@ -165,7 +165,7 @@ $$\text{PackedClosure} = (\text{table\_idx} \ll 32) \mid \text{env\_ptr}$$
 - `env_ptr ∈ [0, 2^32 - 1]`：捕获环境结构在线性内存中的字节偏移。
 - `<<` 为左移位，`|` 为按位或。
 
-**对应源码**：[tenth/src/compile/wasm/compile.rs:686-730](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)。
+**对应源码**：[tenth/src/compile/wasm/compile.rs:686-730](../../tenth/src/compile/wasm/compile.rs)。
 
 **定义 3.2（捕获环境 EnvStruct）**：捕获环境为线性内存中连续的字节序列，长度为 `k * 8` 字节（`k` 为捕获数量）：
 
@@ -179,19 +179,19 @@ $$\text{EnvStruct}_i(\text{env\_ptr}) = \text{i64.load}(\text{env\_ptr} + 8i)$$
 
 $$\text{ClosureType}(N) = (i64, \underbrace{i64, \ldots, i64}_{N}) \to i64$$
 
-其中第一个 `i64` 为 `env_ptr`，后 `N` 个 `i64` 为闭包参数。所有参数与返回值统一为 `i64`（[tenth/src/compile/wasm/sections.rs:52-60](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)）。
+其中第一个 `i64` 为 `env_ptr`，后 `N` 个 `i64` 为闭包参数。所有参数与返回值统一为 `i64`（[tenth/src/compile/wasm/sections.rs:52-60](../../tenth/src/compile/wasm/sections.rs)）。
 
 **定义 3.4（闭包索引 cidx）**：每个闭包在编译期由 `collect_closures` 分配唯一索引 `cidx`，与 `closure_info` 列表一一对应：
 
 $$\text{closure\_info}[cidx] = (\text{func\_idx}, \text{type\_idx}, N)$$
 
-其中 `func_idx = IMPORT_COUNT + num\_user\_funcs + 1 + cidx`（[tenth/src/compile/wasm/closures.rs:239-261](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/closures.rs)）。
+其中 `func_idx = IMPORT_COUNT + num\_user\_funcs + 1 + cidx`（[tenth/src/compile/wasm/closures.rs:239-261](../../tenth/src/compile/wasm/closures.rs)）。
 
 **定义 3.5（table 索引映射 TableIdxMap）**：闭包索引 `cidx` 与 table 索引一致——第 `cidx` 个闭包占据 table 的第 `cidx` 项：
 
 $$\text{table}[cidx] = \text{func\_idx}(cidx)$$
 
-由 `emit_elem_section` 通过 `Elements::Functions(&func_idxs)` 填充，起始 offset 为 0（[tenth/src/compile/wasm/sections.rs:148-158](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)）。
+由 `emit_elem_section` 通过 `Elements::Functions(&func_idxs)` 填充，起始 offset 为 0（[tenth/src/compile/wasm/sections.rs:148-158](../../tenth/src/compile/wasm/sections.rs)）。
 
 ### 3.2 操作的形式化
 
@@ -213,7 +213,7 @@ $$\text{AllocateAndStore}(\text{captures}) = \begin{aligned}
 
 $$\text{StoreCapture}(i, \text{cap\_name}, \text{tmp}) = \text{local.get tmp} \ ;;\ \text{i32.wrap\_i64} \ ;;\ \text{local.get}(\text{local\_map}[\text{cap\_name}]) \ ;;\ \text{i64.store}(\text{offset}=8i)$$
 
-**对应源码**：[tenth/src/compile/wasm/compile.rs:686-730](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)。
+**对应源码**：[tenth/src/compile/wasm/compile.rs:686-730](../../tenth/src/compile/wasm/compile.rs)。
 
 **定义 3.7（闭包调用 InvokeClosure）**：对调用 `Call { Var(cv), args }`（其中 `cv` 为闭包变量），`InvokeClosure` 生成：
 
@@ -225,7 +225,7 @@ $$\text{InvokeClosure}(cv, \text{args}, \text{type\_idx}) = \begin{aligned}
 & \ ;;\ \text{call\_indirect}(\text{type\_idx}, \text{table}=0)
 \end{aligned}$$
 
-调用栈最终布局为 `[env_ptr, args..., fn_ptr]`，符合 WASM `call_indirect` 的栈语义（[tenth/src/compile/wasm/compile.rs:300-327](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)）。
+调用栈最终布局为 `[env_ptr, args..., fn_ptr]`，符合 WASM `call_indirect` 的栈语义（[tenth/src/compile/wasm/compile.rs:300-327](../../tenth/src/compile/wasm/compile.rs)）。
 
 **定义 3.8（捕获变量读取 LoadCapture）**：在闭包体内对 `Var(name)` 的读取（`name ∈ current_captures`），`LoadCapture` 生成：
 
@@ -234,7 +234,7 @@ $$\text{LoadCapture}(\text{name}, \text{ci}) = \begin{aligned}
 & \ ;;\ \text{i64.load}(\text{align}=3)
 \end{aligned}$$
 
-其中 `ci = current_captures.position(name)`（[tenth/src/compile/wasm/compile.rs:130-145](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)）。
+其中 `ci = current_captures.position(name)`（[tenth/src/compile/wasm/compile.rs:130-145](../../tenth/src/compile/wasm/compile.rs)）。
 
 ### 3.3 调用栈布局的形式化
 
@@ -250,7 +250,7 @@ $$\text{CallStack} = [\text{env\_ptr}, \text{param}_1, \ldots, \text{param}_N, \
 
 - `local_map = {param_1: 1, param_2: 2, ..., param_N: N}`（参数从 local 1 开始，local 0 为 env_ptr）。
 - `compiling_closure = true`。
-- `current_captures = captures.to_vec()`（[tenth/src/compile/wasm/closures.rs:124-161](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/closures.rs)）。
+- `current_captures = captures.to_vec()`（[tenth/src/compile/wasm/closures.rs:124-161](../../tenth/src/compile/wasm/closures.rs)）。
 
 `Var(name)` 的读取分三种情况：
 
@@ -336,7 +336,7 @@ $$\forall \rho. \llbracket P \rrbracket_\rho = \llbracket \text{CC}(P) \rrbracke
 
 **归纳完整**：所有 HIR 节点类型均覆盖，故 `⟦CC(P)⟧ = ⟦P⟧`。$\square$
 
-**说明**：A1 在 Tenth 的 HIR lowering 阶段保证（若变量未定义，lowering 报错）；A2 由 T22 在四条假设下保证；A3 由 `compile.rs` 的类型转换逻辑保证（[tenth/src/compile/wasm/compile.rs:714-723](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)）。
+**说明**：A1 在 Tenth 的 HIR lowering 阶段保证（若变量未定义，lowering 报错）；A2 由 T22 在四条假设下保证；A3 由 `compile.rs` 的类型转换逻辑保证（[tenth/src/compile/wasm/compile.rs:714-723](../../tenth/src/compile/wasm/compile.rs)）。
 
 ### 4.2 定理 C2（env_ptr 偏移正确性）
 
@@ -352,7 +352,7 @@ $$\llbracket \text{LoadCapture}(\text{cap}_i, i) \rrbracket = \text{EnvStruct}_i
 
 $$\text{StoreCapture}(i, \text{cap}_i, \text{tmp}) = \text{local.get tmp} \ ;;\ \text{i32.wrap\_i64} \ ;;\ \text{local.get}(\text{local\_map}[\text{cap}_i]) \ ;;\ \text{i64.store}(\text{offset}=8i)$$
 
-源码：[tenth/src/compile/wasm/compile.rs:710-724](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)：
+源码：[tenth/src/compile/wasm/compile.rs:710-724](../../tenth/src/compile/wasm/compile.rs)：
 
 ```rust
 for (ci, cap_name) in captures.iter().enumerate() {
@@ -376,7 +376,7 @@ $$\text{Memory}[\text{env\_ptr} + 8i] = \rho[\text{cap}_i]$$
 
 $$\text{LoadCapture}(\text{cap}_i, \text{ci}) = \text{local.get 0} \ ;;\ \text{i32.wrap\_i64} \ ;;\ \text{i32.const}(8 \cdot \text{ci}) \ ;;\ \text{i32.add} \ ;;\ \text{i64.load}$$
 
-源码：[tenth/src/compile/wasm/compile.rs:130-145](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)：
+源码：[tenth/src/compile/wasm/compile.rs:130-145](../../tenth/src/compile/wasm/compile.rs)：
 
 ```rust
 if let Some(ci) = self.current_captures.iter().position(|c| c == name) {
@@ -392,7 +392,7 @@ if let Some(ci) = self.current_captures.iter().position(|c| c == name) {
 
 `local.get 0` 取 env_ptr（i64），`i32.wrap_i64` 截断为 i32 地址，`i32.const 8ci + i32.add` 计算地址 `env_ptr + 8ci`，`i64.load` 读取 `Memory[env_ptr + 8ci]`。
 
-**关键观察**：`ci = current_captures.position(cap_i)`，且 `current_captures = captures.to_vec()`（在 `compile_closure_body` 中设置，[tenth/src/compile/wasm/closures.rs:148](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/closures.rs)）。故 `ci = i`（写入时的索引）。
+**关键观察**：`ci = current_captures.position(cap_i)`，且 `current_captures = captures.to_vec()`（在 `compile_closure_body` 中设置，[tenth/src/compile/wasm/closures.rs:148](../../tenth/src/compile/wasm/closures.rs)）。故 `ci = i`（写入时的索引）。
 
 **合并两端**：
 
@@ -413,7 +413,7 @@ $$\llbracket \text{LoadCapture}(\text{cap}_i, i) \rrbracket = \text{Memory}[\tex
 
 **部分 1（table 填充）**：
 
-由定义 3.4，`closure_info[cidx] = (func_idx, type_idx, N)`，其中 `func_idx = IMPORT_COUNT + num_user_funcs + 1 + cidx`（[tenth/src/compile/wasm/closures.rs:253-254](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/closures.rs)）：
+由定义 3.4，`closure_info[cidx] = (func_idx, type_idx, N)`，其中 `func_idx = IMPORT_COUNT + num_user_funcs + 1 + cidx`（[tenth/src/compile/wasm/closures.rs:253-254](../../tenth/src/compile/wasm/closures.rs)）：
 
 ```rust
 let cidx = self.closure_info.len() as u32;
@@ -422,7 +422,7 @@ let param_count = params.len() as u32;
 self.closure_info.push((func_idx, 0, param_count));
 ```
 
-由 `emit_elem_section`（[tenth/src/compile/wasm/sections.rs:148-158](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)）：
+由 `emit_elem_section`（[tenth/src/compile/wasm/sections.rs:148-158](../../tenth/src/compile/wasm/sections.rs)）：
 
 ```rust
 let func_idxs: Vec<u32> = self.closure_info.iter().map(|&(fi, _, _)| fi).collect();
@@ -450,7 +450,7 @@ $$\text{table}[i] = \text{func\_idx}(i) = \text{closure\_info}[i].0$$
 
 `call_indirect` 通过 `fn_ptr` 索引 table，调用 `table[fn_ptr] = table[cidx] = func_idx(cidx)`，即第 `cidx` 个闭包的 WASM 函数。✓
 
-源码：[tenth/src/compile/wasm/compile.rs:692-694](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)：
+源码：[tenth/src/compile/wasm/compile.rs:692-694](../../tenth/src/compile/wasm/compile.rs)：
 
 ```rust
 let (_func_idx, _type_idx, _pc) = self.closure_info[cidx];
@@ -556,7 +556,7 @@ $\square$
 if let Some(ci) = self.current_captures.iter().position(|c| c == name) {
 ```
 
-源码：[tenth/src/compile/wasm/compile.rs:132](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)。每次比较为 `O(|name|)`（字符串比较），共 `O(k)` 次。设最大名称长度为 `L`（常数），则定位为 `O(k · L) = O(k)`。✓
+源码：[tenth/src/compile/wasm/compile.rs:132](../../tenth/src/compile/wasm/compile.rs)。每次比较为 `O(|name|)`（字符串比较），共 `O(k)` 次。设最大名称长度为 `L`（常数），则定位为 `O(k · L) = O(k)`。✓
 
 **注意**：这是**编译期**复杂度（在 `compile_expr` 中执行），非运行期。运行期生成的指令为 `O(1)`（见 1）。
 
@@ -595,8 +595,8 @@ $$T = O(A) + O(1) + O(u) = O(A + u)$$
 
 **7. 编译期 table 生成复杂度**：
 
-`emit_table_section`（[tenth/src/compile/wasm/sections.rs:124-138](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)）创建 1 个 table，`O(1)`。
-`emit_elem_section`（[tenth/src/compile/wasm/sections.rs:148-158](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)）填充 `N` 个元素，`O(N)`。
+`emit_table_section`（[tenth/src/compile/wasm/sections.rs:124-138](../../tenth/src/compile/wasm/sections.rs)）创建 1 个 table，`O(1)`。
+`emit_elem_section`（[tenth/src/compile/wasm/sections.rs:148-158](../../tenth/src/compile/wasm/sections.rs)）填充 `N` 个元素，`O(N)`。
 
 故编译期 table 生成 `O(N)`。✓
 
@@ -615,7 +615,7 @@ $\square$
 
 ### 5.1 闭包创建的实现
 
-**源码**：[tenth/src/compile/wasm/compile.rs:686-730](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)。
+**源码**：[tenth/src/compile/wasm/compile.rs:686-730](../../tenth/src/compile/wasm/compile.rs)。
 
 实现要点：
 
@@ -636,11 +636,11 @@ $\square$
 
 ### 5.2 闭包调用的实现
 
-**源码**：[tenth/src/compile/wasm/compile.rs:300-327](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)。
+**源码**：[tenth/src/compile/wasm/compile.rs:300-327](../../tenth/src/compile/wasm/compile.rs)。
 
 实现要点：
 
-1. **闭包变量检测**：通过 `closure_vars.get(&fname)` 检测 `fname` 是否为闭包变量。`closure_vars` 在 `Let` 语句处理时填充（[tenth/src/compile/wasm/compile.rs:762-771](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)）——若 `init` 是 `Closure`，将变量名映射到 `type_idx`。
+1. **闭包变量检测**：通过 `closure_vars.get(&fname)` 检测 `fname` 是否为闭包变量。`closure_vars` 在 `Let` 语句处理时填充（[tenth/src/compile/wasm/compile.rs:762-771](../../tenth/src/compile/wasm/compile.rs)）——若 `init` 是 `Closure`，将变量名映射到 `type_idx`。
 2. **解包**：
    - `fn_ptr = cv >> 32`（`i64.shr_u`），存入临时 local `tmp`。
    - `env_ptr = cv & 0xFFFFFFFF`（`i64.and`）。
@@ -654,7 +654,7 @@ $\square$
 
 ### 5.3 闭包体编译的实现
 
-**源码**：[tenth/src/compile/wasm/closures.rs:124-161](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/closures.rs)。
+**源码**：[tenth/src/compile/wasm/closures.rs:124-161](../../tenth/src/compile/wasm/closures.rs)。
 
 实现要点：
 
@@ -672,7 +672,7 @@ $\square$
 
 ### 5.4 捕获变量读取的实现
 
-**源码**：[tenth/src/compile/wasm/compile.rs:130-145](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)。
+**源码**：[tenth/src/compile/wasm/compile.rs:130-145](../../tenth/src/compile/wasm/compile.rs)。
 
 实现要点：
 
@@ -691,7 +691,7 @@ $\square$
 
 ### 5.5 table 与 elem 段的生成
 
-**源码**：[tenth/src/compile/wasm/sections.rs:124-158](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)。
+**源码**：[tenth/src/compile/wasm/sections.rs:124-158](../../tenth/src/compile/wasm/sections.rs)。
 
 实现要点：
 
@@ -706,7 +706,7 @@ $\square$
 
 ### 5.6 类型段的生成
 
-**源码**：[tenth/src/compile/wasm/sections.rs:52-63](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)。
+**源码**：[tenth/src/compile/wasm/sections.rs:52-63](../../tenth/src/compile/wasm/sections.rs)。
 
 实现要点：
 
@@ -787,11 +787,11 @@ WASM 的结构化控制流（`block`/`loop`/`if`）对闭包转换的影响：
 
 - **无 continuation**：CPS 变换通常依赖 continuation，但 WASM 的结构化控制流不支持任意 continuation。Tenth 的方案避免 continuation——env_ptr 作为显式参数传递，无需 continuation。
 - **无尾调用优化（MVP）**：递归闭包调用可能栈溢出。Tail-call proposal（`return_call`）尚未广泛实现。Tenth 当前未使用 `return_call`。
-- **Block 限定的控制流**：`break`/`continue` 通过 `br` 指令实现，限定向外层 `block`/`loop`。闭包体内的 `break`/`continue` 需正确处理 `if_depths` 栈（[tenth/src/compile/wasm/closures.rs:136-139](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/closures.rs)）。
+- **Block 限定的控制流**：`break`/`continue` 通过 `br` 指令实现，限定向外层 `block`/`loop`。闭包体内的 `break`/`continue` 需正确处理 `if_depths` 栈（[tenth/src/compile/wasm/closures.rs:136-139](../../tenth/src/compile/wasm/closures.rs)）。
 
 ### 7.2 单一 table 限制的影响
 
-WASM MVP 只支持一个 `funcref` table（[tenth/src/compile/wasm/sections.rs:130-137](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)）：
+WASM MVP 只支持一个 `funcref` table（[tenth/src/compile/wasm/sections.rs:130-137](../../tenth/src/compile/wasm/sections.rs)）：
 
 - **全局单一 table**：所有闭包共享同一 table，无模块隔离。
 - **table 索引全局唯一**：`cidx` 在整个模块内唯一，跨模块互操作需额外协调。
@@ -948,7 +948,7 @@ WASM `call_indirect` 通过 `type_index` 进行运行期类型检查：
 
 **现象**：env_ptr 打包在 i64 的低 32 位，截断为 i32 后用于线性内存寻址。这限制线性内存上限为 4GB（`i32` 地址空间）。
 
-**根源**：[tenth/src/compile/wasm/compile.rs:704, 712](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs) 的 `I64ExtendI32U` 与 `I32WrapI64` 指令。
+**根源**：[tenth/src/compile/wasm/compile.rs:704, 712](../../tenth/src/compile/wasm/compile.rs) 的 `I64ExtendI32U` 与 `I32WrapI64` 指令。
 
 **影响**：若 Tenth 程序的线性内存需求超过 4GB（如大规模张量计算），env_ptr 截断会导致地址错误。当前 `emit_memory_section` 设置 `minimum: 16, maximum: Some(256)` 页（每页 64KB，共 16MB），远低于 4GB，故实践中不触发。
 
@@ -965,7 +965,7 @@ WASM `call_indirect` 通过 `type_index` 进行运行期类型检查：
 
 **现象**：捕获变量按值复制（`i64.store` 写入 env 结构），闭包内对捕获变量的修改不影响外层。Tenth 的闭包体内 `Var(name)` 读取捕获变量后，无 `i64.store` 写回——**捕获变量在闭包内是只读的**。
 
-**根源**：[tenth/src/compile/wasm/compile.rs:710-724](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs) 的 `StoreCapture` 仅在闭包创建时写入，闭包体内无写回机制。`Assign` 节点在闭包内只支持局部变量赋值（`local_map`），不支持写回 env 结构。
+**根源**：[tenth/src/compile/wasm/compile.rs:710-724](../../tenth/src/compile/wasm/compile.rs) 的 `StoreCapture` 仅在闭包创建时写入，闭包体内无写回机制。`Assign` 节点在闭包内只支持局部变量赋值（`local_map`），不支持写回 env 结构。
 
 **影响**：
 
@@ -995,7 +995,7 @@ println(counter);  // 期望 1，实际 0（按值复制，外层 counter 不变
 
 **现象**：WASM MVP 只支持一个 `funcref` table，所有闭包共享同一 table，无模块隔离。
 
-**根源**：[tenth/src/compile/wasm/sections.rs:130-137](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs) 的 `emit_table_section` 创建单一 table。
+**根源**：[tenth/src/compile/wasm/sections.rs:130-137](../../tenth/src/compile/wasm/sections.rs) 的 `emit_table_section` 创建单一 table。
 
 **影响**：
 
@@ -1160,7 +1160,7 @@ println(counter);  // 期望 1，实际 0（按值复制，外层 counter 不变
 
 **挑战**：
 
-- 当前 fallback 到 `i64.const 0`（[tenth/src/compile/wasm/compile.rs:718-721](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)）掩盖了 T22 的错误。
+- 当前 fallback 到 `i64.const 0`（[tenth/src/compile/wasm/compile.rs:718-721](../../tenth/src/compile/wasm/compile.rs)）掩盖了 T22 的错误。
 
 ---
 
@@ -1207,13 +1207,13 @@ println(counter);  // 期望 1，实际 0（按值复制，外层 counter 不变
 9. WebAssembly. (2023). *Reference Types Proposal*. https://github.com/WebAssembly/reference-types
 10. WebAssembly. (2023). *Tail Call Proposal*. https://github.com/WebAssembly/tail-call
 11. WebAssembly. (2023). *GC Proposal*. https://github.com/WebAssembly/gc
-12. Tenth 项目. (2026). *WASM 闭包编译实现*. [tenth/src/compile/wasm/closures.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/closures.rs)
-13. Tenth 项目. (2026). *WASM 段生成*. [tenth/src/compile/wasm/sections.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)
-14. Tenth 项目. (2026). *WASM 表达式编译*. [tenth/src/compile/wasm/compile.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)
-15. Tenth 项目. (2026). *WASM 编译器状态*. [tenth/src/compile/wasm/mod.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs)
-16. Tenth 项目. (2026). *T22：Closure 自由变量分析正确性*. [docs/论文/T22-Closure自由变量分析正确性.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T22-Closure自由变量分析正确性.md)
-17. Tenth 项目. (2026). *自由变量分析实现*. [tenth/src/hir/lower/closures.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/closures.rs)
-18. Tenth 项目. (2026). *工作规范 v1.1*. `.trae/rules/工作规范.md`
+12. Tenth 项目. (2026). *WASM 闭包编译实现*. [tenth/src/compile/wasm/closures.rs](../../tenth/src/compile/wasm/closures.rs)
+13. Tenth 项目. (2026). *WASM 段生成*. [tenth/src/compile/wasm/sections.rs](../../tenth/src/compile/wasm/sections.rs)
+14. Tenth 项目. (2026). *WASM 表达式编译*. [tenth/src/compile/wasm/compile.rs](../../tenth/src/compile/wasm/compile.rs)
+15. Tenth 项目. (2026). *WASM 编译器状态*. [tenth/src/compile/wasm/mod.rs](../../tenth/src/compile/wasm/mod.rs)
+16. Tenth 项目. (2026). *T22：Closure 自由变量分析正确性*. [docs/论文/T22-Closure自由变量分析正确性.md](T22-Closure自由变量分析正确性.md)
+17. Tenth 项目. (2026). *自由变量分析实现*. [tenth/src/hir/lower/closures.rs](../../tenth/src/hir/lower/closures.rs)
+18. Tenth 项目. (2026). *工作规范 v1.1*. `.agents/rules/工作规范.md`
 
 ---
 
@@ -1285,4 +1285,4 @@ T30 的语义保持（C1）依赖 T22 的 FV 分析完备性（A2 假设）。�
 
 ---
 
-> **数理部声明**：本文的理论结论基于对 [tenth/src/compile/wasm/closures.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/closures.rs)、[tenth/src/compile/wasm/sections.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)、[tenth/src/compile/wasm/compile.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)、[tenth/src/compile/wasm/mod.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs)（v0.3.3+）的源码分析。所有源码引用均使用 `file://` 链接标注。局限章节诚实披露了证明的漏洞与假设的强度，未掩盖任何已知问题。实施建议附录将理论结论转化为可执行指导，但未实施任何代码修改——实施由编译器部负责。与 T22 的联动关系在附录 D 中显式说明，T30 的语义保持强依赖 T22 的完备性结论。
+> **数理部声明**：本文的理论结论基于对 [tenth/src/compile/wasm/closures.rs](../../tenth/src/compile/wasm/closures.rs)、[tenth/src/compile/wasm/sections.rs](../../tenth/src/compile/wasm/sections.rs)、[tenth/src/compile/wasm/compile.rs](../../tenth/src/compile/wasm/compile.rs)、[tenth/src/compile/wasm/mod.rs](../../tenth/src/compile/wasm/mod.rs)（v0.3.3+）的源码分析。所有源码引用均使用 `file://` 链接标注。局限章节诚实披露了证明的漏洞与假设的强度，未掩盖任何已知问题。实施建议附录将理论结论转化为可执行指导，但未实施任何代码修改——实施由编译器部负责。与 T22 的联动关系在附录 D 中显式说明，T30 的语义保持强依赖 T22 的完备性结论。

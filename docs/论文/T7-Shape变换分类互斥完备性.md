@@ -11,7 +11,7 @@
 
 ## 摘要
 
-本文对 Tenth 语言的 21 个自动微分算子（`TapeOp`）的 shape 变换行为进行形式化分类,证明 **Construct / Preserve / Reduce / Expand** 四元分类的互斥性与完备性。我们将每个算子的 shape 语义抽象为变换函数 $\sigma: \mathcal{S}^{k} \to \mathcal{S}$,基于"维度秩的增减"与"维度是否被收缩/广播"两条结构性判据,对 [`runtime/autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 中全部 21 个 `TapeOp` 变体完成归类。主要结果:(1)**定理 T7-1**(互斥性)四类变换两两不相交,任意算子在固定输入下至多归属一类;(2)**定理 T7-2**(完备性)四类变换覆盖 Tenth 全部 21 个 `TapeOp`,分布为 Construct×1、Preserve×11、Reduce×5、Expand×4;(3)**定理 T7-3**(分类稳定性)分类对一元复合算子封闭,复合的分类可由子算子分类的" supremum"判定。本文诚实记录 6 处理论局限,重点处理三类边界情形:`Transpose`(置换型 Preserve)、`MatMul`/`Conv2D`(收缩型 Reduce,秩不严格单调)、`Add` 系列(广播型 Expand,同 shape 时退化为 Preserve)。完备性保证 shape 推断算法对 21 个算子无遗漏,为护城河 F(张量关系调试器)与护城河 A(Autograd 反向 Shape 静态验证)提供分类学基础。
+本文对 Tenth 语言的 21 个自动微分算子（`TapeOp`）的 shape 变换行为进行形式化分类,证明 **Construct / Preserve / Reduce / Expand** 四元分类的互斥性与完备性。我们将每个算子的 shape 语义抽象为变换函数 $\sigma: \mathcal{S}^{k} \to \mathcal{S}$,基于"维度秩的增减"与"维度是否被收缩/广播"两条结构性判据,对 [`runtime/autodiff.rs`](../../tenth/src/runtime/autodiff.rs) 中全部 21 个 `TapeOp` 变体完成归类。主要结果:(1)**定理 T7-1**(互斥性)四类变换两两不相交,任意算子在固定输入下至多归属一类;(2)**定理 T7-2**(完备性)四类变换覆盖 Tenth 全部 21 个 `TapeOp`,分布为 Construct×1、Preserve×11、Reduce×5、Expand×4;(3)**定理 T7-3**(分类稳定性)分类对一元复合算子封闭,复合的分类可由子算子分类的" supremum"判定。本文诚实记录 6 处理论局限,重点处理三类边界情形:`Transpose`(置换型 Preserve)、`MatMul`/`Conv2D`(收缩型 Reduce,秩不严格单调)、`Add` 系列(广播型 Expand,同 shape 时退化为 Preserve)。完备性保证 shape 推断算法对 21 个算子无遗漏,为护城河 F(张量关系调试器)与护城河 A(Autograd 反向 Shape 静态验证)提供分类学基础。
 
 **关键词**:shape 变换分类、互斥完备性、TapeOp、自动微分、shape 推断、张量算子、形式化证明、Tenth 语言
 
@@ -21,7 +21,7 @@
 
 ### 1.1 shape 推断算法的完整性需求
 
-AI 原生编程语言的核心能力之一是**编译期与运行时的 shape 推断**(shape inference)。Tenth 的 shape 推断分两层:编译期由 [`hir/lower/types.rs::resolve_method_type`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)(第 219-386 行)按算子名查表推断输出 shape;运行时由 [`runtime/autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 `Tape::forward` 在执行时记录每个 `TapeNode` 的输入输出张量 shape。
+AI 原生编程语言的核心能力之一是**编译期与运行时的 shape 推断**(shape inference)。Tenth 的 shape 推断分两层:编译期由 [`hir/lower/types.rs::resolve_method_type`](../../tenth/src/hir/lower/types.rs)(第 219-386 行)按算子名查表推断输出 shape;运行时由 [`runtime/autodiff.rs`](../../tenth/src/runtime/autodiff.rs) 的 `Tape::forward` 在执行时记录每个 `TapeNode` 的输入输出张量 shape。
 
 shape 推断算法的**完整性**(completeness)要求:对语言支持的每一个算子,推断算法都有对应的规则,不存在"无规则可查"的算子。若某算子无推断规则,程序中该算子的输出 shape 将退化为 `Any`(完全未知),后续 shape 检查失效,shape 错误可能延迟到运行时才暴露,违背 Tenth"早报错"的设计原则(见护城河 A/D)。
 
@@ -34,7 +34,7 @@ shape 变换分类不仅服务于完整性论证,还指导编译器优化:
 - **内存复用**:Preserve 类算子(如 `Exp`/`Log`)的输出可与输入共享缓冲区或原地计算(若 dtype 一致)。
 - **算子融合**:相邻的 Preserve 类算子可融合为单一 kernel(如 `Exp → Mul` 融合为 `Swish` 激活)。
 - **shape 静态传播**:Preserve 类的输出 shape 等于输入,无需额外计算;Reduce/Expand 类需特定公式。
-- **根因诊断**:护城河 F(见 [`形式化分析理论可行性论证.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) §3)的根因候选集上界依赖分类——非 Preserve 类算子是 shape 漂移的主要嫌疑。
+- **根因诊断**:护城河 F(见 [`形式化分析理论可行性论证.md`](../shape-check-roadmap/形式化分析理论可行性论证.md) §3)的根因候选集上界依赖分类——非 Preserve 类算子是 shape 漂移的主要嫌疑。
 
 ### 1.3 研究问题与贡献
 
@@ -47,7 +47,7 @@ shape 变换分类不仅服务于完整性论证,还指导编译器优化:
 **贡献**:
 
 1. **形式化定义**(§3):将 shape 变换抽象为函数 $\sigma: \mathcal{S}^{k} \to \mathcal{S}$,给出四类的形式化判据,并扩展到二元算子。
-2. **实证分类**(§4):对 [`autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 第 30-79 行定义的全部 21 个 `TapeOp` 变体逐一归类,每个分类附源码行号证据。
+2. **实证分类**(§4):对 [`autodiff.rs`](../../tenth/src/runtime/autodiff.rs) 第 30-79 行定义的全部 21 个 `TapeOp` 变体逐一归类,每个分类附源码行号证据。
 3. **三个主定理**(§5):互斥性(T7-1)、完备性(T7-2)、分类稳定性(T7-3),附完整证明。
 4. **shape 推断指导**(§6):每类的推断规则与无遗漏性证明。
 5. **诚实局限**(§8):独立章节记录 6 处局限,重点处理三类边界情形。
@@ -71,7 +71,7 @@ shape 变换分类不仅服务于完整性论证,还指导编译器优化:
 
 **代数数据类型**(ADT)将类型分为"和类型"(sum,tagged union)与"积类型"(product,struct)。Haskell 的 `Functor` 类型类进一步将类型构造子按 `fmap` 的行为分类。shape 变换分类借鉴这一思路:将算子按"shape 的代数变换"分类,而非按"数值语义"分类。
 
-**Hindley-Milner 类型推断**中,类型变量间的约束($\alpha = \beta$、$\alpha = \text{Int}$)构成合一(unification)问题。shape 推断类比:shape 变量间的约束($d_i = d_j$、$d_i = c$)构成求解问题(见 [`T3-HIR约束求解NP完全性归约.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T3-HIR约束求解NP完全性归约.md))。分类法将算子约束按"等式型"(Preserve)、"不等式型"(Reduce/Expand)、"无约束型"(Construct)归类,简化约束系统的结构分析。
+**Hindley-Milner 类型推断**中,类型变量间的约束($\alpha = \beta$、$\alpha = \text{Int}$)构成合一(unification)问题。shape 推断类比:shape 变量间的约束($d_i = d_j$、$d_i = c$)构成求解问题(见 [`T3-HIR约束求解NP完全性归约.md`](T3-HIR约束求解NP完全性归约.md))。分类法将算子约束按"等式型"(Preserve)、"不等式型"(Reduce/Expand)、"无约束型"(Construct)归类,简化约束系统的结构分析。
 
 ### 2.2 NumPy 的 ufunc 分类
 
@@ -88,11 +88,11 @@ XLA(Google TPU 编译器)的 HLO 算子有显式的 shape inference 函数(见 `
 
 ### 2.4 与 T1 Shape 代数的关系
 
-[`T1-Shape代数系统的形式化建模.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T1-Shape代数系统的形式化建模.md) 建模了 Tenth 的 `Dim` 三值域与广播运算 $\oplus$ 的代数性质,证明 $\oplus$ 在 `Known ∪ {Any}` 片段构成有界半格。本文的 Expand 类(广播型)直接依赖 T1 的广播代数——`Add`/`Sub`/`Mul`/`Div` 的 shape 推断规则即 T1 的 $\oplus$ 运算。T1 关注"维度值的代数",本文关注"shape 变换的分类",两者互补:T1 提供 Expand 类的理论基础,本文提供跨类的完整性保证。
+[`T1-Shape代数系统的形式化建模.md`](T1-Shape代数系统的形式化建模.md) 建模了 Tenth 的 `Dim` 三值域与广播运算 $\oplus$ 的代数性质,证明 $\oplus$ 在 `Known ∪ {Any}` 片段构成有界半格。本文的 Expand 类(广播型)直接依赖 T1 的广播代数——`Add`/`Sub`/`Mul`/`Div` 的 shape 推断规则即 T1 的 $\oplus$ 运算。T1 关注"维度值的代数",本文关注"shape 变换的分类",两者互补:T1 提供 Expand 类的理论基础,本文提供跨类的完整性保证。
 
 ### 2.5 与 T8 四级解释分类的关系
 
-[`T8-Shape解释关系四级分类.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T8-Shape解释关系四级分类.md) 定义根因解释的四级分类(DefinitelyRoot / ExplainsError / PartialExplain / Unrelated),其中 (C2) 条件依赖本文的 `Class(v)` 分类(Construct/Preserve/Reduce/Expand,见 [`形式化分析理论可行性论证.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) §2.2 定义 2.4)。本文证明的分类完备性是 T8 根因分析"无遗漏"的前提——若分类不完备,某些算子无法计算 `Class(v)`,T8 的候选集会漏报。
+[`T8-Shape解释关系四级分类.md`](T8-Shape解释关系四级分类.md) 定义根因解释的四级分类(DefinitelyRoot / ExplainsError / PartialExplain / Unrelated),其中 (C2) 条件依赖本文的 `Class(v)` 分类(Construct/Preserve/Reduce/Expand,见 [`形式化分析理论可行性论证.md`](../shape-check-roadmap/形式化分析理论可行性论证.md) §2.2 定义 2.4)。本文证明的分类完备性是 T8 根因分析"无遗漏"的前提——若分类不完备,某些算子无法计算 `Class(v)`,T8 的候选集会漏报。
 
 ---
 
@@ -106,17 +106,17 @@ XLA(Google TPU 编译器)的 HLO 算子有显式的 shape inference 函数(见 `
 - **体积**(volume):$|s| = \prod_{i=1}^{n} d_i$,约定 $|\epsilon| = 1$(空积)。
 - **维度多重集**:$\mathrm{ms}(s) = \{d_1, \ldots, d_n\}_{\text{multi}}$(允许重复元素的无序集合)。
 
-**定义 3.2(TapeOp 算子集)**。Tenth 的自动微分算子集合 $\mathcal{O}$ 定义于 [`runtime/autodiff.rs:30-79`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs),共 21 个变体:
+**定义 3.2(TapeOp 算子集)**。Tenth 的自动微分算子集合 $\mathcal{O}$ 定义于 [`runtime/autodiff.rs:30-79`](../../tenth/src/runtime/autodiff.rs),共 21 个变体:
 
 $$\mathcal{O} = \{\textsf{Input}, \textsf{Add}, \textsf{Sub}, \textsf{Mul}, \textsf{Div}, \textsf{Neg}, \textsf{ReLU}, \textsf{MatMul}, \textsf{Transpose}, \textsf{Sum}, \textsf{Mean}, \textsf{Exp}, \textsf{Log}, \textsf{Sigmoid}, \textsf{Softmax}, \textsf{CrossEntropy}, \textsf{Dropout}, \textsf{Conv2D}, \textsf{BatchNorm}, \textsf{LayerNorm}, \textsf{Gelu}\}$$
 
 每个算子 $op \in \mathcal{O}$ 有固定元数 $k_{op}$(输入数,见 `TapeNode.inputs` 的长度约定):
 
-- $k_{\textsf{Input}} = 0$(无上游 Tape 节点,见 [`autodiff.rs:99-106`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `inputs: vec![]`)。
-- $k_{\textsf{Neg}}, k_{\textsf{ReLU}}, \ldots, k_{\textsf{Gelu}} = 1$(一元算子,见 [`autodiff.rs:113-122`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `unary` 的 `inputs: vec![input_id]`)。
-- $k_{\textsf{Add}}, k_{\textsf{Sub}}, k_{\textsf{Mul}}, k_{\textsf{Div}}, k_{\textsf{MatMul}}, k_{\textsf{Conv2D}} = 2$(二元算子,见 [`autodiff.rs:128-137`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `binary` 的 `inputs: vec![a_id, b_id]`)。
+- $k_{\textsf{Input}} = 0$(无上游 Tape 节点,见 [`autodiff.rs:99-106`](../../tenth/src/runtime/autodiff.rs) `inputs: vec![]`)。
+- $k_{\textsf{Neg}}, k_{\textsf{ReLU}}, \ldots, k_{\textsf{Gelu}} = 1$(一元算子,见 [`autodiff.rs:113-122`](../../tenth/src/runtime/autodiff.rs) `unary` 的 `inputs: vec![input_id]`)。
+- $k_{\textsf{Add}}, k_{\textsf{Sub}}, k_{\textsf{Mul}}, k_{\textsf{Div}}, k_{\textsf{MatMul}}, k_{\textsf{Conv2D}} = 2$(二元算子,见 [`autodiff.rs:128-137`](../../tenth/src/runtime/autodiff.rs) `binary` 的 `inputs: vec![a_id, b_id]`)。
 
-**注**:`CrossEntropy`/`BatchNorm`/`LayerNorm`/`Dropout` 在 Tape 注册时 `inputs` 字段只有 1 个上游节点(见 [`autodiff.rs:157-208`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `cross_entropy`/`batchnorm`/`layernorm`/`dropout`),但 `input_tensors` 含多个张量(如 `target`、`gamma`、`beta`、`mask`)。从 shape 流的角度,$k_{op}$ 按**上游 Tape 节点数**计算(即 `inputs.len()`),辅助张量(`target`/`gamma`/`mask` 等)不参与 shape 流的主链路。故 $k_{\textsf{CrossEntropy}} = k_{\textsf{BatchNorm}} = k_{\textsf{LayerNorm}} = k_{\textsf{Dropout}} = 1$。
+**注**:`CrossEntropy`/`BatchNorm`/`LayerNorm`/`Dropout` 在 Tape 注册时 `inputs` 字段只有 1 个上游节点(见 [`autodiff.rs:157-208`](../../tenth/src/runtime/autodiff.rs) `cross_entropy`/`batchnorm`/`layernorm`/`dropout`),但 `input_tensors` 含多个张量(如 `target`、`gamma`、`beta`、`mask`)。从 shape 流的角度,$k_{op}$ 按**上游 Tape 节点数**计算(即 `inputs.len()`),辅助张量(`target`/`gamma`/`mask` 等)不参与 shape 流的主链路。故 $k_{\textsf{CrossEntropy}} = k_{\textsf{BatchNorm}} = k_{\textsf{LayerNorm}} = k_{\textsf{Dropout}} = 1$。
 
 ### 3.2 Shape 变换函数
 
@@ -126,11 +126,11 @@ $$\sigma_{op}: \mathcal{S}^{k_{op}} \to \mathcal{S} \cup \{\bot\}$$
 
 其中 $\bot$ 表示"输入 shape 对该算子不合法"。$\sigma_{op}(s_1, \ldots, s_{k_{op}}) = s^{out}$ 当且仅当 $op$ 在输入 shape $(s_1, \ldots, s_{k_{op}})$ 下合法且输出 shape 为 $s^{out}$。
 
-**实现对应**:$\sigma_{op}$ 对应 [`hir/lower/types.rs::resolve_method_type`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)(第 219-356 行)与 [`runtime/autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 forward 实现。例如:
+**实现对应**:$\sigma_{op}$ 对应 [`hir/lower/types.rs::resolve_method_type`](../../tenth/src/hir/lower/types.rs)(第 219-356 行)与 [`runtime/autodiff.rs`](../../tenth/src/runtime/autodiff.rs) 的 forward 实现。例如:
 
-- $\sigma_{\textsf{MatMul}}((m, k), (k', n)) = (m, n)$,要求 $k = k'$(内侧维度匹配),否则 $\bot$。见 [`types.rs:223-253`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) `matmul` 分支与 [`autodiff.rs:350-443`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `TapeOp::MatMul` 分支。
-- $\sigma_{\textsf{Add}}(s, t) = s \oplus t$(广播,见 T1 定义),要求 $s, t$ 可广播,否则 $\bot$。见 [`types.rs:150-153`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) `broadcast_shapes` 调用与 [`autodiff.rs:301-314`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `TapeOp::Add` 分支。
-- $\sigma_{\textsf{Sum}}(s) = \epsilon$(标量),任意 $s$ 合法。见 [`autodiff.rs:455-463`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `TapeOp::Sum` 分支。
+- $\sigma_{\textsf{MatMul}}((m, k), (k', n)) = (m, n)$,要求 $k = k'$(内侧维度匹配),否则 $\bot$。见 [`types.rs:223-253`](../../tenth/src/hir/lower/types.rs) `matmul` 分支与 [`autodiff.rs:350-443`](../../tenth/src/runtime/autodiff.rs) `TapeOp::MatMul` 分支。
+- $\sigma_{\textsf{Add}}(s, t) = s \oplus t$(广播,见 T1 定义),要求 $s, t$ 可广播,否则 $\bot$。见 [`types.rs:150-153`](../../tenth/src/hir/lower/types.rs) `broadcast_shapes` 调用与 [`autodiff.rs:301-314`](../../tenth/src/runtime/autodiff.rs) `TapeOp::Add` 分支。
+- $\sigma_{\textsf{Sum}}(s) = \epsilon$(标量),任意 $s$ 合法。见 [`autodiff.rs:455-463`](../../tenth/src/runtime/autodiff.rs) `TapeOp::Sum` 分支。
 
 ### 3.3 四元分类的形式化判据
 
@@ -200,33 +200,33 @@ $$\sigma: \mathcal{S}^k \to \mathcal{S} \quad (k \geq 2) \quad \text{且} \quad 
 
 ## 4. 21 个 TapeOp 的分类
 
-本节对 [`autodiff.rs:30-79`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 定义的全部 21 个 `TapeOp` 变体逐一归类,每个分类附源码证据与判定论证。
+本节对 [`autodiff.rs:30-79`](../../tenth/src/runtime/autodiff.rs) 定义的全部 21 个 `TapeOp` 变体逐一归类,每个分类附源码证据与判定论证。
 
 ### 4.1 分类总表
 
 | # | TapeOp | $k_{op}$ | $\mathrm{Class}^*$ | 判定依据(源码行号) |
 |---|--------|----------|--------------------|--------------------|
-| 1 | `Input` | 0 | **Construct** | [`autodiff.rs:99-106`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `inputs: vec![]` |
-| 2 | `Add` | 2 | **Expand** | [`autodiff.rs:301-314`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `unbroadcast`(广播反向) |
-| 3 | `Sub` | 2 | **Expand** | [`autodiff.rs:301-314`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 同 Add,符号 -1 |
-| 4 | `Mul` | 2 | **Expand** | [`autodiff.rs:315-326`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `unbroadcast` |
-| 5 | `Div` | 2 | **Expand** | [`autodiff.rs:327-337`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `unbroadcast` |
-| 6 | `Neg` | 1 | **Preserve** | [`autodiff.rs:338-341`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `g = -&grad`(同 shape) |
-| 7 | `ReLU` | 1 | **Preserve** | [`autodiff.rs:342-349`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `mask`(同 shape) |
-| 8 | `MatMul` | 2 | **Reduce** | [`autodiff.rs:350-443`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 收缩 k 维 |
-| 9 | `Transpose` | 1 | **Preserve** | [`autodiff.rs:444-454`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 置换最后两维 |
-| 10 | `Sum` | 1 | **Reduce** | [`autodiff.rs:455-463`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `→ scalar` |
-| 11 | `Mean` | 1 | **Reduce** | [`autodiff.rs:464-473`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `→ scalar` |
-| 12 | `Exp` | 1 | **Preserve** | [`autodiff.rs:474-480`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `result_ref.data`(同 shape) |
-| 13 | `Log` | 1 | **Preserve** | [`autodiff.rs:481-487`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `a_ref.data`(同 shape) |
-| 14 | `Sigmoid` | 1 | **Preserve** | [`autodiff.rs:488-495`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `result_ref.data`(同 shape) |
-| 15 | `Softmax` | 1 | **Preserve** | [`autodiff.rs:735-745`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `result_ref.data`(同 shape) |
-| 16 | `CrossEntropy` | 1 | **Reduce** | [`autodiff.rs:723-734`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `logits → scalar` |
-| 17 | `Dropout` | 1 | **Preserve** | [`autodiff.rs:712-722`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `mask * grad`(同 shape) |
-| 18 | `Conv2D` | 2 | **Reduce** | [`autodiff.rs:615-711`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 收缩 C_in/kH/kW |
-| 19 | `BatchNorm` | 1 | **Preserve** | [`autodiff.rs:496-522`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `dX` 同 shape |
-| 20 | `LayerNorm` | 1 | **Preserve** | [`autodiff.rs:523-596`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `d_x` 同 shape |
-| 21 | `Gelu` | 1 | **Preserve** | [`autodiff.rs:597-614`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `deriv`(同 shape) |
+| 1 | `Input` | 0 | **Construct** | [`autodiff.rs:99-106`](../../tenth/src/runtime/autodiff.rs) `inputs: vec![]` |
+| 2 | `Add` | 2 | **Expand** | [`autodiff.rs:301-314`](../../tenth/src/runtime/autodiff.rs) `unbroadcast`(广播反向) |
+| 3 | `Sub` | 2 | **Expand** | [`autodiff.rs:301-314`](../../tenth/src/runtime/autodiff.rs) 同 Add,符号 -1 |
+| 4 | `Mul` | 2 | **Expand** | [`autodiff.rs:315-326`](../../tenth/src/runtime/autodiff.rs) `unbroadcast` |
+| 5 | `Div` | 2 | **Expand** | [`autodiff.rs:327-337`](../../tenth/src/runtime/autodiff.rs) `unbroadcast` |
+| 6 | `Neg` | 1 | **Preserve** | [`autodiff.rs:338-341`](../../tenth/src/runtime/autodiff.rs) `g = -&grad`(同 shape) |
+| 7 | `ReLU` | 1 | **Preserve** | [`autodiff.rs:342-349`](../../tenth/src/runtime/autodiff.rs) `mask`(同 shape) |
+| 8 | `MatMul` | 2 | **Reduce** | [`autodiff.rs:350-443`](../../tenth/src/runtime/autodiff.rs) 收缩 k 维 |
+| 9 | `Transpose` | 1 | **Preserve** | [`autodiff.rs:444-454`](../../tenth/src/runtime/autodiff.rs) 置换最后两维 |
+| 10 | `Sum` | 1 | **Reduce** | [`autodiff.rs:455-463`](../../tenth/src/runtime/autodiff.rs) `→ scalar` |
+| 11 | `Mean` | 1 | **Reduce** | [`autodiff.rs:464-473`](../../tenth/src/runtime/autodiff.rs) `→ scalar` |
+| 12 | `Exp` | 1 | **Preserve** | [`autodiff.rs:474-480`](../../tenth/src/runtime/autodiff.rs) `result_ref.data`(同 shape) |
+| 13 | `Log` | 1 | **Preserve** | [`autodiff.rs:481-487`](../../tenth/src/runtime/autodiff.rs) `a_ref.data`(同 shape) |
+| 14 | `Sigmoid` | 1 | **Preserve** | [`autodiff.rs:488-495`](../../tenth/src/runtime/autodiff.rs) `result_ref.data`(同 shape) |
+| 15 | `Softmax` | 1 | **Preserve** | [`autodiff.rs:735-745`](../../tenth/src/runtime/autodiff.rs) `result_ref.data`(同 shape) |
+| 16 | `CrossEntropy` | 1 | **Reduce** | [`autodiff.rs:723-734`](../../tenth/src/runtime/autodiff.rs) `logits → scalar` |
+| 17 | `Dropout` | 1 | **Preserve** | [`autodiff.rs:712-722`](../../tenth/src/runtime/autodiff.rs) `mask * grad`(同 shape) |
+| 18 | `Conv2D` | 2 | **Reduce** | [`autodiff.rs:615-711`](../../tenth/src/runtime/autodiff.rs) 收缩 C_in/kH/kW |
+| 19 | `BatchNorm` | 1 | **Preserve** | [`autodiff.rs:496-522`](../../tenth/src/runtime/autodiff.rs) `dX` 同 shape |
+| 20 | `LayerNorm` | 1 | **Preserve** | [`autodiff.rs:523-596`](../../tenth/src/runtime/autodiff.rs) `d_x` 同 shape |
+| 21 | `Gelu` | 1 | **Preserve** | [`autodiff.rs:597-614`](../../tenth/src/runtime/autodiff.rs) `deriv`(同 shape) |
 
 **分类统计**:
 
@@ -240,7 +240,7 @@ $$\sigma: \mathcal{S}^k \to \mathcal{S} \quad (k \geq 2) \quad \text{且} \quad 
 
 ### 4.2 Construct 类判定论证
 
-**`Input`** ([`autodiff.rs:32, 99-106`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)):
+**`Input`** ([`autodiff.rs:32, 99-106`](../../tenth/src/runtime/autodiff.rs)):
 
 - $k_{\textsf{Input}} = 0$(`inputs: vec![]`,无上游 Tape 节点)。
 - `input_tensors: vec![tensor]` 表示从外部注册一个已存在的张量(叶子参数)。
@@ -258,19 +258,19 @@ Preserve 类共 11 个算子,均为一元($k_{op} = 1$),输出 shape = 输入 sh
 
 这些算子的 shape 推断规则为 $\sigma(s) = s$(输出 shape 严格等于输入 shape)。源码证据:
 
-- [`types.rs:285-289`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs):`"abs" | "sqrt" | "exp" | "log" | "relu" | "sigmoid" | "tanh" | "softmax" | "gelu"` 分支返回 `Type::Tensor { dtype, dims: dims.clone() }`(克隆输入 dims)。
-- 反向传播证据:每个算子的梯度 `g_a` 与输入 `a_ref.data` 或 `result_ref.data` 同 shape(逐元素运算)。例如 `Exp` 的 `g_a = &grad * &result_ref.data`([`autodiff.rs:477`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)),`grad` 与 `result_ref.data` 同 shape,故 `g_a` 与输入同 shape。
+- [`types.rs:285-289`](../../tenth/src/hir/lower/types.rs):`"abs" | "sqrt" | "exp" | "log" | "relu" | "sigmoid" | "tanh" | "softmax" | "gelu"` 分支返回 `Type::Tensor { dtype, dims: dims.clone() }`(克隆输入 dims)。
+- 反向传播证据:每个算子的梯度 `g_a` 与输入 `a_ref.data` 或 `result_ref.data` 同 shape(逐元素运算)。例如 `Exp` 的 `g_a = &grad * &result_ref.data`([`autodiff.rs:477`](../../tenth/src/runtime/autodiff.rs)),`grad` 与 `result_ref.data` 同 shape,故 `g_a` 与输入同 shape。
 
 满足定义 3.4 (C2) 严格 Preserve 子类:$\sigma: \mathbb{N}^k \to \mathbb{N}^k$ 且 $\forall i: \sigma_i = \mathrm{id}$。
 
-`BatchNorm`/`LayerNorm` 的输出 shape = 输入 shape(`dX` 与 `x_hat_ref.shape()` 同 shape,见 [`autodiff.rs:515`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `&std_inv_ref.data * &gamma_ref.data * ...`)。`gamma`/`beta` 是参数(非主 shape 流),不影响主输入的 shape 保持。
+`BatchNorm`/`LayerNorm` 的输出 shape = 输入 shape(`dX` 与 `x_hat_ref.shape()` 同 shape,见 [`autodiff.rs:515`](../../tenth/src/runtime/autodiff.rs) `&std_inv_ref.data * &gamma_ref.data * ...`)。`gamma`/`beta` 是参数(非主 shape 流),不影响主输入的 shape 保持。
 
 **组 2:置换 Preserve(1 个)**
 
-`Transpose` ([`autodiff.rs:47-48, 444-454`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)):
+`Transpose` ([`autodiff.rs:47-48, 444-454`](../../tenth/src/runtime/autodiff.rs)):
 
 - shape 推断规则:$\sigma((d_1, \ldots, d_n)) = (d_1, \ldots, d_{n-2}, d_n, d_{n-1})$(交换最后两维)。
-- 见 [`types.rs:346-352`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs):2D 时 `dims: vec![dims[1].clone(), dims[0].clone()]`,非 2D 时 `dims: dims.clone()`(保守保持)。
+- 见 [`types.rs:346-352`](../../tenth/src/hir/lower/types.rs):2D 时 `dims: vec![dims[1].clone(), dims[0].clone()]`,非 2D 时 `dims: dims.clone()`(保守保持)。
 - $\|s^{out}\| = \|s^{in}\|$(秩不变),$\mathrm{ms}(s^{out}) = \mathrm{ms}(s^{in})$(维度多重集保持)。
 - **但不满足严格 Preserve**:$s^{out} \neq s^{in}$(顺序不同,2D 情形)。
 - 满足定义 3.4 (C2) 置换 Preserve 子类:$\mathrm{ms}(s^{out}) = \mathrm{ms}(s^{in})$。
@@ -285,9 +285,9 @@ Reduce 类共 5 个算子,分三组论证:
 
 `Sum`、`Mean`、`CrossEntropy`。
 
-- `Sum` ([`autodiff.rs:49-50, 455-463`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)):$\sigma(s) = \epsilon$(标量,空元组)。$\|s^{out}\| = 0 < \|s^{in}\|$(对 $\|s^{in}\| \geq 1$)。满足定义 3.4 (C3) 秩严格减少。
-- `Mean` ([`autodiff.rs:51-52, 464-473`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)):同 `Sum`,$\sigma(s) = \epsilon$。
-- `CrossEntropy` ([`autodiff.rs:62-63, 723-734`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)):$\sigma(s) = \epsilon$(标量 loss)。输入 `logits`(如 $(B, C)$),输出标量。$\|s^{out}\| = 0 < \|s^{in}\|$。
+- `Sum` ([`autodiff.rs:49-50, 455-463`](../../tenth/src/runtime/autodiff.rs)):$\sigma(s) = \epsilon$(标量,空元组)。$\|s^{out}\| = 0 < \|s^{in}\|$(对 $\|s^{in}\| \geq 1$)。满足定义 3.4 (C3) 秩严格减少。
+- `Mean` ([`autodiff.rs:51-52, 464-473`](../../tenth/src/runtime/autodiff.rs)):同 `Sum`,$\sigma(s) = \epsilon$。
+- `CrossEntropy` ([`autodiff.rs:62-63, 723-734`](../../tenth/src/runtime/autodiff.rs)):$\sigma(s) = \epsilon$(标量 loss)。输入 `logits`(如 $(B, C)$),输出标量。$\|s^{out}\| = 0 < \|s^{in}\|$。
 
 三者均满足一元归约型形式化:$\sigma: \mathbb{N}^k \to \mathbb{N}^m$ 且 $m < k$(此处 $m = 0$)。
 
@@ -295,22 +295,22 @@ Reduce 类共 5 个算子,分三组论证:
 
 `MatMul`、`Conv2D`。
 
-`MatMul` ([`autodiff.rs:46, 350-443`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)):
+`MatMul` ([`autodiff.rs:46, 350-443`](../../tenth/src/runtime/autodiff.rs)):
 
 - shape 推断规则:$\sigma_{\textsf{MatMul}}((m, k), (k', n)) = (m, n)$,要求 $k = k'$。
-- 见 [`types.rs:223-253`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs):`dims: vec![dims[0].clone(), adims[1].clone()]`。
+- 见 [`types.rs:223-253`](../../tenth/src/hir/lower/types.rs):`dims: vec![dims[0].clone(), adims[1].clone()]`。
 - **收缩判据**:内侧维度 $k$ 是"收缩维"——它出现在两个输入中,但在输出中消失。输出的 $(m, n)$ 是两个输入的"外侧维度",各来自一个输入。
 - 语义本质:`MatMul` 是沿 $k$ 维的加权求和(内积),$k$ 维被"收缩"。
 - $\|s^{out}\| = 2 = \max(\|s^{in}_1\|, \|s^{in}_2\|) = 2$(秩不严格减少),但满足 $\mathrm{Contracted}$ 判据(因 $op \in \mathcal{O}_{\text{contract}}$)。
 - **归类**:Reduce(结构收缩型)。
 - **边界说明**:秩不严格单调,依赖收缩判据的扩展定义,见 §8.2 局限 L2。
 
-`Conv2D` ([`autodiff.rs:67-69, 615-711`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)):
+`Conv2D` ([`autodiff.rs:67-69, 615-711`](../../tenth/src/runtime/autodiff.rs)):
 
 - shape 推断规则:$\sigma_{\textsf{Conv2D}}((N, C_{in}, H, W), (C_{out}, C_{in}, k_H, k_W)) = (N, C_{out}, H_{out}, W_{out})$。
   - $H_{out} = \lfloor (H + 2P - k_H) / S \rfloor + 1$,$W_{out}$ 类似($P$ = padding,$S$ = stride)。
-- 见 [`autodiff.rs:629-633`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs):`out_shape = [N, C_out, H_out, W_out]`。
-- **收缩判据**:$C_{in}$、$k_H$、$k_W$ 是收缩维——它们出现在输入中(权重 shape 含 $C_{in} \cdot k_H \cdot k_W$),但在输出中消失。输出沿 $C_{in} \cdot k_H \cdot k_W$ 维求和(卷积 = im2col + matmul,见 [`autodiff.rs:617`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 注释 `output = im2col @ w_flat^T`)。
+- 见 [`autodiff.rs:629-633`](../../tenth/src/runtime/autodiff.rs):`out_shape = [N, C_out, H_out, W_out]`。
+- **收缩判据**:$C_{in}$、$k_H$、$k_W$ 是收缩维——它们出现在输入中(权重 shape 含 $C_{in} \cdot k_H \cdot k_W$),但在输出中消失。输出沿 $C_{in} \cdot k_H \cdot k_W$ 维求和(卷积 = im2col + matmul,见 [`autodiff.rs:617`](../../tenth/src/runtime/autodiff.rs) 注释 `output = im2col @ w_flat^T`)。
 - $op \in \mathcal{O}_{\text{contract}}$。
 - **归类**:Reduce(结构收缩型)。
 
@@ -321,8 +321,8 @@ Expand 类共 4 个算子,均为二元($k_{op} = 2$):
 `Add`、`Sub`、`Mul`、`Div`。
 
 - shape 推断规则:$\sigma(s, t) = s \oplus t$(NumPy 广播,见 T1 定义 3.6)。
-- 见 [`types.rs:150-153`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs):`broadcast_shapes(ldims, rdims)` 返回广播结果。
-- 见 [`autodiff.rs:301-337`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs):反向传播使用 `unbroadcast`([`autodiff.rs:836-883`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)),证明前向存在广播。
+- 见 [`types.rs:150-153`](../../tenth/src/hir/lower/types.rs):`broadcast_shapes(ldims, rdims)` 返回广播结果。
+- 见 [`autodiff.rs:301-337`](../../tenth/src/runtime/autodiff.rs):反向传播使用 `unbroadcast`([`autodiff.rs:836-883`](../../tenth/src/runtime/autodiff.rs)),证明前向存在广播。
 - **广播判据**:当 $s \neq t$ 且可广播时,$s^{out} = s \oplus t$ 满足 $\|s^{out}\| > \min(\|s\|, \|t\|)$ 或 $|s^{out}| > \min(|s|, |t|)$。例如 $s = (3, 4)$,$t = (4,)$,$s^{out} = (3, 4)$,$\|t\| = 1 < \|s^{out}\| = 2$。
 - 满足定义 3.4 (C4):$\exists j: s^{in}_j \neq s^{out}$ 且 $s^{out} = s^{in}_1 \oplus s^{in}_2$。
 - **退化情形**:当 $s = t$ 时,$s^{out} = s = t$,具体行为退化为 Preserve。但结构行为分类仍为 Expand(规则是广播)。
@@ -499,7 +499,7 @@ $op_1$ 将 $s$ 归约为 $s'$。$op_2$ 将 $s'$ 扩张为 $s''$。复合结果 $
 
 - 输入:无(外部数据)。
 - 输出 shape:由构造函数的字面量参数或运行时张量给定。
-- 算法:查构造函数签名(如 `zeros(3, 4)` → `[3, 4]`,见 [`types.rs:450-462`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) `shape_from_int_args`)。
+- 算法:查构造函数签名(如 `zeros(3, 4)` → `[3, 4]`,见 [`types.rs:450-462`](../../tenth/src/hir/lower/types.rs) `shape_from_int_args`)。
 - 复杂度:$O(\|s^{out}\|)$(参数个数)。
 
 **Preserve 类规则**:
@@ -508,7 +508,7 @@ $op_1$ 将 $s$ 归约为 $s'$。$op_2$ 将 $s'$ 扩张为 $s''$。复合结果 $
 - 输出 shape:$s^{out} = s^{in}$(严格)或 $s^{out} = \pi(s^{in})$(置换,如 `Transpose`)。
 - 算法:复制输入 shape(或应用已知置换)。
 - 复杂度:$O(\|s^{in}\|)$(shape 拷贝)。
-- 实现对应:[`types.rs:285-289`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) `dims: dims.clone()`。
+- 实现对应:[`types.rs:285-289`](../../tenth/src/hir/lower/types.rs) `dims: dims.clone()`。
 
 **Reduce 类规则**:
 
@@ -516,17 +516,17 @@ $op_1$ 将 $s$ 归约为 $s'$。$op_2$ 将 $s'$ 扩张为 $s''$。复合结果 $
 - 输出 shape:由归约/收缩公式计算。
 - 一元归约型(`Sum`/`Mean`/`CrossEntropy`):$s^{out} = \epsilon$(标量)。算法:返回空 shape。
 - 结构收缩型(`MatMul`):$s^{out} = (m, n)$ from $((m, k), (k, n))$。算法:取输入 1 的第 0 维 + 输入 2 的第 1 维。
-- 结构收缩型(`Conv2D`):$s^{out} = (N, C_{out}, H_{out}, W_{out})$。算法:由 padding/stride/kernel 公式计算(见 [`autodiff.rs:629-633`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs))。
+- 结构收缩型(`Conv2D`):$s^{out} = (N, C_{out}, H_{out}, W_{out})$。算法:由 padding/stride/kernel 公式计算(见 [`autodiff.rs:629-633`](../../tenth/src/runtime/autodiff.rs))。
 - 复杂度:$O(\|s^{out}\|)$(输出 shape 长度)。
-- 实现对应:[`types.rs:223-253`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) `matmul` 分支、[`types.rs:259-278`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) `sum`/`mean` 分支。
+- 实现对应:[`types.rs:223-253`](../../tenth/src/hir/lower/types.rs) `matmul` 分支、[`types.rs:259-278`](../../tenth/src/hir/lower/types.rs) `sum`/`mean` 分支。
 
 **Expand 类规则**:
 
 - 输入:两个输入 shape $s, t$。
 - 输出 shape:$s^{out} = s \oplus t$(广播,见 T1 定义 3.6)。
-- 算法:调用 `broadcast_shapes`([`types.rs:18-41`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)),从右向左对齐,逐维取 max。
+- 算法:调用 `broadcast_shapes`([`types.rs:18-41`](../../tenth/src/hir/lower/types.rs)),从右向左对齐,逐维取 max。
 - 复杂度:$O(\max(\|s\|, \|t\|))$。
-- 实现对应:[`types.rs:150-153`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) `broadcast_shapes(ldims, rdims)`。
+- 实现对应:[`types.rs:150-153`](../../tenth/src/hir/lower/types.rs) `broadcast_shapes(ldims, rdims)`。
 
 ### 6.2 算法的无遗漏性证明
 
@@ -540,11 +540,11 @@ $op_1$ 将 $s$ 归约为 $s'$。$op_2$ 将 $s'$ 扩张为 $s''$。复合结果 $
 
 故算法对每个算子都有规则可调,无遗漏。$\square$
 
-**实践验证**:对照 [`types.rs::resolve_method_type`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)(第 219-386 行)的实现:
+**实践验证**:对照 [`types.rs::resolve_method_type`](../../tenth/src/hir/lower/types.rs)(第 219-386 行)的实现:
 
 - Preserve 类(`exp`/`log`/`relu`/`sigmoid`/`tanh`/`softmax`/`gelu`/`masked_fill`):返回 `dims: dims.clone()`。✓
 - Reduce 类(`matmul`/`sum`/`mean`/`argmax`/`argmin`):返回计算后的 shape。✓
-- Expand 类:由 `infer_binary_type`([`types.rs:135-166`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs))调用 `broadcast_shapes`。✓
+- Expand 类:由 `infer_binary_type`([`types.rs:135-166`](../../tenth/src/hir/lower/types.rs))调用 `broadcast_shapes`。✓
 - Construct 类(`zeros`/`ones`/`tensor`/`randn`):由 `shape_from_int_args` 返回。✓
 
 实现覆盖全部 21 个 `TapeOp` 对应的方法名,无遗漏。✓
@@ -579,7 +579,7 @@ $op_1$ 将 $s$ 归约为 $s'$。$op_2$ 将 $s'$ 扩张为 $s''$。复合结果 $
 
 **建议**:引入第五类 **Reduce-Expand**(混合型),或采用"per-dimension classification"(每个维度单独归类)。这是未来工作。
 
-**(2)Reshape 算子**:Tenth 当前无 `Reshape` 作为 `TapeOp`(reshape 在 HIR 层处理,见 [`types.rs:280-282`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) `reshape`/`view` 分支)。`Reshape` 的 shape 变换是 $\sigma(s) = s'$(任意同体积 shape),可能:
+**(2)Reshape 算子**:Tenth 当前无 `Reshape` 作为 `TapeOp`(reshape 在 HIR 层处理,见 [`types.rs:280-282`](../../tenth/src/hir/lower/types.rs) `reshape`/`view` 分支)。`Reshape` 的 shape 变换是 $\sigma(s) = s'$(任意同体积 shape),可能:
 - 秩减少($\|(3, 4)\| = 2 \to \|(12,)\| = 1$):Reduce。
 - 秩增加($\|(12,)\| = 1 \to \|(3, 4)\| = 2$):Expand。
 - 秩不变($\|(2, 6)\| = 2 \to \|(3, 4)\| = 2$,但维度值变):既非严格 Preserve 也非 Reduce/Expand。
@@ -590,7 +590,7 @@ $op_1$ 将 $s$ 归约为 $s'$。$op_2$ 将 $s'$ 扩张为 $s''$。复合结果 $
 
 ### 7.3 与 T1 Shape 代数的关系
 
-T1([`T1-Shape代数系统的形式化建模.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T1-Shape代数系统的形式化建模.md))证明广播运算 $\oplus$ 在 `Known ∪ {Any}` 片段构成有界半格。本文的 Expand 类直接依赖 $\oplus$:
+T1([`T1-Shape代数系统的形式化建模.md`](T1-Shape代数系统的形式化建模.md))证明广播运算 $\oplus$ 在 `Known ∪ {Any}` 片段构成有界半格。本文的 Expand 类直接依赖 $\oplus$:
 
 - `Add`/`Sub`/`Mul`/`Div` 的 shape 推断规则是 $\oplus$(T1 定理 2)。
 - T1 定理 4(全 `Known` 输入的可靠性完备性)保证 Expand 类对全 `Known` 输入的 shape 推断精确。
@@ -600,7 +600,7 @@ T1([`T1-Shape代数系统的形式化建模.md`](file:///d:/史蒂夫/Desktop/AI
 
 ### 7.4 与 T8 四级解释分类的关系
 
-T8([`T8-Shape解释关系四级分类.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T8-Shape解释关系四级分类.md))的根因解释依赖本文的 `Class(v)`:
+T8([`T8-Shape解释关系四级分类.md`](T8-Shape解释关系四级分类.md))的根因解释依赖本文的 `Class(v)`:
 
 - (C2a):$\mathrm{Class}(v) = \text{Reduce}$ 且 $|s_{exp}| > |s_{act}|$(节点缩减体积,与期望>实际一致)。
 - (C2b):$\mathrm{Class}(v) = \text{Expand}$ 且 $|s_{exp}| < |s_{act}|$(节点扩展体积,与期望<实际一致)。
@@ -658,7 +658,7 @@ T8([`T8-Shape解释关系四级分类.md`](file:///d:/史蒂夫/Desktop/AI开发
 
 ### 8.5 局限 L5:未覆盖非 TapeOp 算子
 
-**是什么**:本文仅覆盖 21 个 `TapeOp`(自动微分算子),不覆盖 HIR 层的其他 shape 变换(如 `reshape`/`view`/`flatten`/`permute`/`broadcast_to`/`cat`,见 [`types.rs:280-342`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs))。这些算子有独立的 shape 推断规则,但不参与 autodiff Tape。
+**是什么**:本文仅覆盖 21 个 `TapeOp`(自动微分算子),不覆盖 HIR 层的其他 shape 变换(如 `reshape`/`view`/`flatten`/`permute`/`broadcast_to`/`cat`,见 [`types.rs:280-342`](../../tenth/src/hir/lower/types.rs))。这些算子有独立的 shape 推断规则,但不参与 autodiff Tape。
 
 **影响**:中。分类法的完备性仅对 `TapeOp` 成立,不覆盖 HIR 层全量算子。`Reshape` 等算子的分类挑战(见 §7.2)未被本文解决。
 
@@ -705,12 +705,12 @@ T8([`T8-Shape解释关系四级分类.md`](file:///d:/史蒂夫/Desktop/AI开发
 ## 参考文献
 
 1. Tenth 项目内部文档:
-   - [`runtime/autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)(21 个 TapeOp 定义与实现)
-   - [`hir/lower/types.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)(编译期 shape 推断算法)
-   - [`docs/shape-check-roadmap/形式化分析理论可行性论证.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)(定义 2.4 分类,§2.2)
-   - [`docs/论文/T1-Shape代数系统的形式化建模.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T1-Shape代数系统的形式化建模.md)(广播代数,Expand 类基础)
-   - [`docs/论文/T8-Shape解释关系四级分类.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T8-Shape解释关系四级分类.md)(根因解释依赖本文分类)
-   - [`docs/语言参考手册.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md) §11.5(算子语义)
+   - [`runtime/autodiff.rs`](../../tenth/src/runtime/autodiff.rs)(21 个 TapeOp 定义与实现)
+   - [`hir/lower/types.rs`](../../tenth/src/hir/lower/types.rs)(编译期 shape 推断算法)
+   - [`docs/shape-check-roadmap/形式化分析理论可行性论证.md`](../shape-check-roadmap/形式化分析理论可行性论证.md)(定义 2.4 分类,§2.2)
+   - [`docs/论文/T1-Shape代数系统的形式化建模.md`](T1-Shape代数系统的形式化建模.md)(广播代数,Expand 类基础)
+   - [`docs/论文/T8-Shape解释关系四级分类.md`](T8-Shape解释关系四级分类.md)(根因解释依赖本文分类)
+   - [`docs/语言参考手册.md`](../语言参考手册.md) §11.5(算子语义)
 2. NumPy. Broadcasting rules. https://numpy.org/doc/stable/user/basics.broadcasting.html(§2.2 ufunc 分类)
 3. Bradbury, J., et al. (2018). JAX: Composable transformations of Python+NumPy programs.(§2.2 JAX shape 处理)
 4. XLA. Shape inference for HLO instructions. https://www.tensorflow.org/xla/operation_semantics(§2.3 XLA shape inference)
@@ -746,11 +746,11 @@ T8([`T8-Shape解释关系四级分类.md`](file:///d:/史蒂夫/Desktop/AI开发
 
 | 本文章节 | 对应文档 | 关系 |
 |---------|---------|------|
-| §3 定义 3.4 | [`形式化分析理论可行性论证.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) §2.2 定义 2.4 | 本文细化:体积判据→结构判据,处理二元算子 |
-| §4 分类总表 | [`autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) §27-79 | 实证对应:每个 TapeOp 的源码行号 |
-| §6 推断规则 | [`types.rs::resolve_method_type`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) | 实现对应:每类的推断算法 |
-| §7.3 与 T1 关系 | [`T1-Shape代数`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T1-Shape代数系统的形式化建模.md) | 互补:T1 提供 Expand 代数基础,本文提供全类完整性 |
-| §7.4 与 T8 关系 | [`T8-四级分类`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T8-Shape解释关系四级分类.md) | 依赖:T8 的 (C2) 条件依赖本文 Class(v) |
+| §3 定义 3.4 | [`形式化分析理论可行性论证.md`](../shape-check-roadmap/形式化分析理论可行性论证.md) §2.2 定义 2.4 | 本文细化:体积判据→结构判据,处理二元算子 |
+| §4 分类总表 | [`autodiff.rs`](../../tenth/src/runtime/autodiff.rs) §27-79 | 实证对应:每个 TapeOp 的源码行号 |
+| §6 推断规则 | [`types.rs::resolve_method_type`](../../tenth/src/hir/lower/types.rs) | 实现对应:每类的推断算法 |
+| §7.3 与 T1 关系 | [`T1-Shape代数`](T1-Shape代数系统的形式化建模.md) | 互补:T1 提供 Expand 代数基础,本文提供全类完整性 |
+| §7.4 与 T8 关系 | [`T8-四级分类`](T8-Shape解释关系四级分类.md) | 依赖:T8 的 (C2) 条件依赖本文 Class(v) |
 
 ---
 
@@ -761,8 +761,8 @@ T8([`T8-Shape解释关系四级分类.md`](file:///d:/史蒂夫/Desktop/AI开发
 ### D.1 shape 推断算法的实现
 
 1. **按分类组织规则表**:在 `resolve_method_type` 中,按 Construct/Preserve/Reduce/Expand 四组组织算子规则,而非按字母序。这便于新增算子时快速定位规则位置。
-2. **Preserve 类统一处理**:对严格 Preserve 子类(9 个算子),可合并为单一规则 `dims: dims.clone()`,减少代码重复。当前实现已部分如此([`types.rs:285-289`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs))。
-3. **Expand 类复用广播代数**:Expand 类的 4 个算子共享 `broadcast_shapes` 规则,已在 `infer_binary_type` 中实现([`types.rs:150-153`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs))。
+2. **Preserve 类统一处理**:对严格 Preserve 子类(9 个算子),可合并为单一规则 `dims: dims.clone()`,减少代码重复。当前实现已部分如此([`types.rs:285-289`](../../tenth/src/hir/lower/types.rs))。
+3. **Expand 类复用广播代数**:Expand 类的 4 个算子共享 `broadcast_shapes` 规则,已在 `infer_binary_type` 中实现([`types.rs:150-153`](../../tenth/src/hir/lower/types.rs))。
 
 ### D.2 护城河 F 的候选集优化
 
@@ -775,11 +775,11 @@ T8([`T8-Shape解释关系四级分类.md`](file:///d:/史蒂夫/Desktop/AI开发
 1. **每类至少一例**:测试 shape 推断算法时,每类至少覆盖一个算子(Construct: `Input`;Preserve: `Exp`;Reduce: `Sum`;Expand: `Add` with broadcast)。
 2. **边界情形覆盖**:
    - `Transpose`(置换 Preserve):测试 2D 与非 2D 情形。
-   - `MatMul`(收缩 Reduce):测试 1D@2D、2D@2D、2D@1D 情形(见 [`autodiff.rs:375-436`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 1D 提升)。
+   - `MatMul`(收缩 Reduce):测试 1D@2D、2D@2D、2D@1D 情形(见 [`autodiff.rs:375-436`](../../tenth/src/runtime/autodiff.rs) 的 1D 提升)。
    - `Add` 同 shape 退化:测试同 shape 与广播两种情形,验证分类为 Expand 但同 shape 行为正确。
 
 ---
 
 > **文档结束**
 >
-> 本文 v1 经历 4 轮自审,修正了 4 处问题(见 §1.4)。所有分类判定均对应到 [`autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 具体实现(用 `file://` 链接 + 行号)。6 处局限独立章节记录(§8),无掩盖。如发现分类错误或边界遗漏,应在 `MEMO.md` 记录并修订本文。
+> 本文 v1 经历 4 轮自审,修正了 4 处问题(见 §1.4)。所有分类判定均对应到 [`autodiff.rs`](../../tenth/src/runtime/autodiff.rs) 具体实现(用 `file://` 链接 + 行号)。6 处局限独立章节记录(§8),无掩盖。如发现分类错误或边界遗漏,应在 `MEMO.md` 记录并修订本文。

@@ -21,11 +21,11 @@
 
 栈式字节码虚拟机是动态语言运行时的主流架构之一（CPython、JVM、YARV、V8 Ignition）。其形式化的核心挑战在于：**操作数栈是隐式状态**，每条指令的前置条件（栈深度、栈顶类型）不显式编码于指令操作数中，而由前驱指令机械推导。这使得栈式 VM 的操作语义必须以**栈迁移关系**为核心，而非以寄存器编号为索引。
 
-Tenth VM（[`tenth/src/runtime/vm.rs:155-182`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）是典型的栈式 VM，其状态由 `stack: Vec<Value>`、`frames: Vec<Frame>`、`locals: Vec<Value>`、`ip: usize`、`code: Vec<u8>` 构成。每条指令通过 `pop`/`push` 隐式操作栈顶。这种设计的优势是指令编码紧凑（1 字节 opcode + 操作数）、与 HIR 后序遍历同构；代价是栈形（stack shape）的正确性完全依赖编译器与运行时的协作不变量。
+Tenth VM（[`tenth/src/runtime/vm.rs:155-182`](../../tenth/src/runtime/vm.rs)）是典型的栈式 VM，其状态由 `stack: Vec<Value>`、`frames: Vec<Frame>`、`locals: Vec<Value>`、`ip: usize`、`code: Vec<u8>` 构成。每条指令通过 `pop`/`push` 隐式操作栈顶。这种设计的优势是指令编码紧凑（1 字节 opcode + 操作数）、与 HIR 后序遍历同构；代价是栈形（stack shape）的正确性完全依赖编译器与运行时的协作不变量。
 
 ### 1.2 栈卫生
 
-Tenth VM 的 `Ret` 指令（[`tenth/src/runtime/vm.rs:577-590`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）执行如下动作：
+Tenth VM 的 `Ret` 指令（[`tenth/src/runtime/vm.rs:577-590`](../../tenth/src/runtime/vm.rs)）执行如下动作：
 
 ```rust
 Op::Ret => {
@@ -48,16 +48,16 @@ Op::Ret => {
 
 ### 1.3 双协议：Call vs. CallN
 
-Tenth VM 同时支持两种调用指令（[`tenth/src/runtime/vm.rs:503-566`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：
+Tenth VM 同时支持两种调用指令（[`tenth/src/runtime/vm.rs:503-566`](../../tenth/src/runtime/vm.rs)）：
 
 - **`Call(i)`**：操作数为函数名字符串索引。**用栈深度推断参数数量**：`n = self.stack.len() - base`（native 路径），或用被调函数的 `num_args`（用户函数路径）。`Frame.stack_base` 记录为 `base`（调用者函数入口时计算的固定基址）。
 - **`CallN(i, n)`**：操作数为函数名索引 + 显式参数数量 `n`。**显式传入参数数量**，先弹出 `n` 个参数到 `args` 向量，再 `Frame.stack_base = self.stack.len()`（弹参数后的栈长度）。
 
-这是历史遗留的双重协议：`Call` 是早期设计，依赖"调用点栈恰好只有参数"的隐式约定；`CallN` 是后期为支持闭包与 `FnRef`（[`tenth/src/runtime/vm.rs:534-539`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）引入的显式协议。二者并存带来形式化挑战：在何种前提下二者等价？不等价时行为差异是什么？
+这是历史遗留的双重协议：`Call` 是早期设计，依赖"调用点栈恰好只有参数"的隐式约定；`CallN` 是后期为支持闭包与 `FnRef`（[`tenth/src/runtime/vm.rs:534-539`](../../tenth/src/runtime/vm.rs)）引入的显式协议。二者并存带来形式化挑战：在何种前提下二者等价？不等价时行为差异是什么？
 
 ### 1.4 摊还 deadline
 
-Tenth VM 的执行资源控制采用**步数预算 + 墙钟 deadline 双轨独立检查**（[`tenth/src/runtime/vm.rs:353-384`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：
+Tenth VM 的执行资源控制采用**步数预算 + 墙钟 deadline 双轨独立检查**（[`tenth/src/runtime/vm.rs:353-384`](../../tenth/src/runtime/vm.rs)）：
 
 ```rust
 let mut loop_counter: u64 = 0;
@@ -79,7 +79,7 @@ loop {
 
 每步递减 `step_budget`（若设），但**墙钟 deadline 每 4096 步才检查一次**（`loop_counter & 0xFFF == 0`）。这是摊还分析的典型实例：单次 `SystemTime::now()` 系统调用开销约 100–500 ns，若每步检查会成为热路径瓶颈；每 4096 步检查则将摊还开销降至 ~0.05 ns/步，同时保证 deadline 超限的响应延迟上界为 4096 步。
 
-历史上该机制存在过缺陷（H-4，[`tenth/src/runtime/vm.rs:358-360`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 注释）：早期实现将 deadline 检查嵌套在 `step_budget` 内，导致只设 `--timeout` 而不设步数预算时 deadline 永不触发。当前实现用独立 `loop_counter` 修复此缺陷。
+历史上该机制存在过缺陷（H-4，[`tenth/src/runtime/vm.rs:358-360`](../../tenth/src/runtime/vm.rs) 注释）：早期实现将 deadline 检查嵌套在 `step_budget` 内，导致只设 `--timeout` 而不设步数预算时 deadline 永不触发。当前实现用独立 `loop_counter` 修复此缺陷。
 
 ### 1.5 贡献
 
@@ -137,7 +137,7 @@ $$
 - $\textit{bg} \in \mathbb{N} \cup \{\bot\}$：步数预算（`Option<u64>`，$\bot$ 表示未设）；
 - $\textit{ct} \in \mathbb{Z}_{2^{64}}$：deadline 检查用的循环计数器（`u64` wrapping）。
 
-**定义 3.2（Frame）**。帧是四元组 $f = \langle \textit{ip}_f,\ \textit{chk}_f,\ \textit{loc}_f,\ \textit{sb}_f \rangle$，对应 [`tenth/src/runtime/vm.rs:148-153`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)：
+**定义 3.2（Frame）**。帧是四元组 $f = \langle \textit{ip}_f,\ \textit{chk}_f,\ \textit{loc}_f,\ \textit{sb}_f \rangle$，对应 [`tenth/src/runtime/vm.rs:148-153`](../../tenth/src/runtime/vm.rs)：
 ```rust
 struct Frame {
     ip: usize,           // 返回地址
@@ -156,9 +156,9 @@ VM 一步迁移的形式化为：
 $$
 \langle \sigma, \textit{op} \rangle \rightarrow \sigma' \quad \text{或} \quad \langle \sigma, \textit{op} \rangle \rightarrow \textit{Err}
 $$
-其中 $\textit{op} = \textit{decode}(\textit{code}, \textit{ip})$ 是从字节码解码出的指令（[`tenth/src/runtime/vm.rs:386-421`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。迁移规则按指令分派，详见第 6 节。
+其中 $\textit{op} = \textit{decode}(\textit{code}, \textit{ip})$ 是从字节码解码出的指令（[`tenth/src/runtime/vm.rs:386-421`](../../tenth/src/runtime/vm.rs)）。迁移规则按指令分派，详见第 6 节。
 
-**资源检查前置**：每步迁移前先执行资源检查（[`tenth/src/runtime/vm.rs:357-384`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：
+**资源检查前置**：每步迁移前先执行资源检查（[`tenth/src/runtime/vm.rs:357-384`](../../tenth/src/runtime/vm.rs)）：
 $$
 \textit{check}(\sigma) = \begin{cases}
 \textit{Err}(\text{Timeout}) & \textit{bg} = 0 \\
@@ -172,7 +172,7 @@ $$
 
 **定义 3.4（调用栈快照）**。设当前帧栈 $\textit{frs} = [f_0, f_1, \dots, f_{k-1}]$（$f_{k-1}$ 为当前帧），定义：
 - 当前 chunk 索引：$\textit{chk}_{\text{cur}} = f_{k-1}.\textit{chk}_f$（若 $k \geq 1$，否则为入口 chunk）；
-- 当前栈基址：$\textit{sb}_{\text{cur}} = f_{k-1}.\textit{sb}_f$（若 $k \geq 1$，否则为入口 `base`，[`tenth/src/runtime/vm.rs:338`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。
+- 当前栈基址：$\textit{sb}_{\text{cur}} = f_{k-1}.\textit{sb}_f$（若 $k \geq 1$，否则为入口 `base`，[`tenth/src/runtime/vm.rs:338`](../../tenth/src/runtime/vm.rs)）。
 
 调用栈的"生长"由 `Call`/`CallN` 推入新帧，"收缩"由 `Ret` 弹出当前帧。每次 `Ret` 通过 `truncate(sb)` 确保收缩后栈状态与生长前对称。
 
@@ -188,7 +188,7 @@ $$
 $$
 即操作数栈恢复到"调用前基址 + 返回值"，帧栈恢复到调用前状态。证明见第 7 节。
 
-**源码锚点**：[`tenth/src/runtime/vm.rs:577-590`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)（`Ret` 实现），[`tenth/src/runtime/vm.rs:515`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)（`Call` 推帧），[`tenth/src/runtime/vm.rs:545`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)（`CallN` 推帧）。
+**源码锚点**：[`tenth/src/runtime/vm.rs:577-590`](../../tenth/src/runtime/vm.rs)（`Ret` 实现），[`tenth/src/runtime/vm.rs:515`](../../tenth/src/runtime/vm.rs)（`Call` 推帧），[`tenth/src/runtime/vm.rs:545`](../../tenth/src/runtime/vm.rs)（`CallN` 推帧）。
 
 ### 4.2 定理 V2（Call/CallN 双协议等价性）
 
@@ -199,13 +199,13 @@ $$
 
 进一步，**当栈纪律不成立时**（即栈在基址 $b$ 之上有多于 $n$ 个值），二者行为不同：`Call` 的 `truncate(b)` 会清除所有多余值，`CallN` 的 `truncate(b + m)`（$m$ 为多余值数）保留多余值。证明见第 8 节。
 
-**源码锚点**：[`tenth/src/runtime/vm.rs:503-527`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)（`Call`），[`tenth/src/runtime/vm.rs:528-566`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)（`CallN`）。
+**源码锚点**：[`tenth/src/runtime/vm.rs:503-527`](../../tenth/src/runtime/vm.rs)（`Call`），[`tenth/src/runtime/vm.rs:528-566`](../../tenth/src/runtime/vm.rs)（`CallN`）。
 
 ### 4.3 定理 V3（类型安全进展定理）
 
 **定理 V3（进展）**。设 HIR 表达式 $e$ 在类型系统 $\Gamma \vdash e : \tau$ 下类型良好，经 lowering 与字节码编译得到 chunk 序列 $\textit{chs}$。若 VM 状态 $\sigma$ 对应 $e$ 的中间执行状态，且 $\textit{stk}$ 顶部的值类型与当前指令 $\textit{op}$ 的前置类型兼容，则迁移 $\langle \sigma, \textit{op} \rangle \rightarrow \sigma'$ 必然成立（$\sigma'$ 为下一状态或 `Err`），不存在"卡住"（stuck，既不迁移也不报错）状态。
 
-**源码锚点**：[`tenth/src/runtime/vm.rs:422-802`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)（指令分派），[`tenth/src/runtime/vm.rs:386-421`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)（解码，未知 opcode 回退为 `Ret`）。
+**源码锚点**：[`tenth/src/runtime/vm.rs:422-802`](../../tenth/src/runtime/vm.rs)（指令分派），[`tenth/src/runtime/vm.rs:386-421`](../../tenth/src/runtime/vm.rs)（解码，未知 opcode 回退为 `Ret`）。
 
 ### 4.4 定理 V4（摊还 deadline 开销上界）
 
@@ -217,7 +217,7 @@ $$
 
 **定理 V4b（deadline 超限响应延迟上界）**。设单步最大耗时为 $T_{\max}$（含 native 调用），deadline 触发到实际返回 `Timeout` 的延迟 $\leq 4095 \cdot T_{\max} + T_{\max} = 4096 \cdot T_{\max}$。若存在无界单步（如 native 函数内部死循环），则该上界失效——见局限章节。证明见第 9 节。
 
-**源码锚点**：[`tenth/src/runtime/vm.rs:369-384`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)（4096 步周期检查）。
+**源码锚点**：[`tenth/src/runtime/vm.rs:369-384`](../../tenth/src/runtime/vm.rs)（4096 步周期检查）。
 
 ### 4.5 定理 V5（与 CPython eval loop timeout 对比）
 
@@ -227,7 +227,7 @@ $$
 - Tenth 摊还开销低于 CPython **约 20 倍**；
 - 但 CPython 的 deadline 响应延迟为单步（$\leq T_{\max}$），Tenth 为 $4096 \cdot T_{\max}$——CPython 响应更及时。
 
-**源码锚点**：[`tenth/src/runtime/vm.rs:353-384`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)（双轨独立检查），[`tenth/src/runtime/interpreter/mod.rs:332-361`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)（解释器侧对称实现，与 T35 联动）。
+**源码锚点**：[`tenth/src/runtime/vm.rs:353-384`](../../tenth/src/runtime/vm.rs)（双轨独立检查），[`tenth/src/runtime/interpreter/mod.rs:332-361`](../../tenth/src/runtime/interpreter/mod.rs)（解释器侧对称实现，与 T35 联动）。
 
 ---
 
@@ -252,7 +252,7 @@ $$
 \quad \text{(R-Dup)}
 $$
 
-注：实现中 `Pop`/`Dup` 用 `unwrap_or(Value::Unit)` 兜底（[`tenth/src/runtime/vm.rs:432-436`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），即栈空时 `Pop` 静默返回 `Unit`、`Dup` 压入 `Unit`。形式化中我们要求 $|\textit{stk}| \geq 1$ 作为前置条件；不满足时进入"退化"状态——这是形式化与实现的差距，见局限章节。
+注：实现中 `Pop`/`Dup` 用 `unwrap_or(Value::Unit)` 兜底（[`tenth/src/runtime/vm.rs:432-436`](../../tenth/src/runtime/vm.rs)），即栈空时 `Pop` 静默返回 `Unit`、`Dup` 压入 `Unit`。形式化中我们要求 $|\textit{stk}| \geq 1$ 作为前置条件；不满足时进入"退化"状态——这是形式化与实现的差距，见局限章节。
 
 ### 5.2 局部变量指令
 
@@ -266,7 +266,7 @@ $$
 \quad \text{(R-Store)}
 $$
 
-注：实现中 `Store` 在 $i \geq |\textit{loc}|$ 时自动 `locals.resize(i+1, Value::Unit)`（[`tenth/src/runtime/vm.rs:444`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），即局部变量表可动态扩张——这偏离了静态大小假设，是简化形式化与灵活实现的取舍。
+注：实现中 `Store` 在 $i \geq |\textit{loc}|$ 时自动 `locals.resize(i+1, Value::Unit)`（[`tenth/src/runtime/vm.rs:444`](../../tenth/src/runtime/vm.rs)），即局部变量表可动态扩张——这偏离了静态大小假设，是简化形式化与灵活实现的取舍。
 
 ### 5.3 算术指令
 
@@ -275,7 +275,7 @@ $$
 \quad \text{(R-Add)}
 $$
 
-其中 $\textit{add}$ 是 [`tenth/src/runtime/vm.rs:817-872`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 中 `add_priv` 的数学抽象，覆盖 Int×Int、Float×Float、Tensor×Float 等 11 种类型组合。类型不匹配时迁移到 `Err`。
+其中 $\textit{add}$ 是 [`tenth/src/runtime/vm.rs:817-872`](../../tenth/src/runtime/vm.rs) 中 `add_priv` 的数学抽象，覆盖 Int×Int、Float×Float、Tensor×Float 等 11 种类型组合。类型不匹配时迁移到 `Err`。
 
 ### 5.4 跳转指令
 
@@ -307,7 +307,7 @@ $$
 
 其中 $f = \langle \textit{ip}', g_{\text{idx}}, \textit{loc}_c, b \rangle$（$\textit{sb}_f = b$），$\textit{loc}_g^{\text{init}}[i] = \textit{args}[i]$（前 $n_g$ 个）其余为 `Unit`，长度 $\max(n_g, l_g)$。
 
-**注**：实现中 `Call` 对用户函数路径用 `callee_args = num_args` 弹参（[`tenth/src/runtime/vm.rs:513-523`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），即**用被调函数签名推断参数数量**，而非用栈深度。但 native 路径用 `n = stack.len() - base`（[`tenth/src/runtime/vm.rs:507`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）——**用栈深度推断**。这是双协议的微妙之处：同一 `Call` 指令对 native 与 user 函数用不同推断策略。
+**注**：实现中 `Call` 对用户函数路径用 `callee_args = num_args` 弹参（[`tenth/src/runtime/vm.rs:513-523`](../../tenth/src/runtime/vm.rs)），即**用被调函数签名推断参数数量**，而非用栈深度。但 native 路径用 `n = stack.len() - base`（[`tenth/src/runtime/vm.rs:507`](../../tenth/src/runtime/vm.rs)）——**用栈深度推断**。这是双协议的微妙之处：同一 `Call` 指令对 native 与 user 函数用不同推断策略。
 
 **CallN 协议（用户函数路径）**：
 
@@ -334,7 +334,7 @@ $$
 \quad \text{(R-Ret-top)}
 $$
 
-对应实现 `return Ok(result)`（[`tenth/src/runtime/vm.rs:588`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。
+对应实现 `return Ok(result)`（[`tenth/src/runtime/vm.rs:588`](../../tenth/src/runtime/vm.rs)）。
 
 ---
 
@@ -369,11 +369,11 @@ $$
 
 *证明*。分两种情形：
 
-- **Call 用户函数路径**（[`tenth/src/runtime/vm.rs:515`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：`stack_base: base`。其中 `base` 是调用者函数入口时由 `let base = self.stack.len().saturating_sub(num_args)` 计算（[`tenth/src/runtime/vm.rs:338`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），表示调用者**自身**的参数之下位置。但这里 `Call` 推帧用的 `base` 是**调用者**的基址，不是"当前调用点参数之下"。
+- **Call 用户函数路径**（[`tenth/src/runtime/vm.rs:515`](../../tenth/src/runtime/vm.rs)）：`stack_base: base`。其中 `base` 是调用者函数入口时由 `let base = self.stack.len().saturating_sub(num_args)` 计算（[`tenth/src/runtime/vm.rs:338`](../../tenth/src/runtime/vm.rs)），表示调用者**自身**的参数之下位置。但这里 `Call` 推帧用的 `base` 是**调用者**的基址，不是"当前调用点参数之下"。
 
   这里需要澄清：在 Tenth VM 实现中，`base` 是调用者函数入口时计算的固定值，整个函数执行期间不变。因此 `Call` 的 `stack_base: base` 实际上是"调用者的基址"，而非"当前调用点的参数基址"。这意味着 `Call` 协议隐含假设：**调用点处栈在 `base` 之上恰好只有参数**（无遗留中间值）。在此假设下，调用点参数之下 = 调用者基址 $b$，故 $\textit{sb}_f = b$。
 
-- **CallN 用户函数路径**（[`tenth/src/runtime/vm.rs:545`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：`stack_base: self.stack.len()`，此时已弹出 $n$ 个参数。设调用前栈 $\textit{stk}_0 = \textit{stk}_0[0..b'] \cdot \textit{args}$，弹参数后 $\textit{stk} = \textit{stk}_0[0..b']$，$|\textit{stk}| = b'$。故 $\textit{sb}_f = b'$，其中 $b'$ 是调用点参数之下的位置。
+- **CallN 用户函数路径**（[`tenth/src/runtime/vm.rs:545`](../../tenth/src/runtime/vm.rs)）：`stack_base: self.stack.len()`，此时已弹出 $n$ 个参数。设调用前栈 $\textit{stk}_0 = \textit{stk}_0[0..b'] \cdot \textit{args}$，弹参数后 $\textit{stk} = \textit{stk}_0[0..b']$，$|\textit{stk}| = b'$。故 $\textit{sb}_f = b'$，其中 $b'$ 是调用点参数之下的位置。
 
 两种协议下 $\textit{sb}_f$ 都等于"调用点参数之下的位置"——但 Call 协议要求栈纪律成立（$b' = b$，即调用点参数之下 = 调用者基址），CallN 协议无此要求（$b'$ 直接由当前栈长度决定）。$\square$
 
@@ -400,7 +400,7 @@ $$
 
 这由以下不变量保证：**被调函数体只能通过 `push`/`pop` 操作栈顶，不能修改栈中下标 $< b$ 的元素**。Rust `Vec<Value>` 的 `push`/`pop`/`truncate` 操作：
 - `push(v)`：仅追加到末尾，不影响 $[0..b]$；
-- `pop()`：仅移除末尾，若 $|\textit{stk}| > b$ 则不影响 $[0..b]$；若 $|\textit{stk}| = b$ 则 `pop` 返回 `Unit`（`unwrap_or` 兜底，[`tenth/src/runtime/vm.rs:194`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）但仍不修改 $[0..b]$；
+- `pop()`：仅移除末尾，若 $|\textit{stk}| > b$ 则不影响 $[0..b]$；若 $|\textit{stk}| = b$ 则 `pop` 返回 `Unit`（`unwrap_or` 兜底，[`tenth/src/runtime/vm.rs:194`](../../tenth/src/runtime/vm.rs)）但仍不修改 $[0..b]$；
 - `truncate(k)`：仅当 $k < |\textit{stk}|$ 时丢弃末尾，$k \geq b$ 时不影响 $[0..b]$。被调函数体的 `Ret` 用 `truncate(f.stack_base)`，其中 $f$ 是被调函数自己推入的帧，$\textit{sb}_f \geq b$（被调函数的基址 $\geq$ 调用者的基址，因为调用者已压入参数）。
 
 故被调函数体执行期间 $\textit{stk}[0..b]$ 保持不变，即 $\textit{stk}_{\text{pre}}[0..b] = \textit{stk}_0[0..b]$。
@@ -438,15 +438,15 @@ $\square$
 
 设调用点栈 $\textit{stk} = \textit{stk}[0..b] \cdot \textit{args}$，$|\textit{args}| = n$，栈纪律成立意味着 $\textit{stk}[0..b]$ 恰为调用者基址之下的部分。
 
-- **Call 路径**（[`tenth/src/runtime/vm.rs:515`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：`stack_base: base`，其中 `base` $= b$（调用者入口基址，栈纪律下等于调用点参数之下位置）。故 $\textit{sb}_f = b$。
+- **Call 路径**（[`tenth/src/runtime/vm.rs:515`](../../tenth/src/runtime/vm.rs)）：`stack_base: base`，其中 `base` $= b$（调用者入口基址，栈纪律下等于调用点参数之下位置）。故 $\textit{sb}_f = b$。
 
-- **CallN 路径**（[`tenth/src/runtime/vm.rs:545`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：先弹 $n$ 个参数，$\textit{stk}$ 变为 $\textit{stk}[0..b]$，$|\textit{stk}| = b$；`stack_base: self.stack.len()` $= b$。故 $\textit{sb}_{f'} = b$。
+- **CallN 路径**（[`tenth/src/runtime/vm.rs:545`](../../tenth/src/runtime/vm.rs)）：先弹 $n$ 个参数，$\textit{stk}$ 变为 $\textit{stk}[0..b]$，$|\textit{stk}| = b$；`stack_base: self.stack.len()` $= b$。故 $\textit{sb}_{f'} = b$。
 
 故 $\textit{sb}_f = \textit{sb}_{f'} = b$。$\square$
 
 **情形 (b)：执行后操作数栈相同**。
 
-由 (a)，两协议推入帧的 $\textit{sb}$ 相同。两协议都被调函数 $g$，初始 $\textit{loc}_g$ 都为 $\textit{args}$（Call 在 [`tenth/src/runtime/vm.rs:521-523`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 弹参到 `locals`，CallN 在 [`tenth/src/runtime/vm.rs:550-551`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 用 `args` 作 `locals`）。两协议调用前操作数栈弹参数后都为 $\textit{stk}[0..b]$。故被调函数体执行前的 VM 状态 $\langle 0, \textit{code}_g, \textit{stk}[0..b], \textit{frs} \cdot f, \textit{loc}_g^{\text{init}}, \cdot, \cdot \rangle$ 完全相同（除帧 $f$ 与 $f'$ 的 `ip`/`chunk_idx`/`locals` 字段，但这些字段在 `Ret` 时被恢复，不影响被调函数体执行）。
+由 (a)，两协议推入帧的 $\textit{sb}$ 相同。两协议都被调函数 $g$，初始 $\textit{loc}_g$ 都为 $\textit{args}$（Call 在 [`tenth/src/runtime/vm.rs:521-523`](../../tenth/src/runtime/vm.rs) 弹参到 `locals`，CallN 在 [`tenth/src/runtime/vm.rs:550-551`](../../tenth/src/runtime/vm.rs) 用 `args` 作 `locals`）。两协议调用前操作数栈弹参数后都为 $\textit{stk}[0..b]$。故被调函数体执行前的 VM 状态 $\langle 0, \textit{code}_g, \textit{stk}[0..b], \textit{frs} \cdot f, \textit{loc}_g^{\text{init}}, \cdot, \cdot \rangle$ 完全相同（除帧 $f$ 与 $f'$ 的 `ip`/`chunk_idx`/`locals` 字段，但这些字段在 `Ret` 时被恢复，不影响被调函数体执行）。
 
 被调函数体从相同初始状态出发，按确定性迁移规则（指令分派是确定性的，无随机），到达相同 `Ret` 前状态。由定理 V1，`Ret` 后栈状态相同。$\square$
 
@@ -466,7 +466,7 @@ $\square$
 
 ### 8.3 Native 路径的额外差异
 
-`Call` 对 native 函数用 `n = self.stack.len() - base`（[`tenth/src/runtime/vm.rs:507`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）推断参数数量，**会把栈纪律不成立时的 `extra` 也当作参数传给 native**。`CallN` 用显式 $n$，只传恰好 $n$ 个参数。这是 native 路径下双协议的额外差异——即使栈纪律成立，`Call` 对 native 也依赖栈深度推断，`CallN` 显式指定。
+`Call` 对 native 函数用 `n = self.stack.len() - base`（[`tenth/src/runtime/vm.rs:507`](../../tenth/src/runtime/vm.rs)）推断参数数量，**会把栈纪律不成立时的 `extra` 也当作参数传给 native**。`CallN` 用显式 $n$，只传恰好 $n$ 个参数。这是 native 路径下双协议的额外差异——即使栈纪律成立，`Call` 对 native 也依赖栈深度推断，`CallN` 显式指定。
 
 **推论 V2.1**。栈纪律成立时，对用户函数 `Call(g)` 与 `CallN(g, n)` 完全等价；对 native 函数，`Call(g)` 与 `CallN(g, n)` 在 $n = \text{stack.len()} - \text{base}$ 时等价，否则不等价。
 
@@ -503,7 +503,7 @@ $\square$
 
 ### 9.3 wrapping_add 的安全性
 
-`loop_counter` 用 `u64::wrapping_add`（[`tenth/src/runtime/vm.rs:371`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），在 $2^{64}$ 步后回绕。回绕不影响 `& 0xFFF == 0` 的周期性——`wrapping_add(1) & 0xFFF` 的周期始终为 4096。但回绕点处可能出现连续两次触发（从 `0xFFF...FFF` 到 `0`），开销为 $2 \cdot c_{\text{clk}}$，可忽略。
+`loop_counter` 用 `u64::wrapping_add`（[`tenth/src/runtime/vm.rs:371`](../../tenth/src/runtime/vm.rs)），在 $2^{64}$ 步后回绕。回绕不影响 `& 0xFFF == 0` 的周期性——`wrapping_add(1) & 0xFFF` 的周期始终为 4096。但回绕点处可能出现连续两次触发（从 `0xFFF...FFF` 到 `0`），开销为 $2 \cdot c_{\text{clk}}$，可忽略。
 
 回绕所需步数 $2^{64} \approx 1.8 \times 10^{19}$，单步 5 ns 时需 $9 \times 10^{9}$ 秒 $\approx 285$ 年——实际不可达。
 
@@ -539,27 +539,27 @@ Tenth 的取舍是**保留双协议**，新代码用 `CallN`，旧代码保留 `
 
 Tenth 的 4096 步周期检查是**摊还优化**的典范：用 4096 倍的响应延迟换取 4096 倍的开销降低。对 AI 训练场景（步数预算 $\sim 10^9$），摊还开销 $\sim 50\text{ ns/step} \times 10^9 = 50\text{ s}$，可接受；对交互式 REPL（步数 $\sim 10^4$），延迟 $\leq 4096 \times 5\text{ ns} = 20\text{ μs}$，无感知。
 
-但对**单步无界**的场景（如 native 函数内部死循环），周期检查失效——这是 Tenth 选择 native 函数受 `step_budget` 不约束的设计代价（[`tenth/src/runtime/interpreter/natives.rs:87-94`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs) 中 `with_step_limit`/`with_timeout_ms` 通过保存/恢复 budget 实现子预算，但 native 内部仍可无限循环）。
+但对**单步无界**的场景（如 native 函数内部死循环），周期检查失效——这是 Tenth 选择 native 函数受 `step_budget` 不约束的设计代价（[`tenth/src/runtime/interpreter/natives.rs:87-94`](../../tenth/src/runtime/interpreter/natives.rs) 中 `with_step_limit`/`with_timeout_ms` 通过保存/恢复 budget 实现子预算，但 native 内部仍可无限循环）。
 
 ### 10.4 双轨独立检查的必要性
 
-历史缺陷 H-4（[`tenth/src/runtime/vm.rs:358-360`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 注释）表明：将 deadline 检查嵌套在 `step_budget` 检查内（即 `if let Some(budget) = step_budget { ... check deadline ... }`）会导致**只设 `--timeout` 不设步数预算时 deadline 永不触发**。当前实现用独立 `loop_counter` 修复，确保两个资源限制相互正交。这是**正交性设计原则**的实例：两个独立的功能不应相互耦合。
+历史缺陷 H-4（[`tenth/src/runtime/vm.rs:358-360`](../../tenth/src/runtime/vm.rs) 注释）表明：将 deadline 检查嵌套在 `step_budget` 检查内（即 `if let Some(budget) = step_budget { ... check deadline ... }`）会导致**只设 `--timeout` 不设步数预算时 deadline 永不触发**。当前实现用独立 `loop_counter` 修复，确保两个资源限制相互正交。这是**正交性设计原则**的实例：两个独立的功能不应相互耦合。
 
 ---
 
 ## 11. 开放问题
 
-1. **`MethodCall` 的多分派形式化**。本文未形式化 `MethodCall`（[`tenth/src/runtime/vm.rs:567-575`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），它通过 `call_method_priv` 做运行时多分派。其与 `Call`/`CallN` 的等价性需单独研究。
+1. **`MethodCall` 的多分派形式化**。本文未形式化 `MethodCall`（[`tenth/src/runtime/vm.rs:567-575`](../../tenth/src/runtime/vm.rs)），它通过 `call_method_priv` 做运行时多分派。其与 `Call`/`CallN` 的等价性需单独研究。
 
-2. **JIT 路径的栈卫生**。JIT 编译后的代码（[`tenth/src/compile/jit/`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/)）是否保持 `truncate` 语义？JIT 通过 hostcall 回调 VM（[`tenth/src/runtime/vm.rs:211-220`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) `call_with_args`），其栈卫生依赖 hostcall trampoline 的正确性——这需在论文 T9（JIT 特化语义保持）框架下补充。
+2. **JIT 路径的栈卫生**。JIT 编译后的代码（[`tenth/src/compile/jit/`](../../tenth/src/compile/jit/)）是否保持 `truncate` 语义？JIT 通过 hostcall 回调 VM（[`tenth/src/runtime/vm.rs:211-220`](../../tenth/src/runtime/vm.rs) `call_with_args`），其栈卫生依赖 hostcall trampoline 的正确性——这需在论文 T9（JIT 特化语义保持）框架下补充。
 
-3. **native 函数的栈副作用**。native 函数（`NativeFn = fn(&mut Vm, &[Value]) -> TenthResult<Value>`，[`tenth/src/runtime/vm.rs:14`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）可任意修改 `Vm.stack`。定理 V1 假设 native 路径下 `stack_base` 正确——但若 native 函数体内 `stack_push` 多次后 `return Ok(Value::Unit)`，`Call` 的 native 路径（[`tenth/src/runtime/vm.rs:506-511`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）不做 `truncate`，会破坏栈卫生。这是开放风险。
+3. **native 函数的栈副作用**。native 函数（`NativeFn = fn(&mut Vm, &[Value]) -> TenthResult<Value>`，[`tenth/src/runtime/vm.rs:14`](../../tenth/src/runtime/vm.rs)）可任意修改 `Vm.stack`。定理 V1 假设 native 路径下 `stack_base` 正确——但若 native 函数体内 `stack_push` 多次后 `return Ok(Value::Unit)`，`Call` 的 native 路径（[`tenth/src/runtime/vm.rs:506-511`](../../tenth/src/runtime/vm.rs)）不做 `truncate`，会破坏栈卫生。这是开放风险。
 
 4. **deadline 检查与 native 调用的交互**。native 调用期间 `loop_counter` 不递增（native 在单步内执行），故 native 内部死循环无法被 deadline 中断。需研究协作式中断（native 周期性检查标志位）或抢占式中断（独立线程 + 信号）。
 
 5. **栈深度上界**。本文未分析栈深度上界。`step_budget` 限制步数但不直接限制栈深度——`Push` 循环可在步数预算内耗尽内存。需引入 `stack_depth_limit`（独立于步数预算）。
 
-6. **与 T35（解释器-VM 等价性）的联动**。解释器侧（[`tenth/src/runtime/interpreter/mod.rs:332-361`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) `tick`）用相同 4096 步周期检查 deadline，但解释器无 `truncate`（树形解释器无操作数栈）。T35 需证明：在 deadline 触发时机上，VM 与解释器的行为等价（都每 4096 步检查一次）。本文的定理 V4 为 T35 提供了 deadline 检查的复杂度上界，但等价性证明需 T35 独立完成。
+6. **与 T35（解释器-VM 等价性）的联动**。解释器侧（[`tenth/src/runtime/interpreter/mod.rs:332-361`](../../tenth/src/runtime/interpreter/mod.rs) `tick`）用相同 4096 步周期检查 deadline，但解释器无 `truncate`（树形解释器无操作数栈）。T35 需证明：在 deadline 触发时机上，VM 与解释器的行为等价（都每 4096 步检查一次）。本文的定理 V4 为 T35 提供了 deadline 检查的复杂度上界，但等价性证明需 T35 独立完成。
 
 ---
 
@@ -569,11 +569,11 @@ Tenth 的 4096 步周期检查是**摊还优化**的典范：用 4096 倍的响�
 
 ### 12.1 形式化未覆盖的实现细节
 
-- **`unwrap_or(Value::Unit)` 兜底**：实现中 `pop`/`pop2` 等用 `unwrap_or(Value::Unit)` 兜底栈空情况（[`tenth/src/runtime/vm.rs:804-808`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) `pop2`）。形式化中我们要求 $|\textit{stk}| \geq k$ 作为前置条件，未覆盖栈空时的退化行为。**影响**：形式化证明适用于"栈纪律良好"的程序，对栈空时的 `Unit` 兜底未形式化。**缓解**：编译器保证栈空兜底不触发（HIR 类型检查排除栈不匹配）。
+- **`unwrap_or(Value::Unit)` 兜底**：实现中 `pop`/`pop2` 等用 `unwrap_or(Value::Unit)` 兜底栈空情况（[`tenth/src/runtime/vm.rs:804-808`](../../tenth/src/runtime/vm.rs) `pop2`）。形式化中我们要求 $|\textit{stk}| \geq k$ 作为前置条件，未覆盖栈空时的退化行为。**影响**：形式化证明适用于"栈纪律良好"的程序，对栈空时的 `Unit` 兜底未形式化。**缓解**：编译器保证栈空兜底不触发（HIR 类型检查排除栈不匹配）。
 
-- **`Store` 的动态扩张**：`Store(i)` 在 $i \geq |\textit{loc}|$ 时 `locals.resize(i+1, Value::Unit)`（[`tenth/src/runtime/vm.rs:444`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。形式化假设 `loc` 静态大小。**影响**：对动态扩张的 `Store` 行为未形式化。**缓解**：编译器保证 `i < num_locals`，动态扩张仅为兜底。
+- **`Store` 的动态扩张**：`Store(i)` 在 $i \geq |\textit{loc}|$ 时 `locals.resize(i+1, Value::Unit)`（[`tenth/src/runtime/vm.rs:444`](../../tenth/src/runtime/vm.rs)）。形式化假设 `loc` 静态大小。**影响**：对动态扩张的 `Store` 行为未形式化。**缓解**：编译器保证 `i < num_locals`，动态扩张仅为兜底。
 
-- **`Chunk::read_op` 的 `Ret` 回退**：未知 opcode 在 `Chunk::read_op` 中 `panic!`（[`tenth/src/runtime/vm.rs:141`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），但内联解码器（[`tenth/src/runtime/vm.rs:419`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）回退为 `Ret`。形式化采用内联解码器的回退语义。**影响**：形式化与 `Chunk::read_op` 的 panic 行为不一致——但热路径用内联解码器，`Chunk::read_op` 仅用于离线分析。**缓解**：定理 V3 的进展性基于内联解码器。
+- **`Chunk::read_op` 的 `Ret` 回退**：未知 opcode 在 `Chunk::read_op` 中 `panic!`（[`tenth/src/runtime/vm.rs:141`](../../tenth/src/runtime/vm.rs)），但内联解码器（[`tenth/src/runtime/vm.rs:419`](../../tenth/src/runtime/vm.rs)）回退为 `Ret`。形式化采用内联解码器的回退语义。**影响**：形式化与 `Chunk::read_op` 的 panic 行为不一致——但热路径用内联解码器，`Chunk::read_op` 仅用于离线分析。**缓解**：定理 V3 的进展性基于内联解码器。
 
 ### 12.2 证明的强度限制
 
@@ -585,9 +585,9 @@ Tenth 的 4096 步周期检查是**摊还优化**的典范：用 4096 倍的响�
 
 ### 12.3 形式化与实现的工程差距
 
-- **`code`/`strings` 的 `clone`**：每次 `Call` 与 `Ret` 都 `clone` 当前 chunk 的 `code` 与 `strings`（[`tenth/src/runtime/vm.rs:517-518, 547-548, 558-559, 584-585`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。形式化中 `code` 作为状态的一部分被原样传递，未建模 `clone` 开销。**影响**：形式化的复杂度分析未包含 `clone` 的 $O(|\textit{code}|)$ 开销——实际每次调用的开销高于形式化预测。**缓解**：这是实现层面的优化机会（用 `Rc<Chunk>` 或索引替代 `clone`），不影响语义正确性。
+- **`code`/`strings` 的 `clone`**：每次 `Call` 与 `Ret` 都 `clone` 当前 chunk 的 `code` 与 `strings`（[`tenth/src/runtime/vm.rs:517-518, 547-548, 558-559, 584-585`](../../tenth/src/runtime/vm.rs)）。形式化中 `code` 作为状态的一部分被原样传递，未建模 `clone` 开销。**影响**：形式化的复杂度分析未包含 `clone` 的 $O(|\textit{code}|)$ 开销——实际每次调用的开销高于形式化预测。**缓解**：这是实现层面的优化机会（用 `Rc<Chunk>` 或索引替代 `clone`），不影响语义正确性。
 
-- **`locals.clone()`**：`Call` 推帧时 `locals.clone()`（[`tenth/src/runtime/vm.rs:515`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。形式化中 `loc` 作为状态一部分被"保存"到帧，未建模 `clone` 开销。**影响**：同上。
+- **`locals.clone()`**：`Call` 推帧时 `locals.clone()`（[`tenth/src/runtime/vm.rs:515`](../../tenth/src/runtime/vm.rs)）。形式化中 `loc` 作为状态一部分被"保存"到帧，未建模 `clone` 开销。**影响**：同上。
 
 ### 12.4 未覆盖的指令
 
@@ -618,7 +618,7 @@ Tenth 的 4096 步周期检查是**摊还优化**的典范：用 4096 倍的响�
 - **双协议**：新代码应统一用 `CallN`，`Call` 视为遗留；编译器应静态保证栈纪律；
 - **deadline**：4096 步周期对 AI 训练场景合理；交互式场景可考虑更短周期（如 256 步）；native 死循环需协作式中断。
 
-本文为 T35（解释器-VM 等价性）提供了 VM 侧的操作语义基础与 deadline 检查复杂度上界，T35 可在此基础上证明解释器侧 `tick`（[`tenth/src/runtime/interpreter/mod.rs:332-361`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)）与 VM 侧 `loop_counter`（[`tenth/src/runtime/vm.rs:371-384`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）在 deadline 触发时机上的等价性。
+本文为 T35（解释器-VM 等价性）提供了 VM 侧的操作语义基础与 deadline 检查复杂度上界，T35 可在此基础上证明解释器侧 `tick`（[`tenth/src/runtime/interpreter/mod.rs:332-361`](../../tenth/src/runtime/interpreter/mod.rs)）与 VM 侧 `loop_counter`（[`tenth/src/runtime/vm.rs:371-384`](../../tenth/src/runtime/vm.rs)）在 deadline 触发时机上的等价性。
 
 ---
 
@@ -641,26 +641,26 @@ Tenth 的 4096 步周期检查是**摊还优化**的典范：用 4096 倍的响�
 
 | 定理 | 陈述 | 证明方法 | 源码锚点 |
 |------|------|---------|---------|
-| V1 | 栈卫生不变量 | 反向归纳 + 截断语义归约 | [vm.rs:577-590](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| V2 | Call/CallN 双协议等价性 | 双向模拟 | [vm.rs:503-566](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| V3 | 类型安全进展 | 分情形分析 + 解码器回退 | [vm.rs:422-802](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| V4 | 摊还 deadline 开销上界 | 聚合法 | [vm.rs:369-384](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| V4b | deadline 超限响应延迟上界 | 最坏情况分析 | [vm.rs:369-384](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| V5 | 与 CPython eval loop 对比 | 定量对比 | [vm.rs:353-384](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| V1.1 | 截断确定性 | `Vec::truncate` 语义 | [vm.rs:580](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| V1.2 | 调用前栈基址匹配 | 分协议情形分析 | [vm.rs:515,545](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| V1.3 | Ret 不依赖被调函数体 | 截断确定性应用 | [vm.rs:577-590](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
+| V1 | 栈卫生不变量 | 反向归纳 + 截断语义归约 | [vm.rs:577-590](../../tenth/src/runtime/vm.rs) |
+| V2 | Call/CallN 双协议等价性 | 双向模拟 | [vm.rs:503-566](../../tenth/src/runtime/vm.rs) |
+| V3 | 类型安全进展 | 分情形分析 + 解码器回退 | [vm.rs:422-802](../../tenth/src/runtime/vm.rs) |
+| V4 | 摊还 deadline 开销上界 | 聚合法 | [vm.rs:369-384](../../tenth/src/runtime/vm.rs) |
+| V4b | deadline 超限响应延迟上界 | 最坏情况分析 | [vm.rs:369-384](../../tenth/src/runtime/vm.rs) |
+| V5 | 与 CPython eval loop 对比 | 定量对比 | [vm.rs:353-384](../../tenth/src/runtime/vm.rs) |
+| V1.1 | 截断确定性 | `Vec::truncate` 语义 | [vm.rs:580](../../tenth/src/runtime/vm.rs) |
+| V1.2 | 调用前栈基址匹配 | 分协议情形分析 | [vm.rs:515,545](../../tenth/src/runtime/vm.rs) |
+| V1.3 | Ret 不依赖被调函数体 | 截断确定性应用 | [vm.rs:577-590](../../tenth/src/runtime/vm.rs) |
 | V1.1 推论 | 嵌套调用的栈卫生传递 | 对调用深度归纳 | 同 V1 |
-| V2.1 | Native 路径双协议差异 | 栈深度推断 vs 显式 | [vm.rs:506-511](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
+| V2.1 | Native 路径双协议差异 | 栈深度推断 vs 显式 | [vm.rs:506-511](../../tenth/src/runtime/vm.rs) |
 
 ## 附录 B：与现有文档的对应
 
 | 本文章节 | 对应文档 |
 |---------|---------|
-| §3 状态空间 | [CODE_WIKI.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/CODE_WIKI.md) VM 模块详解 |
-| §5 迁移规则 | [docs/语言参考手册.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md) 指令集 |
-| §10 工程权衡 | [MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md) H-4 缺陷记录 |
-| §11 开放问题 | [AUDIT.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/AUDIT.md) 待办 |
+| §3 状态空间 | [CODE_WIKI.md](../../CODE_WIKI.md) VM 模块详解 |
+| §5 迁移规则 | [docs/语言参考手册.md](../语言参考手册.md) 指令集 |
+| §10 工程权衡 | [MEMO.md](../../MEMO.md) H-4 缺陷记录 |
+| §11 开放问题 | [AUDIT.md](../../AUDIT.md) 待办 |
 | §12 局限 | （本文新增，建议同步至 AUDIT.md）|
 
 ## 附录 C：实施建议

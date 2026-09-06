@@ -1,7 +1,7 @@
-﻿# sync-public.ps1 — 生成对外发布快照（干净仓库素材）
+# sync-public.ps1 — 生成对外发布快照（干净仓库素材）
 #
 # 用途：从开发仓库（含大量内部文档）整理出"对外发布树"——
-#       只含对外源码/文档/CI，排除内部工作文件（.trae/.agents/能力梳理/
+#       只含对外源码/文档/CI，排除内部工作文件（.agents/能力梳理/
 #       MEMO/AUDIT/CODE_WIKI/设计调研文档等），且不带 .git 历史。
 #       生成物供"新仓库单次初始提交"使用，保证对外提交记录干净专业。
 #
@@ -101,7 +101,7 @@ Set-Content -Path (Join-Path $out ".gitignore") -Value $gitignore -Encoding UTF8
 # ---------- 校验：确保无内部文件泄漏 ----------
 Write-Host ""
 Write-Host "[sync] === 校验（内部文件不得出现） ==="
-$leakPatterns = @(".trae", ".agents", "能力梳理", "MEMO.md", "AUDIT.md", "CODE_WIKI.md",
+$leakPatterns = @(".agents", "能力梳理", "MEMO.md", "AUDIT.md", "CODE_WIKI.md",
                   "基本功核查", "现状调研报告", "security_review", "用户反馈",
                   "程序张量探索", "shape-check-roadmap", "虚拟管理体系", "编译到机器码方案",
                   "superpowers", "AGENTS.md", "async-concurrency-design", "gpu-feasibility",

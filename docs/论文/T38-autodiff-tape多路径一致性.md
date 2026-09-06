@@ -40,9 +40,9 @@ Tenth 维护三条执行路径：
 
 | 路径 | 实现入口 | tape 记录点 |
 |------|---------|------------|
-| 字节码 VM | `Vm::run`（[vm.rs:331](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | `record_binary` / `record_unary`（[vm.rs:1797-1828](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） |
-| Tree-walk 解释器 | `Interpreter`（[interpreter/mod.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)） | `record_binary` / `record_unary`（[mod.rs:1032-1059](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)） |
-| Cranelift JIT | `run_jit`（[jit/mod.rs:37](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)） | **整体跳过**——`is_recording()` 安全门 fallback 至 VM（[mod.rs:41-43](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)） |
+| 字节码 VM | `Vm::run`（[vm.rs:331](../../tenth/src/runtime/vm.rs)） | `record_binary` / `record_unary`（[vm.rs:1797-1828](../../tenth/src/runtime/vm.rs)） |
+| Tree-walk 解释器 | `Interpreter`（[interpreter/mod.rs](../../tenth/src/runtime/interpreter/mod.rs)） | `record_binary` / `record_unary`（[mod.rs:1032-1059](../../tenth/src/runtime/interpreter/mod.rs)） |
+| Cranelift JIT | `run_jit`（[jit/mod.rs:37](../../tenth/src/compile/jit/mod.rs)） | **整体跳过**——`is_recording()` 安全门 fallback 至 VM（[mod.rs:41-43](../../tenth/src/compile/jit/mod.rs)） |
 
 JIT 选择的"整体退出"策略而非"在 JIT 代码中插入 record 调用"，是一种**副作用敏感的部分求值**决策：JIT 编译的标量算术不会触发任何 hostcall，因此 recording 模式下若让 JIT 继续执行，tape 会被静默掏空。
 
@@ -67,19 +67,19 @@ $$T = [(op_1, \text{in}_1, \text{out}_1), (op_2, \text{in}_2, \text{out}_2), \do
 
 其中 $\text{in}_i \subseteq \{x\} \cup \{\text{out}_j : j < i\}$。tape 的**完整性**指 $T$ 忠实记录了 $P$ 的所有可微操作；**忠实性的破坏**等价于梯度的错误。
 
-Tenth 的 tape 实现见 [autodiff.rs:83-265](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)：`Tape` 结构持有 `Vec<TapeNode>`，每个 `TapeNode` 含 `op: TapeOp`、`inputs: Vec<usize>`（上游节点 id）、`input_tensors: Vec<Rc<RefCell<Tensor>>>`（输入张量引用，backward 时读取）。
+Tenth 的 tape 实现见 [autodiff.rs:83-265](../../tenth/src/runtime/autodiff.rs)：`Tape` 结构持有 `Vec<TapeNode>`，每个 `TapeNode` 含 `op: TapeOp`、`inputs: Vec<usize>`（上游节点 id）、`input_tensors: Vec<Rc<RefCell<Tensor>>>`（输入张量引用，backward 时读取）。
 
 ### 2.2 PyTorch autograd hook
 
 PyTorch 的 autograd 引擎采用动态图：每个 `Tensor` 持有 `.grad_fn` 属性指向产生它的反向函数。前向执行时，若 `requires_grad=True`，则构建反向图节点；反向时 `engine.execute()` 沿反向图拓扑序调度。
 
-关键差异：PyTorch 的反向图是**惰性构建**的（每次前向都重建），且 hook 机制（`register_hook`）允许用户在反向阶段插入副作用。这与 Tenth 的 tape 模型不同——Tenth 的 tape 是**显式持久化**的单一序列，反向阶段直接遍历 `nodes.iter().rev()`（[autodiff.rs:285](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），无显式反向图。
+关键差异：PyTorch 的反向图是**惰性构建**的（每次前向都重建），且 hook 机制（`register_hook`）允许用户在反向阶段插入副作用。这与 Tenth 的 tape 模型不同——Tenth 的 tape 是**显式持久化**的单一序列，反向阶段直接遍历 `nodes.iter().rev()`（[autodiff.rs:285](../../tenth/src/runtime/autodiff.rs)），无显式反向图。
 
 ### 2.3 JAX traced values
 
 JAX 的 autodiff 建立在抽象值（traced values）上：`jax.grad` 通过将输入包装为 `Tracer`，前向执行时构建 JAXPR 中间表示，反向阶段对 JAXPR 求导。JAXPR 是**纯函数式** IR，禁止副作用。
 
-关键差异：JAX 通过纯函数性保证 tape 完整性——任何副作用都被类型系统拒绝。Tenth 是**命令式**语言，tape 记录依赖运行时的 `if self.recording { ... }` 分支（[vm.rs:832](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 等），effect system 缺位下完整性靠工程纪律维持。这正是 A3 定理（梯度正确性相对性）的根源。
+关键差异：JAX 通过纯函数性保证 tape 完整性——任何副作用都被类型系统拒绝。Tenth 是**命令式**语言，tape 记录依赖运行时的 `if self.recording { ... }` 分支（[vm.rs:832](../../tenth/src/runtime/vm.rs) 等），effect system 缺位下完整性靠工程纪律维持。这正是 A3 定理（梯度正确性相对性）的根源。
 
 ---
 
@@ -87,7 +87,7 @@ JAX 的 autodiff 建立在抽象值（traced values）上：`jax.grad` 通过将
 
 ### 3.1 TapeOp 枚举
 
-`TapeOp` 是 `TapeNode` 的算子标签，定义为 21 个变体的枚举（[autodiff.rs:29-79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+`TapeOp` 是 `TapeNode` 的算子标签，定义为 21 个变体的枚举（[autodiff.rs:29-79](../../tenth/src/runtime/autodiff.rs)）：
 
 ```
 Input | Add | Sub | Mul | Div | Neg | ReLU | MatMul | Transpose |
@@ -104,7 +104,7 @@ Dropout | Conv2D | BatchNorm | LayerNorm | Gelu
 
 ### 3.2 record_binary 的代数结构
 
-`record_binary`（[vm.rs:1810-1828](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 与 [interpreter/mod.rs:1032-1050](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)）的核心是一个**四分支决策**：
+`record_binary`（[vm.rs:1810-1828](../../tenth/src/runtime/vm.rs) 与 [interpreter/mod.rs:1032-1050](../../tenth/src/runtime/interpreter/mod.rs)）的核心是一个**四分支决策**：
 
 ```
 record_binary(op, t1, t2, result):
@@ -121,17 +121,17 @@ record_binary(op, t1, t2, result):
 **关键性质**：
 1. **tape_id 传播**：`result.tape_id` 始终被设为新节点 id，保证下游算子能挂接；
 2. **dummy input 注入**：当某侧无 tape_id 时，自动创建 `tape.input(...)` 叶节点——这把"未参与 record 的张量"提升为叶，使其梯度可累积（虽然通常这些张量不需要梯度，但不会破坏 DAG 连通性）；
-3. **`binary_direct` 兜底**：两侧都无 tape_id 时，节点不挂接上游（`inputs: vec![]`），backward 时 `propagate_grad` 走 direct 分支直接写入张量 `.grad`（[autodiff.rs:792-801](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+3. **`binary_direct` 兜底**：两侧都无 tape_id 时，节点不挂接上游（`inputs: vec![]`），backward 时 `propagate_grad` 走 direct 分支直接写入张量 `.grad`（[autodiff.rs:792-801](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 3.3 is_recording 安全门
 
-`is_recording()` 是 VM 上的纯字段查询（[vm.rs:191](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：
+`is_recording()` 是 VM 上的纯字段查询（[vm.rs:191](../../tenth/src/runtime/vm.rs)）：
 
 ```rust
 pub fn is_recording(&self) -> bool { self.recording }
 ```
 
-`recording` 字段由 `autograd_start` / `autograd_end` 这类 native 函数设置（[interpreter/natives.rs:149,177](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)）。JIT 入口 `run_jit` 在第 41 行检查此字段（[jit/mod.rs:41-43](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)）：
+`recording` 字段由 `autograd_start` / `autograd_end` 这类 native 函数设置（[interpreter/natives.rs:149,177](../../tenth/src/runtime/interpreter/natives.rs)）。JIT 入口 `run_jit` 在第 41 行检查此字段（[jit/mod.rs:41-43](../../tenth/src/compile/jit/mod.rs)）：
 
 ```rust
 if vm.is_recording() {
@@ -139,7 +139,7 @@ if vm.is_recording() {
 }
 ```
 
-**这是 JIT 的整体退出决策**：一旦 recording 为真，整个函数调用走 VM 路径，而非"在 JIT 代码中插入 record hostcall"。理由在 [jit/mod.rs:38-40](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) 的注释中明确——"tape writes happen inside the interpreter's Add/Sub/Mul/Div and tensor method handlers, and JIT-compiled scalar arithmetic would silently skip them"。
+**这是 JIT 的整体退出决策**：一旦 recording 为真，整个函数调用走 VM 路径，而非"在 JIT 代码中插入 record hostcall"。理由在 [jit/mod.rs:38-40](../../tenth/src/compile/jit/mod.rs) 的注释中明确——"tape writes happen inside the interpreter's Add/Sub/Mul/Div and tensor method handlers, and JIT-compiled scalar arithmetic would silently skip them"。
 
 ---
 
@@ -178,8 +178,8 @@ if vm.is_recording() {
 由归纳原理，$T_V \cong T_I$。$\square$
 
 **实证依据**：
-- VM 侧 `record_binary`：[vm.rs:1810](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)；
-- 解释器侧 `record_binary`：[interpreter/mod.rs:1032](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)；
+- VM 侧 `record_binary`：[vm.rs:1810](../../tenth/src/runtime/vm.rs)；
+- 解释器侧 `record_binary`：[interpreter/mod.rs:1032](../../tenth/src/runtime/interpreter/mod.rs)；
 - 两侧实现文本对称（四分支决策完全一致），是 (C2) 的代码级证据。
 
 ---
@@ -189,18 +189,18 @@ if vm.is_recording() {
 **陈述**：在 `recording = true` 状态下，对任意函数 $f$，`run_jit(vm, f)` 的执行在 autodiff 语义上等价于 `vm.call(f)`，即两者产生的 tape 与最终梯度相同。
 
 **前置条件**：
-- (C4) `is_recording()` 是 `recording` 字段的纯读取（[vm.rs:191](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），无副作用；
-- (C5) `run_jit` 在 recording 为真时**无条件**走 `vm.call(name)` 分支（[jit/mod.rs:41-43](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)），不执行任何 JIT 编译或 hostcall；
+- (C4) `is_recording()` 是 `recording` 字段的纯读取（[vm.rs:191](../../tenth/src/runtime/vm.rs)），无副作用；
+- (C5) `run_jit` 在 recording 为真时**无条件**走 `vm.call(name)` 分支（[jit/mod.rs:41-43](../../tenth/src/compile/jit/mod.rs)），不执行任何 JIT 编译或 hostcall；
 - (C6) `vm.call` 与 `vm.run` 是字节码 VM 的标准入口，其内部 `record_binary` / `record_unary` 调用按 §3.2 协议执行。
 
 **证明**：
 
 考虑 `run_jit(vm, f)` 在 `recording = true` 下的执行轨迹：
 
-1. 进入 `run_jit`（[jit/mod.rs:37](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)）；
+1. 进入 `run_jit`（[jit/mod.rs:37](../../tenth/src/compile/jit/mod.rs)）；
 2. 第 41 行检查 `vm.is_recording()`，由 (C4) 返回 `true`；
 3. 第 42 行 `return vm.call(name)`，由 (C5) 不执行后续 JIT 逻辑；
-4. `vm.call(name)` 调用 `vm.run(idx)`（[vm.rs:325-329](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），即标准字节码 VM 执行；
+4. `vm.call(name)` 调用 `vm.run(idx)`（[vm.rs:325-329](../../tenth/src/runtime/vm.rs)），即标准字节码 VM 执行；
 5. VM 执行过程中，每个张量算子按 (C6) 触发 `record_binary` / `record_unary`，tape 完整记录。
 
 因此，`run_jit(vm, f)` 在 recording 模式下的可观察行为（tape 内容、梯度结果）与直接调用 `vm.call(f)` **逐字节相同**。
@@ -215,9 +215,9 @@ if vm.is_recording() {
 **JIT 退出的"副作用敏感"性质**：本策略是部分求值的特例——JIT 对**纯标量算术**特化，对**含副作用的 tape 记录**整体放弃。这与 Stoyanov（1986）的"副作用阻断部分求值"原则一致：任何可能触发副作用的代码点都阻断特化，回退到解释执行。$\square$
 
 **实证依据**：
-- `is_recording()` 纯字段读取：[vm.rs:191](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)；
-- JIT 安全门：[jit/mod.rs:41-43](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)；
-- JIT 模块文档注释明确"autodiff recording routed through host trampolines"：[jit/mod.rs:9-14](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)。
+- `is_recording()` 纯字段读取：[vm.rs:191](../../tenth/src/runtime/vm.rs)；
+- JIT 安全门：[jit/mod.rs:41-43](../../tenth/src/compile/jit/mod.rs)；
+- JIT 模块文档注释明确"autodiff recording routed through host trampolines"：[jit/mod.rs:9-14](../../tenth/src/compile/jit/mod.rs)。
 
 ---
 
@@ -234,7 +234,7 @@ $$\text{GradCorrect}(P) \iff \text{TapeComplete}(T(P))$$
 **证明**：
 
 **方向 $\Leftarrow$**（完整性蕴含正确性）：
-设 $T(P)$ 完整。由 Wengert 理论（§2.1），$T(P)$ 忠实表示了 $P$ 的计算图。backward 阶段（[autodiff.rs:272-749](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）按 `nodes.iter().rev()` 拓扑逆序遍历，对每个节点应用对应 `TapeOp` 的链式法则（[autodiff.rs:291-746](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。由 backward 实现的数学正确性（每个 `TapeOp` 的反向公式见 §3.1 分类对应的标准链式法则），梯度按链式法则累积至 `TapeOp::Input` 叶节点。因此梯度正确。
+设 $T(P)$ 完整。由 Wengert 理论（§2.1），$T(P)$ 忠实表示了 $P$ 的计算图。backward 阶段（[autodiff.rs:272-749](../../tenth/src/runtime/autodiff.rs)）按 `nodes.iter().rev()` 拓扑逆序遍历，对每个节点应用对应 `TapeOp` 的链式法则（[autodiff.rs:291-746](../../tenth/src/runtime/autodiff.rs)）。由 backward 实现的数学正确性（每个 `TapeOp` 的反向公式见 §3.1 分类对应的标准链式法则），梯度按链式法则累积至 `TapeOp::Input` 叶节点。因此梯度正确。
 
 **方向 $\Rightarrow$**（正确性蕴含完整性，逆否证明）：
 设 $T(P)$ 不完整，即存在可微算子 $op^*$ 在 $P$ 中执行但未在 $T(P)$ 中记录。考虑 $op^*$ 对下游梯度的影响：
@@ -247,8 +247,8 @@ $$\text{GradCorrect}(P) \iff \text{TapeComplete}(T(P))$$
 **关键观察**：上述错误**不产生任何运行时异常**。`record_binary` 的 dummy 注入机制（§3.2 性质 2）会把"缺失记录"静默转化为"叶节点"，tape 看起来仍然连通，只是拓扑结构错误。这正是"梯度正确性的相对性"——错误潜伏在 tape 完整性层面，而非算子实现层面。$\square$
 
 **实证依据**：
-- backward 拓扑遍历：[autodiff.rs:285](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)；
-- dummy 注入机制：[vm.rs:1817,1821](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)；
+- backward 拓扑遍历：[autodiff.rs:285](../../tenth/src/runtime/autodiff.rs)；
+- dummy 注入机制：[vm.rs:1817,1821](../../tenth/src/runtime/vm.rs)；
 - backward 无"未记录算子"检测：搜索 `tenth/src/runtime/autodiff.rs` 无任何"missing record"或"unrecorded"相关断言。
 
 **A3 的工程含义**：Tenth 的 autodiff 正确性**依赖工程纪律**——每个新增算子必须人工在 VM 和解释器两侧添加 `record_binary` / `record_unary` 调用。effect system 缺位下，这是脆弱的。定理 A4 将展示这一脆弱性的真实后果。
@@ -265,27 +265,27 @@ $$\text{GradCorrect}(P) \iff \text{TapeComplete}(T(P))$$
 
 | # | TapeOp | VM record 调用点 | 解释器 record 调用点 | 状态 |
 |---|--------|------------------|---------------------|------|
-| 1 | `Input` | `tape.input` 在 `record_binary` dummy 分支（[vm.rs:1817,1821](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）及 Conv2D/BN/LN/Dropout 路径 | 同 VM（[mod.rs:1039,1043](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)） | ✅ |
-| 2 | `Add` | 5 处 `record_binary(TapeOp::Add, ...)`（[vm.rs:832-867](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | 5 处（[binary.rs:35-71](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/binary.rs)） | ✅ |
-| 3 | `Sub` | 5 处（[vm.rs:888-925](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | 5 处（[binary.rs:94-132](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/binary.rs)） | ✅ |
-| 4 | `Mul` | 5 处（[vm.rs:946-983](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | 5 处（[binary.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/binary.rs)） | ✅ |
-| 5 | `Div` | 5 处（[vm.rs:1009-1048](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | 5 处（[binary.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/binary.rs)） | ✅ |
+| 1 | `Input` | `tape.input` 在 `record_binary` dummy 分支（[vm.rs:1817,1821](../../tenth/src/runtime/vm.rs)）及 Conv2D/BN/LN/Dropout 路径 | 同 VM（[mod.rs:1039,1043](../../tenth/src/runtime/interpreter/mod.rs)） | ✅ |
+| 2 | `Add` | 5 处 `record_binary(TapeOp::Add, ...)`（[vm.rs:832-867](../../tenth/src/runtime/vm.rs)） | 5 处（[binary.rs:35-71](../../tenth/src/runtime/interpreter/binary.rs)） | ✅ |
+| 3 | `Sub` | 5 处（[vm.rs:888-925](../../tenth/src/runtime/vm.rs)） | 5 处（[binary.rs:94-132](../../tenth/src/runtime/interpreter/binary.rs)） | ✅ |
+| 4 | `Mul` | 5 处（[vm.rs:946-983](../../tenth/src/runtime/vm.rs)） | 5 处（[binary.rs](../../tenth/src/runtime/interpreter/binary.rs)） | ✅ |
+| 5 | `Div` | 5 处（[vm.rs:1009-1048](../../tenth/src/runtime/vm.rs)） | 5 处（[binary.rs](../../tenth/src/runtime/interpreter/binary.rs)） | ✅ |
 | 6 | **`Neg`** | **0 处** | **0 处** | **❌ 缺失** |
-| 7 | `ReLU` | `record_unary`（[vm.rs:1337](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:869](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 8 | `MatMul` | `record_binary`（[vm.rs:1467](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:897](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 9 | `Transpose` | `record_unary`（[vm.rs:1411](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:919](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 10 | `Sum` | `record_unary`（[vm.rs:1281](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:815](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 11 | `Mean` | `record_unary`（[vm.rs:1300](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:834](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 12 | `Exp` | `record_unary`（[vm.rs:1327](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:853](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 13 | `Log` | `record_unary`（[vm.rs:1332](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:861](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 14 | `Sigmoid` | `record_unary`（[vm.rs:1342](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:877](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | ✅ |
-| 15 | `Softmax` | `record_unary`（[vm.rs:1359](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:1311](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 16 | `CrossEntropy` | `tape.cross_entropy`（[natives.rs:360](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)，**仅在解释器侧 native 注册**） | 同左 | ⚠️ 见局限 §12.3 |
-| 17 | `Dropout` | `tape.dropout`（[vm.rs:1714](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:1153](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 18 | `Conv2D` | `tape.conv2d`（[vm.rs:1524](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:1000](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 19 | `BatchNorm` | `tape.batchnorm`（[vm.rs:1603](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:1102](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 20 | `LayerNorm` | `tape.layernorm`（[vm.rs:1682](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:1239](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
-| 21 | `Gelu` | `record_unary`（[vm.rs:1351](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)） | （[methods.rs:1256](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 7 | `ReLU` | `record_unary`（[vm.rs:1337](../../tenth/src/runtime/vm.rs)） | （[methods.rs:869](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 8 | `MatMul` | `record_binary`（[vm.rs:1467](../../tenth/src/runtime/vm.rs)） | （[methods.rs:897](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 9 | `Transpose` | `record_unary`（[vm.rs:1411](../../tenth/src/runtime/vm.rs)） | （[methods.rs:919](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 10 | `Sum` | `record_unary`（[vm.rs:1281](../../tenth/src/runtime/vm.rs)） | （[methods.rs:815](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 11 | `Mean` | `record_unary`（[vm.rs:1300](../../tenth/src/runtime/vm.rs)） | （[methods.rs:834](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 12 | `Exp` | `record_unary`（[vm.rs:1327](../../tenth/src/runtime/vm.rs)） | （[methods.rs:853](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 13 | `Log` | `record_unary`（[vm.rs:1332](../../tenth/src/runtime/vm.rs)） | （[methods.rs:861](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 14 | `Sigmoid` | `record_unary`（[vm.rs:1342](../../tenth/src/runtime/vm.rs)） | （[methods.rs:877](../../tenth/src/runtime/vm.rs)） | ✅ |
+| 15 | `Softmax` | `record_unary`（[vm.rs:1359](../../tenth/src/runtime/vm.rs)） | （[methods.rs:1311](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 16 | `CrossEntropy` | `tape.cross_entropy`（[natives.rs:360](../../tenth/src/runtime/interpreter/natives.rs)，**仅在解释器侧 native 注册**） | 同左 | ⚠️ 见局限 §12.3 |
+| 17 | `Dropout` | `tape.dropout`（[vm.rs:1714](../../tenth/src/runtime/vm.rs)） | （[methods.rs:1153](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 18 | `Conv2D` | `tape.conv2d`（[vm.rs:1524](../../tenth/src/runtime/vm.rs)） | （[methods.rs:1000](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 19 | `BatchNorm` | `tape.batchnorm`（[vm.rs:1603](../../tenth/src/runtime/vm.rs)） | （[methods.rs:1102](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 20 | `LayerNorm` | `tape.layernorm`（[vm.rs:1682](../../tenth/src/runtime/vm.rs)） | （[methods.rs:1239](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
+| 21 | `Gelu` | `record_unary`（[vm.rs:1351](../../tenth/src/runtime/vm.rs)） | （[methods.rs:1256](../../tenth/src/runtime/interpreter/methods.rs)） | ✅ |
 
 **核心发现**：
 
@@ -293,9 +293,9 @@ $$\text{GradCorrect}(P) \iff \text{TapeComplete}(T(P))$$
 
 搜索证据：在 `tenth/src` 全树执行 `Grep` 模式 `TapeOp::Neg`，**仅返回 2 处匹配**，全部位于 `autodiff.rs` 内部：
 
-1. [autodiff.rs:42](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)——枚举定义 `Neg,`；
-2. [autodiff.rs:338](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)——backward 实现 `TapeOp::Neg => { let g = -&grad; propagate_grad(node, 0, &g, &mut node_grads)?; }`；
-3. [autodiff.rs:814](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)——`op_name` 映射 `TapeOp::Neg => "Neg"`。
+1. [autodiff.rs:42](../../tenth/src/runtime/autodiff.rs)——枚举定义 `Neg,`；
+2. [autodiff.rs:338](../../tenth/src/runtime/autodiff.rs)——backward 实现 `TapeOp::Neg => { let g = -&grad; propagate_grad(node, 0, &g, &mut node_grads)?; }`；
+3. [autodiff.rs:814](../../tenth/src/runtime/autodiff.rs)——`op_name` 映射 `TapeOp::Neg => "Neg"`。
 
 **VM 与解释器中无任何 `record_unary(TapeOp::Neg, ...)` 调用**。
 
@@ -303,7 +303,7 @@ $$\text{GradCorrect}(P) \iff \text{TapeComplete}(T(P))$$
 - 前向执行：VM/解释器计算 `0 - tensor` 或直接逐元素取负，产生结果 $r$；
 - tape 记录：`r.tape_id` 未被设置（因为 `record_unary(TapeOp::Neg, ...)` 未调用）；
 - 下游算子：`record_binary` 检查 `r.tape_id` 为 `None`，进入 `(Some, None)` 或 `(None, None)` 分支，将 $r$ 提升为叶节点；
-- backward：`TapeOp::Neg` 的反向逻辑（[autodiff.rs:338-341](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）**永远不会被触发**——它是 dead code；
+- backward：`TapeOp::Neg` 的反向逻辑（[autodiff.rs:338-341](../../tenth/src/runtime/autodiff.rs)）**永远不会被触发**——它是 dead code；
 - 梯度：取负操作的链式贡献 $\frac{\partial (-x)}{\partial x} = -1$ 丢失，上游参数梯度错误。
 
 **这正是 A3 定理预测的"静默破坏"**：backward 实现存在但永不触发，无任何运行时报错。
@@ -314,7 +314,7 @@ $$\text{GradCorrect}(P) \iff \text{TapeComplete}(T(P))$$
 
 #### A4.2 `CrossEntropy` 的路径不对称
 
-`CrossEntropy` 仅通过 `tape.cross_entropy` 直接调用，且调用点位于 [natives.rs:360](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)——这是解释器侧的 native 函数注册。VM 侧的 `CrossEntropy` record 调用未在 vm.rs 中直接出现，可能通过 native 调用机制间接进入解释器。这一不对称性是 A1 定理 (C2) 条件的潜在违反点，需在 T35 中专门验证。
+`CrossEntropy` 仅通过 `tape.cross_entropy` 直接调用，且调用点位于 [natives.rs:360](../../tenth/src/runtime/interpreter/natives.rs)——这是解释器侧的 native 函数注册。VM 侧的 `CrossEntropy` record 调用未在 vm.rs 中直接出现，可能通过 native 调用机制间接进入解释器。这一不对称性是 A1 定理 (C2) 条件的潜在违反点，需在 T35 中专门验证。
 
 $\square$
 
@@ -398,15 +398,15 @@ $\square$
 
 ### 5.2 一致性不变量
 
-**不变量 I1（tape 唯一性）**：任一时刻只有一个 `Tape` 实例处于活跃状态（VM 的 `tape: Option<Tape>` 字段，[vm.rs:163](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。
+**不变量 I1（tape 唯一性）**：任一时刻只有一个 `Tape` 实例处于活跃状态（VM 的 `tape: Option<Tape>` 字段，[vm.rs:163](../../tenth/src/runtime/vm.rs)）。
 
 **不变量 I2（record 调用对称性）**：VM 与解释器对同一 IR 节点的 record 调用必须对称（A1 的 (C2) 条件）。
 
 **不变量 I3（JIT 不 record）**：JIT 路径**永不**直接调用 `record_*`，所有 recording 通过 fallback 至 VM 完成（A2）。
 
-**不变量 I4（tape_id 传播）**：record 调用后 `result.tape_id` 必须被设置为新节点 id（[vm.rs:1806,1826](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。
+**不变量 I4（tape_id 传播）**：record 调用后 `result.tape_id` 必须被设置为新节点 id（[vm.rs:1806,1826](../../tenth/src/runtime/vm.rs)）。
 
-**不变量 I5（拓扑序）**：tape 节点按前向执行顺序追加，backward 按 `nodes.iter().rev()` 遍历（[autodiff.rs:285](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+**不变量 I5（拓扑序）**：tape 节点按前向执行顺序追加，backward 按 `nodes.iter().rev()` 遍历（[autodiff.rs:285](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.3 一致性破坏的模式
 
@@ -421,7 +421,7 @@ $\square$
 
 ### 6.1 退出点的单一性
 
-Tenth 的 JIT 退出策略是**单一退出点**——仅在 `run_jit` 入口检查 `is_recording()`（[jit/mod.rs:41](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)）。这与多退出点策略（如每个 hostcall 前检查）相比：
+Tenth 的 JIT 退出策略是**单一退出点**——仅在 `run_jit` 入口检查 `is_recording()`（[jit/mod.rs:41](../../tenth/src/compile/jit/mod.rs)）。这与多退出点策略（如每个 hostcall 前检查）相比：
 
 - **优势**：检查开销 O(1)，且退出决策集中可审计；
 - **代价**：recording 模式下整个函数退回 VM，无法部分 JIT（如纯标量段 JIT、tensor 段 VM 的混合策略）。
@@ -442,7 +442,7 @@ A2 已证明退出至 `vm.call` 保持 autodiff 语义。这里补充与 T9 的�
 
 - **协程/异步**：若 Tenth 未来引入异步执行，`recording` 字段可能在函数内部被其他协程修改；
 - **递归 recording**：若函数 A 在 recording 中调用函数 B，B 的 `run_jit` 检查 `is_recording()` 仍为 true，递归退出至 VM——这是正确的，但性能损失放大；
-- **native 函数内部 recording**：native 函数（如 `autograd_start`）设置 `recording = true` 后调用用户函数，用户函数走 VM——这是当前实现的标准路径（[natives.rs:149-168](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)）。
+- **native 函数内部 recording**：native 函数（如 `autograd_start`）设置 `recording = true` 后调用用户函数，用户函数走 VM——这是当前实现的标准路径（[natives.rs:149-168](../../tenth/src/runtime/interpreter/natives.rs)）。
 
 ---
 
@@ -452,7 +452,7 @@ A2 已证明退出至 `vm.call` 保持 autodiff 语义。这里补充与 T9 的�
 
 ### 7.1 验证方法
 
-1. **枚举源**：从 [autodiff.rs:29-79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 `TapeOp` 枚举定义提取全部 21 个变体；
+1. **枚举源**：从 [autodiff.rs:29-79](../../tenth/src/runtime/autodiff.rs) 的 `TapeOp` 枚举定义提取全部 21 个变体；
 2. **搜索模式**：对每个变体 $op$，在 `tenth/src` 全树执行 `Grep` 模式 `TapeOp::<op>`，收集所有匹配；
 3. **分类匹配**：将匹配分为三类——枚举定义、backward 实现、前向 record 调用；
 4. **状态判定**：
@@ -468,7 +468,7 @@ A2 已证明退出至 `vm.call` 保持 autodiff 语义。这里补充与 T9 的�
 
 ### 7.3 `Neg` 缺陷的根因推测
 
-`TapeOp::Neg` 的 backward 实现完整（[autodiff.rs:338-341](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），说明设计意图是让 `-tensor` 走独立 `Neg` 算子。但前向实现中，`-tensor` 可能在 AST lowering 阶段被翻译为 `Sub(0, tensor)`，从而走 `Sub` 的 record 路径，`Neg` 算子被绕过。
+`TapeOp::Neg` 的 backward 实现完整（[autodiff.rs:338-341](../../tenth/src/runtime/autodiff.rs)），说明设计意图是让 `-tensor` 走独立 `Neg` 算子。但前向实现中，`-tensor` 可能在 AST lowering 阶段被翻译为 `Sub(0, tensor)`，从而走 `Sub` 的 record 路径，`Neg` 算子被绕过。
 
 这是**设计-实现漂移**的典型表现：设计时定义了 `Neg` 算子并实现 backward，但 lowering 时选择了 `Sub` 等价路径，导致 `Neg` 成为 dead code。这种漂移在缺乏 effect system 强制的语言中极易发生，印证了 A3 的相对性论断。
 
@@ -577,7 +577,7 @@ effect system 把"哪些函数可能 record"从隐式工程纪律提升为显式
 
 ### 11.2 A2 定理的局限
 
-- **文档措辞不严**：[jit/mod.rs:38-40](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) 的注释说 "tape writes happen inside the **interpreter's** Add/Sub/Mul/Div"，但实际 `run_jit` fallback 至 `vm.call(name)`（VM 字节码执行器），而非解释器 tree-walk。注释与代码不一致，但语义上 VM 的 record 调用同样完整，A2 结论不受影响。
+- **文档措辞不严**：[jit/mod.rs:38-40](../../tenth/src/compile/jit/mod.rs) 的注释说 "tape writes happen inside the **interpreter's** Add/Sub/Mul/Div"，但实际 `run_jit` fallback 至 `vm.call(name)`（VM 字节码执行器），而非解释器 tree-walk。注释与代码不一致，但语义上 VM 的 record 调用同样完整，A2 结论不受影响。
 - **递归 fallback 未分析**：若 `vm.call` 内部再次进入 `run_jit`（如递归调用），`is_recording()` 仍为 true，递归退出——性能损失放大，但 A2 的语义保持仍成立。未量化递归深度对性能的影响。
 - **并发未分析**：`recording` 字段是普通 `bool`，非原子。若 Tenth 未来引入多线程，`is_recording()` 检查与 `vm.call` 之间的数据竞争未分析。
 
@@ -600,7 +600,7 @@ effect system 把"哪些函数可能 record"从隐式工程纪律提升为显式
 
 ### 11.6 形式化模型的局限
 
-- **未建模 `tape_id` 的全局唯一性**：`tape_id` 是 `Option<usize>`，跨 tape 实例的唯一性未形式化。若 tape 被 `clear()` 后重建（[autodiff.rs:752](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），旧 `tape_id` 可能与新 id 冲突——但当前实现中 `clear` 与 `recording = false` 同步，不冲突。
+- **未建模 `tape_id` 的全局唯一性**：`tape_id` 是 `Option<usize>`，跨 tape 实例的唯一性未形式化。若 tape 被 `clear()` 后重建（[autodiff.rs:752](../../tenth/src/runtime/autodiff.rs)），旧 `tape_id` 可能与新 id 冲突——但当前实现中 `clear` 与 `recording = false` 同步，不冲突。
 - **未建模 `Rc<RefCell<Tensor>>` 的所有权**：`input_tensors` 持有 `Rc` 引用，若张量在 backward 前被释放，tape 节点持有悬垂引用——但 Rust 的 `Rc` 保证引用计数，不会释放。这一安全保证未形式化。
 
 ### 11.7 工程差距
@@ -635,10 +635,10 @@ effect system 把"哪些函数可能 record"从隐式工程纪律提升为显式
 
 | 定理 | 陈述 | 证明 | 实证依据 |
 |------|------|------|---------|
-| A1 | VM 与解释器 tape 同构 | §4 归纳 | [vm.rs:1810](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs), [mod.rs:1032](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) |
-| A2 | JIT 退出语义保持 | §4 轨迹分析 | [jit/mod.rs:41-43](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs), [vm.rs:191,325](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| A3 | 梯度正确性相对性 | §4 逆否 | [autodiff.rs:285,1817](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| A4 | 21 算子穷尽性 | §4 枚举 | [autodiff.rs:29-79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 全树 Grep |
+| A1 | VM 与解释器 tape 同构 | §4 归纳 | [vm.rs:1810](../../tenth/src/runtime/vm.rs), [mod.rs:1032](../../tenth/src/runtime/interpreter/mod.rs) |
+| A2 | JIT 退出语义保持 | §4 轨迹分析 | [jit/mod.rs:41-43](../../tenth/src/compile/jit/mod.rs), [vm.rs:191,325](../../tenth/src/runtime/vm.rs) |
+| A3 | 梯度正确性相对性 | §4 逆否 | [autodiff.rs:285,1817](../../tenth/src/runtime/autodiff.rs) |
+| A4 | 21 算子穷尽性 | §4 枚举 | [autodiff.rs:29-79](../../tenth/src/runtime/autodiff.rs) 全树 Grep |
 | A5 | 与 PyTorch/JAX 对比 | §4 维度分析 | 文献 |
 
 ## 附录 B：与现有文档的对应
@@ -657,7 +657,7 @@ effect system 把"哪些函数可能 record"从隐式工程纪律提升为显式
 |--------|------|---------|-----------|
 | P0 | 删除 `TapeOp::Neg` dead code 或补全前向 record | §7.3 | 1 小时（含测试） |
 | P1 | 为 21 算子编写 recording 模式测试 | §9.2 | 1 天 |
-| P1 | 修正 [jit/mod.rs:38-40](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) 注释（"interpreter's" → "VM's"） | §11.2 | 5 分钟 |
+| P1 | 修正 [jit/mod.rs:38-40](../../tenth/src/compile/jit/mod.rs) 注释（"interpreter's" → "VM's"） | §11.2 | 5 分钟 |
 | P2 | 验证 `CrossEntropy` 路径对称性 | §11.4 | 半天 |
 | P3 | effect system 设计 spike | §10 | 1 周 |
 

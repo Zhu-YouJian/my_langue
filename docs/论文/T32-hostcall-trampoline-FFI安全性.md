@@ -3,10 +3,10 @@
 > **理论分析点**：T32 | **难度**：会议论文级 | **版本**：v1
 > **关联**：T31（基于 Cranelift 的栈区设计——无 phi 节点的栈式 JIT）、T9（JIT 特化语义保持）
 > **核心源码**：
-> - [`tenth/src/compile/jit/hostcalls.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)
-> - [`tenth/src/compile/jit/context.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)
-> - [`tenth/src/compile/jit/mod.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)
-> - [`tenth/src/compile/jit/translator.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)
+> - [`tenth/src/compile/jit/hostcalls.rs`](../../tenth/src/compile/jit/hostcalls.rs)
+> - [`tenth/src/compile/jit/context.rs`](../../tenth/src/compile/jit/context.rs)
+> - [`tenth/src/compile/jit/mod.rs`](../../tenth/src/compile/jit/mod.rs)
+> - [`tenth/src/compile/jit/translator.rs`](../../tenth/src/compile/jit/translator.rs)
 
 ---
 
@@ -32,7 +32,7 @@ Cranelift 生成的机器码不参与 Rust 类型系统，其返回值通过平�
 
 ### 1.2 Rust + Cranelift 集成的挑战
 
-Tenth 的 JIT 路径（[`compile/jit/mod.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)）使用 Cranelift 把字节码 `Chunk` 翻译为机器码（[§3.1, T31]），编译产物函数指针通过 `transmute` 转换为类型化 `JitFn`（[context.rs:55](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）。JIT 产物反过来通过 `call_indirect` 调用 Rust 端的 hostcall trampoline（[translator.rs:583-660](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。这一双向 FFI 边界上的 UB 风险点至少有四类（见 §4 详述）。
+Tenth 的 JIT 路径（[`compile/jit/mod.rs`](../../tenth/src/compile/jit/mod.rs)）使用 Cranelift 把字节码 `Chunk` 翻译为机器码（[§3.1, T31]），编译产物函数指针通过 `transmute` 转换为类型化 `JitFn`（[context.rs:55](../../tenth/src/compile/jit/context.rs)）。JIT 产物反过来通过 `call_indirect` 调用 Rust 端的 hostcall trampoline（[translator.rs:583-660](../../tenth/src/compile/jit/translator.rs)）。这一双向 FFI 边界上的 UB 风险点至少有四类（见 §4 详述）。
 
 ### 1.3 贡献
 
@@ -78,17 +78,17 @@ Rust 的 FFI 安全性由以下规则构成（[Nomicon]）：
 
 Tenth JIT 路径有两条 FFI 调用方向：
 
-**方向 A（Rust → JIT）**：[`hostcalls.rs:33-62 invoke_jit`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)。Rust 调用 `JitFn` 类型的函数指针，参数为 `(vm: *mut Vm, args: *const Value, n: usize, out: *mut Value)`。
+**方向 A（Rust → JIT）**：[`hostcalls.rs:33-62 invoke_jit`](../../tenth/src/compile/jit/hostcalls.rs)。Rust 调用 `JitFn` 类型的函数指针，参数为 `(vm: *mut Vm, args: *const Value, n: usize, out: *mut Value)`。
 
-**方向 B（JIT → Rust）**：[`translator.rs:603-732`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)。JIT 产物通过 `call_indirect` 调用 hostcall trampoline（如 `host_add`、`host_make_vec`），trampoline 是 `unsafe extern "C" fn`（[hostcalls.rs:82-451](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
+**方向 B（JIT → Rust）**：[`translator.rs:603-732`](../../tenth/src/compile/jit/translator.rs)。JIT 产物通过 `call_indirect` 调用 hostcall trampoline（如 `host_add`、`host_make_vec`），trampoline 是 `unsafe extern "C" fn`（[hostcalls.rs:82-451](../../tenth/src/compile/jit/hostcalls.rs)）。
 
 ### 3.2 `Value` 的非平凡布局
 
-[`runtime/value.rs:68-106`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/value.rs) 定义 `Value` 为含 18 个变体的 `enum`，部分变体包含 `Rc<RefCell<...>>`、`Vec<Value>`、`String`、`HashMap`。其 `size_of::<Value>()` 在 64 位平台上为 32 字节或更多（具体取决于派生 `Debug`/`Clone` 的开销，实测为 32 字节，[`translator.rs:28`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 的 `VALUE_SIZE` 常量）。该 enum **未标注 `#[repr(C)]`**，故其布局由 Rust 编译器自由选择（tag 位置、padding、变体排序），**跨 FFI 直接传递是 UB**（违反 R2）。
+[`runtime/value.rs:68-106`](../../tenth/src/runtime/value.rs) 定义 `Value` 为含 18 个变体的 `enum`，部分变体包含 `Rc<RefCell<...>>`、`Vec<Value>`、`String`、`HashMap`。其 `size_of::<Value>()` 在 64 位平台上为 32 字节或更多（具体取决于派生 `Debug`/`Clone` 的开销，实测为 32 字节，[`translator.rs:28`](../../tenth/src/compile/jit/translator.rs) 的 `VALUE_SIZE` 常量）。该 enum **未标注 `#[repr(C)]`**，故其布局由 Rust 编译器自由选择（tag 位置、padding、变体排序），**跨 FFI 直接传递是 UB**（违反 R2）。
 
 ### 3.3 协议要点
 
-按 [`hostcalls.rs:1-13`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) 的注释：
+按 [`hostcalls.rs:1-13`](../../tenth/src/compile/jit/hostcalls.rs) 的注释：
 
 - `vm: *mut Vm` — VM 上下文。
 - 输入 `Value` 以 `*const Value` 传递（只读）。
@@ -106,13 +106,13 @@ Tenth JIT 路径有两条 FFI 调用方向：
 
 > 对每个 hostcall trampoline `h` 与每个 JIT 函数 `f`，所有 `Value` 类型的输入与输出参数**均**通过裸指针 `*const Value` / `*mut Value` 传递；**禁止**通过函数返回槽返回 `Value`。
 
-**实现位置**：[`hostcalls.rs:8-13`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)；[`translator.rs:43-47`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)（Cranelift 签名只声明 `bool` 作为返回值，参数全为指针）；`invoke_jit` 返回 `bool` 而非 `Value`（[hostcalls.rs:34, 42](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
+**实现位置**：[`hostcalls.rs:8-13`](../../tenth/src/compile/jit/hostcalls.rs)；[`translator.rs:43-47`](../../tenth/src/compile/jit/translator.rs)（Cranelift 签名只声明 `bool` 作为返回值，参数全为指针）；`invoke_jit` 返回 `bool` 而非 `Value`（[hostcalls.rs:34, 42](../../tenth/src/compile/jit/hostcalls.rs)）。
 
 ### 定义 I2（panic 隔离）
 
 > 对方向 A 的每次 JIT 调用，调用表达式 `f(vm, args, n, out)` 必须被 `catch_unwind` 包裹；捕获的 panic payload 写入 `vm.last_error`、`*out` 写为 `Value::Unit`、返回 `false`。方向 B 中，trampoline 函数为 `extern "C"`，且 Rust 编译器按 `extern "C"` 语义生成代码（无 unwind 表跨越边界）。
 
-**实现位置**：[`hostcalls.rs:41-61`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)；所有 trampoline 标注 `unsafe extern "C"`（如 [`hostcalls.rs:82`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
+**实现位置**：[`hostcalls.rs:41-61`](../../tenth/src/compile/jit/hostcalls.rs)；所有 trampoline 标注 `unsafe extern "C"`（如 [`hostcalls.rs:82`](../../tenth/src/compile/jit/hostcalls.rs)）。
 
 ### 定义 I3（safe_slice 闸门）
 
@@ -122,13 +122,13 @@ Tenth JIT 路径有两条 FFI 调用方向：
 > (c) `count > MAX_HOSTCALL_ARGS`（= $2^{20}$）时返回空切片；
 > (d) `count` 与 `count * k`（$k \in \{1, 2\}$）的乘积用 `checked_mul` 验证不溢出。
 
-**实现位置**：[`hostcalls.rs:23, 68-78`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)（`safe_slice` 与 `MAX_HOSTCALL_ARGS`）；[`hostcalls.rs:267-273, 296-303, 409-415`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)（`host_make_map`/`host_new_struct`/`host_make_tensor` 的 `checked_mul`）。
+**实现位置**：[`hostcalls.rs:23, 68-78`](../../tenth/src/compile/jit/hostcalls.rs)（`safe_slice` 与 `MAX_HOSTCALL_ARGS`）；[`hostcalls.rs:267-273, 296-303, 409-415`](../../tenth/src/compile/jit/hostcalls.rs)（`host_make_map`/`host_new_struct`/`host_make_tensor` 的 `checked_mul`）。
 
 ### 定义 I4（JitFn 类型断言）
 
 > 在 `JitContext::get_or_compile` 中，对 `raw_ptr: *const u8` 与目标类型 `JitFn` 调用 `transmute` 之前，必须执行运行时断言 `assert_eq!(size_of::<*const u8>(), size_of::<JitFn>())`；断言失败时进程 abort。
 
-**实现位置**：[`context.rs:50-55`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)。
+**实现位置**：[`context.rs:50-55`](../../tenth/src/compile/jit/context.rs)。
 
 ---
 
@@ -136,7 +136,7 @@ Tenth JIT 路径有两条 FFI 调用方向：
 
 ### 5.1 定理 F1（FFI 边界 UB 自由性）
 
-**陈述**：设 Tenth JIT 与 Rust 边界上的所有交互均满足 I1、I2、I3、I4。设 `invoke_jit` 与所有 hostcall trampoline 的实现遵循 [`hostcalls.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) 与 [`context.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs) 中的源码。则在以下前置条件下：
+**陈述**：设 Tenth JIT 与 Rust 边界上的所有交互均满足 I1、I2、I3、I4。设 `invoke_jit` 与所有 hostcall trampoline 的实现遵循 [`hostcalls.rs`](../../tenth/src/compile/jit/hostcalls.rs) 与 [`context.rs`](../../tenth/src/compile/jit/context.rs) 中的源码。则在以下前置条件下：
 
 - (P1) `vm` 指针非空且指向有效的 `Vm` 实例；
 - (P2) JIT 产物由 Tenth translator 合法生成（未被恶意篡改）；
@@ -147,21 +147,21 @@ Tenth JIT 路径有两条 FFI 调用方向：
 
 **证明**：按 FFI 边界上的 UB 来源分类证明。
 
-**(A) 布局 UB（R2 违反）**：由 I1，所有 `Value` 经指针传递。Rust 端通过 `*const Value` / `*mut Value` 引用 `Value`，其布局由 Rust 编译器决定，与 JIT 端无关——JIT 端只把指针作为不透明 `i64`/`ptr` 处理（[`translator.rs:43-46`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。`Value` 的内部布局从未跨边界。返回值仅 `bool`（1 字节，`#[repr(C)]` 保证布局），符合 Cranelift 的 `I8` 返回槽（[`translator.rs:47`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。故布局一致，无 R2 违反。
+**(A) 布局 UB（R2 违反）**：由 I1，所有 `Value` 经指针传递。Rust 端通过 `*const Value` / `*mut Value` 引用 `Value`，其布局由 Rust 编译器决定，与 JIT 端无关——JIT 端只把指针作为不透明 `i64`/`ptr` 处理（[`translator.rs:43-46`](../../tenth/src/compile/jit/translator.rs)）。`Value` 的内部布局从未跨边界。返回值仅 `bool`（1 字节，`#[repr(C)]` 保证布局），符合 Cranelift 的 `I8` 返回槽（[`translator.rs:47`](../../tenth/src/compile/jit/translator.rs)）。故布局一致，无 R2 违反。
 
-**(B) Unwind UB（R3 违反）**：方向 A 由 I2 `catch_unwind` 包裹（[`hostcalls.rs:41`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）；即使 JIT 产物内部 panic（理论上 trampoline 的 Rust 代码 panic），unwind 在 `catch_unwind` 处终止，不跨越 `extern "C"` 边界。方向 B 中 trampoline 自身是 `extern "C"`，其内部 panic 若未被 trampoline 自身捕获，按 Rust 语义在 `extern "C"` 边界 abort（Rust 1.51+ 默认行为）；由 I2 隐含——`extern "C"` 不允许 unwind。故无 R3 违反。
+**(B) Unwind UB（R3 违反）**：方向 A 由 I2 `catch_unwind` 包裹（[`hostcalls.rs:41`](../../tenth/src/compile/jit/hostcalls.rs)）；即使 JIT 产物内部 panic（理论上 trampoline 的 Rust 代码 panic），unwind 在 `catch_unwind` 处终止，不跨越 `extern "C"` 边界。方向 B 中 trampoline 自身是 `extern "C"`，其内部 panic 若未被 trampoline 自身捕获，按 Rust 语义在 `extern "C"` 边界 abort（Rust 1.51+ 默认行为）；由 I2 隐含——`extern "C"` 不允许 unwind。故无 R3 违反。
 
-**(C) 切片 UB（`from_raw_parts` 溢出）**：由 I3，所有 `from_raw_parts` 经 `safe_slice` 或 `checked_mul` 闸门。`safe_slice` 在 `count > MAX_HOSTCALL_ARGS` 时返回空切片（[`hostcalls.rs:74`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）；`MAX_HOSTCALL_ARGS = 2^{20}` 远小于 `usize::MAX`，`count * 2` 不溢出（$2^{21} \ll 2^{64}$）。`checked_mul` 在溢出时返回 `None`，被 `host_make_map` 等显式处理（[`hostcalls.rs:267-273`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。`ptr.is_null()` 提前返回（[`hostcalls.rs:69-71`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。故无 `from_raw_parts` UB。
+**(C) 切片 UB（`from_raw_parts` 溢出）**：由 I3，所有 `from_raw_parts` 经 `safe_slice` 或 `checked_mul` 闸门。`safe_slice` 在 `count > MAX_HOSTCALL_ARGS` 时返回空切片（[`hostcalls.rs:74`](../../tenth/src/compile/jit/hostcalls.rs)）；`MAX_HOSTCALL_ARGS = 2^{20}` 远小于 `usize::MAX`，`count * 2` 不溢出（$2^{21} \ll 2^{64}$）。`checked_mul` 在溢出时返回 `None`，被 `host_make_map` 等显式处理（[`hostcalls.rs:267-273`](../../tenth/src/compile/jit/hostcalls.rs)）。`ptr.is_null()` 提前返回（[`hostcalls.rs:69-71`](../../tenth/src/compile/jit/hostcalls.rs)）。故无 `from_raw_parts` UB。
 
-**(D) Transmute UB（`*const u8` → `JitFn`）**：由 I4，`transmute` 前断言 `size_of::<*const u8>() == size_of::<JitFn>()`（[`context.rs:50-54`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）。在 64 位平台上两者均为 8 字节，断言成立；若未来 `JitFn` 签名变更导致尺寸不符（理论上不可能因函数指针总是 1 字），断言触发 abort 而非静默 UB。Rust 文档明确：`transmute` 在两侧 `size_of` 相等时是安全（虽 `unsafe`）；不等时 UB。故 I4 阻止 transmute UB。
+**(D) Transmute UB（`*const u8` → `JitFn`）**：由 I4，`transmute` 前断言 `size_of::<*const u8>() == size_of::<JitFn>()`（[`context.rs:50-54`](../../tenth/src/compile/jit/context.rs)）。在 64 位平台上两者均为 8 字节，断言成立；若未来 `JitFn` 签名变更导致尺寸不符（理论上不可能因函数指针总是 1 字），断言触发 abort 而非静默 UB。Rust 文档明确：`transmute` 在两侧 `size_of` 相等时是安全（虽 `unsafe`）；不等时 UB。故 I4 阻止 transmute UB。
 
-**(E) 生存期 UB（R4 违反）**：`args: &[Value]` 由 P4 保证生存期；`vm: *mut Vm` 由 P1 保证。`out: &mut Value` 由 `invoke_jit` 调用方（[`mod.rs:80-81`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)）在栈上分配 `let mut out = Value::Unit` 并传入 `&mut out`，生存期覆盖整个调用。trampoline 内 `std::ptr::write(out, ...)`（如 [`hostcalls.rs:83`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）写入的是已初始化的 `Value` 内存，无 drop 旧值的需要（旧值是 `Value::Unit`，无堆分配），故无 drop UB。
+**(E) 生存期 UB（R4 违反）**：`args: &[Value]` 由 P4 保证生存期；`vm: *mut Vm` 由 P1 保证。`out: &mut Value` 由 `invoke_jit` 调用方（[`mod.rs:80-81`](../../tenth/src/compile/jit/mod.rs)）在栈上分配 `let mut out = Value::Unit` 并传入 `&mut out`，生存期覆盖整个调用。trampoline 内 `std::ptr::write(out, ...)`（如 [`hostcalls.rs:83`](../../tenth/src/compile/jit/hostcalls.rs)）写入的是已初始化的 `Value` 内存，无 drop 旧值的需要（旧值是 `Value::Unit`，无堆分配），故无 drop UB。
 
 由 (A)–(E) 四类 UB 均被 I1–I4 阻止，且无其他 UB 来源（P2/P3 排除恶意与并发场景），定理成立。$\square$
 
 ### 5.2 定理 F2（panic 不跨越 FFI）
 
-**陈述**：在 I2 成立且 `invoke_jit` 的实现为 [`hostcalls.rs:33-62`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) 的前提下，若 `fn_ptr(vm, args.as_ptr(), args.len(), out as *mut Value)` 的求值引发 panic，则：
+**陈述**：在 I2 成立且 `invoke_jit` 的实现为 [`hostcalls.rs:33-62`](../../tenth/src/compile/jit/hostcalls.rs) 的前提下，若 `fn_ptr(vm, args.as_ptr(), args.len(), out as *mut Value)` 的求值引发 panic，则：
 (a) panic 不跨越 `extern "C"` 边界进入 JIT 产物；
 (b) `vm.last_error` 被设置为形如 `"JIT panic: <msg>"` 的字符串（若 `vm` 非空）；
 (c) `*out` 被写为 `Value::Unit`；
@@ -169,12 +169,12 @@ Tenth JIT 路径有两条 FFI 调用方向：
 
 **证明**：`catch_unwind(AssertUnwindSafe(|| { fn_ptr(...) }))` 是 Rust 标准库的 panic 捕获原语。其语义（[RustStd]）为：若闭包求值 panic，`catch_unwind` 返回 `Err(payload)`，且 unwind 在闭包边界停止。`AssertUnwindSafe` 是对 `FnOnce` 的 `UnwindSafe` 约束的显式放宽，不影响捕获语义。
 
-`fn_ptr` 调用的 ABI 为 `extern "C"`（[`hostcalls.rs:34`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。即使 JIT 产物内部代码或 hostcall trampoline 内的 Rust 代码触发 panic，unwind 栈展开在 `catch_unwind` 处被截获，不进入 JIT 产物的调用帧（unwind 在 Rust 端截获，与 JIT 产物的 unwind 表无关——事实上 JIT 产物无 Rust 风格 unwind 表，故跨边界 unwind 本身即 UB，但 `catch_unwind` 在 Rust 端先于该 UB 发生之前截获，因 unwind 由 Rust 代码发起）。
+`fn_ptr` 调用的 ABI 为 `extern "C"`（[`hostcalls.rs:34`](../../tenth/src/compile/jit/hostcalls.rs)）。即使 JIT 产物内部代码或 hostcall trampoline 内的 Rust 代码触发 panic，unwind 栈展开在 `catch_unwind` 处被截获，不进入 JIT 产物的调用帧（unwind 在 Rust 端截获，与 JIT 产物的 unwind 表无关——事实上 JIT 产物无 Rust 风格 unwind 表，故跨边界 unwind 本身即 UB，但 `catch_unwind` 在 Rust 端先于该 UB 发生之前截获，因 unwind 由 Rust 代码发起）。
 
 捕获后，`match result { Err(payload) => ... }` 分支执行：
-- (b) 通过 `payload.downcast_ref::<&'static str>()` 或 `String` 提取消息（[`hostcalls.rs:48-54`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)），写入 `(*vm).set_last_error(format!("JIT panic: {}", msg))`（若 `!vm.is_null()`）；
-- (c) `std::ptr::write(out, Value::Unit)`（[`hostcalls.rs:58`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）；
-- (d) 返回 `false`（[`hostcalls.rs:59`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
+- (b) 通过 `payload.downcast_ref::<&'static str>()` 或 `String` 提取消息（[`hostcalls.rs:48-54`](../../tenth/src/compile/jit/hostcalls.rs)），写入 `(*vm).set_last_error(format!("JIT panic: {}", msg))`（若 `!vm.is_null()`）；
+- (c) `std::ptr::write(out, Value::Unit)`（[`hostcalls.rs:58`](../../tenth/src/compile/jit/hostcalls.rs)）；
+- (d) 返回 `false`（[`hostcalls.rs:59`](../../tenth/src/compile/jit/hostcalls.rs)）。
 
 故 (a)–(d) 成立。$\square$
 
@@ -182,7 +182,7 @@ Tenth JIT 路径有两条 FFI 调用方向：
 
 ### 5.3 定理 F3（safe_slice 的溢出防护）
 
-**陈述**：在 I3 成立且 `safe_slice` 实现为 [`hostcalls.rs:68-78`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) 的前提下，对任意输入 `ptr: *const Value` 与 `count: u64`：
+**陈述**：在 I3 成立且 `safe_slice` 实现为 [`hostcalls.rs:68-78`](../../tenth/src/compile/jit/hostcalls.rs) 的前提下，对任意输入 `ptr: *const Value` 与 `count: u64`：
 (a) 若 `ptr.is_null()`，返回空切片 `&[]`，不调用 `from_raw_parts`；
 (b) 若 `count == 0`，返回空切片，不调用 `from_raw_parts`；
 (c) 若 `count > MAX_HOSTCALL_ARGS = 2^{20}`，返回空切片，不调用 `from_raw_parts`；
@@ -190,7 +190,7 @@ Tenth JIT 路径有两条 FFI 调用方向：
 
 **证明**：
 
-`safe_slice` 控制流（[`hostcalls.rs:69-77`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）：
+`safe_slice` 控制流（[`hostcalls.rs:69-77`](../../tenth/src/compile/jit/hostcalls.rs)）：
 
 ```
 if ptr.is_null() { return &[]; }            // (a)
@@ -206,25 +206,25 @@ from_raw_parts(ptr, n)
 
 (b) `count == 0` 分支显式返回。$\checkmark$
 
-(c) `c as usize > MAX_HOSTCALL_ARGS` 分支：在 64 位平台 `usize = u64`，故 `c as usize` 无截断，比较直接。`MAX_HOSTCALL_ARGS = 1 << 20 = 1_048_576`（[`hostcalls.rs:23`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。$\checkmark$
+(c) `c as usize > MAX_HOSTCALL_ARGS` 分支：在 64 位平台 `usize = u64`，故 `c as usize` 无截断，比较直接。`MAX_HOSTCALL_ARGS = 1 << 20 = 1_048_576`（[`hostcalls.rs:23`](../../tenth/src/compile/jit/hostcalls.rs)）。$\checkmark$
 
 (d) 由 (c) 进入此分支的条件是 `c \le 2^{20}`，故 `c as usize` 在 32 位与 64 位平台均无截断（$2^{20} < 2^{32}$）。`from_raw_parts(ptr, n)` 的契约（[RustStd]）：`ptr` 必须非空（由 (a) 保证）、`n` 个 `Value` 内存必须可读（由 P4 + 调用方契约保证）。在 I3 + P1–P4 下，安全。$\checkmark$
 
-对 `count * 2` 场景（`host_make_map`/`host_new_struct`），`checked_mul` 在 `count * 2` 溢出时返回 `None`，进入降级分支（写空 `Map` 或 `Value::Unit`，[`hostcalls.rs:267-273, 296-303`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。对 `host_make_tensor` 的 `rows * cols`，同理 `checked_mul` + `MAX_HOSTCALL_ARGS` 上限（[`hostcalls.rs:409-415`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。$\square$
+对 `count * 2` 场景（`host_make_map`/`host_new_struct`），`checked_mul` 在 `count * 2` 溢出时返回 `None`，进入降级分支（写空 `Map` 或 `Value::Unit`，[`hostcalls.rs:267-273, 296-303`](../../tenth/src/compile/jit/hostcalls.rs)）。对 `host_make_tensor` 的 `rows * cols`，同理 `checked_mul` + `MAX_HOSTCALL_ARGS` 上限（[`hostcalls.rs:409-415`](../../tenth/src/compile/jit/hostcalls.rs)）。$\square$
 
 **注**：`MAX_HOSTCALL_ARGS = 2^{20}` 的选择是工程权衡——足够大以覆盖合理的 Tenth 函数参数数（实际函数通常 < 100 参数），足够小以使 `count * 2 = 2^{21}` 远低于 `usize::MAX`，避免任何溢出。
 
 ### 5.4 定理 F4（JitFn 类型断言）
 
-**陈述**：在 I4 成立且 `JitContext::get_or_compile` 实现为 [`context.rs:36-58`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs) 的前提下：
+**陈述**：在 I4 成立且 `JitContext::get_or_compile` 实现为 [`context.rs:36-58`](../../tenth/src/compile/jit/context.rs) 的前提下：
 (a) 若 `size_of::<*const u8>() != size_of::<JitFn>()`，则 `assert_eq!` 触发 panic，进程 abort（因 panic 在非 `catch_unwind` 上下文中触发，默认 abort on panic 不影响，但即使 unwind，由于 `get_or_compile` 不在 `catch_unwind` 内，将沿调用栈上溯直到 abort）；
 (b) 若 `size_of::<*const u8>() == size_of::<JitFn>()`，则 `transmute(raw_ptr)` 在 Rust 语义下不引入 UB。
 
 **证明**：
 
-(a) `assert_eq!(x, y, "...")` 在 `x != y` 时 `panic!`。`JitContext::get_or_compile` 不被 `catch_unwind` 包裹（[`mod.rs:62-65`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) 直接 `match`），故 panic 沿调用栈上溯。Rust 默认 panic 策略为 unwind，但若 `Cargo.toml` 配置 `panic = "abort"` 则直接 abort；无论哪种，进程不会进入 UB 状态。
+(a) `assert_eq!(x, y, "...")` 在 `x != y` 时 `panic!`。`JitContext::get_or_compile` 不被 `catch_unwind` 包裹（[`mod.rs:62-65`](../../tenth/src/compile/jit/mod.rs) 直接 `match`），故 panic 沿调用栈上溯。Rust 默认 panic 策略为 unwind，但若 `Cargo.toml` 配置 `panic = "abort"` 则直接 abort；无论哪种，进程不会进入 UB 状态。
 
-(b) Rust 文档 [Nomicon]：`transmute<T, U>` 在 `size_of::<T>() == size_of::<U>()` 时是布局安全的（仍 `unsafe`，因可能违反其他不变量，如非 `Pod` 类型的位模式）。这里 `T = *const u8`，`U = JitFn = unsafe extern "C" fn(...)`，二者在所有支持的平台上均为 `size_of::<usize>()`（[`context.rs:50-54`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)）。`raw_ptr` 由 `module.get_finalized_function(fn_id)` 返回（[`context.rs:43`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)），Cranelift 保证其为合法的可执行函数地址。故 `transmute` 后的 `JitFn` 可安全调用（在 P2 假设下）。$\square$
+(b) Rust 文档 [Nomicon]：`transmute<T, U>` 在 `size_of::<T>() == size_of::<U>()` 时是布局安全的（仍 `unsafe`，因可能违反其他不变量，如非 `Pod` 类型的位模式）。这里 `T = *const u8`，`U = JitFn = unsafe extern "C" fn(...)`，二者在所有支持的平台上均为 `size_of::<usize>()`（[`context.rs:50-54`](../../tenth/src/compile/jit/context.rs)）。`raw_ptr` 由 `module.get_finalized_function(fn_id)` 返回（[`context.rs:43`](../../tenth/src/compile/jit/context.rs)），Cranelift 保证其为合法的可执行函数地址。故 `transmute` 后的 `JitFn` 可安全调用（在 P2 假设下）。$\square$
 
 **注**：`size_of::<JitFn>() == size_of::<*const u8>()` 在所有 Rust 支持的平台上成立，I4 的断言是防御性编程——若未来 Rust 引入"fat function pointer"或 Cranelift 变更返回类型，断言会立即触发而非静默 UB。
 
@@ -253,15 +253,15 @@ from_raw_parts(ptr, n)
 
 ### 6.1 I1：out-pointer 传递
 
-**机制**：所有 `Value` 类型参数以 `*const Value`（输入）或 `*mut Value`（输出）传递。返回值仅 `bool`（[`hostcalls.rs:34`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
+**机制**：所有 `Value` 类型参数以 `*const Value`（输入）或 `*mut Value`（输出）传递。返回值仅 `bool`（[`hostcalls.rs:34`](../../tenth/src/compile/jit/hostcalls.rs)）。
 
 **为什么必须如此**：`Value` 是 32 字节非 `#[repr(C)]` enum。Rust 的 enum 布局（tag 位置、niche 优化）由编译器自由选择，跨 FFI 时 JIT 端无法可靠地按 Rust 布局填充返回槽。Cranelift 的 `Signature::returns` 仅支持基本类型（`I8`/`I64`/`F64`/指针），不支持 32 字节聚合体（除非用 `struct` 返回，但 `struct` 返回 ABI 在不同平台不一致——System V AMD64 与 Microsoft x64 不同）。
 
-**额外好处**：错误信号统一——返回 `bool` 表示成功/失败，错误细节通过 `vm.last_error` 传递（[`hostcalls.rs:12`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
+**额外好处**：错误信号统一——返回 `bool` 表示成功/失败，错误细节通过 `vm.last_error` 传递（[`hostcalls.rs:12`](../../tenth/src/compile/jit/hostcalls.rs)）。
 
 ### 6.2 I2：panic 隔离
 
-**机制**：`invoke_jit` 用 `catch_unwind(AssertUnwindSafe(|| { fn_ptr(...) }))` 包裹方向 A 调用（[`hostcalls.rs:41-43`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。方向 B 的 trampoline 标注 `extern "C"`（如 [`hostcalls.rs:82`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)），按 Rust 语义其内部 panic 在边界 abort（或被调用方 `catch_unwind` 捕获）。
+**机制**：`invoke_jit` 用 `catch_unwind(AssertUnwindSafe(|| { fn_ptr(...) }))` 包裹方向 A 调用（[`hostcalls.rs:41-43`](../../tenth/src/compile/jit/hostcalls.rs)）。方向 B 的 trampoline 标注 `extern "C"`（如 [`hostcalls.rs:82`](../../tenth/src/compile/jit/hostcalls.rs)），按 Rust 语义其内部 panic 在边界 abort（或被调用方 `catch_unwind` 捕获）。
 
 **为什么必须如此**：JIT 产物由 Cranelift 生成，无 Rust unwind 表。若 Rust 端 trampoline panic，unwind 进入 JIT 帧时找不到 landing pad，触发 UB（段错误或进程 abort，取决于平台）。`catch_unwind` 在 Rust 端截获，避免此情形。
 
@@ -277,7 +277,7 @@ from_raw_parts(ptr, n)
 
 ### 6.4 I4：JitFn 类型断言
 
-**机制**：[`context.rs:50-54`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs) 在 `transmute` 前断言 `size_of::<*const u8>() == size_of::<JitFn>()`。
+**机制**：[`context.rs:50-54`](../../tenth/src/compile/jit/context.rs) 在 `transmute` 前断言 `size_of::<*const u8>() == size_of::<JitFn>()`。
 
 **为什么必须如此**：`std::mem::transmute<T, U>` 在 `size_of::<T>() != size_of::<U>()` 时是 UB（[Nomicon]）。Cranelift 的 `get_finalized_function` 返回 `*const u8`，Tenth 需转为 `JitFn`。在所有当前支持的平台上二者尺寸相等（8 字节），但断言是防御性编程——若未来 Rust 引入 fat function pointer 或 Cranelift 变更返回类型，断言触发而非静默 UB。
 
@@ -389,7 +389,7 @@ $2^{20} = 1\,048\,576$ 是工程权衡：
 
 **影响**：定理 F1 不覆盖 `vm = null` 场景。
 
-**缓解**：`invoke_jit` 的调用方（[`mod.rs:81`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)）传入 `vm as *mut Vm`，由 `&mut vm` 借用保证非空。但 trampoline 自身不检查 `vm.is_null()`——除 `invoke_jit` 的 panic 分支显式检查（[`hostcalls.rs:55`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。其他 trampoline 假设 `vm` 非空，是 P1 的隐含契约。
+**缓解**：`invoke_jit` 的调用方（[`mod.rs:81`](../../tenth/src/compile/jit/mod.rs)）传入 `vm as *mut Vm`，由 `&mut vm` 借用保证非空。但 trampoline 自身不检查 `vm.is_null()`——除 `invoke_jit` 的 panic 分支显式检查（[`hostcalls.rs:55`](../../tenth/src/compile/jit/hostcalls.rs)）。其他 trampoline 假设 `vm` 非空，是 P1 的隐含契约。
 
 ### L4. 形式化不完备
 
@@ -405,15 +405,15 @@ $2^{20} = 1\,048\,576$ 是工程权衡：
 
 **影响**：`catch_unwind` 的 `AssertUnwindSafe` 是显式放宽 `UnwindSafe` 约束，可能掩盖状态不一致——例如，若 hostcall 在 `vm.set_last_error` 前 panic，`vm.last_error` 仍是上次的值，但 `out` 被覆盖为 `Unit`，状态部分不一致。
 
-**缓解**：`invoke_jit` 在 panic 分支显式设置 `last_error`（[`hostcalls.rs:56`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)），覆盖上次值。但若 `set_last_error` 自身 panic（理论上 `String` 操作可能 OOM panic），状态仍不一致——这是未覆盖的边界。
+**缓解**：`invoke_jit` 在 panic 分支显式设置 `last_error`（[`hostcalls.rs:56`](../../tenth/src/compile/jit/hostcalls.rs)），覆盖上次值。但若 `set_last_error` 自身 panic（理论上 `String` 操作可能 OOM panic），状态仍不一致——这是未覆盖的边界。
 
 ### L6. 与 T31（栈区设计）联动的局限
 
-**陈述**：T31 论证 JIT 翻译器的"栈区设计"（单个大 `StackSlot`，无 phi 节点）与 SSA 的语义等价性。T31 的栈区是 `Value` 大小的内存区域（`VALUE_SIZE * MAX_STACK_DEPTH`，[`translator.rs:28-32`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），JIT 端通过 `stack_store`/`stack_load` 操作。这些 `Value` 内存的初始化由翻译器保证（push 总是先于 pop）。
+**陈述**：T31 论证 JIT 翻译器的"栈区设计"（单个大 `StackSlot`，无 phi 节点）与 SSA 的语义等价性。T31 的栈区是 `Value` 大小的内存区域（`VALUE_SIZE * MAX_STACK_DEPTH`，[`translator.rs:28-32`](../../tenth/src/compile/jit/translator.rs)），JIT 端通过 `stack_store`/`stack_load` 操作。这些 `Value` 内存的初始化由翻译器保证（push 总是先于 pop）。
 
 **联动局限**：T32 的 I1 保证 hostcall 边界上的 `Value` 通过指针传递，但不覆盖 JIT 端栈区内部的 `Value` 布局——若 T31 的栈区设计在某种边界情况下（如未初始化 slot 被读取），`Value` 内存是未初始化的 `MaybeUninit`，传给 hostcall 的 `*const Value` 解引用 UB。T31 的语义等价性证明需保证"所有 read 之前有对应 write"，否则 T32 的 I1 不成立。
 
-**缓解**：T31 的翻译器对每个 `Op` 显式处理（[`translator.rs:221-483`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），每个 pop 前有对应 push。但形式化证明（T31 待完成）需明确此点。
+**缓解**：T31 的翻译器对每个 `Op` 显式处理（[`translator.rs:221-483`](../../tenth/src/compile/jit/translator.rs)），每个 pop 前有对应 push。但形式化证明（T31 待完成）需明确此点。
 
 ### L7. `transmute` 的语义假设
 
@@ -474,10 +474,10 @@ Tenth hostcall 协议的设计哲学是"**每个 FFI 不变量对应一个潜在
 
 | 不变量 | 源码位置 | 关键行 |
 |--------|---------|--------|
-| I1 | [`hostcalls.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) | L8-13（约定注释）、L34（`invoke_jit` 签名）、L82-451（所有 trampoline 签名） |
-| I2 | [`hostcalls.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) | L41-43（`catch_unwind`）、L46-61（panic 处理） |
-| I3 | [`hostcalls.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) | L23（`MAX_HOSTCALL_ARGS`）、L68-78（`safe_slice`）、L267-273/L296-303/L409-415（`checked_mul`） |
-| I4 | [`context.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs) | L50-54（`assert_eq!`）、L55（`transmute`） |
+| I1 | [`hostcalls.rs`](../../tenth/src/compile/jit/hostcalls.rs) | L8-13（约定注释）、L34（`invoke_jit` 签名）、L82-451（所有 trampoline 签名） |
+| I2 | [`hostcalls.rs`](../../tenth/src/compile/jit/hostcalls.rs) | L41-43（`catch_unwind`）、L46-61（panic 处理） |
+| I3 | [`hostcalls.rs`](../../tenth/src/compile/jit/hostcalls.rs) | L23（`MAX_HOSTCALL_ARGS`）、L68-78（`safe_slice`）、L267-273/L296-303/L409-415（`checked_mul`） |
+| I4 | [`context.rs`](../../tenth/src/compile/jit/context.rs) | L50-54（`assert_eq!`）、L55（`transmute`） |
 
 ## 附录 C：实施建议
 
@@ -485,6 +485,6 @@ Tenth hostcall 协议的设计哲学是"**每个 FFI 不变量对应一个潜在
 
 1. **保持 I1–I4 的显式编码**：未来若新增 hostcall，必须遵循 out-pointer 协议（I1）、不在 trampoline 内 panic 或被 `catch_unwind` 覆盖（I2）、所有 `from_raw_parts` 经 `safe_slice`/`checked_mul`（I3）。
 2. **`MAX_HOSTCALL_ARGS` 的版本化**：若调整该常量，需重新评估 I3 的溢出边界（`count * 2` 是否仍不溢出）。
-3. **`JitFn` 签名变更的同步**：若 `JitFn` 签名变更（如增加参数），I4 的断言会触发；此时需同步更新 `translator.rs` 的 `Signature` 声明（[`translator.rs:43-47`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。
+3. **`JitFn` 签名变更的同步**：若 `JitFn` 签名变更（如增加参数），I4 的断言会触发；此时需同步更新 `translator.rs` 的 `Signature` 声明（[`translator.rs:43-47`](../../tenth/src/compile/jit/translator.rs)）。
 4. **新增 hostcall 的检查清单**：每个新 hostcall 需在 PR 中确认 (a) 签名为 `unsafe extern "C" fn(..., out: *mut Value)` 或返回基本类型；(b) 内部不 panic 或 panic 被上层 `catch_unwind` 覆盖；(c) 任何 `from_raw_parts` 经 `safe_slice`；(d) 不引入新的 `transmute`。
 5. **与 T31 的联合验证**：当 T31 的栈区设计形式化完成后，需联合 T32 的 I1 验证"栈区 `Value` 在传给 hostcall 前已初始化"——这是 T31 + T32 的联合不变量。

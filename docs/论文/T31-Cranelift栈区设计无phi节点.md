@@ -4,14 +4,14 @@
 > **日期**：2026-07-02
 > **类型**：理论分析论文（T31 理论点，护城河 E 子课题）
 > **实证基础**：Tenth v0.3.3+ 源码（`compile/jit/translator.rs`、`compile/jit/context.rs`、`compile/jit/mod.rs`、`compile/jit/hostcalls.rs`、`runtime/vm.rs`）
-> **关联文档**：[`docs/论文/T9-JIT特化语义保持证明.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T9-JIT特化语义保持证明.md)（护城河 E 主证）、`docs/语言参考手册.md`、`docs/shape-check-roadmap/战略规划.md`
+> **关联文档**：[`docs/论文/T9-JIT特化语义保持证明.md`](T9-JIT特化语义保持证明.md)（护城河 E 主证）、`docs/语言参考手册.md`、`docs/shape-check-roadmap/战略规划.md`
 > **版本**：v1（首轮分析，含 4 轮自审修正留痕）
 
 ---
 
 ## 摘要
 
-Tenth 语言的 JIT 翻译器采用了一个**罕见的反主流设计**：放弃 Cranelift 原生提供的 SSA + phi 构造路径，转而分配单个大 `StackSlot`（256 个 `Value` 大小的连续内存区），由编译期维护的虚拟栈指针 `sp` 索引，所有 push/pop 翻译为 `stack_store`/`stack_load` 指令。控制流合并处，两条分支被约束为"以相同的 `sp` 进入合并块"，从而两侧写入相同的内存偏移——合并块的"正确值"已天然存在于内存中，**完全不需要 phi 节点**（[`tenth/src/compile/jit/translator.rs:3-10`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。这一选择与 Cranelift 官方文档推荐的 SSA + phi 路径背道而驰，但带来三个工程红利：(1) 翻译器单遍线性、无需 SSA 构造阶段；(2) 翻译器实现复杂度从"必须正确实现 dominance frontier 与 phi 插入"降为"维护 `sp` 算术"；(3) 与栈式字节码 VM 的执行模型天然对齐，hostcall trampoline 协议简化为"out-pointer 通过内存传递"。本文给出五个主定理：**J1**（栈区设计与 SSA + phi 的语义等价）、**J2**（控制流合并正确性）、**J3**（编译速度优势：单遍 O(n) vs SSA 构造 O(n·d)）、**J4**（运行时性能对比：含 stack-slot promotion 折损分析）、**J5**（编译产物大小对比）。证明核心方法为**状态对应关系归纳**：构造关系 $\mathcal{R}$ 使栈区状态 $(\mathrm{ip}, \mathrm{mem}, \mathrm{sp})$ 与 SSA 状态 $(\mathrm{ip}, \mathrm{env})$ 对应，归纳证明每步执行保持 $\mathcal{R}$，且合并点处"内存中最新写入"与 SSA phi 选择一致。本文诚实记录 8 处理论局限，包括 `MAX_STACK_DEPTH = 256` 的静默溢出、`sp` 不变量未在编译期静态校验、Cranelift 后端对 `stack_load/store` 链的优化能力假设等，为后续 SSA-on-demand 混合方案与形式化验证提供坐标。
+Tenth 语言的 JIT 翻译器采用了一个**罕见的反主流设计**：放弃 Cranelift 原生提供的 SSA + phi 构造路径，转而分配单个大 `StackSlot`（256 个 `Value` 大小的连续内存区），由编译期维护的虚拟栈指针 `sp` 索引，所有 push/pop 翻译为 `stack_store`/`stack_load` 指令。控制流合并处，两条分支被约束为"以相同的 `sp` 进入合并块"，从而两侧写入相同的内存偏移——合并块的"正确值"已天然存在于内存中，**完全不需要 phi 节点**（[`tenth/src/compile/jit/translator.rs:3-10`](../../tenth/src/compile/jit/translator.rs)）。这一选择与 Cranelift 官方文档推荐的 SSA + phi 路径背道而驰，但带来三个工程红利：(1) 翻译器单遍线性、无需 SSA 构造阶段；(2) 翻译器实现复杂度从"必须正确实现 dominance frontier 与 phi 插入"降为"维护 `sp` 算术"；(3) 与栈式字节码 VM 的执行模型天然对齐，hostcall trampoline 协议简化为"out-pointer 通过内存传递"。本文给出五个主定理：**J1**（栈区设计与 SSA + phi 的语义等价）、**J2**（控制流合并正确性）、**J3**（编译速度优势：单遍 O(n) vs SSA 构造 O(n·d)）、**J4**（运行时性能对比：含 stack-slot promotion 折损分析）、**J5**（编译产物大小对比）。证明核心方法为**状态对应关系归纳**：构造关系 $\mathcal{R}$ 使栈区状态 $(\mathrm{ip}, \mathrm{mem}, \mathrm{sp})$ 与 SSA 状态 $(\mathrm{ip}, \mathrm{env})$ 对应，归纳证明每步执行保持 $\mathcal{R}$，且合并点处"内存中最新写入"与 SSA phi 选择一致。本文诚实记录 8 处理论局限，包括 `MAX_STACK_DEPTH = 256` 的静默溢出、`sp` 不变量未在编译期静态校验、Cranelift 后端对 `stack_load/store` 链的优化能力假设等，为后续 SSA-on-demand 混合方案与形式化验证提供坐标。
 
 **关键词**：JIT 编译、Cranelift、SSA、phi 节点、栈式虚拟机、语义等价、双模拟、Tenth 语言
 
@@ -25,16 +25,16 @@ SSA（Static Single Assignment，[Cytron et al. 1991]）是现代编译器 IR �
 
 栈式虚拟机（stack-based VM）则采取完全不同的执行模型：操作数通过隐式栈传递，指令如 `Add` 弹出两个栈顶、压入一个结果。LuaJIT、CPython（YARV）、JVM 字节码、WebAssembly 均属此族。栈式字节码紧凑、解释器实现简单，但与 SSA 后端衔接时存在张力——栈位置是动态的，而 SSA 值是静态命名的。
 
-Tenth 语言的执行管线恰好横跨两界：源语言经 HIR 编译为**栈式字节码**（[`runtime/vm.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 中的 `Chunk`/`Op`），由栈式 VM 解释执行；JIT 路径则需将栈式字节码翻译为 Cranelift IR 以生成机器码。这一衔接处的工程设计选择，正是本文研究的核心。
+Tenth 语言的执行管线恰好横跨两界：源语言经 HIR 编译为**栈式字节码**（[`runtime/vm.rs`](../../tenth/src/runtime/vm.rs) 中的 `Chunk`/`Op`），由栈式 VM 解释执行；JIT 路径则需将栈式字节码翻译为 Cranelift IR 以生成机器码。这一衔接处的工程设计选择，正是本文研究的核心。
 
 ### 1.2 Cranelift 的反主流用法
 
 Cranelift 是 Bytecode Alliance 开发的可移植编译器后端，原生支持 SSA + phi：用户通过 `FunctionBuilder::create_block`、`append_block_params`、`brif` 等接口构造 CFG，Cranelift 自动处理 dominance 与 phi 插入。Cranelift 官方文档明确推荐此路径。
 
-Tenth JIT 翻译器**主动绕过**了这条推荐路径。它分配单个大 `StackSlot`（`VALUE_SIZE * MAX_STACK_DEPTH` 字节，当前 256 个 Value），编译期维护字节偏移 `sp: i32`，所有 push/pop 翻译为 `stack_store`/`stack_load`，**完全不使用 Cranelift 的 block 参数与 phi 机制**（[`translator.rs:67-71, 104-107`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。translator.rs 顶部注释明确陈述了这一设计意图：
+Tenth JIT 翻译器**主动绕过**了这条推荐路径。它分配单个大 `StackSlot`（`VALUE_SIZE * MAX_STACK_DEPTH` 字节，当前 256 个 Value），编译期维护字节偏移 `sp: i32`，所有 push/pop 翻译为 `stack_store`/`stack_load`，**完全不使用 Cranelift 的 block 参数与 phi 机制**（[`translator.rs:67-71, 104-107`](../../tenth/src/compile/jit/translator.rs)）。translator.rs 顶部注释明确陈述了这一设计意图：
 
 > "The virtual stack is a single large `StackSlot` ... Both branches of an if/else write to the same memory offsets, so control-flow merges need no phi nodes — the correct value is already in memory at runtime."
-> （[`translator.rs:3-10`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）
+> （[`translator.rs:3-10`](../../tenth/src/compile/jit/translator.rs)）
 
 这是 Cranelift 文档未推荐、社区案例罕见的用法。本文对该选择进行严格的形式化分析，回答："**这一反主流设计是否语义正确？在何种性能-复杂度权衡下是合理的?**"
 
@@ -116,22 +116,22 @@ phi 节点的存在是 SSA 形式的产物——因为 SSA 要求每个值只有
 ### 3.1 基本记号
 
 - $\mathbb{N}$：自然数集；$\mathbb{Z}$：整数集；$\mathbb{B} = \{0, 1\}$。
-- $\mathrm{Op}$：Tenth 字节码指令集（46 个 Op，见 [`runtime/vm.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 中的 `enum Op`）。
+- $\mathrm{Op}$：Tenth 字节码指令集（46 个 Op，见 [`runtime/vm.rs`](../../tenth/src/runtime/vm.rs) 中的 `enum Op`）。
 - $\mathrm{Value}$：Tenth 运行时值域（Int/Float/Bool/String/Unit/Vec/Map/Struct/Enum/Closure/Tensor 等）。
-- $V_{\mathrm{size}} := \mathrm{size\_of}(\mathrm{Value})$：单个 Value 的字节大小（32+ 字节，含 `Rc`/`Vec`/`String` 等，见 [`hostcalls.rs:1-7`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。
-- $D_{\max} := 256$：栈区容量（[`translator.rs:32`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。
+- $V_{\mathrm{size}} := \mathrm{size\_of}(\mathrm{Value})$：单个 Value 的字节大小（32+ 字节，含 `Rc`/`Vec`/`String` 等，见 [`hostcalls.rs:1-7`](../../tenth/src/compile/jit/hostcalls.rs)）。
+- $D_{\max} := 256$：栈区容量（[`translator.rs:32`](../../tenth/src/compile/jit/translator.rs)）。
 - $\mathrm{Slot} := [0, D_{\max} \cdot V_{\mathrm{size}})$：栈区字节偏移域。
 - $\mathrm{Mem} := \mathrm{Slot} \to \mathrm{Value} \cup \{\bot\}$：栈区内存状态（$\bot$ 表示未初始化）。
-- $\mathrm{sp} \in \mathbb{Z}$：编译期栈指针，字节偏移（[`translator.rs:105`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。
+- $\mathrm{sp} \in \mathbb{Z}$：编译期栈指针，字节偏移（[`translator.rs:105`](../../tenth/src/compile/jit/translator.rs)）。
 
 ### 3.2 CFG 与块结构
 
-Tenth 字节码的 CFG 由 `find_leaders` 识别（[`translator.rs:198-217`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）：
+Tenth 字节码的 CFG 由 `find_leaders` 识别（[`translator.rs:198-217`](../../tenth/src/compile/jit/translator.rs)）：
 
 - 跳转指令（`Jump`/`JmpFalse`/`JmpTrue`）的目标与下一条指令均为 leader；
 - `Ret` 后的指令为 leader。
 
-每个 leader 对应一个 Cranelift `Block`，记录于 `blocks: HashMap<usize, Block>`（[`translator.rs:111`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。每个 block 入口处的 `sp` 值记录于 `block_sp: HashMap<Block, i32>`（[`translator.rs:113`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。
+每个 leader 对应一个 Cranelift `Block`，记录于 `blocks: HashMap<usize, Block>`（[`translator.rs:111`](../../tenth/src/compile/jit/translator.rs)）。每个 block 入口处的 `sp` 值记录于 `block_sp: HashMap<Block, i32>`（[`translator.rs:113`](../../tenth/src/compile/jit/translator.rs)）。
 
 ### 3.3 phi 节点的形式化
 
@@ -159,13 +159,13 @@ let stack_slot = builder.create_sized_stack_slot(StackSlotData::new(
 ));
 ```
 
-（[`translator.rs:67-71`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）
+（[`translator.rs:67-71`](../../tenth/src/compile/jit/translator.rs)）
 
 形式化：栈区是连续字节区 $S \in \mathrm{Mem}$，容量 $|S| = D_{\max} \cdot V_{\mathrm{size}}$ 字节。每个 Value 占 $V_{\mathrm{size}}$ 字节，故栈区可容纳 $D_{\max}$ 个 Value。
 
 ### 4.2 编译期栈指针 sp
 
-`sp: i32` 是**编译期**维护的字节偏移（[`translator.rs:78, 105`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。它**不**生成到 Cranelift IR 中——所有 `stack_addr`/`stack_load`/`stack_store` 指令使用编译期已知的常量偏移：
+`sp: i32` 是**编译期**维护的字节偏移（[`translator.rs:78, 105`](../../tenth/src/compile/jit/translator.rs)）。它**不**生成到 Cranelift IR 中——所有 `stack_addr`/`stack_load`/`stack_store` 指令使用编译期已知的常量偏移：
 
 ```rust
 fn stack_addr_at_sp(&mut self) -> Value_ {
@@ -173,9 +173,9 @@ fn stack_addr_at_sp(&mut self) -> Value_ {
 }
 ```
 
-（[`translator.rs:515-517`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）
+（[`translator.rs:515-517`](../../tenth/src/compile/jit/translator.rs)）
 
-关键约束：`sp` 在编译期是确定的，但同一 Cranelift block 在不同执行路径上被到达时，对应的 `sp` 值可能不同——这正是 `block_sp: HashMap<Block, i32>` 的作用（[`translator.rs:113, 160-168`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。
+关键约束：`sp` 在编译期是确定的，但同一 Cranelift block 在不同执行路径上被到达时，对应的 `sp` 值可能不同——这正是 `block_sp: HashMap<Block, i32>` 的作用（[`translator.rs:113, 160-168`](../../tenth/src/compile/jit/translator.rs)）。
 
 ### 4.3 push/pop 翻译规则
 
@@ -191,9 +191,9 @@ fn stack_addr_at_sp(&mut self) -> Value_ {
 | `Store(i)` | `sp -= V_size` | `copy_stack_to_slot(sp, local_i, 0)` |
 | `Ret` | `sp -= V_size` | `copy_stack_to_ptr(sp, out_ptr)` |
 
-（实证：[`translator.rs:222-259, 293-305, 367-373`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）
+（实证：[`translator.rs:222-259, 293-305, 367-373`](../../tenth/src/compile/jit/translator.rs)）
 
-`copy_within_stack`、`copy_stack_to_slot` 等辅助函数均通过 `stack_load` + `stack_store` 循环实现，循环步长为指针宽度（`self.ptr.bytes()`），逐字复制（[`translator.rs:522-529`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。
+`copy_within_stack`、`copy_stack_to_slot` 等辅助函数均通过 `stack_load` + `stack_store` 循环实现，循环步长为指针宽度（`self.ptr.bytes()`），逐字复制（[`translator.rs:522-529`](../../tenth/src/compile/jit/translator.rs)）。
 
 ### 4.4 控制流合并处的 sp 同步
 
@@ -218,7 +218,7 @@ JmpFalse(o) => {
 }
 ```
 
-（[`translator.rs:306-328`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）
+（[`translator.rs:306-328`](../../tenth/src/compile/jit/translator.rs)）
 
 在 block 入口处，translator 从 `block_sp` 恢复 `sp`：
 
@@ -228,7 +228,7 @@ if let Some(&sp) = self.block_sp.get(&blk) {
 }
 ```
 
-（[`translator.rs:166-168`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）
+（[`translator.rs:166-168`](../../tenth/src/compile/jit/translator.rs)）
 
 **关键不变量**（记为 $\mathrm{Inv}_{\mathrm{sp}}$）：对任意 block $b$，所有跳转到 $b$ 的路径在跳转前 `sp` 相同。这一不变量由 translator 在每条跳转指令处显式维护（写入 `block_sp`），并在 block 入口处假设（读取 `block_sp`）。
 
@@ -247,9 +247,9 @@ for i in 0..num_locals {
 }
 ```
 
-（[`translator.rs:138-145`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）
+（[`translator.rs:138-145`](../../tenth/src/compile/jit/translator.rs)）
 
-注释明确说明动机："Locals are individual `StackSlot`s (they don't have merge issues)"（[`translator.rs:10`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。局部变量在控制流合并处不存在"两条分支写入不同值"的问题——局部变量的值是程序计数点唯一的，而非栈位置唯一的。但 Tenth 仍为每个 local 分配独立槽，避免 `Load`/`Store` 时与虚拟栈区的偏移混淆。
+注释明确说明动机："Locals are individual `StackSlot`s (they don't have merge issues)"（[`translator.rs:10`](../../tenth/src/compile/jit/translator.rs)）。局部变量在控制流合并处不存在"两条分支写入不同值"的问题——局部变量的值是程序计数点唯一的，而非栈位置唯一的。但 Tenth 仍为每个 local 分配独立槽，避免 `Load`/`Store` 时与虚拟栈区的偏移混淆。
 
 ### 4.6 未填充合并块的处理
 
@@ -267,7 +267,7 @@ for (_ip, blk) in all_blocks {
 }
 ```
 
-（[`translator.rs:183-192`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）
+（[`translator.rs:183-192`](../../tenth/src/compile/jit/translator.rs)）
 
 这一处理保证 Cranelift IR 的所有 block 均有终结指令，避免"block without terminator"错误。
 
@@ -275,7 +275,7 @@ for (_ip, blk) in all_blocks {
 
 ## 5. 主定理与证明
 
-本节给出五个主定理。所有定理的实证基础为 [`translator.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 与 [`context.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs)。
+本节给出五个主定理。所有定理的实证基础为 [`translator.rs`](../../tenth/src/compile/jit/translator.rs) 与 [`context.rs`](../../tenth/src/compile/jit/context.rs)。
 
 ### 5.1 定理 J1（栈区设计与 SSA + phi 的语义等价）
 
@@ -293,13 +293,13 @@ for (_ip, blk) in all_blocks {
 
 (c) 对每个局部变量 $i$，$\mathrm{local}_i$ 的 SSA 对应 $l_i$ 满足 $\mathrm{local}_i = \Gamma[l_i]$。
 
-**归纳基础**（ip = 0）：参数 $\vec{a}$ 由 `args_ptr` 拷贝到 `locals[0..n]`（[`translator.rs:146-150`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），SSA 中 block 参数同样绑定 $\vec{a}$，对应关系成立。
+**归纳基础**（ip = 0）：参数 $\vec{a}$ 由 `args_ptr` 拷贝到 `locals[0..n]`（[`translator.rs:146-150`](../../tenth/src/compile/jit/translator.rs)），SSA 中 block 参数同样绑定 $\vec{a}$，对应关系成立。
 
 **归纳步**：对每条 Op $op$，分情况证明：
 
 - **PushInt(n)**：栈区写 $S[\mathrm{sp}] = n$，$\mathrm{sp}' = \mathrm{sp} + V_{\mathrm{size}}$。SSA 引入新值 $v' = \mathrm{iconst}(n)$。对应关系扩展为 $S[\mathrm{sp}] = \Gamma[v']$。✓
 - **Pop**：栈区 $\mathrm{sp}' = \mathrm{sp} - V_{\mathrm{size}}$。SSA 中对应值不再可访问（可视为 dead）。对应关系收缩。✓
-- **Add**：栈区 `host_add(&S[sp-2V], &S[sp-V], &S[sp-2V])`，$\mathrm{sp}' = \mathrm{sp} - V_{\mathrm{size}}$。SSA 中 $v' = \mathrm{add}(v_{\mathrm{sp-2V}}, v_{\mathrm{sp-V}})$。由 hostcall 协议（[`hostcalls.rs:1-13`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)），`host_add` 的语义与 `Vm::add_priv` 一致，故 $S[\mathrm{sp}-2V] = v'$，与 SSA 一致。✓
+- **Add**：栈区 `host_add(&S[sp-2V], &S[sp-V], &S[sp-2V])`，$\mathrm{sp}' = \mathrm{sp} - V_{\mathrm{size}}$。SSA 中 $v' = \mathrm{add}(v_{\mathrm{sp-2V}}, v_{\mathrm{sp-V}})$。由 hostcall 协议（[`hostcalls.rs:1-13`](../../tenth/src/compile/jit/hostcalls.rs)），`host_add` 的语义与 `Vm::add_priv` 一致，故 $S[\mathrm{sp}-2V] = v'$，与 SSA 一致。✓
 - **Jump(t)**：栈区记录 `block_sp[t] = sp`，跳转。SSA 中 `jump(t, &[])`，无 phi 实参。由 $\mathrm{Inv}_{\mathrm{sp}}$，所有进入 $t$ 的路径 sp 相同，故对应关系在 $t$ 入口处一致恢复。✓
 - **JmpFalse(o)**：栈区弹出条件值（$\mathrm{sp}' = \mathrm{sp} - V_{\mathrm{size}}$），两目标 block 均记录 $\mathrm{sp}'$。SSA 中条件值同样消费，两目标 block 入口对应关系一致。✓
 - **Ret**：栈区 `copy_stack_to_ptr(sp, out_ptr)`，返回。SSA 中 `return_(v_ret)`。由对应关系，$S[\mathrm{sp}] = \Gamma[v_{\mathrm{ret}}]$，二者返回值一致。✓
@@ -320,7 +320,7 @@ for (_ip, blk) in all_blocks {
 
 **(1) 栈区侧**：
 
-由 [`translator.rs:306-328`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)，每条跳转指令在 `brif`/`jump` 前调用 `self.block_sp.insert(target, self.sp)`，且 `self.sp` 已是该分支出口处的值。故运行时，沿边 $p_i \to m$ 进入 $m$ 时，栈区内容 $S$ 即为 $p_i$ 出口处的 $S$。
+由 [`translator.rs:306-328`](../../tenth/src/compile/jit/translator.rs)，每条跳转指令在 `brif`/`jump` 前调用 `self.block_sp.insert(target, self.sp)`，且 `self.sp` 已是该分支出口处的值。故运行时，沿边 $p_i \to m$ 进入 $m$ 时，栈区内容 $S$ 即为 $p_i$ 出口处的 $S$。
 
 在 $m$ 入口处读取偏移 $o$ 的值，得到 $S[o]$，即 $p_i$ 出口处的 $S_{p_i}[o]$。这正是"实际执行路径写入的值"。
 
@@ -334,7 +334,7 @@ for (_ip, blk) in all_blocks {
 
 **(4) 边界情况**：
 
-- **未填充合并块**（[`translator.rs:184-192`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）：若合并块未被任何分支直达到达（如 if/else 末尾的 fallthrough label），translator 用 `emit_return` 填充。此时 $m$ 实际上是函数出口，无后续读取，对应 SSA 中的 return。✓
+- **未填充合并块**（[`translator.rs:184-192`](../../tenth/src/compile/jit/translator.rs)）：若合并块未被任何分支直达到达（如 if/else 末尾的 fallthrough label），translator 用 `emit_return` 填充。此时 $m$ 实际上是函数出口，无后续读取，对应 SSA 中的 return。✓
 - **空分支**：若某分支为空（直接 jump 到 $m$），$\mathrm{sp}_{p_i}^{\mathrm{out}}$ 等于该分支入口 sp，由 $\mathrm{Inv}_{\mathrm{sp}}$，与另一分支一致。✓
 - **嵌套合并**：多层 if/else 嵌套时，每层合并点独立满足 $\mathrm{Inv}_{\mathrm{sp}}$，归纳可证。✓
 
@@ -353,7 +353,7 @@ $\square$
 
 **(1) 栈区设计**：
 
-translator 的主循环（[`translator.rs:156-175`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）单遍扫描字节码，每条 Op 触发 `emit_op`，生成常数条 Cranelift 指令（如 `PushInt` 生成 1 个 hostcall + 1 个 sp 更新；`Add` 生成 1 个 hostcall + 2 个 sp 更新，[`translator.rs:737-749`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。`find_leaders`（[`translator.rs:198-217`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）单遍扫描识别 leader，复杂度 $O(n)$。`block_sp` 操作为 $O(1)$ 哈希插入/查找。
+translator 的主循环（[`translator.rs:156-175`](../../tenth/src/compile/jit/translator.rs)）单遍扫描字节码，每条 Op 触发 `emit_op`，生成常数条 Cranelift 指令（如 `PushInt` 生成 1 个 hostcall + 1 个 sp 更新；`Add` 生成 1 个 hostcall + 2 个 sp 更新，[`translator.rs:737-749`](../../tenth/src/compile/jit/translator.rs)）。`find_leaders`（[`translator.rs:198-217`](../../tenth/src/compile/jit/translator.rs)）单遍扫描识别 leader，复杂度 $O(n)$。`block_sp` 操作为 $O(1)$ 哈希插入/查找。
 
 总复杂度：$\Theta(n)$。✓
 
@@ -391,9 +391,9 @@ translator 的主循环（[`translator.rs:156-175`](file:///d:/史蒂夫/Desktop
 
 **(1) 栈区开销分析**：
 
-translator 对每条非纯算术 Op 生成一个 hostcall（如 `PushInt` → `host_make_int`，[`translator.rs:222-226`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。hostcall 通过 `call_indirect` 调用（[`translator.rs:603-607`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），开销 $T_{\mathrm{hostcall}}$ 含间接调用 + trampoline 执行 + VM 内部逻辑。
+translator 对每条非纯算术 Op 生成一个 hostcall（如 `PushInt` → `host_make_int`，[`translator.rs:222-226`](../../tenth/src/compile/jit/translator.rs)）。hostcall 通过 `call_indirect` 调用（[`translator.rs:603-607`](../../tenth/src/compile/jit/translator.rs)），开销 $T_{\mathrm{hostcall}}$ 含间接调用 + trampoline 执行 + VM 内部逻辑。
 
-对纯算术 Op（如 `Add`），translator 生成 `host_add` hostcall + 两个 `stack_addr`（参数地址）+ 一个 `stack_addr`（输出地址）（[`translator.rs:737-749`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。hostcall 内部读取栈内存、计算、写回。开销为 $T_{\mathrm{hostcall}} + T_{\mathrm{mem}}$（$T_{\mathrm{mem}}$ 含 stack_load 参数 + stack_store 结果）。
+对纯算术 Op（如 `Add`），translator 生成 `host_add` hostcall + 两个 `stack_addr`（参数地址）+ 一个 `stack_addr`（输出地址）（[`translator.rs:737-749`](../../tenth/src/compile/jit/translator.rs)）。hostcall 内部读取栈内存、计算、写回。开销为 $T_{\mathrm{hostcall}} + T_{\mathrm{mem}}$（$T_{\mathrm{mem}}$ 含 stack_load 参数 + stack_store 结果）。
 
 **(2) SSA 开销分析**：
 
@@ -458,7 +458,7 @@ Cranelift 后端将 IR lowering 为机器码。栈区设计的 `stack_load/store
 
 ### 5.6 与 T9 的联动
 
-T9（[JIT 特化语义保持证明](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T9-JIT特化语义保持证明.md)）证明：Tenth JIT 编译产物（栈区设计）在支持的 opcode 子集上与 VM 解释执行弱双模拟等价（定理 E1）。
+T9（[JIT 特化语义保持证明](T9-JIT特化语义保持证明.md)）证明：Tenth JIT 编译产物（栈区设计）在支持的 opcode 子集上与 VM 解释执行弱双模拟等价（定理 E1）。
 
 本文证明：栈区设计 JIT 产物与假设的 SSA 设计 JIT 产物弱双模拟等价（定理 J1）。
 
@@ -521,7 +521,7 @@ $$
 
 形式化：$\forall b.\ \forall p_1, p_2 \in \mathrm{pred}(b).\ \mathrm{sp}_{p_1}^{\mathrm{out}} = \mathrm{sp}_{p_2}^{\mathrm{out}} =: \mathrm{sp}_b^{\mathrm{in}}$。
 
-**实证**：translator 通过 `block_sp` 显式维护此不变量（[`translator.rs:113, 306-328`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。但 translator **不**在编译期静态校验此不变量——若某分支未正确同步 sp，运行时行为未定义（局限 L2）。
+**实证**：translator 通过 `block_sp` 显式维护此不变量（[`translator.rs:113, 306-328`](../../tenth/src/compile/jit/translator.rs)）。但 translator **不**在编译期静态校验此不变量——若某分支未正确同步 sp，运行时行为未定义（局限 L2）。
 
 ### 6.4 可观察行为
 
@@ -554,7 +554,7 @@ $$
 
 **引理 7.2**（基础）. 对初始状态 $\sigma_0 = (0, S_0, 0, L_0)$ 与 $\Sigma_0 = (0, \Gamma_0, \Pi_0)$，其中 $L_0[i] = \vec{a}[i] = \Gamma_0[l_i^{\mathrm{entry}}]$（参数绑定），$\mathrm{sp}_0 = 0$，有 $\mathcal{R}(\sigma_0, \Sigma_0)$。
 
-**证明**：(a) ip 均为 0 ✓；(b) $\mathrm{sp} = 0$，故区间为空，条件空真 ✓；(c) 由 [`translator.rs:146-150`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)，参数从 `args_ptr` 拷贝到 `locals[0..n]`，SSA 中 block 参数同样绑定 $\vec{a}$，故 $L_0[i] = \Gamma_0[l_i]$ ✓；(d) $\mathrm{sp} = 0$ 一致 ✓。$\square$
+**证明**：(a) ip 均为 0 ✓；(b) $\mathrm{sp} = 0$，故区间为空，条件空真 ✓；(c) 由 [`translator.rs:146-150`](../../tenth/src/compile/jit/translator.rs)，参数从 `args_ptr` 拷贝到 `locals[0..n]`，SSA 中 block 参数同样绑定 $\vec{a}$，故 $L_0[i] = \Gamma_0[l_i]$ ✓；(d) $\mathrm{sp} = 0$ 一致 ✓。$\square$
 
 **引理 7.3**（归纳步-直线代码）. 设 $\mathcal{R}(\sigma, \Sigma)$，$\sigma \to_{\mathrm{stk}} \sigma'$ 由直线 Op（PushInt/PushFloat/PushBool/Pop/Dup/Load/Store/Add/...）触发。则存在 $\Sigma'$ 使得 $\Sigma \to_{\mathrm{ssa}} \Sigma'$ 且 $\mathcal{R}(\sigma', \Sigma')$。
 
@@ -562,7 +562,7 @@ $$
 
 **情形 PushInt(n)**：$\sigma' = (\mathrm{ip}+5, S[\mathrm{sp} \mapsto n], \mathrm{sp}+V, L)$。SSA 中引入新值 $v' = \mathrm{iconst}(n)$，$\Gamma' = \Gamma[v' \mapsto n]$。设 $v_o$ 对应偏移 $o = \mathrm{sp}$：$S'[o] = n = \Gamma'[v']$ ✓。$\mathrm{sp}' = \mathrm{sp} + V$，对应 SSA 新增一个活跃值 ✓。其他对应关系不变 ✓。
 
-**情形 Add**：$\sigma' = (\mathrm{ip}+1, S[\mathrm{sp}-2V \mapsto \mathrm{add}(S[\mathrm{sp}-2V], S[\mathrm{sp}-V])], \mathrm{sp}-V, L)$。SSA 中 $v' = \mathrm{add}(v_{\mathrm{sp}-2V}, v_{\mathrm{sp}-V})$，$\Gamma'[v'] = \mathrm{add}(\Gamma[v_{\mathrm{sp}-2V}], \Gamma[v_{\mathrm{sp}-V}])$。由 hostcall 协议（[`hostcalls.rs:1-13`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)），`host_add` 的语义与 VM `add_priv` 一致，故 $S'[\mathrm{sp}-2V] = \mathrm{add}(\Gamma[v_{\mathrm{sp}-2V}], \Gamma[v_{\mathrm{sp}-V}]) = \Gamma'[v']$ ✓。$\mathrm{sp}' = \mathrm{sp} - V$，对应 SSA 中两个输入值消费、一个结果值产生，净活跃值减 1 ✓。
+**情形 Add**：$\sigma' = (\mathrm{ip}+1, S[\mathrm{sp}-2V \mapsto \mathrm{add}(S[\mathrm{sp}-2V], S[\mathrm{sp}-V])], \mathrm{sp}-V, L)$。SSA 中 $v' = \mathrm{add}(v_{\mathrm{sp}-2V}, v_{\mathrm{sp}-V})$，$\Gamma'[v'] = \mathrm{add}(\Gamma[v_{\mathrm{sp}-2V}], \Gamma[v_{\mathrm{sp}-V}])$。由 hostcall 协议（[`hostcalls.rs:1-13`](../../tenth/src/compile/jit/hostcalls.rs)），`host_add` 的语义与 VM `add_priv` 一致，故 $S'[\mathrm{sp}-2V] = \mathrm{add}(\Gamma[v_{\mathrm{sp}-2V}], \Gamma[v_{\mathrm{sp}-V}]) = \Gamma'[v']$ ✓。$\mathrm{sp}' = \mathrm{sp} - V$，对应 SSA 中两个输入值消费、一个结果值产生，净活跃值减 1 ✓。
 
 **情形 Load(i)**：$\sigma' = (\mathrm{ip}+1, S[\mathrm{sp} \mapsto L[i]], \mathrm{sp}+V, L)$。SSA 中 $v' = l_i$（直接引用局部变量值），$\Gamma'[v'] = \Gamma[l_i] = L[i]$ ✓。
 
@@ -580,7 +580,7 @@ $$
 
 由 $\mathrm{Inv}_{\mathrm{sp}}$，所有进入 $t$ 的路径 sp 相同，故栈区在 $t$ 入口处的 $S$ 内容来自实际执行的前驱 $p$。SSA 中 $t$ 入口处的 phi 同样根据前驱 $p$ 解析。由对应关系 (b)，$S[o] = \Gamma[v_o^p] = \Gamma'[v_o^t]$（phi 解析后）✓。
 
-**情形 JmpFalse(t)**：$\sigma' = (t, S, \mathrm{sp}-V, L)$ 或 $(\mathrm{ip}+5, S, \mathrm{sp}-V, L)$，取决于 $\mathrm{truthy}(S[\mathrm{sp}-V])$。SSA 中条件值同样消费，brif 选择目标 block。两个目标 block 的 $\mathrm{sp}_t^{\mathrm{in}} = \mathrm{sp}_{\mathrm{ip}+5}^{\mathrm{in}} = \mathrm{sp} - V$（由 [`translator.rs:324-325`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 显式记录）。SSA 中两目标 block 入口处 phi 同样根据实际前驱解析。对应关系 (b) 在两目标 block 入口处均成立 ✓。
+**情形 JmpFalse(t)**：$\sigma' = (t, S, \mathrm{sp}-V, L)$ 或 $(\mathrm{ip}+5, S, \mathrm{sp}-V, L)$，取决于 $\mathrm{truthy}(S[\mathrm{sp}-V])$。SSA 中条件值同样消费，brif 选择目标 block。两个目标 block 的 $\mathrm{sp}_t^{\mathrm{in}} = \mathrm{sp}_{\mathrm{ip}+5}^{\mathrm{in}} = \mathrm{sp} - V$（由 [`translator.rs:324-325`](../../tenth/src/compile/jit/translator.rs) 显式记录）。SSA 中两目标 block 入口处 phi 同样根据实际前驱解析。对应关系 (b) 在两目标 block 入口处均成立 ✓。
 
 **情形 JmpTrue(t)**：与 JmpFalse 对称。✓
 
@@ -588,7 +588,7 @@ $\square$
 
 **引理 7.5**（归纳步-Ret）. 设 $\mathcal{R}(\sigma, \Sigma)$，$\sigma \to_{\mathrm{stk}} \mathrm{halt}(S[\mathrm{sp}-V])$。则 $\Sigma \to_{\mathrm{ssa}} \mathrm{halt}(\Gamma[v_{\mathrm{sp}-V}])$，且 $S[\mathrm{sp}-V] = \Gamma[v_{\mathrm{sp}-V}]$。
 
-**证明**：由 [`translator.rs:367-373`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)，Ret 弹出栈顶并 `copy_stack_to_ptr`。由对应关系 (b)，$S[\mathrm{sp}-V] = \Gamma[v_{\mathrm{sp}-V}]$ ✓。$\square$
+**证明**：由 [`translator.rs:367-373`](../../tenth/src/compile/jit/translator.rs)，Ret 弹出栈顶并 `copy_stack_to_ptr`。由对应关系 (b)，$S[\mathrm{sp}-V] = \Gamma[v_{\mathrm{sp}-V}]$ ✓。$\square$
 
 **定理 7.6**（弱双模拟）. 对任意输入 $\vec{a}$，若 $P$ 满足 $\mathrm{Inv}_{\mathrm{sp}}$，则 $\mathcal{M}_{\mathrm{stk}}(P)$ 与 $\mathcal{M}_{\mathrm{ssa}}(P)$ 弱双模拟等价。
 
@@ -596,9 +596,9 @@ $\square$
 
 ### 7.3 边界情况
 
-**(1) 空栈返回**：若函数末尾 $\mathrm{sp} = 0$（无返回值），translator 调用 `emit_return` 写入 `Unit`（[`translator.rs:493-510`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。SSA 路径同样返回 `Unit`。对应关系成立 ✓。
+**(1) 空栈返回**：若函数末尾 $\mathrm{sp} = 0$（无返回值），translator 调用 `emit_return` 写入 `Unit`（[`translator.rs:493-510`](../../tenth/src/compile/jit/translator.rs)）。SSA 路径同样返回 `Unit`。对应关系成立 ✓。
 
-**(2) 未填充合并块**：translator 对未访问的合并块填充 `emit_return`（[`translator.rs:184-192`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。这些块实际上不会被执行（无前驱），但 Cranelift 要求所有 block 有终结指令。SSA 路径同样需处理 unreachable block。对应关系在可达 block 上成立 ✓。
+**(2) 未填充合并块**：translator 对未访问的合并块填充 `emit_return`（[`translator.rs:184-192`](../../tenth/src/compile/jit/translator.rs)）。这些块实际上不会被执行（无前驱），但 Cranelift 要求所有 block 有终结指令。SSA 路径同样需处理 unreachable block。对应关系在可达 block 上成立 ✓。
 
 **(3) MAX_STACK_DEPTH 溢出**：若运行时 `sp` 超过 $D_{\max} \cdot V_{\mathrm{size}}$，`stack_store` 写越界，行为未定义。SSA 路径无此问题（值在寄存器/溢出槽中，由 regalloc 管理）。**这是栈区设计的局限**（局限 L1，见 §11），但不破坏等价性证明——证明假设无溢出。
 
@@ -625,7 +625,7 @@ $\square$
 | 栈消除阶段 | 无 | 有（栈式字节码输入） |
 | 实测翻译时间（典型 chunk, n=1000） | ~0.1ms | ~0.5ms（估计） |
 
-**注**：实测数据需通过对比实验获取，本文仅给出理论复杂度。T9 记录自举管线总时间 ~0.2s（[`MEMO.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md)），其中 JIT 编译占比可忽略，故栈区设计的编译速度优势在自举场景下不显著。但对大型 chunk（n > 10000）或频繁 JIT 编译场景，优势将显现。
+**注**：实测数据需通过对比实验获取，本文仅给出理论复杂度。T9 记录自举管线总时间 ~0.2s（[`MEMO.md`](../../MEMO.md)），其中 JIT 编译占比可忽略，故栈区设计的编译速度优势在自举场景下不显著。但对大型 chunk（n > 10000）或频繁 JIT 编译场景，优势将显现。
 
 ### 8.2 运行时性能（定理 J4 实证）
 
@@ -662,11 +662,11 @@ Cranelift 官方文档与示例代码均推荐 SSA + phi 路径：用户通过 `
 
 Tenth 选择栈区设计的动机可从源码注释与实现结构中提炼：
 
-**(1) 与栈式字节码对齐**：Tenth 字节码是栈式的（[`runtime/vm.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），translator 的核心循环（[`translator.rs:156-175`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）逐条 Op 翻译，sp 算术直接对应栈式语义。若改用 SSA 路径，需先做栈消除，引入额外复杂度。
+**(1) 与栈式字节码对齐**：Tenth 字节码是栈式的（[`runtime/vm.rs`](../../tenth/src/runtime/vm.rs)），translator 的核心循环（[`translator.rs:156-175`](../../tenth/src/compile/jit/translator.rs)）逐条 Op 翻译，sp 算术直接对应栈式语义。若改用 SSA 路径，需先做栈消除，引入额外复杂度。
 
-**(2) hostcall 协议的简化**：Tenth 的 hostcall trampoline 通过 `*mut Value` out-pointer 传递结果（[`hostcalls.rs:1-13`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs)）。栈区设计的 `stack_addr` 直接给出 out-pointer 地址，无需额外的栈帧布局。SSA 路径下，out-pointer 仍需指向某内存位置（`Value` 是 32+ 字节枚举，不能通过寄存器返回），故仍需分配临时栈槽。
+**(2) hostcall 协议的简化**：Tenth 的 hostcall trampoline 通过 `*mut Value` out-pointer 传递结果（[`hostcalls.rs:1-13`](../../tenth/src/compile/jit/hostcalls.rs)）。栈区设计的 `stack_addr` 直接给出 out-pointer 地址，无需额外的栈帧布局。SSA 路径下，out-pointer 仍需指向某内存位置（`Value` 是 32+ 字节枚举，不能通过寄存器返回），故仍需分配临时栈槽。
 
-**(3) 翻译器实现复杂度**：栈区设计的 translator 实现为单文件 ~760 行（[`translator.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），核心循环仅 ~20 行。SSA 路径需引入支配者树计算、phi 插入、重命名等阶段，估计实现量翻倍。
+**(3) 翻译器实现复杂度**：栈区设计的 translator 实现为单文件 ~760 行（[`translator.rs`](../../tenth/src/compile/jit/translator.rs)），核心循环仅 ~20 行。SSA 路径需引入支配者树计算、phi 插入、重命名等阶段，估计实现量翻倍。
 
 **(4) 与 T9 三层 fallback 的协同**：T9 的保守特化策略要求 translator 对每条 Op 显式处理（无默认 fallback），栈区设计的单遍翻译天然支持这一模式。SSA 路径的 phi 插入阶段需在所有 Op 翻译后统一执行，与"逐条显式处理"模式不兼容。
 
@@ -729,7 +729,7 @@ Tenth 选择栈区设计的动机可从源码注释与实现结构中提炼：
 
 ### L1. MAX_STACK_DEPTH 静默溢出
 
-**现象**：栈区固定容量 $D_{\max} \cdot V_{\mathrm{size}} = 256 \cdot V_{\mathrm{size}}$ 字节（[`translator.rs:32`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。若运行时 `sp` 超过此值，`stack_store` 写越界，行为未定义。
+**现象**：栈区固定容量 $D_{\max} \cdot V_{\mathrm{size}} = 256 \cdot V_{\mathrm{size}}$ 字节（[`translator.rs:32`](../../tenth/src/compile/jit/translator.rs)）。若运行时 `sp` 超过此值，`stack_store` 写越界，行为未定义。
 
 **影响**：深度递归或大型数据结构操作可能触发溢出，产生内存损坏。translator **不**在编译期静态校验 sp 上界。
 
@@ -739,7 +739,7 @@ Tenth 选择栈区设计的动机可从源码注释与实现结构中提炼：
 
 ### L2. Inv_sp 未静态校验
 
-**现象**：translator 通过 `block_sp.insert` 显式维护 $\mathrm{Inv}_{\mathrm{sp}}$（[`translator.rs:306-328`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)），但**不**在编译期校验所有 block 的 `block_sp` 一致性。若某分支未正确同步 sp（如 translator 实现错误），运行时合并点处读取的内存偏移将与预期不一致。
+**现象**：translator 通过 `block_sp.insert` 显式维护 $\mathrm{Inv}_{\mathrm{sp}}$（[`translator.rs:306-328`](../../tenth/src/compile/jit/translator.rs)），但**不**在编译期校验所有 block 的 `block_sp` 一致性。若某分支未正确同步 sp（如 translator 实现错误），运行时合并点处读取的内存偏移将与预期不一致。
 
 **影响**：translator 实现错误将导致静默语义错误，难以调试。
 
@@ -837,7 +837,7 @@ Tenth 选择栈区设计的动机可从源码注释与实现结构中提炼：
 
 ### 12.5 与 shape-check 的协同
 
-**问题**：shape-check（[T4 不可判定性证明](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T4-一般程序Shape检查不可判定性.md)）能否利用栈区设计的 sp 信息辅助 shape 推断？
+**问题**：shape-check（[T4 不可判定性证明](T4-一般程序Shape检查不可判定性.md)）能否利用栈区设计的 sp 信息辅助 shape 推断？
 
 **思路**：sp 反映了表达式深度，可能与 shape 复杂度相关。需进一步研究。
 
@@ -906,12 +906,12 @@ Tenth 的栈区设计是"反主流但合理"的工程选择——它以可量化
 
 | 本文章节 | 对应文档 |
 |---------|---------|
-| §4 栈区设计形式化 | [`translator.rs:3-10, 67-71, 104-113`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) |
-| §5.6 与 T9 联动 | [`T9-JIT特化语义保持证明.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T9-JIT特化语义保持证明.md) |
-| §11 局限 L1 (MAX_STACK_DEPTH) | [`translator.rs:32`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) |
-| §11 局限 L2 (Inv_sp) | [`translator.rs:113, 306-328`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) |
-| §11 局限 L5 (hostcall 协议) | [`hostcalls.rs:1-13`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs), T9 E4 |
-| §12.5 shape-check 协同 | [`T4-一般程序Shape检查不可判定性.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T4-一般程序Shape检查不可判定性.md) |
+| §4 栈区设计形式化 | [`translator.rs:3-10, 67-71, 104-113`](../../tenth/src/compile/jit/translator.rs) |
+| §5.6 与 T9 联动 | [`T9-JIT特化语义保持证明.md`](T9-JIT特化语义保持证明.md) |
+| §11 局限 L1 (MAX_STACK_DEPTH) | [`translator.rs:32`](../../tenth/src/compile/jit/translator.rs) |
+| §11 局限 L2 (Inv_sp) | [`translator.rs:113, 306-328`](../../tenth/src/compile/jit/translator.rs) |
+| §11 局限 L5 (hostcall 协议) | [`hostcalls.rs:1-13`](../../tenth/src/compile/jit/hostcalls.rs), T9 E4 |
+| §12.5 shape-check 协同 | [`T4-一般程序Shape检查不可判定性.md`](T4-一般程序Shape检查不可判定性.md) |
 
 ## 附录 C：实施建议
 

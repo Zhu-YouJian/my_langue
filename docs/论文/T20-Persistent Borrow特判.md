@@ -21,9 +21,9 @@ Tenth 语言的借用检查器采用语句粒度的保守近似策略（T19）�
 
 ### 1.1 语句粒度借用检查的局限
 
-Tenth 语言的借用检查器（[`tenth/src/hir/lower/scope.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/scope.rs)）采用一种极简的语句粒度近似策略（理论点 T19）：不实现 NLL 或 two-phase borrows，而是在每条语句结束后调用 `release_borrows()` 重置所有 `SharedRef` 和 `ExclusiveRef` 状态为 `Owned`（[`scope.rs:113-122`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/scope.rs)）。`Moved` 状态被保留以确保 use-after-move 仍被检测。
+Tenth 语言的借用检查器（[`tenth/src/hir/lower/scope.rs`](../../tenth/src/hir/lower/scope.rs)）采用一种极简的语句粒度近似策略（理论点 T19）：不实现 NLL 或 two-phase borrows，而是在每条语句结束后调用 `release_borrows()` 重置所有 `SharedRef` 和 `ExclusiveRef` 状态为 `Owned`（[`scope.rs:113-122`](../../tenth/src/hir/lower/scope.rs)）。`Moved` 状态被保留以确保 use-after-move 仍被检测。
 
-这一策略的设计动机（见 [`scope.rs:104-112`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/scope.rs) 注释）是：在没有 NLL 的情况下，任何 `&x` 或 `&mut x` 会永久标记 `x` 为已借用，导致后续无法再次借用。语句末尾释放是一种务实的近似——允许 `if peek(&p).disc == 54 { advance(&mut p); }` 这类常见模式（条件中的共享借用通过 `if` 条件后的 `release_borrows()` 释放，体中可重新可变借用，见 [`lower_expr.rs:434-437`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)），同时仍能捕获单表达式内的双重可变借用。
+这一策略的设计动机（见 [`scope.rs:104-112`](../../tenth/src/hir/lower/scope.rs) 注释）是：在没有 NLL 的情况下，任何 `&x` 或 `&mut x` 会永久标记 `x` 为已借用，导致后续无法再次借用。语句末尾释放是一种务实的近似——允许 `if peek(&p).disc == 54 { advance(&mut p); }` 这类常见模式（条件中的共享借用通过 `if` 条件后的 `release_borrows()` 释放，体中可重新可变借用，见 [`lower_expr.rs:434-437`](../../tenth/src/hir/lower/lower_expr.rs)），同时仍能捕获单表达式内的双重可变借用。
 
 然而，T19 的纯语句粒度策略存在一个语义缺陷：`let r = &x;` 语句末尾，`release_borrows()` 会立即释放 `x` 的借用，使得 `r` 所持引用在借用检查器视图中"不存在"。后续语句若执行 `let m = &mut x;`，检查器不会报错——但 `r` 可能仍在作用域内被使用，构成实际的别名冲突。
 
@@ -54,7 +54,7 @@ use(r, m);                   // r 与 m 同时活跃，m 可变 → 别名冲突
 
 为修补上述缺陷，Tenth 引入"持久借用特判"——一个**语义补丁**（semantic patch）：在语句序列的释放循环中，若当前语句是 `let` 且初始化表达式为直接引用（`&x` 或 `&mut x`），则跳过 `release_borrows()`。
 
-核心判定函数 `creates_persistent_borrow` 定义于 [`tenth/src/hir/lower/mod.rs:43-50`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/mod.rs)：
+核心判定函数 `creates_persistent_borrow` 定义于 [`tenth/src/hir/lower/mod.rs:43-50`](../../tenth/src/hir/lower/mod.rs)：
 
 ```rust
 pub(super) fn creates_persistent_borrow(stmt: &ast::Stmt) -> bool {
@@ -68,10 +68,10 @@ pub(super) fn creates_persistent_borrow(stmt: &ast::Stmt) -> bool {
 ```
 
 特判在两个位置应用：
-- **Block 表达式体**（[`lower_expr.rs:463-465`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）：逐语句 lowered 后，若非持久借用则释放。
-- **Loop 体**（[`lower_stmt.rs:72-74`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_stmt.rs)）：同上。
+- **Block 表达式体**（[`lower_expr.rs:463-465`](../../tenth/src/hir/lower/lower_expr.rs)）：逐语句 lowered 后，若非持久借用则释放。
+- **Loop 体**（[`lower_stmt.rs:72-74`](../../tenth/src/hir/lower/lower_stmt.rs)）：同上。
 
-自举编译器 `tenthc` 中存在语义完全一致的镜像实现（[`tenthc/hir/lower.th:154-163`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/lower.th)），应用于 Block（[`:799-801`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/lower.th)）和 Loop（[`:1011-1013`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/lower.th)）。
+自举编译器 `tenthc` 中存在语义完全一致的镜像实现（[`tenthc/hir/lower.th:154-163`](../../tenthc/hir/lower.th)），应用于 Block（[`:799-801`](../../tenthc/hir/lower.th)）和 Loop（[`:1011-1013`](../../tenthc/hir/lower.th)）。
 
 ### 1.4 贡献
 
@@ -91,7 +91,7 @@ pub(super) fn creates_persistent_borrow(stmt: &ast::Stmt) -> bool {
 | 轮次 | 原始断言 | 修正 |
 |------|---------|------|
 | 第 1 轮（结构） | PB1 初稿声称"特判保持 T19 的接受集不变" | 修正：特判使接受集**严格缩小**（更严格），T19 接受但特判拒绝的程序集非空 |
-| 第 2 轮（证明） | PB4 初稿未区分 `let r = &p; if r.disc == 54 {...}` 与 `if peek(&p).disc == 54 {...}` | 修正：前者由 T20 处理（持久借用），后者由 T19 的 if 条件释放处理（[`lower_expr.rs:437`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)），两者机制不同 |
+| 第 2 轮（证明） | PB4 初稿未区分 `let r = &p; if r.disc == 54 {...}` 与 `if peek(&p).disc == 54 {...}` | 修正：前者由 T20 处理（持久借用），后者由 T19 的 if 条件释放处理（[`lower_expr.rs:437`](../../tenth/src/hir/lower/lower_expr.rs)），两者机制不同 |
 | 第 3 轮（边界） | 未处理 While/For 体的特判应用 | 验证 While/For 体为单语句（`Box<Stmt>`），若为 Block 则经 `lower_expr` 的 Block 分支处理，特判一致应用；但 Loop 体为语句向量，显式应用特判 |
 | 第 4 轮（诚实） | PB3 初稿声称完备化"仅需语法分析" | 修正：`Call` 分支需要返回类型分析，当前 Tenth 类型系统对引用返回类型的跟踪不完整，完备化需类型系统扩展，标注为"未来工作" |
 
@@ -101,22 +101,22 @@ pub(super) fn creates_persistent_borrow(stmt: &ast::Stmt) -> bool {
 
 ### 2.1 T19：语句粒度借用检查
 
-T19（理论点 19，详见 [`docs/理论分析点调研报告.md:241-251`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/理论分析点调研报告.md)）形式化了 Tenth 的语句粒度借用检查策略。其核心是一个四状态所有权状态机：
+T19（理论点 19，详见 [`docs/理论分析点调研报告.md:241-251`](../理论分析点调研报告.md)）形式化了 Tenth 的语句粒度借用检查策略。其核心是一个四状态所有权状态机：
 
 - **Owned**：变量未被借用，可被共享或可变借用。
 - **SharedRef(n)**：变量被 n 个共享引用借用，可继续共享借用但不可可变借用。
 - **ExclusiveRef**：变量被一个可变引用借用，不可再被任何借用。
 - **Moved**：变量已被移动，任何使用均为错误（终态）。
 
-`release_borrows()` 操作（[`scope.rs:113-122`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/scope.rs)）将所有 `SharedRef(_)` 和 `ExclusiveRef` 重置为 `Owned`，保留 `Moved`。这一操作在以下位置调用：
+`release_borrows()` 操作（[`scope.rs:113-122`](../../tenth/src/hir/lower/scope.rs)）将所有 `SharedRef(_)` 和 `ExclusiveRef` 重置为 `Owned`，保留 `Moved`。这一操作在以下位置调用：
 
 1. 每条非持久借用语句末尾（Block 体、Loop 体）。
-2. `if` 表达式的条件之后（[`lower_expr.rs:437`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）。
-3. `if` 表达式的 then 分支之后（[`lower_expr.rs:439`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）。
-4. `if` 表达式的 else 分支之后（[`lower_expr.rs:441`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）。
-5. `while` 条件之后（[`lower_stmt.rs:50`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_stmt.rs)）。
-6. `for` 迭代器之后（[`lower_stmt.rs:57`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_stmt.rs)）。
-7. `match` scrutinee 之后（自举侧 [`tenthc/hir/lower.th:934`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/lower.th)）。
+2. `if` 表达式的条件之后（[`lower_expr.rs:437`](../../tenth/src/hir/lower/lower_expr.rs)）。
+3. `if` 表达式的 then 分支之后（[`lower_expr.rs:439`](../../tenth/src/hir/lower/lower_expr.rs)）。
+4. `if` 表达式的 else 分支之后（[`lower_expr.rs:441`](../../tenth/src/hir/lower/lower_expr.rs)）。
+5. `while` 条件之后（[`lower_stmt.rs:50`](../../tenth/src/hir/lower/lower_stmt.rs)）。
+6. `for` 迭代器之后（[`lower_stmt.rs:57`](../../tenth/src/hir/lower/lower_stmt.rs)）。
+7. `match` scrutinee 之后（自举侧 [`tenthc/hir/lower.th:934`](../../tenthc/hir/lower.th)）。
 
 T19 的健全性结论（本文引用为前提）：
 
@@ -168,7 +168,7 @@ $$\Sigma = \{ \textsf{Owned}, \textsf{SharedRef}(n) \mid n \in \mathbb{N}^+, \te
 | `move v` | $\sigma(v) \in \{\textsf{Owned}, \textsf{SharedRef}(\_)\}$ | $\sigma(v) \leftarrow \textsf{Moved}$ |
 | `release_borrows` | 任意 | $\textsf{SharedRef}(\_) \mapsto \textsf{Owned}$；$\textsf{ExclusiveRef} \mapsto \textsf{Owned}$；$\textsf{Moved}, \textsf{Owned}$ 不变 |
 
-（实现见 [`scope.rs:67-97, 113-122`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/scope.rs)）
+（实现见 [`scope.rs:67-97, 113-122`](../../tenth/src/hir/lower/scope.rs)）
 
 ### 3.2 T19 释放策略形式化
 
@@ -182,7 +182,7 @@ $$\textsf{T19-Release}(S) := \forall i \in [1, n]. \textsf{release\_borrows} \te
 
 $$\textsf{creates\_persistent\_borrow}(s) := \begin{cases} \textsf{true} & \text{若 } s = \textsf{Let}\{ \textsf{init}: e \} \text{ 且 } e \in \{\textsf{Ref}(\_), \textsf{MutRef}(\_)\} \\ \textsf{false} & \text{否则} \end{cases}$$
 
-此定义精确对应源码 [`mod.rs:43-50`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/mod.rs)。`ExprKind::Ref` 和 `ExprKind::MutRef` 的 AST 定义见 [`ast.rs:141-142`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)。
+此定义精确对应源码 [`mod.rs:43-50`](../../tenth/src/hir/lower/mod.rs)。`ExprKind::Ref` 和 `ExprKind::MutRef` 的 AST 定义见 [`ast.rs:141-142`](../../tenth/src/parser/ast.rs)。
 
 **关键观察**：判定仅检查 init 的**顶层** ExprKind，不递归进入子表达式。这是特判不完备性的根源（§4 定理 PB2）。
 
@@ -192,7 +192,7 @@ $$\textsf{creates\_persistent\_borrow}(s) := \begin{cases} \textsf{true} & \text
 
 $$\textsf{T20-Release}(S) := \forall i \in [1, n]. \begin{cases} \textsf{skip release} & \text{若 } \textsf{creates\_persistent\_borrow}(s_i) \\ \textsf{release\_borrows} & \text{否则} \end{cases} \text{ after } \textsf{lower}(s_i)$$
 
-实现见 [`lower_expr.rs:463-465`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)（Block）和 [`lower_stmt.rs:72-74`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_stmt.rs)（Loop）。
+实现见 [`lower_expr.rs:463-465`](../../tenth/src/hir/lower/lower_expr.rs)（Block）和 [`lower_stmt.rs:72-74`](../../tenth/src/hir/lower/lower_stmt.rs)（Loop）。
 
 ### 3.5 持久借用窗口
 
@@ -307,7 +307,7 @@ fn main() {
 }
 ```
 
-- `creates_persistent_borrow(let r = identity(&data))`：`init.kind = ExprKind::Call`，不匹配 `Ref | MutRef`，返回 `false`（[`mod.rs:46`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/mod.rs)）。
+- `creates_persistent_borrow(let r = identity(&data))`：`init.kind = ExprKind::Call`，不匹配 `Ref | MutRef`，返回 `false`（[`mod.rs:46`](../../tenth/src/hir/lower/mod.rs)）。
 - 语句末尾调用 `release_borrows` → `data` 从 `SharedRef(1)` 重置为 `Owned`。
 - `let m = &mut data;` 的 `check_borrow_mut(data)` 通过（data 为 Owned）。
 - **结果**：`r`（指向 data 的引用）与 `m`（data 的可变引用）同时活跃，别名冲突未被检测。
@@ -331,7 +331,7 @@ fn main() {
 ```
 
 - `creates_persistent_borrow(let r = if ...)`：`init.kind = ExprKind::If`，返回 `false`。
-- `lower_expr(If)` 内部：lower 条件 → `release_borrows` → lower then（`&a` → a: SharedRef）→ `release_borrows`（[`lower_expr.rs:439`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）→ a: Owned → lower else → `release_borrows`。
+- `lower_expr(If)` 内部：lower 条件 → `release_borrows` → lower then（`&a` → a: SharedRef）→ `release_borrows`（[`lower_expr.rs:439`](../../tenth/src/hir/lower/lower_expr.rs)）→ a: Owned → lower else → `release_borrows`。
 - 语句末尾：`release_borrows` → a, b 均 Owned。
 - `let m = &mut a;` 通过。**不健全**：`r` 可能指向 `a`，与 `m` 冲突。
 
@@ -348,14 +348,14 @@ fn main() {
 ```
 
 - `init.kind = ExprKind::Block`，特判返回 `false`。
-- Block 内部 lower `{ &x }`：lower `&x` → x: SharedRef → Block 末尾 `release_borrows`（[`lower_expr.rs:463-465`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）→ x: Owned。
+- Block 内部 lower `{ &x }`：lower `&x` → x: SharedRef → Block 末尾 `release_borrows`（[`lower_expr.rs:463-465`](../../tenth/src/hir/lower/lower_expr.rs)）→ x: Owned。
 - 语句末尾再次 `release_borrows`（无效果，x 已 Owned）。
 - `&mut x` 通过。**不健全**。
 
 **CE-4**：`let r = match s { _ => &x };` 被错误释放。
 
 - `init.kind = ExprKind::Match`，特判返回 `false`。
-- Match lowering 中 scrutinee 后 `release_borrows`（自举侧 [`tenthc/hir/lower.th:934`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/lower.th)），arm body 中的 `&x` 创建借用，但 arm 后释放（match 语义类似 if，每个 arm 后释放）。
+- Match lowering 中 scrutinee 后 `release_borrows`（自举侧 [`tenthc/hir/lower.th:934`](../../tenthc/hir/lower.th)），arm body 中的 `&x` 创建借用，但 arm 后释放（match 语义类似 if，每个 arm 后释放）。
 - 语句末尾 `release_borrows` → x: Owned。
 - **不健全**。
 
@@ -395,7 +395,7 @@ $\textsf{may\_return\_ref}^*$ 仅在表达式**确实可能**产生引用值时�
 **工程可行性分析**。
 
 - Ref/MutRef/Paren/Try/If/Block/Match 分支：纯语法递归，可在 `lower_expr` 期间同步计算，无需额外信息。
-- **Call 分支**：需要查询函数的返回类型。Tenth 的类型系统在 `lower_expr` 阶段已维护函数签名（`Scope::functions: HashMap<String, (Vec<(String, Type)>, Type)>`，见 [`scope.rs:15`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/scope.rs)），理论上可查询返回类型是否为引用类型。
+- **Call 分支**：需要查询函数的返回类型。Tenth 的类型系统在 `lower_expr` 阶段已维护函数签名（`Scope::functions: HashMap<String, (Vec<(String, Type)>, Type)>`，见 [`scope.rs:15`](../../tenth/src/hir/lower/scope.rs)），理论上可查询返回类型是否为引用类型。
 
 **当前未实现的原因**（诚实披露）：
 
@@ -443,12 +443,12 @@ $\textsf{may\_return\_ref}^*$ 仅在表达式**确实可能**产生引用值时�
 
 **P-1**：
 - `let r = &x;`：lower `&x` → `check_borrow_shared(x)` 通过（x: Owned）→ x: SharedRef(1)。`creates_persistent_borrow = true` → 跳过 release。x 保持 SharedRef(1)。
-- `let m = &mut x;`：lower `&mut x` → `check_borrow_mut(x)` 检查：x 为 SharedRef(1)，n > 0 → **失败**，错误 "cannot borrow 'x' as mutable because it is also borrowed as shared"（[`scope.rs:81-87`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/scope.rs)）。
+- `let m = &mut x;`：lower `&mut x` → `check_borrow_mut(x)` 检查：x 为 SharedRef(1)，n > 0 → **失败**，错误 "cannot borrow 'x' as mutable because it is also borrowed as shared"（[`scope.rs:81-87`](../../tenth/src/hir/lower/scope.rs)）。
 - **结果**：正确拒绝。$\square_{P\text{-}1}$
 
 **P-2**：
 - `let m = &mut x;`：lower `&mut x` → `check_borrow_mut(x)` 通过 → x: ExclusiveRef。`creates_persistent_borrow = true`（init = MutRef）→ 跳过 release。x 保持 ExclusiveRef。
-- `let r = &x;`：lower `&x` → `check_borrow_shared(x)` 检查：x 为 ExclusiveRef → **失败**，错误 "不可将 'x' 共享借用，因为它已被可变借用"（[`scope.rs:67-72`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/scope.rs)）。
+- `let r = &x;`：lower `&x` → `check_borrow_shared(x)` 检查：x 为 ExclusiveRef → **失败**，错误 "不可将 'x' 共享借用，因为它已被可变借用"（[`scope.rs:67-72`](../../tenth/src/hir/lower/scope.rs)）。
 - **结果**：正确拒绝。$\square_{P\text{-}2}$
 
 **P-3**：
@@ -485,9 +485,9 @@ T20 特判体现了"反例驱动扩展"的设计模式：
 
 T20 的设计动机是**最小化实现复杂度**：
 
-- **判定函数 8 行**（[`mod.rs:43-50`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/mod.rs)）：纯语法模式匹配，无数据流分析。
+- **判定函数 8 行**（[`mod.rs:43-50`](../../tenth/src/hir/lower/mod.rs)）：纯语法模式匹配，无数据流分析。
 - **应用点 2 处**（Block + Loop）：每处仅 3 行（if not persistent → release）。
-- **自举镜像一致**（[`tenthc/hir/lower.th:154-163`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/lower.th)）：自举编译器同步实现，499+ 测试无回归。
+- **自举镜像一致**（[`tenthc/hir/lower.th:154-163`](../../tenthc/hir/lower.th)）：自举编译器同步实现，499+ 测试无回归。
 
 与 NLL 实现成本对比：Rust 的 NLL 需要活跃性数据流分析（MIR-level liveness pass），实现量级在数千行。T20 以 ~15 行代码覆盖了最常见的持久借用模式（直接引用 let），是极高的工程性价比。
 
@@ -589,7 +589,7 @@ NLL 引入后，`release_borrows` 策略本身将被活跃性分析替代，`cre
 
 当前 While 和 For 的体为单语句（`Box<Stmt>`），若体为 Block 则经 `lower_expr` 的 Block 分支处理特判。但若体为非 Block 的单语句（如 `while c { let r = &x; ... }` 不成立——While 体必须是 Block），则特判不应用。
 
-经核查 AST 定义（[`ast.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)），While/For/Loop 的体分别为 `Box<Stmt>`、`Box<Stmt>`、`Vec<Stmt>`。While/For 的体通常为 Block 表达式，Block 内部的特判已正确处理。Loop 体为语句向量，显式应用特判。因此当前实现**基本对称**，但若 While/For 体直接为非 Block 单语句（理论上 AST 允许），则特判不应用——这是一个边界不对称（局限 L4）。
+经核查 AST 定义（[`ast.rs`](../../tenth/src/parser/ast.rs)），While/For/Loop 的体分别为 `Box<Stmt>`、`Box<Stmt>`、`Vec<Stmt>`。While/For 的体通常为 Block 表达式，Block 内部的特判已正确处理。Loop 体为语句向量，显式应用特判。因此当前实现**基本对称**，但若 While/For 体直接为非 Block 单语句（理论上 AST 允许），则特判不应用——这是一个边界不对称（局限 L4）。
 
 ---
 
@@ -645,7 +645,7 @@ NLL 引入后，`release_borrows` 策略本身将被活跃性分析替代，`cre
 
 ### L5. 自举侧的 Match 释放不对称
 
-**是什么**：自举编译器 `tenthc` 在 Match 的 scrutinee 后调用 `release_borrows`（[`tenthc/hir/lower.th:934`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/lower.th)），但 Rust 母编译器的 Match lowering 是否同样释放需核查。
+**是什么**：自举编译器 `tenthc` 在 Match 的 scrutinee 后调用 `release_borrows`（[`tenthc/hir/lower.th:934`](../../tenthc/hir/lower.th)），但 Rust 母编译器的 Match lowering 是否同样释放需核查。
 
 **影响**：若两侧 Match 的释放策略不一致，可能破坏自举语义等价性（T12）。
 

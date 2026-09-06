@@ -8,7 +8,7 @@
 
 ## 摘要
 
-Tenth 语言同时维护两个执行引擎：**树遍历解释器**（tree-walking interpreter，直接遍历 HIR，是最完整的事实规范）与**栈式字节码虚拟机**（stack-based bytecode VM，执行 `compile::bytecode` 生成的 bytecode，性能更优但功能子集不完整）。两者通过 [`parity_test.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/tests/parity_test.rs)（100 个 `#[test]` 函数，AUDIT 声称 129 项）保证行为一致，但**从未进行形式化证明**。本文对这一双执行引擎架构进行形式化建模，提出**共同子集 bisimulation 等价性**框架，给出五个主定理。**核心发现是反方向的**：通过对解释器 [`tenth/src/runtime/interpreter/mod.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) 与 VM [`tenth/src/runtime/vm.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 及字节码编译器 [`tenth/src/compile/bytecode.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs) 的逐一源码审查，我们识别出**五项确凿差异**：(1) `Move` 语义——解释器写 `Value::Moved`，VM `Op::MoveOp` 是 no-op；(2) `TryBlock`——解释器完整实现 try-catch 捕获 `TryPropagate`，VM 完全 no-op；(3) `Tuple`——解释器生成 `Value::Tuple`，VM 不 emit 任何 op；(4) `Closure`——解释器生成 `Value::Closure` 含捕获环境，VM `MakeClosure` 只生成 `Value::FnRef` 无捕获；(5) 间接 `GenericCall`——VM 直接返回 `Err` 触发回退。**进一步发现**：`parity_test.rs` 的真实目的是验证 tenthc（自举）与 Rust 母编译器产生的 WASM 一致性（属 T12 范畴），**并非**直接验证 VM 与解释器一致性——这是任务描述与实际源码的重大不一致，本文在 §9 给出诚实披露。本文给出共同子集 $G$ 上的 bisimulation 等价性证明（定理 E1）、已知差异的精确刻画（定理 E2）、parity_test 覆盖度的实证分析（定理 E3）、翻译验证的可验证条件框架（定理 E4）、差分测试的内在局限（定理 E5），并诚实记录五项局限。
+Tenth 语言同时维护两个执行引擎：**树遍历解释器**（tree-walking interpreter，直接遍历 HIR，是最完整的事实规范）与**栈式字节码虚拟机**（stack-based bytecode VM，执行 `compile::bytecode` 生成的 bytecode，性能更优但功能子集不完整）。两者通过 [`parity_test.rs`](../../tenth/tests/parity_test.rs)（100 个 `#[test]` 函数，AUDIT 声称 129 项）保证行为一致，但**从未进行形式化证明**。本文对这一双执行引擎架构进行形式化建模，提出**共同子集 bisimulation 等价性**框架，给出五个主定理。**核心发现是反方向的**：通过对解释器 [`tenth/src/runtime/interpreter/mod.rs`](../../tenth/src/runtime/interpreter/mod.rs) 与 VM [`tenth/src/runtime/vm.rs`](../../tenth/src/runtime/vm.rs) 及字节码编译器 [`tenth/src/compile/bytecode.rs`](../../tenth/src/compile/bytecode.rs) 的逐一源码审查，我们识别出**五项确凿差异**：(1) `Move` 语义——解释器写 `Value::Moved`，VM `Op::MoveOp` 是 no-op；(2) `TryBlock`——解释器完整实现 try-catch 捕获 `TryPropagate`，VM 完全 no-op；(3) `Tuple`——解释器生成 `Value::Tuple`，VM 不 emit 任何 op；(4) `Closure`——解释器生成 `Value::Closure` 含捕获环境，VM `MakeClosure` 只生成 `Value::FnRef` 无捕获；(5) 间接 `GenericCall`——VM 直接返回 `Err` 触发回退。**进一步发现**：`parity_test.rs` 的真实目的是验证 tenthc（自举）与 Rust 母编译器产生的 WASM 一致性（属 T12 范畴），**并非**直接验证 VM 与解释器一致性——这是任务描述与实际源码的重大不一致，本文在 §9 给出诚实披露。本文给出共同子集 $G$ 上的 bisimulation 等价性证明（定理 E1）、已知差异的精确刻画（定理 E2）、parity_test 覆盖度的实证分析（定理 E3）、翻译验证的可验证条件框架（定理 E4）、差分测试的内在局限（定理 E5），并诚实记录五项局限。
 
 **关键词**：双执行引擎；bisimulation；翻译验证；差分测试；栈式虚拟机；树遍历解释器；Tenth 语言
 
@@ -20,7 +20,7 @@ Tenth 语言同时维护两个执行引擎：**树遍历解释器**（tree-walki
 
 动态语言运行时的常见架构存在两条路径：**树遍历解释器**（tree-walking interpreter，直接遍历抽象语法树或 HIR）与**字节码虚拟机**（bytecode VM，先编译为字节码再执行）。CPython 早期仅有解释器，Python 3.6 引入字节码后再加 JIT（PyPy、PEP 659 specializer）；Ruby MRI 经历了 YARV 字节码化的演进；Lua 5.0 之前是解释器，5.0 后改为字节码 VM。这种"两套执行引擎并存"的架构带来一个本质问题：**同一源程序在两个引擎上的执行行为是否等价？**
 
-Tenth 语言正是这样的双引擎架构。其解释器 [`Interpreter`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) 直接遍历 HIR，是**功能最完整**的执行路径，被工作规范默认为"事实规范"（de facto specification）；其 VM [`Vm`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 通过 `BytecodeCompiler` 将 HIR 编译为字节码再执行，**性能更优**但功能子集不完整。`main.rs` 默认优先尝试 VM 执行，失败时 fallback 到解释器（[`main.rs:240-266`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)）。
+Tenth 语言正是这样的双引擎架构。其解释器 [`Interpreter`](../../tenth/src/runtime/interpreter/mod.rs) 直接遍历 HIR，是**功能最完整**的执行路径，被工作规范默认为"事实规范"（de facto specification）；其 VM [`Vm`](../../tenth/src/runtime/vm.rs) 通过 `BytecodeCompiler` 将 HIR 编译为字节码再执行，**性能更优**但功能子集不完整。`main.rs` 默认优先尝试 VM 执行，失败时 fallback 到解释器（[`main.rs:240-266`](../../tenth/src/main.rs)）。
 
 这种"VM 优先 + 解释器兜底"的策略隐含一个**未形式化的假设**：在 VM 能成功执行的程序子集上，VM 与解释器行为等价。本文形式化并审查这一假设。
 
@@ -38,17 +38,17 @@ Tenth 的双引擎架构是翻译验证的天然场景：HIR 是源语言，字�
 
 对解释器与 VM 源码的逐一审查发现了**五项确凿差异**，证伪了"VM 与解释器行为等价"的强声明：
 
-1. **`Move` 语义**：解释器 [`mod.rs:886-894`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) 在执行 `HirExprKind::Move(inner)` 时，求值 inner 后将源变量置为 `Value::Moved`（标记移动后不可再用）；VM [`vm.rs:745-747`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 的 `Op::MoveOp` 是 **no-op**（注释 "no-op: move semantics are checked at HIR level"），字节码编译器 [`bytecode.rs:482-484`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs) 只 emit 一个 `MoveOp` 标记。
+1. **`Move` 语义**：解释器 [`mod.rs:886-894`](../../tenth/src/runtime/interpreter/mod.rs) 在执行 `HirExprKind::Move(inner)` 时，求值 inner 后将源变量置为 `Value::Moved`（标记移动后不可再用）；VM [`vm.rs:745-747`](../../tenth/src/runtime/vm.rs) 的 `Op::MoveOp` 是 **no-op**（注释 "no-op: move semantics are checked at HIR level"），字节码编译器 [`bytecode.rs:482-484`](../../tenth/src/compile/bytecode.rs) 只 emit 一个 `MoveOp` 标记。
 
-2. **`TryBlock`**：解释器 [`mod.rs:896-918`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) 完整实现 `try { ... }` 块——捕获 `TenthError::TryPropagate` 异常并包装为 `Value::Enum { Result::Err }`，成功则包装为 `Result::Ok`；字节码编译器 [`bytecode.rs:485-487`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs) **完全不 emit 任何 op**（注释 "TryBlock not yet supported in bytecode; emit as no-op"）。VM 端无任何对应处理。
+2. **`TryBlock`**：解释器 [`mod.rs:896-918`](../../tenth/src/runtime/interpreter/mod.rs) 完整实现 `try { ... }` 块——捕获 `TenthError::TryPropagate` 异常并包装为 `Value::Enum { Result::Err }`，成功则包装为 `Result::Ok`；字节码编译器 [`bytecode.rs:485-487`](../../tenth/src/compile/bytecode.rs) **完全不 emit 任何 op**（注释 "TryBlock not yet supported in bytecode; emit as no-op"）。VM 端无任何对应处理。
 
-3. **`Tuple`**：解释器 [`mod.rs:939-952`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) 生成 `Value::Tuple(values)`；字节码编译器 [`bytecode.rs:521-527`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs) 仅编译每个元素到栈，**不 emit 任何构造 op**（注释 "TODO: proper tuple support in bytecode"）。VM [`vm.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 既无 `MakeTuple` 操作码，也无 `Value::Tuple` 处理分支。
+3. **`Tuple`**：解释器 [`mod.rs:939-952`](../../tenth/src/runtime/interpreter/mod.rs) 生成 `Value::Tuple(values)`；字节码编译器 [`bytecode.rs:521-527`](../../tenth/src/compile/bytecode.rs) 仅编译每个元素到栈，**不 emit 任何构造 op**（注释 "TODO: proper tuple support in bytecode"）。VM [`vm.rs`](../../tenth/src/runtime/vm.rs) 既无 `MakeTuple` 操作码，也无 `Value::Tuple` 处理分支。
 
-4. **`Closure`**：解释器 [`mod.rs:725-737`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) 生成 `Value::Closure { params, body, captures }`，**捕获自由变量环境**；VM `Op::MakeClosure` [`vm.rs:788-798`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 只生成 `Value::FnRef { name, params, return_type }`，**完全不捕获环境**——参数名甚至被替换为占位符 `__param_{i}`。
+4. **`Closure`**：解释器 [`mod.rs:725-737`](../../tenth/src/runtime/interpreter/mod.rs) 生成 `Value::Closure { params, body, captures }`，**捕获自由变量环境**；VM `Op::MakeClosure` [`vm.rs:788-798`](../../tenth/src/runtime/vm.rs) 只生成 `Value::FnRef { name, params, return_type }`，**完全不捕获环境**——参数名甚至被替换为占位符 `__param_{i}`。
 
-5. **间接 `GenericCall`**：字节码编译器 [`bytecode.rs:477-480`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs) 在遇到 `func.kind` 非 `Var` 的间接泛型调用时直接返回 `Err`（"字节码：间接 GenericCall（回退）"），触发 VM 失败 → 解释器 fallback。
+5. **间接 `GenericCall`**：字节码编译器 [`bytecode.rs:477-480`](../../tenth/src/compile/bytecode.rs) 在遇到 `func.kind` 非 `Var` 的间接泛型调用时直接返回 `Err`（"字节码：间接 GenericCall（回退）"），触发 VM 失败 → 解释器 fallback。
 
-更严重的是，`main.rs` 的 fallback 路径存在**副作用未隔离**问题（[`main.rs:250-253`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 警告注释）：
+更严重的是，`main.rs` 的 fallback 路径存在**副作用未隔离**问题（[`main.rs:250-253`](../../tenth/src/main.rs) 警告注释）：
 
 > "VM 可能已部分执行并产生副作用（如 println 输出），解释器将从头重新执行，可能导致副作用重复。"
 
@@ -104,11 +104,11 @@ Tenth 的 `parity_test.rs` 是差分测试的实例——但需澄清其比较�
 
 本文与两篇姊妹论文紧密联动：
 
-- **T12**（[双侧编译器语义等价性](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T12-双侧编译器语义等价性.md)）：考察"前端双侧"——Rust 母编译器 vs tenthc 自举编译器。T12 给出**四级等价标准**（L1 词法、L2 语法、L3 HIR、L4 代码生成），证明在 shape 检查与错误恢复上**两侧不等价**。本文考察"后端双侧"——解释器 vs VM——并借鉴 T12 的"共同子集等价 + 差异集显式刻画"方法论。
+- **T12**（[双侧编译器语义等价性](T12-双侧编译器语义等价性.md)）：考察"前端双侧"——Rust 母编译器 vs tenthc 自举编译器。T12 给出**四级等价标准**（L1 词法、L2 语法、L3 HIR、L4 代码生成），证明在 shape 检查与错误恢复上**两侧不等价**。本文考察"后端双侧"——解释器 vs VM——并借鉴 T12 的"共同子集等价 + 差异集显式刻画"方法论。
 
-- **T34**（[栈式 VM 操作语义形式化](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T34-栈式VM操作语义形式化.md)）：T34 形式化 VM 单侧的操作语义——栈卫生不变量（定理 V1）、Call/CallN 双协议等价性（定理 V2）、类型安全进展（定理 V3）、摊还 deadline（定理 V4）。本文将 T34 的单侧语义作为 VM 侧的形式化基础，扩展到双侧等价性。
+- **T34**（[栈式 VM 操作语义形式化](T34-栈式VM操作语义形式化.md)）：T34 形式化 VM 单侧的操作语义——栈卫生不变量（定理 V1）、Call/CallN 双协议等价性（定理 V2）、类型安全进展（定理 V3）、摊还 deadline（定理 V4）。本文将 T34 的单侧语义作为 VM 侧的形式化基础，扩展到双侧等价性。
 
-- **T9**（JIT 特化语义保持）：JIT 是 Tenth 的第三执行路径。当 JIT 触发时，[`translator.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 遇到不支持指令返回 `Err` 触发 VM fallback；VM 失败再 fallback 到解释器。本文 §10 讨论"三层 fallback 链"的等价性传递。
+- **T9**（JIT 特化语义保持）：JIT 是 Tenth 的第三执行路径。当 JIT 触发时，[`translator.rs`](../../tenth/src/compile/jit/translator.rs) 遇到不支持指令返回 `Err` 触发 VM fallback；VM 失败再 fallback 到解释器。本文 §10 讨论"三层 fallback 链"的等价性传递。
 
 ---
 
@@ -127,7 +127,7 @@ $$\sigma_I = \langle \textit{scopes}, \textit{functions}, \textit{tape}, \textit
 - $\textit{step}: \text{Option<u64>}$——步数预算；
 - $\textit{tick}: \text{u64}$——周期性 deadline 检查计数器。
 
-源码对应：[`Interpreter` 结构体（mod.rs:37-69）`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)。
+源码对应：[`Interpreter` 结构体（mod.rs:37-69）`](../../tenth/src/runtime/interpreter/mod.rs)。
 
 **定义 3.2**（解释器求值关系）：解释器的求值是关系 $\Downarrow_I \subseteq \text{HirExpr} \times \Sigma_I \times \text{Value} \times \Sigma_I$，读作"在状态 $\sigma_I$ 下求值 $e$ 得到值 $v$ 与新状态 $\sigma_I'$"，记 $\langle e, \sigma_I \rangle \Downarrow_I \langle v, \sigma_I' \rangle$。
 
@@ -137,7 +137,7 @@ $$\frac{\langle e_1, \sigma \rangle \Downarrow_I \langle v_1, \sigma' \rangle \q
 
 $$\frac{\langle e, \sigma \rangle \Downarrow_I \langle v, \sigma' \rangle \quad \text{Var}(x) \text{ in } \sigma'}{\langle \text{move } e, \sigma \rangle \Downarrow_I \langle v, \sigma'[x \mapsto \text{Moved}] \rangle} \quad (\text{E-Move})$$
 
-注意 E-Move 规则的副作用：源变量 $x$ 在求值后被置为 `Value::Moved`（[`mod.rs:890-892`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)）。这是 VM 无法模拟的语义。
+注意 E-Move 规则的副作用：源变量 $x$ 在求值后被置为 `Value::Moved`（[`mod.rs:890-892`](../../tenth/src/runtime/interpreter/mod.rs)）。这是 VM 无法模拟的语义。
 
 ### 3.2 VM 形式化
 
@@ -147,11 +147,11 @@ VM 形式化沿用 T34 的状态模型：
 
 $$\sigma_V = \langle \textit{ip}, \textit{code}, \textit{strings}, \textit{stack}, \textit{frames}, \textit{locals}, \textit{globals} \rangle$$
 
-源码对应：[`Vm` 结构体（vm.rs:155-182）`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)。
+源码对应：[`Vm` 结构体（vm.rs:155-182）`](../../tenth/src/runtime/vm.rs)。
 
 **定义 3.4**（VM 求值关系）：VM 的执行是小步转移关系 $\to_V \subseteq \Sigma_V \times \Sigma_V \cup \{\text{err}\}$。每条字节码指令对应一条转移规则。详参见 T34 §3。
 
-**定义 3.5**（字节码编译）：编译函数 $\text{compile}: \text{HirFnDef} \to \text{Chunk}$ 将 HIR 函数映射为字节码块。$\text{compile}$ 由 [`BytecodeCompiler::compile`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs) 实现。
+**定义 3.5**（字节码编译）：编译函数 $\text{compile}: \text{HirFnDef} \to \text{Chunk}$ 将 HIR 函数映射为字节码块。$\text{compile}$ 由 [`BytecodeCompiler::compile`](../../tenth/src/compile/bytecode.rs) 实现。
 
 ### 3.3 观察等价
 
@@ -247,7 +247,7 @@ VM 侧：`compile` 生成 `compile(e_cond) ++ [JmpFalse(L1)] ++ compile(e_then) 
 
 **差异 $D_1$（Move 语义）**：
 
-- 解释器（[`mod.rs:886-894`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)）：
+- 解释器（[`mod.rs:886-894`](../../tenth/src/runtime/interpreter/mod.rs)）：
   ```rust
   HirExprKind::Move(inner) => {
       let val = self.eval_expr(inner)?;
@@ -259,7 +259,7 @@ VM 侧：`compile` 生成 `compile(e_cond) ++ [JmpFalse(L1)] ++ compile(e_then) 
   ```
   语义：求值 inner，若 inner 是变量引用，将其置为 `Value::Moved`（后续访问将报错）。
 
-- VM（[`vm.rs:745-747`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：
+- VM（[`vm.rs:745-747`](../../tenth/src/runtime/vm.rs)）：
   ```rust
   Op::MoveOp => {
       // no-op: move semantics are checked at HIR level
@@ -267,7 +267,7 @@ VM 侧：`compile` 生成 `compile(e_cond) ++ [JmpFalse(L1)] ++ compile(e_then) 
   ```
   语义：**什么都不做**。
 
-- 字节码编译器（[`bytecode.rs:482-484`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs)）：
+- 字节码编译器（[`bytecode.rs:482-484`](../../tenth/src/compile/bytecode.rs)）：
   ```rust
   HirExprKind::Move { .. } => {
       self.chunk.emit(Op::MoveOp);
@@ -287,9 +287,9 @@ fn main() -> i64 {
 
 **差异 $D_2$（TryBlock）**：
 
-- 解释器（[`mod.rs:896-918`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)）：完整实现 try 块，捕获 `TenthError::TryPropagate` 包装为 `Result::Err`。
+- 解释器（[`mod.rs:896-918`](../../tenth/src/runtime/interpreter/mod.rs)）：完整实现 try 块，捕获 `TenthError::TryPropagate` 包装为 `Result::Err`。
 
-- 字节码编译器（[`bytecode.rs:485-487`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs)）：
+- 字节码编译器（[`bytecode.rs:485-487`](../../tenth/src/compile/bytecode.rs)）：
   ```rust
   HirExprKind::TryBlock { .. } => {
       // TryBlock not yet supported in bytecode; emit as no-op
@@ -309,9 +309,9 @@ fn main() -> Result<i64, i64> {
 
 **差异 $D_3$（Tuple）**：
 
-- 解释器（[`mod.rs:939-952`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)）：生成 `Value::Tuple(values)`。
+- 解释器（[`mod.rs:939-952`](../../tenth/src/runtime/interpreter/mod.rs)）：生成 `Value::Tuple(values)`。
 
-- 字节码编译器（[`bytecode.rs:521-527`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs)）：
+- 字节码编译器（[`bytecode.rs:521-527`](../../tenth/src/compile/bytecode.rs)）：
   ```rust
   HirExprKind::Tuple(elems) => {
       for e in elems {
@@ -334,7 +334,7 @@ fn main() -> i64 {
 
 **差异 $D_4$（Closure）**：
 
-- 解释器（[`mod.rs:725-737`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs)）：
+- 解释器（[`mod.rs:725-737`](../../tenth/src/runtime/interpreter/mod.rs)）：
   ```rust
   HirExprKind::Closure { params, body, captures } => {
       let captured_values: Vec<(String, Value)> = captures.iter()
@@ -351,7 +351,7 @@ fn main() -> i64 {
   ```
   语义：生成 `Value::Closure`，**捕获自由变量的当前值**。
 
-- VM `Op::MakeClosure`（[`vm.rs:788-798`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：
+- VM `Op::MakeClosure`（[`vm.rs:788-798`](../../tenth/src/runtime/vm.rs)）：
   ```rust
   Op::MakeClosure(params_count, name_idx) => {
       let name = strings.get(name_idx).cloned().unwrap_or_default();
@@ -380,7 +380,7 @@ fn main() -> i64 {
 
 **差异 $D_5$（间接 GenericCall）**：
 
-- 字节码编译器（[`bytecode.rs:477-480`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs)）：
+- 字节码编译器（[`bytecode.rs:477-480`](../../tenth/src/compile/bytecode.rs)）：
   ```rust
   } else {
       return Err(crate::error::TenthError::RuntimeError {
@@ -414,11 +414,11 @@ fn main() -> i64 {
 
 **(1) parity_test 真实目的的澄清**
 
-`parity_test.rs` 文件头注释（[`parity_test.rs:1-11`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/tests/parity_test.rs)）明确写道：
+`parity_test.rs` 文件头注释（[`parity_test.rs:1-11`](../../tenth/tests/parity_test.rs)）明确写道：
 
 > "Phase D parity tests — verify tenthc (self-hosted) produces WASM that behaves identically to the Rust mother compiler for the same Tenth source."
 
-测试流程（[`parity_test.rs:33-121`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/tests/parity_test.rs)）：
+测试流程（[`parity_test.rs:33-121`](../../tenth/tests/parity_test.rs)）：
 
 1. 用 Rust 母编译器编译 `src` → WASM-Rust；
 2. 用 tenthc（在 wasmi 中执行）编译同一 `src` → WASM-Tenthc；
@@ -530,7 +530,7 @@ fn main() -> i64 {
 let t = move s;
 let u = s;           // 解释器报错；VM 成功
 ```
-但这是**程序错误**（违反借用检查），不会出现在正常测试用例中。HIR 层的借用检查（[T19](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T19-语句粒度借用检查.md)）通常会在编译期拦截此类访问，使得差分测试无法构造出"合法但能暴露 $D_1$"的用例。
+但这是**程序错误**（违反借用检查），不会出现在正常测试用例中。HIR 层的借用检查（[T19](T19-语句粒度借用检查.md)）通常会在编译期拦截此类访问，使得差分测试无法构造出"合法但能暴露 $D_1$"的用例。
 
 **(2) $D_4$ Closure 的不可观测性**
 
@@ -564,7 +564,7 @@ $D_1$ 与 $D_4$ 的不可观测性源于：
 
 Tenth 的执行可抽象为三层：
 
-1. **HIR 层**（源语义）：HIR 是源程序的规范化中间表示，由 [`Lowerer`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/mod.rs) 从 AST lower 而来。HIR 的语义由 [`docs/语言参考手册.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md) 权威定义。
+1. **HIR 层**（源语义）：HIR 是源程序的规范化中间表示，由 [`Lowerer`](../../tenth/src/hir/lower/mod.rs) 从 AST lower 而来。HIR 的语义由 [`docs/语言参考手册.md`](../语言参考手册.md) 权威定义。
 2. **解释器层**（事实规范）：解释器直接遍历 HIR，其行为被视为 HIR 语义的**事实规范**——任何与解释器行为不一致的实现视为缺陷。
 3. **VM 层**（优化实现）：VM 通过字节码执行 HIR，是优化路径，但功能子集不完整。
 
@@ -584,8 +584,8 @@ Tenth 实际执行路径是三层 fallback 链：
 
 $$\text{JIT} \xrightarrow{\text{失败}} \text{VM} \xrightarrow{\text{失败}} \text{Interpreter}$$
 
-- JIT（[`compile/jit/translator.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）：遇到不支持指令返回 Err，fallback 到 VM；
-- VM（[`main.rs:240-256`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)）：编译或执行失败，fallback 到解释器；
+- JIT（[`compile/jit/translator.rs`](../../tenth/src/compile/jit/translator.rs)）：遇到不支持指令返回 Err，fallback 到 VM；
+- VM（[`main.rs:240-256`](../../tenth/src/main.rs)）：编译或执行失败，fallback 到解释器；
 - 解释器：最终兜底。
 
 **问题**：fallback 不是语义透明的。`main.rs:250-253` 明确警告：
@@ -642,7 +642,7 @@ bisimulation 保持的关键不变量：
 
 ### 7.1 $D_1$ Move 的根因
 
-**根因**：Move 语义在 HIR 层已有借用检查（[T19](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T19-语句粒度借用检查.md)）保证"move 后不可访问"，因此 VM 端 `MoveOp` 设计为 no-op 是**工程优化**——既然编译期已保证不违例，运行时不必再写 `Moved` 标记。
+**根因**：Move 语义在 HIR 层已有借用检查（[T19](T19-语句粒度借用检查.md)）保证"move 后不可访问"，因此 VM 端 `MoveOp` 设计为 no-op 是**工程优化**——既然编译期已保证不违例，运行时不必再写 `Moved` 标记。
 
 **问题**：这一优化假设了"HIR 借用检查绝对正确"。若借用检查有 bug（漏检），解释器能在运行时捕获（`Value::Moved` 报错），VM 则会"成功"执行错误程序——差异暴露。
 
@@ -680,7 +680,7 @@ bisimulation 保持的关键不变量：
 3. VM 执行 `MakeClosure` 时弹出 captures_count 个值，构造 `Value::Closure { name, params, captures }`；
 4. 调用闭包时，将 captures 注入新 Frame 的 locals。
 
-参考 T22（[Closure 自由变量分析正确性](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T22-Closure自由变量分析正确性.md)）确保捕获列表正确。
+参考 T22（[Closure 自由变量分析正确性](T22-Closure自由变量分析正确性.md)）确保捕获列表正确。
 
 ### 7.5 $D_5$ 间接 GenericCall 的根因
 
@@ -694,7 +694,7 @@ bisimulation 保持的关键不变量：
 
 ### 7.6 fallback 副作用隔离问题
 
-当前 fallback 机制（[`main.rs:240-266`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)）的副作用未隔离——VM 可能已输出到 stdout，解释器重新执行会再次输出。
+当前 fallback 机制（[`main.rs:240-266`](../../tenth/src/main.rs)）的副作用未隔离——VM 可能已输出到 stdout，解释器重新执行会再次输出。
 
 **修复建议**：
 
@@ -732,11 +732,11 @@ bisimulation 保持的关键不变量：
 
 ### 8.2 与 vm_autodiff_test 的互补
 
-`vm_autodiff_test.rs`（[15 项](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/tests/vm_autodiff_test.rs)）测试 VM 上的自动微分——这部分覆盖了 tape 操作的 VM-Interpreter 一致性。但与 parity_test 一样，它不是系统的 VM-Interpreter 差分测试。
+`vm_autodiff_test.rs`（[15 项](../../tenth/tests/vm_autodiff_test.rs)）测试 VM 上的自动微分——这部分覆盖了 tape 操作的 VM-Interpreter 一致性。但与 parity_test 一样，它不是系统的 VM-Interpreter 差分测试。
 
 ### 8.3 fixpoint_runtime 的角色
 
-`fixpoint_runtime.rs`（[AUDIT §7.4 提到](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/AUDIT.md)）测试 Wasmtime 端到端编译+执行——这是 WASM 后端的验证，与 VM-Interpreter 等价性无关。
+`fixpoint_runtime.rs`（[AUDIT §7.4 提到](../../AUDIT.md)）测试 Wasmtime 端到端编译+执行——这是 WASM 后端的验证，与 VM-Interpreter 等价性无关。
 
 ### 8.4 真正的 VM-Interpreter 差分测试缺口
 
@@ -784,13 +784,13 @@ fallback 策略的成本：
 
 ### 9.4 与 JIT 的关系
 
-JIT（[T9](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T9-JIT特化语义保持证明.md)、[T33](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T33-JIT缓存生命周期与代码热加载.md)）是 Tenth 的第三执行路径。JIT 通过 `translator.rs` 将字节码翻译为本地代码，遇到不支持指令返回 Err 触发 VM fallback。
+JIT（[T9](T9-JIT特化语义保持证明.md)、[T33](T33-JIT缓存生命周期与代码热加载.md)）是 Tenth 的第三执行路径。JIT 通过 `translator.rs` 将字节码翻译为本地代码，遇到不支持指令返回 Err 触发 VM fallback。
 
 JIT 的语义保持（T9 已证）基于"JIT 翻译的字节码子集与 VM 执行一致"。因此：
 
 $$\text{JIT} \sim \text{VM} \text{（在 JIT 支持子集上，T9 已证）} \wedge \text{VM} \sim \text{Interpreter} \text{（在 } G \text{ 上，本文 E1）} \Rightarrow \text{JIT} \sim \text{Interpreter} \text{（在 } G \cap \text{JIT-subset} \text{ 上）}$$
 
-这是 bisimulation 的传递性。但若 VM 在 $\Delta$ 上不等价，JIT 也继承这一不等价——除非 JIT 翻译器显式拒绝 $\Delta$（事实上它确实如此，[`translator.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 遇 `IsStruct` 等 return Err）。
+这是 bisimulation 的传递性。但若 VM 在 $\Delta$ 上不等价，JIT 也继承这一不等价——除非 JIT 翻译器显式拒绝 $\Delta$（事实上它确实如此，[`translator.rs`](../../tenth/src/compile/jit/translator.rs) 遇 `IsStruct` 等 return Err）。
 
 ---
 
@@ -824,7 +824,7 @@ $$\text{JIT} \sim \text{VM} \text{（在 JIT 支持子集上，T9 已证）} \we
 
 ### 局限 L1（形式化未覆盖 native 函数）
 
-**是什么**：本文 bisimulation 证明假设 native 函数（如 `println`、`vec_push`）在解释器与 VM 上行为一致。但 native 函数由 [`natives.rs`（解释器）](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs) 与 [`main.rs::register_natives`（VM）](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 分别实现，可能存在差异（如错误消息、边界行为）。
+**是什么**：本文 bisimulation 证明假设 native 函数（如 `println`、`vec_push`）在解释器与 VM 上行为一致。但 native 函数由 [`natives.rs`（解释器）](../../tenth/src/runtime/interpreter/natives.rs) 与 [`main.rs::register_natives`（VM）](../../tenth/src/main.rs) 分别实现，可能存在差异（如错误消息、边界行为）。
 
 **影响**：定理 E1 的可靠性可能因 native 差异而受损——即使 HIR 在 $G$ 内，若调用的 native 行为不一致，整体行为仍不等价。
 
@@ -832,7 +832,7 @@ $$\text{JIT} \sim \text{VM} \text{（在 JIT 支持子集上，T9 已证）} \we
 
 ### 局限 L2（HIR 层借用检查的假设）
 
-**是什么**：定理 E2 差异 $D_1$ 的"反例"假设程序能通过 HIR 层借用检查（[T19](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T19-语句粒度借用检查.md)）。但借用检查本身可能有 bug（漏检），此时反例可能实际可执行。
+**是什么**：定理 E2 差异 $D_1$ 的"反例"假设程序能通过 HIR 层借用检查（[T19](T19-语句粒度借用检查.md)）。但借用检查本身可能有 bug（漏检），此时反例可能实际可执行。
 
 **影响**：$D_1$ 的"行为可区分"反例在实际中可能被借用检查拦截，无法触发——bisimulation 的"排除"可能过强。
 
@@ -840,11 +840,11 @@ $$\text{JIT} \sim \text{VM} \text{（在 JIT 支持子集上，T9 已证）} \we
 
 ### 局限 L3（解释器绝对正确的假设）
 
-**是什么**：本文"解释器即规范"原则假设解释器本身正确。但解释器也可能有 bug——[`AUDIT.md §六`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/AUDIT.md) 列出的"已知限制"中，#2 提到"树遍历解释器大文件慢"，性能虽非语义 bug 但暗示实现复杂度。
+**是什么**：本文"解释器即规范"原则假设解释器本身正确。但解释器也可能有 bug——[`AUDIT.md §六`](../../AUDIT.md) 列出的"已知限制"中，#2 提到"树遍历解释器大文件慢"，性能虽非语义 bug 但暗示实现复杂度。
 
 **影响**：若解释器有 bug，定理 E1 的"bisimulation"是相对解释器的，而非相对 HIR 规约的——可能两侧一致地错。
 
-**缓解**：未来工作应以 [`docs/语言参考手册.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md) 为绝对规约，独立验证解释器与 VM 各自的正确性（而非仅双侧一致）。
+**缓解**：未来工作应以 [`docs/语言参考手册.md`](../语言参考手册.md) 为绝对规约，独立验证解释器与 VM 各自的正确性（而非仅双侧一致）。
 
 ### 局限 L4（parity_test 数量的不一致）
 
@@ -856,7 +856,7 @@ $$\text{JIT} \sim \text{VM} \text{（在 JIT 支持子集上，T9 已证）} \we
 
 ### 局限 L5（未覆盖 WASM 后端的等价性）
 
-**是什么**：本文聚焦 VM-Interpreter 等价性，未覆盖 HIR→WASM 翻译（[T29](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T29-HIR到WASM语义保持与host边界类型塌缩.md) 已覆盖）的等价性。WASM 后端是 Tenth 的第三执行路径（自举路径 C），其与解释器/VM 的等价性需独立证明。
+**是什么**：本文聚焦 VM-Interpreter 等价性，未覆盖 HIR→WASM 翻译（[T29](T29-HIR到WASM语义保持与host边界类型塌缩.md) 已覆盖）的等价性。WASM 后端是 Tenth 的第三执行路径（自举路径 C），其与解释器/VM 的等价性需独立证明。
 
 **影响**：本文未给出"WASM 与 VM/解释器等价"的证明——这一定理由 T29 部分覆盖，但 T29 聚焦 HIR→WASM 翻译保持，未涉及与 VM 的双侧等价。
 
@@ -913,17 +913,17 @@ $$\text{JIT} \sim \text{VM} \text{（在 JIT 支持子集上，T9 已证）} \we
 
 [7] McKinna, J., Pollack, R. (1999). *Some lambda calculus and type theory formalized*. Journal of Automated Reasoning, 23(3–4), 373–409. (双射式元理论风格)
 
-[8] Tenth 数理部. (2026). *T34: 栈式 VM 操作语义形式化*. [docs/论文/T34-栈式VM操作语义形式化.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T34-栈式VM操作语义形式化.md)
+[8] Tenth 数理部. (2026). *T34: 栈式 VM 操作语义形式化*. [docs/论文/T34-栈式VM操作语义形式化.md](T34-栈式VM操作语义形式化.md)
 
-[9] Tenth 数理部. (2026). *T12: 双侧编译器语义等价性*. [docs/论文/T12-双侧编译器语义等价性.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T12-双侧编译器语义等价性.md)
+[9] Tenth 数理部. (2026). *T12: 双侧编译器语义等价性*. [docs/论文/T12-双侧编译器语义等价性.md](T12-双侧编译器语义等价性.md)
 
-[10] Tenth 数理部. (2026). *T9: JIT 特化语义保持证明*. [docs/论文/T9-JIT特化语义保持证明.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T9-JIT特化语义保持证明.md)
+[10] Tenth 数理部. (2026). *T9: JIT 特化语义保持证明*. [docs/论文/T9-JIT特化语义保持证明.md](T9-JIT特化语义保持证明.md)
 
-[11] Tenth 数理部. (2026). *T22: Closure 自由变量分析正确性*. [docs/论文/T22-Closure自由变量分析正确性.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T22-Closure自由变量分析正确性.md)
+[11] Tenth 数理部. (2026). *T22: Closure 自由变量分析正确性*. [docs/论文/T22-Closure自由变量分析正确性.md](T22-Closure自由变量分析正确性.md)
 
-[12] Tenth 数理部. (2026). *T19: 语句粒度借用检查*. [docs/论文/T19-语句粒度借用检查.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T19-语句粒度借用检查.md)
+[12] Tenth 数理部. (2026). *T19: 语句粒度借用检查*. [docs/论文/T19-语句粒度借用检查.md](T19-语句粒度借用检查.md)
 
-[13] Tenth 数理部. (2026). *T29: HIR 到 WASM 语义保持与 host 边界类型塌缩*. [docs/论文/T29-HIR到WASM语义保持与host边界类型塌缩.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T29-HIR到WASM语义保持与host边界类型塌缩.md)
+[13] Tenth 数理部. (2026). *T29: HIR 到 WASM 语义保持与 host 边界类型塌缩*. [docs/论文/T29-HIR到WASM语义保持与host边界类型塌缩.md](T29-HIR到WASM语义保持与host边界类型塌缩.md)
 
 ---
 
@@ -944,11 +944,11 @@ $$\text{JIT} \sim \text{VM} \text{（在 JIT 支持子集上，T9 已证）} \we
 
 | 差异 | 解释器位置 | VM/字节码编译器位置 | 反例 |
 |------|-----------|---------------------|------|
-| $D_1$ Move | [`mod.rs:886-894`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) | [`vm.rs:745-747`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) + [`bytecode.rs:482-484`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs) | §4 $D_1$ |
-| $D_2$ TryBlock | [`mod.rs:896-918`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) | [`bytecode.rs:485-487`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs) | §4 $D_2$ |
-| $D_3$ Tuple | [`mod.rs:939-952`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) | [`bytecode.rs:521-527`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs) | §4 $D_3$ |
-| $D_4$ Closure | [`mod.rs:725-737`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) | [`vm.rs:788-798`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) | §4 $D_4$ |
-| $D_5$ GenericCall | [`mod.rs:1066`（eval_call）](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/mod.rs) | [`bytecode.rs:477-480`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bytecode.rs) | §4 $D_5$ |
+| $D_1$ Move | [`mod.rs:886-894`](../../tenth/src/runtime/interpreter/mod.rs) | [`vm.rs:745-747`](../../tenth/src/runtime/vm.rs) + [`bytecode.rs:482-484`](../../tenth/src/compile/bytecode.rs) | §4 $D_1$ |
+| $D_2$ TryBlock | [`mod.rs:896-918`](../../tenth/src/runtime/interpreter/mod.rs) | [`bytecode.rs:485-487`](../../tenth/src/compile/bytecode.rs) | §4 $D_2$ |
+| $D_3$ Tuple | [`mod.rs:939-952`](../../tenth/src/runtime/interpreter/mod.rs) | [`bytecode.rs:521-527`](../../tenth/src/compile/bytecode.rs) | §4 $D_3$ |
+| $D_4$ Closure | [`mod.rs:725-737`](../../tenth/src/runtime/interpreter/mod.rs) | [`vm.rs:788-798`](../../tenth/src/runtime/vm.rs) | §4 $D_4$ |
+| $D_5$ GenericCall | [`mod.rs:1066`（eval_call）](../../tenth/src/runtime/interpreter/mod.rs) | [`bytecode.rs:477-480`](../../tenth/src/compile/bytecode.rs) | §4 $D_5$ |
 
 ## 附录 C：实施建议
 

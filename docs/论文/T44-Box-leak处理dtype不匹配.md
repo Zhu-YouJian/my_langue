@@ -4,7 +4,7 @@
 > 主题：`TensorData::Index` 实现中 `Box::leak` 反模式的形式化分析、不可避免性证明与替代方案
 > 版本：v1.0
 > 适用版本：Tenth v0.3.3+
-> 关联源码：[`tenth/src/runtime/tensor.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)
+> 关联源码：[`tenth/src/runtime/tensor.rs`](../../tenth/src/runtime/tensor.rs)
 
 ---
 
@@ -24,7 +24,7 @@ Tenth 语言在 v0.3.x 引入异构 dtype 张量枚举 `TensorData = F32(ArrayD<
 
 数值计算语言普遍面临一个核心张力：**对外暴露统一接口**（让算法代码与 dtype 无关），**对内承载异构表示**（让 f32/f64/int8 等不同精度各自占用紧凑内存）。PyTorch 通过 `torch::Tensor` 持有 `dtype` 字段并在 C++ 层 dispatch；NumPy 通过 `PyArrayObject` 携带 `descr->type` 并在 ufunc 循环里 dispatch；Julia 通过多重派发在编译期生成特化代码。
 
-Tenth 作为一个 Rust 实现的 AI 原生语言，在 v0.3.x 阶段选择了一个朴素方案：用一个枚举 `TensorData` 显式区分 `F32` 与 `F64` 两个变体，各自承载 `ndarray::ArrayD<f32>` 与 `ndarray::ArrayD<f64>`（见 [tensor.rs L7-L10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）。这一选择避免了"f32 退化为语法糖 f64"的精度欺骗，但代价是：**任何对外统一的接口都必须在两个变体上分别给出实现**，且接口的返回类型必须能容纳两种 dtype 的结果。
+Tenth 作为一个 Rust 实现的 AI 原生语言，在 v0.3.x 阶段选择了一个朴素方案：用一个枚举 `TensorData` 显式区分 `F32` 与 `F64` 两个变体，各自承载 `ndarray::ArrayD<f32>` 与 `ndarray::ArrayD<f64>`（见 [tensor.rs L7-L10](../../tenth/src/runtime/tensor.rs)）。这一选择避免了"f32 退化为语法糖 f64"的精度欺骗，但代价是：**任何对外统一的接口都必须在两个变体上分别给出实现**，且接口的返回类型必须能容纳两种 dtype 的结果。
 
 ### 1.2 Box::leak 反模式
 
@@ -39,12 +39,12 @@ pub trait Index<Idx> {
 
 返回值是 `&Self::Output`——一个**借用引用**，生命周期绑于 `&self`。如果 `Output = f64`，那么 `F64` 分支可以直接返回 `&a[[idx]]`（指向底层 `ArrayD<f64>` 的内存），但 `F32` 分支无法返回 `&f64`：底层 `ArrayD<f32>` 中**没有 `f64` 内存**，要返回 `f64` 必须做 `v as f64` 的值转换，而**值转换产生的是临时值，无法返回其引用**。
 
-Tenth 的当前实现选择了 `Box::leak(Box::new(v as f64))`（见 [tensor.rs L1355-L1389](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）：将临时值装箱到堆上，然后用 `Box::leak` 把 `Box<f64>` 退化成 `&'static f64`，从而满足 `Index` 的签名。代价是这块堆内存**永远不会被释放**。源码注释将此标记为已知反模式：
+Tenth 的当前实现选择了 `Box::leak(Box::new(v as f64))`（见 [tensor.rs L1355-L1389](../../tenth/src/runtime/tensor.rs)）：将临时值装箱到堆上，然后用 `Box::leak` 把 `Box<f64>` 退化成 `&'static f64`，从而满足 `Index` 的签名。代价是这块堆内存**永远不会被释放**。源码注释将此标记为已知反模式：
 
 > // F32 cast 到 f64 需要新内存，无法返回引用。
 > // 这里用 leak 方式返回 'static 引用，仅供测试断言读取，避免内存泄漏需调用方不长期持有。
 > // 更优做法是改造外部代码用 `.get(i)` 返回 `Option<f64>`。
-> —— [tensor.rs L1361-L1363](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)
+> —— [tensor.rs L1361-L1363](../../tenth/src/runtime/tensor.rs)
 
 ### 1.3 贡献
 
@@ -98,7 +98,7 @@ PyTorch 的方案在 Rust 中等价于：`fn index(&self, i) -> Tensor` 而非 `
 
 ### 2.4 Tenth 的 Phase 1 兼容层
 
-Tenth 在 [tensor.rs L1348-L1352](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 注释中明确标注这是 Phase 1 兼容层：
+Tenth 在 [tensor.rs L1348-L1352](../../tenth/src/runtime/tensor.rs) 注释中明确标注这是 Phase 1 兼容层：
 
 > // 这是 Phase 1 兼容层：F32 张量在外部算术中表现为 f64，dtype 信息在此层丢失。
 > // Phase 3/4 改造外部代码使用真正的 f32 路径后，这些 trait impl 可移除。
@@ -132,7 +132,7 @@ Tenth 在 [tensor.rs L1348-L1352](file:///d:/史蒂夫/Desktop/AI开发新语言
 
 ### 4.1 TensorData 数据结构
 
-**定义 4.1（TensorData）**：Tenth 的张量数据载体是如下变体枚举（[tensor.rs L7-L10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）：
+**定义 4.1（TensorData）**：Tenth 的张量数据载体是如下变体枚举（[tensor.rs L7-L10](../../tenth/src/runtime/tensor.rs)）：
 
 $$
 \text{TensorData} \;::=\; \text{F32}(\text{ArrayD}\langle\mathbb{R}_{32}\rangle) \;\mid\; \text{F64}(\text{ArrayD}\langle\mathbb{R}_{64}\rangle)
@@ -147,11 +147,11 @@ $$
 \text{dtype}(\text{F32}(\_)) = \text{F32}, \;\; \text{dtype}(\text{F64}(\_)) = \text{F64}
 $$
 
-对应 [tensor.rs L14-L19](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)。
+对应 [tensor.rs L14-L19](../../tenth/src/runtime/tensor.rs)。
 
 ### 4.2 Index trait 的实现
 
-Tenth 为 `TensorData` 实现了三个 `Index` 变体（[tensor.rs L1355-L1389](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），均以 `Output = f64`：
+Tenth 为 `TensorData` 实现了三个 `Index` 变体（[tensor.rs L1355-L1389](../../tenth/src/runtime/tensor.rs)），均以 `Output = f64`：
 
 **定义 4.3（Index<[usize;1]> 实现）**：
 
@@ -183,7 +183,7 @@ impl Index<[usize; 1]> for TensorData {
 }
 ```
 
-`Index<usize>`（[L1371-L1376](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）通过 `&self[[idx]]` 复用 $\text{idx}_1$；`Index<[usize;2]>`（[L1378-L1389](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）结构相同，仅索引维数不同。
+`Index<usize>`（[L1371-L1376](../../tenth/src/runtime/tensor.rs)）通过 `&self[[idx]]` 复用 $\text{idx}_1$；`Index<[usize;2]>`（[L1378-L1389](../../tenth/src/runtime/tensor.rs)）结构相同，仅索引维数不同。
 
 **定义 4.4（leak 操作）**：定义 $\text{leak} : \mathbb{R}_{64} \to \&'\text{static}\,\mathbb{R}_{64}$ 为
 
@@ -209,7 +209,7 @@ $$
 
 ### 4.3 已存在的无泄漏替代：Tensor::get
 
-Tenth 在 [tensor.rs L408-L413](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 已经实现了无泄漏的索引方法：
+Tenth 在 [tensor.rs L408-L413](../../tenth/src/runtime/tensor.rs) 已经实现了无泄漏的索引方法：
 
 ```rust
 pub fn get(&self, index: &[usize]) -> Option<f64> {
@@ -260,9 +260,9 @@ pub fn get(&self, index: &[usize]) -> Option<f64> {
 
 **定理 L2**：在以下假设下，`Box::leak`（或任何等价的"逃逸到堆并放弃回收"操作）是 `Index<[usize;1]> for TensorData` 实现的**必要**手段：
 
-- (A1) `Output = f64`（签名约束，由 [tensor.rs L1356](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 给出）。
+- (A1) `Output = f64`（签名约束，由 [tensor.rs L1356](../../tenth/src/runtime/tensor.rs) 给出）。
 - (A2) F32 分支必须返回 `&f64`（由 `Index` trait 签名强制）。
-- (A3) F32 内部内存元素类型为 f32（由 [tensor.rs L8](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 强制）。
+- (A3) F32 内部内存元素类型为 f32（由 [tensor.rs L8](../../tenth/src/runtime/tensor.rs) 强制）。
 - (A4) 不允许 `unsafe` 代码（Tenth runtime 默认约束）。
 - (A5) 不允许修改 `Index` trait 签名（标准库 trait，无法修改）。
 
@@ -332,7 +332,7 @@ $\square$
 
 **推论 L2.1**：在 (A1)-(A5) 下，"消除 `Box::leak`" 与 "保持 `Index` impl" 不可同时成立。要消除 `Box::leak`，必须放松 A1（改 `Output` 类型）或 A2（不实现 `Index`）或 A5（自定义 trait，见 §9）。
 
-**推论 L2.2**：Tenth 注释中"更优做法是改造外部代码用 `.get(i)` 返回 `Option<f64>`"（[tensor.rs L1363](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）正是放松 A1+A2——不再实现 `Index`，改用 `Tensor::get -> Option<f64>`，从签名层规避问题。这是定理 L2 的直接工程后果。
+**推论 L2.2**：Tenth 注释中"更优做法是改造外部代码用 `.get(i)` 返回 `Option<f64>`"（[tensor.rs L1363](../../tenth/src/runtime/tensor.rs)）正是放松 A1+A2——不再实现 `Index`，改用 `Tensor::get -> Option<f64>`，从签名层规避问题。这是定理 L2 的直接工程后果。
 
 ### 5.3 定理 L3（与 ndarray 视图方案对比）
 
@@ -499,7 +499,7 @@ trait ElemIndex {
 
 **(S4) 签名层替换方案分析**：
 
-不实现 `Index`，提供方法 `fn get(&self, i) -> Option<f64>`（值返回）。Tenth 已落地（[tensor.rs L408-L413](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）。无借用、无 leak、无堆分配。
+不实现 `Index`，提供方法 `fn get(&self, i) -> Option<f64>`（值返回）。Tenth 已落地（[tensor.rs L408-L413](../../tenth/src/runtime/tensor.rs)）。无借用、无 leak、无堆分配。
 
 代价：
 
@@ -549,7 +549,7 @@ $$
 
 ### 6.3 泄漏速率
 
-Tenth 注释指出 `Box::leak` 路径"仅供测试断言读取"（[tensor.rs L1362](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），即预期调用频率低。但：
+Tenth 注释指出 `Box::leak` 路径"仅供测试断言读取"（[tensor.rs L1362](../../tenth/src/runtime/tensor.rs)），即预期调用频率低。但：
 
 - (i) 注释是**约定**，非**强制**——编译器不阻止在热路径调用。
 - (ii) 测试代码中的循环可能高频调用（如断言张量每个元素）。
@@ -581,7 +581,7 @@ Tenth 注释指出 `Box::leak` 路径"仅供测试断言读取"（[tensor.rs L13
 
 - **(A1) `Output = f64`**：这是当前 Tenth 选择，**可放松**。放松后失去"`tensor[i]` 当 f64 用"的便利。
 - **(A2) 返回 `&f64`**：由 `Index` trait 签名强制，**不可放松**（除非不实现 `Index`）。
-- **(A3) F32 内部为 f32**：由 [tensor.rs L8](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 强制，**不可放松**——若放松则 f32 退化为 f64，违背 TensorData 设计目的。
+- **(A3) F32 内部为 f32**：由 [tensor.rs L8](../../tenth/src/runtime/tensor.rs) 强制，**不可放松**——若放松则 f32 退化为 f64，违背 TensorData 设计目的。
 - **(A4) 不允许 `unsafe`**：Tenth runtime 默认约束，**可放松但不应放松**——引入 `unsafe` 是更大反模式。
 - **(A5) 不修改 `Index` trait**：标准库约束，**不可放松**。
 
@@ -605,7 +605,7 @@ Tenth 注释指出 `Box::leak` 路径"仅供测试断言读取"（[tensor.rs L13
 
 - 在当前接口约束下，**没有更好的实现**——`Box::leak` 是约束下的最优解。
 - 要消除反模式，必须**改变约束**——放松 A1-A5 中的某条。
-- Tenth 注释已识别此点（[tensor.rs L1363](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），并指出 S4 是迁移目标。
+- Tenth 注释已识别此点（[tensor.rs L1363](../../tenth/src/runtime/tensor.rs)），并指出 S4 是迁移目标。
 
 这是反模式分析的典型形态：反模式不是"工程师犯错"，而是"约束组合的必然"——消除它需要架构级变更，而非局部修补。
 
@@ -753,7 +753,7 @@ $$
 \end{cases}
 $$
 
-对应 [tensor.rs L408-L413](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)。
+对应 [tensor.rs L408-L413](../../tenth/src/runtime/tensor.rs)。
 
 **性质**：
 
@@ -783,11 +783,11 @@ $$
 
 ### 9.6 替代方案的发现
 
-**关键发现**：Tenth 已经在 `Tensor::get` 中实现了 S4 方案（[tensor.rs L408-L413](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），但 `Index` impl 仍然保留。这意味着：
+**关键发现**：Tenth 已经在 `Tensor::get` 中实现了 S4 方案（[tensor.rs L408-L413](../../tenth/src/runtime/tensor.rs)），但 `Index` impl 仍然保留。这意味着：
 
 - **泄漏路径与无泄漏路径并存**——调用方可选用 `tensor[[i]]`（leak）或 `tensor.get(&[i])`（无 leak）。
 - **迁移未完成**——`Index` impl 仍被外部代码使用，否则可移除。
-- **过渡策略明确**——按 Phase 3/4 计划（[tensor.rs L1350-L1351](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）逐步迁移调用点，最终移除 `Index` impl。
+- **过渡策略明确**——按 Phase 3/4 计划（[tensor.rs L1350-L1351](../../tenth/src/runtime/tensor.rs)）逐步迁移调用点，最终移除 `Index` impl。
 
 这一发现将"反模式不可避免性"（定理 L2）的工程含义精化为：**反模式在接口约束下不可避免，但 Tenth 已识别并提供了替代路径，剩余工作是迁移而非补缺陷**。
 
@@ -814,14 +814,14 @@ Phase 1 阶段优先**开发效率**（让 f32 张量先跑起来），是合理
 1. **审计调用点**：搜索所有 `tensor[[i]]` / `tensor[i]` 用法，分类为"测试断言"与"运行时路径"。
 2. **优先迁移运行时路径**：autodiff tape、热循环等高频调用点先迁移到 `tensor.get(&[i])`。
 3. **测试断言保留或迁移**：测试代码低频调用，可暂保留 `Index`，或一并迁移。
-4. **最终移除 `Index` impl**：所有调用点迁移后，移除 [tensor.rs L1355-L1389](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 的三个 `Index` impl。
+4. **最终移除 `Index` impl**：所有调用点迁移后，移除 [tensor.rs L1355-L1389](../../tenth/src/runtime/tensor.rs) 的三个 `Index` impl。
 5. **保留 `Tensor::get`**：作为唯一索引 API。
 
 ### 10.3 迁移的下游影响
 
 迁移 `Index` impl 的下游影响：
 
-- **算术 trait impl**（[tensor.rs L1348+](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）：`Add`/`Sub`/`Mul`/`Div`/`Neg` 等也属于 Phase 1 兼容层，应一并迁移。
+- **算术 trait impl**（[tensor.rs L1348+](../../tenth/src/runtime/tensor.rs)）：`Add`/`Sub`/`Mul`/`Div`/`Neg` 等也属于 Phase 1 兼容层，应一并迁移。
 - **autodiff**（`runtime/autodiff.rs`）：若 `TapeOp` 实现中使用 `tensor[[i]]`，需迁移。
 - **标准库 nn 模块**：若 `tenth/std/nn/` 中使用 `tensor[[i]]`，需迁移。
 
@@ -903,8 +903,8 @@ Julia 风格的编译期特化（多重派发）能否在 Rust 中模拟？`macr
 
 ### 13.2 形式化的不完备性
 
-- **未覆盖 `Index<[usize;2]>`**：本文主要分析 `Index<[usize;1]>`，但 `Index<[usize;2]>`（[tensor.rs L1378-L1389](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）结构相同，结论可类推。形式化未显式展开 2D 情形。
-- **未覆盖 `Index<usize>`**：`Index<usize>`（[tensor.rs L1371-L1376](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）通过 `&self[[idx]]` 复用 `Index<[usize;1]>`，结论继承。
+- **未覆盖 `Index<[usize;2]>`**：本文主要分析 `Index<[usize;1]>`，但 `Index<[usize;2]>`（[tensor.rs L1378-L1389](../../tenth/src/runtime/tensor.rs)）结构相同，结论可类推。形式化未显式展开 2D 情形。
+- **未覆盖 `Index<usize>`**：`Index<usize>`（[tensor.rs L1371-L1376](../../tenth/src/runtime/tensor.rs)）通过 `&self[[idx]]` 复用 `Index<[usize;1]>`，结论继承。
 
 ### 13.3 工程差距
 
@@ -939,12 +939,12 @@ Julia 风格的编译期特化（多重派发）能否在 Rust 中模拟？`macr
 
 ### 14.1 Tenth 项目源码
 
-- [tenth/src/runtime/tensor.rs L7-L10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) — `TensorData` 枚举定义
-- [tenth/src/runtime/tensor.rs L14-L19](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) — `dtype()` 方法
-- [tenth/src/runtime/tensor.rs L50-L55](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) — `as_f64_view()` 方法
-- [tenth/src/runtime/tensor.rs L408-L413](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) — `Tensor::get -> Option<f64>` 无泄漏替代
-- [tenth/src/runtime/tensor.rs L1348-L1352](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) — Phase 1 兼容层注释
-- [tenth/src/runtime/tensor.rs L1355-L1389](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) — `Index` impl（核心，含 `Box::leak`）
+- [tenth/src/runtime/tensor.rs L7-L10](../../tenth/src/runtime/tensor.rs) — `TensorData` 枚举定义
+- [tenth/src/runtime/tensor.rs L14-L19](../../tenth/src/runtime/tensor.rs) — `dtype()` 方法
+- [tenth/src/runtime/tensor.rs L50-L55](../../tenth/src/runtime/tensor.rs) — `as_f64_view()` 方法
+- [tenth/src/runtime/tensor.rs L408-L413](../../tenth/src/runtime/tensor.rs) — `Tensor::get -> Option<f64>` 无泄漏替代
+- [tenth/src/runtime/tensor.rs L1348-L1352](../../tenth/src/runtime/tensor.rs) — Phase 1 兼容层注释
+- [tenth/src/runtime/tensor.rs L1355-L1389](../../tenth/src/runtime/tensor.rs) — `Index` impl（核心，含 `Box::leak`）
 
 ### 14.2 Rust 标准库与生态
 
@@ -972,12 +972,12 @@ Julia 风格的编译期特化（多重派发）能否在 Rust 中模拟？`macr
 
 ### 14.6 Tenth 项目内部文档
 
-- [DEPS.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/DEPS.md) — 环境配置与构建命令
-- [CODE_WIKI.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/CODE_WIKI.md) — 模块架构
-- [MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md) — 逐版变更记录
-- [能力梳理/能力全梳理.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/能力梳理/能力全梳理.md) — 能力状态
-- [AUDIT.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/AUDIT.md) — 缺陷登记册
-- [docs/语言参考手册.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md) — 语言语法与 API 权威定义
+- [DEPS.md](../../DEPS.md) — 环境配置与构建命令
+- [CODE_WIKI.md](../../CODE_WIKI.md) — 模块架构
+- [MEMO.md](../../MEMO.md) — 逐版变更记录
+- [能力梳理/能力全梳理.md](../../能力梳理/能力全梳理.md) — 能力状态
+- [AUDIT.md](../../AUDIT.md) — 缺陷登记册
+- [docs/语言参考手册.md](../语言参考手册.md) — 语言语法与 API 权威定义
 
 ---
 
@@ -1005,12 +1005,12 @@ Julia 风格的编译期特化（多重派发）能否在 Rust 中模拟？`macr
 
 | 论文章节 | 对应 Tenth 文档 |
 |---------|---------------|
-| §1.2 Box::leak 反模式 | [tensor.rs L1361-L1363 注释](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| §2.4 Phase 1 兼容层 | [tensor.rs L1348-L1352 注释](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| §4.1 TensorData 定义 | [tensor.rs L7-L10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| §4.2 Index impl | [tensor.rs L1355-L1389](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| §4.3 Tensor::get 替代 | [tensor.rs L408-L413](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| §9.4 S4 方案 | [tensor.rs L408-L413](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
+| §1.2 Box::leak 反模式 | [tensor.rs L1361-L1363 注释](../../tenth/src/runtime/tensor.rs) |
+| §2.4 Phase 1 兼容层 | [tensor.rs L1348-L1352 注释](../../tenth/src/runtime/tensor.rs) |
+| §4.1 TensorData 定义 | [tensor.rs L7-L10](../../tenth/src/runtime/tensor.rs) |
+| §4.2 Index impl | [tensor.rs L1355-L1389](../../tenth/src/runtime/tensor.rs) |
+| §4.3 Tensor::get 替代 | [tensor.rs L408-L413](../../tenth/src/runtime/tensor.rs) |
+| §9.4 S4 方案 | [tensor.rs L408-L413](../../tenth/src/runtime/tensor.rs) |
 
 ## 附录 C：实施建议
 
@@ -1029,10 +1029,10 @@ Julia 风格的编译期特化（多重派发）能否在 Rust 中模拟？`macr
 
 ### C.3 长期（Phase 4 终态）
 
-1. 移除 [tensor.rs L1355-L1389](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 的三个 `Index` impl。
+1. 移除 [tensor.rs L1355-L1389](../../tenth/src/runtime/tensor.rs) 的三个 `Index` impl。
 2. 评估 S3（GAT + 视图枚举）作为保留 dtype 信息的终态方案。
-3. 更新 [MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md) 记录迁移完成。
-4. 更新 [能力梳理/能力全梳理.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/能力梳理/能力全梳理.md) 标注 `Index` impl 移除。
+3. 更新 [MEMO.md](../../MEMO.md) 记录迁移完成。
+4. 更新 [能力梳理/能力全梳理.md](../../能力梳理/能力全梳理.md) 标注 `Index` impl 移除。
 
 ### C.4 验证
 

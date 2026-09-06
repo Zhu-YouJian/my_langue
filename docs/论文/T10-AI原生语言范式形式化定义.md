@@ -294,8 +294,8 @@ $$\forall e_i, e_j \in \mathcal{E}: \nabla_P \big|_{e_i} = \nabla_P \big|_{e_j}$
 ### 4.1 J1 的实例化：Tensor 内建类型
 
 **实例化位置**：
-- 类型定义：[`tenth/src/hir/types.rs:19-25`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs#L19)
-- 张量字面量语法：[`docs/语言参考手册.md §2.3`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md) 第 119 行 `tensor[[1.0, 2.0], [3.0, 4.0]]`
+- 类型定义：[`tenth/src/hir/types.rs:19-25`](../../tenth/src/hir/types.rs#L19)
+- 张量字面量语法：[`docs/语言参考手册.md §2.3`](../语言参考手册.md) 第 119 行 `tensor[[1.0, 2.0], [3.0, 4.0]]`
 - 广播运算：`runtime/tensor.rs` 中运算符实现
 
 **形式化对应**：
@@ -308,9 +308,9 @@ $$\forall e_i, e_j \in \mathcal{E}: \nabla_P \big|_{e_i} = \nabla_P \big|_{e_j}$
 ### 4.2 J2 的实例化：Autodiff 原语
 
 **实例化位置**：
-- 原语注册：[`tenth/src/main.rs:683-745`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs#L683)（`new_grad`、`param`、`backward`、`grad`、`stop_grad`、`zero_grad`）
-- 标准库索引：[`tenth/std/prelude.th:15-17`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th#L15) 显式标注 "Built-in (always available, no import needed)"
-- Autodiff 引擎：[`tenth/src/runtime/autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)（Wengert Tape 实现）
+- 原语注册：[`tenth/src/main.rs:683-745`](../../tenth/src/main.rs#L683)（`new_grad`、`param`、`backward`、`grad`、`stop_grad`、`zero_grad`）
+- 标准库索引：[`tenth/std/prelude.th:15-17`](../../tenth/std/prelude.th#L15) 显式标注 "Built-in (always available, no import needed)"
+- Autodiff 引擎：[`tenth/src/runtime/autodiff.rs`](../../tenth/src/runtime/autodiff.rs)（Wengert Tape 实现）
 
 **形式化对应**：
 - 原语集 $\mathcal{O}_{ad} = \{$`new_grad`, `param`, `backward`, `grad`, `stop_grad`, `zero_grad`$\}$，覆盖参数声明、前向记录、反向传播、梯度获取、梯度控制五类操作。
@@ -323,10 +323,10 @@ $$\forall e_i, e_j \in \mathcal{E}: \nabla_P \big|_{e_i} = \nabla_P \big|_{e_j}$
 ### 4.3 J3 的实例化：Shape 类型系统
 
 **实例化位置**：
-- Dim 类型定义：[`tenth/src/hir/types.rs:13-17`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs#L13) `enum Dim { Known(i64), Symbol(String), Any }`
-- 编译期 matmul shape 检查：[`tenth/src/hir/lower/types.rs:672-738`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs#L672)（内侧维度 K 必须相等）
-- 编译期 FLOPs 预估：[`tenth/src/hir/lower/types.rs:740-759`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs#L740)
-- 运行时 autodiff shape 校验：[`tenth/src/runtime/autodiff.rs:272`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs#L272)（`backward` 返回 `Result`）
+- Dim 类型定义：[`tenth/src/hir/types.rs:13-17`](../../tenth/src/hir/types.rs#L13) `enum Dim { Known(i64), Symbol(String), Any }`
+- 编译期 matmul shape 检查：[`tenth/src/hir/lower/types.rs:672-738`](../../tenth/src/hir/lower/types.rs#L672)（内侧维度 K 必须相等）
+- 编译期 FLOPs 预估：[`tenth/src/hir/lower/types.rs:740-759`](../../tenth/src/hir/lower/types.rs#L740)
+- 运行时 autodiff shape 校验：[`tenth/src/runtime/autodiff.rs:272`](../../tenth/src/runtime/autodiff.rs#L272)（`backward` 返回 `Result`）
 
 **形式化对应**：
 - (J3.a) Shape 是类型的一部分：`Tensor[f64, 3, 224, 224]` 中 `3, 224, 224` 是 `Vec<Dim>`，进入类型判断 $\Gamma \vdash x : \mathrm{Tensor}[\mathrm{F64}, \mathrm{Known}(3), \mathrm{Known}(224), \mathrm{Known}(224)]$。
@@ -341,7 +341,7 @@ $$\forall e_i, e_j \in \mathcal{E}: \nabla_P \big|_{e_i} = \nabla_P \big|_{e_j}$
 ### 4.4 J4 的实例化：NN 算子标准库
 
 **实例化位置**：
-- 标准库索引：[`tenth/std/prelude.th:55-68`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th#L55)
+- 标准库索引：[`tenth/std/prelude.th:55-68`](../../tenth/std/prelude.th#L55)
 - NN 模块目录：`tenth/std/nn/` 下包含 `activations.th`、`attention.th`、`batchnorm.th`、`conv.th`、`dropout.th`、`embedding.th`、`feedforward.th`、`layer_norm.th`、`loss.th`、`multihead_attention.th`、`positional_encoding.th`、`transformer.th`
 
 **算子清单**（满足 J4.a 最低要求）：
@@ -367,17 +367,17 @@ $$\forall e_i, e_j \in \mathcal{E}: \nabla_P \big|_{e_i} = \nabla_P \big|_{e_j}$
 
 **实例化位置**：
 - 三执行路径：
-  - 解释器路径：[`tenth/src/runtime/interpreter/`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter)
-  - VM 路径：[`tenth/src/runtime/vm.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)
-  - JIT 路径：[`tenth/src/compile/jit/translator.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)
-- 共享 autodiff 实现：[`tenth/src/runtime/autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)（`Tape::backward`，所有路径共用）
+  - 解释器路径：[`tenth/src/runtime/interpreter/`](../../tenth/src/runtime/interpreter)
+  - VM 路径：[`tenth/src/runtime/vm.rs`](../../tenth/src/runtime/vm.rs)
+  - JIT 路径：[`tenth/src/compile/jit/translator.rs`](../../tenth/src/compile/jit/translator.rs)
+- 共享 autodiff 实现：[`tenth/src/runtime/autodiff.rs`](../../tenth/src/runtime/autodiff.rs)（`Tape::backward`，所有路径共用）
 
 **引理 5.1（autodiff 语义一致性）**：Tenth 的三执行路径共享同一 `autodiff.rs::Tape::backward` 实现，故 autodiff 语义在所有路径上一致。
 
 **证明**：
 - 解释器路径：在 tree-walk 执行张量操作时，调用 `Tape::unary`/`binary` 记录节点；`backward()` 调用 `Tape::backward`。
 - VM 路径：执行字节码中的张量 native 指令时，调用相同的 `Tape` API 记录节点；`backward` native 调用 `Tape::backward`。
-- JIT 路径：[`translator.rs:13`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs#L13) 显示 JIT 生成函数签名为 `extern "C" fn(vm: *mut u8, args: *const u8, n: usize, out: *mut u8) -> bool`，即 JIT 编译的函数通过 hostcall 回到 VM 上下文执行张量操作；张量操作仍走 `Tape` 记录路径；`backward` 仍调用 `Tape::backward`。
+- JIT 路径：[`translator.rs:13`](../../tenth/src/compile/jit/translator.rs#L13) 显示 JIT 生成函数签名为 `extern "C" fn(vm: *mut u8, args: *const u8, n: usize, out: *mut u8) -> bool`，即 JIT 编译的函数通过 hostcall 回到 VM 上下文执行张量操作；张量操作仍走 `Tape` 记录路径；`backward` 仍调用 `Tape::backward`。
 - 三路径共享 `Tape::backward` 实现，故 $\nabla_P \big|_{interpreter} = \nabla_P \big|_{vm} = \nabla_P \big|_{jit}$。$\square$
 
 **J5 满足度**：✅ 满足（**但有局限 L4**：JIT 路径当前主要翻译标量与控制流，张量 op 通过 hostcall fallback 调用 VM native，性能尚未充分体现 JIT 优势）。
@@ -576,7 +576,7 @@ $$\forall e_i, e_j \in \mathcal{E}: \nabla_P \big|_{e_i} = \nabla_P \big|_{e_j}$
 
 ### 7.1 局限 L1：Autodiff 原语严格属 native 函数而非词法关键字
 
-**是什么**：J2 判据要求 autodiff 操作是"语言原语"。Tenth 的 `param/grad/backward/stop_grad/zero_grad` 通过 `vm.add_native(...)` 在 [`main.rs:683-745`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs#L683) 注册为 native 函数，而非通过 lexer 的保留字 token 解析（对比 `fn`/`let`/`if` 等是真正的词法关键字）。
+**是什么**：J2 判据要求 autodiff 操作是"语言原语"。Tenth 的 `param/grad/backward/stop_grad/zero_grad` 通过 `vm.add_native(...)` 在 [`main.rs:683-745`](../../tenth/src/main.rs#L683) 注册为 native 函数，而非通过 lexer 的保留字 token 解析（对比 `fn`/`let`/`if` 等是真正的词法关键字）。
 
 **影响**：
 - 语法层面：用户书写 `param(x)` 而非 `param x`，与函数调用无区别。
@@ -604,7 +604,7 @@ $$\forall e_i, e_j \in \mathcal{E}: \nabla_P \big|_{e_i} = \nabla_P \big|_{e_j}$
 
 ### 7.3 局限 L3：`multihead_attention` 当前为 single-head 等价实现
 
-**是什么**：J4 判据要求 NN 算子作为标准库。Tenth 的 [`tenth/std/nn/multihead_attention.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th) 文件第 4-11 行明确注释：
+**是什么**：J4 判据要求 NN 算子作为标准库。Tenth 的 [`tenth/std/nn/multihead_attention.th`](../../tenth/std/nn/multihead_attention.th) 文件第 4-11 行明确注释：
 
 > Simplified: since Tenth matmul only supports 2D tensors, we cannot reshape Q/K/V into (n_heads, seq_len, d_k) and compute per-head attention in parallel. Instead, this implementation computes a single-head-equivalent attention over the full d_model dimension.
 
@@ -618,7 +618,7 @@ $$\forall e_i, e_j \in \mathcal{E}: \nabla_P \big|_{e_i} = \nabla_P \big|_{e_j}$
 
 ### 7.4 局限 L4：JIT 路径的张量 op 走 hostcall fallback
 
-**是什么**：J5 判据要求多执行路径共享 AI 语义。Tenth 的 JIT 路径（[`translator.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）当前主要翻译标量与控制流，张量 op 通过 hostcall 回调 VM native 执行。
+**是什么**：J5 判据要求多执行路径共享 AI 语义。Tenth 的 JIT 路径（[`translator.rs`](../../tenth/src/compile/jit/translator.rs)）当前主要翻译标量与控制流，张量 op 通过 hostcall 回调 VM native 执行。
 
 **影响**：
 - J5 语义一致性满足（引理 5.1 保证），但 JIT 性能优势未充分体现——张量 op 仍有 VM 调用开销。
@@ -731,23 +731,23 @@ $$\forall e_i, e_j \in \mathcal{E}: \nabla_P \big|_{e_i} = \nabla_P \big|_{e_j}$
 
 ### 10.1 Tenth 项目内部文档
 
-1. [Tenth 语言参考手册 v0.3.3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md)
-2. [Tenth 编译期 Shape 检查战略规划](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)
-3. [Tenth 深化方向综合分析](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md)
-4. [T1-Shape 代数系统的形式化建模](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T1-Shape代数系统的形式化建模.md)
-5. [T2-Tape 形式化模型与根因定位可判定性](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md)
-6. [T3-HIR 约束求解 NP 完全性归约](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T3-HIR约束求解NP完全性归约.md)
-7. [T4-一般程序 Shape 检查不可判定性](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T4-一般程序Shape检查不可判定性.md)
+1. [Tenth 语言参考手册 v0.3.3](../语言参考手册.md)
+2. [Tenth 编译期 Shape 检查战略规划](../shape-check-roadmap/战略规划.md)
+3. [Tenth 深化方向综合分析](../shape-check-roadmap/综合分析.md)
+4. [T1-Shape 代数系统的形式化建模](T1-Shape代数系统的形式化建模.md)
+5. [T2-Tape 形式化模型与根因定位可判定性](T2-Tape形式化模型与根因定位可判定性.md)
+6. [T3-HIR 约束求解 NP 完全性归约](T3-HIR约束求解NP完全性归约.md)
+7. [T4-一般程序 Shape 检查不可判定性](T4-一般程序Shape检查不可判定性.md)
 
 ### 10.2 Tenth 源码
 
-8. [`hir/types.rs` — HIR 类型系统（Dim 三值）](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs)
-9. [`hir/lower/types.rs` — 编译期 shape 检查与内存预估`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)
-10. [`runtime/autodiff.rs` — Wengert Tape autodiff 实现`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)
-11. [`main.rs` — autodiff 原语注册（native 函数）`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)
-12. [`compile/jit/translator.rs` — JIT 翻译器（Cranelift）`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)
-13. [`std/prelude.th` — 标准库索引`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th)
-14. [`std/nn/multihead_attention.th` — 多头注意力（single-head 等价实现）`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th)
+8. [`hir/types.rs` — HIR 类型系统（Dim 三值）](../../tenth/src/hir/types.rs)
+9. [`hir/lower/types.rs` — 编译期 shape 检查与内存预估`](../../tenth/src/hir/lower/types.rs)
+10. [`runtime/autodiff.rs` — Wengert Tape autodiff 实现`](../../tenth/src/runtime/autodiff.rs)
+11. [`main.rs` — autodiff 原语注册（native 函数）`](../../tenth/src/main.rs)
+12. [`compile/jit/translator.rs` — JIT 翻译器（Cranelift）`](../../tenth/src/compile/jit/translator.rs)
+13. [`std/prelude.th` — 标准库索引`](../../tenth/std/prelude.th)
+14. [`std/nn/multihead_attention.th` — 多头注意力（single-head 等价实现）`](../../tenth/std/nn/multihead_attention.th)
 
 ### 10.3 外部参考
 

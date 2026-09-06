@@ -18,23 +18,23 @@ Tenth 语言的 AST→HIR lowering 不是单纯的"加类型注解"，而是一�
 
 ### 1.1 Lowering 在编译器中的角色
 
-编译器的 **lowering**（降级）阶段将高层中间表示（high-level IR）转换为低层中间表示（low-level IR），通常伴随抽象层级的降低：树状结构变图、隐式控制流变显式、语法糖脱糖。在 Tenth 编译管线中（[CODE_WIKI.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/CODE_WIKI.md)），lowering 指 **AST → HIR** 的转换：
+编译器的 **lowering**（降级）阶段将高层中间表示（high-level IR）转换为低层中间表示（low-level IR），通常伴随抽象层级的降低：树状结构变图、隐式控制流变显式、语法糖脱糖。在 Tenth 编译管线中（[CODE_WIKI.md](../../CODE_WIKI.md)），lowering 指 **AST → HIR** 的转换：
 
 ```
 .th → Lexer → Parser → AST → [Lowering] → HIR → VM/Interpreter/WASM/JIT
 ```
 
-AST（[tenth/src/parser/ast.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）是 parser 直接产生的具体语法树，保留所有源码字面信息；HIR（[tenth/src/hir/hir.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）是带类型注解的、面向后端（VM/WASM/JIT）的中间表示。
+AST（[tenth/src/parser/ast.rs](../../tenth/src/parser/ast.rs)）是 parser 直接产生的具体语法树，保留所有源码字面信息；HIR（[tenth/src/hir/hir.rs](../../tenth/src/hir/hir.rs)）是带类型注解的、面向后端（VM/WASM/JIT）的中间表示。
 
 ### 1.2 AST→HIR 的信息有损变换挑战
 
 与"加类型注解"的朴素观点不同，Tenth 的 AST→HIR lowering 包含**真信息有损变换**：
 
-1. **Assign target 收紧**：AST 的 `Assign { target: Box<Expr>, value: Box<Expr> }`（[ast.rs:117-120](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）允许任意表达式作为赋值目标；HIR 的 `Assign { target: String, value: Box<HirExpr> }`（[hir.rs:79-82](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）仅允许变量名。HIR 通过引入 `DerefAssign`、`FieldAssign`、`DerefAssignOp` 三个独立变体部分补偿，但**不引入** `IndexAssign`、`FieldAssignOp`——即 `x[i] = v`、`s.f += v` 等 AST 合法程序无法 lowering。
+1. **Assign target 收紧**：AST 的 `Assign { target: Box<Expr>, value: Box<Expr> }`（[ast.rs:117-120](../../tenth/src/parser/ast.rs)）允许任意表达式作为赋值目标；HIR 的 `Assign { target: String, value: Box<HirExpr> }`（[hir.rs:79-82](../../tenth/src/hir/hir.rs)）仅允许变量名。HIR 通过引入 `DerefAssign`、`FieldAssign`、`DerefAssignOp` 三个独立变体部分补偿，但**不引入** `IndexAssign`、`FieldAssignOp`——即 `x[i] = v`、`s.f += v` 等 AST 合法程序无法 lowering。
 
-2. **静默丢弃**：`StructLiteral` 的 `generics` 字段在 lowering 中被 `generics: _` 显式丢弃（[lower_expr.rs:571](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）；`is_pub` 可见性修饰符在 `Function`/`StructDef`/`Impl` 项 lowering 中未被保留到 HIR（[ast.rs:246, 261, 272](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs) vs [hir.rs:226-234](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）。
+2. **静默丢弃**：`StructLiteral` 的 `generics` 字段在 lowering 中被 `generics: _` 显式丢弃（[lower_expr.rs:571](../../tenth/src/hir/lower/lower_expr.rs)）；`is_pub` 可见性修饰符在 `Function`/`StructDef`/`Impl` 项 lowering 中未被保留到 HIR（[ast.rs:246, 261, 272](../../tenth/src/parser/ast.rs) vs [hir.rs:226-234](../../tenth/src/hir/hir.rs)）。
 
-3. **Index 类型重命名**：AST `Vec<IndexExpr>` → HIR `Vec<Index>`（[ast.rs:185-192](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs) vs [hir.rs:184-191](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)），两者结构同构（`Single`/`Range`/`Colon` 三变体完全对应），**不是信息损失**——但常被误判为有损。
+3. **Index 类型重命名**：AST `Vec<IndexExpr>` → HIR `Vec<Index>`（[ast.rs:185-192](../../tenth/src/parser/ast.rs) vs [hir.rs:184-191](../../tenth/src/hir/hir.rs)），两者结构同构（`Single`/`Range`/`Colon` 三变体完全对应），**不是信息损失**——但常被误判为有损。
 
 这意味着 HIR 的表达力是 AST 的真子集。Lowering 必须**拒绝** AST 中合法但 HIR 无法表示的程序（通过 `?` 传播 `ParseError`/`TypeError`），同时**保留** HIR 能表示的子集的语义。问题是：**当前实现是否在所有 HIR 可表示的子集上都保持语义？是否所有拒绝都对应明确的 HIR 表达力不足？是否存在"AST 合法 → HIR 静默丢失信息"的漏洞？**
 
@@ -91,8 +91,8 @@ Tenth 的 HIR 设计更接近 Rustc 的 MIR——简化为后端友好的形式�
 
 ### 2.5 T16 与 T19 的联动
 
-- **T16**（[T16-双向类型重建.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T16-双向类型重建.md)）证明 lowering 阶段的类型重建满足 Subject Reduction。本文 L1 定理依赖 T16 的类型正确性作为前提：若类型重建错误，HIR 的 `ty` 字段可能误导后端，但语义保持证明不依赖 `ty` 的精确性（仅依赖结构等价）。
-- **T19**（[T19-语句粒度借用检查.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T19-语句粒度借用检查.md)）证明 lowering 中的借用检查（`scope.check_borrow_shared/mut`，[lower_expr.rs:701, 717](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）满足语句级安全性。本文 L1 不直接依赖 T19，但二者共同构成 lowering 的正确性保证。
+- **T16**（[T16-双向类型重建.md](T16-双向类型重建.md)）证明 lowering 阶段的类型重建满足 Subject Reduction。本文 L1 定理依赖 T16 的类型正确性作为前提：若类型重建错误，HIR 的 `ty` 字段可能误导后端，但语义保持证明不依赖 `ty` 的精确性（仅依赖结构等价）。
+- **T19**（[T19-语句粒度借用检查.md](T19-语句粒度借用检查.md)）证明 lowering 中的借用检查（`scope.check_borrow_shared/mut`，[lower_expr.rs:701, 717](../../tenth/src/hir/lower/lower_expr.rs)）满足语句级安全性。本文 L1 不直接依赖 T19，但二者共同构成 lowering 的正确性保证。
 
 ---
 
@@ -100,7 +100,7 @@ Tenth 的 HIR 设计更接近 Rustc 的 MIR——简化为后端友好的形式�
 
 ### 3.1 AST 的代数数据类型定义
 
-**定义 3.1（AST 表达式）**。AST 表达式 $\text{Expr}_A$ 由如下代数数据类型定义（对应 [ast.rs:64-146](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）：
+**定义 3.1（AST 表达式）**。AST 表达式 $\text{Expr}_A$ 由如下代数数据类型定义（对应 [ast.rs:64-146](../../tenth/src/parser/ast.rs)）：
 
 $$
 e_A \in \text{Expr}_A ::= \text{Lit}(l) \mid \text{Var}(x) \mid \text{Bin}(op, e_1, e_2) \mid \text{Un}(op, e) \mid \text{Call}(e_f, \vec{e}) \mid \text{GCall}(e_f, \vec{\tau}_A, \vec{e}) \mid \text{MCall}(e_r, m, \vec{e}) \mid \text{Idx}(e_t, \vec{ix}_A) \mid \text{Fld}(e_t, f) \mid \text{TLit}(\vec{\vec{e}}) \mid \text{ALit}(\vec{e}) \mid \text{Range}(e_s?, e_e?, b) \mid \text{If}(e_c, e_t, e_e?) \mid \text{Block}(\vec{s}) \mid \text{Clos}(\vec{(x, \tau_A?)}, e) \mid \text{Assign}(e_{tgt}, e_v) \mid \text{AssignOp}(e_{tgt}, op, e_v) \mid \text{SLit}(n, \vec{\tau}_A, \vec{(f, e)}, b) \mid \text{ELit}(n, v, \vec{(f, e)}) \mid \text{Match}(e_s, \vec{arm}) \mid \text{Ref}(e) \mid \text{MutRef}(e) \mid \text{Deref}(e) \mid \text{Move}(e) \mid \text{Try}(e) \mid \text{IStr}(\vec{p}) \mid \text{Tup}(\vec{e})
@@ -110,13 +110,13 @@ $$
 
 **关键观察**：$\text{Assign}$ 的 target $e_{tgt}$ 是任意 $\text{Expr}_A$——`x`、`*p`、`s.f`、`x[i]`、甚至 `f().g` 都是合法 AST。
 
-**定义 3.2（AST 索引表达式）**。$\text{Ix}_A ::= \text{Single}(e) \mid \text{Range}(e_s?, e_e?) \mid \text{Colon}$（[ast.rs:185-192](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）。
+**定义 3.2（AST 索引表达式）**。$\text{Ix}_A ::= \text{Single}(e) \mid \text{Range}(e_s?, e_e?) \mid \text{Colon}$（[ast.rs:185-192](../../tenth/src/parser/ast.rs)）。
 
-**定义 3.3（AST 模式）**。$\text{Pat}_A ::= \text{EV}(n, v, fb?, \vec{x}) \mid \text{Wild} \mid \text{Lit}(l) \mid \text{Tup}(\vec{p}) \mid \text{Range}(k_1, k_2, b) \mid \text{Bind}(x) \mid \text{Struct}(n, \vec{(f, x)})$（[ast.rs:156-176](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）。
+**定义 3.3（AST 模式）**。$\text{Pat}_A ::= \text{EV}(n, v, fb?, \vec{x}) \mid \text{Wild} \mid \text{Lit}(l) \mid \text{Tup}(\vec{p}) \mid \text{Range}(k_1, k_2, b) \mid \text{Bind}(x) \mid \text{Struct}(n, \vec{(f, x)})$（[ast.rs:156-176](../../tenth/src/parser/ast.rs)）。
 
 ### 3.2 HIR 的代数数据类型定义
 
-**定义 3.4（HIR 表达式）**。HIR 表达式 $\text{Expr}_H$ 由如下代数数据类型定义（对应 [hir.rs:12-123](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）：
+**定义 3.4（HIR 表达式）**。HIR 表达式 $\text{Expr}_H$ 由如下代数数据类型定义（对应 [hir.rs:12-123](../../tenth/src/hir/hir.rs)）：
 
 $$
 e_H \in \text{Expr}_H ::= \text{Lit}(l) \mid \text{Var}(x) \mid \text{Bin}(op, e_1, e_2, \tau) \mid \text{Un}(op, e, \tau) \mid \text{Call}(e_f, \vec{e}, \tau) \mid \text{GCall}(e_f, \vec{\tau}, \vec{e}, \tau) \mid \text{MCall}(e_r, m, \vec{e}, \tau) \mid \text{Idx}(e_t, \vec{ix}_H) \mid \text{Fld}(e_t, f) \mid \text{TLit}(\vec{\vec{e}}, \tau) \mid \text{ALit}(\vec{e}, \tau) \mid \text{Range}(e_s?, e_e?, b) \mid \text{If}(e_c, e_t, e_e?, \tau) \mid \text{Block}(\vec{s}, e?) \mid \text{Clos}(\vec{(x, \tau)}, e, \vec{x}) \mid \text{Assign}(x, e) \mid \text{AssignOp}(x, op, e) \mid \text{SLit}(n, \vec{(f, e)}, b) \mid \text{ELit}(n, v, \vec{(f, e)}) \mid \text{Match}(e_s, \vec{arm}_H) \mid \text{Ref}(e) \mid \text{MutRef}(e) \mid \text{Deref}(e) \mid \text{DerefAssign}(e, e) \mid \text{DerefAssignOp}(e, op, e) \mid \text{Move}(e) \mid \text{Try}(e) \mid \text{IStr}(\vec{p}) \mid \text{Tup}(\vec{e}) \mid \text{FldAssign}(e, f, e)
@@ -129,9 +129,9 @@ $$
 - **HIR 不含** $\text{IndexAssign}$、$\text{FieldAssignOp}$ 变体——这两类赋值无法表示；
 - HIR 的 $\text{SLit}$（StructLiteral）**不含** $\vec{\tau}_A$（generics 被丢弃）。
 
-**定义 3.5（HIR 索引）**。$\text{Ix}_H ::= \text{Single}(e_H) \mid \text{Range}(e_H?, e_H?) \mid \text{Colon}$（[hir.rs:184-191](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）。
+**定义 3.5（HIR 索引）**。$\text{Ix}_H ::= \text{Single}(e_H) \mid \text{Range}(e_H?, e_H?) \mid \text{Colon}$（[hir.rs:184-191](../../tenth/src/hir/hir.rs)）。
 
-**定义 3.6（HIR 模式）**。$\text{Pat}_H ::= \text{EV}(n, v, fb?, \vec{(f, x)}) \mid \text{Wild} \mid \text{Lit}(l) \mid \text{Tup}(\vec{p}_H) \mid \text{Range}(k_1, k_2, b) \mid \text{Bind}(x) \mid \text{Struct}(n, \vec{(f, x)})$（[hir.rs:133-153](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）。
+**定义 3.6（HIR 模式）**。$\text{Pat}_H ::= \text{EV}(n, v, fb?, \vec{(f, x)}) \mid \text{Wild} \mid \text{Lit}(l) \mid \text{Tup}(\vec{p}_H) \mid \text{Range}(k_1, k_2, b) \mid \text{Bind}(x) \mid \text{Struct}(n, \vec{(f, x)})$（[hir.rs:133-153](../../tenth/src/hir/hir.rs)）。
 
 ### 3.3 差异的逐一分析
 
@@ -139,14 +139,14 @@ $$
 
 | # | 变换点 | AST 表示 | HIR 表示 | 类型 | 源码位置 |
 |---|--------|---------|---------|------|---------|
-| D1 | Assign target | `Box<Expr>` | `String` | 显式拒绝 | [lower_expr.rs:520-548](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
-| D2 | AssignOp target | `Box<Expr>` | `String`（无 FldAssignOp） | 显式拒绝 | [lower_expr.rs:550-569](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
-| D3 | StructLiteral generics | `Vec<TypeAnnotation>` | **丢弃**（`generics: _`） | **静默丢失** | [lower_expr.rs:571](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
-| D4 | is_pub 可见性 | `bool`（Function/StructDef/Impl） | **丢弃**（HIR 无对应字段） | **静默丢失** | [ast.rs:246,261,272](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs) vs [hir.rs:226-234](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs) |
+| D1 | Assign target | `Box<Expr>` | `String` | 显式拒绝 | [lower_expr.rs:520-548](../../tenth/src/hir/lower/lower_expr.rs) |
+| D2 | AssignOp target | `Box<Expr>` | `String`（无 FldAssignOp） | 显式拒绝 | [lower_expr.rs:550-569](../../tenth/src/hir/lower/lower_expr.rs) |
+| D3 | StructLiteral generics | `Vec<TypeAnnotation>` | **丢弃**（`generics: _`） | **静默丢失** | [lower_expr.rs:571](../../tenth/src/hir/lower/lower_expr.rs) |
+| D4 | is_pub 可见性 | `bool`（Function/StructDef/Impl） | **丢弃**（HIR 无对应字段） | **静默丢失** | [ast.rs:246,261,272](../../tenth/src/parser/ast.rs) vs [hir.rs:226-234](../../tenth/src/hir/hir.rs) |
 | D5 | Ident → String | `Ident { name, span }` | `String` | 信息缩减（span 丢失） | 全局 |
-| D6 | Index 类型重命名 | `Vec<IndexExpr>` | `Vec<Index>` | **结构同构**（无信息损失） | [lower_expr.rs:772-782](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
-| D7 | Match tuple_fields → tuple_binds | `Vec<String>` | `Vec<(String, String)>`（合成字段名 `_i`） | **信息增加** | [lower_expr.rs:786-794](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
-| D8 | GenericCall 重写 | `GenericCall{func, generics, args}` | `Call{func: Var(mangled_name), args, ret_ty}` | 部分损失（类型参数编码到 mangling 字符串中） | [lower_expr.rs:237-307](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
+| D6 | Index 类型重命名 | `Vec<IndexExpr>` | `Vec<Index>` | **结构同构**（无信息损失） | [lower_expr.rs:772-782](../../tenth/src/hir/lower/lower_expr.rs) |
+| D7 | Match tuple_fields → tuple_binds | `Vec<String>` | `Vec<(String, String)>`（合成字段名 `_i`） | **信息增加** | [lower_expr.rs:786-794](../../tenth/src/hir/lower/lower_expr.rs) |
+| D8 | GenericCall 重写 | `GenericCall{func, generics, args}` | `Call{func: Var(mangled_name), args, ret_ty}` | 部分损失（类型参数编码到 mangling 字符串中） | [lower_expr.rs:237-307](../../tenth/src/hir/lower/lower_expr.rs) |
 
 **注**：任务描述提及"Match arms 顺序与 pattern 表示变化"——经源码审查，**arms 顺序在 AST 与 HIR 中均按源码顺序保留**（无重排），**pattern 表示变化仅为 D7（tuple_fields → tuple_binds，信息增加）**，不存在信息损失。任务描述的预期与实际源码存在偏差，本文以源码为准。
 
@@ -216,34 +216,34 @@ $$
 
 **证明**。对 $a$ 的结构作归纳。归纳假设：对所有子表达式 $a_i$，若 $h_i = \text{lower}(a_i)$ 成功，则 $a_i \sim_H h_i$。
 
-**情况 1：$a = \text{Lit}(l)$**。$h = \text{Lit}(l)$（[lower_expr.rs:18-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)），字面量值不变。$\text{obs}(\Sigma, l) = l = \text{obs}(\Sigma, l)$。✓
+**情况 1：$a = \text{Lit}(l)$**。$h = \text{Lit}(l)$（[lower_expr.rs:18-25](../../tenth/src/hir/lower/lower_expr.rs)），字面量值不变。$\text{obs}(\Sigma, l) = l = \text{obs}(\Sigma, l)$。✓
 
-**情况 2：$a = \text{Var}(x)$**。$h = \text{Var}(x)$（[lower_expr.rs:28-101](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)），变量名不变。若 $x$ 在作用域内，$\rho(x)$ 在 AST 与 HIR 求值中相同。✓
+**情况 2：$a = \text{Var}(x)$**。$h = \text{Var}(x)$（[lower_expr.rs:28-101](../../tenth/src/hir/lower/lower_expr.rs)），变量名不变。若 $x$ 在作用域内，$\rho(x)$ 在 AST 与 HIR 求值中相同。✓
 
-**情况 3：$a = \text{Bin}(op, e_1, e_2)$**。$h = \text{Bin}(op', h_1, h_2, \tau)$，其中 $op' = \text{lower\_binop}(op)$（[lower_expr.rs:109](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)），$h_i = \text{lower}(e_i)$。`lower_binop` 是双射（[mod.rs:156-166](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/mod.rs)），故 $op' \equiv op$。由归纳假设 $e_i \sim_H h_i$，故 $\text{Bin}(op, e_1, e_2) \sim_H \text{Bin}(op, h_1, h_2, \tau)$——$\tau$ 字段不影响求值（仅用于后端代码生成）。✓
+**情况 3：$a = \text{Bin}(op, e_1, e_2)$**。$h = \text{Bin}(op', h_1, h_2, \tau)$，其中 $op' = \text{lower\_binop}(op)$（[lower_expr.rs:109](../../tenth/src/hir/lower/lower_expr.rs)），$h_i = \text{lower}(e_i)$。`lower_binop` 是双射（[mod.rs:156-166](../../tenth/src/hir/lower/mod.rs)），故 $op' \equiv op$。由归纳假设 $e_i \sim_H h_i$，故 $\text{Bin}(op, e_1, e_2) \sim_H \text{Bin}(op, h_1, h_2, \tau)$——$\tau$ 字段不影响求值（仅用于后端代码生成）。✓
 
-**情况 4：$a = \text{Assign}(e_{tgt}, e_v)$**。分四子情况（[lower_expr.rs:520-548](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）：
+**情况 4：$a = \text{Assign}(e_{tgt}, e_v)$**。分四子情况（[lower_expr.rs:520-548](../../tenth/src/hir/lower/lower_expr.rs)）：
 
 - 4a：$e_{tgt} = \text{Var}(x)$。$h = \text{Assign}(x, h_v)$。AST 的 `Assign-Var` 规则与 HIR 的 `Assign-Var-H` 规则相同。✓
 - 4b：$e_{tgt} = \text{Deref}(e_p)$。$h = \text{DerefAssign}(h_p, h_v)$。AST 的 `Assign-Deref` 与 HIR 的 `DerefAssign-H` 相同。✓
 - 4c：$e_{tgt} = \text{Fld}(e_t, f)$。$h = \text{FldAssign}(h_t, f, h_v)$。AST 的 `Assign-Field` 与 HIR 的 `FldAssign-H` 相同。✓
 - 4d：$e_{tgt}$ 为其他形式（如 $\text{Idx}$、$\text{Call}$）。lowering 返回 `Err(ParseError("invalid assignment target"))`——**不在 L1 范围内**（$a \notin \mathcal{R}$），由 L2 处理。
 
-**情况 5：$a = \text{Idx}(e_t, \vec{ix}_A)$**。$h = \text{Idx}(h_t, \vec{ix}_H)$，其中 $\vec{ix}_H = \text{lower\_index}(\vec{ix}_A)$（[lower_expr.rs:368-376, 772-782](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）。`lower_index` 是结构同构（D6）：`Single → Single`、`Range → Range`、`Colon → Colon`，递归调用 `lower_expr` 处理内部表达式。由归纳假设，内部表达式语义等价，故整体语义等价。✓
+**情况 5：$a = \text{Idx}(e_t, \vec{ix}_A)$**。$h = \text{Idx}(h_t, \vec{ix}_H)$，其中 $\vec{ix}_H = \text{lower\_index}(\vec{ix}_A)$（[lower_expr.rs:368-376, 772-782](../../tenth/src/hir/lower/lower_expr.rs)）。`lower_index` 是结构同构（D6）：`Single → Single`、`Range → Range`、`Colon → Colon`，递归调用 `lower_expr` 处理内部表达式。由归纳假设，内部表达式语义等价，故整体语义等价。✓
 
-**情况 6：$a = \text{Match}(e_s, \vec{arm})$**。$h = \text{Match}(h_s, \vec{arm}_H)$。arms 顺序保留（[lower_expr.rs:657-679](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) 用 `arms.iter()` 顺序映射）。每个 arm 的 pattern 经 `lower_pattern`（[lower_expr.rs:784-829](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）转换：
+**情况 6：$a = \text{Match}(e_s, \vec{arm})$**。$h = \text{Match}(h_s, \vec{arm}_H)$。arms 顺序保留（[lower_expr.rs:657-679](../../tenth/src/hir/lower/lower_expr.rs) 用 `arms.iter()` 顺序映射）。每个 arm 的 pattern 经 `lower_pattern`（[lower_expr.rs:784-829](../../tenth/src/hir/lower/lower_expr.rs)）转换：
 
 - `EnumVariant`：`tuple_fields: Vec<String>` → `tuple_binds: Vec<(String, String)>`，合成字段名 `_i`。这是**信息增加**（D7）——合成的字段名不改变匹配语义，仅用于后端字段访问。模式匹配语义由 arm 顺序与 pattern 结构决定，二者均保留。✓
 - 其他 pattern 变体：1:1 映射。✓
 
-**情况 7：$a = \text{SLit}(n, \vec{\tau}_A, \vec{(f, e)}, b)$**。$h = \text{SLit}(n, \vec{(f, h)}, b)$。**注意**：$\vec{\tau}_A$ 被丢弃（D3）。但 $\vec{\tau}_A$ 仅影响**类型注解**，不影响结构体字段的**运行时值**——字段值 $\vec{e}$ 已 lowering 为 $\vec{h}$，运行时按字段名访问。若 $n$ 是非泛型结构体，$\vec{\tau}_A$ 本就为空，无损失。若 $n$ 是泛型结构体，$\vec{\tau}_A$ 的丢弃**确实损失类型信息**，但当前 Tenth 运行时对泛型结构体的字段布局不做类型特化（[lower_stmt.rs:92-101](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_stmt.rs) 仅存储定义，不实例化），故可观察行为不变。**此为 D3 静默丢失的语义保持辩护，但削弱了未来扩展性**——详见 §6.2。✓（在当前运行时语义下）
+**情况 7：$a = \text{SLit}(n, \vec{\tau}_A, \vec{(f, e)}, b)$**。$h = \text{SLit}(n, \vec{(f, h)}, b)$。**注意**：$\vec{\tau}_A$ 被丢弃（D3）。但 $\vec{\tau}_A$ 仅影响**类型注解**，不影响结构体字段的**运行时值**——字段值 $\vec{e}$ 已 lowering 为 $\vec{h}$，运行时按字段名访问。若 $n$ 是非泛型结构体，$\vec{\tau}_A$ 本就为空，无损失。若 $n$ 是泛型结构体，$\vec{\tau}_A$ 的丢弃**确实损失类型信息**，但当前 Tenth 运行时对泛型结构体的字段布局不做类型特化（[lower_stmt.rs:92-101](../../tenth/src/hir/lower/lower_stmt.rs) 仅存储定义，不实例化），故可观察行为不变。**此为 D3 静默丢失的语义保持辩护，但削弱了未来扩展性**——详见 §6.2。✓（在当前运行时语义下）
 
 **情况 8：$a = \text{Call}(e_f, \vec{e})$**。$h = \text{Call}(h_f, \vec{h}, \tau_{ret})$。函数调用语义由函数体决定，参数顺序与值不变。✓
 
-**情况 9：$a = \text{GCall}(e_f, \vec{\tau}_A, \vec{e})$**。分两子情况（[lower_expr.rs:176-308](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）：
+**情况 9：$a = \text{GCall}(e_f, \vec{\tau}_A, \vec{e})$**。分两子情况（[lower_expr.rs:176-308](../../tenth/src/hir/lower/lower_expr.rs)）：
 
 - 9a：native generic ctor（`randn`/`zeros`/`ones`/`rand`/`tensor`/`tensor_from_vec`）。HIR 重写为 `Call(Var(runtime_name), args, ret_ty)`，其中 `runtime_name` 由 `(func_name, dtype)` 决定（如 `randn_f32`）。类型参数 $\tau_A$ 编码到 `runtime_name` 字符串中（D8）。运行时按 `runtime_name` 分发，语义等价。✓
-- 9b：用户泛型函数。HIR 生成 mangled 函数定义 `func_T1_T2` 并重写为 `Call(Var(mangled), args, ret_ty)`。mangled name 唯一编码类型参数，运行时调用实例化的函数体。由 T18（[T18-泛型实例化作为类型替换.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T18-泛型实例化作为类型替换.md)）的实例化等价性，语义保持。✓
+- 9b：用户泛型函数。HIR 生成 mangled 函数定义 `func_T1_T2` 并重写为 `Call(Var(mangled), args, ret_ty)`。mangled name 唯一编码类型参数，运行时调用实例化的函数体。由 T18（[T18-泛型实例化作为类型替换.md](T18-泛型实例化作为类型替换.md)）的实例化等价性，语义保持。✓
 
 **情况 10：$a = \text{Closure}(\vec{(x, \tau_A?)}, e)$**。$h = \text{Clos}(\vec{(x, \tau)}, h, \vec{c})$，其中 $\tau = \text{Unknown}$ 当 $\tau_A$ 缺失，$\vec{c}$ 是 `free_vars_in` 计算的自由变量捕获列表。AST 闭包在运行时也需捕获自由变量（解释器/VM 实现一致），HIR 显式列出捕获不改变语义。✓
 
@@ -272,17 +272,17 @@ $$
 
 **证明**。逐一审查 `lower_expr` 与 `lower_stmt` 中所有 `return Err(...)` 点：
 
-1. **[lower_expr.rs:541-546](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)**：`Assign` 的 target 匹配 `_` 分支。AST 允许任意 `Expr` 作为 target；HIR `Assign` target 为 `String`，`DerefAssign`/`FldAssign` 已专门处理 `Deref`/`Field`。其余 `ExprKind`（`Index`、`Call`、`Binary`、`Match`、...）无对应 HIR 变体。**拒绝正确**。
+1. **[lower_expr.rs:541-546](../../tenth/src/hir/lower/lower_expr.rs)**：`Assign` 的 target 匹配 `_` 分支。AST 允许任意 `Expr` 作为 target；HIR `Assign` target 为 `String`，`DerefAssign`/`FldAssign` 已专门处理 `Deref`/`Field`。其余 `ExprKind`（`Index`、`Call`、`Binary`、`Match`、...）无对应 HIR 变体。**拒绝正确**。
 
-2. **[lower_expr.rs:563-568](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)**：`AssignOp` 的 target 匹配 `_` 分支。HIR `AssignOp` target 为 `String`，`DerefAssignOp` 处理 `Deref`。无 `FieldAssignOp`、`IndexAssignOp`。**拒绝正确**。
+2. **[lower_expr.rs:563-568](../../tenth/src/hir/lower/lower_expr.rs)**：`AssignOp` 的 target 匹配 `_` 分支。HIR `AssignOp` target 为 `String`，`DerefAssignOp` 处理 `Deref`。无 `FieldAssignOp`、`IndexAssignOp`。**拒绝正确**。
 
-3. **[lower_expr.rs:179-186](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)**：`GenericCall` 的 `func` 不是 `Ident`。HIR GenericCall 要求具名函数（mangling 需要函数名）。**拒绝正确**。
+3. **[lower_expr.rs:179-186](../../tenth/src/hir/lower/lower_expr.rs)**：`GenericCall` 的 `func` 不是 `Ident`。HIR GenericCall 要求具名函数（mangling 需要函数名）。**拒绝正确**。
 
-4. **[lower_expr.rs:198-219](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)**：native generic ctor 的类型参数不为单一 `BaseType`。运行时 `randn_f32` 等需要具体 dtype。**拒绝正确**。
+4. **[lower_expr.rs:198-219](../../tenth/src/hir/lower/lower_expr.rs)**：native generic ctor 的类型参数不为单一 `BaseType`。运行时 `randn_f32` 等需要具体 dtype。**拒绝正确**。
 
-5. **[lower_expr.rs:84-89](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)**：未定义变量。HIR 无法解析引用。**拒绝正确**。
+5. **[lower_expr.rs:84-89](../../tenth/src/hir/lower/lower_expr.rs)**：未定义变量。HIR 无法解析引用。**拒绝正确**。
 
-6. **[lower_expr.rs:253-258](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)**：未定义泛型函数。**拒绝正确**。
+6. **[lower_expr.rs:253-258](../../tenth/src/hir/lower/lower_expr.rs)**：未定义泛型函数。**拒绝正确**。
 
 7. 借用检查与 shape 检查的拒绝由 T19 与 T16 处理，不在本文范围但**不矛盾**。
 
@@ -320,8 +320,8 @@ $$
 
 | # | 静默丢失 | 影响的编译期保证 | 运行时影响 | 源码位置 |
 |---|---------|----------------|-----------|---------|
-| L4-1 | `StructLiteral.generics` 丢弃（D3） | 泛型结构体实例化的类型参数不可追踪 | 无（运行时不实例化泛型结构体） | [lower_expr.rs:571](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
-| L4-2 | `is_pub` 可见性丢弃（D4） | 跨模块可见性检查无法执行 | 无（运行时不检查可见性） | [ast.rs:246,261,272](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs) |
+| L4-1 | `StructLiteral.generics` 丢弃（D3） | 泛型结构体实例化的类型参数不可追踪 | 无（运行时不实例化泛型结构体） | [lower_expr.rs:571](../../tenth/src/hir/lower/lower_expr.rs) |
+| L4-2 | `is_pub` 可见性丢弃（D4） | 跨模块可见性检查无法执行 | 无（运行时不检查可见性） | [ast.rs:246,261,272](../../tenth/src/parser/ast.rs) |
 
 **证明（构造性）**。
 
@@ -333,9 +333,9 @@ let p1 = Pair<f32>{ a: 1.0, b: 2.0 };
 let p2 = Pair<f64>{ a: 1.0, b: 2.0 };
 ```
 
-经 parser（[parser.rs:241](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)），$p_1, p_2$ 的 AST `StructLiteral.generics` 分别为 `[Base(F32)]`、`[Base(F64)]`。经 lowering（[lower_expr.rs:571](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) `generics: _`），$p_1, p_2$ 的 HIR 完全相同（`SLit("Pair", [("a", ...), ("b", ...)], false)`）。**两个语义不同的 AST 程序产生相同的 HIR**——这是静默丢失。
+经 parser（[parser.rs:241](../../tenth/src/parser/parser.rs)），$p_1, p_2$ 的 AST `StructLiteral.generics` 分别为 `[Base(F32)]`、`[Base(F64)]`。经 lowering（[lower_expr.rs:571](../../tenth/src/hir/lower/lower_expr.rs) `generics: _`），$p_1, p_2$ 的 HIR 完全相同（`SLit("Pair", [("a", ...), ("b", ...)], false)`）。**两个语义不同的 AST 程序产生相同的 HIR**——这是静默丢失。
 
-**运行时影响**：当前 Tenth 运行时对泛型结构体不实例化（[lower_stmt.rs:92-101](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_stmt.rs) 仅存储 `HirGenericStruct` 定义，不生成特化布局），字段访问按字段名偏移，dtype 信息从字段值动态推断。故 $p_1, p_2$ 的运行时行为相同（都是包含两个浮点的结构体）。
+**运行时影响**：当前 Tenth 运行时对泛型结构体不实例化（[lower_stmt.rs:92-101](../../tenth/src/hir/lower/lower_stmt.rs) 仅存储 `HirGenericStruct` 定义，不生成特化布局），字段访问按字段名偏移，dtype 信息从字段值动态推断。故 $p_1, p_2$ 的运行时行为相同（都是包含两个浮点的结构体）。
 
 **编译期影响**：HIR 无法区分 $p_1, p_2$ 的类型，导致：
 - 后续 `p1.a + 1.0`（若 `1.0` 默认 f64）的 dtype 提升无法基于 `p1` 的泛型实例化推断；
@@ -355,7 +355,7 @@ api();
 helper();  // 应被拒绝（helper 非 pub），但 HIR 无法判断
 ```
 
-AST `ItemKind::Function` 的 `is_pub: false` for `helper`、`is_pub: true` for `api`。经 lowering，HIR `HirFnDef`（[hir.rs:226-234](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）**无 `is_pub` 字段**，二者仅函数名不同。`use m::*`（[lower_stmt.rs:307-368](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_stmt.rs)）导入模块内**所有**函数，不区分 `pub`/非 `pub`。故 `helper()` 在 HIR 层可调用——可见性检查失效。
+AST `ItemKind::Function` 的 `is_pub: false` for `helper`、`is_pub: true` for `api`。经 lowering，HIR `HirFnDef`（[hir.rs:226-234](../../tenth/src/hir/hir.rs)）**无 `is_pub` 字段**，二者仅函数名不同。`use m::*`（[lower_stmt.rs:307-368](../../tenth/src/hir/lower/lower_stmt.rs)）导入模块内**所有**函数，不区分 `pub`/非 `pub`。故 `helper()` 在 HIR 层可调用——可见性检查失效。
 
 **运行时影响**：无（运行时不检查可见性，函数调用按名字分发）。
 
@@ -419,15 +419,15 @@ fn validate(a: AST, h: HIR) -> Result<(), VCFailure> {
 
 ### 6.1 D1：Assign target 收紧
 
-**AST**：`Assign { target: Box<Expr>, value: Box<Expr> }`（[ast.rs:117-120](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）。target 可以是任意 `Expr`——`x`、`*p`、`s.f`、`x[i]`、`f().g` 等均合法。
+**AST**：`Assign { target: Box<Expr>, value: Box<Expr> }`（[ast.rs:117-120](../../tenth/src/parser/ast.rs)）。target 可以是任意 `Expr`——`x`、`*p`、`s.f`、`x[i]`、`f().g` 等均合法。
 
-**HIR**：拆分为四个变体（[hir.rs:79-87, 105-113, 118-122](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）：
+**HIR**：拆分为四个变体（[hir.rs:79-87, 105-113, 118-122](../../tenth/src/hir/hir.rs)）：
 - `Assign { target: String, ... }`——变量赋值
 - `DerefAssign { target: Box<HirExpr>, ... }`——解引用赋值
 - `FldAssign { target: Box<HirExpr>, field: String, ... }`——字段赋值
 - **缺失**：`IndexAssign`、`CallAssign`、`BinaryAssign` 等
 
-**Lowering 行为**（[lower_expr.rs:520-548](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）：
+**Lowering 行为**（[lower_expr.rs:520-548](../../tenth/src/hir/lower/lower_expr.rs)）：
 - `target = Var(x)` → `Assign(x, v)` ✓
 - `target = Deref(p)` → `DerefAssign(p, v)` ✓
 - `target = Field(t, f)` → `FldAssign(t, f, v)` ✓
@@ -442,14 +442,14 @@ fn validate(a: AST, h: HIR) -> Result<(), VCFailure> {
 
 ### 6.2 D2：AssignOp target 收紧
 
-**AST**：`AssignOp { target: Box<Expr>, op, value }`（[ast.rs:121-125](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）。
+**AST**：`AssignOp { target: Box<Expr>, op, value }`（[ast.rs:121-125](../../tenth/src/parser/ast.rs)）。
 
 **HIR**：拆分为两个变体：
 - `AssignOp { target: String, op, value }`——变量复合赋值
 - `DerefAssignOp { target: Box<HirExpr>, op, value }`——解引用复合赋值
 - **缺失**：`FldAssignOp`、`IndexAssignOp`
 
-**Lowering 行为**（[lower_expr.rs:550-569](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）：
+**Lowering 行为**（[lower_expr.rs:550-569](../../tenth/src/hir/lower/lower_expr.rs)）：
 - `target = Var(x)` → `AssignOp(x, op, v)` ✓
 - `target = Deref(p)` → `DerefAssignOp(p, op, v)` ✓
 - 其他 → `Err(ParseError("invalid assignment target"))` ✗
@@ -462,13 +462,13 @@ fn validate(a: AST, h: HIR) -> Result<(), VCFailure> {
 
 ### 6.3 D3：StructLiteral generics 静默丢弃（**静默丢失**）
 
-**AST**：`StructLiteral { name, generics: Vec<TypeAnnotation>, fields, use_defaults }`（[ast.rs:126-131](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）。
+**AST**：`StructLiteral { name, generics: Vec<TypeAnnotation>, fields, use_defaults }`（[ast.rs:126-131](../../tenth/src/parser/ast.rs)）。
 
-**HIR**：`StructLiteral { name: String, fields: Vec<(String, HirExpr)>, has_default: bool }`（[hir.rs:88-92](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）——**无 `generics` 字段**。
+**HIR**：`StructLiteral { name: String, fields: Vec<(String, HirExpr)>, has_default: bool }`（[hir.rs:88-92](../../tenth/src/hir/hir.rs)）——**无 `generics` 字段**。
 
-**Lowering 行为**（[lower_expr.rs:571](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）：`generics: _` 显式丢弃。
+**Lowering 行为**（[lower_expr.rs:571](../../tenth/src/hir/lower/lower_expr.rs)）：`generics: _` 显式丢弃。
 
-**类型构造**（[lower_expr.rs:631](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）：
+**类型构造**（[lower_expr.rs:631](../../tenth/src/hir/lower/lower_expr.rs)）：
 ```rust
 let struct_ty = Type::from_annotation(&ast::TypeAnnotation::Named(
     ast::Ident { name: name.name.clone(), span: name.span.clone() }
@@ -487,14 +487,14 @@ let struct_ty = Type::from_annotation(&ast::TypeAnnotation::Named(
 
 ### 6.4 D4：is_pub 可见性静默丢弃（**静默丢失**）
 
-**AST**：`ItemKind::Function { ..., is_pub: bool }`、`StructDef { ..., is_pub: bool }`、`Impl { ..., is_pub: bool }`（[ast.rs:246, 261, 272](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）。
+**AST**：`ItemKind::Function { ..., is_pub: bool }`、`StructDef { ..., is_pub: bool }`、`Impl { ..., is_pub: bool }`（[ast.rs:246, 261, 272](../../tenth/src/parser/ast.rs)）。
 
-**HIR**：`HirFnDef`（[hir.rs:226-234](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）无 `is_pub` 字段；`HirProgram` 的 `structs`/`methods` 等也无可见性信息。
+**HIR**：`HirFnDef`（[hir.rs:226-234](../../tenth/src/hir/hir.rs)）无 `is_pub` 字段；`HirProgram` 的 `structs`/`methods` 等也无可见性信息。
 
-**Lowering 行为**：`is_pub` 字段在 [lower_stmt.rs:442-488](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_stmt.rs) 等位置被隐式忽略（`ItemKind::Function { name, generics, params, return_type, body, .. }` 的 `..` 包含 `is_pub`）。
+**Lowering 行为**：`is_pub` 字段在 [lower_stmt.rs:442-488](../../tenth/src/hir/lower/lower_stmt.rs) 等位置被隐式忽略（`ItemKind::Function { name, generics, params, return_type, body, .. }` 的 `..` 包含 `is_pub`）。
 
 **影响**：
-- `use m::*` 导入所有函数，不区分 `pub`/非 `pub`（[lower_stmt.rs:333-340](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_stmt.rs)）；
+- `use m::*` 导入所有函数，不区分 `pub`/非 `pub`（[lower_stmt.rs:333-340](../../tenth/src/hir/lower/lower_stmt.rs)）；
 - 模块封装性失效——非 `pub` 函数可被外部模块调用。
 
 **当前运行时影响**：无（运行时不检查可见性）。
@@ -503,17 +503,17 @@ let struct_ty = Type::from_annotation(&ast::TypeAnnotation::Named(
 
 ### 6.5 D5：Ident → String 信息缩减
 
-**AST**：`Ident { name: String, span: Span }`（[ast.rs:13-17](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）。
+**AST**：`Ident { name: String, span: Span }`（[ast.rs:13-17](../../tenth/src/parser/ast.rs)）。
 
 **HIR**：许多位置使用 `String` 而非保留 `Ident`（如 `Assign.target`、`Var(String)`、`Field.field`、`StructLiteral.name` 等）。
 
-**影响**：span 信息在标识符级别丢失，但父 `HirExpr` 仍携带 `span`（[hir.rs:159](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）。**这是调试信息的缩减，非语义丢失**——span 不影响程序行为，仅影响错误报告精度。
+**影响**：span 信息在标识符级别丢失，但父 `HirExpr` 仍携带 `span`（[hir.rs:159](../../tenth/src/hir/hir.rs)）。**这是调试信息的缩减，非语义丢失**——span 不影响程序行为，仅影响错误报告精度。
 
 **评估**：可接受。Rustc 通过 `HirId` 系统保留全 span，但代价是复杂的 ID 管理。Tenth 的简化方案牺牲了部分错误精度，换取 HIR 简洁性。
 
 ### 6.6 D6：Index 类型重命名（**结构同构，无信息损失**）
 
-**AST**：`IndexExpr`（[ast.rs:185-192](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）与 **HIR**：`Index`（[hir.rs:184-191](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）的三个变体完全对应：
+**AST**：`IndexExpr`（[ast.rs:185-192](../../tenth/src/parser/ast.rs)）与 **HIR**：`Index`（[hir.rs:184-191](../../tenth/src/hir/hir.rs)）的三个变体完全对应：
 
 | AST `IndexExpr` | HIR `Index` | 同构 |
 |-----------------|-------------|------|
@@ -521,17 +521,17 @@ let struct_ty = Type::from_annotation(&ast::TypeAnnotation::Named(
 | `Range { start: Option<Box<Expr>>, end: Option<Box<Expr>> }` | `Range { start: Option<Box<HirExpr>>, end: Option<Box<HirExpr>> }` | ✓ |
 | `Colon` | `Colon` | ✓ |
 
-**Lowering**（[lower_expr.rs:772-782](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）：1:1 映射，无信息损失。
+**Lowering**（[lower_expr.rs:772-782](../../tenth/src/hir/lower/lower_expr.rs)）：1:1 映射，无信息损失。
 
 **结论**：任务描述提及"Index 从 `Vec<IndexExpr>` 收紧为 `Vec<Index>`（结构变化）"——经审查，这是**类型重命名**而非结构变化。本文诚实纠正这一预期偏差。
 
 ### 6.7 D7：Match tuple_fields → tuple_binds（**信息增加**）
 
-**AST**：`Pattern::EnumVariant { ..., tuple_fields: Vec<String> }`（[ast.rs:159-164](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）——仅记录绑定名，不记录字段名。
+**AST**：`Pattern::EnumVariant { ..., tuple_fields: Vec<String> }`（[ast.rs:159-164](../../tenth/src/parser/ast.rs)）——仅记录绑定名，不记录字段名。
 
-**HIR**：`HirPattern::EnumVariant { ..., tuple_binds: Vec<(String, String)> }`（[hir.rs:134-141](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）——记录 `(field_name, bind_name)` 对，字段名合成为 `_0, _1, ...`。
+**HIR**：`HirPattern::EnumVariant { ..., tuple_binds: Vec<(String, String)> }`（[hir.rs:134-141](../../tenth/src/hir/hir.rs)）——记录 `(field_name, bind_name)` 对，字段名合成为 `_0, _1, ...`。
 
-**Lowering**（[lower_expr.rs:786-794](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）：
+**Lowering**（[lower_expr.rs:786-794](../../tenth/src/hir/lower/lower_expr.rs)）：
 ```rust
 tuple_binds: tuple_fields.iter().enumerate()
     .map(|(i, bind_name)| (format!("_{}", i), bind_name.clone()))
@@ -546,11 +546,11 @@ tuple_binds: tuple_fields.iter().enumerate()
 
 **AST**：`GenericCall { func: Box<Expr>, generics: Vec<TypeAnnotation>, args: Vec<Expr> }`。
 
-**HIR**：对 native generic ctor 与用户泛型函数，重写为 `Call { func: Var(mangled_name), args, ret_ty }`（[lower_expr.rs:237-307](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）。类型参数编码到 `mangled_name` 字符串中（如 `randn_f32`、`func_T1_T2`）。
+**HIR**：对 native generic ctor 与用户泛型函数，重写为 `Call { func: Var(mangled_name), args, ret_ty }`（[lower_expr.rs:237-307](../../tenth/src/hir/lower/lower_expr.rs)）。类型参数编码到 `mangled_name` 字符串中（如 `randn_f32`、`func_T1_T2`）。
 
 **影响**：
 - HIR `Call` 的 `func` 是 `Var(String)`，类型参数信息在字符串中，不是结构化的 `Vec<Type>`；
-- HIR 仍保留 `GenericCall` 变体（[hir.rs:31-36](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)），但实际 lowering 中**未使用**该变体（所有 generic call 都重写为 `Call`）。
+- HIR 仍保留 `GenericCall` 变体（[hir.rs:31-36](../../tenth/src/hir/hir.rs)），但实际 lowering 中**未使用**该变体（所有 generic call 都重写为 `Call`）。
 
 **部分损失**：类型参数以字符串形式保留（可解析恢复），但失去结构化表示。对后端代码生成无影响（按 mangled name 查找），但对 HIR 分析工具（如 shape 检查器）需解析 mangled name 才能恢复类型参数。
 
@@ -564,10 +564,10 @@ tuple_binds: tuple_fields.iter().enumerate()
 
 Tenth lowering 使用 Rust 的 `?` 操作符传播 `TenthResult<T>`。审查所有 `?` 点：
 
-- `self.lower_expr(left)?`（[lower_expr.rs:104-105](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）——子表达式 lowering 失败时传播；
-- `self.scope.check_use(&ident.name, &ident.span)?`（[lower_expr.rs:50](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）——使用已 move 的值时传播；
-- `Self::check_binary_shape_compat(...)?`（[lower_expr.rs:107](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）——shape 不兼容时传播；
-- `self.resolve_call_type(...)?`（[lower_expr.rs:148](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs)）——调用类型解析失败时传播；
+- `self.lower_expr(left)?`（[lower_expr.rs:104-105](../../tenth/src/hir/lower/lower_expr.rs)）——子表达式 lowering 失败时传播；
+- `self.scope.check_use(&ident.name, &ident.span)?`（[lower_expr.rs:50](../../tenth/src/hir/lower/lower_expr.rs)）——使用已 move 的值时传播；
+- `Self::check_binary_shape_compat(...)?`（[lower_expr.rs:107](../../tenth/src/hir/lower/lower_expr.rs)）——shape 不兼容时传播；
+- `self.resolve_call_type(...)?`（[lower_expr.rs:148](../../tenth/src/hir/lower/lower_expr.rs)）——调用类型解析失败时传播；
 - 类似地，`lower_stmt.rs` 中所有 `?` 点均对应明确的错误条件。
 
 **正确性**：`?` 传播保证任何子表达式的错误立即终止 lowering，不产生部分 HIR。这与 L2 的"拒绝的正确性"一致——错误要么在子表达式层处理，要么在当前层处理，不会"静默通过"。
@@ -580,13 +580,13 @@ Tenth lowering 使用 Rust 的 `?` 操作符传播 `TenthResult<T>`。审查所�
 
 | # | 位置 | 触发条件 | 错误类型 |
 |---|------|---------|---------|
-| R1 | [lower_expr.rs:84-89](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) | 未定义变量 | TypeError |
-| R2 | [lower_expr.rs:179-186](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) | GenericCall func 非 Ident | TypeError |
-| R3 | [lower_expr.rs:198-219](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) | native generic ctor 类型参数非法 | TypeError |
-| R4 | [lower_expr.rs:253-258](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) | 未定义泛型函数 | TypeError |
-| R5 | [lower_expr.rs:541-546](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) | Assign target 非法 | ParseError |
-| R6 | [lower_expr.rs:563-568](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) | AssignOp target 非法 | ParseError |
-| R7 | [lower_stmt.rs:235-243](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_stmt.rs) | trait 实现缺少方法 | TypeError |
+| R1 | [lower_expr.rs:84-89](../../tenth/src/hir/lower/lower_expr.rs) | 未定义变量 | TypeError |
+| R2 | [lower_expr.rs:179-186](../../tenth/src/hir/lower/lower_expr.rs) | GenericCall func 非 Ident | TypeError |
+| R3 | [lower_expr.rs:198-219](../../tenth/src/hir/lower/lower_expr.rs) | native generic ctor 类型参数非法 | TypeError |
+| R4 | [lower_expr.rs:253-258](../../tenth/src/hir/lower/lower_expr.rs) | 未定义泛型函数 | TypeError |
+| R5 | [lower_expr.rs:541-546](../../tenth/src/hir/lower/lower_expr.rs) | Assign target 非法 | ParseError |
+| R6 | [lower_expr.rs:563-568](../../tenth/src/hir/lower/lower_expr.rs) | AssignOp target 非法 | ParseError |
+| R7 | [lower_stmt.rs:235-243](../../tenth/src/hir/lower/lower_stmt.rs) | trait 实现缺少方法 | TypeError |
 | R8 | scope.rs:58-65, 67-79, 81-97 | 借用冲突、use of moved value | TypeError |
 
 加上 `?` 传播的隐式拒绝点（来自 T16 的 shape 检查、T19 的借用检查），覆盖了所有 HIR 表达力不足的情形。
@@ -619,7 +619,7 @@ Tenth lowering 使用 Rust 的 `?` 操作符传播 `TenthResult<T>`。审查所�
 
 - 在 lowering 中检测 `StructLiteral` 带 `generics` 时发出 warning；
 - 在 `use m::*` 导入非 `pub` 函数时发出 warning；
-- 将 warning 纳入 `HirProgram.warnings`（[hir.rs:257](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/hir.rs)）。
+- 将 warning 纳入 `HirProgram.warnings`（[hir.rs:257](../../tenth/src/hir/hir.rs)）。
 
 ### 8.4 扩展审查范围
 
@@ -627,7 +627,7 @@ Tenth lowering 使用 Rust 的 `?` 操作符传播 `TenthResult<T>`。审查所�
 
 ### 8.5 与 tenthc 的同步
 
-T12（[T12-双侧编译器语义等价性.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T12-双侧编译器语义等价性.md)）发现 tenthc 侧缺失多项 shape 检查。本文的语义保持证明针对 Rust 母编译器；tenthc 侧的 lowering 是否保持语义需单独验证（未来工作）。
+T12（[T12-双侧编译器语义等价性.md](T12-双侧编译器语义等价性.md)）发现 tenthc 侧缺失多项 shape 检查。本文的语义保持证明针对 Rust 母编译器；tenthc 侧的 lowering 是否保持语义需单独验证（未来工作）。
 
 ---
 
@@ -703,17 +703,17 @@ L1 的 $\phi_4$ 依赖 T16 的 Subject Reduction。若 T16 的证明有漏洞（
 
 [7] M. M. Chakravarty et al. "Associated Type Synonym." *WGP'05*, ACM, 2005.
 
-[8] Tenth 项目. "工作规范 v1.1." [工作规范.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/.trae/rules/工作规范.md).
+[8] Tenth 项目. "工作规范 v1.1." [工作规范.md](../../.agents/rules/工作规范.md).
 
-[9] Tenth 数理部. "T16-双向类型重建." [T16-双向类型重建.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T16-双向类型重建.md).
+[9] Tenth 数理部. "T16-双向类型重建." [T16-双向类型重建.md](T16-双向类型重建.md).
 
-[10] Tenth 数理部. "T12-双侧编译器语义等价性." [T12-双侧编译器语义等价性.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T12-双侧编译器语义等价性.md).
+[10] Tenth 数理部. "T12-双侧编译器语义等价性." [T12-双侧编译器语义等价性.md](T12-双侧编译器语义等价性.md).
 
-[11] Tenth 数理部. "T18-泛型实例化作为类型替换." [T18-泛型实例化作为类型替换.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T18-泛型实例化作为类型替换.md).
+[11] Tenth 数理部. "T18-泛型实例化作为类型替换." [T18-泛型实例化作为类型替换.md](T18-泛型实例化作为类型替换.md).
 
-[12] Tenth 数理部. "T19-语句粒度借用检查." [T19-语句粒度借用检查.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T19-语句粒度借用检查.md).
+[12] Tenth 数理部. "T19-语句粒度借用检查." [T19-语句粒度借用检查.md](T19-语句粒度借用检查.md).
 
-[13] Tenth 数理部. "T9-JIT特化语义保持证明." [T9-JIT特化语义保持证明.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T9-JIT特化语义保持证明.md).
+[13] Tenth 数理部. "T9-JIT特化语义保持证明." [T9-JIT特化语义保持证明.md](T9-JIT特化语义保持证明.md).
 
 ---
 
@@ -721,14 +721,14 @@ L1 的 $\phi_4$ 依赖 T16 的 Subject Reduction。若 T16 的证明有漏洞（
 
 | 编号 | 变换点 | 类型 | 定理归属 | 源码位置 |
 |------|--------|------|---------|---------|
-| D1 | Assign target 收紧 | 显式拒绝 | L2、L3 (C1) | [lower_expr.rs:520-548](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
-| D2 | AssignOp target 收紧 | 显式拒绝 | L2、L3 (C2) | [lower_expr.rs:550-569](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
-| D3 | StructLiteral.generics 丢弃 | **静默丢失** | L4-1 | [lower_expr.rs:571](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
-| D4 | is_pub 可见性丢弃 | **静默丢失** | L4-2 | [ast.rs:246,261,272](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs) |
+| D1 | Assign target 收紧 | 显式拒绝 | L2、L3 (C1) | [lower_expr.rs:520-548](../../tenth/src/hir/lower/lower_expr.rs) |
+| D2 | AssignOp target 收紧 | 显式拒绝 | L2、L3 (C2) | [lower_expr.rs:550-569](../../tenth/src/hir/lower/lower_expr.rs) |
+| D3 | StructLiteral.generics 丢弃 | **静默丢失** | L4-1 | [lower_expr.rs:571](../../tenth/src/hir/lower/lower_expr.rs) |
+| D4 | is_pub 可见性丢弃 | **静默丢失** | L4-2 | [ast.rs:246,261,272](../../tenth/src/parser/ast.rs) |
 | D5 | Ident → String (span 丢失) | 信息缩减（非语义） | — | 全局 |
-| D6 | Index 类型重命名 | 结构同构 | — | [lower_expr.rs:772-782](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
-| D7 | Match tuple_fields → tuple_binds | 信息增加 | — | [lower_expr.rs:786-794](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
-| D8 | GenericCall 重写为 Call+mangled | 部分损失（可恢复） | — | [lower_expr.rs:237-307](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) |
+| D6 | Index 类型重命名 | 结构同构 | — | [lower_expr.rs:772-782](../../tenth/src/hir/lower/lower_expr.rs) |
+| D7 | Match tuple_fields → tuple_binds | 信息增加 | — | [lower_expr.rs:786-794](../../tenth/src/hir/lower/lower_expr.rs) |
+| D8 | GenericCall 重写为 Call+mangled | 部分损失（可恢复） | — | [lower_expr.rs:237-307](../../tenth/src/hir/lower/lower_expr.rs) |
 
 ## 附录 B：主定理索引
 
@@ -744,10 +744,10 @@ L1 的 $\phi_4$ 依赖 T16 的 Subject Reduction。若 T16 的证明有漏洞（
 
 | 本文章节 | 对应文档 |
 |---------|---------|
-| §3 (AST/HIR 形式化) | [CODE_WIKI.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/CODE_WIKI.md) 模块详解 |
-| §5.4 (L4 静默丢失) | [AUDIT.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/AUDIT.md) 缺陷登记（建议新增条目） |
-| §6 (有损变换分析) | [能力梳理/能力全梳理.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/能力梳理/能力全梳理.md) 状态标记 |
-| §7 (工程实现) | [MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md) 变更记录 |
+| §3 (AST/HIR 形式化) | [CODE_WIKI.md](../../CODE_WIKI.md) 模块详解 |
+| §5.4 (L4 静默丢失) | [AUDIT.md](../../AUDIT.md) 缺陷登记（建议新增条目） |
+| §6 (有损变换分析) | [能力梳理/能力全梳理.md](../../能力梳理/能力全梳理.md) 状态标记 |
+| §7 (工程实现) | [MEMO.md](../../MEMO.md) 变更记录 |
 | §9 (局限) | T16 §9、T12 §9 的局限体系 |
 
 ---

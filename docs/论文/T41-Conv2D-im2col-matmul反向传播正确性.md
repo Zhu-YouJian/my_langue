@@ -108,7 +108,7 @@ $$k = (c \cdot k_H + kh) \cdot k_W + kw$$
 则：
 $$\Phi(X)[m(n,h_i,w_i),\ k(c,kh,kw)] = \begin{cases} X[n, c,\ h_i \cdot S + kh - P,\ w_i \cdot S + kw - P] & \text{若 } 0 \le h_i S + kh - P < H \text{ 且 } 0 \le w_i S + kw - P < W \\ 0 & \text{否则（padding 区）} \end{cases}$$
 
-> **实现对应**：见 [tensor.rs L1210-L1277 im2col](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)。实现中 `ih = hi * stride + kh`，`iw = wi * stride + kw`，条件 `ih >= pad && ih < h + pad` 等价于 $0 \le h_i S + kh - P < H$，越界时 push 0.0。索引 `((ni * c + ci) * h + ih_adj) * w + iw_adj` 正是 $X[n, c, ih-P, iw-P]$ 的行主序扁平索引。
+> **实现对应**：见 [tensor.rs L1210-L1277 im2col](../../tenth/src/runtime/tensor.rs)。实现中 `ih = hi * stride + kh`，`iw = wi * stride + kw`，条件 `ih >= pad && ih < h + pad` 等价于 $0 \le h_i S + kh - P < H$，越界时 push 0.0。索引 `((ni * c + ci) * h + ih_adj) * w + iw_adj` 正是 $X[n, c, ih-P, iw-P]$ 的行主序扁平索引。
 
 ### 3.3 前向形式化
 
@@ -118,7 +118,7 @@ $$Y = \mathrm{reshape}(Y_{\text{2d}},\ (N, C_{\text{out}}, H_{\text{out}}, W_{\t
 
 其中 $W_{\text{flat}}$ 是 $W$ 在后三维上的展平：$W_{\text{flat}}[c_o, k(c,kh,kw)] = W[c_o, c, kh, kw]$。
 
-> **实现对应**：见 [methods.rs L982-L988](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)。`output_2d = cols.matmul(&w_flat.transpose())`，再 `reshape(&[n, c_out, h_out, w_out])`。
+> **实现对应**：见 [methods.rs L982-L988](../../tenth/src/runtime/interpreter/methods.rs)。`output_2d = cols.matmul(&w_flat.transpose())`，再 `reshape(&[n, c_out, h_out, w_out])`。
 
 ### 3.4 反向形式化
 
@@ -128,7 +128,7 @@ $$Y = \mathrm{reshape}(Y_{\text{2d}},\ (N, C_{\text{out}}, H_{\text{out}}, W_{\t
 3. $dC = dY_{\text{2d}} \cdot W_{\text{flat}} \in \mathbb{R}^{M \times K}$
 4. $dX = \mathrm{col2im}(dC,\ (N, C_{\text{in}}, H, W))$
 
-> **实现对应**：见 [autodiff.rs L615-L711 Conv2D backward](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。步骤 2 对应 `matmul_2d(&col_t, &grad_2d)`（L649-L650），步骤 3 对应 `matmul_2d(&grad_2d, &w_flat)`（L684），步骤 4 对应 L686-L704 的 col2im（实现细节见 §7 局限分析）。
+> **实现对应**：见 [autodiff.rs L615-L711 Conv2D backward](../../tenth/src/runtime/autodiff.rs)。步骤 2 对应 `matmul_2d(&col_t, &grad_2d)`（L649-L650），步骤 3 对应 `matmul_2d(&grad_2d, &w_flat)`（L684），步骤 4 对应 L686-L704 的 col2im（实现细节见 §7 局限分析）。
 
 ### 3.5 col2col 形式化（理论定义）
 
@@ -185,7 +185,7 @@ $$= \sum_{n, c, ih, iw} X[n, c, ih, iw] \cdot \Psi(C')[n, c, ih, iw] = \langle X
 - **padding 边界**：当 $(ih, iw)$ 落在 padding 区（$ih < 0$ 或 $ih \ge H$），$\Phi(X)[m,k] = 0$，对应项在左侧求和中贡献为 $0$；右侧 $\Psi(C')$ 仅对 $ih \in [0, H)$ 定义，不写入 padding 区。两侧一致。
 - **kernel 越界**：当 $k_H > H + 2P$ 或 $k_W > W + 2P$，$H_{\text{out}} \le 0$，im2col 不可定义，定理前置条件不满足。
 
-> **实现对应**：定理 C1 对应的实现位于 [autodiff.rs L686-L704](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 col2im 步骤。**注意**：当前实现采用 reshape 而非真累积，仅在非重叠窗口下与理论 col2im 等价（详见 §7.2 局限）。
+> **实现对应**：定理 C1 对应的实现位于 [autodiff.rs L686-L704](../../tenth/src/runtime/autodiff.rs) 的 col2im 步骤。**注意**：当前实现采用 reshape 而非真累积，仅在非重叠窗口下与理论 col2im 等价（详见 §7.2 局限）。
 
 ### 4.2 定理 C2（dW_flat 正确性）
 
@@ -206,7 +206,7 @@ $$\frac{\partial L}{\partial W_{\text{flat}}[c_o, k]} = \sum_{m=0}^{M-1} \frac{\
 
 实现中 `d_w_flat = matmul_2d(&col_t, &grad_2d)` 得到 $(K, C_{\text{out}})$，再 `d_w_flat_t = d_w_flat.reversed_axes()` 得到 $(C_{\text{out}}, K)$，最后 reshape 回 $(C_{\text{out}}, C_{\text{in}}, k_H, k_W)$，与上述一致。$\square$
 
-> **实现对应**：[autodiff.rs L648-L672](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。`col_t = col_data.reversed_axes()` 即 $\Phi(X)^\top$，`d_w_flat = matmul_2d(&col_t, &grad_2d)` 即 $\Phi(X)^\top \cdot dY_{\text{2d}}$。Shape 校验链：L659 检查 `d_w_flat_t.len() != total` 防止 reshape 越界。
+> **实现对应**：[autodiff.rs L648-L672](../../tenth/src/runtime/autodiff.rs)。`col_t = col_data.reversed_axes()` 即 $\Phi(X)^\top$，`d_w_flat = matmul_2d(&col_t, &grad_2d)` 即 $\Phi(X)^\top \cdot dY_{\text{2d}}$。Shape 校验链：L659 检查 `d_w_flat_t.len() != total` 防止 reshape 越界。
 
 ### 4.3 定理 C3（d(im2col) 正确性）
 
@@ -225,7 +225,7 @@ $$\frac{\partial L}{\partial \Phi(X)[m, k]} = \sum_{c_o=0}^{C_{\text{out}}-1} \f
 
 右侧恰为 $(dY_{\text{2d}} \cdot W_{\text{flat}})[m, k]$。$\square$
 
-> **实现对应**：[autodiff.rs L674-L684](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。`w_flat` 由权重 reshape 到 $(C_{\text{out}}, C_{\text{in}} \cdot k_H \cdot k_W) = (C_{\text{out}}, K)$（L676-L683），`d_col = matmul_2d(&grad_2d, &w_flat)` 即 $dY_{\text{2d}} \cdot W_{\text{flat}}$，shape 为 $(M, K)$。
+> **实现对应**：[autodiff.rs L674-L684](../../tenth/src/runtime/autodiff.rs)。`w_flat` 由权重 reshape 到 $(C_{\text{out}}, C_{\text{in}} \cdot k_H \cdot k_W) = (C_{\text{out}}, K)$（L676-L683），`d_col = matmul_2d(&grad_2d, &w_flat)` 即 $dY_{\text{2d}} \cdot W_{\text{flat}}$，shape 为 $(M, K)$。
 
 **定理 C1 + C3 联合**：由定理 C3 得 $d\Phi(X) = dY_{\text{2d}} \cdot W_{\text{flat}}$，再由定理 C1 的推论 C1.1，$dX = \Psi(d\Phi(X)) = \mathrm{col2im}(dY_{\text{2d}} \cdot W_{\text{flat}})$。这构成完整的 $dX$ 计算链路。
 
@@ -246,7 +246,7 @@ $$\mathrm{Mem} = 128 \times 64 \times 9 \times 32 \times 32 = 75{,}497{,}472 \te
 
 **放大因子分析**：内存放大倍数为 $\frac{\mathrm{Mem}(\Phi)}{\mathrm{Mem}(X)} = \frac{k_H \cdot k_W \cdot H_{\text{out}} \cdot W_{\text{out}}}{H \cdot W}$。当 $S=1, P=(k-1)/2$（same padding）时 $H_{\text{out}} = H$，放大倍数恰为 $k_H \cdot k_W$。对 $3 \times 3$ 卷积为 $9\times$，对 $7 \times 7$ 卷积为 $49\times$。
 
-> **实现对应**：[tensor.rs L1217](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) `Vec::with_capacity(n * h_out * w_out * c * kernel_h * kernel_w)` 即按定理 C4 预分配内存。
+> **实现对应**：[tensor.rs L1217](../../tenth/src/runtime/tensor.rs) `Vec::with_capacity(n * h_out * w_out * c * kernel_h * kernel_w)` 即按定理 C4 预分配内存。
 
 ### 4.5 定理 C5（im2col+GEMM vs Winograd vs 直接卷积对比）
 
@@ -280,7 +280,7 @@ $$dW_{\text{flat}} = \Phi(X)^\top \cdot dY_{\text{2d}} \qquad (\text{定理 C2})
 
 **证明**. 由定理 C3，$d\Phi(X) = dY_{\text{2d}} \cdot W_{\text{flat}}$。由定理 C1 推论 C1.1，$dX = \Psi(d\Phi(X)) = \Psi(dY_{\text{2d}} \cdot W_{\text{flat}})$。$dW_{\text{flat}}$ 由定理 C2 直接给出。$\square$
 
-**与 T39 Wengert Tape 的联动**：上述反向链路在 Tenth 中由 Wengert Tape（T39）承载。前向时，`tape.conv2d(x_id, w_id, cols_rc, result_rc)` 在 tape 上记录 `TapeOp::Conv2D` 节点，其 `input_tensors = [X, W, im2col, Y]` 缓存了 im2col 列矩阵作为中间结果（见 [autodiff.rs L210-L230](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。反向时，tape 的线性 backward 遍历按拓扑序取出节点，从 `input_tensors[2]`（即 $\Phi(X)$）直接读取缓存的 im2col，无需重新计算——这是 Wengert Tape "以空间换时间"原则在 Conv2D 上的具体体现。T39 证明了 tape 的全局反向正确性，本文（T41）证明 Conv2D 节点在该 tape 上的局部反向正确性，二者构成层级的正确性论证：**tape 框架正确（T39）+ 各算子节点反向正确（T41 等）⇒ 全局反向正确**。
+**与 T39 Wengert Tape 的联动**：上述反向链路在 Tenth 中由 Wengert Tape（T39）承载。前向时，`tape.conv2d(x_id, w_id, cols_rc, result_rc)` 在 tape 上记录 `TapeOp::Conv2D` 节点，其 `input_tensors = [X, W, im2col, Y]` 缓存了 im2col 列矩阵作为中间结果（见 [autodiff.rs L210-L230](../../tenth/src/runtime/autodiff.rs)）。反向时，tape 的线性 backward 遍历按拓扑序取出节点，从 `input_tensors[2]`（即 $\Phi(X)$）直接读取缓存的 im2col，无需重新计算——这是 Wengert Tape "以空间换时间"原则在 Conv2D 上的具体体现。T39 证明了 tape 的全局反向正确性，本文（T41）证明 Conv2D 节点在该 tape 上的局部反向正确性，二者构成层级的正确性论证：**tape 框架正确（T39）+ 各算子节点反向正确（T41 等）⇒ 全局反向正确**。
 
 ---
 
@@ -320,7 +320,7 @@ im2col 中，当 $h_i S + kh - P \in [0, H)$ 时取真实值，否则取 $0$。p
 
 **情形 K1：$k_H > H + 2P$**.
 
-此时 $H_{\text{out}} = \lfloor (H + 2P - k_H)/S \rfloor + 1 \le 0$，im2col 不可定义，定理前置条件不满足。实现中 `h_out` 计算（[tensor.rs L1214](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）会产生下溢，`Vec::with_capacity` 分配零长度，前向 matmul 产出空矩阵。此为退化情形，需在调用层校验。
+此时 $H_{\text{out}} = \lfloor (H + 2P - k_H)/S \rfloor + 1 \le 0$，im2col 不可定义，定理前置条件不满足。实现中 `h_out` 计算（[tensor.rs L1214](../../tenth/src/runtime/tensor.rs)）会产生下溢，`Vec::with_capacity` 分配零长度，前向 matmul 产出空矩阵。此为退化情形，需在调用层校验。
 
 ---
 
@@ -380,7 +380,7 @@ Tenth 选用 im2col+GEMM 的工程理由：
 
 ### 9.2 当前实现的 col2im 策略
 
-**关键观察**：Tenth 当前的 col2im（[autodiff.rs L686-L704](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）采用 **reshape 而非真累积** 策略：
+**关键观察**：Tenth 当前的 col2im（[autodiff.rs L686-L704](../../tenth/src/runtime/autodiff.rs)）采用 **reshape 而非真累积** 策略：
 
 ```rust
 // 实现摘录（autodiff.rs L689-L704）
@@ -402,7 +402,7 @@ let d_x: ArrayD<f64> = {
 
 ### 9.3 reshape 与 layout 一致性
 
-前向 reshape（[methods.rs L988](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)）将 $(M, C_{\text{out}})$ 的 `output_2d` 直接 reshape 为 $(N, C_{\text{out}}, H_{\text{out}}, W_{\text{out}})$。这在行主序下要求 $M$ 的分解顺序为 $(N, H_{\text{out}}, W_{\text{out}})$，即 `m = (n * H_out + h_i) * W_out + w_i`（与定义 3.1 一致）。只要 im2col 的行填充顺序与此一致，reshape 即正确。反向 reshape $dY \to dY_{\text{2d}}$（[autodiff.rs L637-L644](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）使用 `[hw_out * n, c_out]`，与 im2col 行顺序一致，保证 layout 对齐。
+前向 reshape（[methods.rs L988](../../tenth/src/runtime/interpreter/methods.rs)）将 $(M, C_{\text{out}})$ 的 `output_2d` 直接 reshape 为 $(N, C_{\text{out}}, H_{\text{out}}, W_{\text{out}})$。这在行主序下要求 $M$ 的分解顺序为 $(N, H_{\text{out}}, W_{\text{out}})$，即 `m = (n * H_out + h_i) * W_out + w_i`（与定义 3.1 一致）。只要 im2col 的行填充顺序与此一致，reshape 即正确。反向 reshape $dY \to dY_{\text{2d}}$（[autodiff.rs L637-L644](../../tenth/src/runtime/autodiff.rs)）使用 `[hw_out * n, c_out]`，与 im2col 行顺序一致，保证 layout 对齐。
 
 ---
 
@@ -412,7 +412,7 @@ let d_x: ArrayD<f64> = {
 
 ### 10.1 实现局限：col2im 退化为 reshape（影响：高）
 
-**是什么**：Tenth 的 col2im（[autodiff.rs L689-L704](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）只做 reshape，不做真累积。代码注释声称 "accumulate" 但实现未累积。
+**是什么**：Tenth 的 col2im（[autodiff.rs L689-L704](../../tenth/src/runtime/autodiff.rs)）只做 reshape，不做真累积。代码注释声称 "accumulate" 但实现未累积。
 
 **影响**：反向传播在重叠窗口（$S < k_H$ 或 $S < k_W$）下会因元素数不匹配而报错中断。常见配置（$3 \times 3$, stride=1）不可用。
 
@@ -430,7 +430,7 @@ let d_x: ArrayD<f64> = {
 
 ### 10.3 形式化局限：dtype 抽象（影响：低）
 
-**是什么**：本文按 $\mathbb{R}$ 上的浮点数证明，未区分 f32/f64。Tenth im2col 实现支持两种 dtype（[tensor.rs L1219-L1276](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），但反向 `matmul_2d` 与 col2im 仅处理 f64（[autodiff.rs L637](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `Vec<f64>`）。
+**是什么**：本文按 $\mathbb{R}$ 上的浮点数证明，未区分 f32/f64。Tenth im2col 实现支持两种 dtype（[tensor.rs L1219-L1276](../../tenth/src/runtime/tensor.rs)），但反向 `matmul_2d` 与 col2im 仅处理 f64（[autodiff.rs L637](../../tenth/src/runtime/autodiff.rs) `Vec<f64>`）。
 
 **影响**：f32 输入的 Conv2D 反向可能存在 dtype 不一致。理论证明在 $\mathbb{R}$ 上成立，与 dtype 无关，但实现的 dtype 处理需运行时部审查。
 
@@ -513,10 +513,10 @@ im2col 的内存放大（定理 C4）在大模型下是瓶颈。开放方向：
 
 | 定理 | 内容 | 证明位置 | 实现位置 |
 |------|------|---------|---------|
-| C1 | col2im 是 im2col 的合法伴随（$\Phi^\top = \Psi$） | §4.1 | [autodiff.rs L686-L704](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| C2 | $dW_{\text{flat}} = \Phi(X)^\top \cdot dY_{\text{2d}}$ | §4.2 | [autodiff.rs L648-L672](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| C3 | $d\Phi(X) = dY_{\text{2d}} \cdot W_{\text{flat}}$ | §4.3 | [autodiff.rs L674-L684](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| C4 | im2col 内存代价 $O(N C_{\text{in}} k_H k_W H_{\text{out}} W_{\text{out}})$ | §4.4 | [tensor.rs L1217](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
+| C1 | col2im 是 im2col 的合法伴随（$\Phi^\top = \Psi$） | §4.1 | [autodiff.rs L686-L704](../../tenth/src/runtime/autodiff.rs) |
+| C2 | $dW_{\text{flat}} = \Phi(X)^\top \cdot dY_{\text{2d}}$ | §4.2 | [autodiff.rs L648-L672](../../tenth/src/runtime/autodiff.rs) |
+| C3 | $d\Phi(X) = dY_{\text{2d}} \cdot W_{\text{flat}}$ | §4.3 | [autodiff.rs L674-L684](../../tenth/src/runtime/autodiff.rs) |
+| C4 | im2col 内存代价 $O(N C_{\text{in}} k_H k_W H_{\text{out}} W_{\text{out}})$ | §4.4 | [tensor.rs L1217](../../tenth/src/runtime/tensor.rs) |
 | C5 | im2col+GEMM vs Winograd vs 直接卷积对比 | §4.5 | N/A（理论对比） |
 
 ## 附录 B：与现有文档的对应

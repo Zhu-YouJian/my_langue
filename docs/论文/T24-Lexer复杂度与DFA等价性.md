@@ -43,9 +43,9 @@ Tenth 语言的词法分析器（lexer）采用手写递归状态机实现，而
 
 ### 1.3 Tenth 的手写 lexer
 
-Tenth 语言（Tensor + Zenith）的词法分析器位于 [tenth/src/lexer/lexer.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)，采用 Rust 手写实现。其自举编译器 tenthc 的对应实现在 [tenthc/lexer/lexer.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)，用 Tenth 自身编写。
+Tenth 语言（Tensor + Zenith）的词法分析器位于 [tenth/src/lexer/lexer.rs](../../tenth/src/lexer/lexer.rs)，采用 Rust 手写实现。其自举编译器 tenthc 的对应实现在 [tenthc/lexer/lexer.th](../../tenthc/lexer/lexer.th)，用 Tenth 自身编写。
 
-核心入口 `next_token`（[lexer.rs:386-531](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）采用经典的"字符分类 + peek 判定"模式：先 `skip_whitespace_and_comments`，再按首字符分类（数字 / 标识符 / 字符串 / 运算符），多字符 token 通过 1–4 字符的 peek 深度判定。
+核心入口 `next_token`（[lexer.rs:386-531](../../tenth/src/lexer/lexer.rs)）采用经典的"字符分类 + peek 判定"模式：先 `skip_whitespace_and_comments`，再按首字符分类（数字 / 标识符 / 字符串 / 运算符），多字符 token 通过 1–4 字符的 peek 深度判定。
 
 ### 1.4 贡献
 
@@ -108,8 +108,8 @@ maximal munch 是大多数编程语言词法分析的隐含约定。例如，在
 
 Tenth 维护两套 lexer（详见 T12 [T12-双侧编译器语义等价性](T12-双侧编译器语义等价性.md)）：
 
-- **Rust 母编译器 lexer**（[tenth/src/lexer/lexer.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）：完整功能，支持字符串插值、转义字符、所有 token。
-- **tenthc 自举 lexer**（[tenthc/lexer/lexer.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)）：子集实现，无字符串插值、无转义字符、缺失部分 token。
+- **Rust 母编译器 lexer**（[tenth/src/lexer/lexer.rs](../../tenth/src/lexer/lexer.rs)）：完整功能，支持字符串插值、转义字符、所有 token。
+- **tenthc 自举 lexer**（[tenthc/lexer/lexer.th](../../tenthc/lexer/lexer.th)）：子集实现，无字符串插值、无转义字符、缺失部分 token。
 
 两侧 Token 表示的去规范化差异（tenthc 携带冗余 `disc`/`ival`/`fval`/`sval` 字段）已在 T15 [T15-Denormalized Token表示等价性](T15-Denormalized Token表示等价性.md) 中分析。本文聚焦于 lexer 的**控制流等价性**与**复杂度**。
 
@@ -121,14 +121,14 @@ Tenth 维护两套 lexer（详见 T12 [T12-双侧编译器语义等价性](T12-�
 
 - $\Sigma$：Tenth 源码字符集（Unicode，但 lexer 实际仅处理 ASCII 子集 + 透传非 ASCII 标识符字符）。
 - $\Sigma^*$：源码字符串集合。
-- $\mathcal{T} = \{t_1, \ldots, t_N\}$：Token 种类集合（$N \approx 60$，见 [token.rs:13-100](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs)）。
+- $\mathcal{T} = \{t_1, \ldots, t_N\}$：Token 种类集合（$N \approx 60$，见 [token.rs:13-100](../../tenth/src/lexer/token.rs)）。
 - $\text{Lexer}: \Sigma^* \to \mathcal{T}^*$：词法分析函数。
 - $\text{pos}$：当前消费位置（$0 \le \text{pos} \le |w|$）。
 - $\text{peek}(w, \text{pos}, k)$：从位置 $\text{pos}$ 起向前看 $k$ 个字符（$k \ge 1$），返回 $w[\text{pos}], w[\text{pos}+1], \ldots, w[\text{pos}+k-1]$。
 
 ### 3.2 next_token 的状态机刻画
 
-`next_token`（[lexer.rs:386-531](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）的逻辑可刻画为以下状态迁移：
+`next_token`（[lexer.rs:386-531](../../tenth/src/lexer/lexer.rs)）的逻辑可刻画为以下状态迁移：
 
 **状态 0（Start）**：调用 `skip_whitespace_and_comments`，然后 `peek` 首字符 $c$：
 - $c = \text{EOF}$ → 接受 `Eof`，终止。
@@ -139,18 +139,18 @@ Tenth 维护两套 lexer（详见 T12 [T12-双侧编译器语义等价性](T12-�
 - $c \in \{(, ), [, ], \{, \}, ,, ;, :, ., \%, ^, ?\}$ → advance，接受对应单字符 token。
 - 其他 → 错误"意外字符"。
 
-**状态 1（Number）**：调用 `read_number`（[lexer.rs:97-203](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）：
+**状态 1（Number）**：调用 `read_number`（[lexer.rs:97-203](../../tenth/src/lexer/lexer.rs)）：
 - 消费连续的 $[0-9\_]$（整数部分）。
 - peek `.` + peek_next 数字 → 消费小数点 + 连续 $[0-9\_]$（小数部分）。
 - peek `e`/`E` → 消费指数部分（含可选 `+`/`-`）。
 - peek `f` + 检查 $\text{pos}+1, \text{pos}+2, \text{pos}+3$ → 消费 `f32`/`f64` 后缀（4 字符 peek）。
 - 根据 `is_float`/`suffix_dtype` 构造 `IntLiteral(i64)` 或 `FloatLiteral(f64, BaseType)`。
 
-**状态 2（Identifier）**：调用 `read_identifier`（[lexer.rs:205-257](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）：
+**状态 2（Identifier）**：调用 `read_identifier`（[lexer.rs:205-257](../../tenth/src/lexer/lexer.rs)）：
 - 消费连续的 $[a-zA-Z0-9\_]$。
 - 查表：若匹配关键字（`fn`/`let`/`if`/...，共 32 个），返回对应 `TokenKind`；否则返回 `Identifier(String)`。
 
-**状态 3（String）**：调用 `read_string`（[lexer.rs:259-365](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）：
+**状态 3（String）**：调用 `read_string`（[lexer.rs:259-365](../../tenth/src/lexer/lexer.rs)）：
 - 消费到闭合 `"`，处理 `\n`/`\t`/`\\`/`\"`/`\{`/`\}` 转义。
 - 检测 `{ident}` 插值：peek `{` + peek_next 是字母/下划线 → 消费到 `}`，构造 `InterpolatedString`。
 
@@ -184,7 +184,7 @@ Tenth lexer 有两类 peek：
 
 **类型 A（推进式 peek）**：peek 1 字符，若匹配则 advance，再 peek 下一字符。用于运算符链（如 `..=` 识别）。
 
-**类型 B（非推进式 peek）**：在不 advance 的前提下，同时检查 $\text{pos}+1, \text{pos}+2, \ldots, \text{pos}+k$ 位置的字符。用于 `f32`/`f64` 后缀检测（[lexer.rs:153-169](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）：
+**类型 B（非推进式 peek）**：在不 advance 的前提下，同时检查 $\text{pos}+1, \text{pos}+2, \ldots, \text{pos}+k$ 位置的字符。用于 `f32`/`f64` 后缀检测（[lexer.rs:153-169](../../tenth/src/lexer/lexer.rs)）：
 
 ```rust
 if self.peek() == Some('f') {
@@ -204,9 +204,9 @@ if self.peek() == Some('f') {
 
 ### 3.5 多字符 token 的识别：`>>` / `>=` / `>`
 
-> **诚实声明**：任务描述提及 `>>=`，但 Tenth 的 `TokenKind` 枚举（[token.rs:13-100](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs)）**不包含 `ShrAssign` 变体**。源码搜索 `>>=`/`ShrAssign` 仅在 CUDA kernel 字符串字面量中出现（[cuda_kernel.rs:205](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/gpu/cuda_kernel.rs)），不构成 Tenth token。因此 `>` 起始的多字符 token 实际为 `>=`（`GtEq`）与 `>>`（`Shr`），本文按此分析。
+> **诚实声明**：任务描述提及 `>>=`，但 Tenth 的 `TokenKind` 枚举（[token.rs:13-100](../../tenth/src/lexer/token.rs)）**不包含 `ShrAssign` 变体**。源码搜索 `>>=`/`ShrAssign` 仅在 CUDA kernel 字符串字面量中出现（[cuda_kernel.rs:205](../../tenth/src/compile/gpu/cuda_kernel.rs)），不构成 Tenth token。因此 `>` 起始的多字符 token 实际为 `>=`（`GtEq`）与 `>>`（`Shr`），本文按此分析。
 
-`>` 起始的 token 识别（[lexer.rs:446-456](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）：
+`>` 起始的 token 识别（[lexer.rs:446-456](../../tenth/src/lexer/lexer.rs)）：
 
 ```rust
 if ch == '>' {
@@ -216,13 +216,13 @@ if ch == '>' {
 }
 ```
 
-注意检查顺序：先 `=` 后 `>`。由于 `=` 与 `>` 是不同字符，两者互斥，顺序不影响结果。tenthc 侧顺序相反（先 `>` 后 `=`，[lexer.th:185-190](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)），同样因互斥而不影响正确性。
+注意检查顺序：先 `=` 后 `>`。由于 `=` 与 `>` 是不同字符，两者互斥，顺序不影响结果。tenthc 侧顺序相反（先 `>` 后 `=`，[lexer.th:185-190](../../tenthc/lexer/lexer.th)），同样因互斥而不影响正确性。
 
 对于输入 `>>=`（Tenth 不将其识别为单一 token），lexer 先匹配 `>>`（`Shr`），然后在下一轮 `next_token` 匹配 `=`（`Assign`）。这满足 maximal munch：因为 `>>=` 不是已定义的 token 模式，从位置 $i$ 能匹配的最长 token 是 `>>`（长度 2），而非 `>`（长度 1）。
 
 ### 3.6 数字字面量的解析
 
-数字字面量解析（`read_number`，[lexer.rs:97-203](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）分四阶段：
+数字字面量解析（`read_number`，[lexer.rs:97-203](../../tenth/src/lexer/lexer.rs)）分四阶段：
 
 1. **整数部分**：消费连续 $[0-9\_]$，构造字符串 $s$。
 2. **小数部分**：若 peek `.` 且 peek_next 是数字，消费 `.` + 连续 $[0-9\_]$，标记 `is_float = true`。
@@ -231,7 +231,7 @@ if ch == '>' {
 
 最终通过 Rust 标准库的 `str::parse::<i64>()` 或 `str::parse::<f64>()` 将字符串转换为数值。
 
-tenthc 侧（[lexer.th:48-116](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)）采用**增量算术**而非字符串构造：
+tenthc 侧（[lexer.th:48-116](../../tenthc/lexer/lexer.th)）采用**增量算术**而非字符串构造：
 
 ```tenth
 let mut ival: i64 = 0;
@@ -251,7 +251,7 @@ while is_digit(ch) {
 
 ### 4.1 定理 D1（DFA 等价性）
 
-**定理 D1**。存在 DFA $M_{\text{Tenth}}$，使得 $L(M_{\text{Tenth}}) = L(\text{Lexer}_{\text{Rust}})$，其中 $\text{Lexer}_{\text{Rust}}$ 是 [tenth/src/lexer/lexer.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) 定义的单 token 词法分析函数。
+**定理 D1**。存在 DFA $M_{\text{Tenth}}$，使得 $L(M_{\text{Tenth}}) = L(\text{Lexer}_{\text{Rust}})$，其中 $\text{Lexer}_{\text{Rust}}$ 是 [tenth/src/lexer/lexer.rs](../../tenth/src/lexer/lexer.rs) 定义的单 token 词法分析函数。
 
 **证明**。
 
@@ -322,14 +322,14 @@ $$w \in L(\text{Lexer}_{\text{Rust}}) \iff w \in L(M_{\text{Tenth}})$$
 
 **时间复杂度**。
 
-`tokenize`（[lexer.rs:533-544](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）反复调用 `next_token` 直到 EOF。每个字符至多被消费一次（`advance` 后 `pos` 单调递增），因此总 advance 次数 $\le n$。
+`tokenize`（[lexer.rs:533-544](../../tenth/src/lexer/lexer.rs)）反复调用 `next_token` 直到 EOF。每个字符至多被消费一次（`advance` 后 `pos` 单调递增），因此总 advance 次数 $\le n$。
 
 但需考虑 **peek 开销**：lexer 在不 advance 的情况下可能查看多个字符。由定理 D1 的证明，最大 peek 深度 $k_{\max} = 4$。每次 `next_token` 调用中，peek 操作的次数有上界 $C_{\text{peek}} \cdot k_{\max}$（$C_{\text{peek}}$ 是 `next_token` 中 peek 调用点的数量，约为 30）。
 
 然而，peek 操作**不消费字符**，因此同一字符可能被多次 peek。关键问题是：同一字符被 peek 的次数是否有界？
 
 考察 peek 的使用模式：
-- `skip_whitespace_and_comments` 中，每个字符被 peek 至多 2 次（`peek` + `peek_next`，[lexer.rs:52-95](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）。
+- `skip_whitespace_and_comments` 中，每个字符被 peek 至多 2 次（`peek` + `peek_next`，[lexer.rs:52-95](../../tenth/src/lexer/lexer.rs)）。
 - `read_number` 中，`.` 处 peek 2 次（`peek` + `peek_next`），`f` 处 peek 4 次（$\text{pos}+1$ 到 $\text{pos}+3$）。
 - `read_identifier` 中，每个字符 peek 1 次。
 - `read_string` 中，每个字符 peek 1–2 次（`{` 处 peek 2 次）。
@@ -348,7 +348,7 @@ $$
 
 `tokenize` 存储 token 序列，空间 $O(m)$（$m$ 是 token 数，$m \le n$）。若改为流式输出（每次 `next_token` 后丢弃），单 token 工作空间为 $O(L_{\max})$（$L_{\max}$ 是最长 token 的长度），由源码约束 $L_{\max} \le n$ 但实际有界（标识符长度通常 $< 256$），可视为 $O(1)$ 摊还。
 
-tenthc 侧的增量算术解析（[lexer.th:48-116](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)）使用 $O(1)$ 额外空间（`ival`/`frac_val`/`frac_len` 等固定数量标量），优于 Rust 侧的字符串构造（$O(L)$）。$\square$
+tenthc 侧的增量算术解析（[lexer.th:48-116](../../tenthc/lexer/lexer.th)）使用 $O(1)$ 额外空间（`ival`/`frac_val`/`frac_len` 等固定数量标量），优于 Rust 侧的字符串构造（$O(L)$）。$\square$
 
 ### 4.3 定理 D3（maximal munch 保持）
 
@@ -358,7 +358,7 @@ tenthc 侧的增量算术解析（[lexer.th:48-116](file:///d:/史蒂夫/Desktop
 
 需证明：对每个运算符首字符 $c$，lexer 的 if-else 链按长度递减顺序检查，且检查顺序保证选择最长匹配。
 
-逐一审查 [lexer.rs:417-520](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)：
+逐一审查 [lexer.rs:417-520](../../tenth/src/lexer/lexer.rs)：
 
 **情况 1：`=` 起始**。
 - 模式：`==`（长度 2）、`=>`（长度 2）、`=`（长度 1）。
@@ -383,7 +383,7 @@ tenthc 侧的增量算术解析（[lexer.th:48-116](file:///d:/史蒂夫/Desktop
 
 **情况 5：`.` 起始**（三级 peek）。
 - 模式：`..=`（长度 3）、`..`（长度 2）、`.`（长度 1）。
-- 代码（[lexer.rs:503-513](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）：advance `.` 后 peek `.`，若匹配则 advance 后再 peek `=`。
+- 代码（[lexer.rs:503-513](../../tenth/src/lexer/lexer.rs)）：advance `.` 后 peek `.`，若匹配则 advance 后再 peek `=`。
 - 若输入是 `..=`：匹配 `DotDotEq`（长度 3）。
 - 若输入是 `..`：匹配 `DotDot`（长度 2）。
 - 若输入是 `.`：匹配 `Dot`（长度 1）。
@@ -395,7 +395,7 @@ tenthc 侧的增量算术解析（[lexer.th:48-116](file:///d:/史蒂夫/Desktop
 **情况 7：数字字面量**。
 - 模式：`<digits>`、`<digits>.<digits>`、`<digits>e<sign><digits>`、`<digits>f32`、`<digits>f64`、`<digits>.<digits>f32` 等。
 - `read_number` 依次尝试小数部分、指数部分、后缀，每一步都"贪婪消费"匹配的字符。
-- 关键：小数点检测要求 `peek_next` 是数字（[lexer.rs:113](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)），避免将 `1..10` 中的 `.` 误消费（`..` 是范围运算符）。
+- 关键：小数点检测要求 `peek_next` 是数字（[lexer.rs:113](../../tenth/src/lexer/lexer.rs)），避免将 `1..10` 中的 `.` 误消费（`..` 是范围运算符）。
 - 后缀检测要求 boundary 检查（`c3` 非字母数字），避免将 `3.14factor` 误匹配为 `3.14f`。
 - 满足 maximal munch。✓
 
@@ -407,13 +407,13 @@ tenthc 侧的增量算术解析（[lexer.th:48-116](file:///d:/史蒂夫/Desktop
 
 ### 4.4 定理 D4（增量算术解析的精度边界）
 
-**定理 D4**。tenthc lexer 的增量算术解析 `ival = ival * 10 + char_to_digit(ch)`（[lexer.th:54](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)）**不显式检测 i64 溢出**。溢出时的行为取决于 Tenth VM 的 i64 算术语义。
+**定理 D4**。tenthc lexer 的增量算术解析 `ival = ival * 10 + char_to_digit(ch)`（[lexer.th:54](../../tenthc/lexer/lexer.th)）**不显式检测 i64 溢出**。溢出时的行为取决于 Tenth VM 的 i64 算术语义。
 
 **证明**。
 
 **(a) tenthc 的增量解析无溢出检测。**
 
-审查 [tenthc/lexer/lexer.th:48-58](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)：
+审查 [tenthc/lexer/lexer.th:48-58](../../tenthc/lexer/lexer.th)：
 
 ```tenth
 let mut ival: i64 = 0;
@@ -428,7 +428,7 @@ while is_digit(ch) {
 
 循环体 `ival = ival * 10 + char_to_digit(ch)` 直接执行乘加，**无 `checked_mul`/`checked_add`/`overflowing_*` 调用，无溢出分支**。搜索 tenthc 全文，无 `overflow`/`checked`/`wrapping` 关键字（搜索证据：tenthc/ 目录无相关匹配）。
 
-对比 Rust 侧（[lexer.rs:193-201](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）：
+对比 Rust 侧（[lexer.rs:193-201](../../tenth/src/lexer/lexer.rs)）：
 
 ```rust
 let n: i64 = s.parse().map_err(|_| TenthError::LexerError {
@@ -441,7 +441,7 @@ Rust 标准库的 `str::parse::<i64>()` 在溢出时返回 `Err(ParseIntError)`�
 
 **(b) 溢出时的行为分析。**
 
-tenthc 运行在 Tenth VM 上。VM 的 `Op::Mul` 与 `Op::Add` 实现在 [vm.rs:932-934](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) 与 [vm.rs:817-819](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)：
+tenthc 运行在 Tenth VM 上。VM 的 `Op::Mul` 与 `Op::Add` 实现在 [vm.rs:932-934](../../tenth/src/runtime/vm.rs) 与 [vm.rs:817-819](../../tenth/src/runtime/vm.rs)：
 
 ```rust
 fn add_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
@@ -453,7 +453,7 @@ fn mul_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
         (Value::Int(x), Value::Int(y)) => Value::Int(x * y),  // 行 934
 ```
 
-VM 使用 Rust 原生 `+`/`*` 运算符。Tenth 的 [Cargo.toml](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/Cargo.toml) 在 `[profile.release]` 与 `[profile.dev]` 均设置 `overflow-checks = true`（[Cargo.toml:33,39](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/Cargo.toml)）。
+VM 使用 Rust 原生 `+`/`*` 运算符。Tenth 的 [Cargo.toml](../../tenth/Cargo.toml) 在 `[profile.release]` 与 `[profile.dev]` 均设置 `overflow-checks = true`（[Cargo.toml:33,39](../../tenth/Cargo.toml)）。
 
 因此，当 `ival * 10` 或 `ival * 10 + digit` 溢出 i64 时：
 - Rust 原生 `*`/`+` 在 `overflow-checks = true` 下**触发 panic**（`attempt to multiply with overflow`）。
@@ -485,8 +485,8 @@ tenthc 的增量算术解析在 i64 溢出时**不优雅**（panic 而非返回�
 **(a) 共同 token 子集。**
 
 由 T12 §1.3 与 T15 的分析，tenthc 缺失以下 token：
-- `CharLiteral`（[token.rs:19](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs)）
-- `InterpolatedString`（[token.rs:18](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs)）
+- `CharLiteral`（[token.rs:19](../../tenth/src/lexer/token.rs)）
+- `InterpolatedString`（[token.rs:18](../../tenth/src/lexer/token.rs)）
 - 关键字：`Try`/`Pub`/`Type`/`Spawn`/`Task`/`Shard`/`Node`/`Macro`/`Where`/`As`/`In`
 - 运算符：`Shl`（`<<`）、`QuestionMark`（`?`）、`Caret`（`^`）
 
@@ -497,11 +497,11 @@ tenthc 的增量算术解析在 i64 溢出时**不优雅**（panic 而非返回�
 对每个 $t \in \mathcal{T}_{\text{common}}$，逐一核对两侧的识别逻辑：
 
 1. **单字符运算符**：两侧逻辑相同（advance + 返回）。✓
-2. **`==`/`!=`/`<=`/`>=`/`>>`/`&&`/`||`**：两侧均 advance 后 peek 第二字符，匹配则 advance + 返回。Rust [lexer.rs:417-470](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)，tenthc [lexer.th:177-192](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)。检查顺序虽有差异（如 `>` 侧 Rust 先 `=` 后 `>`，tenthc 先 `>` 后 `=`），但因第二字符互斥，结果相同。✓
+2. **`==`/`!=`/`<=`/`>=`/`>>`/`&&`/`||`**：两侧均 advance 后 peek 第二字符，匹配则 advance + 返回。Rust [lexer.rs:417-470](../../tenth/src/lexer/lexer.rs)，tenthc [lexer.th:177-192](../../tenthc/lexer/lexer.th)。检查顺序虽有差异（如 `>` 侧 Rust 先 `=` 后 `>`，tenthc 先 `>` 后 `=`），但因第二字符互斥，结果相同。✓
 3. **`+=`/`-=`/`*=`/`/=`/`->`/`=>`/`::`/`..`/`..=`**：两侧逻辑相同。✓
 4. **`IntLiteral`**：两侧均消费 $[0-9\_]$。Rust 用 `str::parse::<i64>()`，tenthc 用增量算术。在不溢出的前提下，两者数值相同（Horner 法则：$\sum_{i=0}^{n-1} d_i \cdot 10^{n-1-i} = ((\cdots((0 \cdot 10 + d_0) \cdot 10 + d_1)\cdots) \cdot 10 + d_{n-1})$，即增量算术与多项式求值等价）。✓（溢出场景见定理 D4，不在共同子集保证范围内）
 5. **`FloatLiteral`**：两侧均检测 `.`/`e`/`f32`/`f64`。tenthc 用增量算术计算 `ival + frac_val/div`，Rust 用 `str::parse::<f64>()`。在不溢出且 f64 精度范围内，两者数值相同（浮点精度差异在 ULP 级别，不影响词法等价性）。✓
-6. **`StringLiteral`**：Rust 支持转义与插值；tenthc 仅做简单切片（[lexer.th:150-159](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)）。**仅在不含转义与插值的纯字符串上等价**。含 `\n`/`\t`/`{expr}` 的字符串两侧不等价——但这类字符串不属于 $\mathcal{T}_{\text{common}}$（tenthc 不支持）。✓（限定在纯字符串）
+6. **`StringLiteral`**：Rust 支持转义与插值；tenthc 仅做简单切片（[lexer.th:150-159](../../tenthc/lexer/lexer.th)）。**仅在不含转义与插值的纯字符串上等价**。含 `\n`/`\t`/`{expr}` 的字符串两侧不等价——但这类字符串不属于 $\mathcal{T}_{\text{common}}$（tenthc 不支持）。✓（限定在纯字符串）
 7. **关键字与标识符**：两侧均消费 $[a-zA-Z0-9\_]*$ 后查表。共同关键字集合一致。✓
 
 **(c) Token 表示等价。**
@@ -518,21 +518,21 @@ tenthc 的增量算术解析在 i64 溢出时**不优雅**（panic 而非返回�
 
 | Token | 首字符 | peek 深度 | 推进模式 | 源码位置 |
 |-------|--------|-----------|----------|----------|
-| `Eof` | EOF | 0 | — | [lexer.rs:389-397](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| `IntLiteral` | `[0-9]` | 2 | 推进 | [lexer.rs:113](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| `FloatLiteral`（小数） | `[0-9]` | 2 | 推进 | [lexer.rs:113](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| `FloatLiteral`（指数） | `[0-9]` | 1 | 推进 | [lexer.rs:128-148](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| `FloatLiteral`（f32/f64 后缀） | `f` | **4** | **非推进** | [lexer.rs:153-169](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| `Identifier`/关键字 | `[a-zA-Z_]` | 1 | 推进 | [lexer.rs:210-217](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| `StringLiteral`（纯） | `"` | 1 | 推进 | [lexer.rs:259-365](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| `InterpolatedString`（`{expr}`） | `"` + `{` | 2 | 推进 | [lexer.rs:305-354](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| `==`/`=>`/`!=`/`<=`/`<<`/`>=`/`>>`/`&&`/`\|\|` | 运算符首字符 | 1 | 推进 | [lexer.rs:417-470](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| `+=`/`-=`/`*=`/`/=`/`->` | 运算符首字符 | 1 | 推进 | [lexer.rs:471-502](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| `::`/`..` | `:`/`.` | 1 | 推进 | [lexer.rs:503-520](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| `..=` | `.` | 2 | 推进 | [lexer.rs:503-513](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| 单字符 token | 各 | 0 | — | [lexer.rs:367-384](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| 行注释 `//` | `/` | 2 | 非推进 | [lexer.rs:55-64](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| 块注释 `/* */` | `/` | 2 | 非推进 | [lexer.rs:65-90](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
+| `Eof` | EOF | 0 | — | [lexer.rs:389-397](../../tenth/src/lexer/lexer.rs) |
+| `IntLiteral` | `[0-9]` | 2 | 推进 | [lexer.rs:113](../../tenth/src/lexer/lexer.rs) |
+| `FloatLiteral`（小数） | `[0-9]` | 2 | 推进 | [lexer.rs:113](../../tenth/src/lexer/lexer.rs) |
+| `FloatLiteral`（指数） | `[0-9]` | 1 | 推进 | [lexer.rs:128-148](../../tenth/src/lexer/lexer.rs) |
+| `FloatLiteral`（f32/f64 后缀） | `f` | **4** | **非推进** | [lexer.rs:153-169](../../tenth/src/lexer/lexer.rs) |
+| `Identifier`/关键字 | `[a-zA-Z_]` | 1 | 推进 | [lexer.rs:210-217](../../tenth/src/lexer/lexer.rs) |
+| `StringLiteral`（纯） | `"` | 1 | 推进 | [lexer.rs:259-365](../../tenth/src/lexer/lexer.rs) |
+| `InterpolatedString`（`{expr}`） | `"` + `{` | 2 | 推进 | [lexer.rs:305-354](../../tenth/src/lexer/lexer.rs) |
+| `==`/`=>`/`!=`/`<=`/`<<`/`>=`/`>>`/`&&`/`\|\|` | 运算符首字符 | 1 | 推进 | [lexer.rs:417-470](../../tenth/src/lexer/lexer.rs) |
+| `+=`/`-=`/`*=`/`/=`/`->` | 运算符首字符 | 1 | 推进 | [lexer.rs:471-502](../../tenth/src/lexer/lexer.rs) |
+| `::`/`..` | `:`/`.` | 1 | 推进 | [lexer.rs:503-520](../../tenth/src/lexer/lexer.rs) |
+| `..=` | `.` | 2 | 推进 | [lexer.rs:503-513](../../tenth/src/lexer/lexer.rs) |
+| 单字符 token | 各 | 0 | — | [lexer.rs:367-384](../../tenth/src/lexer/lexer.rs) |
+| 行注释 `//` | `/` | 2 | 非推进 | [lexer.rs:55-64](../../tenth/src/lexer/lexer.rs) |
+| 块注释 `/* */` | `/` | 2 | 非推进 | [lexer.rs:65-90](../../tenth/src/lexer/lexer.rs) |
 
 ### 5.2 最大 peek 深度
 
@@ -543,7 +543,7 @@ tenthc 的增量算术解析在 i64 溢出时**不优雅**（panic 而非返回�
 - 位置 $\text{pos}+2$：检查 `2` 或 `4`
 - 位置 $\text{pos}+3$：边界检查（非 alphanumeric + 非 `_`）
 
-tenthc 侧同样为 $k_{\max} = 4$（[lexer.th:71-89](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)），构造方式与 Rust 侧一致。
+tenthc 侧同样为 $k_{\max} = 4$（[lexer.th:71-89](../../tenthc/lexer/lexer.th)），构造方式与 Rust 侧一致。
 
 ### 5.3 peek 深度与 token 种类数的关系
 
@@ -563,7 +563,7 @@ peek 深度与 token 种类数无直接关系，但与**最长 token 长度**相
 | 溢出检测 | ✅ `parse()` 返回 `Err` | ❌ 无显式检测 |
 | 溢出行为 | 返回 `TenthError::LexerError`，优雅中止 | VM panic（`overflow-checks = true`） |
 | 空间复杂度 | $O(L)$（字符串） | $O(1)$（标量） |
-| 源码位置 | [lexer.rs:193-201](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) | [lexer.th:48-58](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th) |
+| 源码位置 | [lexer.rs:193-201](../../tenth/src/lexer/lexer.rs) | [lexer.th:48-58](../../tenthc/lexer/lexer.th) |
 
 ### 6.2 溢出时的行为
 
@@ -575,7 +575,7 @@ LexerError { line: L, col: C, message: "无效的整数：9999999999999999999" }
 
 编译中止，错误信息清晰。
 
-**tenthc 侧**：`ival = ival * 10 + 9` 在第 19 次迭代时，`ival * 10` 溢出 i64，Tenth VM 的 `Op::Mul`（[vm.rs:934](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）触发 panic：
+**tenthc 侧**：`ival = ival * 10 + 9` 在第 19 次迭代时，`ival * 10` 溢出 i64，Tenth VM 的 `Op::Mul`（[vm.rs:934](../../tenth/src/runtime/vm.rs)）触发 panic：
 
 ```
 thread 'main' panicked at 'attempt to multiply with overflow', runtime/vm.rs:934
@@ -608,11 +608,11 @@ thread 'main' panicked at 'attempt to multiply with overflow', runtime/vm.rs:934
 
 ### 7.2 可维护性
 
-Tenth lexer 的 if-else 链按字符组织，可读性尚可。但 `read_number`（[lexer.rs:97-203](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)，107 行）逻辑较复杂（小数/指数/后缀三阶段 + 4 字符 peek），是维护性最高的函数。
+Tenth lexer 的 if-else 链按字符组织，可读性尚可。但 `read_number`（[lexer.rs:97-203](../../tenth/src/lexer/lexer.rs)，107 行）逻辑较复杂（小数/指数/后缀三阶段 + 4 字符 peek），是维护性最高的函数。
 
 ### 7.3 错误信息质量
 
-手写 lexer 的核心优势是错误信息质量。Rust 侧 `read_number` 在溢出时返回精确的行号与"无效整数：9999999999999999999"格式的诊断信息（[lexer.rs:193-201](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）。DFA 生成器通常只能报"意外字符"。
+手写 lexer 的核心优势是错误信息质量。Rust 侧 `read_number` 在溢出时返回精确的行号与"无效整数：9999999999999999999"格式的诊断信息（[lexer.rs:193-201](../../tenth/src/lexer/lexer.rs)）。DFA 生成器通常只能报"意外字符"。
 
 tenthc 侧在溢出时 panic，无 lexer 层错误信息——这是**精度边界的代价**。
 
@@ -649,7 +649,7 @@ ival = ival + digit;
 ### 8.4 `>>=` 的引入
 
 若未来 Tenth 需要复合右移赋值 `>>=`（如 Rust 的 `x >>= 1`），需：
-1. 在 `TokenKind` 添加 `ShrAssign` 变体（[token.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs)）；
+1. 在 `TokenKind` 添加 `ShrAssign` 变体（[token.rs](../../tenth/src/lexer/token.rs)）；
 2. 在 `next_token` 的 `>` 分支添加 `>>=` 检查（需在 `>>` 之前检查，或改为先 peek `>>` 再 peek `=`）；
 3. 同步 tenthc 侧；
 4. 更新 parser 与 HIR。
@@ -678,7 +678,7 @@ T15 证明 tenthc Token 的 `disc`/`ival`/`fval`/`sval` 冗余字段是 `kind` �
 
 **局限 4：浮点精度差异未深入。** 定理 D5 声称两侧 `FloatLiteral` "数值相同"，但 Rust 的 `str::parse::<f64>()` 与 tenthc 的 `ival + frac_val / div` 在浮点精度上可能有 ULP 级差异（如 `0.1` 的解析）。本文不深入浮点精度分析，标注为未来工作。
 
-**局限 5：Unicode 标识符未分析。** Tenth lexer 用 `is_alphabetic()` 判定标识符首字符（[lexer.rs:406](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)），支持 Unicode 标识符；tenthc 用 `is_alpha` 仅检查 ASCII（[lexer.th:5](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)）。这是定理 D5 的一个边界——非 ASCII 标识符两侧不等价。但 tenthc 源码本身仅用 ASCII 标识符，自举不受影响。
+**局限 5：Unicode 标识符未分析。** Tenth lexer 用 `is_alphabetic()` 判定标识符首字符（[lexer.rs:406](../../tenth/src/lexer/lexer.rs)），支持 Unicode 标识符；tenthc 用 `is_alpha` 仅检查 ASCII（[lexer.th:5](../../tenthc/lexer/lexer.th)）。这是定理 D5 的一个边界——非 ASCII 标识符两侧不等价。但 tenthc 源码本身仅用 ASCII 标识符，自举不受影响。
 
 ---
 

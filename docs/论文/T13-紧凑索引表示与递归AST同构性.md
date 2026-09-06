@@ -3,7 +3,7 @@
 > **Tenth 自举元理论系列 · T13**
 > 数理部出品 · v1.0
 > 适用版本：Tenth v0.3.3+
-> 关联源码：[`tenth/src/compile/bridge.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)、[`tenthc/hir/hir.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/hir.th)
+> 关联源码：[`tenth/src/compile/bridge.rs`](../../tenth/src/compile/bridge.rs)、[`tenthc/hir/hir.th`](../../tenthc/hir/hir.th)
 
 ---
 
@@ -25,11 +25,11 @@ Tenth 语言为支持自举而采用紧凑表示策略：自举编译器 `tenthc
 
 ### 1.2 Tenth 语言的递归类型限制
 
-Tenth 是一门通用编程语言，设计上偏向数值计算与 AI 原生场景（参见 [`docs/语言参考手册.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md)）。出于运行时与类型系统的简化考虑，Tenth 在 v0.3.3 阶段未直接支持形如 `enum Expr { Binary(Box<Expr>, Box<Expr>), ... }` 的递归类型——这意味着用 Tenth 自身编写编译器时，无法像 Rust 那样直接定义递归 AST。这是自举（self-hosting）面临的第一个工程障碍。
+Tenth 是一门通用编程语言，设计上偏向数值计算与 AI 原生场景（参见 [`docs/语言参考手册.md`](../语言参考手册.md)）。出于运行时与类型系统的简化考虑，Tenth 在 v0.3.3 阶段未直接支持形如 `enum Expr { Binary(Box<Expr>, Box<Expr>), ... }` 的递归类型——这意味着用 Tenth 自身编写编译器时，无法像 Rust 那样直接定义递归 AST。这是自举（self-hosting）面临的第一个工程障碍。
 
 ### 1.3 tenthc 的紧凑索引表示
 
-为绕过上述限制，自举编译器 `tenthc` 采用紧凑索引表示。其核心数据结构 `HirExpr` 定义于 [`tenthc/hir/hir.th:30-65`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/hir.th)：
+为绕过上述限制，自举编译器 `tenthc` 采用紧凑索引表示。其核心数据结构 `HirExpr` 定义于 [`tenthc/hir/hir.th:30-65`](../../tenthc/hir/hir.th)：
 
 ```tenth
 struct HirExpr {
@@ -50,11 +50,11 @@ struct HirExpr {
 }
 ```
 
-所有子节点引用均通过 `i64` 索引表达：`0` 表示 nil（空引用/缺失），`n ≥ 1` 表示引用 `expr_nodes[n-1]`、`stmt_nodes[n-1]` 或 `arg_list[n-1]` 等平坦数组中的元素。整个 `HirProgram`（[hir.th:150-177](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/hir.th)）通过 `expr_nodes: Vec<HirExpr>`、`stmt_nodes: Vec<HirStmt>`、`arg_list: Vec<i64>`、`stmt_list: Vec<i64>` 等多个平坦数组协同表达一棵完整程序树。
+所有子节点引用均通过 `i64` 索引表达：`0` 表示 nil（空引用/缺失），`n ≥ 1` 表示引用 `expr_nodes[n-1]`、`stmt_nodes[n-1]` 或 `arg_list[n-1]` 等平坦数组中的元素。整个 `HirProgram`（[hir.th:150-177](../../tenthc/hir/hir.th)）通过 `expr_nodes: Vec<HirExpr>`、`stmt_nodes: Vec<HirStmt>`、`arg_list: Vec<i64>`、`stmt_list: Vec<i64>` 等多个平坦数组协同表达一棵完整程序树。
 
 ### 1.4 bridge.rs 的反向转换
 
-`bridge.rs::compact_program_to_ast`（[bridge.rs:15-78](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）负责将 `tenthc` 解释器构造的 `Value::Struct("Program", ...)` 反向重构为 Rust 的 `ast::Program`。其核心递归函数 `convert_expr_depth`（[bridge.rs:417-646](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）按 `kind` 字段分派，对 `left`/`right`/`arg_start`/`extra_start` 等索引递归调用自身，重建 `Box<ast::Expr>` 树。该函数在路径 B（Tenth 前端 + Rust 后端）中是必经环节：
+`bridge.rs::compact_program_to_ast`（[bridge.rs:15-78](../../tenth/src/compile/bridge.rs)）负责将 `tenthc` 解释器构造的 `Value::Struct("Program", ...)` 反向重构为 Rust 的 `ast::Program`。其核心递归函数 `convert_expr_depth`（[bridge.rs:417-646](../../tenth/src/compile/bridge.rs)）按 `kind` 字段分派，对 `left`/`right`/`arg_start`/`extra_start` 等索引递归调用自身，重建 `Box<ast::Expr>` 树。该函数在路径 B（Tenth 前端 + Rust 后端）中是必经环节：
 
 ```rust
 // tenth/src/compile/mod.rs:30
@@ -97,7 +97,7 @@ Equality graphs（e-graphs）将等价的表达式集合表示为 e-class 与 e-
 - **Prolog**：WAM 内存模型中 `0` 常用于标记空引用或未绑定变量。
 - **Lisp**：`nil` 既是空表也充当 `false`，是 1-based + 0=nil 思想的鼻祖。
 
-Tenth 选用此约定的动机有二：(i) `0` 自然表示"无引用"，与字段零值初始化（`..` 默认语法，[hir.th:3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/hir.th) 注释）契合，无需 Option 包装；(ii) 索引访问 `arr[idx - 1]` 单步减法开销可忽略，换取 nil 检查的简化。
+Tenth 选用此约定的动机有二：(i) `0` 自然表示"无引用"，与字段零值初始化（`..` 默认语法，[hir.th:3](../../tenthc/hir/hir.th) 注释）契合，无需 Option 包装；(ii) 索引访问 `arr[idx - 1]` 单步减法开销可忽略，换取 nil 检查的简化。
 
 ### 2.4 序列化/反序列化的保持性
 
@@ -109,7 +109,7 @@ Tenth 选用此约定的动机有二：(i) `0` 自然表示"无引用"，与字�
 
 ### 3.1 递归 AST：代数数据类型定义
 
-设 Rust 端递归 AST 由如下代数数据类型给出（简化自 [`ast.rs:64-146`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/ast.rs)）：
+设 Rust 端递归 AST 由如下代数数据类型给出（简化自 [`ast.rs:64-146`](../../tenth/src/parser/ast.rs)）：
 
 $$
 \begin{aligned}
@@ -122,13 +122,13 @@ $$
 \end{aligned}
 $$
 
-其中 `Box<Expr>` 强制堆分配，子节点为指针。每个 `Expr` 携带 `span: Span`，但在 bridge 转换中所有 span 被替换为 `dummy_span = Span { line: 0, col: 0 }`（[bridge.rs:26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)），故 span 不参与双射性论证，下文视为常量。
+其中 `Box<Expr>` 强制堆分配，子节点为指针。每个 `Expr` 携带 `span: Span`，但在 bridge 转换中所有 span 被替换为 `dummy_span = Span { line: 0, col: 0 }`（[bridge.rs:26](../../tenth/src/compile/bridge.rs)），故 span 不参与双射性论证，下文视为常量。
 
 **定义 3.1**（AST 树）。一棵 AST 是一个有限有根有序树 $T = (V, E, r)$，其中 $V$ 是节点集合，$E \subseteq V \times V$ 是父子边，$r \in V$ 是根。每个节点 $v \in V$ 携带标号 $\ell(v) \in \text{ExprKind}$，子节点按有序列表组织。树的有限性由源程序有限性保证。
 
 ### 3.2 紧凑表示：平坦数组 + 1-based 索引
 
-紧凑表示由若干平行数组构成。核心数组（[hir.th:150-167](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/hir.th)）：
+紧凑表示由若干平行数组构成。核心数组（[hir.th:150-167](../../tenthc/hir/hir.th)）：
 
 | 数组 | 元素类型 | 用途 |
 |------|---------|------|
@@ -140,7 +140,7 @@ $$
 | `block_idxs` | `i64` | 函数体/块作用域的语句索引 |
 | `loop_idxs` | `i64` | 循环体的语句索引 |
 
-`HirExpr` 节点 $n$ 的子引用字段（[hir.th:38-56](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/hir.th)）：
+`HirExpr` 节点 $n$ 的子引用字段（[hir.th:38-56](../../tenthc/hir/hir.th)）：
 
 - `left`, `right`, `cond`, `body`, `alt`：直接索引到 `expr_nodes`；
 - `args_start` + `args_count`：切片索引到 `arg_list`（间接引用），但 `bridge.rs` 中实现为直接索引到 `expr_nodes`（见 §3.4 工程差距）；
@@ -161,18 +161,18 @@ $$
 
 | 字段场景 | 0 的含义 | 源码依据 |
 |---------|---------|---------|
-| `expr_idx` (stmt 中) | 该语句无关联表达式（如空 `return`） | [bridge.rs:347-351](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) `if expr_idx > 0 { Some(...) } else { None }` |
-| `left`/`right` (expr 中) | 该位置无子表达式（如 `unary` 只用 `left`，`right=0`） | [bridge.rs:493-506](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) unary 仅访问 `left` |
-| `extra_start` (if 的 else_branch) | 无 else 分支 | [bridge.rs:530-534](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) `if extra_start > 0 { Some(...) } else { None }` |
-| `body_start`/`main_stmts_start` (fn/main 中) | 无函数体 | [bridge.rs:273-285](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) |
+| `expr_idx` (stmt 中) | 该语句无关联表达式（如空 `return`） | [bridge.rs:347-351](../../tenth/src/compile/bridge.rs) `if expr_idx > 0 { Some(...) } else { None }` |
+| `left`/`right` (expr 中) | 该位置无子表达式（如 `unary` 只用 `left`，`right=0`） | [bridge.rs:493-506](../../tenth/src/compile/bridge.rs) unary 仅访问 `left` |
+| `extra_start` (if 的 else_branch) | 无 else 分支 | [bridge.rs:530-534](../../tenth/src/compile/bridge.rs) `if extra_start > 0 { Some(...) } else { None }` |
+| `body_start`/`main_stmts_start` (fn/main 中) | 无函数体 | [bridge.rs:273-285](../../tenth/src/compile/bridge.rs) |
 
 **不变量 N1**（nil 单义性）。在任意合法紧凑表示 $\mathcal{C}$ 中，对任意字段 $f$，$f = 0$ 当且仅当该字段对应的 AST 子节点位置为 `None`（缺失）。
 
 ### 3.4 跨 Vec 引用与工程差距
 
-`hir.th` 的设计意图（[hir.th:163-167](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/hir.th) 注释）是 `args_start` 索引到 `arg_list`，再由 `arg_list[k]` 间接索引到 `expr_nodes`。这允许实参共享、重排。
+`hir.th` 的设计意图（[hir.th:163-167](../../tenthc/hir/hir.th) 注释）是 `args_start` 索引到 `arg_list`，再由 `arg_list[k]` 间接索引到 `expr_nodes`。这允许实参共享、重排。
 
-但 `bridge.rs` 中 `convert_expr_depth` 的 `call`/`method_call` 分支（[bridge.rs:513-521](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)、[bridge.rs:556-564](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）实现为：
+但 `bridge.rs` 中 `convert_expr_depth` 的 `call`/`method_call` 分支（[bridge.rs:513-521](../../tenth/src/compile/bridge.rs)、[bridge.rs:556-564](../../tenth/src/compile/bridge.rs)）实现为：
 
 ```rust
 let start = arg_start.max(1) as usize;
@@ -184,7 +184,7 @@ for i in start..end {
 }
 ```
 
-即直接将 `arg_start` 当作 `expr_nodes` 的连续起始索引，绕过 `arg_list`。这意味着 tenthc 在构造 `Program` Value 时实际将实参节点连续分配在 `expr_nodes` 中，而非通过 `arg_list` 间接。`block` 分支（[bridge.rs:607-617](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）则将 `extra_start` 直接索引到 `stmt_nodes`。
+即直接将 `arg_start` 当作 `expr_nodes` 的连续起始索引，绕过 `arg_list`。这意味着 tenthc 在构造 `Program` Value 时实际将实参节点连续分配在 `expr_nodes` 中，而非通过 `arg_list` 间接。`block` 分支（[bridge.rs:607-617](../../tenth/src/compile/bridge.rs)）则将 `extra_start` 直接索引到 `stmt_nodes`。
 
 **工程差距 G1**。`hir.th` 的间接引用设计（`args_start → arg_list → expr_nodes`）与 `bridge.rs` 的直接引用实现（`arg_start → expr_nodes`）不一致。当前实现要求 tenthc 在构造 Value 时保证实参节点在 `expr_nodes` 中连续，否则 bridge 会解引用错误节点。这构成"实现契约"而非"文档契约"。
 
@@ -202,7 +202,7 @@ $$
 \mathcal{K}_{\text{sup}} = \{\text{"int"}, \text{"float"}, \text{"str"}, \text{"ident"}, \text{"bool"}, \text{"binary"}, \text{"unary"}, \text{"call"}, \text{"if"}, \text{"assign"}, \text{"method\_call"}, \text{"field"}, \text{"index"}, \text{"ref"}, \text{"deref"}, \text{"block"}, \text{"return"}\}
 $$
 
-共 17 种，对应 [bridge.rs:459-645](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 的 match 臂。
+共 17 种，对应 [bridge.rs:459-645](../../tenth/src/compile/bridge.rs) 的 match 臂。
 
 **定义 4.2**（被支持的 AST 子集 $\mathcal{A}_{\text{sup}}$）。$\mathcal{A}_{\text{sup}} \subset \text{Expr}$ 是由 $\mathcal{K}_{\text{sup}}$ 对应的 `ExprKind` 变体生成的 AST 集合。具体包括 `Literal`、`Ident`、`Binary`、`Unary`、`Call`、`If`、`Assign`、`MethodCall`、`Field`、`Index`、`Ref`、`Deref`、`Block`、以及被 bridge 包装为 `Block([Return])` 的 `return`。
 
@@ -222,15 +222,15 @@ $$
 
 **证明**。需证存在性与唯一性。
 
-*存在性*。我们证明 `compact_program_to_ast` 在 $\mathcal{C}$ 上终止并返回某 AST。考察 `convert_expr_depth(idx, ..., depth)`（[bridge.rs:417-646](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）：
+*存在性*。我们证明 `compact_program_to_ast` 在 $\mathcal{C}$ 上终止并返回某 AST。考察 `convert_expr_depth(idx, ..., depth)`（[bridge.rs:417-646](../../tenth/src/compile/bridge.rs)）：
 
-1. 若 `depth > 50`，函数返回 `Err`（[bridge.rs:424-428](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）。但 $\mathcal{C} \in \mathfrak{C}_{\text{leg}}^{(50)}$ 满足 C3，故递归深度 $\leq 50$，此分支不触发。
-2. 若 `idx == 0 || idx > expr_nodes.len()`，返回 `Err`（[bridge.rs:429-433](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）。但 C2 保证索引合法，此分支不触发。
-3. 否则，函数读取 `kind` 字段并进入 match。由 C1，`kind ∈ 𝒦_sup`，故进入对应分支而非 fallthrough（[bridge.rs:637-644](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）。
+1. 若 `depth > 50`，函数返回 `Err`（[bridge.rs:424-428](../../tenth/src/compile/bridge.rs)）。但 $\mathcal{C} \in \mathfrak{C}_{\text{leg}}^{(50)}$ 满足 C3，故递归深度 $\leq 50$，此分支不触发。
+2. 若 `idx == 0 || idx > expr_nodes.len()`，返回 `Err`（[bridge.rs:429-433](../../tenth/src/compile/bridge.rs)）。但 C2 保证索引合法，此分支不触发。
+3. 否则，函数读取 `kind` 字段并进入 match。由 C1，`kind ∈ 𝒦_sup`，故进入对应分支而非 fallthrough（[bridge.rs:637-644](../../tenth/src/compile/bridge.rs)）。
 4. 每个分支的递归调用 `convert_expr_depth(..., depth + 1)` 严格增加 `depth`，且递归调用的索引字段满足 C2，故递归在有限步内终止（最深 50 层）。
 5. 每个分支构造一个 `ast::Expr`，叶节点直接构造，复合节点通过 `Box::new` 包装递归结果。
 
-类似地，`convert_stmt_range_direct`（[bridge.rs:312-328](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）在 C2 下终止。顶层 `compact_program_to_ast` 遍历 `structs`/`enums`/`fns`/`main_stmts`（[bridge.rs:30-74](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)），均为有限遍历。故存在性得证。
+类似地，`convert_stmt_range_direct`（[bridge.rs:312-328](../../tenth/src/compile/bridge.rs)）在 C2 下终止。顶层 `compact_program_to_ast` 遍历 `structs`/`enums`/`fns`/`main_stmts`（[bridge.rs:30-74](../../tenth/src/compile/bridge.rs)），均为有限遍历。故存在性得证。
 
 *唯一性*。对 `depth` 施归纳。基础：`depth = 0` 时 `convert_expr_depth` 不递归，仅根据 `kind` 构造叶节点（如 `"int"` → `Literal::Int(ival)`），结果唯一。归纳：设对 `depth ≤ k` 唯一性成立。对 `depth = k+1`，每个分支的递归调用深度 $\leq k$，由归纳假设其结果唯一；match 分支由 `kind` 唯一确定，故总结果唯一。$\square$
 
@@ -248,9 +248,9 @@ $$
 
 - 若 $\ell(r) = \text{Literal}(v)$：则 $\mathcal{C}_1, \mathcal{C}_2$ 的根节点 `kind` 必为 `"int"`/`"float"`/`"str"`/`"bool"` 之一，且对应字段值相等。由标准化定义（节点内容唯一确定索引），$\mathcal{C}_1$ 与 $\mathcal{C}_2$ 的根节点相同，且无子节点。故 $\mathcal{C}_1 = \mathcal{C}_2$，矛盾。
 
-- 若 $\ell(r) = \text{Binary}(op, l, r)$：则根节点 `kind = "binary"`，`sval = op`（[bridge.rs:483](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）。`left`/`right` 字段在 $\mathcal{C}_1, \mathcal{C}_2$ 中分别指向子表达式 $l, r$。由 AST $T_1 = T_2$，子树 $l, r$ 相同。对 $l, r$ 施归纳假设（其深度严格小于 $T$），$\mathcal{C}_1$ 与 $\mathcal{C}_2$ 中对应子树标准化表示相同。由标准化定义，根节点也相同。故 $\mathcal{C}_1 = \mathcal{C}_2$，矛盾。
+- 若 $\ell(r) = \text{Binary}(op, l, r)$：则根节点 `kind = "binary"`，`sval = op`（[bridge.rs:483](../../tenth/src/compile/bridge.rs)）。`left`/`right` 字段在 $\mathcal{C}_1, \mathcal{C}_2$ 中分别指向子表达式 $l, r$。由 AST $T_1 = T_2$，子树 $l, r$ 相同。对 $l, r$ 施归纳假设（其深度严格小于 $T$），$\mathcal{C}_1$ 与 $\mathcal{C}_2$ 中对应子树标准化表示相同。由标准化定义，根节点也相同。故 $\mathcal{C}_1 = \mathcal{C}_2$，矛盾。
 
-- 其余 `kind` 类似：每个 `kind` 的字段读取是确定性的（[bridge.rs:449-457](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)），AST 结构唯一确定字段值，标准化定义唯一确定节点位置。
+- 其余 `kind` 类似：每个 `kind` 的字段读取是确定性的（[bridge.rs:449-457](../../tenth/src/compile/bridge.rs)），AST 结构唯一确定字段值，标准化定义唯一确定节点位置。
 
 故单射性成立。$\square_{\text{inj}}$
 
@@ -270,7 +270,7 @@ $$
 
 调用 `convert_expr_depth(root, ...)` 进入 `"binary"` 分支，递归调用 `convert_expr_depth(left, ...)` 与 `convert_expr_depth(right, ...)`，由归纳假设返回 $l$ 与 $r$，组装为 $\text{Binary}(op, l, r) = T$。满射成立。
 
-类似构造可对 $\mathcal{K}_{\text{sup}}$ 中每个 `kind` 给出。例如 `If(cond, then, Some(else))` 构造 `expr_nodes` 拼接 `cond/then/else` 三段，根节点 `kind="if"`, `left = cond_root`, `right = then_root`, `extra_start = else_root`；`If(cond, then, None)` 则 `extra_start = 0`，对应 [bridge.rs:530-534](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 的 `if extra_start > 0` 判断。`Block(stmts)` 构造 `stmt_nodes` 拼接，根节点 `kind="block"`, `extra_start = 1`, `extra_count = |stmts|`，对应 [bridge.rs:605-622](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)。
+类似构造可对 $\mathcal{K}_{\text{sup}}$ 中每个 `kind` 给出。例如 `If(cond, then, Some(else))` 构造 `expr_nodes` 拼接 `cond/then/else` 三段，根节点 `kind="if"`, `left = cond_root`, `right = then_root`, `extra_start = else_root`；`If(cond, then, None)` 则 `extra_start = 0`，对应 [bridge.rs:530-534](../../tenth/src/compile/bridge.rs) 的 `if extra_start > 0` 判断。`Block(stmts)` 构造 `stmt_nodes` 拼接，根节点 `kind="block"`, `extra_start = 1`, `extra_count = |stmts|`，对应 [bridge.rs:605-622](../../tenth/src/compile/bridge.rs)。
 
 故满射性成立。$\square_{\text{surj}}$
 
@@ -282,15 +282,15 @@ $$
 
 **证明**。`compact_program_to_ast` 中所有索引访问形式为：
 
-1. `expr_nodes[idx - 1]`（[bridge.rs:435](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）：由 C2，`idx = 0` 已在 [bridge.rs:429](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 拦截返回 `Err`；`idx > |E|` 同样拦截。故访问时 `1 ≤ idx ≤ |E|`，`idx - 1` 落在 `[0, |E|-1]`，合法。
+1. `expr_nodes[idx - 1]`（[bridge.rs:435](../../tenth/src/compile/bridge.rs)）：由 C2，`idx = 0` 已在 [bridge.rs:429](../../tenth/src/compile/bridge.rs) 拦截返回 `Err`；`idx > |E|` 同样拦截。故访问时 `1 ≤ idx ≤ |E|`，`idx - 1` 落在 `[0, |E|-1]`，合法。
 
-2. `stmt_nodes[i - 1]`（[bridge.rs:322](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)、[bridge.rs:612](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）：循环条件 `i == 0 || i > stmt_nodes.len() { continue; }` 显式跳过越界索引。由 C2，此跳过分支不触发，但即使触发也不报错。故访问合法。
+2. `stmt_nodes[i - 1]`（[bridge.rs:322](../../tenth/src/compile/bridge.rs)、[bridge.rs:612](../../tenth/src/compile/bridge.rs)）：循环条件 `i == 0 || i > stmt_nodes.len() { continue; }` 显式跳过越界索引。由 C2，此跳过分支不触发，但即使触发也不报错。故访问合法。
 
-3. `expr_nodes[i - 1]` 在 `call`/`method_call` 循环（[bridge.rs:517](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)、[bridge.rs:560](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）：循环条件 `i > 0 && i <= expr_nodes.len()` 显式检查。由 C2 + C4，所有 `i` 落在合法范围。
+3. `expr_nodes[i - 1]` 在 `call`/`method_call` 循环（[bridge.rs:517](../../tenth/src/compile/bridge.rs)、[bridge.rs:560](../../tenth/src/compile/bridge.rs)）：循环条件 `i > 0 && i <= expr_nodes.len()` 显式检查。由 C2 + C4，所有 `i` 落在合法范围。
 
-4. 顶层 `structs_val`/`enums_val`/`fns_val`/`expr_nodes`/`stmt_nodes` 的 `extract_vec`（[bridge.rs:150-167](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）：从 `Value::Vec` 提取，返回 `Vec<Value>`，迭代访问天然合法。
+4. 顶层 `structs_val`/`enums_val`/`fns_val`/`expr_nodes`/`stmt_nodes` 的 `extract_vec`（[bridge.rs:150-167](../../tenth/src/compile/bridge.rs)）：从 `Value::Vec` 提取，返回 `Vec<Value>`，迭代访问天然合法。
 
-"不悬空"含义：所有索引指向已分配节点。由 C2（索引 $\leq |E|$ 或 $|S|$）+ 节点数组在转换期间不变（无并发修改，所有值 `clone`，见 [bridge.rs:6](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 注释 "All values are cloned"），引用不会悬空。$\square$
+"不悬空"含义：所有索引指向已分配节点。由 C2（索引 $\leq |E|$ 或 $|S|$）+ 节点数组在转换期间不变（无并发修改，所有值 `clone`，见 [bridge.rs:6](../../tenth/src/compile/bridge.rs) 注释 "All values are cloned"），引用不会悬空。$\square$
 
 ### 4.5 定理 B4（depth 限制的可表达性）
 
@@ -300,9 +300,9 @@ $$
 
 *严格包含*。$\mathcal{A}_{\text{sup}}^{(50)} \subseteq \mathcal{A}_{\text{sup}}$ 显然（深度限制是子集限制）。严格性：构造 $T_{51} = \text{Binary}(+, T_{50}, \text{Ident}("x"))$，其中 $T_{50}$ 是深度 50 的左偏斜二叉树。$T_{51}$ 深度 51，$T_{51} \in \mathcal{A}_{\text{sup}}$ 但 $T_{51} \notin \mathcal{A}_{\text{sup}}^{(50)}$。
 
-*自举足够性*。tenthc 自身源码（`tenthc/*.th`）的最深表达式嵌套通过解析器结构约束。考察 tenthc 的递归下降解析器（[tenthc/parser/parser.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)），表达式嵌套主要来自：(i) 二元运算符链；(ii) 嵌套 if；(iii) 嵌套 call 实参。每层嵌套对应 `convert_expr_depth` 的 `depth + 1` 递归。tenthc 源码的最深表达式嵌套实测不超过 30 层（保守估计，每层函数调用 +1 而非每层语法构造 +1，因为 `convert_expr_depth` 在 call 分支对实参递归但 `depth` 共享）。故 50 的上限对 tenthc 自举足够。
+*自举足够性*。tenthc 自身源码（`tenthc/*.th`）的最深表达式嵌套通过解析器结构约束。考察 tenthc 的递归下降解析器（[tenthc/parser/parser.th](../../tenthc/parser/parser.th)），表达式嵌套主要来自：(i) 二元运算符链；(ii) 嵌套 if；(iii) 嵌套 call 实参。每层嵌套对应 `convert_expr_depth` 的 `depth + 1` 递归。tenthc 源码的最深表达式嵌套实测不超过 30 层（保守估计，每层函数调用 +1 而非每层语法构造 +1，因为 `convert_expr_depth` 在 call 分支对实参递归但 `depth` 共享）。故 50 的上限对 tenthc 自举足够。
 
-**刻画**。$\mathcal{A}_{\text{sup}}^{(50)}$ 是"表达式树深度 ≤ 50 的被支持 AST 子集"。深度 50 是经验设定，对应典型编译器源码的最深嵌套。深度超过 50 的程序（如机器生成的深度嵌套算术表达式）会被 `convert_expr_depth` 拒绝（[bridge.rs:424-428](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 返回 `Err`）。$\square$
+**刻画**。$\mathcal{A}_{\text{sup}}^{(50)}$ 是"表达式树深度 ≤ 50 的被支持 AST 子集"。深度 50 是经验设定，对应典型编译器源码的最深嵌套。深度超过 50 的程序（如机器生成的深度嵌套算术表达式）会被 `convert_expr_depth` 拒绝（[bridge.rs:424-428](../../tenth/src/compile/bridge.rs) 返回 `Err`）。$\square$
 
 ### 4.6 定理 B5（语义保持）
 
@@ -315,21 +315,21 @@ $$
 对节点深度施归纳。
 
 *基础*（叶节点）：
-- $e_i.\text{kind} = \text{"int"}$：$\mathcal{C}$ 语义 $\llbracket e_i \rrbracket_{\mathcal{C}} = \text{Int}(e_i.\text{ival})$。AST $\text{Literal}(\text{Int}(\text{ival}))$ 语义相同。由 [bridge.rs:460-463](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)，`ival` 字段直接读取并构造 `Literal::Int(ival)`，数值保持。
-- $e_i.\text{kind} = \text{"str"}$：类似，`sval` 直接传递（[bridge.rs:468-471](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）。
-- $e_i.\text{kind} = \text{"ident"}$：$\llbracket e_i \rrbracket_{\mathcal{C}} = \text{Var}(e_i.\text{sval})$，AST $\text{Ident}(\text{sval})$ 语义相同（[bridge.rs:472-475](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）。
-- $e_i.\text{kind} = \text{"bool"}$：`ival != 0` 转 bool，与 Tenth 中 bool 字面量语义一致（[bridge.rs:476-479](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）。
-- $e_i.\text{kind} = \text{"float"}$：`ival as f64`，**注意局限 L4**：float 字面量在 tenthc 紧凑表示中通过 `lit_fval: f64` 字段存储，但 bridge 读取的是 `ival`（[bridge.rs:450](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) `let ival = get_field_i64(&fields, "ival")?;`）并 `ival as f64` 转换。若 tenthc 把浮点值存入 `ival` 而非 `lit_fval`，则此处语义保持；否则存在精度损失。这是工程实现细节，需在 tenthc 中确认字段一致性。
+- $e_i.\text{kind} = \text{"int"}$：$\mathcal{C}$ 语义 $\llbracket e_i \rrbracket_{\mathcal{C}} = \text{Int}(e_i.\text{ival})$。AST $\text{Literal}(\text{Int}(\text{ival}))$ 语义相同。由 [bridge.rs:460-463](../../tenth/src/compile/bridge.rs)，`ival` 字段直接读取并构造 `Literal::Int(ival)`，数值保持。
+- $e_i.\text{kind} = \text{"str"}$：类似，`sval` 直接传递（[bridge.rs:468-471](../../tenth/src/compile/bridge.rs)）。
+- $e_i.\text{kind} = \text{"ident"}$：$\llbracket e_i \rrbracket_{\mathcal{C}} = \text{Var}(e_i.\text{sval})$，AST $\text{Ident}(\text{sval})$ 语义相同（[bridge.rs:472-475](../../tenth/src/compile/bridge.rs)）。
+- $e_i.\text{kind} = \text{"bool"}$：`ival != 0` 转 bool，与 Tenth 中 bool 字面量语义一致（[bridge.rs:476-479](../../tenth/src/compile/bridge.rs)）。
+- $e_i.\text{kind} = \text{"float"}$：`ival as f64`，**注意局限 L4**：float 字面量在 tenthc 紧凑表示中通过 `lit_fval: f64` 字段存储，但 bridge 读取的是 `ival`（[bridge.rs:450](../../tenth/src/compile/bridge.rs) `let ival = get_field_i64(&fields, "ival")?;`）并 `ival as f64` 转换。若 tenthc 把浮点值存入 `ival` 而非 `lit_fval`，则此处语义保持；否则存在精度损失。这是工程实现细节，需在 tenthc 中确认字段一致性。
 
 *归纳*（复合节点）：
-- $e_i.\text{kind} = \text{"binary"}$：$\llbracket e_i \rrbracket_{\mathcal{C}} = \llbracket e_i.\text{op} \rrbracket(\llbracket e_{\text{left}} \rrbracket, \llbracket e_{\text{right}} \rrbracket)$。AST $\text{Binary}(\text{parse\_binop}(sval), l, r)$ 语义相同。由 [bridge.rs:480-492](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)，`op` 通过 `parse_binop` 映射（[bridge.rs:648-667](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)），13 个二元运算符一一对应。由归纳假设，$\llbracket e_{\text{left}} \rrbracket_{\mathcal{C}} = \llbracket l \rrbracket_{\text{AST}}$，$\llbracket e_{\text{right}} \rrbracket_{\mathcal{C}} = \llbracket r \rrbracket_{\text{AST}}$，故语义相等。
-- $e_i.\text{kind} = \text{"if"}$：$\llbracket e_i \rrbracket_{\mathcal{C}} = \text{if } \llbracket e_{\text{left}} \rrbracket \text{ then } \llbracket e_{\text{right}} \rrbracket \text{ else } \llbracket e_{\text{extra\_start}} \rrbracket$（若 `extra_start > 0`）。AST `If(cond, then, else_branch)` 语义相同。由 [bridge.rs:527-543](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 与归纳假设，保持。
-- $e_i.\text{kind} = \text{"call"}$：$\llbracket e_i \rrbracket_{\mathcal{C}} = \text{Call}(e_i.\text{sval}, [\llbracket e_{\text{arg\_start}} \rrbracket, \llbracket e_{\text{arg\_start}+1} \rrbracket, \ldots])$。AST `Call(Ident(sval), args)` 语义相同。由 [bridge.rs:507-526](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 与 C4（实参连续），保持。
+- $e_i.\text{kind} = \text{"binary"}$：$\llbracket e_i \rrbracket_{\mathcal{C}} = \llbracket e_i.\text{op} \rrbracket(\llbracket e_{\text{left}} \rrbracket, \llbracket e_{\text{right}} \rrbracket)$。AST $\text{Binary}(\text{parse\_binop}(sval), l, r)$ 语义相同。由 [bridge.rs:480-492](../../tenth/src/compile/bridge.rs)，`op` 通过 `parse_binop` 映射（[bridge.rs:648-667](../../tenth/src/compile/bridge.rs)），13 个二元运算符一一对应。由归纳假设，$\llbracket e_{\text{left}} \rrbracket_{\mathcal{C}} = \llbracket l \rrbracket_{\text{AST}}$，$\llbracket e_{\text{right}} \rrbracket_{\mathcal{C}} = \llbracket r \rrbracket_{\text{AST}}$，故语义相等。
+- $e_i.\text{kind} = \text{"if"}$：$\llbracket e_i \rrbracket_{\mathcal{C}} = \text{if } \llbracket e_{\text{left}} \rrbracket \text{ then } \llbracket e_{\text{right}} \rrbracket \text{ else } \llbracket e_{\text{extra\_start}} \rrbracket$（若 `extra_start > 0`）。AST `If(cond, then, else_branch)` 语义相同。由 [bridge.rs:527-543](../../tenth/src/compile/bridge.rs) 与归纳假设，保持。
+- $e_i.\text{kind} = \text{"call"}$：$\llbracket e_i \rrbracket_{\mathcal{C}} = \text{Call}(e_i.\text{sval}, [\llbracket e_{\text{arg\_start}} \rrbracket, \llbracket e_{\text{arg\_start}+1} \rrbracket, \ldots])$。AST `Call(Ident(sval), args)` 语义相同。由 [bridge.rs:507-526](../../tenth/src/compile/bridge.rs) 与 C4（实参连续），保持。
 - 其余 `kind` 类似论证。
 
-语句层（[bridge.rs:330-389](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）类似：`"let"` 映射 `StmtKind::Let`，`"return"` 映射 `StmtKind::Return`，`"expr"` 映射 `StmtKind::Expr`，语义一一对应。
+语句层（[bridge.rs:330-389](../../tenth/src/compile/bridge.rs)）类似：`"let"` 映射 `StmtKind::Let`，`"return"` 映射 `StmtKind::Return`，`"expr"` 映射 `StmtKind::Expr`，语义一一对应。
 
-故 `compact_program_to_ast` 语义保持。后续 HIR lowerer 与 bytecode 编译器对 AST $T$ 的处理在路径 A（Rust 全栈）中已验证（[MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md) 测试全绿），故 $T$ 经路径 B 生成的程序与 $\mathcal{C}$ 的原生语义一致。$\square$
+故 `compact_program_to_ast` 语义保持。后续 HIR lowerer 与 bytecode 编译器对 AST $T$ 的处理在路径 A（Rust 全栈）中已验证（[MEMO.md](../../MEMO.md) 测试全绿），故 $T$ 经路径 B 生成的程序与 $\mathcal{C}$ 的原生语义一致。$\square$
 
 ---
 
@@ -339,27 +339,27 @@ $$
 
 **不变量 I1**（索引域）。对任意 expr 索引字段 $f \in \{\text{left}, \text{right}, \text{cond}, \text{body}, \text{alt}, \text{arg\_start}, \text{extra\_start}\}$，$f \in \{0\} \cup [1, |E|]$。对 stmt 索引字段，$f \in \{0\} \cup [1, |S|]$。
 
-**运行时检查**：`convert_expr_depth` 在 [bridge.rs:429-433](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 显式检查 `idx == 0 || idx > expr_nodes.len()`，违反时返回 `Err`。
+**运行时检查**：`convert_expr_depth` 在 [bridge.rs:429-433](../../tenth/src/compile/bridge.rs) 显式检查 `idx == 0 || idx > expr_nodes.len()`，违反时返回 `Err`。
 
 **不变量 I2**（depth 单调）。每次递归调用 `convert_expr_depth(..., depth + 1)` 严格增加 depth。depth 上限 50。
 
-**运行时检查**：[bridge.rs:424-428](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 检查 `depth > 50`，违反时返回 `Err`。
+**运行时检查**：[bridge.rs:424-428](../../tenth/src/compile/bridge.rs) 检查 `depth > 50`，违反时返回 `Err`。
 
 ### 5.2 nil 表示的不变量
 
 **不变量 I3**（nil 单义）。字段值为 0 当且仅当对应 AST 子位置为 `None`。
 
-**运行时检查**：bridge 中所有"可选子节点"通过 `if f > 0 { Some(...) } else { None }` 模式处理（[bridge.rs:347-351](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)、[bridge.rs:530-534](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)、[bridge.rs:624-628](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）。无显式反向检查（即不验证 `f != 0` 当 AST 期望 `Some` 时），这是局限 L5。
+**运行时检查**：bridge 中所有"可选子节点"通过 `if f > 0 { Some(...) } else { None }` 模式处理（[bridge.rs:347-351](../../tenth/src/compile/bridge.rs)、[bridge.rs:530-534](../../tenth/src/compile/bridge.rs)、[bridge.rs:624-628](../../tenth/src/compile/bridge.rs)）。无显式反向检查（即不验证 `f != 0` 当 AST 期望 `Some` 时），这是局限 L5。
 
 ### 5.3 跨 Vec 引用的不变量
 
 **不变量 I4**（实参连续性，实现契约 G1）。对 `kind = "call"` 或 `"method_call"` 的节点，`arg_start, arg_start+1, ..., arg_start+arg_count-1` 全部落在 `[1, |E|]` 且对应节点为合法实参表达式。
 
-**运行时检查**：[bridge.rs:517](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) `if i > 0 && i <= expr_nodes.len()` 仅检查边界，不检查"是否为合法实参"。若 tenthc 错误地把非实参节点放在该范围，bridge 会静默接受并产生错误 AST。这是局限 L6。
+**运行时检查**：[bridge.rs:517](../../tenth/src/compile/bridge.rs) `if i > 0 && i <= expr_nodes.len()` 仅检查边界，不检查"是否为合法实参"。若 tenthc 错误地把非实参节点放在该范围，bridge 会静默接受并产生错误 AST。这是局限 L6。
 
 **不变量 I5**（语句连续性）。对 `kind = "block"` 的节点，`extra_start, ..., extra_start+extra_count-1` 全部落在 `[1, |S|]`。
 
-**运行时检查**：[bridge.rs:611](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) `if i == 0 || i > stmt_nodes.len() { continue; }` 跳过越界，但 `continue` 而非 `Err`，是静默跳过（局限 L7）。
+**运行时检查**：[bridge.rs:611](../../tenth/src/compile/bridge.rs) `if i == 0 || i > stmt_nodes.len() { continue; }` 跳过越界，但 `continue` 而非 `Err`，是静默跳过（局限 L7）。
 
 ### 5.4 不变量的运行时检查汇总
 
@@ -377,7 +377,7 @@ $$
 
 ### 6.1 对 GC 的影响
 
-紧凑表示的"所有值 clone"策略（[bridge.rs:6](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 注释 "All values are cloned from the interpreter's Value tree to avoid borrowing issues"）避免借用冲突，但代价是 O(N) 内存复制，其中 N 为节点总数。对 tenthc 自举（~0.2s 完成，节点数 ~数千），此开销可忽略。但若用于大型程序，应考虑改为 arena 分配或引用计数。
+紧凑表示的"所有值 clone"策略（[bridge.rs:6](../../tenth/src/compile/bridge.rs) 注释 "All values are cloned from the interpreter's Value tree to avoid borrowing issues"）避免借用冲突，但代价是 O(N) 内存复制，其中 N 为节点总数。对 tenthc 自举（~0.2s 完成，节点数 ~数千），此开销可忽略。但若用于大型程序，应考虑改为 arena 分配或引用计数。
 
 由于转换后 AST 拥有独立堆内存（`Box<Expr>`），转换期间存在"紧凑表示 + AST"双份内存的瞬时峰值，约为 2× 节点数 × 节点大小。
 
@@ -406,7 +406,7 @@ $$
 
 ### 7.2 depth 限制的动态调整
 
-当前 `depth > 50` 硬编码于 [bridge.rs:424](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)。未来可：
+当前 `depth > 50` 硬编码于 [bridge.rs:424](../../tenth/src/compile/bridge.rs)。未来可：
 
 - 改为可配置参数，按程序规模动态调整。
 - 改为迭代算法（显式栈）消除递归深度限制，将栈深度限制从 50 提升到可用堆内存上限。
@@ -450,7 +450,7 @@ $$
 
 ### L1：depth > 50 硬上限
 
-**是什么**：`convert_expr_depth` 在 [bridge.rs:424-428](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 硬编码 `depth > 50` 检查，超过则返回 `Err`。
+**是什么**：`convert_expr_depth` 在 [bridge.rs:424-428](../../tenth/src/compile/bridge.rs) 硬编码 `depth > 50` 检查，超过则返回 `Err`。
 
 **影响**：定理 B2 的双射性仅在 $\mathcal{A}_{\text{sup}}^{(50)}$ 上成立，对深度 > 50 的程序不构成双射（满射失败）。
 
@@ -458,7 +458,7 @@ $$
 
 ### L2：unknown kind 的 fallthrough 非双射点
 
-**是什么**：`convert_expr_depth` 的 match 语句在 [bridge.rs:637-644](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 对未识别的 `kind` 返回 `Literal::Int(0)` 占位，而非 `Err`。
+**是什么**：`convert_expr_depth` 的 match 语句在 [bridge.rs:637-644](../../tenth/src/compile/bridge.rs) 对未识别的 `kind` 返回 `Literal::Int(0)` 占位，而非 `Err`。
 
 **影响**：若 tenthc 输出 `kind ∉ 𝒦_sup` 的节点，bridge 静默产生错误 AST（值为 0 的整数字面量），双射性失败且无报错。
 
@@ -474,7 +474,7 @@ $$
 
 ### L4：float 字面量的字段一致性
 
-**是什么**：`hir.th` 中 `HirExpr` 有 `lit_ival: i64` 与 `lit_fval: f64` 两个字段（[hir.th:33-34](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/hir.th)）。但 bridge 在 [bridge.rs:450](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 仅读取 `ival`（通过 `get_field_i64`），并在 [bridge.rs:464-467](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 用 `ival as f64` 构造 `Literal::Float`。
+**是什么**：`hir.th` 中 `HirExpr` 有 `lit_ival: i64` 与 `lit_fval: f64` 两个字段（[hir.th:33-34](../../tenthc/hir/hir.th)）。但 bridge 在 [bridge.rs:450](../../tenth/src/compile/bridge.rs) 仅读取 `ival`（通过 `get_field_i64`），并在 [bridge.rs:464-467](../../tenth/src/compile/bridge.rs) 用 `ival as f64` 构造 `Literal::Float`。
 
 **影响**：若 tenthc 把浮点值存入 `lit_fval` 而非 `lit_ival`，bridge 会读取到 0 或错误值，float 语义丢失。
 
@@ -484,7 +484,7 @@ $$
 
 **是什么**：I3 不变量要求"字段=0 当且仅当 AST 期望 None"。bridge 仅实现正向（字段=0 → None），未实现反向（AST 期望 Some 时验证字段≠0）。
 
-**影响**：若 tenthc 错误地把 `if` 的 `cond` 字段设为 0（而 AST 期望 `cond` 必须存在），bridge 会调用 `convert_expr_depth(0, ...)` 触发 [bridge.rs:429](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 的 `Err`。故此情况会被捕获，但报错信息为"索引 0 越界"而非"nil 单义性违反"，调试性差。
+**影响**：若 tenthc 错误地把 `if` 的 `cond` 字段设为 0（而 AST 期望 `cond` 必须存在），bridge 会调用 `convert_expr_depth(0, ...)` 触发 [bridge.rs:429](../../tenth/src/compile/bridge.rs) 的 `Err`。故此情况会被捕获，但报错信息为"索引 0 越界"而非"nil 单义性违反"，调试性差。
 
 **缓解**：当前 `Err` 已能阻止错误传播，但错误信息需改进。
 
@@ -498,7 +498,7 @@ $$
 
 ### L7：语句越界的静默跳过
 
-**是什么**：`convert_stmt_range_direct` 在 [bridge.rs:321](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 与 block 分支在 [bridge.rs:611](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 对越界索引 `continue` 跳过而非 `Err`。
+**是什么**：`convert_stmt_range_direct` 在 [bridge.rs:321](../../tenth/src/compile/bridge.rs) 与 block 分支在 [bridge.rs:611](../../tenth/src/compile/bridge.rs) 对越界索引 `continue` 跳过而非 `Err`。
 
 **影响**：若紧凑表示包含越界语句索引，bridge 静默丢失语句，产生残缺 AST。
 
@@ -506,11 +506,11 @@ $$
 
 ### L8：span 信息的丢失
 
-**是什么**：bridge 用 `dummy_span = Span { line: 0, col: 0 }`（[bridge.rs:26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs)）填充所有 AST 节点的 span，丢弃 tenthc 解析时的源位置信息。
+**是什么**：bridge 用 `dummy_span = Span { line: 0, col: 0 }`（[bridge.rs:26](../../tenth/src/compile/bridge.rs)）填充所有 AST 节点的 span，丢弃 tenthc 解析时的源位置信息。
 
 **影响**：错误诊断（如类型错误、借用检查错误）无法定位到 tenthc 源码行号，只能报告"在 bridge 转换后的 AST 中某位置"。
 
-**缓解**：tenthc 的 `HirExpr` 当前无 span 字段（[hir.th:30-65](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/hir.th) 未含 span），需先在 tenthc 端记录 span，再在 bridge 中传播。这是未来工作。
+**缓解**：tenthc 的 `HirExpr` 当前无 span 字段（[hir.th:30-65](../../tenthc/hir/hir.th) 未含 span），需先在 tenthc 端记录 span，再在 bridge 中传播。这是未来工作。
 
 ---
 
@@ -528,15 +528,15 @@ $$
 
 ### 附录 B：与现有文档的对应
 
-- 自举三路径定义见 [工作规范.md §四](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/.trae/rules/工作规范.md)，本文聚焦路径 B。
-- bridge.rs 在路径 B 中的位置见 [compile/mod.rs:30](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/mod.rs)。
-- 紧凑表示的设计动机见 [hir.th:1-4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/hir.th) 注释。
-- 自举性能目标 ~0.2s 见 [工作规范.md §二](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/.trae/rules/工作规范.md)。
+- 自举三路径定义见 [工作规范.md §四](../../.agents/rules/工作规范.md)，本文聚焦路径 B。
+- bridge.rs 在路径 B 中的位置见 [compile/mod.rs:30](../../tenth/src/compile/mod.rs)。
+- 紧凑表示的设计动机见 [hir.th:1-4](../../tenthc/hir/hir.th) 注释。
+- 自举性能目标 ~0.2s 见 [工作规范.md §二](../../.agents/rules/工作规范.md)。
 
 ### 附录 C：实施建议
 
-1. **优先级 P0**（修复 L2）：将 [bridge.rs:637-644](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 的 fallthrough 从 `Ok(Literal::Int(0))` 改为 `Err`，使 C1 成为运行时强制不变量。
-2. **优先级 P1**（修复 L7）：将 [bridge.rs:321](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 与 [bridge.rs:611](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/bridge.rs) 的 `continue` 改为 `Err`，使 I5 成为运行时强制不变量。
+1. **优先级 P0**（修复 L2）：将 [bridge.rs:637-644](../../tenth/src/compile/bridge.rs) 的 fallthrough 从 `Ok(Literal::Int(0))` 改为 `Err`，使 C1 成为运行时强制不变量。
+2. **优先级 P1**（修复 L7）：将 [bridge.rs:321](../../tenth/src/compile/bridge.rs) 与 [bridge.rs:611](../../tenth/src/compile/bridge.rs) 的 `continue` 改为 `Err`，使 I5 成为运行时强制不变量。
 3. **优先级 P1**（修复 L4）：核对 tenthc 中 float 字面量的存储字段，若用 `lit_fval`，则在 bridge 中新增 `get_field_f64` 并在 `"float"` 分支读取。
 4. **优先级 P2**（修复 G1）：统一 `hir.th` 设计与 `bridge.rs` 实现的跨 Vec 引用契约（§7.5）。
 5. **优先级 P3**（增强 L8）：在 tenthc `HirExpr` 中添加 span 字段，bridge 中传播。

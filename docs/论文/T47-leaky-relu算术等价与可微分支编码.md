@@ -3,14 +3,14 @@
 > **论文编号**：T47
 > **数理部分类**：可微分支编码 / 算术等价变换 / 形式化语义
 > **关联论文**：T39（Wengert Tape 形式化语义与反向模式正确性）
-> **关联源码**：[`tenth/std/nn/activations.th` L16-L31](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th)、[`tenth/src/runtime/autodiff.rs` L342-L349](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)
+> **关联源码**：[`tenth/std/nn/activations.th` L16-L31](../../tenth/std/nn/activations.th)、[`tenth/src/runtime/autodiff.rs` L342-L349](../../tenth/src/runtime/autodiff.rs)
 > **版本**：v1.0  |  **日期**：2026-07-02
 
 ---
 
 ## 摘要
 
-Tenth 语言在 v0.3.3 设计中**有意省略**了 tensor 级别的条件选择原语——既无 PyTorch 的 `torch.where(cond, a, b)`，也无 JAX 的 `jax.lax.select(cond, a, b)`，更未将 `masked_fill` 注册到 `TapeOp` 自动微分枚举中（[autodiff.rs L29-L79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 仅含 21 个可微算子，无 `MaskedFill`）。这一**能力限制**给需要"分段函数"语义的激活函数（如 `leaky_relu`）的实现带来了挑战：标准库开发者既不能直接写条件表达式，又必须保持可微性。
+Tenth 语言在 v0.3.3 设计中**有意省略**了 tensor 级别的条件选择原语——既无 PyTorch 的 `torch.where(cond, a, b)`，也无 JAX 的 `jax.lax.select(cond, a, b)`，更未将 `masked_fill` 注册到 `TapeOp` 自动微分枚举中（[autodiff.rs L29-L79](../../tenth/src/runtime/autodiff.rs) 仅含 21 个可微算子，无 `MaskedFill`）。这一**能力限制**给需要"分段函数"语义的激活函数（如 `leaky_relu`）的实现带来了挑战：标准库开发者既不能直接写条件表达式，又必须保持可微性。
 
 本文形式化分析 Tenth 标准库中 `leaky_relu` 的算术等价技巧——`leaky_relu(x, slope) = relu(x) + slope * relu(-x)`，证明这一恒等式在数学语义与自动微分语义两个层面均与朴素定义 `x if x > 0 else slope * x` 等价。我们提出五条主定理：
 
@@ -53,15 +53,15 @@ leaky_relu(x, slope) = jax.lax.select(x > 0, x, slope * x)
 
 Tenth v0.3.3 的 tensor 类型有意省略了 tensor 级别的条件运算原语。我们在源码层面确认了这一事实：
 
-- [`tenth/src/runtime/tensor.rs` L1086-L1118](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 实现了 `masked_fill(mask, value)` 方法，但**仅作为前向操作**，未注册到 `TapeOp`（[autodiff.rs L29-L79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 枚举的 21 个变体中无 `MaskedFill`），因此**不可微**；
-- tensor 类型无 element-wise `max(t1, t2)` 方法（仅有标量 reduce 的 `max_val()`，[tensor.rs L490](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）；
-- Tenth 语法中的 `where` 是类型约束子句（[语言参考手册 L99, L474](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md)），类似 Rust，**不是**张量条件选择表达式。
+- [`tenth/src/runtime/tensor.rs` L1086-L1118](../../tenth/src/runtime/tensor.rs) 实现了 `masked_fill(mask, value)` 方法，但**仅作为前向操作**，未注册到 `TapeOp`（[autodiff.rs L29-L79](../../tenth/src/runtime/autodiff.rs) 枚举的 21 个变体中无 `MaskedFill`），因此**不可微**；
+- tensor 类型无 element-wise `max(t1, t2)` 方法（仅有标量 reduce 的 `max_val()`，[tensor.rs L490](../../tenth/src/runtime/tensor.rs)）；
+- Tenth 语法中的 `where` 是类型约束子句（[语言参考手册 L99, L474](../语言参考手册.md)），类似 Rust，**不是**张量条件选择表达式。
 
 在这种能力约束下，标准库开发者面对 `leaky_relu` 的实现必须寻找**可微的算术恒等式**来替代条件分支。
 
 ### 1.3 算术等价技巧
 
-Tenth 标准库采用了如下实现（[`tenth/std/nn/activations.th` L16-L26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th)）：
+Tenth 标准库采用了如下实现（[`tenth/std/nn/activations.th` L16-L26](../../tenth/std/nn/activations.th)）：
 
 ```tenth
 // LeakyReLU：f(x) = x if x > 0 else slope * x
@@ -77,7 +77,7 @@ fn leaky_relu(x: Tensor[f64, ..], slope: f64) -> Tensor[f64, ..] {
 }
 ```
 
-注释明确给出了 case 分析证明的骨架。这一技巧的精髓在于：用**两个 ReLU 的线性组合**编码了"分段线性"语义，而 ReLU 已经是 `TapeOp` 中的可微算子（[autodiff.rs L43-L44, L342-L349](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+注释明确给出了 case 分析证明的骨架。这一技巧的精髓在于：用**两个 ReLU 的线性组合**编码了"分段线性"语义，而 ReLU 已经是 `TapeOp` 中的可微算子（[autodiff.rs L43-L44, L342-L349](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 1.4 贡献
 
@@ -154,7 +154,7 @@ def leaky_relu(x, slope):
 
 ### 2.5 Tenth 的设计选择
 
-Tenth v0.3.3 **有意省略** tensor 级条件原语的设计动因（综合 [CODE_WIKI.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/CODE_WIKI.md) 与 [MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md)）：
+Tenth v0.3.3 **有意省略** tensor 级条件原语的设计动因（综合 [CODE_WIKI.md](../../CODE_WIKI.md) 与 [MEMO.md](../../MEMO.md)）：
 
 1. **简化 `TapeOp` 枚举**：21 个算子已经覆盖了常用神经网络前向/反向，新增 `MaskedFill`/`Select` 会增加 backward 实现负担与自举同步成本；
 2. **避免运行时分支**：tensor 条件运算引入逐元素掩码，与 Tenth 的"算子级闭式 backward"哲学冲突；
@@ -176,7 +176,7 @@ $$
 
 **定义 3.2（ReLU 函数）**：$\text{relu}(x) = \max(0, x) = \begin{cases} x & x > 0 \\ 0 & x \leq 0 \end{cases}$
 
-对应 Tenth 实现：[`tenth/src/runtime/tensor.rs` L871-L876](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)。
+对应 Tenth 实现：[`tenth/src/runtime/tensor.rs` L871-L876](../../tenth/src/runtime/tensor.rs)。
 
 **定义 3.3（Tenth 算术等价形式）**：
 
@@ -184,7 +184,7 @@ $$
 \text{leaky\_relu}_{\text{AE}}(x, \alpha) = \text{relu}(x) + \alpha \cdot \text{relu}(-x)
 $$
 
-对应 Tenth 实现：[`tenth/std/nn/activations.th` L24-L26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th)。
+对应 Tenth 实现：[`tenth/std/nn/activations.th` L24-L26](../../tenth/std/nn/activations.th)。
 
 ### 3.2 张量情形的逐点推广
 
@@ -194,14 +194,14 @@ $$
 \text{leaky\_relu}(x, \alpha)_i = \text{leaky\_relu}(x_i, \alpha), \quad \forall i \in [1, n]
 $$
 
-由于 Tenth 的 `relu()` 是逐元素算子（[tensor.rs L871-L876](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），`+` 和 `*`（标量广播）也是逐元素，故张量情形的算术等价归约为标量情形的逐点应用。本文以下证明聚焦标量情形。
+由于 Tenth 的 `relu()` 是逐元素算子（[tensor.rs L871-L876](../../tenth/src/runtime/tensor.rs)），`+` 和 `*`（标量广播）也是逐元素，故张量情形的算术等价归约为标量情形的逐点应用。本文以下证明聚焦标量情形。
 
 ### 3.3 自动微分语义
 
-依 T39 §3.3（[T39 §3.3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md)），Tenth 的 Wengert tape 给每个算子定义前向指称 $\mathcal{F}[\![\cdot]\!]$ 与反向指称 $\mathcal{B}[\![\cdot]\!]$。涉及本论文的算子：
+依 T39 §3.3（[T39 §3.3](T39-Wengert-Tape形式化语义与反向模式正确性.md)），Tenth 的 Wengert tape 给每个算子定义前向指称 $\mathcal{F}[\![\cdot]\!]$ 与反向指称 $\mathcal{B}[\![\cdot]\!]$。涉及本论文的算子：
 
-- **ReLU 前向**：$\mathcal{F}[\![\text{ReLU}]\!](a) = \max(0, a)$（[T39 §5.7](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md)）；
-- **ReLU 反向**：$\mathcal{B}[\![\text{ReLU}]\!](a, \bar c) = \bar c \odot \mathbb{1}_{a > 0}$（[autodiff.rs L342-L349](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **ReLU 前向**：$\mathcal{F}[\![\text{ReLU}]\!](a) = \max(0, a)$（[T39 §5.7](T39-Wengert-Tape形式化语义与反向模式正确性.md)）；
+- **ReLU 反向**：$\mathcal{B}[\![\text{ReLU}]\!](a, \bar c) = \bar c \odot \mathbb{1}_{a > 0}$（[autodiff.rs L342-L349](../../tenth/src/runtime/autodiff.rs)）；
 - **Add 反向**：$\mathcal{B}[\![\text{Add}]\!]((a, b), \bar c) = (\bar c, \bar c)$；
 - **Mul 反向**（标量-张量广播）：$\mathcal{B}[\![\text{Mul}\cdot s]\!](a, \bar c) = s \cdot \bar c$；
 - **Neg 反向**：$\mathcal{B}[\![\text{Neg}]\!](a, \bar c) = -\bar c$。
@@ -220,7 +220,7 @@ $$
 \text{relu}(x) + \alpha \cdot \text{relu}(-x) = \text{leaky\_relu}(x, \alpha)
 $$
 
-即 Tenth 实现 [`activations.th` L24-L26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) 与朴素分段定义在 $\mathbb{R}$ 上逐点相等。
+即 Tenth 实现 [`activations.th` L24-L26](../../tenth/std/nn/activations.th) 与朴素分段定义在 $\mathbb{R}$ 上逐点相等。
 
 **证明**：分三种情形。
 
@@ -250,7 +250,7 @@ $$
 
 注意 $x < 0$ 时 $\alpha x = \text{leaky\_relu}(x, \alpha)$（按定义 3.1）。等式成立。
 
-**Case 3**：$x = 0$。则 $-x = 0$，$\text{relu}(0) = 0$（依 [tensor.rs L873](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 实现 `if x > 0.0 { x } else { 0.0 }`，0 不满足 `> 0`，取 0）。代入：
+**Case 3**：$x = 0$。则 $-x = 0$，$\text{relu}(0) = 0$（依 [tensor.rs L873](../../tenth/src/runtime/tensor.rs) 实现 `if x > 0.0 { x } else { 0.0 }`，0 不满足 `> 0`，取 0）。代入：
 
 $$
 \text{relu}(0) + \alpha \cdot \text{relu}(0) = 0 + \alpha \cdot 0 = 0
@@ -260,9 +260,9 @@ $$
 
 三种情形完备且互斥，故 $\forall x \in \mathbb{R}, \alpha \in \mathbb{R}$，定理成立。$\square$
 
-**推论 AE1.1**：取 $\alpha = 0$，得 $\text{relu}(x) = \text{leaky\_relu}(x, 0)$，与 [activations.th L20 注释](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) "slope=0 时等价"一致。
+**推论 AE1.1**：取 $\alpha = 0$，得 $\text{relu}(x) = \text{leaky\_relu}(x, 0)$，与 [activations.th L20 注释](../../tenth/std/nn/activations.th) "slope=0 时等价"一致。
 
-**推论 AE1.2**：取 $\alpha = 1$，得 $\text{relu}(x) + \text{relu}(-x) = |x|$（绝对值）。这是 ReLU 与绝对值关系的经典恒等式，也是 [activations.th L19 注释](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) 提及"0.5*(x + |x|) 类技巧"的代数基础。
+**推论 AE1.2**：取 $\alpha = 1$，得 $\text{relu}(x) + \text{relu}(-x) = |x|$（绝对值）。这是 ReLU 与绝对值关系的经典恒等式，也是 [activations.th L19 注释](../../tenth/std/nn/activations.th) 提及"0.5*(x + |x|) 类技巧"的代数基础。
 
 ### 4.2 定理 AE2（可微性保持）
 
@@ -274,7 +274,7 @@ $$
 
 即除可数集 $\{0\}$ 外，两种实现产生相同的反向梯度。
 
-**证明**：在 Tenth tape 语义下，梯度通过链式法则逐算子回传（[T39 定理 AD1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md)）。我们分别计算两种实现的梯度。
+**证明**：在 Tenth tape 语义下，梯度通过链式法则逐算子回传（[T39 定理 AD1](T39-Wengert-Tape形式化语义与反向模式正确性.md)）。我们分别计算两种实现的梯度。
 
 **朴素形式的梯度**（理论上）：
 
@@ -323,7 +323,7 @@ $$
 
 故除 $x = 0$ 处的次梯度约定（可数集，测度零）外，两种实现产生相同梯度。$\square$
 
-**注记 AE2.1**：$x = 0$ 处的次梯度选取是 ReLU 类函数的固有约定，与具体实现无关。Tenth 选择 $\mathbb{1}_{0 > 0} = 0$（[autodiff.rs L345](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），与 PyTorch 一致（[T39 §6.7](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md)）。算术等价实现继承了这一约定，未引入新的不一致。
+**注记 AE2.1**：$x = 0$ 处的次梯度选取是 ReLU 类函数的固有约定，与具体实现无关。Tenth 选择 $\mathbb{1}_{0 > 0} = 0$（[autodiff.rs L345](../../tenth/src/runtime/autodiff.rs)），与 PyTorch 一致（[T39 §6.7](T39-Wengert-Tape形式化语义与反向模式正确性.md)）。算术等价实现继承了这一约定，未引入新的不一致。
 
 **注记 AE2.2**：算术等价实现的 tape 链包含 5 个节点（Neg, ReLU, ReLU, Mul, Add），而朴素 select 实现若存在则仅需 1 个节点（Select）。tape 节点数的增加带来常数倍的内存与计算开销，但**不影响梯度的数学正确性**（见 §8 工程权衡）。
 
@@ -405,7 +405,7 @@ $$
 
 这是 leaky_relu 的另一种等价编码。验证 $x > 0$：$\alpha x + (1 - \alpha) x = x$ ✓；$x < 0$：$\alpha x + 0 = \alpha x$ ✓。
 
-但 Tenth 标准库选择了 $\text{relu}(x) + \alpha \text{relu}(-x)$ 的对称形式（[activations.th L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th)），原因是：当 $\alpha$ 为编译期常量时，$\alpha x + (1-\alpha) \text{relu}(x)$ 与 $\text{relu}(x) + \alpha \text{relu}(-x)$ 均用 2 个 ReLU 节点 + 标量乘加，但后者更显式表达"$x > 0$ 贡献 + $x < 0$ 贡献"的双段语义，可读性更佳。两种编码均正确，是同一通则的不同实例。
+但 Tenth 标准库选择了 $\text{relu}(x) + \alpha \text{relu}(-x)$ 的对称形式（[activations.th L25](../../tenth/std/nn/activations.th)），原因是：当 $\alpha$ 为编译期常量时，$\alpha x + (1-\alpha) \text{relu}(x)$ 与 $\text{relu}(x) + \alpha \text{relu}(-x)$ 均用 2 个 ReLU 节点 + 标量乘加，但后者更显式表达"$x > 0$ 贡献 + $x < 0$ 贡献"的双段语义，可读性更佳。两种编码均正确，是同一通则的不同实例。
 
 **推论 AE3.2（ReLU 截断）**：截断函数 $\text{clip}(x, 0, c) = \min(\max(x, 0), c)$ 的两段线性分析：$\theta_1 = 0, \theta_2 = c$，三段线性 $0, x, c$。可用 $\text{relu}(x) - \text{relu}(x - c)$ 编码（$x > c$ 时第一项 $x$ 减第二项 $x - c$ 得 $c$，$0 < x \leq c$ 时第二项为 0 得 $x$，$x \leq 0$ 时两者皆 0）。这是定理 AE3 在多阈值情形的推广。
 
@@ -490,13 +490,13 @@ Tenth 的算术等价是"**表达力换取简单性**"的工程选择：用更�
 
 而 LHS：$x < 0 \Rightarrow -x > 0 \Rightarrow \text{relu}(-x) = -x$（正数），$\alpha \cdot \text{relu}(-x) = \alpha \cdot (-x) = -\alpha x$。但 $-\alpha x = \alpha x$ 仅当 $x = 0$，看似矛盾。
 
-**关键澄清**：定理 AE1 的形式是 $\text{relu}(x) + \alpha \text{relu}(-x)$，对应 [activations.th L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) 的 `x.relu() + slope * (-x).relu()`。我们重新核对 Case 3：
+**关键澄清**：定理 AE1 的形式是 $\text{relu}(x) + \alpha \text{relu}(-x)$，对应 [activations.th L25](../../tenth/std/nn/activations.th) 的 `x.relu() + slope * (-x).relu()`。我们重新核对 Case 3：
 
 $x < 0$ 时，$-x > 0$，$\text{relu}(-x) = -x$（正数）。LHS = $0 + \alpha \cdot (-x) = \alpha \cdot (-x) = -\alpha x$。由于 $x < 0$，$-x > 0$，故 $-\alpha x > 0$（$\alpha > 0$ 时）。
 
 而 RHS = $\text{leaky\_relu}(x, \alpha) = \alpha x$。由于 $x < 0$，$\alpha x < 0$（$\alpha > 0$ 时）。
 
-**两者不等？！** 仔细检查 [activations.th L22-L23 注释](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th)：
+**两者不等？！** 仔细检查 [activations.th L22-L23 注释](../../tenth/std/nn/activations.th)：
 
 ```
 //   当 x>0: relu(x)=x, relu(-x)=0 → x ✓
@@ -527,13 +527,13 @@ $x < 0$ 时，$-x > 0$，$\text{relu}(-x) = -x$（正数）。LHS = $0 + \alpha 
 
 **重新验证**：$x < 0$ 时，$\text{relu}(x) - \alpha \cdot \text{relu}(-x) = 0 - \alpha \cdot (-x) = \alpha x$（负数）✓。
 
-而 Tenth [activations.th L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) 写的是 `x.relu() + slope * (-x).relu()`，符号为正。
+而 Tenth [activations.th L25](../../tenth/std/nn/activations.th) 写的是 `x.relu() + slope * (-x).relu()`，符号为正。
 
 ### 5.4 修正定理 AE1
 
 基于上述分析，定理 AE1 的正确形式应是：
 
-**定理 AE1（修正版）**：Tenth 实现 [`activations.th` L24-L26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) 的 `leaky_relu(x, slope) = relu(x) + slope * relu(-x)` 实际计算的是：
+**定理 AE1（修正版）**：Tenth 实现 [`activations.th` L24-L26](../../tenth/std/nn/activations.th) 的 `leaky_relu(x, slope) = relu(x) + slope * relu(-x)` 实际计算的是：
 
 $$
 f_{\text{Tenth}}(x, \alpha) = \begin{cases} x & x > 0 \\ -\alpha x & x < 0 \\ 0 & x = 0 \end{cases}
@@ -547,7 +547,7 @@ $$
 
 ### 5.5 与注释的对照
 
-[activations.th L22-L23](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) 注释明确写：
+[activations.th L22-L23](../../tenth/std/nn/activations.th) 注释明确写：
 
 ```
 //   当 x<0: relu(x)=0, relu(-x)=-x → -slope*x ✓
@@ -557,13 +557,13 @@ $$
 
 1. 视为"绝对值 leaky"（输出非负）；
 2. 注释作者认为 $-\text{slope} \cdot x$ 即标准 leaky_relu（混淆了符号）；
-3. 默认 $\text{slope}$ 在调用时取负值（但 [L30 `leaky_relu_default`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) 传入 $0.01$，正值）。
+3. 默认 $\text{slope}$ 在调用时取负值（但 [L30 `leaky_relu_default`](../../tenth/std/nn/activations.th) 传入 $0.01$，正值）。
 
 ### 5.6 定理 AE1 的最终陈述
 
 综合上述分析，我们给出**两个版本**的定理 AE1，对应两种语义：
 
-**定理 AE1-T（Tenth 语义）**：Tenth 实现 [`activations.th` L24-L26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) 满足：
+**定理 AE1-T（Tenth 语义）**：Tenth 实现 [`activations.th` L24-L26](../../tenth/std/nn/activations.th) 满足：
 
 $$
 \text{relu}(x) + \alpha \cdot \text{relu}(-x) = \begin{cases} x & x > 0 \\ -\alpha x & x < 0 \\ 0 & x = 0 \end{cases} =: f_{\text{Tenth}}(x, \alpha)
@@ -579,7 +579,7 @@ $$
 
 **证明**：分三 case，与 AE1-T 类似但符号相反。$\square$
 
-**注记 AE1.3**：Tenth 实现 `+` 与标准 `-` 的差异是**潜在 bug 或语义偏离**，建议在 [MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md) 与 [AUDIT.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/AUDIT.md) 记录。本文不修改实现（数理部不写代码），仅披露此差异作为局限（见 §10）。
+**注记 AE1.3**：Tenth 实现 `+` 与标准 `-` 的差异是**潜在 bug 或语义偏离**，建议在 [MEMO.md](../../MEMO.md) 与 [AUDIT.md](../../AUDIT.md) 记录。本文不修改实现（数理部不写代码），仅披露此差异作为局限（见 §10）。
 
 **注记 AE1.4**：本文以下章节（AE2-AE5）的证明均基于 AE1-T（Tenth 实际语义），不影响等价性证明的结构，仅是"哪一种语义"的标注。
 
@@ -638,7 +638,7 @@ $$
 - **能编码**：所有"分段线性 + 连续 + 固定阈值"的激活函数（ReLU、leaky_relu、clip、PReLU 的特例）；
 - **不能编码**：分段非线性（ELU、GELU、SiLU/Swish、hardswish）、不连续阶跃（Heaviside）、运行时阈值动态非线性段。
 
-Tenth 标准库已通过专用 `TapeOp`（如 `Gelu`，[autodiff.rs L77](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）覆盖 GELU，绕过了 AE4 类 1 的限制——这是"扩展 `TapeOp`"而非"算术等价"的路径。
+Tenth 标准库已通过专用 `TapeOp`（如 `Gelu`，[autodiff.rs L77](../../tenth/src/runtime/autodiff.rs)）覆盖 GELU，绕过了 AE4 类 1 的限制——这是"扩展 `TapeOp`"而非"算术等价"的路径。
 
 ---
 
@@ -680,11 +680,11 @@ Tenth 中：`(t1 + t2 + (t1 - t2).relu() + (t2 - t1).relu()) * 0.5`。这是 ele
 
 若 Tenth 未来引入 `Select` 原语，需：
 
-1. 在 [`tenth/src/runtime/autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `TapeOp` 添加 `Select` 变体（前向 + 反向）；
-2. 同步 [`tenthc/`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/) 自举编译器对应模块（依 [工作规范.md §4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/.trae/rules/工作规范.md)）；
-3. 更新 [能力全梳理](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/能力梳理/能力全梳理.md) 与 [MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md)；
+1. 在 [`tenth/src/runtime/autodiff.rs`](../../tenth/src/runtime/autodiff.rs) `TapeOp` 添加 `Select` 变体（前向 + 反向）；
+2. 同步 [`tenthc/`](../../tenthc/) 自举编译器对应模块（依 [工作规范.md §4](../../.agents/rules/工作规范.md)）；
+3. 更新 [能力全梳理](../../能力梳理/能力全梳理.md) 与 [MEMO.md](../../MEMO.md)；
 4. 添加测试（依工作规范 §6）；
-5. 更新 [语言参考手册](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md)。
+5. 更新 [语言参考手册](../语言参考手册.md)。
 
 工程代价中等，但**会破坏** Tenth "21 算子"的简洁性，需总师级决策。
 
@@ -750,7 +750,7 @@ leaky_relu 算术等价实现产生 5 个 tape 节点（Neg, ReLU, ReLU, Mul, Ad
 
 但对典型 transformer 模型，激活函数开销占总训练开销的 5-15%，5×常数倍使激活占比升至 25-75%，**显著**。这是算术等价的实际代价。
 
-**缓解**：算子融合（将 Neg+ReLU 融合为 NegReLU，或将整个 leaky_relu 融合为单算子）可消除常数倍开销。Tenth 的 JIT（[compile/jit/](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/)）提供了融合框架（参见 T9 JIT 论文）。
+**缓解**：算子融合（将 Neg+ReLU 融合为 NegReLU，或将整个 leaky_relu 融合为单算子）可消除常数倍开销。Tenth 的 JIT（[compile/jit/](../../tenth/src/compile/jit/)）提供了融合框架（参见 T9 JIT 论文）。
 
 ### 9.3 数值精度
 
@@ -764,7 +764,7 @@ leaky_relu 算术等价实现产生 5 个 tape 节点（Neg, ReLU, ReLU, Mul, Ad
 
 ### 10.1 leaky_relu 语义偏离
 
-**是什么**：[activations.th L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) 的实现 `x.relu() + slope * (-x).relu()` 在 $x < 0$ 处给出 $-\text{slope} \cdot x$（正数），而标准 leaky_relu 给出 $\text{slope} \cdot x$（负数）。两者符号相反（详见 §5.3-§5.6）。
+**是什么**：[activations.th L25](../../tenth/std/nn/activations.th) 的实现 `x.relu() + slope * (-x).relu()` 在 $x < 0$ 处给出 $-\text{slope} \cdot x$（正数），而标准 leaky_relu 给出 $\text{slope} \cdot x$（负数）。两者符号相反（详见 §5.3-§5.6）。
 
 **影响**：使用 Tenth `leaky_relu` 的模型在负半轴的激活值与 PyTorch/JAX 不同，可能导致预训练权重不兼容、训练动态偏离。
 
@@ -772,7 +772,7 @@ leaky_relu 算术等价实现产生 5 个 tape 节点（Neg, ReLU, ReLU, Mul, Ad
 
 - 选项 A：修改实现为 `x.relu() - slope * (-x).relu()`（标准语义）；
 - 选项 B：在文档中明确说明 Tenth leaky_relu 是"绝对值型"变体；
-- 选项 C：在 [AUDIT.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/AUDIT.md) 登记为已知缺陷。
+- 选项 C：在 [AUDIT.md](../../AUDIT.md) 登记为已知缺陷。
 
 **本文行动**：不修改实现（数理部不写代码），仅在 §5 与本节披露。建议总师决策。
 
@@ -802,7 +802,7 @@ leaky_relu 算术等价实现产生 5 个 tape 节点（Neg, ReLU, ReLU, Mul, Ad
 
 ### 10.5 与 T39 联动的依赖
 
-**是什么**：定理 AE2 依赖 T39 的 ReLU backward 正确性（[T39 §6.7](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md)）。若 T39 的 ReLU backward 存在未发现的缺陷，AE2 的结论受影响。
+**是什么**：定理 AE2 依赖 T39 的 ReLU backward 正确性（[T39 §6.7](T39-Wengert-Tape形式化语义与反向模式正确性.md)）。若 T39 的 ReLU backward 存在未发现的缺陷，AE2 的结论受影响。
 
 **影响**：本文结论与 T39 形成依赖链，需协同验证。
 
@@ -878,7 +878,7 @@ leaky_relu 算术等价实现产生 5 个 tape 节点（Neg, ReLU, ReLU, Mul, Ad
 
 本文形式化分析了 Tenth v0.3.3 标准库中 `leaky_relu` 的算术等价技巧——`relu(x) + slope * relu(-x)`，主要贡献为：
 
-1. **定理 AE1-T/AE1-S**：分别给出 Tenth 实现与标准 leaky_relu 的算术等价形式，并**披露两者的符号差异**（§5.3-§5.6）——这是本文最重要的发现，建议登记至 [AUDIT.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/AUDIT.md)；
+1. **定理 AE1-T/AE1-S**：分别给出 Tenth 实现与标准 leaky_relu 的算术等价形式，并**披露两者的符号差异**（§5.3-§5.6）——这是本文最重要的发现，建议登记至 [AUDIT.md](../../AUDIT.md)；
 2. **定理 AE2**：在 Wengert tape 语义下（与 T39 联动）证明算术等价保持可微性，除 $x = 0$ 处次梯度约定外梯度相同；
 3. **定理 AE3**：抽象出"可微分支编码通则"，给出双段线性 + 阈值固定 + 连续的充分条件；
 4. **定理 AE4**：界定三类必须引入 select 的情形（分段非线性、动态阈值非线性、不连续）；
@@ -889,9 +889,9 @@ leaky_relu 算术等价实现产生 5 个 tape 节点（Neg, ReLU, ReLU, Mul, Ad
 **对实施的指导**：
 
 - 标准库开发者：依通则（§6）判断激活函数是否可算术等价编码；
-- 编译器部：若引入 select 原语（§7.5），需同步 tenthc 与 [语言参考手册](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md)；
+- 编译器部：若引入 select 原语（§7.5），需同步 tenthc 与 [语言参考手册](../语言参考手册.md)；
 - 运行时部：考虑算子融合（§11.4）消除算术等价的常数倍开销；
-- 文档部：将本文归档至 [docs/论文/](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/)，并在 [MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md) 留痕；
+- 文档部：将本文归档至 [docs/论文/](./)，并在 [MEMO.md](../../MEMO.md) 留痕；
 - 总师：决策是否修正 leaky_relu 的符号差异（§10.1）。
 
 ---
@@ -899,19 +899,19 @@ leaky_relu 算术等价实现产生 5 个 tape 节点（Neg, ReLU, ReLU, Mul, Ad
 ## 参考文献
 
 1. **Anderson, S. E.** (1997-2005). *Bit Twiddling Hacks*. Stanford Graphics. https://graphics.stanford.edu/~seander/bithacks.html
-2. **Tenth 项目**（2026）. *autodiff.rs: Wengert Tape 实现*. [tenth/src/runtime/autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)
-3. **Tenth 项目**（2026）. *activations.th: 标准库激活函数*. [tenth/std/nn/activations.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th)
-4. **Tenth 项目**（2026）. *tensor.rs: 张量类型与运算*. [tenth/src/runtime/tensor.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)
-5. **Tenth 数理部**（2026）. *T39: Wengert Tape 形式化语义与反向模式正确性*. [docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md)
-6. **Tenth 数理部**（2026）. *T38: autodiff tape 多路径一致性*. [docs/论文/T38-autodiff-tape多路径一致性.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T38-autodiff-tape多路径一致性.md)
-7. **Tenth 数理部**（2026）. *T9: JIT 特化语义保持证明*. [docs/论文/T9-JIT特化语义保持证明.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T9-JIT特化语义保持证明.md)
+2. **Tenth 项目**（2026）. *autodiff.rs: Wengert Tape 实现*. [tenth/src/runtime/autodiff.rs](../../tenth/src/runtime/autodiff.rs)
+3. **Tenth 项目**（2026）. *activations.th: 标准库激活函数*. [tenth/std/nn/activations.th](../../tenth/std/nn/activations.th)
+4. **Tenth 项目**（2026）. *tensor.rs: 张量类型与运算*. [tenth/src/runtime/tensor.rs](../../tenth/src/runtime/tensor.rs)
+5. **Tenth 数理部**（2026）. *T39: Wengert Tape 形式化语义与反向模式正确性*. [docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md](T39-Wengert-Tape形式化语义与反向模式正确性.md)
+6. **Tenth 数理部**（2026）. *T38: autodiff tape 多路径一致性*. [docs/论文/T38-autodiff-tape多路径一致性.md](T38-autodiff-tape多路径一致性.md)
+7. **Tenth 数理部**（2026）. *T9: JIT 特化语义保持证明*. [docs/论文/T9-JIT特化语义保持证明.md](T9-JIT特化语义保持证明.md)
 8. **PyTorch**（2024）. *torch.where 文档*. https://pytorch.org/docs/stable/generated/torch.where.html
 9. **JAX**（2024）. *jax.lax.select 文档*. https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.select.html
 10. **Goodfellow, I., Bengio, Y., Courville, A.** (2016). *Deep Learning*. MIT Press. https://www.deeplearningbook.org/
 11. **Baydin, A. G., Pearlmutter, B. A., Radul, A. A., Siskind, J. M.** (2018). *Automatic Differentiation in Machine Learning: a Survey*. Journal of Marchine Learning Research, 18(153), 1-43.
 12. **Wengert, R. E.** (1964). *A Simple Automatic Derivative Evaluation Program*. Communications of the ACM, 7(8), 463-464.
 13. **Maas, A. L., Hannun, A. Y., Ng, A. Y.** (2013). *Rectifier Nonlinearities Improve Neural Network Acoustic Models*. ICML Workshop on Deep Learning for Audio, Speech and Language Processing.（leaky_relu 原始论文）
-14. **Tenth 项目**（2026）. *工作规范 v1.1*. [.trae/rules/工作规范.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/.trae/rules/工作规范.md)
+14. **Tenth 项目**（2026）. *工作规范 v1.1*. [.agents/rules/工作规范.md](../../.agents/rules/工作规范.md)
 
 ---
 
@@ -919,9 +919,9 @@ leaky_relu 算术等价实现产生 5 个 tape 节点（Neg, ReLU, ReLU, Mul, Ad
 
 | 编号 | 名称 | 陈述位置 | 证明位置 | 关键源码 |
 |------|------|---------|---------|---------|
-| AE1-T | leaky_relu 算术等价（Tenth 语义） | §5.6 | §5.2 | [activations.th L24-L26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) |
+| AE1-T | leaky_relu 算术等价（Tenth 语义） | §5.6 | §5.2 | [activations.th L24-L26](../../tenth/std/nn/activations.th) |
 | AE1-S | leaky_relu 算术等价（标准语义） | §5.6 | §5.6 | （未实现，建议形式） |
-| AE2 | 可微性保持 | §4.2 | §4.2 | [autodiff.rs L342-L349](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
+| AE2 | 可微性保持 | §4.2 | §4.2 | [autodiff.rs L342-L349](../../tenth/src/runtime/autodiff.rs) |
 | AE3 | 可编码通则 | §4.3 | §4.3 | （构造性定理） |
 | AE4 | 必须引入 select 的情形 | §4.4 | §4.4 | （边界刻画） |
 | AE5 | 与 PyTorch/JAX select 对比 | §4.5 | §4.5 | （对比定理） |
@@ -934,13 +934,13 @@ leaky_relu 算术等价实现产生 5 个 tape 节点（Neg, ReLU, ReLU, Mul, Ad
 
 | 本文章节 | 对应文档 | 关系 |
 |---------|---------|------|
-| §3.3 自动微分语义 | [T39 §3.3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md) | 联动（依赖 ReLU backward） |
-| §4.2 定理 AE2 | [T39 定理 AD1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md) | 依赖（链式法则） |
-| §10.5 与 T39 联动 | [T38 多路径一致性](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T38-autodiff-tape多路径一致性.md) | 互补（实现级一致性） |
-| §6.4 工程含义 | [CODE_WIKI.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/CODE_WIKI.md) | 实施 |
-| §10.1 语义偏离 | [AUDIT.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/AUDIT.md) | 建议登记 |
-| §7.5 引入 select | [MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md) | 变更记录（若实施） |
-| §6 通则 | [能力梳理/能力全梳理.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/能力梳理/能力全梳理.md) | 能力边界 |
+| §3.3 自动微分语义 | [T39 §3.3](T39-Wengert-Tape形式化语义与反向模式正确性.md) | 联动（依赖 ReLU backward） |
+| §4.2 定理 AE2 | [T39 定理 AD1](T39-Wengert-Tape形式化语义与反向模式正确性.md) | 依赖（链式法则） |
+| §10.5 与 T39 联动 | [T38 多路径一致性](T38-autodiff-tape多路径一致性.md) | 互补（实现级一致性） |
+| §6.4 工程含义 | [CODE_WIKI.md](../../CODE_WIKI.md) | 实施 |
+| §10.1 语义偏离 | [AUDIT.md](../../AUDIT.md) | 建议登记 |
+| §7.5 引入 select | [MEMO.md](../../MEMO.md) | 变更记录（若实施） |
+| §6 通则 | [能力梳理/能力全梳理.md](../../能力梳理/能力全梳理.md) | 能力边界 |
 
 ---
 
@@ -948,14 +948,14 @@ leaky_relu 算术等价实现产生 5 个 tape 节点（Neg, ReLU, ReLU, Mul, Ad
 
 ### C.1 短期（v0.3.x）
 
-1. **登记符号差异**：将 §10.1 的 leaky_relu 语义偏离登记至 [AUDIT.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/AUDIT.md)；
-2. **添加测试**：在 [tenth/std/nn/](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/) 添加 `test_leaky_relu.th`，覆盖 $x > 0, x = 0, x < 0$ 三 case；
-3. **文档同步**：在 [语言参考手册](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md) 激活函数章节添加 leaky_relu 的算术等价说明。
+1. **登记符号差异**：将 §10.1 的 leaky_relu 语义偏离登记至 [AUDIT.md](../../AUDIT.md)；
+2. **添加测试**：在 [tenth/std/nn/](../../tenth/std/nn/) 添加 `test_leaky_relu.th`，覆盖 $x > 0, x = 0, x < 0$ 三 case；
+3. **文档同步**：在 [语言参考手册](../语言参考手册.md) 激活函数章节添加 leaky_relu 的算术等价说明。
 
 ### C.2 中期（v0.4.x）
 
 1. **通则推广**：将 §6 通则应用于其他激活函数（PReLU、clip），评估是否需扩展 `TapeOp`；
-2. **算子融合**：在 [compile/jit/](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/) 添加 `Neg+ReLU → ReLUNeg` 融合模式，降低算术等价的常数开销。
+2. **算子融合**：在 [compile/jit/](../../tenth/src/compile/jit/) 添加 `Neg+ReLU → ReLUNeg` 融合模式，降低算术等价的常数开销。
 
 ### C.3 长期（v0.5+）
 

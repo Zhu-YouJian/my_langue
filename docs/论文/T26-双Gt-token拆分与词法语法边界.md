@@ -49,7 +49,7 @@ Java Generics（JSR 14 / Java 5, 2004）采取了与 C++11 类似的策略：在
 
 ### 1.5 Tenth 的运行时拆分方案
 
-Tenth 选择了**运行时拆分**（runtime split）方案，即不修改 lexer，而在 parser 中通过 `expect_gt` 函数（[parser.rs:58-86](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)）动态处理 `Shr` token：
+Tenth 选择了**运行时拆分**（runtime split）方案，即不修改 lexer，而在 parser 中通过 `expect_gt` 函数（[parser.rs:58-86](../../tenth/src/parser/parser.rs)）动态处理 `Shr` token：
 
 - 当 parser 期望一个 `Gt` 来闭合泛型参数列表时，调用 `expect_gt`；
 - 若当前 token 是 `Gt`，正常消耗；
@@ -126,7 +126,7 @@ Scannerless parsing [5] 取消 lexer/parser 分离，直接在字符流上进行
 
 ### 3.2 lexer 对 `>>` 的识别
 
-Tenth 的 Rust 母编译器 lexer（[lexer.rs:446-456](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）按以下规则识别 `>` 字符：
+Tenth 的 Rust 母编译器 lexer（[lexer.rs:446-456](../../tenth/src/lexer/lexer.rs)）按以下规则识别 `>` 字符：
 
 ```
 ch == '>' :
@@ -135,7 +135,7 @@ ch == '>' :
   return Gt
 ```
 
-tenthc 的 lexer（[lexer.th:185-190](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)）行为一致：
+tenthc 的 lexer（[lexer.th:185-190](../../tenthc/lexer/lexer.th)）行为一致：
 
 ```
 ch == ">" :
@@ -144,11 +144,11 @@ ch == ">" :
   return Token{ kind: Gt, disc: 34, ... }
 ```
 
-**两侧 lexer 在 `>>` 识别上对称**：都按最大匹配产生单一 `Shr` token。两侧的 `TokenKind` 枚举也都包含 `Shr` 变体（Rust: [token.rs:74](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs)；tenthc: [token.th:3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/token.th)）。
+**两侧 lexer 在 `>>` 识别上对称**：都按最大匹配产生单一 `Shr` token。两侧的 `TokenKind` 枚举也都包含 `Shr` 变体（Rust: [token.rs:74](../../tenth/src/lexer/token.rs)；tenthc: [token.th:3](../../tenthc/lexer/token.th)）。
 
 ### 3.3 parser 的 `expect_gt`：运行时拆分
 
-Rust 母编译器的 `expect_gt` 实现（[parser.rs:58-86](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)）：
+Rust 母编译器的 `expect_gt` 实现（[parser.rs:58-86](../../tenth/src/parser/parser.rs)）：
 
 ```rust
 fn expect_gt(&mut self) -> TenthResult<&Token> {
@@ -191,7 +191,7 @@ $$
 
 ### 3.4 拆分的触发条件：4 处调用点
 
-`expect_gt` 在 Rust 母编译器中被调用 4 次（[parser.rs:221, 557, 1172, 1784](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)），分别对应 4 种泛型闭合上下文：
+`expect_gt` 在 Rust 母编译器中被调用 4 次（[parser.rs:221, 557, 1172, 1784](../../tenth/src/parser/parser.rs)），分别对应 4 种泛型闭合上下文：
 
 | 调用点 | 上下文 | 文法位置 |
 |--------|--------|---------|
@@ -343,7 +343,7 @@ grep -rn "expect(TokenKind::Gt)" tenth/src/parser/
 **步骤 4**：不存在其他 `>` 作为闭合符的语法位置。Tenth 中 `>` 字符还在以下场景出现，但都不是"泛型闭合"：
 
 - 比较运算符 `a > b`：由 `parse_binary_op` 处理，不调用 `expect_gt`；
-- 右移赋值 `a >>= b`：Tenth 不支持 `>>=`（无 `ShrAssign` token，见 [token.rs:56-79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs)）；
+- 右移赋值 `a >>= b`：Tenth 不支持 `>>=`（无 `ShrAssign` token，见 [token.rs:56-79](../../tenth/src/lexer/token.rs)）；
 - 右移运算 `a >> b`：由 `parse_binary_op` 处理，token 为 `Shr`，不涉及闭合。
 
 因此，所有需要拆分 `>>` 的语法上下文都已被 $\text{GenCtx}$ 覆盖。$\square$
@@ -370,7 +370,7 @@ grep -rn "expect_gt" tenthc/
 grep -rn "disc == 63\|disc==63" tenthc/parser/
 ```
 
-结果：3 处匹配（[parser.th:470, 508, 1109](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)），分别是：
+结果：3 处匹配（[parser.th:470, 508, 1109](../../tenthc/parser/parser.th)），分别是：
 
 - **L470**：`looks_like_generic_call` 函数中，作为前瞻扫描的终止条件（`if t.disc == 34 || t.disc == 63 { break; }`，即遇到 `>` 或 `>>` 时停止扫描类型实参）；
 - **L508**：`parse_postfix` 的 `GenericCall` 分支中，同样的终止条件；
@@ -407,14 +407,14 @@ grep -rn "disc == 63\|disc==63" tenthc/parser/
 grep -rn "fn parse_type" tenthc/parser/
 ```
 
-结果：**无匹配**。tenthc 没有递归的 `parse_type` 函数。类型注解在 tenthc 中是通过**字符串收集**处理的（[parser.th:1186-1194, 1207-1214](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)）：parser 跳过类型 token 直到遇到分隔符（`,`, `)`, `{`），将它们拼接成字符串作为 `type_ann`。
+结果：**无匹配**。tenthc 没有递归的 `parse_type` 函数。类型注解在 tenthc 中是通过**字符串收集**处理的（[parser.th:1186-1194, 1207-1214](../../tenthc/parser/parser.th)）：parser 跳过类型 token 直到遇到分隔符（`,`, `)`, `{`），将它们拼接成字符串作为 `type_ann`。
 
 **步骤 5**：构造反例。
 
 考虑 tenthc 解析 `fn f() -> HashMap<str, Vec<i64>> { ... }`：
 
 1. `parse_fn` 读取 `fn`、`f`、`(`、`)`；
-2. 遇到 `->`，进入返回类型扫描（[parser.th:1207-1214](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)）；
+2. 遇到 `->`，进入返回类型扫描（[parser.th:1207-1214](../../tenthc/parser/parser.th)）；
 3. 扫描器跳过 token 直到 `{`，将 `HashMap < str , Vec < i64 >>` 拼接为字符串 `"HashMap < str , Vec < i64 >>"`；
 4. 这一字符串作为 `return_type` 保存，**不进行结构化解析**。
 
@@ -457,12 +457,12 @@ tenthc 的 `>>` 处理与 Rust 母编译器**不对称**：
 
 | 方面 | Rust 母编译器 | tenthc |
 |------|--------------|--------|
-| `expect_gt` 函数 | ✅ 实现（[parser.rs:58-86](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)） | ❌ 未实现 |
+| `expect_gt` 函数 | ✅ 实现（[parser.rs:58-86](../../tenth/src/parser/parser.rs)） | ❌ 未实现 |
 | `Shr` 拆分 | ✅ 消耗 `Shr` + 插入合成 `Gt` | ❌ 消耗 `Shr` 作为单个 `>`，不插入合成 token |
 | 嵌套泛型支持 | ✅ 通过合成 token 递归处理 | ❌ 无法正确处理（但通过"不结构化解析类型"部分绕过） |
 | `parse_type` 递归 | ✅ 结构化解析 | ❌ 字符串收集（不递归） |
-| 自身源码使用嵌套泛型 | ✅ 多处（如 `HashMap<i64, Vec<i64>>` 在 [f32_wasm_test.rs:16](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/tests/f32_wasm_test.rs)） | ❌ 无（grep 无匹配） |
-| 测试覆盖 | ✅ `test_nested_generic_type`（[generic_test.rs:152](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/tests/generic_test.rs)） | ❌ 无 |
+| 自身源码使用嵌套泛型 | ✅ 多处（如 `HashMap<i64, Vec<i64>>` 在 [f32_wasm_test.rs:16](../../tenth/tests/f32_wasm_test.rs)） | ❌ 无（grep 无匹配） |
+| 测试覆盖 | ✅ `test_nested_generic_type`（[generic_test.rs:152](../../tenth/tests/generic_test.rs)） | ❌ 无 |
 
 这一不对称与 T12 的双侧等价性结果**直接联动**：
 
@@ -550,10 +550,10 @@ $\square$
 
 Tenth 选择方案 A（运行时拆分）的工程理由：
 
-1. **lexer 简单性**：Tenth 的 lexer（[lexer.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）是单一函数 `lexer_next`，纯字符驱动，无状态栈。这降低了 lexer 的实现与测试成本；
+1. **lexer 简单性**：Tenth 的 lexer（[lexer.rs](../../tenth/src/lexer/lexer.rs)）是单一函数 `lexer_next`，纯字符驱动，无状态栈。这降低了 lexer 的实现与测试成本；
 2. **双侧同步成本**：Tenth 有母编译器与 tenthc 两套 lexer。若采用方案 B，两侧都需要维护深度栈，且必须保持同步——增加双侧等价性的负担（T12 已记录多处不对称，再加一处深度栈同步是雪上加霜）；
 3. **拆分逻辑局部化**：`expect_gt` 是一个 28 行的函数，逻辑集中在 parser 一处，易于理解与测试；
-4. **测试覆盖**：[generic_test.rs:152, 192](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/tests/generic_test.rs) 有针对嵌套泛型的测试，验证拆分正确性。
+4. **测试覆盖**：[generic_test.rs:152, 192](../../tenth/tests/generic_test.rs) 有针对嵌套泛型的测试，验证拆分正确性。
 
 代价是：tenthc 未实现 `expect_gt`（定理 G4），导致双侧不对称。这是工程选择的一致性代价。
 
@@ -565,11 +565,11 @@ Tenth 选择方案 A（运行时拆分）的工程理由：
 
 **结论**：**无**。tenthc 的 `parser.th` 中不存在名为 `expect_gt` 的函数（grep 验证）。tenthc 在 3 处内联处理 `Shr` token：
 
-- [parser.th:470](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)：`looks_like_generic_call` 前瞻扫描时，遇到 `disc == 63`（Shr）break；
-- [parser.th:508](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)：`parse_postfix` 的 GenericCall 分支，类型实参循环遇到 `disc == 63` break；
-- [parser.th:1109](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)：`parse_generic_params` 函数，类型形参循环遇到 `disc == 63` break。
+- [parser.th:470](../../tenthc/parser/parser.th)：`looks_like_generic_call` 前瞻扫描时，遇到 `disc == 63`（Shr）break；
+- [parser.th:508](../../tenthc/parser/parser.th)：`parse_postfix` 的 GenericCall 分支，类型实参循环遇到 `disc == 63` break；
+- [parser.th:1109](../../tenthc/parser/parser.th)：`parse_generic_params` 函数，类型形参循环遇到 `disc == 63` break。
 
-这三处都采用了**简化策略**：将 `>>` 当作单个 `>` 消耗，不插入合成 token。注释（[parser.th:1120-1122](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)）明确承认："For simplicity, treat `>>` as closing one `>`; ... We consume it as `>`."
+这三处都采用了**简化策略**：将 `>>` 当作单个 `>` 消耗，不插入合成 token。注释（[parser.th:1120-1122](../../tenthc/parser/parser.th)）明确承认："For simplicity, treat `>>` as closing one `>`; ... We consume it as `>`."
 
 ### 6.2 对 tenthc 自举能力的影响
 
@@ -757,7 +757,7 @@ Tenth 的 `expect_gt` 仅处理 `Shr`。若未来 Tenth 引入：
 
 建议在 T12 的 §1.3"调研发现的不对称问题"中补录第五处不对称：
 
-> 5. **`>>` token 拆分**：Rust [parser.rs:58-86](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) 实现 `expect_gt` 函数，运行时拆分 `Shr` 为两个 `Gt`（插入合成 token）；tenthc [parser.th:1109-1124](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th) **未实现** `expect_gt`，而是将 `>>` 当作单个 `>` 消耗，不插入合成 token。tenthc 自身源码不使用嵌套泛型，因此缺陷休眠。
+> 5. **`>>` token 拆分**：Rust [parser.rs:58-86](../../tenth/src/parser/parser.rs) 实现 `expect_gt` 函数，运行时拆分 `Shr` 为两个 `Gt`（插入合成 token）；tenthc [parser.th:1109-1124](../../tenthc/parser/parser.th) **未实现** `expect_gt`，而是将 `>>` 当作单个 `>` 消耗，不插入合成 token。tenthc 自身源码不使用嵌套泛型，因此缺陷休眠。
 
 并在 T12 定理 S5（共同子集等价性）的"共同子集"定义中，显式排除"嵌套泛型"特性。
 
@@ -802,7 +802,7 @@ Tenth 的 `expect_gt` 仅处理 `Shr`。若未来 Tenth 引入：
 
 [5] Visser, E. (1997). *Scannerless Generalized-LR Parsing*. Programming Research Group, University of Amsterdam. http://www.cs.uu.nl/research/techreps/reu/CS-1997-12.html
 
-[6] Tenth 项目. *工作规范 v1.1*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\.trae\rules\工作规范.md`
+[6] Tenth 项目. *工作规范 v1.1*. `../../.agents/rules/工作规范.md`
 
 [7] Tenth 项目. *T12: 双侧编译器语义等价性*. `docs/论文/T12-双侧编译器语义等价性.md`
 
@@ -826,22 +826,22 @@ Tenth 的 `expect_gt` 仅处理 `Shr`。若未来 Tenth 引入：
 
 | 位置 | 内容 | 文件 |
 |------|------|------|
-| Rust `expect_gt` 实现 | L58-86 | [parser.rs:58-86](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) |
-| Rust `expect_gt` 调用 1（结构体字面量泛型） | L221 | [parser.rs:221](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) |
-| Rust `expect_gt` 调用 2（泛型调用） | L557 | [parser.rs:557](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) |
-| Rust `expect_gt` 调用 3（类型注解 Generic） | L1172 | [parser.rs:1172](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) |
-| Rust `expect_gt` 调用 4（泛型形参） | L1784 | [parser.rs:1784](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) |
-| Rust lexer 识别 `>>` | L451-453 | [lexer.rs:451-453](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs) |
-| Rust `Shr` token 定义 | L74 | [token.rs:74](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs) |
-| Rust 嵌套泛型测试 1 | L152 | [generic_test.rs:152](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/tests/generic_test.rs) |
-| Rust 嵌套泛型测试 2（AST 结构验证） | L192 | [generic_test.rs:192](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/tests/generic_test.rs) |
-| tenthc `>>` 内联处理 1（前瞻扫描） | L470 | [parser.th:470](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th) |
-| tenthc `>>` 内联处理 2（泛型调用实参） | L508 | [parser.th:508](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th) |
-| tenthc `>>` 内联处理 3（泛型形参） | L1109 | [parser.th:1109](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th) |
-| tenthc 简化策略注释 | L1120-1122 | [parser.th:1120-1122](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th) |
-| tenthc lexer 识别 `>>` | L185-190 | [lexer.th:185-190](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th) |
-| tenthc `Shr` token 定义 | L3 | [token.th:3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/token.th) |
-| tenthc 类型注解字符串收集 | L1186-1194 | [parser.th:1186-1194](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th) |
+| Rust `expect_gt` 实现 | L58-86 | [parser.rs:58-86](../../tenth/src/parser/parser.rs) |
+| Rust `expect_gt` 调用 1（结构体字面量泛型） | L221 | [parser.rs:221](../../tenth/src/parser/parser.rs) |
+| Rust `expect_gt` 调用 2（泛型调用） | L557 | [parser.rs:557](../../tenth/src/parser/parser.rs) |
+| Rust `expect_gt` 调用 3（类型注解 Generic） | L1172 | [parser.rs:1172](../../tenth/src/parser/parser.rs) |
+| Rust `expect_gt` 调用 4（泛型形参） | L1784 | [parser.rs:1784](../../tenth/src/parser/parser.rs) |
+| Rust lexer 识别 `>>` | L451-453 | [lexer.rs:451-453](../../tenth/src/lexer/lexer.rs) |
+| Rust `Shr` token 定义 | L74 | [token.rs:74](../../tenth/src/lexer/token.rs) |
+| Rust 嵌套泛型测试 1 | L152 | [generic_test.rs:152](../../tenth/tests/generic_test.rs) |
+| Rust 嵌套泛型测试 2（AST 结构验证） | L192 | [generic_test.rs:192](../../tenth/tests/generic_test.rs) |
+| tenthc `>>` 内联处理 1（前瞻扫描） | L470 | [parser.th:470](../../tenthc/parser/parser.th) |
+| tenthc `>>` 内联处理 2（泛型调用实参） | L508 | [parser.th:508](../../tenthc/parser/parser.th) |
+| tenthc `>>` 内联处理 3（泛型形参） | L1109 | [parser.th:1109](../../tenthc/parser/parser.th) |
+| tenthc 简化策略注释 | L1120-1122 | [parser.th:1120-1122](../../tenthc/parser/parser.th) |
+| tenthc lexer 识别 `>>` | L185-190 | [lexer.th:185-190](../../tenthc/lexer/lexer.th) |
+| tenthc `Shr` token 定义 | L3 | [token.th:3](../../tenthc/lexer/token.th) |
+| tenthc 类型注解字符串收集 | L1186-1194 | [parser.th:1186-1194](../../tenthc/parser/parser.th) |
 
 ## 附录 C：与现有文档的对应
 

@@ -8,9 +8,9 @@
 
 | 项目 | 版本 | 位置 |
 |------|------|------|
-| rustc | 1.95.0 (2026-04-14) | `C:\Users\史蒂夫\.cargo\bin\rustc.exe` |
-| cargo | 1.95.0 | `C:\Users\史蒂夫\.cargo\bin\cargo.exe` |
-| rustup (toolchain 管理器) | — | `C:\Users\史蒂夫\.rustup\` |
+| rustc | 1.95.0 (2026-04-14) | `%USERPROFILE%\.cargo\bin\rustc.exe` |
+| cargo | 1.95.0 | `%USERPROFILE%\.cargo\bin\cargo.exe` |
+| rustup (toolchain 管理器) | — | `%USERPROFILE%\.rustup\` |
 
 ### 使用方式
 
@@ -18,19 +18,19 @@ Rust 未加入系统 PATH，编译时需用完整路径：
 
 ```bash
 # 编译
-C:\Users\史蒂夫\.cargo\bin\cargo.exe build --manifest-path tenth/Cargo.toml
+%USERPROFILE%\.cargo\bin\cargo.exe build --manifest-path tenth/Cargo.toml
 
 # 测试
-C:\Users\史蒂夫\.cargo\bin\cargo.exe test --manifest-path tenth/Cargo.toml
+%USERPROFILE%\.cargo\bin\cargo.exe test --manifest-path tenth/Cargo.toml
 
 # 运行 REPL
-C:\Users\史蒂夫\.cargo\bin\cargo.exe run --manifest-path tenth/Cargo.toml
+%USERPROFILE%\.cargo\bin\cargo.exe run --manifest-path tenth/Cargo.toml
 ```
 
 如果需要加入当前会话的 PATH（非全局，关终端即失效）：
 
 ```cmd
-set PATH=%PATH%;C:\Users\史蒂夫\.cargo\bin
+set PATH=%PATH%;%USERPROFILE%\.cargo\bin
 ```
 
 ---

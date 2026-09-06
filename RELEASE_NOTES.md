@@ -1,7 +1,7 @@
 # Tenth 1.0.0 发布说明（Release Notes）
 
 > **版本**：v1.0.0（自 v0.5.0）| **日期**：2026-08-04
-> **定位**：Tenth 首个 **1.0 正式发布**——语言核心 100%、API 冻结、性能达标、护城河就绪、生态工具链齐全、跨平台产物可发布。
+> **定位**：Tenth 首个 **1.0 正式发布**——语言核心 ≈84%、API 冻结、性能达标、护城河就绪、生态工具链齐全、跨平台产物可发布。
 > **配套文档**：API 冻结与 semver 承诺 → `docs/API冻结清单.md`；语言规范（稳定契约）→ `docs/语言规范.md`；用法 → `docs/语言参考手册.md`。
 
 ---
@@ -10,12 +10,12 @@
 
 | 里程碑 | 内容 | 成果 |
 |--------|------|------|
-| **M1 语言核心 100%** | WASM 后端 4 缺口 / true letrec 递归闭包 / 运行时小缺口（broadcast_to·内联 mod·1D 张量迭代）/ 语义杂项（VM 引用语义·顶层 let·命名空间）/ 语言规范 7 章定稿 | 语言核心 **100%**；62 个实例全部双路径（VM=JIT 与解释器）可运行；规范覆盖语言核心 ✅84 项 |
+| **M1 语言核心 ≈84%** | WASM 后端 4 缺口 / true letrec 递归闭包 / 运行时小缺口（broadcast_to·内联 mod·1D 张量迭代）/ 语义杂项（VM 引用语义·顶层 let·命名空间）/ 语言规范 7 章定稿 | 语言核心 **≈84%**；62 个实例全部双路径（VM=JIT 与解释器）可运行；规范覆盖语言核心 ✅84 项 |
 | **M2 性能叙事** | A1 JIT-to-JIT 直接调用 / A2 小函数内联 / A3 opcode 覆盖 / A5 一致性套件 + 基准门槛 / A6 入参标量 ABI | fib(28) **180ms → 8ms（~20×）**、loop 1e7 **488ms → 60-65ms（~7.4×）**、matmul 0-1ms；基准门槛 CI（D4） |
 | **M2.6-P 系列** | P1 纯标量固定开销消除 / P2 JIT 静默错值 5 维审计 / P3 f64+Int 特化 / P4 CallClosure JIT-to-JIT | fib **8ms**（每次调用 ~9.6ns）；f64 特化 fp_fib ~3ms / fp_poly ~7ms；closure-heavy **~6×**；修 AUDIT-11.4.36/11.4.37 |
 | **M3 护城河** | shape 参数一致化 / typestate（G1-G6）/ 静默失败防护（丢弃 + 误用拦截）/ lossy 格 / 内存·算力预估 | 编译期 + 运行时**双层 shape 防御**；typestate 状态参数 + 调用点检查；`db_query().len()` 等误用编译期 warning |
 | **M4 生态工具链** | tenthpm（M4.1）/ LSP（M4.2）/ 标准库 AI 生态（M4.3）/ 调试器·剖析器（M4.4） | 包管理器（传递依赖/锁文件/本地 registry）、语言服务器 13 项能力、3 优化器 + datasets + 分布式本地语义、CLI 调试器 + 热点剖析器 |
-| **M5 稳定化与 1.0** | M5.1 API 冻结 + 规范定稿 / M5.2 fuzz + 大规模回归 / M5.3 跨平台产物 / M5.4 1.0 release | **API 冻结**（语法/标准库/CLI/native 四面）；fuzz 6 项 + 实例批量守护；Windows 5 产物 + CI matrix（Win/Linux/macOS）+ WASM 自举；**2377 passed / 0 failed** |
+| **M5 稳定化与 1.0** | M5.1 API 冻结 + 规范定稿 / M5.2 fuzz + 大规模回归 / M5.3 跨平台产物 / M5.4 1.0 release | **API 冻结**（语法/标准库/CLI/native 四面）；fuzz 6 项 + 实例批量守护；Windows 5 产物 + CI matrix（Win/Linux/macOS）+ WASM 自举；**2377 passed / 0 failed**（当前记录，以全新 `cargo test --release` 实测为准） |
 
 ## 二、关键能力
 
@@ -24,7 +24,7 @@
 - **护城河**：编译期 shape 检查 / 静默失败防护（丢弃 + 误用）/ typestate / lossy 格 / 内存·算力预估 / 编译期零除数 / 运行时 autodiff shape 校验 / FormalExplain 关系调试器
 - **执行管线**：字节码 VM（默认，~0.2s 自举）/ 树遍历解释器（fallback）/ Cranelift JIT（热点编译 + 标量 ABI）/ WASM 后端
 - **自举**：Tenth 编译器由 Tenth 自身编写（`tenthc/`，7 个 `.th` 文件，5000+ 行）；三条自举路径验证通过；自举 WASM 产物 `tenthc_full.wasm`（92.5KB）可复现 `[OK]`
-- **标准库**：65 模块（63 用户模块 + prelude，71 个 `.th` 文件），覆盖 nn / optim / data / init / collections / string / json / toml / cli / logging / time / random / math / crypto / regex / net / http / fs / process / distributed 等；prelude 150+ native 符号
+- **标准库**：以 `tenth/std/` + `prelude.th` 索引为准（`.th` 71 个 / 命名空间约 29），覆盖 nn / optim / data / init / collections / string / json / toml / cli / logging / time / random / math / crypto / regex / net / http / fs / process / distributed 等；prelude 150+ native 符号
 - **工具链**：`tenthpm`（10 子命令：init/build/test/run/add/remove/list/clean/publish/install，传递依赖解析 + 锁文件 + 本地 registry）、`tenth-lsp`（13 项能力）、`tenth-debug`（断点/单步/变量查看）、`tenth-prof`（top-N 热点剖析）
 
 ## 三、性能数据（release + JIT 默认路径，同机 5 次中位数）

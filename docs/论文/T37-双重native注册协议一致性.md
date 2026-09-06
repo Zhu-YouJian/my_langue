@@ -33,7 +33,7 @@ Tenth 语言同时维护两条执行路径——基于字节码栈式 VM 的快�
 
 ### 1.2 历史教训
 
-Tenth 项目在 v0.3.x 演化过程中实际遭遇过此反模式引发的故障：张量构造函数 `zeros/ones/rand/randn` 早期仅在解释器路径实现，VM 路径下程序调用 `zeros(256,256,256)` 会得到 `Unit` 而非张量，进而触发下游 `.numel()` 等方法的运行时崩溃。源码注释（见 [tenth/src/main.rs:1042-1044](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)）显式记录了这一历史：
+Tenth 项目在 v0.3.x 演化过程中实际遭遇过此反模式引发的故障：张量构造函数 `zeros/ones/rand/randn` 早期仅在解释器路径实现，VM 路径下程序调用 `zeros(256,256,256)` 会得到 `Unit` 而非张量，进而触发下游 `.numel()` 等方法的运行时崩溃。源码注释（见 [tenth/src/main.rs:1042-1044](../../tenth/src/main.rs)）显式记录了这一历史：
 
 ```rust
 // ── Tensor 构造函数（与 interpreter::natives 对齐，支持任意 shape）──
@@ -69,7 +69,7 @@ Lua 通过 `luaL_Reg` 数组 + `luaL_setfuncs` 在栈上注册 C 函数（见 Lu
 
 ### 2.3 Tenth 的特殊性
 
-Tenth 同时维护栈式 VM（`runtime/vm.rs`）与 tree-walk 解释器（`runtime/interpreter/`），二者并存于同一二进制中。VM 是默认路径，解释器在 VM 编译失败时回退（见 [tenth/src/main.rs:1278-1285](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)）。这种"双引擎同存"的设计强制 native 必须双注册，是 Python/Lua 所不具备的工程约束。
+Tenth 同时维护栈式 VM（`runtime/vm.rs`）与 tree-walk 解释器（`runtime/interpreter/`），二者并存于同一二进制中。VM 是默认路径，解释器在 VM 编译失败时回退（见 [tenth/src/main.rs:1278-1285](../../tenth/src/main.rs)）。这种"双引擎同存"的设计强制 native 必须双注册，是 Python/Lua 所不具备的工程约束。
 
 ---
 
@@ -105,11 +105,11 @@ Tenth 同时维护栈式 VM（`runtime/vm.rs`）与 tree-walk 解释器（`runti
 
 **定义 4.2（注册函数 $R_V$）**：VM 路径的注册函数 $R_V$ 由 `main.rs::register_natives` 定义，是一张从 native 名到闭包的映射：
 
-$$R_V(n) = \begin{cases} f_V & \text{若 } \texttt{vm.add\_native}(n, f_V) \text{ 在 [main.rs:322-1149](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 中被调用} \\ \bot & \text{否则} \end{cases}$$
+$$R_V(n) = \begin{cases} f_V & \text{若 } \texttt{vm.add\_native}(n, f_V) \text{ 在 [main.rs:322-1149](../../tenth/src/main.rs) 中被调用} \\ \bot & \text{否则} \end{cases}$$
 
 **定义 4.3（注册函数 $R_I$）**：解释器路径的注册函数 $R_I$ 由 `interpreter::natives.rs::call_named_fn` 的 `match name { ... }` 分支定义：
 
-$$R_I(n) = \begin{cases} f_I & \text{若 } n \text{ 是 [natives.rs:40-1221](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs) 的某个 match 分支} \\ \bot & \text{否则（fallthrough 至用户函数查找）} \end{cases}$$
+$$R_I(n) = \begin{cases} f_I & \text{若 } n \text{ 是 [natives.rs:40-1221](../../tenth/src/runtime/interpreter/natives.rs) 的某个 match 分支} \\ \bot & \text{否则（fallthrough 至用户函数查找）} \end{cases}$$
 
 ### 4.3 双映射一致
 
@@ -123,7 +123,7 @@ $$\text{sem}_V(s, R_V(n), \bar v) = \text{sem}_I(s, R_I(n), \bar v)$$
 
 ### 4.4 故障模式
 
-**定义 4.6（单侧缺失故障）**：若 $n \in \text{dom}(R_I) \setminus \text{dom}(R_V)$，则在 VM 路径下调用 $n$ 会触发"undefined function $n$"运行时错误（[natives.rs:1268-1270](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs) 的等价分支），或返回 `Unit`（取决于调用点的字节码生成方式）。
+**定义 4.6（单侧缺失故障）**：若 $n \in \text{dom}(R_I) \setminus \text{dom}(R_V)$，则在 VM 路径下调用 $n$ 会触发"undefined function $n$"运行时错误（[natives.rs:1268-1270](../../tenth/src/runtime/interpreter/natives.rs) 的等价分支），或返回 `Unit`（取决于调用点的字节码生成方式）。
 
 **定义 4.7（语义偏移故障）**：若 $n \in \text{dom}(R_V) \cap \text{dom}(R_I)$ 但 $R_V(n)(\bar v) \neq R_I(n)(\bar v)$ 对某 $\bar v$ 成立，则双路径同输入产生不同结果，破坏执行引擎等价性（待 T35 形式化）。
 
@@ -154,8 +154,8 @@ $$\text{sem}_V(s, R_V(n), \bar v) = \text{sem}_I(s, R_I(n), \bar v)$$
 **逆定理**：$\mathcal{N} \cong_{\text{reg}} (R_V, R_I) \Rightarrow \text{sem}_V = \text{sem}_I$ 仅在"native 调用是唯一双路径分歧源"时成立。该假设较强，第 12 节将单独讨论其局限。
 
 **源码引用**：
-- VM 注册：[tenth/src/main.rs:322-1149](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)
-- 解释器注册：[tenth/src/runtime/interpreter/natives.rs:37-1271](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)
+- VM 注册：[tenth/src/main.rs:322-1149](../../tenth/src/main.rs)
+- 解释器注册：[tenth/src/runtime/interpreter/natives.rs:37-1271](../../tenth/src/runtime/interpreter/natives.rs)
 
 ---
 
@@ -165,14 +165,14 @@ $$\text{sem}_V(s, R_V(n), \bar v) = \text{sem}_I(s, R_I(n), \bar v)$$
 
 **实证证据**：
 
-1. **化石注释**：[tenth/src/main.rs:1042-1044](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 明确记载：
+1. **化石注释**：[tenth/src/main.rs:1042-1044](../../tenth/src/main.rs) 明确记载：
 
    > 历史：这些函数仅在 interpreter 实现，JIT/VM 路径下返回 Unit。
    > 补齐后 zeros(256,256,256).numel() 等才能在默认 tenth run 路径下正常工作。
 
-2. **当前实现已补齐**：[main.rs:1045-1062](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 现含 `vm.add_native("zeros", ...)`、`vm.add_native("ones", ...)`、`vm.add_native("rand", ...)`，与解释器分支 [natives.rs:393-449](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs) 对齐。补齐后 $n \in \text{dom}(R_V) \cap \text{dom}(R_I)$，N1 不变量恢复。
+2. **当前实现已补齐**：[main.rs:1045-1062](../../tenth/src/main.rs) 现含 `vm.add_native("zeros", ...)`、`vm.add_native("ones", ...)`、`vm.add_native("rand", ...)`，与解释器分支 [natives.rs:393-449](../../tenth/src/runtime/interpreter/natives.rs) 对齐。补齐后 $n \in \text{dom}(R_V) \cap \text{dom}(R_I)$，N1 不变量恢复。
 
-3. **同期补齐的同类**：`zeros_f32`、`ones_f32`、`rand_f32`、`randn`、`randn_f32` 均在 [main.rs:1016-1080](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 补齐，且 `randn`/`randn_f32` 在 VM 路径使用 Box-Muller 变换，与解释器路径（委托 `Tensor::randn`）的随机数发生器**不同**——这是一个潜在的语义偏移（见 N3 与第 12 节局限 L3）。
+3. **同期补齐的同类**：`zeros_f32`、`ones_f32`、`rand_f32`、`randn`、`randn_f32` 均在 [main.rs:1016-1080](../../tenth/src/main.rs) 补齐，且 `randn`/`randn_f32` 在 VM 路径使用 Box-Muller 变换，与解释器路径（委托 `Tensor::randn`）的随机数发生器**不同**——这是一个潜在的语义偏移（见 N3 与第 12 节局限 L3）。
 
 **证明**（形式化还原）：
 
@@ -199,7 +199,7 @@ $$\llbracket P \rrbracket_I = \llbracket \texttt{.numel()} \rrbracket_I(\text{Te
 
 **实证方法**：
 
-通过对 [main.rs:322-1149](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 中 `vm.add_native(...)` 调用与 [natives.rs:40-1221](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs) 中 `match name { ... }` 分支的逐行枚举，得：
+通过对 [main.rs:322-1149](../../tenth/src/main.rs) 中 `vm.add_native(...)` 调用与 [natives.rs:40-1221](../../tenth/src/runtime/interpreter/natives.rs) 中 `match name { ... }` 分支的逐行枚举，得：
 
 - $|\text{dom}(R_V)| = 70$
 - $|\text{dom}(R_I)| = 84$
@@ -211,11 +211,11 @@ $$\llbracket P \rrbracket_I = \llbracket \texttt{.numel()} \rrbracket_I(\text{Te
 
 **关键风险项分析**：
 
-1. **`save_weights` / `load_weights`**：解释器有（[natives.rs:450-574](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)），VM 无。VM 路径下任何使用权重持久化的训练脚本都会静默失败——这是 ML 训练流程的关键路径。
-2. **`with_step_limit` / `with_timeout_ms` / `is_timeout`**：解释器有（[natives.rs:74-140](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)），VM 无。VM 路径下用户写的超时控制代码完全失效，可能导致无限循环。
-3. **`sin` / `cos` / `ln` / `pow`**：解释器有（[natives.rs:271-322](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)），VM 无。这些是基础数学函数。注意 VM 路径有 `math_pow`/`math_log2` 等带前缀版本，但裸名 `sin/cos/ln/pow` 缺失。
-4. **`format` / `parse_int` / `parse_float`**：解释器有（[natives.rs:944-1013](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)），VM 无。影响字符串处理程序。
-5. **`start_grad`**：解释器有（[natives.rs:147-151](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)），VM 无。注意 `start_grad` 与 `new_grad` 在解释器中行为不同——`start_grad` 仅设 `recording = true` 不创建新 Tape，而 `new_grad` 同时创建 Tape。VM 路径下 `start_grad` 会让程序直接报"undefined function"错误，而非退化为 `new_grad`。
+1. **`save_weights` / `load_weights`**：解释器有（[natives.rs:450-574](../../tenth/src/runtime/interpreter/natives.rs)），VM 无。VM 路径下任何使用权重持久化的训练脚本都会静默失败——这是 ML 训练流程的关键路径。
+2. **`with_step_limit` / `with_timeout_ms` / `is_timeout`**：解释器有（[natives.rs:74-140](../../tenth/src/runtime/interpreter/natives.rs)），VM 无。VM 路径下用户写的超时控制代码完全失效，可能导致无限循环。
+3. **`sin` / `cos` / `ln` / `pow`**：解释器有（[natives.rs:271-322](../../tenth/src/runtime/interpreter/natives.rs)），VM 无。这些是基础数学函数。注意 VM 路径有 `math_pow`/`math_log2` 等带前缀版本，但裸名 `sin/cos/ln/pow` 缺失。
+4. **`format` / `parse_int` / `parse_float`**：解释器有（[natives.rs:944-1013](../../tenth/src/runtime/interpreter/natives.rs)），VM 无。影响字符串处理程序。
+5. **`start_grad`**：解释器有（[natives.rs:147-151](../../tenth/src/runtime/interpreter/natives.rs)），VM 无。注意 `start_grad` 与 `new_grad` 在解释器中行为不同——`start_grad` 仅设 `recording = true` 不创建新 Tape，而 `new_grad` 同时创建 Tape。VM 路径下 `start_grad` 会让程序直接报"undefined function"错误，而非退化为 `new_grad`。
 
 ---
 
@@ -236,7 +236,7 @@ $$\llbracket P \rrbracket_I = \llbracket \texttt{.numel()} \rrbracket_I(\text{Te
 
 **论证**：
 
-Python 的 `PyMethodDef` 数组在 C 模块初始化时被解释器读取，注册到模块字典。由于只有一条执行路径，不存在"另一侧"的概念。Lua 同理。Tenth 的双引擎设计要求 native 必须双注册，本质上是**双源真相的成本换取了双引擎的容错收益**——当 VM 编译失败时，解释器仍可执行（见 [main.rs:1278-1285](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 的 fallback 路径）。这是 Tenth 在 ML 训练场景（需要快速迭代且不能因编译失败阻塞实验）下的工程取舍。
+Python 的 `PyMethodDef` 数组在 C 模块初始化时被解释器读取，注册到模块字典。由于只有一条执行路径，不存在"另一侧"的概念。Lua 同理。Tenth 的双引擎设计要求 native 必须双注册，本质上是**双源真相的成本换取了双引擎的容错收益**——当 VM 编译失败时，解释器仍可执行（见 [main.rs:1278-1285](../../tenth/src/main.rs) 的 fallback 路径）。这是 Tenth 在 ML 训练场景（需要快速迭代且不能因编译失败阻塞实验）下的工程取舍。
 
 **推论 N4.1**：Tenth 的双重注册反模式无法通过"模仿 Python/Lua 单注册表"消除，因双引擎同存是设计目标。正确修补方向是**声明宏自动双重注册**（N5）。$\square$
 
@@ -281,8 +281,8 @@ match name { "zeros" => { /* 上述 impl 适配为解释器分支 */ } }
 **为何标注为未来工作**：当前 `register_natives` 与 `call_named_fn` 的代码结构差异较大（前者是命令式调用序列，后者是 match 表达式），宏改造涉及两侧代码生成模板的设计，且需在不破坏自举三路径（[DEPS.md 路径 A/B/C]）的前提下进行。这超出本文范围。$\square$
 
 **源码引用**：
-- VM 注册入口：[tenth/src/main.rs:322](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)
-- 解释器注册入口：[tenth/src/runtime/interpreter/natives.rs:37](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)
+- VM 注册入口：[tenth/src/main.rs:322](../../tenth/src/main.rs)
+- 解释器注册入口：[tenth/src/runtime/interpreter/natives.rs:37](../../tenth/src/runtime/interpreter/natives.rs)
 
 ---
 
@@ -309,7 +309,7 @@ match name { "zeros" => { /* 上述 impl 适配为解释器分支 */ } }
 
 ### 6.3 语义偏移实例：`randn` 的双路径随机源
 
-VM 路径 [main.rs:1016-1028](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)：
+VM 路径 [main.rs:1016-1028](../../tenth/src/main.rs)：
 
 ```rust
 vm.add_native("randn".into(), |_vm, args| {
@@ -324,7 +324,7 @@ vm.add_native("randn".into(), |_vm, args| {
 });
 ```
 
-解释器路径 [natives.rs:400-406](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)：
+解释器路径 [natives.rs:400-406](../../tenth/src/runtime/interpreter/natives.rs)：
 
 ```rust
 "randn" => {
@@ -341,11 +341,11 @@ vm.add_native("randn".into(), |_vm, args| {
 
 ### 7.1 化石注释的考古学
 
-[tenth/src/main.rs:1042-1044](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 的注释是少有的"反模式化石"——它直接记录了"这些函数仅在 interpreter 实现"的历史状态。这类注释在工程实践中价值极高：
+[tenth/src/main.rs:1042-1044](../../tenth/src/main.rs) 的注释是少有的"反模式化石"——它直接记录了"这些函数仅在 interpreter 实现"的历史状态。这类注释在工程实践中价值极高：
 
 1. **可追溯性**：注释本身证明了反模式曾经存在，不是论文虚构；
 2. **修补证据**：注释下方的 `vm.add_native("zeros", ...)` 等代码即是修补 commit 的产物；
-3. **可审计性**：未来开发者可通过此注释理解为何该段代码必须与 [natives.rs:436-449](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs) 对齐。
+3. **可审计性**：未来开发者可通过此注释理解为何该段代码必须与 [natives.rs:436-449](../../tenth/src/runtime/interpreter/natives.rs) 对齐。
 
 ### 7.2 故障的潜伏期
 
@@ -367,7 +367,7 @@ vm.add_native("randn".into(), |_vm, args| {
 
 ### 8.1 两侧注册表全量枚举
 
-#### 8.1.1 VM 路径 $R_V$（70 项，源自 [main.rs:322-1149](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)）
+#### 8.1.1 VM 路径 $R_V$（70 项，源自 [main.rs:322-1149](../../tenth/src/main.rs)）
 
 按功能分类：
 
@@ -386,7 +386,7 @@ vm.add_native("randn".into(), |_vm, args| {
 
 注：分类计数 5+2+10+5+7+15+6+2+3+11+2+2 = 70，与枚举一致。
 
-#### 8.1.2 解释器路径 $R_I$（84 项，源自 [natives.rs:40-1221](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)）
+#### 8.1.2 解释器路径 $R_I$（84 项，源自 [natives.rs:40-1221](../../tenth/src/runtime/interpreter/natives.rs)）
 
 按功能分类：
 
@@ -463,7 +463,7 @@ vm.add_native("randn".into(), |_vm, args| {
 ### 9.4 容错性
 
 - **Python/Lua**：单引擎，无回退能力。VM 崩溃即程序崩溃。
-- **Tenth**：双引擎可互为回退（[main.rs:1278-1285](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)），但回退前提是 $R_I$ 完备。若 $R_I$ 也不完备（如缺 `to_f64`），则回退路径同样失败。**双源真相的容错收益只在协议完备时兑现**。
+- **Tenth**：双引擎可互为回退（[main.rs:1278-1285](../../tenth/src/main.rs)），但回退前提是 $R_I$ 完备。若 $R_I$ 也不完备（如缺 `to_f64`），则回退路径同样失败。**双源真相的容错收益只在协议完备时兑现**。
 
 ---
 
@@ -528,7 +528,7 @@ N1 给出的是"双引擎等价 ⇒ 注册一致"的单向蕴含。完整的等�
 
 ### 11.5 `vm_run` 遗留函数的隐患
 
-[main.rs:1180-1311](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 存在 `#[allow(dead_code)] fn vm_run`，内部独立注册了 5 个 native（`println, read_file, Vec::new, compile_host, compile_program`），构成**第三处潜在注册点**。虽当前为 dead code，但若未来被误启用，将引入"三源真相"。建议清理或显式标记 `#[deprecated]`。
+[main.rs:1180-1311](../../tenth/src/main.rs) 存在 `#[allow(dead_code)] fn vm_run`，内部独立注册了 5 个 native（`println, read_file, Vec::new, compile_host, compile_program`），构成**第三处潜在注册点**。虽当前为 dead code，但若未来被误启用，将引入"三源真相"。建议清理或显式标记 `#[deprecated]`。
 
 ---
 
@@ -562,7 +562,7 @@ N5 仅给出宏的设计目标，未实现原型。宏展开为双份代码的�
 
 ### L7：循环论证风险
 
-N1 的证明构造程序 $P_n = \texttt{let x = } n\texttt{(...); return x;}$，假设该程序在 VM 路径下"会调用 native $n$"。但若 VM 编译期将 `n(...)` 编译为内联字节码（如 `Op::MakeTensor` 对 `tensor[[...]]` 的特化，见 [main.rs:350-359](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 注释），则调用不走 native 表，N1 的反证不成立。本文假设"native 调用走运行时分派"，这在大多数 native 上成立，但对有编译期特化的 native（如 `tensor`）不成立。**缓解**：N1 应排除有编译期特化的 native，或在求值模型中显式区分"编译期特化"与"运行时分派"两类调用。这是本文形式化最需要补强之处。
+N1 的证明构造程序 $P_n = \texttt{let x = } n\texttt{(...); return x;}$，假设该程序在 VM 路径下"会调用 native $n$"。但若 VM 编译期将 `n(...)` 编译为内联字节码（如 `Op::MakeTensor` 对 `tensor[[...]]` 的特化，见 [main.rs:350-359](../../tenth/src/main.rs) 注释），则调用不走 native 表，N1 的反证不成立。本文假设"native 调用走运行时分派"，这在大多数 native 上成立，但对有编译期特化的 native（如 `tensor`）不成立。**缓解**：N1 应排除有编译期特化的 native，或在求值模型中显式区分"编译期特化"与"运行时分派"两类调用。这是本文形式化最需要补强之处。
 
 ### L8：分类计数的机械性
 
@@ -575,7 +575,7 @@ N1 的证明构造程序 $P_n = \texttt{let x = } n\texttt{(...); return x;}$，
 本文对 Tenth 的双重 native 注册结构进行了形式化建模，给出五个主定理：
 
 1. **N1**：双重注册不变量——双引擎等价蕴含注册一致；
-2. **N2**：历史教训实证——`zeros/ones/rand/randn` 曾违反 N1，已在 [main.rs:1042-1080](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 补齐；
+2. **N2**：历史教训实证——`zeros/ones/rand/randn` 曾违反 N1，已在 [main.rs:1042-1080](../../tenth/src/main.rs) 补齐；
 3. **N3**：当前完备性审计——VM 路径缺 17 项（含 2 项致命：`save_weights/load_weights`）、解释器路径缺 3 项，协议不完备；
 4. **N4**：与 Python/Lua 对比——Tenth 的反模式是双引擎设计的代价，无法通过模仿单注册表消除；
 5. **N5**：宏自动双重注册方案——标注为未来工作，可强制保证域一致与签名一致，语义一致仍需测试。
@@ -591,17 +591,17 @@ N1 的证明构造程序 $P_n = \texttt{let x = } n\texttt{(...); return x;}$，
 
 ## 14 参考文献
 
-1. Tenth 项目. *工作规范 v1.1*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\.trae\rules\工作规范.md`
-2. Tenth 项目. *DEPS.md*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\DEPS.md`
-3. Tenth 项目. *CODE_WIKI.md*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\CODE_WIKI.md`
-4. Tenth 项目. *MEMO.md*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\MEMO.md`
-5. Tenth 项目. *AUDIT.md*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\AUDIT.md`
-6. Tenth 项目. *能力梳理/能力全梳理.md*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\能力梳理\能力全梳理.md`
-7. Tenth 项目. *docs/语言参考手册.md*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\docs\语言参考手册.md`
-8. T34 论文. *栈式 VM 操作语义形式化*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\docs\论文\T34-栈式VM操作语义形式化.md`
-9. T9 论文. *JIT 特化语义保持证明*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\docs\论文\T9-JIT特化语义保持证明.md`
-10. T12 论文. *双侧编译器语义等价性*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\docs\论文\T12-双侧编译器语义等价性.md`
-11. T32 论文. *hostcall trampoline FFI 安全性*. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\docs\论文\T32-hostcall-trampoline-FFI安全性.md`
+1. Tenth 项目. *工作规范 v1.1*. `../../.agents/rules/工作规范.md`
+2. Tenth 项目. *DEPS.md*. `../../DEPS.md`
+3. Tenth 项目. *CODE_WIKI.md*. `../../CODE_WIKI.md`
+4. Tenth 项目. *MEMO.md*. `../../MEMO.md`
+5. Tenth 项目. *AUDIT.md*. `../../AUDIT.md`
+6. Tenth 项目. *能力梳理/能力全梳理.md*. `../../能力梳理/能力全梳理.md`
+7. Tenth 项目. *docs/语言参考手册.md*. `../语言参考手册.md`
+8. T34 论文. *栈式 VM 操作语义形式化*. `T34-栈式VM操作语义形式化.md`
+9. T9 论文. *JIT 特化语义保持证明*. `T9-JIT特化语义保持证明.md`
+10. T12 论文. *双侧编译器语义等价性*. `T12-双侧编译器语义等价性.md`
+11. T32 论文. *hostcall trampoline FFI 安全性*. `T32-hostcall-trampoline-FFI安全性.md`
 12. CPython. *methodobject.h*. https://github.com/python/cpython/blob/main/Include/methodobject.h
 13. Lua. *lauxlib.c*. https://www.lua.org/source/5.4/lauxlib.c.html
 14. Rice, H. G. (1953). *Classes of Recursively Enumerable Sets and Their Decision Problems*. Transactions of the American Mathematical Society, 74, 358-366.（用于 L5 语义等价性不可判定性引用）
@@ -612,8 +612,8 @@ N1 的证明构造程序 $P_n = \texttt{let x = } n\texttt{(...); return x;}$，
 
 | 定理 | 简称 | 源码锚点 |
 |------|------|---------|
-| N1 | 双重注册不变量 | [main.rs:322-1149](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) + [natives.rs:37-1271](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs) |
-| N2 | 历史教训实证 | [main.rs:1042-1080](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) + [natives.rs:393-449](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs) |
+| N1 | 双重注册不变量 | [main.rs:322-1149](../../tenth/src/main.rs) + [natives.rs:37-1271](../../tenth/src/runtime/interpreter/natives.rs) |
+| N2 | 历史教训实证 | [main.rs:1042-1080](../../tenth/src/main.rs) + [natives.rs:393-449](../../tenth/src/runtime/interpreter/natives.rs) |
 | N3 | 当前完备性检查 | 第 8 节全量枚举 |
 | N4 | 与 Python/Lua 对比 | 第 9 节 |
 | N5 | 宏自动双重注册（未来工作） | 设计性，无源码锚点 |
@@ -630,7 +630,7 @@ N1 的证明构造程序 $P_n = \texttt{let x = } n\texttt{(...); return x;}$，
 
 按优先级排序（与第 10.2 节对齐）：
 
-1. **P0-a**：在 [main.rs::register_natives](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 末尾添加 `save_weights`、`load_weights` 的 VM 闭包，参考 [natives.rs:450-574](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)。
+1. **P0-a**：在 [main.rs::register_natives](../../tenth/src/main.rs) 末尾添加 `save_weights`、`load_weights` 的 VM 闭包，参考 [natives.rs:450-574](../../tenth/src/runtime/interpreter/natives.rs)。
 2. **P0-b**：添加 `with_step_limit`、`with_timeout_ms`、`is_timeout` 的 VM 闭包。注意 VM 路径需在 `Vm` 结构体上增加 `step_budget`、`deadline_ms` 字段（若不存在）。
 3. **P1-a**：将 `randn`/`randn_f32` 的 VM 闭包改为委托 `Tensor::randn`/`Tensor::randn_f32`，与解释器一致。
 4. **P1-b**：补齐 `sin/cos/ln/pow` 的 VM 闭包。

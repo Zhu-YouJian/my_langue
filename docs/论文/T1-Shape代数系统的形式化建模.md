@@ -94,19 +94,19 @@ $$\mathbb{D} = \{\,\mathrm{Known}(n) \mid n \in \mathbb{I}_{64}\,\} \;\cup\; \{\
 
 其中 $\mathbb{I}_{64} = [-2^{63}, 2^{63}-1] \cap \mathbb{Z}$ 为 `i64` 的值域。
 
-**实现对应**:[`tenth/src/hir/types.rs:13-17`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs) `enum Dim { Known(i64), Symbol(String), Any }`。
+**实现对应**:[`tenth/src/hir/types.rs:13-17`](../../tenth/src/hir/types.rs) `enum Dim { Known(i64), Symbol(String), Any }`。
 
-**注意(局限 L1)**:$\mathbb{I}_{64}$ 允许负数与零,但语义上维度应为非负(`usize`)。`static_numel` 对 `Known(n) < 0` 返回 `None`([types.rs:128](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs)),但 `broadcast_shapes` 不校验维度非负。详见 §7。
+**注意(局限 L1)**:$\mathbb{I}_{64}$ 允许负数与零,但语义上维度应为非负(`usize`)。`static_numel` 对 `Known(n) < 0` 返回 `None`([types.rs:128](../../tenth/src/hir/types.rs)),但 `broadcast_shapes` 不校验维度非负。详见 §7。
 
 **定义 3.2(运行时具体维度)**。运行时维度域 $\mathbb{D}_{\mathrm{rt}} = \mathbb{N}_0 = \{0, 1, 2, \ldots\}$(`usize`),无 Symbol/Any。存在嵌入 $\iota: \{\mathrm{Known}(n) \mid n \geq 0\} \hookrightarrow \mathbb{D}_{\mathrm{rt}}$, $\iota(\mathrm{Known}(n)) = n$。
 
-**实现对应**:[`tenth/src/runtime/tensor.rs:552`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) `fn broadcast_shape(a: &[usize], b: &[usize]) -> Option<Vec<usize>>`。
+**实现对应**:[`tenth/src/runtime/tensor.rs:552`](../../tenth/src/runtime/tensor.rs) `fn broadcast_shape(a: &[usize], b: &[usize]) -> Option<Vec<usize>>`。
 
 **定义 3.3(Shape)**。Shape 是维度序列 $s = (d_1, \ldots, d_k)$,$k \geq 0$,$d_i \in \mathbb{D}$(编译期)或 $d_i \in \mathbb{D}_{\mathrm{rt}}$(运行时)。空 shape $\epsilon = ()$ 表示标量。记编译期 shape 集合 $\mathbb{S} = \bigcup_{k \geq 0} \mathbb{D}^k$,运行时 shape 集合 $\mathbb{S}_{\mathrm{rt}} = \bigcup_{k \geq 0} \mathbb{D}_{\mathrm{rt}}^k$。
 
 ### 3.2 单维度广播运算
 
-**定义 3.4(单维度广播 $\oplus$)**。偏函数 $\oplus: \mathbb{D} \times \mathbb{D} \rightharpoonup \mathbb{D}$ 定义为(对应 [`hir/lower/types.rs:23-30`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)):
+**定义 3.4(单维度广播 $\oplus$)**。偏函数 $\oplus: \mathbb{D} \times \mathbb{D} \rightharpoonup \mathbb{D}$ 定义为(对应 [`hir/lower/types.rs:23-30`](../../tenth/src/hir/lower/types.rs)):
 
 $$
 \begin{aligned}
@@ -130,7 +130,7 @@ a \oplus_{\mathrm{rt}} a &= a && \text{if } a \geq 2
 \end{aligned}
 $$
 
-其余未定义。对应 [`runtime/tensor.rs:560-564`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)。
+其余未定义。对应 [`runtime/tensor.rs:560-564`](../../tenth/src/runtime/tensor.rs)。
 
 ### 3.3 多维度广播运算
 
@@ -145,7 +145,7 @@ $$
 
 则 $\mathrm{BCast}(s, t) = (\hat{d}_1 \oplus \hat{e}_1, \ldots, \hat{d}_k \oplus \hat{e}_k)$ 当且仅当所有 $\hat{d}_i \oplus \hat{e}_i$ 有定义;否则 $\bot$。
 
-**实现对应**:[`hir/lower/types.rs:18-41`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) 与 [`runtime/tensor.rs:552-567`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)。
+**实现对应**:[`hir/lower/types.rs:18-41`](../../tenth/src/hir/lower/types.rs) 与 [`runtime/tensor.rs:552-567`](../../tenth/src/runtime/tensor.rs)。
 
 **注 3.1(标量作为单位元)**。$m = 0$ 时(标量 $s = \epsilon$),所有 $\hat{d}_i = \mathrm{Known}(1)$,由单位元律 $\mathrm{Known}(1) \oplus x = x$,$\mathrm{BCast}(\epsilon, t) = t$。故**空 shape(标量)是多维度广播的左单位元**;由交换性(定理 1),亦为右单位元。
 
@@ -288,7 +288,7 @@ $$
 
 故 $(x \oplus y) \oplus z = \mathrm{Symbol}(s) \neq \bot = x \oplus (y \oplus z)$。$\square$
 
-**根因分析**。结合律失败的根源在于 **Symbol 的保守兼容规则**$\mathrm{Symbol}(s) \oplus \mathrm{Known}(n) = \mathrm{Symbol}(s)$(对应 [types.rs:28-29](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs))。该规则**假设** Symbol 与任意 Known 兼容,但 Symbol 的"真实值"是单一的——若 $s$ 实际为 2,则与 $\mathrm{Known}(3)$ 不兼容。编译期未做 unification,丢失了"Symbol 同时受多个 Known 约束"的信息,导致:
+**根因分析**。结合律失败的根源在于 **Symbol 的保守兼容规则**$\mathrm{Symbol}(s) \oplus \mathrm{Known}(n) = \mathrm{Symbol}(s)$(对应 [types.rs:28-29](../../tenth/src/hir/lower/types.rs))。该规则**假设** Symbol 与任意 Known 兼容,但 Symbol 的"真实值"是单一的——若 $s$ 实际为 2,则与 $\mathrm{Known}(3)$ 不兼容。编译期未做 unification,丢失了"Symbol 同时受多个 Known 约束"的信息,导致:
 
 - 左结合:Symbol 先吸收 $\mathrm{Known}(2)$ 成为 Symbol,再"宽容地"吸收 $\mathrm{Known}(3)$。
 - 右结合:$\mathrm{Known}(2)$ 与 $\mathrm{Known}(3)$ 先冲突暴露,Symbol 无法挽救。
@@ -311,9 +311,9 @@ $$
 即编译期与运行时**一致**(可靠且完备)。
 
 **证明**。
-$(\Rightarrow)$ 设 $\mathrm{broadcast\_shapes}(s, t) = \mathrm{None}$。由 [types.rs:23-30](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs),`None` 仅在最后一行 `_ => return None` 触发,即存在某对维度 $(\mathrm{Known}(a), \mathrm{Known}(b))$ 满足 $a \neq b$ 且 $a \neq 1$ 且 $b \neq 1$。对应运行时 `broadcast_shape` 中 $(a, b)$ 匹配 `_ => return None`([tensor.rs:563](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs))。故运行时亦返回 `None`。
+$(\Rightarrow)$ 设 $\mathrm{broadcast\_shapes}(s, t) = \mathrm{None}$。由 [types.rs:23-30](../../tenth/src/hir/lower/types.rs),`None` 仅在最后一行 `_ => return None` 触发,即存在某对维度 $(\mathrm{Known}(a), \mathrm{Known}(b))$ 满足 $a \neq b$ 且 $a \neq 1$ 且 $b \neq 1$。对应运行时 `broadcast_shape` 中 $(a, b)$ 匹配 `_ => return None`([tensor.rs:563](../../tenth/src/runtime/tensor.rs))。故运行时亦返回 `None`。
 
-$(\Leftarrow)$ 设 $\mathrm{broadcast\_shape}(\iota(s), \iota(t)) = \mathrm{None}$。由 [tensor.rs:560-563](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs),`None` 仅在 `(_, _)` 分支触发,即存在维度对 $(a, b)$ 满足 $a \neq 1, b \neq 1, a \neq b$。对应编译期 $(\mathrm{Known}(a), \mathrm{Known}(b))$, $a \neq b$, $a, b \geq 2$,落入 `_ => return None`。故编译期亦返回 `None`。$\square$
+$(\Leftarrow)$ 设 $\mathrm{broadcast\_shape}(\iota(s), \iota(t)) = \mathrm{None}$。由 [tensor.rs:560-563](../../tenth/src/runtime/tensor.rs),`None` 仅在 `(_, _)` 分支触发,即存在维度对 $(a, b)$ 满足 $a \neq 1, b \neq 1, a \neq b$。对应编译期 $(\mathrm{Known}(a), \mathrm{Known}(b))$, $a \neq b$, $a, b \geq 2$,落入 `_ => return None`。故编译期亦返回 `None`。$\square$
 
 **推论 4.1(全 Known 的精确性)**。若全 $\mathrm{Known}$ 且 $\mathrm{broadcast\_shapes}(s, t) = \mathrm{Some}(r)$,则 $\iota(r) = \mathrm{broadcast\_shape}(\iota(s), \iota(t))$(结果 shape 精确一致)。
 
@@ -335,7 +335,7 @@ $(\Leftarrow)$ 设 $\mathrm{broadcast\_shape}(\iota(s), \iota(t)) = \mathrm{None
 
 **定义 4.1(广播算子 $B_A$)**。$B_A: \mathbb{R}^A \to \mathbb{R}^O$ 为线性算子,将 $x$ 沿广播轴复制。形式化:若 $A = (a_1, \ldots, a_m)$, $O = (o_1, \ldots, o_n)$,$n \geq m$,左填充 $\hat{A} = (1, \ldots, 1, a_1, \ldots, a_m)$,则 $B_A(x)_{i_1, \ldots, i_n} = x_{j_1, \ldots, j_m}$,其中 $j_k = i_{k + (n-m)}$ 若 $a_k \neq 1$(取原索引),否则 $j_k = 0$(广播轴索引固定为 0)。
 
-**定义 4.2(unbroadcast)**。[`autodiff.rs:836-883`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 `unbroadcast(grad, target_shape)` 实现:对 $\mathrm{grad} \in \mathbb{R}^O$,目标 shape $A$,沿"广播轴"( padded_target 为 1 而 grad_shape $> 1$ 的轴)求和,再 reshape 到 $A$。
+**定义 4.2(unbroadcast)**。[`autodiff.rs:836-883`](../../tenth/src/runtime/autodiff.rs) 的 `unbroadcast(grad, target_shape)` 实现:对 $\mathrm{grad} \in \mathbb{R}^O$,目标 shape $A$,沿"广播轴"( padded_target 为 1 而 grad_shape $> 1$ 的轴)求和,再 reshape 到 $A$。
 
 **定理 5(unbroadcast 是 $B_A$ 的伴随)**。对线性算子 $B_A: \mathbb{R}^A \to \mathbb{R}^O$,其伴随 $B_A^*: \mathbb{R}^O \to \mathbb{R}^A$ 满足 $\langle B_A x, g \rangle_O = \langle x, B_A^* g \rangle_A$。则:
 
@@ -348,17 +348,17 @@ $$B_A^*(g) = \mathrm{unbroadcast}(g, A)$$
 
 **步骤 2(交换求和)**。$= \sum_{j \in [A]} x_j \cdot \left(\sum_{i: \pi(i) = j} g_i\right) = \langle x, B_A^* g \rangle_A$,其中 $(B_A^* g)_j = \sum_{i: \pi(i) = j} g_i$。
 
-**步骤 3(unbroadcast 实现)**。`unbroadcast` 在 [`autodiff.rs:853-857`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 中对每个 `padded_target[axis] == 1 && grad_shape[axis] > 1` 的轴调用 `result.sum_axis(Axis(axis))`,即沿广播轴求和。这正是 $\sum_{i: \pi(i) = j} g_i$ 的逐轴实现。
+**步骤 3(unbroadcast 实现)**。`unbroadcast` 在 [`autodiff.rs:853-857`](../../tenth/src/runtime/autodiff.rs) 中对每个 `padded_target[axis] == 1 && grad_shape[axis] > 1` 的轴调用 `result.sum_axis(Axis(axis))`,即沿广播轴求和。这正是 $\sum_{i: \pi(i) = j} g_i$ 的逐轴实现。
 
-**步骤 4(reshape)**。求和后形状可能仍含被求和轴的退化维度(大小 1),`reshape` 到 $A$ 完成形状对齐([autodiff.rs:860-871](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs))。
+**步骤 4(reshape)**。求和后形状可能仍含被求和轴的退化维度(大小 1),`reshape` 到 $A$ 完成形状对齐([autodiff.rs:860-871](../../tenth/src/runtime/autodiff.rs))。
 
 故 $B_A^*(g) = \mathrm{unbroadcast}(g, A)$。$\square$
 
-**推论 5.1(梯度语义正确性)**。对加法 $z = x + y$,梯度 $\frac{\partial L}{\partial x} = B_A^*(\frac{\partial L}{\partial z}) = \mathrm{unbroadcast}(\frac{\partial L}{\partial z}, A)$。对应实现 [`autodiff.rs:301-313`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)(`TapeOp::Add` 分支调用 `unbroadcast(&grad, input_shape)`)。
+**推论 5.1(梯度语义正确性)**。对加法 $z = x + y$,梯度 $\frac{\partial L}{\partial x} = B_A^*(\frac{\partial L}{\partial z}) = \mathrm{unbroadcast}(\frac{\partial L}{\partial z}, A)$。对应实现 [`autodiff.rs:301-313`](../../tenth/src/runtime/autodiff.rs)(`TapeOp::Add` 分支调用 `unbroadcast(&grad, input_shape)`)。
 
-**推论 5.2(乘法/除法梯度)**。对 $z = x \odot y$(逐元素乘),$\frac{\partial L}{\partial x} = B_A^*(\frac{\partial L}{\partial z} \odot B_B(y))$。对应 [`autodiff.rs:322`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs):`unbroadcast(&(&grad * &b_data), &a_shape)`。除法类似([autodiff.rs:333-334](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs))。
+**推论 5.2(乘法/除法梯度)**。对 $z = x \odot y$(逐元素乘),$\frac{\partial L}{\partial x} = B_A^*(\frac{\partial L}{\partial z} \odot B_B(y))$。对应 [`autodiff.rs:322`](../../tenth/src/runtime/autodiff.rs):`unbroadcast(&(&grad * &b_data), &a_shape)`。除法类似([autodiff.rs:333-334](../../tenth/src/runtime/autodiff.rs))。
 
-**注 4.3(局限 L5)**。定理 5 假设前向广播与反向 unbroadcast 使用**同一对 shape**($A$ 与 $O$)。实践中若前向运算修改了 shape(如 reshape 后再加),则需先追溯 reshape 的伴随,再应用 unbroadcast。当前实现未分离这两步,但 `unbroadcast` 内部的 reshape 兜底([autodiff.rs:861-879](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs))处理了元素数一致但形状不同的退化情形,这是工程兜底而非理论保证。
+**注 4.3(局限 L5)**。定理 5 假设前向广播与反向 unbroadcast 使用**同一对 shape**($A$ 与 $O$)。实践中若前向运算修改了 shape(如 reshape 后再加),则需先追溯 reshape 的伴随,再应用 unbroadcast。当前实现未分离这两步,但 `unbroadcast` 内部的 reshape 兜底([autodiff.rs:861-879](../../tenth/src/runtime/autodiff.rs))处理了元素数一致但形状不同的退化情形,这是工程兜底而非理论保证。
 
 ### 4.6 编译期是运行时的保守过近似(定理 6)
 
@@ -463,7 +463,7 @@ Phase 3 可探索**线性约束求解**(允许 $s + t = n$),但需接受 NP 完�
 ### L1:负维度未校验
 
 - **是什么**:`Dim::Known(i64)` 允许负数,但 `broadcast_shapes` 不校验 `Known(n) >= 0`。运行时 `usize` 不支持负数,负维度在具体化时无意义。
-- **影响**:理论上 $\mathrm{Known}(-1) \oplus \mathrm{Known}(-1) = \mathrm{Known}(-1)$ 由定义成立,但运行时无法具体化。`static_numel` 对负维度返回 `None`([types.rs:128](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs)),部分缓解。
+- **影响**:理论上 $\mathrm{Known}(-1) \oplus \mathrm{Known}(-1) = \mathrm{Known}(-1)$ 由定义成立,但运行时无法具体化。`static_numel` 对负维度返回 `None`([types.rs:128](../../tenth/src/hir/types.rs)),部分缓解。
 - **缓解建议**:在 `broadcast_shapes` 入口校验 `Known(n) >= 0`,负值返回 `None`。或在 `Dim::Known` 构造时断言。
 
 ### L2:运行时结合律的"已知"假设
@@ -486,13 +486,13 @@ Phase 3 可探索**线性约束求解**(允许 $s + t = n$),但需接受 NP 完�
 
 ### L5:unbroadcast 的 reshape 兜底非理论保证
 
-- **是什么**:定理 5 假设前向广播与反向 unbroadcast shape 严格对偶,但 [`autodiff.rs:861-879`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 reshape 兜底处理了"元素数一致但形状不同"的退化情形,这是工程容错而非定理 5 的覆盖范围。
+- **是什么**:定理 5 假设前向广播与反向 unbroadcast shape 严格对偶,但 [`autodiff.rs:861-879`](../../tenth/src/runtime/autodiff.rs) 的 reshape 兜底处理了"元素数一致但形状不同"的退化情形,这是工程容错而非定理 5 的覆盖范围。
 - **影响**:若前向运算链中混入 reshape,unbroadcast 的 reshape 兜底可能掩盖真实的 shape 不一致(方向 A 已消除 silent squeeze,但仍可能报"unbroadcast reshape 失败"而非更精确的诊断)。
 - **缓解建议**:未来工作可将 reshape 的伴随分离为独立算子,而非在 unbroadcast 内兜底。
 
 ### L6:跨函数 shape 求解的非代数性
 
-- **是什么**:本文的代数分析限于**单函数内**的 `broadcast_shapes`。跨函数的 shape 传播由 `merge_return_shape`([types.rs:496-521](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs))处理,该函数是**启发式合并**(取"更精确"的一侧),不遵循 $\oplus$ 的代数规则。
+- **是什么**:本文的代数分析限于**单函数内**的 `broadcast_shapes`。跨函数的 shape 传播由 `merge_return_shape`([types.rs:496-521](../../tenth/src/hir/lower/types.rs))处理,该函数是**启发式合并**(取"更精确"的一侧),不遵循 $\oplus$ 的代数规则。
 - **影响**:跨函数 shape 检查的可靠性未被本文定理覆盖。可能存在"单函数内通过但跨函数漏报"的情形。
 - **缓解建议**:未来工作可将跨函数 shape 求解纳入形式化模型,定义"函数返回 shape"为输入 shape 的函数(依赖型风格),分析其代数性质。
 

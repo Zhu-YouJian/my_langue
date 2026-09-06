@@ -21,13 +21,13 @@
 
 ### 1.1 Shape 错误根因判断的复杂性
 
-在张量计算程序中，shape（张量形状）错误是最常见的运行时错误之一。当 MatMul 报错"内侧维度不匹配 [3,8] @ [4,8]"时，用户面对的真正困难不是"哪一行报错"，而是"为什么这一行的输入变成了 [3,8]"——错误的表现位置与错误的根因位置在计算图中可能相距很远。前向第 3 步的 reshape 误用，可能到反向第 30 步才以 grad shape 不匹配的形式爆出来（参见 [战略规划.md 方向 F §战略起源](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)）。
+在张量计算程序中，shape（张量形状）错误是最常见的运行时错误之一。当 MatMul 报错"内侧维度不匹配 [3,8] @ [4,8]"时，用户面对的真正困难不是"哪一行报错"，而是"为什么这一行的输入变成了 [3,8]"——错误的表现位置与错误的根因位置在计算图中可能相距很远。前向第 3 步的 reshape 误用，可能到反向第 30 步才以 grad shape 不匹配的形式爆出来（参见 [战略规划.md 方向 F §战略起源](../shape-check-roadmap/战略规划.md)）。
 
 现有 AI 框架（PyTorch、JAX、TensorFlow）的报错停留在"位置导向"层面：告诉用户"哪一行错了"，但不告诉"为什么这一行会变成 [3,8]"。更根本的问题是：**当调试器试图判断"哪个算子是根因"时，缺乏形式化的判断标准**。一个节点是不是根因，到底是看它在错误传播路径上？看它的 shape 与错误相关？还是看它直接导致了错误？这三层判断的边界从未被严格区分。
 
 ### 1.2 经验式调试的局限
 
-直觉方案是为算子分配权重（reshape=10, transpose=8, matmul=5），按权重排序选根因。这种方法存在四个根本问题（参见 [形式化分析理论可行性论证.md §1.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)）：
+直觉方案是为算子分配权重（reshape=10, transpose=8, matmul=5），按权重排序选根因。这种方法存在四个根本问题（参见 [形式化分析理论可行性论证.md §1.2](../shape-check-roadmap/形式化分析理论可行性论证.md)）：
 
 1. **不可解释**：用户问"为什么根因是 reshape"，只能答"权重高"
 2. **不可证伪**：权重表是经验设定，无形式化依据
@@ -108,7 +108,7 @@ Tape 根因分析（T2 论文 §7）已证明本质是 shape 错误的后向切�
 沿用 T2 论文与 v3 草稿的符号：
 
 - **Shape** $\mathbb{S} = \bigcup_{n \geq 0} \mathbb{N}^n$，非负整数元组
-- **Tape DAG** $G = (V, E)$，节点 $v = (op_v, s^{in}_v, s^{out}_v, \ell_v)$，边由 Tid 定义（[autodiff.rs:15-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）
+- **Tape DAG** $G = (V, E)$，节点 $v = (op_v, s^{in}_v, s^{out}_v, \ell_v)$，边由 Tid 定义（[autodiff.rs:15-25](../../tenth/src/runtime/autodiff.rs)）
 - **算子 shape 语义** $\text{Sem}_{op}: \mathbb{S}^{k_{op}} \to \mathbb{S} \cup \{\bot\}$
 - **算子内部约束** $\text{Constraint}_{op}(s_1, ..., s_{k_{op}}) = (\text{Sem}_{op}(s_1, ..., s_{k_{op}}) \neq \bot)$
 - **Shape 变换分类** $\text{Class}(v) \in \{\text{Construct}, \text{Preserve}, \text{Reduce}, \text{Expand}\}$
@@ -675,11 +675,11 @@ $$S_v^{\text{legal}} = \{s' \in \mathbb{S} : \text{Sem}_{op_v}(s^{in}_v \text{ �
     - `docs/shape-check-roadmap/形式化分析理论可行性论证.md` v3（§3 定义 3.2, §6.6 F4 循环性）
     - `docs/shape-check-roadmap/战略规划.md`（方向 F 战略定位）
     - `docs/论文/T2-Tape形式化模型与根因定位可判定性.md`（Tape 形式化模型, F1-F5）
-    - `tenth/src/runtime/autodiff.rs`（Tape 实现，[autodiff.rs:15-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) TapeNode 结构）
+    - `tenth/src/runtime/autodiff.rs`（Tape 实现，[autodiff.rs:15-25](../../tenth/src/runtime/autodiff.rs) TapeNode 结构）
     - `tenth/src/runtime/tensor.rs`（Tensor.tape_id 字段）
 
 ---
 
 > **文档结束**
 >
-> 本文 v1 基于 v3 草稿的 §3 定义 3.2 与 §6.6 F4 循环性局限，提出四级解释关系的层级化形式化与 counterfactual 因果性修复。本文的核心理论贡献是定理 T8-3（F4 循环性修复）与定理 T8-4（反事实推理可判定性），核心局限是 §8.1 诚实记录的 Construct 节点可判定性未证明（猜想 T8-4a）。所有形式化定义均可锚定到 Tenth v0.3.3 源码位置（[autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 与 [tensor.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）。如发现证明漏洞或边界遗漏，应在 `MEMO.md` 记录并修订本文。
+> 本文 v1 基于 v3 草稿的 §3 定义 3.2 与 §6.6 F4 循环性局限，提出四级解释关系的层级化形式化与 counterfactual 因果性修复。本文的核心理论贡献是定理 T8-3（F4 循环性修复）与定理 T8-4（反事实推理可判定性），核心局限是 §8.1 诚实记录的 Construct 节点可判定性未证明（猜想 T8-4a）。所有形式化定义均可锚定到 Tenth v0.3.3 源码位置（[autodiff.rs](../../tenth/src/runtime/autodiff.rs) 与 [tensor.rs](../../tenth/src/runtime/tensor.rs)）。如发现证明漏洞或边界遗漏，应在 `MEMO.md` 记录并修订本文。

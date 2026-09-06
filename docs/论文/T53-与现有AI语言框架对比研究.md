@@ -5,10 +5,10 @@
 > **类型**：调研综述 + 对比研究论文（T53 理论点——横向对比研究）
 > **实证基础**：Tenth v0.3.3 源码（`hir/types.rs`、`hir/lower/types.rs`、`runtime/autodiff.rs`、`runtime/tensor.rs`、`main.rs`、`compile/jit/translator.rs`、`std/prelude.th`）
 > **关联文档**：
-> - 上游范式定义：[`docs/论文/T10-AI原生语言范式形式化定义.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)
-> - 上游护城河闭环：[`docs/论文/T11-护城河闭环结构形式化.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md)
-> - 战略文档：[`docs/shape-check-roadmap/战略规划.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)、[`docs/shape-check-roadmap/综合分析.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md)
-> - 源码实证：[`tenth/src/hir/types.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs)、[`tenth/src/runtime/autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)、[`tenth/src/hir/lower/types.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)
+> - 上游范式定义：[`docs/论文/T10-AI原生语言范式形式化定义.md`](T10-AI原生语言范式形式化定义.md)
+> - 上游护城河闭环：[`docs/论文/T11-护城河闭环结构形式化.md`](T11-护城河闭环结构形式化.md)
+> - 战略文档：[`docs/shape-check-roadmap/战略规划.md`](../shape-check-roadmap/战略规划.md)、[`docs/shape-check-roadmap/综合分析.md`](../shape-check-roadmap/综合分析.md)
+> - 源码实证：[`tenth/src/hir/types.rs`](../../tenth/src/hir/types.rs)、[`tenth/src/runtime/autodiff.rs`](../../tenth/src/runtime/autodiff.rs)、[`tenth/src/hir/lower/types.rs`](../../tenth/src/hir/lower/types.rs)
 > **版本**：v1（首轮分析，含 4 轮自审修正留痕）
 
 ---
@@ -32,7 +32,7 @@
 3. **科学计算通用语言**：以 Julia/Flux 为代表，多分派优雅、性能接近 C，但 AI 能力全靠库，无 shape 类型。
 4. **AI 原生语言尝试（已停滞）**：以 Swift for TensorFlow（S4TF）为代表，将 Tensor 提升为语言级类型，但因生态失败于 2021 年归档。
 5. **编译器基础设施**：以 MLIR 为代表，提供方言框架与 shape 推断 pass，但本身不是前端语言。
-6. **AI 原生语言（新兴）**：以 Tenth 为代表，将 Tensor、Autodiff、Shape、NN 算子、多路径执行全部提升至语言级，五判据 J1–J5 全满足（详见 [T10 论文 §3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。
+6. **AI 原生语言（新兴）**：以 Tenth 为代表，将 Tensor、Autodiff、Shape、NN 算子、多路径执行全部提升至语言级，五判据 J1–J5 全满足（详见 [T10 论文 §3](T10-AI原生语言范式形式化定义.md)）。
 
 ### 1.2 对比研究的必要性
 
@@ -46,19 +46,19 @@ PyTorch/JAX 的官方文档对比多停留在 API 层面，缺乏形式化的能
 
 ### 1.3 Tenth 的定位
 
-Tenth 是 Tensor + Zenith 的缩写，定位为"通用编程语言 + AI 原生"（详见 [工作规范.md §一](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/.trae/rules/工作规范.md)）。其核心管线是：
+Tenth 是 Tensor + Zenith 的缩写，定位为"通用编程语言 + AI 原生"（详见 [工作规范.md §一](../../.agents/rules/工作规范.md)）。其核心管线是：
 
 ```
 .th → Lexer → Parser → HIR → VM(默认) / 解释器(fallback) / WASM / JIT
 ```
 
-Tenth 的关键特征（详见 [T10 论文 §4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）：
+Tenth 的关键特征（详见 [T10 论文 §4](T10-AI原生语言范式形式化定义.md)）：
 
-- **Tensor 是内建类型**：`Type::Tensor { dtype, dims }` 是 HIR 顶层类型构造子（[hir/types.rs:19-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs)）。
-- **Autodiff 是语言原语**：`param/grad/backward/stop_grad/zero_grad` 由 native 函数注册（[main.rs:683-745](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)），无需 import，用户不可重定义语义。
-- **Shape 是类型系统一部分**：`Dim::Known(i64) | Symbol(String) | Any` 三值类型系统（[hir/types.rs:13-17](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs)）。
-- **NN 算子是标准库**：`std/nn/` 下覆盖 linear/activation/loss/norm/conv/attention/transformer（[std/prelude.th:55-68](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th)）。
-- **多路径共享 autodiff 语义**：解释器/VM/JIT 三路径共享 `autodiff.rs::Tape::backward` 实现（详见 [T10 引理 5.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。
+- **Tensor 是内建类型**：`Type::Tensor { dtype, dims }` 是 HIR 顶层类型构造子（[hir/types.rs:19-25](../../tenth/src/hir/types.rs)）。
+- **Autodiff 是语言原语**：`param/grad/backward/stop_grad/zero_grad` 由 native 函数注册（[main.rs:683-745](../../tenth/src/main.rs)），无需 import，用户不可重定义语义。
+- **Shape 是类型系统一部分**：`Dim::Known(i64) | Symbol(String) | Any` 三值类型系统（[hir/types.rs:13-17](../../tenth/src/hir/types.rs)）。
+- **NN 算子是标准库**：`std/nn/` 下覆盖 linear/activation/loss/norm/conv/attention/transformer（[std/prelude.th:55-68](../../tenth/std/prelude.th)）。
+- **多路径共享 autodiff 语义**：解释器/VM/JIT 三路径共享 `autodiff.rs::Tape::backward` 实现（详见 [T10 引理 5.1](T10-AI原生语言范式形式化定义.md)）。
 
 ### 1.4 贡献
 
@@ -95,11 +95,11 @@ Tenth 的关键特征（详见 [T10 论文 §4](file:///d:/史蒂夫/Desktop/AI�
 | **Shape 检查** | 对张量形状（如 `[3, 224, 224]`）的一致性验证，包括广播兼容、matmul 内侧维度、reshape 元素守恒等 |
 | **Autodiff** | 自动微分，包括前向模式（forward）与反向模式（reverse），以及混合的 checkpointing |
 | **关系调试器** | 报错以"数据依赖边"为单位（如"a→b 边上 shape 从 [3,8] 变成 [4,8]"），区别于"位置导向"的报错（"第 50 行错误"） |
-| **护城河** | Tenth 区别于 PyTorch/JAX 的核心技术能力，共六个方向 A/B/C/D/E/F（详见 [战略规划.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)） |
+| **护城河** | Tenth 区别于 PyTorch/JAX 的核心技术能力，共六个方向 A/B/C/D/E/F（详见 [战略规划.md](../shape-check-roadmap/战略规划.md)） |
 | **AI 原生语言** | 满足 T10 论文五判据 J1–J5 的语言——Tensor 内建、Autodiff 原语、Shape 类型、NN 标准库、多路径共享 |
 | **库范式** | AI 能力全在库层，宿主语言不参与（如 PyTorch） |
 | **tracing 范式** | 通过运行时 trace 静态化程序（如 JAX） |
-| **闭环防御** | "编译期防患未然 + 运行时出事能查"的完整生命周期防御（详见 [T11 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md)） |
+| **闭环防御** | "编译期防患未然 + 运行时出事能查"的完整生命周期防御（详见 [T11 论文](T11-护城河闭环结构形式化.md)） |
 
 ---
 
@@ -109,10 +109,10 @@ Tenth 的关键特征（详见 [T10 论文 §4](file:///d:/史蒂夫/Desktop/AI�
 
 ### 3.1 Julia（多分派但非 AI 原生）
 
-Julia 是为科学计算设计的高性能通用语言（[Bezanson et al. 2017](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)）。核心特征：
+Julia 是为科学计算设计的高性能通用语言（[Bezanson et al. 2017](T53-与现有AI语言框架对比研究.md)）。核心特征：
 
 - **Tensor 不是内建类型**：依赖 `Array{T, N}` 与 `LinearAlgebra`。
-- **Autodiff 是库**：Zygote.jl 提供源到源自动微分（[Innes et al. 2019](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)）。
+- **Autodiff 是库**：Zygote.jl 提供源到源自动微分（[Innes et al. 2019](T53-与现有AI语言框架对比研究.md)）。
 - **NN 算子是库**：Flux.jl 是 Julia 生态的 AI 库。
 - **Shape 是运行时属性**：`size(x)` 是运行时函数，类型签名只看到秩 N。
 - **JIT 是语言级**：Julia 的 LLVM JIT 是语言核心。
@@ -122,7 +122,7 @@ Julia 是为科学计算设计的高性能通用语言（[Bezanson et al. 2017](
 
 ### 3.2 PyTorch（库非语言）
 
-PyTorch 是当前事实标准的 AI 框架（[Paszke et al. 2019](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)）。核心特征：
+PyTorch 是当前事实标准的 AI 框架（[Paszke et al. 2019](T53-与现有AI语言框架对比研究.md)）。核心特征：
 
 - **Tensor 是 Python 类**：`torch.Tensor` 是 Python 对象，shape 是 `tensor.shape` 属性。
 - **Autodiff 是 hook**：`requires_grad=True` 标记叶子，autograd 引擎动态构建计算图。
@@ -135,7 +135,7 @@ PyTorch 是当前事实标准的 AI 框架（[Paszke et al. 2019](file:///d:/史
 
 ### 3.3 JAX（函数式但 shape 检查弱）
 
-JAX 是 Google 主推的函数式 AI 框架（[Bradbury et al. 2018](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)）。核心特征：
+JAX 是 Google 主推的函数式 AI 框架（[Bradbury et al. 2018](T53-与现有AI语言框架对比研究.md)）。核心特征：
 
 - **Tensor 是抽象值**：`jax.numpy.ndarray` 在 trace 期静态化 shape。
 - **Autodiff 是函数变换**：`jax.grad(f)` 是纯函数式变换。
@@ -148,7 +148,7 @@ JAX 是 Google 主推的函数式 AI 框架（[Bradbury et al. 2018](file:///d:/
 
 ### 3.4 Swift for TensorFlow（已停滞）
 
-S4TF 是 Google 主导、最有代表性的"AI 原生语言"尝试（[S4TF Archive 2021](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)）。核心特征：
+S4TF 是 Google 主导、最有代表性的"AI 原生语言"尝试（[S4TF Archive 2021](T53-与现有AI语言框架对比研究.md)）。核心特征：
 
 - **Tensor 是内建类型**：`Tensor<Scalar>` 是语言级类型。
 - **Autodiff 是语言原语**：`@differentiable` 标注、`gradient(of:)` 是语言特性。
@@ -159,7 +159,7 @@ S4TF 是 Google 主导、最有代表性的"AI 原生语言"尝试（[S4TF Archi
 
 ### 3.5 MLIR（编译器基础设施而非语言）
 
-MLIR（Multi-Level Intermediate Representation）是 LLVM 的编译器基础设施（[Lattner et al. 2021](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)）。核心特征：
+MLIR（Multi-Level Intermediate Representation）是 LLVM 的编译器基础设施（[Lattner et al. 2021](T53-与现有AI语言框架对比研究.md)）。核心特征：
 
 - **不是语言**：MLIR 是 IR 框架，通过"方言"扩展，本身无前端语法。
 - **Tensor 是方言类型**：`tensor<3x4xf32>` 在 `tensor` 方言中。
@@ -223,7 +223,7 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 - $D = 0$（无调试器）：仅显示栈trace，不追溯根因。例：PyTorch 的 `RuntimeError` + 栈。
 - $D = 1$（普通调试器）：可设断点、单步、查看变量，但报错以位置为导向。例：Python pdb、Julia Debugger.jl。
 - $D = 2$（trace 期值流显示）：trace 期可显示抽象值流，但仍以位置为中心。例：JAX 的 trace 报错。
-- $D = 3$（关系调试器理论成熟）：报错以"数据依赖边"为单位，理论模型已建立但工程未完成。Tenth 护城河 F 落于此级（[T2/T6/T8 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md) 已建立完整理论体系）。
+- $D = 3$（关系调试器理论成熟）：报错以"数据依赖边"为单位，理论模型已建立但工程未完成。Tenth 护城河 F 落于此级（[T2/T6/T8 论文](T2-Tape形式化模型与根因定位可判定性.md) 已建立完整理论体系）。
 - $D = 4$（关系调试器工程完成）：理论 + 工程均完成，可直接产出"节点 a → 节点 b 这条边出错，类型是 shape mismatch"形式的报错。Tenth 未来目标。
 
 **对象**：调试能力 $D$。
@@ -254,7 +254,7 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 
 | 语言/框架 | $S$ 等级 | 编译期前向 | 编译期反向 | 编译期内存预估 | 实证位置 |
 |----------|:------:|:--------:|:--------:|:------------:|---------|
-| **Tenth** | **3**（A+D 已实现）/ 4（B 完整后） | ✅ | ✅（autodiff 反向 shape，护城河 A） | ✅（护城河 D） | [hir/lower/types.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)、[autodiff.rs::propagate_grad](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
+| **Tenth** | **3**（A+D 已实现）/ 4（B 完整后） | ✅ | ✅（autodiff 反向 shape，护城河 A） | ✅（护城河 D） | [hir/lower/types.rs](../../tenth/src/hir/lower/types.rs)、[autodiff.rs::propagate_grad](../../tenth/src/runtime/autodiff.rs) |
 | **PyTorch** | 1（运行时） | ❌ | ❌ | ❌ | mypy 无 shape 感知 |
 | **JAX** | 2（trace 期前向） | ✅（trace 期） | ❌ | ❌ | `jax.check_shading` |
 | **Julia/Flux** | 1（运行时） | ❌ | ❌ | ❌ | `size(x)` 是运行时函数 |
@@ -265,10 +265,10 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 **证明**：逐一分析各语言/框架的 shape 检查能力。
 
 **Tenth（$S = 3$）**：
-- (T1) 编译期前向 shape 检查：由 [`check_method_shape`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)（matmul 内侧维度）、[`check_binary_shape_compat`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)（二元运算广播）实现，覆盖等值匹配与部分广播规则。
-- (T2) 编译期反向 shape 校验：由 [护城河 A](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md) 实现——`autodiff.rs::propagate_grad` 全链路返回 `Result`，消除 5 处 silent squeeze（[战略规划.md 方向 A](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)）。10 项 `autodiff_shape_test` 测试覆盖。
-- (T3) 编译期内存/算力预估：由 [护城河 D](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md) 实现——`Type::static_numel`/`static_bytes` 编译期计算，`emit_memory_estimate` 对 ≥1GB tensor 发 warning，`emit_matmul_flop_estimate` 对 ≥1 GFLOP matmul 发 warning（[hir/lower/types.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)）。35 项测试覆盖。
-- (T4) 编译期代数求解器：B 已降级为可选 `--strict-shapes` 模式，仅做受限线性约束 O(1) 代入验证（[战略规划.md 方向 B §降级理由](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)）。
+- (T1) 编译期前向 shape 检查：由 [`check_method_shape`](../../tenth/src/hir/lower/types.rs)（matmul 内侧维度）、[`check_binary_shape_compat`](../../tenth/src/hir/lower/types.rs)（二元运算广播）实现，覆盖等值匹配与部分广播规则。
+- (T2) 编译期反向 shape 校验：由 [护城河 A](../shape-check-roadmap/战略规划.md) 实现——`autodiff.rs::propagate_grad` 全链路返回 `Result`，消除 5 处 silent squeeze（[战略规划.md 方向 A](../shape-check-roadmap/战略规划.md)）。10 项 `autodiff_shape_test` 测试覆盖。
+- (T3) 编译期内存/算力预估：由 [护城河 D](../shape-check-roadmap/战略规划.md) 实现——`Type::static_numel`/`static_bytes` 编译期计算，`emit_memory_estimate` 对 ≥1GB tensor 发 warning，`emit_matmul_flop_estimate` 对 ≥1 GFLOP matmul 发 warning（[hir/lower/types.rs](../../tenth/src/hir/lower/types.rs)）。35 项测试覆盖。
+- (T4) 编译期代数求解器：B 已降级为可选 `--strict-shapes` 模式，仅做受限线性约束 O(1) 代入验证（[战略规划.md 方向 B §降级理由](../shape-check-roadmap/战略规划.md)）。
 
 故 Tenth 当前 $S = 3$（A+D 已实现），完整 B 实现后 $S = 4$。
 
@@ -283,7 +283,7 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 **JAX（$S = 2$）**：
 - 编译期（trace 期）：`jax.check_shading` 检查 sharding 分布一致性，部分 shape 检查在 trace 期完成。但**仅查前向**，反向 shape 不检查。
 - 内存预估：不看绝对量。
-- 反向 shape：JAX 的 `check_shading` 只检查前向，反向 shape 错误靠运行时 NaN 报错（[战略规划.md 方向 A §护城河价值](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)）。
+- 反向 shape：JAX 的 `check_shading` 只检查前向，反向 shape 错误靠运行时 NaN 报错（[战略规划.md 方向 A §护城河价值](../shape-check-roadmap/战略规划.md)）。
 
 故 JAX $S = 2$。
 
@@ -318,7 +318,7 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 
 **综合**：Tenth 的 $S = 3$ 在六种竞品中最高，且 $S = 4$ 的目标态（B 完整实现）理论可期。$\square$
 
-**注 1（Tenth B 降级的影响）**：Tenth 的 B 护城河已降级为可选 `--strict-shapes` 模式（[战略规划.md 方向 B §降级理由](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)），原因是 T3 NP 完全性下界使编译期成本不可控。故当前 Tenth $S = 3$ 而非 $S = 4$，但 A+D 已实现部分仍优于所有竞品。
+**注 1（Tenth B 降级的影响）**：Tenth 的 B 护城河已降级为可选 `--strict-shapes` 模式（[战略规划.md 方向 B §降级理由](../shape-check-roadmap/战略规划.md)），原因是 T3 NP 完全性下界使编译期成本不可控。故当前 Tenth $S = 3$ 而非 $S = 4$，但 A+D 已实现部分仍优于所有竞品。
 
 **注 2（JAX 的 `check_shading`）**：JAX 的 `check_shading` 名义上是 shape 检查，但实际聚焦于 sharding 分布一致性，不查绝对内存量。这是 JAX 与 Tenth 护城河 D 的本质差异。
 
@@ -328,7 +328,7 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 
 | 语言/框架 | mode | path | consistency | integration | 实证位置 |
 |----------|:----:|:----:|:----------:|:----------:|---------|
-| **Tenth** | reverse + forward | multi (3 路径) | **guaranteed**（共享 `Tape::backward`） | **language** | [autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)、[main.rs:683-745](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) |
+| **Tenth** | reverse + forward | multi (3 路径) | **guaranteed**（共享 `Tape::backward`） | **language** | [autodiff.rs](../../tenth/src/runtime/autodiff.rs)、[main.rs:683-745](../../tenth/src/main.rs) |
 | **PyTorch** | reverse + forward | multi (3 路径) | empirical（eager vs compile 漂移历史） | library | autograd 引擎 |
 | **JAX** | reverse + forward | multi (trace 变换) | guaranteed（同一 trace 范式） | library | `jax.grad` |
 | **Julia/Flux** | reverse + forward | single (LLVM JIT) | N/A | library | Zygote.jl |
@@ -339,15 +339,15 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 **证明**：逐一分析。
 
 **Tenth**：
-- mode：reverse mode 由 [autodiff.rs::Tape::backward](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 实现（Wengert Tape）；forward mode 未直接实现但可由 reverse 模拟。
-- path：三执行路径——解释器（[runtime/interpreter/](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter)）、VM（[runtime/vm.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）、JIT（[compile/jit/translator.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）。
-- consistency：**guaranteed**——三路径共享同一 `Tape::backward` 实现，由 [T10 引理 5.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md) 形式化证明（JIT 路径通过 hostcall 回到 VM 上下文执行张量操作，autodiff 仍走 `Tape::backward`）。
-- integration：**language**——`param/grad/backward/stop_grad/zero_grad` 由 [main.rs:683-745](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 注册为 native 函数，无需 import，用户不可重定义语义。
+- mode：reverse mode 由 [autodiff.rs::Tape::backward](../../tenth/src/runtime/autodiff.rs) 实现（Wengert Tape）；forward mode 未直接实现但可由 reverse 模拟。
+- path：三执行路径——解释器（[runtime/interpreter/](../../tenth/src/runtime/interpreter)）、VM（[runtime/vm.rs](../../tenth/src/runtime/vm.rs)）、JIT（[compile/jit/translator.rs](../../tenth/src/compile/jit/translator.rs)）。
+- consistency：**guaranteed**——三路径共享同一 `Tape::backward` 实现，由 [T10 引理 5.1](T10-AI原生语言范式形式化定义.md) 形式化证明（JIT 路径通过 hostcall 回到 VM 上下文执行张量操作，autodiff 仍走 `Tape::backward`）。
+- integration：**language**——`param/grad/backward/stop_grad/zero_grad` 由 [main.rs:683-745](../../tenth/src/main.rs) 注册为 native 函数，无需 import，用户不可重定义语义。
 
 **PyTorch**：
 - mode：reverse（autograd）+ forward（实验性）。
 - path：eager / `torch.compile` / TorchScript。
-- consistency：**empirical**——eager 与 `torch.compile` 在 `silu` 反向等场景存在实现差异历史（[T10 §2.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。语义一致性靠测试覆盖保证，无形式化证明。
+- consistency：**empirical**——eager 与 `torch.compile` 在 `silu` 反向等场景存在实现差异历史（[T10 §2.1](T10-AI原生语言范式形式化定义.md)）。语义一致性靠测试覆盖保证，无形式化证明。
 - integration：library——`backward()` 是方法，autograd 是引擎。
 
 **JAX**：
@@ -392,7 +392,7 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 
 | 语言/框架 | $D$ 等级 | 报错形式 | 根因定位 | 实证位置 |
 |----------|:------:|---------|---------|---------|
-| **Tenth** | **3**（关系调试器理论成熟）/ 4（工程完成后） | 关系导向（"a→b 边上 shape 变化"） | 编译期 HIR 可达性 + 运行时 Tape 路径 | [T2/T6/T8 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md) |
+| **Tenth** | **3**（关系调试器理论成熟）/ 4（工程完成后） | 关系导向（"a→b 边上 shape 变化"） | 编译期 HIR 可达性 + 运行时 Tape 路径 | [T2/T6/T8 论文](T2-Tape形式化模型与根因定位可判定性.md) |
 | **PyTorch** | 0（无调试器） | 位置导向（"`mat1 and mat2 shapes cannot be multiplied`" + 栈） | 无，用户手动沿栈回溯 | RuntimeError + 栈 |
 | **JAX** | 2（trace 期值流显示） | trace 抽象值流 | trace 期显示值流，但仍以位置为中心 | trace 报错 |
 | **Julia/Flux** | 1（普通调试器） | DimensionMismatch + 栈 | 可设断点（Debugger.jl），但报错仍位置导向 | Debugger.jl |
@@ -403,11 +403,11 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 **证明**：逐一分析。
 
 **Tenth（$D = 3$）**：
-- 理论模型已建立：[T2 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md) 定义 Tape DAG 与解释关系，证明根因分析可判定（定理 F1）+ 多项式复杂度（定理 F5）。
-- 双层架构：[T6 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T6-关系调试器形式化模型.md) 定义 HIR 静态层 + Tape 动态层的双层调试模型。
-- 四级解释：[T8 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T8-Shape解释关系四级分类.md) 定义 DefinitelyRoot / ExplainsError / PartialExplain / Unrelated 四级。
-- 报错形式：从"`mat1 and mat2 shapes cannot be multiplied (3x8 and 4x8)`"升级为"**张量 a 和张量 b 之间出错了：出错类型：shape mismatch，根因是 a 上游的 transpose 漏写**"（[战略规划.md 方向 F](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)）。
-- **工程未完成**：[T11 论文 §9.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md) 诚实标注——`Render(I_v)` 文本生成、可达性查询算法、报错格式设计均未实现。
+- 理论模型已建立：[T2 论文](T2-Tape形式化模型与根因定位可判定性.md) 定义 Tape DAG 与解释关系，证明根因分析可判定（定理 F1）+ 多项式复杂度（定理 F5）。
+- 双层架构：[T6 论文](T6-关系调试器形式化模型.md) 定义 HIR 静态层 + Tape 动态层的双层调试模型。
+- 四级解释：[T8 论文](T8-Shape解释关系四级分类.md) 定义 DefinitelyRoot / ExplainsError / PartialExplain / Unrelated 四级。
+- 报错形式：从"`mat1 and mat2 shapes cannot be multiplied (3x8 and 4x8)`"升级为"**张量 a 和张量 b 之间出错了：出错类型：shape mismatch，根因是 a 上游的 transpose 漏写**"（[战略规划.md 方向 F](../shape-check-roadmap/战略规划.md)）。
+- **工程未完成**：[T11 论文 §9.2](T11-护城河闭环结构形式化.md) 诚实标注——`Render(I_v)` 文本生成、可达性查询算法、报错格式设计均未实现。
 
 故 Tenth $D = 3$（理论成熟，工程未完成），目标态 $D = 4$。
 
@@ -514,13 +514,13 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 - B 提供编译期 shape 检查（已降级为可选 lint，但目标态完备）；
 - D 提供编译期内存/算力预估（已实现）；
 - F 提供关系调试器（理论成熟，工程未完成）；
-- 加上护城河 A（autodiff 反向 shape 验证，已实现），形成 [T11 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md) 的闭环防御体系。
+- 加上护城河 A（autodiff 反向 shape 验证，已实现），形成 [T11 论文](T11-护城河闭环结构形式化.md) 的闭环防御体系。
 
 **证明**：
 - B+D 对应 CP1 的 $S \geq 3$（A 已实现，B 完整后 $S = 4$）。
 - A+多路径共享对应 CP2 的 autodiff 四维最大元。
 - F 对应 CP3 的 $D \geq 3$。
-- 三者综合构成 T11 论文的闭环防御（[T11 定理 C1 完备性](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md)）。
+- 三者综合构成 T11 论文的闭环防御（[T11 定理 C1 完备性](T11-护城河闭环结构形式化.md)）。
 
 故 Tenth 的独特定位是护城河 B/D/F（加 A）的综合优势。$\square$
 
@@ -531,23 +531,23 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 **定理 CP5（未来演进方向）**：Tenth 向 PyTorch 生态对齐的演进路径有三条，每条路径有理论约束：
 
 1. **GPU 后端路径**：理论可行，工程量大（每个算子需 CUDA kernel）。无理论障碍。
-2. **ONNX 导出路径**：理论可行但需静态化——动态 shape 程序无法导出 ONNX。需限定为全 Known shape 子集 $\mathcal{P}_{\text{static}}$（[T5 定理 D1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T5-编译期内存预估可判定性与精度.md)）。
+2. **ONNX 导出路径**：理论可行但需静态化——动态 shape 程序无法导出 ONNX。需限定为全 Known shape 子集 $\mathcal{P}_{\text{static}}$（[T5 定理 D1](T5-编译期内存预估可判定性与精度.md)）。
 3. **生态扩展路径**：shape 规则注册 API 让第三方库自带 shape 规则。理论可行，需设计 API 与 lower 集成。
 
 **证明**：分别论证。
 
 **路径 1（GPU 后端）**：
 - 理论可行性：无理论障碍，GPU kernel 与 CPU kernel 语义等价（仅执行后端不同）。
-- 工程约束：每个算子需 CUDA kernel，至少 20+ 算子（[综合分析.md §2.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md)）。
+- 工程约束：每个算子需 CUDA kernel，至少 20+ 算子（[综合分析.md §2.1](../shape-check-roadmap/综合分析.md)）。
 - 推荐分阶段：先 WGPU（跨平台、易实现）验证管线，再 CUDA（性能）。
 
 **路径 2（ONNX 导出）**：
 - 理论约束：ONNX 假设静态 shape，动态 shape 程序无法直接导出。
-- 由 [T5 定理 D1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T5-编译期内存预估可判定性与精度.md)，全 Known shape 子集 $\mathcal{P}_{\text{static}}$ 上内存预估可判定——ONNX 导出可限定为 $\mathcal{P}_{\text{static}}$。
-- 工程约束：HIR → ONNX 算子映射，动态控制流必须静态化（[综合分析.md §4.4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md)）。
+- 由 [T5 定理 D1](T5-编译期内存预估可判定性与精度.md)，全 Known shape 子集 $\mathcal{P}_{\text{static}}$ 上内存预估可判定——ONNX 导出可限定为 $\mathcal{P}_{\text{static}}$。
+- 工程约束：HIR → ONNX 算子映射，动态控制流必须静态化（[综合分析.md §4.4](../shape-check-roadmap/综合分析.md)）。
 
 **路径 3（生态扩展）**：
-- 理论可行性：shape 规则注册 API 让第三方库自带 shape 规则，编译期查表 O(1)（[综合分析.md §4.3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md)）。
+- 理论可行性：shape 规则注册 API 让第三方库自带 shape 规则，编译期查表 O(1)（[综合分析.md §4.3](../shape-check-roadmap/综合分析.md)）。
 - 工程约束：注册 API 设计、与 lower 集成、与 attribute 系统协同。
 - 与 T10 判据 J4 协同：算子签名使用类型化 shape，第三方库调用即享受检查。
 
@@ -571,14 +571,14 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 - AI 能力全靠库（Flux.jl 是第三方库，Zygote.jl 是用户态 autodiff）。
 - 无编译期 shape 检查（`size(x)` 是运行时函数）。
 - 无语言级 autodiff 原语。
-- T10 判据全不满足（[T10 §5.2.4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。
+- T10 判据全不满足（[T10 §5.2.4](T10-AI原生语言范式形式化定义.md)）。
 
 **与 Tenth 对比**：
 - Julia 的多分派 vs Tenth 的 shape 类型系统——Julia 通过多分派实现泛型，Tenth 通过 shape 类型实现静态检查。
 - Julia 的 LLVM JIT vs Tenth 的 Cranelift JIT——Julia 性能更成熟，Tenth 与 VM 共享 autodiff 语义。
 - Julia 的科学计算通用性 vs Tenth 的 AI 原生性——Julia 通用但非 AI 原生，Tenth AI 原生但科学计算通用性弱。
 
-**实证依据**：[Bezanson et al. 2017](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)、[Innes 2018](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)。
+**实证依据**：[Bezanson et al. 2017](T53-与现有AI语言框架对比研究.md)、[Innes 2018](T53-与现有AI语言框架对比研究.md)。
 
 ### 6.2 PyTorch（库非语言）
 
@@ -594,14 +594,14 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 - shape 错误运行时才发现（$S = 1$）。
 - eager / compile / TorchScript 三路径语义漂移历史（$A$ 的 consistency 仅 empirical）。
 - 调试以位置为导向（$D = 0$），silent squeeze 掩盖错误。
-- T10 判据全不满足（[T10 §5.2.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。
+- T10 判据全不满足（[T10 §5.2.2](T10-AI原生语言范式形式化定义.md)）。
 
 **与 Tenth 对比**：
 - PyTorch 生态成熟度远超 Tenth（GPU、ONNX、社区）。
 - Tenth 技术维度全面领先（shape 检查、autodiff 一致性、关系调试器理论）。
-- 这是 [T10 定理 3.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md) 的具体体现——技术结构满足不保证实践成功。
+- 这是 [T10 定理 3.2](T10-AI原生语言范式形式化定义.md) 的具体体现——技术结构满足不保证实践成功。
 
-**实证依据**：[Paszke et al. 2019](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)、[PyTorch 官方文档](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)。
+**实证依据**：[Paszke et al. 2019](T53-与现有AI语言框架对比研究.md)、[PyTorch 官方文档](T53-与现有AI语言框架对比研究.md)。
 
 ### 6.3 JAX（函数式但 shape 检查弱）
 
@@ -617,21 +617,21 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 - trace 模型对副作用限制严格（如不能在 `jit` 内用 Python print）。
 - 反向 shape 不检查（$S = 2$，仅前向）。
 - 学习曲线陡（函数式思维 + trace 模型）。
-- T10 判据 J1/J2/J3 部分满足，J4/J5 不满足（[T10 §5.2.3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。
+- T10 判据 J1/J2/J3 部分满足，J4/J5 不满足（[T10 §5.2.3](T10-AI原生语言范式形式化定义.md)）。
 
 **与 Tenth 对比**：
 - JAX 的组合性 vs Tenth 的多路径——JAX 的 `vmap`/`pmap` 是函数变换，Tenth 的多路径是真正不同的执行引擎。
 - JAX 的 trace 期检查 vs Tenth 的编译期检查——JAX 是运行时 trace（虽静态化），Tenth 是真正的编译期（HIR 阶段）。
 - JAX 不查反向 shape（护城河 A 的核心差异）。
 
-**实证依据**：[Bradbury et al. 2018](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)、[JAX 官方文档](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)。
+**实证依据**：[Bradbury et al. 2018](T53-与现有AI语言框架对比研究.md)、[JAX 官方文档](T53-与现有AI语言框架对比研究.md)。
 
 ### 6.4 Swift for TensorFlow（已停滞）
 
 **范式特征**：AI 原生语言尝试，Tensor 内建 + autodiff 原语 + NN 标准库。
 
 **优势**：
-- T10 判据 J1/J2/J4 满足（[T10 §5.2.5](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。
+- T10 判据 J1/J2/J4 满足（[T10 §5.2.5](T10-AI原生语言范式形式化定义.md)）。
 - Swift 语言本身设计优秀（类型安全、协议导向）。
 - `@differentiable` 标注是语言级特性。
 
@@ -642,11 +642,11 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 - 生态失败——第三方库稀缺、社区小、用户少。
 
 **与 Tenth 对比**：
-- S4TF 是 Tenth 的"历史先驱"——满足 J1/J2/J4 仍停滞，是 [T10 定理 3.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md) 的最强证据。
+- S4TF 是 Tenth 的"历史先驱"——满足 J1/J2/J4 仍停滞，是 [T10 定理 3.2](T10-AI原生语言范式形式化定义.md) 的最强证据。
 - Tenth 在 J3（shape 类型，护城河 A+D 已实现）和 J5（多路径共享 autodiff）上超越 S4TF。
 - S4TF 的失败教训提示 Tenth：技术结构满足不保证生态成功。
 
-**实证依据**：[S4TF Archive 2021](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)。
+**实证依据**：[S4TF Archive 2021](T53-与现有AI语言框架对比研究.md)。
 
 ### 6.5 MLIR（编译器基础设施而非语言）
 
@@ -665,10 +665,10 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 
 **与 Tenth 对比**：
 - MLIR 是 IR 框架，Tenth 是前端语言——二者非同维度对比。
-- 但 MLIR 可作为 Tenth 的后端候选（[T10 §8.3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md) 提出协作可能性）。
+- 但 MLIR 可作为 Tenth 的后端候选（[T10 §8.3](T10-AI原生语言范式形式化定义.md) 提出协作可能性）。
 - Tenth HIR → MLIR 降级可复用 MLIR 的优化 pass（如 XLA、StableHLO）。
 
-**实证依据**：[Lattner et al. 2021](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)。
+**实证依据**：[Lattner et al. 2021](T53-与现有AI语言框架对比研究.md)。
 
 ### 6.6 Lux（Clojure 函数式库）
 
@@ -682,13 +682,13 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 **代价**：
 - 与 JAX 同范式但生态更小。
 - 无 shape 类型，无编译期检查。
-- T10 判据全不满足（[T10 §5.2.7](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。
+- T10 判据全不满足（[T10 §5.2.7](T10-AI原生语言范式形式化定义.md)）。
 
 **与 Tenth 对比**：
 - Lux 是"函数式 JAX 在 Clojure 中的等价物"，与 Tenth 非同维度（库 vs 语言）。
 - Tenth 在所有维度（$S$、$A$、$D$）上均强于 Lux。
 
-**实证依据**：[Lux GitHub](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T53-与现有AI语言框架对比研究.md)。
+**实证依据**：[Lux GitHub](T53-与现有AI语言框架对比研究.md)。
 
 ---
 
@@ -710,7 +710,7 @@ Lux 是 Clojure 生态的函数式 AI 库。核心特征：
 
 ### 7.2 关键观察
 
-**观察 7.1**：Tenth 是唯一实现编译期反向 shape 检查的语言（护城河 A）。这是 [战略规划.md 方向 A](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md) 的核心价值——JAX 都没做好。
+**观察 7.1**：Tenth 是唯一实现编译期反向 shape 检查的语言（护城河 A）。这是 [战略规划.md 方向 A](../shape-check-roadmap/战略规划.md) 的核心价值——JAX 都没做好。
 
 **观察 7.2**：Tenth 是唯一实现编译期内存预估的语言（护城河 D）。PyTorch 要等 CUDA OOM，JAX 不看绝对量。
 
@@ -748,7 +748,7 @@ Tenth 的 shape 检查是真正的"编译期检查"——HIR 阶段就完成，�
 
 ### 8.2 关键观察
 
-**观察 8.1**：Tenth 是唯一多路径共享 autodiff 语义的语言（[T10 引理 5.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md) 形式化证明）。PyTorch 多路径但一致性仅 empirical，JAX 多路径是 trace 变换非真正多路径。
+**观察 8.1**：Tenth 是唯一多路径共享 autodiff 语义的语言（[T10 引理 5.1](T10-AI原生语言范式形式化定义.md) 形式化证明）。PyTorch 多路径但一致性仅 empirical，JAX 多路径是 trace 变换非真正多路径。
 
 **观察 8.2**：Tenth 是唯一做反向 shape 校验的语言（护城河 A）。PyTorch/Julia 的 silent squeeze 是反向 shape 错误被掩盖的典型。
 
@@ -762,7 +762,7 @@ PyTorch 的多路径漂移是结构性问题——动态图无 HIR，不同路�
 
 Tenth 的多路径一致性是结构性优势——HIR 静态 DAG + 共享 `Tape::backward` 实现，三路径语义等价由设计保证，不依赖测试覆盖。
 
-这是 [T10 判据 J5](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md) 的本质——多路径共享语义是 AI 原生语言最难满足的判据，只有 Tenth 满足。
+这是 [T10 判据 J5](T10-AI原生语言范式形式化定义.md) 的本质——多路径共享语义是 AI 原生语言最难满足的判据，只有 Tenth 满足。
 
 ---
 
@@ -786,9 +786,9 @@ Tenth 的多路径一致性是结构性优势——HIR 静态 DAG + 共享 `Tape
 
 **观察 9.1**：Tenth 是唯一建立关系调试器完整理论体系（T2/T6/T8）的语言。其他语言/框架的报错均以位置为导向。
 
-**观察 9.2**：Tenth 的报错类型分类（[T8 四级](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T8-Shape解释关系四级分类.md) DefinitelyRoot / ExplainsError / PartialExplain / Unrelated）是创新核心——现有框架无类似分类。
+**观察 9.2**：Tenth 的报错类型分类（[T8 四级](T8-Shape解释关系四级分类.md) DefinitelyRoot / ExplainsError / PartialExplain / Unrelated）是创新核心——现有框架无类似分类。
 
-**观察 9.3**：Tenth 的双层架构（[T6](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T6-关系调试器形式化模型.md) HIR 静态层 + Tape 动态层）是架构优势——PyTorch 动态图无静态层，JAX trace 无动态层。
+**观察 9.3**：Tenth 的双层架构（[T6](T6-关系调试器形式化模型.md) HIR 静态层 + Tape 动态层）是架构优势——PyTorch 动态图无静态层，JAX trace 无动态层。
 
 **观察 9.4**：Tenth 的关系调试器工程未完成，当前调试体验可能与 PyTorch/Julia 类似（普通调试器）。$D = 3$ 是理论成熟度，非工程现状。
 
@@ -796,7 +796,7 @@ Tenth 的多路径一致性是结构性优势——HIR 静态 DAG + 共享 `Tape
 
 现有 AI 框架的报错都是"位置导向"的——告诉用户"哪一行错了"，但不告诉"为什么这一行会变成 [3,8]"。
 
-Tenth 的关系调试器（[战略规划.md 方向 F](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)）将报错单位从"代码行"换成"数据依赖边"：
+Tenth 的关系调试器（[战略规划.md 方向 F](../shape-check-roadmap/战略规划.md)）将报错单位从"代码行"换成"数据依赖边"：
 
 - 形式：从"`mat1 and mat2 shapes cannot be multiplied (3x8 and 4x8)`"升级为"**张量 a 和张量 b 之间出错了：出错类型：shape mismatch，根因是 a 上游的 transpose 漏写**"。
 - 杀手级特性：grad shape 漂移定位——"反向到 b 时 grad 是 [4,8]，但 a 期望 [3,8]，前向 a→b 经过 sum(0) 降维"。这是现有框架完全做不到的，因为它们没有"前向 shape 流 + 反向 shape 流"的对照。
@@ -820,7 +820,7 @@ Tenth 的关系调试器（[战略规划.md 方向 F](file:///d:/史蒂夫/Deskt
 
 ### 10.2 闭环防御体系
 
-Tenth 的四支柱（A+B+D+F）构成 [T11 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md) 的闭环防御体系：
+Tenth 的四支柱（A+B+D+F）构成 [T11 论文](T11-护城河闭环结构形式化.md) 的闭环防御体系：
 
 ```
 编译期防御层（防患未然）          运行时防御层（出事能查）
@@ -835,7 +835,7 @@ Tenth 的四支柱（A+B+D+F）构成 [T11 论文](file:///d:/史蒂夫/Desktop/
 - **D 预估成本**：编译期预估内存/算力。
 - **F 定位错误**：运行时报错时定位根因路径。
 
-由 [T11 定理 C1（闭环完备性）](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md)：在 T4 不可判定性边界内，闭环覆盖所有 shape 错误路径。
+由 [T11 定理 C1（闭环完备性）](T11-护城河闭环结构形式化.md)：在 T4 不可判定性边界内，闭环覆盖所有 shape 错误路径。
 
 ### 10.3 与 PyTorch/JAX 的范式差异
 
@@ -849,7 +849,7 @@ Tenth 的四支柱（A+B+D+F）构成 [T11 论文](file:///d:/史蒂夫/Desktop/
 | 反向 shape 检查 | ❌ silent squeeze | ❌ 仅前向 | ✅ A 消除 5 处 silent squeeze |
 | 闭环覆盖 | 碎片化（仅运行时） | 碎片化（仅编译期前向） | ✅ 全生命周期闭环 |
 
-**核心论点**（[T11 §1.3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md)）：**单独做任何一项价值有限，组合做才是护城河**。PyTorch 单独做运行时崩溃，JAX 单独做编译期前向检查，都有盲区。Tenth 的闭环是六种竞品中唯一的完整生命周期防御。
+**核心论点**（[T11 §1.3](T11-护城河闭环结构形式化.md)）：**单独做任何一项价值有限，组合做才是护城河**。PyTorch 单独做运行时崩溃，JAX 单独做编译期前向检查，都有盲区。Tenth 的闭环是六种竞品中唯一的完整生命周期防御。
 
 ### 10.4 与 S4TF 的范式差异
 
@@ -859,7 +859,7 @@ S4TF 是历史上最接近 Tenth 的 AI 原生语言尝试，但：
 2. **J5（多路径共享）**：S4TF 不满足（单一路径），Tenth 满足（三路径共享 `Tape::backward`）。
 3. **生态**：S4TF 已停滞，Tenth 活跃但生态弱。
 
-S4TF 的失败教训提示 Tenth：技术结构满足不保证生态成功（[T10 定理 3.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。Tenth 必须在保持技术领先的同时推进生态建设（GPU、ONNX、社区）。
+S4TF 的失败教训提示 Tenth：技术结构满足不保证生态成功（[T10 定理 3.2](T10-AI原生语言范式形式化定义.md)）。Tenth 必须在保持技术领先的同时推进生态建设（GPU、ONNX、社区）。
 
 ---
 
@@ -869,7 +869,7 @@ S4TF 的失败教训提示 Tenth：技术结构满足不保证生态成功（[T1
 
 基于 CP5 路径 1：
 
-- **必要性**：阻塞级。无 GPU 就不能训练真实模型，Tenth 永远停留在 demo 阶段（[综合分析.md §2.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md)）。
+- **必要性**：阻塞级。无 GPU 就不能训练真实模型，Tenth 永远停留在 demo 阶段（[综合分析.md §2.1](../shape-check-roadmap/综合分析.md)）。
 - **可行性**：无理论障碍，工程量大（20+ CUDA kernel）。
 - **推荐路径**：先 WGPU（跨平台、易实现）验证管线，再 CUDA（性能）。
 
@@ -878,14 +878,14 @@ S4TF 的失败教训提示 Tenth：技术结构满足不保证生态成功（[T1
 基于 CP5 路径 2：
 
 - **必要性**：限制级。当前训练完的模型只能 Tenth 自己跑，无法进入主流推理生态。
-- **可行性**：理论可行，需静态化（[T5 定理 D1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T5-编译期内存预估可判定性与精度.md)）。
+- **可行性**：理论可行，需静态化（[T5 定理 D1](T5-编译期内存预估可判定性与精度.md)）。
 - **协同**：导出过程强制模型静态化，与 shape 检查协同——shape 不全的模型无法导出，倒逼用户写 shape 完整的代码。
 
 ### 11.3 Shape 规则注册 API（生态乘数）
 
 基于 CP5 路径 3：
 
-- **必要性**：限制级。当前 shape 规则硬编码在 [hir/lower/types.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)，第三方库无法注册自定义算子的 shape 规则。
+- **必要性**：限制级。当前 shape 规则硬编码在 [hir/lower/types.rs](../../tenth/src/hir/lower/types.rs)，第三方库无法注册自定义算子的 shape 规则。
 - **价值**：让 shape 检查从"内建"扩展到"生态"，覆盖整个第三方库生态。
 - **协同**：与 attribute 系统（4.2）协同——attribute 可携带 shape 规则。
 
@@ -893,11 +893,11 @@ S4TF 的失败教训提示 Tenth：技术结构满足不保证生态成功（[T1
 
 - **必要性**：限制级。F 理论成熟（T2/T6/T8），但工程未完成。
 - **价值**：F 是 A/B/D 的用户界面层，把已有底层信息组织成人类可读的关系报错，杠杆极高。
-- **推荐**：F 的 MVP 优先实现（[T11 附录 C.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md)）。
+- **推荐**：F 的 MVP 优先实现（[T11 附录 C.1](T11-护城河闭环结构形式化.md)）。
 
 ### 11.5 MLIR 协作（基础设施复用）
 
-基于 [T10 §8.3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)：
+基于 [T10 §8.3](T10-AI原生语言范式形式化定义.md)：
 
 - **可能性**：Tenth HIR → MLIR 降级，复用 MLIR 的优化 pass（如 XLA、StableHLO）。
 - **协同**：MLIR 的 shape 推断 pass 可为 Tenth 提供更完整的 shape 推断能力。
@@ -913,9 +913,9 @@ Tenth 的核心保证之一是自举 ~0.2s（不超过 1s）。这要求所有�
 
 - **"检查"类工作（O(n) 或 O(1)）**：默认开启。包括 shape 等值匹配、内存预估、autograd 反向 shape 规则、关系可达性分析。
 - **"求解"类工作（可能 NP）**：默认关闭，可选开启。包括 shape 代数求解、Symbol unify、跨函数约束传播。
-- **绝对原则**：任何可能让编译器 hang 的分析必须做成可选 lint pass，不进主编译路径（[战略规划.md §编译期成本控制原则](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)）。
+- **绝对原则**：任何可能让编译器 hang 的分析必须做成可选 lint pass，不进主编译路径（[战略规划.md §编译期成本控制原则](../shape-check-roadmap/战略规划.md)）。
 
-这是 B 降级为可选 lint 的根本原因——T3 NP 完全性下界使编译期成本不可控（[T11 定理 C3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md)）。
+这是 B 降级为可选 lint 的根本原因——T3 NP 完全性下界使编译期成本不可控（[T11 定理 C3](T11-护城河闭环结构形式化.md)）。
 
 ### 12.2 技术先进 vs 生态成熟
 
@@ -924,11 +924,11 @@ Tenth 面临的核心张力是技术先进 vs 生态成熟：
 - **技术先进**：Tenth 在 $S$、$A$、$D$ 三维度上均领先（CP4）。
 - **生态成熟**：Tenth 远不及 PyTorch/JAX（GPU 缺失、ONNX 缺失、社区小、第三方库稀缺）。
 
-这是 [T10 定理 3.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md) 的具体体现——技术结构满足不保证实践成功。S4TF 是历史教训。
+这是 [T10 定理 3.2](T10-AI原生语言范式形式化定义.md) 的具体体现——技术结构满足不保证实践成功。S4TF 是历史教训。
 
 ### 12.3 多路径一致性 vs JIT 性能
 
-Tenth 的 J5 判据（多路径共享语义）要求 JIT 与 VM 语义严格一致。当前实现通过 hostcall fallback 保证一致性，但 JIT 性能优势未充分体现（[T10 局限 L4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。
+Tenth 的 J5 判据（多路径共享语义）要求 JIT 与 VM 语义严格一致。当前实现通过 hostcall fallback 保证一致性，但 JIT 性能优势未充分体现（[T10 局限 L4](T10-AI原生语言范式形式化定义.md)）。
 
 - **保证一致性**：JIT 通过 hostcall 回到 VM 上下文执行张量操作，autodiff 仍走 `Tape::backward`。
 - **牺牲性能**：张量 op 仍有 VM 调用开销。
@@ -939,7 +939,7 @@ Tenth 的 J5 判据（多路径共享语义）要求 JIT 与 VM 语义严格一�
 Tenth 是编译型语言，HIR 静态 DAG 是其护城河闭环的架构基础。但编译型也带来限制：
 
 - **动态 shape**：需用 `Dim::Any` 退化，丢失检查能力。
-- **动态控制流**：递归/while 程序的 shape 检查不可判定（[T4 定理 B1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T4-一般程序Shape检查不可判定性.md)）。
+- **动态控制流**：递归/while 程序的 shape 检查不可判定（[T4 定理 B1](T4-一般程序Shape检查不可判定性.md)）。
 - **REPL 体验**：编译型语言的 REPL 体验通常弱于解释型。
 
 PyTorch 的动态图灵活性是其优势，但也是 shape 检查弱的原因——动态图无 HIR 静态依赖图。
@@ -954,18 +954,18 @@ PyTorch 的动态图灵活性是其优势，但也是 shape 检查弱的原因�
 
 **是什么**：Tenth 在 $S$、$A$、$D$ 三维度上领先（CP4），但生态成熟度远不及 PyTorch/JAX。具体表现：
 
-- **GPU 后端**：Tenth 无 GPU 支持，是生存级缺口（[综合分析.md §2.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md)）。PyTorch/JAX 有完善 GPU 后端（cuDNN/Triton/XLA）。
+- **GPU 后端**：Tenth 无 GPU 支持，是生存级缺口（[综合分析.md §2.1](../shape-check-roadmap/综合分析.md)）。PyTorch/JAX 有完善 GPU 后端（cuDNN/Triton/XLA）。
 - **ONNX 导出**：Tenth 无 ONNX 导出，模型无法部署到主流推理生态。PyTorch 有成熟 ONNX 导出。
 - **社区规模**：Tenth 用户社区小，第三方库稀缺。PyTorch 社区庞大，第三方库极丰富。
 - **工具链**：Tenth 无调试器、profiler、IDE 支持等工具链。PyTorch 有完整工具链。
 
-**影响多大**：CP4 的"独特定位"是技术维度的，不保证实践成功（[T10 定理 3.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。S4TF 是历史教训——满足 J1/J2/J4 仍停滞。
+**影响多大**：CP4 的"独特定位"是技术维度的，不保证实践成功（[T10 定理 3.2](T10-AI原生语言范式形式化定义.md)）。S4TF 是历史教训——满足 J1/J2/J4 仍停滞。
 
 **如何缓解**：CP5 提出的三条路径（GPU、ONNX、生态扩展）需持续推进。
 
 ### 13.2 Tenth B 护城河已降级
 
-**是什么**：CP1 矩阵中 Tenth 的 $S = 3$，但完整 B 实现后才能达到 $S = 4$。当前 B 已降级为可选 `--strict-shapes` 模式（[战略规划.md 方向 B §降级理由](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)）。
+**是什么**：CP1 矩阵中 Tenth 的 $S = 3$，但完整 B 实现后才能达到 $S = 4$。当前 B 已降级为可选 `--strict-shapes` 模式（[战略规划.md 方向 B §降级理由](../shape-check-roadmap/战略规划.md)）。
 
 **影响多大**：Tenth 当前 shape 检查以等值匹配为主，未实现完整代数求解器。复杂场景（如 `x.flatten().reshape(?, ?)` 需因式分解）仍需用户手写 assert。
 
@@ -973,15 +973,15 @@ PyTorch 的动态图灵活性是其优势，但也是 shape 检查弱的原因�
 
 ### 13.3 Tenth F 工程未完成
 
-**是什么**：CP3 矩阵中 Tenth 的 $D = 3$，是理论成熟度。F 的工程实现（`Render(I_v)` 文本生成、可达性查询算法、报错格式设计）均未完成（[T11 §9.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md)）。
+**是什么**：CP3 矩阵中 Tenth 的 $D = 3$，是理论成熟度。F 的工程实现（`Render(I_v)` 文本生成、可达性查询算法、报错格式设计）均未完成（[T11 §9.2](T11-护城河闭环结构形式化.md)）。
 
 **影响多大**：Tenth 当前调试体验可能与 PyTorch/Julia 类似（普通调试器），关系调试器尚未兑现。$D = 3$ 是理论潜力，非工程现状。
 
-**如何缓解**：F 的 MVP 优先实现（[T11 附录 C.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md)），数据结构已就绪（`TapeNode`、`tape_id`）。
+**如何缓解**：F 的 MVP 优先实现（[T11 附录 C.1](T11-护城河闭环结构形式化.md)），数据结构已就绪（`TapeNode`、`tape_id`）。
 
 ### 13.4 Tenth JIT 张量 op 走 hostcall fallback
 
-**是什么**：CP2 矩阵中 Tenth 的 J5 满足，但 JIT 路径的张量 op 通过 hostcall 回调 VM native 执行（[T10 局限 L4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）。
+**是什么**：CP2 矩阵中 Tenth 的 J5 满足，但 JIT 路径的张量 op 通过 hostcall 回调 VM native 执行（[T10 局限 L4](T10-AI原生语言范式形式化定义.md)）。
 
 **影响多大**：J5 语义一致性满足，但 JIT 性能优势未充分体现——张量 op 仍有 VM 调用开销。护城河 E（Shape 驱动 JIT 特化）尚未实现。
 
@@ -1071,7 +1071,7 @@ PyTorch 的动态图灵活性是其优势，但也是 shape 检查弱的原因�
 **分析**：
 - 编译期可达性：可静态警告"潜在关系问题"，但拿不到运行时实际 shape。
 - 运行时路径定位：精确 shape/value 路径定位，但要等运行时报错。
-- [战略规划.md 方向 F](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md) 推荐双层架构——编译期做潜在关系警告，运行时做精确边定位。
+- [战略规划.md 方向 F](../shape-check-roadmap/战略规划.md) 推荐双层架构——编译期做潜在关系警告，运行时做精确边定位。
 
 **结论**：F 的工程化应先做运行时路径定位（信息已就绪，杠杆高），再做编译期可达性分析。
 
@@ -1082,9 +1082,9 @@ PyTorch 的动态图灵活性是其优势，但也是 shape 检查弱的原因�
 本文对 Tenth 与六种主流 AI 语言/框架（Julia、PyTorch、JAX、Swift for TensorFlow、MLIR、Lux）在 shape 检查、autodiff、调试能力三个核心维度上进行了系统对比。形式化定义三个对比维度（$S$、$A$、$D$），提出五条主定理：
 
 1. **CP1（shape 检查能力对比）**：Tenth 的 $S = 3$（A+D 已实现）在六种竞品中最高，是唯一实现编译期反向 shape 检查（护城河 A）和编译期内存预估（护城河 D）的语言。完整 B 实现后 $S = 4$。
-2. **CP2（autodiff 能力对比）**：Tenth 是唯一达到 autodiff 四维最大元 (reverse+forward, multi-path, guaranteed, language) 的活跃语言。多路径共享 `Tape::backward` 由 [T10 引理 5.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md) 形式化证明。
+2. **CP2（autodiff 能力对比）**：Tenth 是唯一达到 autodiff 四维最大元 (reverse+forward, multi-path, guaranteed, language) 的活跃语言。多路径共享 `Tape::backward` 由 [T10 引理 5.1](T10-AI原生语言范式形式化定义.md) 形式化证明。
 3. **CP3（调试能力对比）**：Tenth 的 $D = 3$（关系调试器理论成熟）在六种竞品中最高，是唯一建立关系调试器完整理论体系（T2/T6/T8）的语言。
-4. **CP4（Tenth 的独特定位）**：在六种竞品中，Tenth 是唯一同时满足 $S \geq 3$、autodiff 四维最大元、$D \geq 3$ 的活跃语言。这是护城河 B/D/F（加 A）的综合优势，构成 [T11 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md) 的闭环防御体系。
+4. **CP4（Tenth 的独特定位）**：在六种竞品中，Tenth 是唯一同时满足 $S \geq 3$、autodiff 四维最大元、$D \geq 3$ 的活跃语言。这是护城河 B/D/F（加 A）的综合优势，构成 [T11 论文](T11-护城河闭环结构形式化.md) 的闭环防御体系。
 5. **CP5（未来演进方向）**：Tenth 向 PyTorch 生态对齐有三条路径——GPU 后端（生存级）、ONNX 导出（部署级）、shape 规则注册 API（生态乘数），每条路径有理论约束。
 
 **关键发现**：
@@ -1111,20 +1111,20 @@ PyTorch 的动态图灵活性是其优势，但也是 shape 检查弱的原因�
 
 ### 16.1 Tenth 项目内部文档
 
-1. Tenth 项目数理部. (2026). *T1-Shape 代数系统的形式化建模*. [`docs/论文/T1-Shape代数系统的形式化建模.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T1-Shape代数系统的形式化建模.md)
-2. Tenth 项目数理部. (2026). *T2-Tape 形式化模型与根因定位可判定性*. [`docs/论文/T2-Tape形式化模型与根因定位可判定性.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md)
-3. Tenth 项目数理部. (2026). *T3-HIR 约束求解 NP 完全性归约*. [`docs/论文/T3-HIR约束求解NP完全性归约.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T3-HIR约束求解NP完全性归约.md)
-4. Tenth 项目数理部. (2026). *T4-一般程序 Shape 检查不可判定性*. [`docs/论文/T4-一般程序Shape检查不可判定性.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T4-一般程序Shape检查不可判定性.md)
-5. Tenth 项目数理部. (2026). *T5-编译期内存预估可判定性与精度*. [`docs/论文/T5-编译期内存预估可判定性与精度.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T5-编译期内存预估可判定性与精度.md)
-6. Tenth 项目数理部. (2026). *T6-关系调试器形式化模型*. [`docs/论文/T6-关系调试器形式化模型.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T6-关系调试器形式化模型.md)
-7. Tenth 项目数理部. (2026). *T7-Shape 变换分类互斥完备性*. [`docs/论文/T7-Shape变换分类互斥完备性.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T7-Shape变换分类互斥完备性.md)
-8. Tenth 项目数理部. (2026). *T8-Shape 解释关系四级分类*. [`docs/论文/T8-Shape解释关系四级分类.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T8-Shape解释关系四级分类.md)
-9. Tenth 项目数理部. (2026). *T10-AI 原生语言范式形式化定义*. [`docs/论文/T10-AI原生语言范式形式化定义.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)
-10. Tenth 项目数理部. (2026). *T11-护城河闭环结构形式化*. [`docs/论文/T11-护城河闭环结构形式化.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T11-护城河闭环结构形式化.md)
-11. Tenth 项目总师. (2026). *编译期 Shape 检查——战略规划*. [`docs/shape-check-roadmap/战略规划.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)
-12. Tenth 项目总师. (2026). *Tenth 深化方向——综合分析*. [`docs/shape-check-roadmap/综合分析.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md)
-13. Tenth 项目. (2026). *源码 v0.3.3*. [`tenth/src/hir/types.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs)、[`tenth/src/runtime/autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)、[`tenth/src/hir/lower/types.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)、[`tenth/src/main.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)、[`tenth/src/compile/jit/translator.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)、[`tenth/std/prelude.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th)
-14. Tenth 项目. (2026). *工作规范 v1.1*. [`.trae/rules/工作规范.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/.trae/rules/工作规范.md)
+1. Tenth 项目数理部. (2026). *T1-Shape 代数系统的形式化建模*. [`docs/论文/T1-Shape代数系统的形式化建模.md`](T1-Shape代数系统的形式化建模.md)
+2. Tenth 项目数理部. (2026). *T2-Tape 形式化模型与根因定位可判定性*. [`docs/论文/T2-Tape形式化模型与根因定位可判定性.md`](T2-Tape形式化模型与根因定位可判定性.md)
+3. Tenth 项目数理部. (2026). *T3-HIR 约束求解 NP 完全性归约*. [`docs/论文/T3-HIR约束求解NP完全性归约.md`](T3-HIR约束求解NP完全性归约.md)
+4. Tenth 项目数理部. (2026). *T4-一般程序 Shape 检查不可判定性*. [`docs/论文/T4-一般程序Shape检查不可判定性.md`](T4-一般程序Shape检查不可判定性.md)
+5. Tenth 项目数理部. (2026). *T5-编译期内存预估可判定性与精度*. [`docs/论文/T5-编译期内存预估可判定性与精度.md`](T5-编译期内存预估可判定性与精度.md)
+6. Tenth 项目数理部. (2026). *T6-关系调试器形式化模型*. [`docs/论文/T6-关系调试器形式化模型.md`](T6-关系调试器形式化模型.md)
+7. Tenth 项目数理部. (2026). *T7-Shape 变换分类互斥完备性*. [`docs/论文/T7-Shape变换分类互斥完备性.md`](T7-Shape变换分类互斥完备性.md)
+8. Tenth 项目数理部. (2026). *T8-Shape 解释关系四级分类*. [`docs/论文/T8-Shape解释关系四级分类.md`](T8-Shape解释关系四级分类.md)
+9. Tenth 项目数理部. (2026). *T10-AI 原生语言范式形式化定义*. [`docs/论文/T10-AI原生语言范式形式化定义.md`](T10-AI原生语言范式形式化定义.md)
+10. Tenth 项目数理部. (2026). *T11-护城河闭环结构形式化*. [`docs/论文/T11-护城河闭环结构形式化.md`](T11-护城河闭环结构形式化.md)
+11. Tenth 项目总师. (2026). *编译期 Shape 检查——战略规划*. [`docs/shape-check-roadmap/战略规划.md`](../shape-check-roadmap/战略规划.md)
+12. Tenth 项目总师. (2026). *Tenth 深化方向——综合分析*. [`docs/shape-check-roadmap/综合分析.md`](../shape-check-roadmap/综合分析.md)
+13. Tenth 项目. (2026). *源码 v0.3.3*. [`tenth/src/hir/types.rs`](../../tenth/src/hir/types.rs)、[`tenth/src/runtime/autodiff.rs`](../../tenth/src/runtime/autodiff.rs)、[`tenth/src/hir/lower/types.rs`](../../tenth/src/hir/lower/types.rs)、[`tenth/src/main.rs`](../../tenth/src/main.rs)、[`tenth/src/compile/jit/translator.rs`](../../tenth/src/compile/jit/translator.rs)、[`tenth/std/prelude.th`](../../tenth/std/prelude.th)
+14. Tenth 项目. (2026). *工作规范 v1.1*. [`.agents/rules/工作规范.md`](../../.agents/rules/工作规范.md)
 
 ### 16.2 学术文献
 
@@ -1189,12 +1189,12 @@ PyTorch 的动态图灵活性是其优势，但也是 shape 检查弱的原因�
 
 | 护城河 | 名称 | 状态 | 实证位置 |
 |--------|------|------|---------|
-| A | Autograd 反向 Shape 验证 | ✅ 已实现（2026-07-01） | [`autodiff.rs::propagate_grad`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| B | Shape 代数求解器 | ⚠️ 已降级（可选 lint） | [`hir/lower/types.rs::check_method_shape`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) |
+| A | Autograd 反向 Shape 验证 | ✅ 已实现（2026-07-01） | [`autodiff.rs::propagate_grad`](../../tenth/src/runtime/autodiff.rs) |
+| B | Shape 代数求解器 | ⚠️ 已降级（可选 lint） | [`hir/lower/types.rs::check_method_shape`](../../tenth/src/hir/lower/types.rs) |
 | C | Model Shape Schema 验证 | ❌ 未启动 | 依赖跨函数 shape 求解 |
-| D | 编译期内存/算力预估 | ✅ 已实现（2026-07-01） | [`hir/lower/types.rs::emit_memory_estimate`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) |
-| E | Shape 驱动 JIT 特化 | ⚠️ 部分实现（JIT 路径存在但未做 shape 特化） | [`compile/jit/`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/) |
-| F | 张量关系调试器 | 📋 理论成熟，工程未完成 | [`autodiff.rs::TapeNode`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)、[T2/T6/T8 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md) |
+| D | 编译期内存/算力预估 | ✅ 已实现（2026-07-01） | [`hir/lower/types.rs::emit_memory_estimate`](../../tenth/src/hir/lower/types.rs) |
+| E | Shape 驱动 JIT 特化 | ⚠️ 部分实现（JIT 路径存在但未做 shape 特化） | [`compile/jit/`](../../tenth/src/compile/jit/) |
+| F | 张量关系调试器 | 📋 理论成熟，工程未完成 | [`autodiff.rs::TapeNode`](../../tenth/src/runtime/autodiff.rs)、[T2/T6/T8 论文](T2-Tape形式化模型与根因定位可判定性.md) |
 
 ## 附录 C：实施建议
 
@@ -1207,7 +1207,7 @@ PyTorch 的动态图灵活性是其优势，但也是 shape 检查弱的原因�
 3. **P1（部署级）**：ONNX 导出（CP5 路径 2）——让 Tenth 模型进入主流推理生态。
 4. **P1（生态乘数）**：shape 规则注册 API（CP5 路径 3）——让护城河覆盖第三方库生态。
 5. **P2（护城河完整）**：B 的 `--strict-shapes` 模式——受限线性约束检查，不破坏自举 ~0.2s。
-6. **P2（性能护城河）**：护城河 E（Shape 驱动 JIT 特化）——缓解 [T10 局限 L4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)，让 J5 性能优势体现。
+6. **P2（性能护城河）**：护城河 E（Shape 驱动 JIT 特化）——缓解 [T10 局限 L4](T10-AI原生语言范式形式化定义.md)，让 J5 性能优势体现。
 7. **P3（基础设施复用）**：MLIR 协作调研——评估 Tenth HIR → MLIR 的可行性。
 8. **P3（长期）**：护城河 C（Model Schema）——依赖跨函数 shape 求解。
 
@@ -1224,9 +1224,9 @@ PyTorch 的动态图灵活性是其优势，但也是 shape 检查弱的原因�
 
 本文对比结论需同步到以下文档：
 
-- [`MEMO.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md)：记录对比研究完成日期与核心结论。
-- [`能力梳理/能力全梳理.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/能力梳理/能力全梳理.md)：更新护城河 A/B/D/F 的状态标记。
-- [`docs/shape-check-roadmap/战略规划.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)：在综合评估表中引用 CP4 独特性结论。
+- [`MEMO.md`](../../MEMO.md)：记录对比研究完成日期与核心结论。
+- [`能力梳理/能力全梳理.md`](../../能力梳理/能力全梳理.md)：更新护城河 A/B/D/F 的状态标记。
+- [`docs/shape-check-roadmap/战略规划.md`](../shape-check-roadmap/战略规划.md)：在综合评估表中引用 CP4 独特性结论。
 
 ---
 

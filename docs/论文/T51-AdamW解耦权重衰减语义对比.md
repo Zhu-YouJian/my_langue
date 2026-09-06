@@ -5,7 +5,7 @@
 > **基准版本**：Tenth v0.3.3
 > **撰写日期**：2026-07-02
 > **联动论文**：T52（优化器状态空间形式化，规划中）、T39（Wengert Tape 形式化语义）、T45（f32 自动微分精度分析）、T48（损失函数双形式）
-> **核心源码**：[`tenth/std/optim/adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th)、[`tenth/std/optim/adam.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th)、[`tenth/std/optim/sgd.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/sgd.th)
+> **核心源码**：[`tenth/std/optim/adamw.th`](../../tenth/std/optim/adamw.th)、[`tenth/std/optim/adam.th`](../../tenth/std/optim/adam.th)、[`tenth/std/optim/sgd.th`](../../tenth/std/optim/sgd.th)
 
 ---
 
@@ -13,14 +13,14 @@
 
 权重衰减（weight decay）是深度学习优化器中抑制过拟合、稳定训练的核心正则化手段。其两种实现方式在工程上长期被混为一谈：（1）**L2 正则化**——把 $\lambda w$ 加到梯度上，让优化器把正则项当作梯度的一部分处理；（2）**解耦权重衰减**——把衰减作为对参数的直接乘性收缩 $w \leftarrow (1-\eta\lambda)w$，与梯度更新分离。Loshchilov & Hutter (2019) 在 *Decoupled Weight Decay Regularization* 一文中指出：**当优化器是 Adam 这类自适应学习率方法时，L2 正则化会被自适应缩放扭曲**，等价的有效衰减强度随历史梯度二阶矩的坐标分布而变，无法实现 L2 正则化的本意——逐坐标均匀收缩。这一论断催生了 AdamW。
 
-Tenth v0.3.3 标准库在 [`tenth/std/optim/adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) 与 [`tenth/std/optim/adam.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th) 中并置提供了两种实现：`adam_step`（原版 Adam，不内置权重衰减）与 `adamw_step`（解耦版，权重衰减直接作用于参数 $w * (1 - lr * decay)$）。`adamw.th` L4–L8 的注释明确指出："原 Adam 的 L2 正则会被扭曲"——这一注释构成可对比的研究对象。值得注意的是，Tenth 的 `adam.th` 本身并未实现 L2 正则化版本的 Adam；L2 正则化模式仅在 [`sgd.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/sgd.th) 的 `sgd_weight_decay` 中以 `gw = grad(w) + decay * w` 形式落地。因此 `adamw.th` 注释中"原 Adam"指的是一种**假想实现**——把 `sgd_weight_decay` 的 L2 模式套用到 Adam 上。
+Tenth v0.3.3 标准库在 [`tenth/std/optim/adamw.th`](../../tenth/std/optim/adamw.th) 与 [`tenth/std/optim/adam.th`](../../tenth/std/optim/adam.th) 中并置提供了两种实现：`adam_step`（原版 Adam，不内置权重衰减）与 `adamw_step`（解耦版，权重衰减直接作用于参数 $w * (1 - lr * decay)$）。`adamw.th` L4–L8 的注释明确指出："原 Adam 的 L2 正则会被扭曲"——这一注释构成可对比的研究对象。值得注意的是，Tenth 的 `adam.th` 本身并未实现 L2 正则化版本的 Adam；L2 正则化模式仅在 [`sgd.th`](../../tenth/std/optim/sgd.th) 的 `sgd_weight_decay` 中以 `gw = grad(w) + decay * w` 形式落地。因此 `adamw.th` 注释中"原 Adam"指的是一种**假想实现**——把 `sgd_weight_decay` 的 L2 模式套用到 Adam 上。
 
 本文对 Tenth 这两种实现进行形式化语义对比，证明五条主定理：
 
 - **定理 AW1（L2 正则被扭曲）**：在 Adam+L2 假想实现中，正则项 $\lambda w_{t-1}$ 进入一阶矩 $m_t$ 与二阶矩 $v_t$ 后，被自适应学习率 $\eta/(\sqrt{\hat v_t}+\epsilon)$ 逐坐标缩放，其有效衰减强度为 $\eta\lambda/(\sqrt{\hat v_t}+\epsilon)$——坐标 $i$ 的有效衰减反比于 $\sqrt{\hat v_{t,i}}$，与 L2 正则化的本意（坐标无关的均匀收缩）背道而驰；
 - **定理 AW2（解耦的等价性）**：AdamW 的更新可分解为两个互不污染的子步骤——先以**未污染的原始梯度**走一次 Adam 更新得 $\tilde w_t$，再对 $\tilde w_t$ 做乘性收缩 $w_t = (1-\eta\lambda)\tilde w_t$；且这两步的顺序在单步内可交换（引理 AW2.1）。解耦的关键在于正则项不进入 $m_t, v_t$ 的累积；
 - **定理 AW3（收敛性对比）**：在凸设置下，AdamW 在标准假设（有界梯度、$\sum \eta_t^2 < \infty$、$v_t$ 一致下界）下达到 $O(\sqrt{T})$ 的 regret 界，与原 Adam 同阶；而 Adam+L2 因正则项进入 $v_t$，使 $v_t$ 的下界依赖于 $\lambda$ 与 $w$ 的范数轨迹，证明所需的"独立于参数轨迹的 $v_t$ 下界"假设失效，标准 Adam 收敛证明不能直接搬运；
-- **定理 AW4（Transformer 训练实证预期）**：在 Transformer 训练典型场景（大学习率 warmup、$\eta \sim 10^{-3}\sim 10^{-4}$、$\lambda \sim 0.01$）下，Adam+L2 的有效衰减被 $\sqrt{\hat v_t}$ 放大或缩小一个数量级以上，AdamW 则保持 $\eta\lambda$ 的恒定名义衰减；这是 AdamW 在 Transformer 训练中显著优于 Adam+L2 的理论依据，与 [`prelude.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th) 中"Transformer 训练推荐"注释呼应；
+- **定理 AW4（Transformer 训练实证预期）**：在 Transformer 训练典型场景（大学习率 warmup、$\eta \sim 10^{-3}\sim 10^{-4}$、$\lambda \sim 0.01$）下，Adam+L2 的有效衰减被 $\sqrt{\hat v_t}$ 放大或缩小一个数量级以上，AdamW 则保持 $\eta\lambda$ 的恒定名义衰减；这是 AdamW 在 Transformer 训练中显著优于 Adam+L2 的理论依据，与 [`prelude.th`](../../tenth/std/prelude.th) 中"Transformer 训练推荐"注释呼应；
 - **定理 AW5（与 PyTorch AdamW 对比）**：Tenth `adamw_step` 与 `torch.optim.AdamW` 在权重衰减路径上代数等价；二者仅在偏置校正的写法（Tenth 用 $\beta_1^t$ 显式传入，PyTorch 在 step 内累积）与 `eps` 位置（Tenth 加在分母 $\sqrt{\hat v}+\epsilon$，PyTorch 默认同位）存在实现细节差异，不影响数学等价性。
 
 本文诚实地披露六类局限：(L1) Tenth 的 `adam.th` 实际未实现 Adam+L2，本文比较的"Adam+L2"是**假想实现**，需通过手动 `gw = grad(w) + decay * w` 构造；(L2) 定理 AW1 的"扭曲"是**单步有效衰减强度**层面的，多步累积下的扭曲量化需进一步分析；(L3) 定理 AW3 的 AdamW 收敛证明依赖 $v_t$ 一致下界假设，该假设在冷启动期（前若干步 $\hat v_t$ 很小）不严格成立；(L4) 定理 AW4 的 Transformer 实证预期是**理论预测**，未配实测数据；(L5) 与 PyTorch 的对比基于 PyTorch 1.x/2.x 公开源码，未来版本可能调整；(L6) 本文未覆盖 AdamW 与 SGD momentum + weight decay 的对比（后者在 Tenth 中由 `sgd_momentum` + `sgd_weight_decay` 模拟）。这些局限以独立章节 §12 显式记录。
@@ -57,7 +57,7 @@ $$
 
 ### 1.2 Tenth 的双实现
 
-Tenth v0.3.3 在标准库 [`tenth/std/optim/`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/) 下并置提供了 Adam 与 AdamW 两种实现，构成可对比的研究对象：
+Tenth v0.3.3 在标准库 [`tenth/std/optim/`](../../tenth/std/optim/) 下并置提供了 Adam 与 AdamW 两种实现，构成可对比的研究对象：
 
 ```tenth
 // ── tenth/std/optim/adam.th ──
@@ -86,7 +86,7 @@ fn adamw_step(w, m, v, lr, beta1, beta2, eps, decay, beta1_t, beta2_t)
 }
 ```
 
-值得特别注意的是，[`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L4–L8 的注释明确写道：
+值得特别注意的是，[`adamw.th`](../../tenth/std/optim/adamw.th) L4–L8 的注释明确写道：
 
 > 与 `std::optim::adam::adam_step` 的区别：
 > - 原 Adam：weight decay 加在梯度上（`gw = grad + decay * w`），与 momentum 耦合
@@ -94,9 +94,9 @@ fn adamw_step(w, m, v, lr, beta1, beta2, eps, decay, beta1_t, beta2_t)
 >
 > 解耦权重衰减对 Transformer 训练尤其重要（学习率大时原 Adam 的 L2 正则会被扭曲）。
 
-这一注释构成 Tenth 对 Loshchilov & Hutter 论断的**官方记录**。然而，注释中描述的"原 Adam：weight decay 加在梯度上"在 Tenth 标准库中**并未直接实现**——[`adam.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th) 中的 `adam_step` 不含 `decay` 参数，是纯 Adam。L2 正则化的 Adam 变体在 Tenth 中是一种**假想实现**：用户需手动构造 `gw = grad(w) + decay * w`，再以某种方式让 `adam_step` 接受这一污染后的梯度。这一观察是本文定理 AW1 形式化的起点。
+这一注释构成 Tenth 对 Loshchilov & Hutter 论断的**官方记录**。然而，注释中描述的"原 Adam：weight decay 加在梯度上"在 Tenth 标准库中**并未直接实现**——[`adam.th`](../../tenth/std/optim/adam.th) 中的 `adam_step` 不含 `decay` 参数，是纯 Adam。L2 正则化的 Adam 变体在 Tenth 中是一种**假想实现**：用户需手动构造 `gw = grad(w) + decay * w`，再以某种方式让 `adam_step` 接受这一污染后的梯度。这一观察是本文定理 AW1 形式化的起点。
 
-L2 正则化模式在 Tenth 中确实落地，但仅出现在 [`sgd.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/sgd.th) 的 `sgd_weight_decay`：
+L2 正则化模式在 Tenth 中确实落地，但仅出现在 [`sgd.th`](../../tenth/std/optim/sgd.th) 的 `sgd_weight_decay`：
 
 ```tenth
 // ── tenth/std/optim/sgd.th ──
@@ -192,7 +192,7 @@ def step(self):
 
 ### 3.4 Tenth 的优化器生态
 
-Tenth v0.3.3 在 [`tenth/std/optim/`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/) 下提供 7 个优化器相关文件：
+Tenth v0.3.3 在 [`tenth/std/optim/`](../../tenth/std/optim/) 下提供 7 个优化器相关文件：
 
 | 文件 | 优化器 | 状态空间 | 权重衰减 |
 |------|--------|---------|---------|
@@ -204,9 +204,9 @@ Tenth v0.3.3 在 [`tenth/std/optim/`](file:///d:/史蒂夫/Desktop/AI开发新�
 | `clip.th` | 梯度裁剪工具 | 无（纯函数） | 无 |
 | `accumulate.th` | 梯度累积工具 | 无（纯函数） | 无 |
 
-观察：**Tenth 的 Adam 不提供 L2 正则化变体**——这是 AdamW 存在的工程动机。若用户需在 Adam 上加 L2，必须手动 `gw = grad(w) + decay * w`，再以某种方式让 `adam_step` 接受这一污染梯度。但 `adam_step` 内部直接调用 `grad(w)`（[`adam.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th) L29），不接受外部梯度参数。因此 Adam+L2 在 Tenth 中**无直接 API 入口**——这是本文形式化"假想实现"的工程现实。
+观察：**Tenth 的 Adam 不提供 L2 正则化变体**——这是 AdamW 存在的工程动机。若用户需在 Adam 上加 L2，必须手动 `gw = grad(w) + decay * w`，再以某种方式让 `adam_step` 接受这一污染梯度。但 `adam_step` 内部直接调用 `grad(w)`（[`adam.th`](../../tenth/std/optim/adam.th) L29），不接受外部梯度参数。因此 Adam+L2 在 Tenth 中**无直接 API 入口**——这是本文形式化"假想实现"的工程现实。
 
-[`prelude.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th) L71 明确标注 AdamW 为"解耦权重衰减（Transformer 训练推荐）"，与本文定理 AW4 的实证预期呼应。
+[`prelude.th`](../../tenth/std/prelude.th) L71 明确标注 AdamW 为"解耦权重衰减（Transformer 训练推荐）"，与本文定理 AW4 的实证预期呼应。
 
 ---
 
@@ -229,7 +229,7 @@ Tenth v0.3.3 在 [`tenth/std/optim/`](file:///d:/史蒂夫/Desktop/AI开发新�
 
 ### 4.2 原版 Adam（Tenth `adam_step`）
 
-**定义 4.1（Adam 更新规则）**：给定初始 $w_0 \in \mathbb{R}^d$，$m_0 = v_0 = 0$，$\beta_1^0 = \beta_2^0 = 1$，原版 Adam 的更新规则（对应 [`adam.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th) L18–L36）为：
+**定义 4.1（Adam 更新规则）**：给定初始 $w_0 \in \mathbb{R}^d$，$m_0 = v_0 = 0$，$\beta_1^0 = \beta_2^0 = 1$，原版 Adam 的更新规则（对应 [`adam.th`](../../tenth/std/optim/adam.th) L18–L36）为：
 
 $$
 \begin{aligned}
@@ -244,11 +244,11 @@ $$
 
 其中 $\mathbf{1}$ 为全 1 向量，$\beta_1^t = \beta_1^{t-1} \cdot \beta_1$（由调用方累积，对应 `beta1_t` 参数）。
 
-**注 4.1**：原版 Adam **不含权重衰减**。这是 Tenth [`adam.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th) 的实际实现状态，与原始 Adam 论文（Kingma & Ba, 2014）一致。
+**注 4.1**：原版 Adam **不含权重衰减**。这是 Tenth [`adam.th`](../../tenth/std/optim/adam.th) 的实际实现状态，与原始 Adam 论文（Kingma & Ba, 2014）一致。
 
 ### 4.3 假想 Adam+L2（基于 `sgd_weight_decay` 模式）
 
-**定义 4.2（Adam+L2 更新规则）**：把 [`sgd.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/sgd.th) L21–L26 中 `sgd_weight_decay` 的 L2 模式套用到 Adam 上，得到假想的 Adam+L2 更新规则（对应 [`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L5 注释所述"原 Adam：weight decay 加在梯度上"）：
+**定义 4.2（Adam+L2 更新规则）**：把 [`sgd.th`](../../tenth/std/optim/sgd.th) L21–L26 中 `sgd_weight_decay` 的 L2 模式套用到 Adam 上，得到假想的 Adam+L2 更新规则（对应 [`adamw.th`](../../tenth/std/optim/adamw.th) L5 注释所述"原 Adam：weight decay 加在梯度上"）：
 
 $$
 \begin{aligned}
@@ -267,7 +267,7 @@ $$
 
 ### 4.4 AdamW（Tenth `adamw_step`）
 
-**定义 4.3（AdamW 更新规则）**：给定初始 $w_0 \in \mathbb{R}^d$，$m_0 = v_0 = 0$，AdamW 的更新规则（对应 [`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L23–L44）为：
+**定义 4.3（AdamW 更新规则）**：给定初始 $w_0 \in \mathbb{R}^d$，$m_0 = v_0 = 0$，AdamW 的更新规则（对应 [`adamw.th`](../../tenth/std/optim/adamw.th) L23–L44）为：
 
 $$
 \begin{aligned}
@@ -436,11 +436,11 @@ $$
 
 | 组合 | Tenth 实现 | 源码位置 |
 |------|-----------|---------|
-| SGD（无衰减） | `sgd_step` | [`sgd.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/sgd.th) L4–L7 |
-| SGD+L2 | `sgd_weight_decay` | [`sgd.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/sgd.th) L23–L26 |
-| Adam（无衰减） | `adam_step` | [`adam.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th) L18–L36 |
-| Adam+L2 | **未实现**（假想） | [`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L5 注释 |
-| AdamW | `adamw_step` | [`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L23–L44 |
+| SGD（无衰减） | `sgd_step` | [`sgd.th`](../../tenth/std/optim/sgd.th) L4–L7 |
+| SGD+L2 | `sgd_weight_decay` | [`sgd.th`](../../tenth/std/optim/sgd.th) L23–L26 |
+| Adam（无衰减） | `adam_step` | [`adam.th`](../../tenth/std/optim/adam.th) L18–L36 |
+| Adam+L2 | **未实现**（假想） | [`adamw.th`](../../tenth/std/optim/adamw.th) L5 注释 |
+| AdamW | `adamw_step` | [`adamw.th`](../../tenth/std/optim/adamw.th) L23–L44 |
 
 **关键观察**：Tenth **不实现 Adam+L2**。这一工程选择是定理 AW1 的现实体现——既然 Adam+L2 在自适应下被扭曲，提供它无意义；直接提供 AdamW 即可。Tenth 通过**只实现解耦版**回避了 L2 扭曲问题。
 
@@ -553,7 +553,7 @@ $$
 - Adam+L2 坐标 $i$：$\eta(1-\beta_1)\lambda / (\sqrt{\hat v_{t, i}}+\epsilon) \approx 10^{-3} \cdot 0.1 \cdot 10^{-2} / 10^{-2} = 10^{-4}$；
 - Adam+L2 坐标 $j$：$\approx 10^{-3} \cdot 0.1 \cdot 10^{-2} / 10^{-5} = 10^{-1}$。
 
-注意：坐标 $j$ 的有效衰减 $10^{-1}$ 远大于 AdamW 的 $10^{-5}$——**四个数量级的扭曲**。这正是 [`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L8 注释"学习率大时原 Adam 的 L2 正则会被扭曲"的量化体现。
+注意：坐标 $j$ 的有效衰减 $10^{-1}$ 远大于 AdamW 的 $10^{-5}$——**四个数量级的扭曲**。这正是 [`adamw.th`](../../tenth/std/optim/adamw.th) L8 注释"学习率大时原 Adam 的 L2 正则会被扭曲"的量化体现。
 
 ---
 
@@ -680,7 +680,7 @@ $$
 定理 AW2 的工程含义：
 
 1. **可分离实现**：AdamW 可拆分为"Adam 更新 + 乘性收缩"两个独立步骤，便于工程实现与调试。Tenth `adamw_step` 的实现即遵循此模式（先 `decayed_w` 后 `new_w`）；
-2. **矩估计可复用**：AdamW 的 $m_t, v_t$ 与原版 Adam 完全相同，可共享矩估计代码（Tenth [`adam.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th) 与 [`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) 的矩估计代码确实一致）；
+2. **矩估计可复用**：AdamW 的 $m_t, v_t$ 与原版 Adam 完全相同，可共享矩估计代码（Tenth [`adam.th`](../../tenth/std/optim/adam.th) 与 [`adamw.th`](../../tenth/std/optim/adamw.th) 的矩估计代码确实一致）；
 3. **衰减可独立调节**：$\lambda$ 仅通过 $(1-\eta\lambda)$ 影响参数路径，与 $\eta, \beta_1, \beta_2$ 解耦，可独立调节而不影响矩估计。这是 AdamW 相对 Adam+L2 的工程优势——Adam+L2 的 $\lambda$ 进入 $v_t$ 后与 $\eta$ 耦合，调节 $\lambda$ 会影响有效学习率。
 
 ---
@@ -862,7 +862,7 @@ $$
 
 ### 10.5 默认超参对比
 
-| 超参 | Tenth 默认（[`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L19 注释） | PyTorch 默认 |
+| 超参 | Tenth 默认（[`adamw.th`](../../tenth/std/optim/adamw.th) L19 注释） | PyTorch 默认 |
 |------|----------------------------------|-------------|
 | `lr` | 0.001 | 0.001 |
 | `beta1` | 0.9 | 0.9 |
@@ -897,7 +897,7 @@ fn adamw_step(w, m, v, lr, beta1, beta2, eps, decay, beta1_t, beta2_t) -> ...
 
 ### 11.3 f32 版本的工程考量
 
-Tenth 为 AdamW 提供 `adamw_step_f32`（[`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L48–L68），与 `adamw_step` 并置。f32 版本的设计考量见 T45（f32 自动微分精度分析）：
+Tenth 为 AdamW 提供 `adamw_step_f32`（[`adamw.th`](../../tenth/std/optim/adamw.th) L48–L68），与 `adamw_step` 并置。f32 版本的设计考量见 T45（f32 自动微分精度分析）：
 
 - **内存减半**：f32 比 f64 内存减半，适合大模型训练；
 - **精度损失**：f32 的 23 位尾数在累积 $m_t, v_t$（指数移动平均）时可能损失精度，需用 Kahan 求和或 stochastic rounding；
@@ -917,9 +917,9 @@ Tenth 同时提供 `sgd_weight_decay`（L2 正则）与 `adamw_step`（解耦衰
 
 ### L1. Adam+L2 是假想实现
 
-**是什么**：定理 AW1 形式化的"Adam+L2"在 Tenth 标准库中**不存在**。Tenth [`adam.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th) 的 `adam_step` 不含 `decay` 参数，是纯 Adam。本文比较的"Adam+L2"是把 [`sgd.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/sgd.th) L23–L26 的 `sgd_weight_decay` L2 模式套用到 Adam 上的假想实现，依据是 [`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L5 注释。
+**是什么**：定理 AW1 形式化的"Adam+L2"在 Tenth 标准库中**不存在**。Tenth [`adam.th`](../../tenth/std/optim/adam.th) 的 `adam_step` 不含 `decay` 参数，是纯 Adam。本文比较的"Adam+L2"是把 [`sgd.th`](../../tenth/std/optim/sgd.th) L23–L26 的 `sgd_weight_decay` L2 模式套用到 Adam 上的假想实现，依据是 [`adamw.th`](../../tenth/std/optim/adamw.th) L5 注释。
 
-**影响**：定理 AW1 的"扭曲"是针对假想实现的理论结论，Tenth 用户实际不会触发此扭曲（除非手动构造 `gw = grad(w) + decay * w` 并以某种方式喂给 Adam）。但这一假想实现是 Loshchilov & Hutter 原论文讨论的对象，也是 [`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) 注释的对比基准，故形式化它有理论价值。
+**影响**：定理 AW1 的"扭曲"是针对假想实现的理论结论，Tenth 用户实际不会触发此扭曲（除非手动构造 `gw = grad(w) + decay * w` 并以某种方式喂给 Adam）。但这一假想实现是 Loshchilov & Hutter 原论文讨论的对象，也是 [`adamw.th`](../../tenth/std/optim/adamw.th) 注释的对比基准，故形式化它有理论价值。
 
 **缓解**：本文已在 §4.3 明确标注定义 4.2 为"假想实现"，并在 §1.2、§6.4 重复说明。读者应理解本文比较的是"若 Tenth 实现 Adam+L2 会有何扭曲"，而非"Tenth 实际存在的 Adam+L2 有何扭曲"。
 
@@ -945,7 +945,7 @@ Tenth 同时提供 `sgd_weight_decay`（L2 正则）与 `adamw_step`（解耦衰
 
 **影响**：定理 AW4 的"AdamW 显著优于 Adam+L2"是理论推断，实际训练中可能受其他因素（学习率调度、batch size、数据分布）影响，扭曲幅度可能小于预测。
 
-**缓解**：本文的理论预测与 Loshchilov & Hutter 原论文的实证一致（他们在 ImageNet、CIFAR 上验证 AdamW 优于 Adam+L2）。Tenth 标准库 [`prelude.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th) L71 标注 AdamW 为"Transformer 训练推荐"也间接印证。完整实证需启动 T52 后的实验任务（开放问题 11.4）。
+**缓解**：本文的理论预测与 Loshchilov & Hutter 原论文的实证一致（他们在 ImageNet、CIFAR 上验证 AdamW 优于 Adam+L2）。Tenth 标准库 [`prelude.th`](../../tenth/std/prelude.th) L71 标注 AdamW 为"Transformer 训练推荐"也间接印证。完整实证需启动 T52 后的实验任务（开放问题 11.4）。
 
 ### L5. PyTorch 版本时效性
 
@@ -975,12 +975,12 @@ Tenth 同时提供 `sgd_weight_decay`（L2 正则）与 `adamw_step`（解耦衰
 
 ## 13. 结论
 
-本文对 Tenth v0.3.3 标准库 [`tenth/std/optim/adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) 与 [`tenth/std/optim/adam.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th) 中的两种 Adam 实现——`adam_step`（原版，无衰减）与 `adamw_step`（解耦版）——进行了形式化语义对比。主要结论如下：
+本文对 Tenth v0.3.3 标准库 [`tenth/std/optim/adamw.th`](../../tenth/std/optim/adamw.th) 与 [`tenth/std/optim/adam.th`](../../tenth/std/optim/adam.th) 中的两种 Adam 实现——`adam_step`（原版，无衰减）与 `adamw_step`（解耦版）——进行了形式化语义对比。主要结论如下：
 
 1. **L2 正则被扭曲**（定理 AW1）：在假想的 Adam+L2 实现中，正则项 $\lambda w$ 进入 $v_t$ 后被自适应学习率 $\eta/(\sqrt{\hat v_t}+\epsilon)$ 逐坐标缩放，有效衰减强度反比于 $\sqrt{\hat v_{t, i}}$，与 L2 正则化的本意（坐标无关均匀收缩）相反；
 2. **解耦的等价性**（定理 AW2）：AdamW 的更新可分解为"原 Adam 更新 + 乘性收缩"两步的复合，两步在单步内可交换（误差 $O((\eta\lambda)^2)$），且矩估计 $m_t, v_t$ 与原版 Adam 完全相同（梯度路径未污染）；
 3. **收敛性对比**（定理 AW3）：在凸设置与标准假设下，AdamW 达到 $O(\sqrt T)$ regret 界，与原版 Adam 同阶；Adam+L2 因 $v_t$ 下界依赖参数轨迹，标准收敛证明不能直接搬运；
-4. **Transformer 训练实证预期**（定理 AW4）：在 Transformer 训练典型设置下，Adam+L2 的有效衰减扭曲可达 5 个数量级，AdamW 保持恒定名义衰减——这是 AdamW 在 Transformer 训练中显著优于 Adam+L2 的理论依据，与 [`prelude.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th) L71"Transformer 训练推荐"注释呼应；
+4. **Transformer 训练实证预期**（定理 AW4）：在 Transformer 训练典型设置下，Adam+L2 的有效衰减扭曲可达 5 个数量级，AdamW 保持恒定名义衰减——这是 AdamW 在 Transformer 训练中显著优于 Adam+L2 的理论依据，与 [`prelude.th`](../../tenth/std/prelude.th) L71"Transformer 训练推荐"注释呼应；
 5. **与 PyTorch AdamW 代数等价**（定理 AW5）：Tenth `adamw_step` 与 `torch.optim.AdamW` 在权重衰减路径上代数等价，仅工程细节（`maximize`、`amsgrad` 等参数）有差异，不影响默认情形的数学等价性。
 
 本文的结论对 Tenth 标准库演化的指导包括：
@@ -1002,14 +1002,14 @@ Tenth 同时提供 `sgd_weight_decay`（L2 正则）与 `adamw_step`（解耦衰
 5. Hanson, S. J., & Pratt, L. Y. (1988). "Comparing Biases for Minimal Network Construction with Back-Propagation". *NIPS 1988*.
 6. Krogh, A., & Hertz, J. A. (1991). "A Simple Weight Decay Can Improve Generalization". *NIPS 1991*.
 7. PyTorch Documentation. "torch.optim.AdamW". https://pytorch.org/docs/stable/generated/torch.optim.AdamW.html
-8. Tenth 项目. [T45-f32自动微分精度分析](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T45-f32自动微分精度分析.md)
-9. Tenth 项目. [T48-损失函数双形式](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T48-损失函数双形式.md)
+8. Tenth 项目. [T45-f32自动微分精度分析](T45-f32自动微分精度分析.md)
+9. Tenth 项目. [T48-损失函数双形式](T48-损失函数双形式.md)
 10. Tenth 项目. T52（优化器状态空间形式化，规划中）
 11. Tenth 项目. T39（Wengert Tape 形式化语义，规划中）
-12. Tenth 项目. [tenth/std/optim/adamw.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th)（核心源码）
-13. Tenth 项目. [tenth/std/optim/adam.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th)（原版对比源码）
-14. Tenth 项目. [tenth/std/optim/sgd.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/sgd.th)（L2 正则化参照源码）
-15. Tenth 项目. [tenth/std/prelude.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th)（标准库索引）
+12. Tenth 项目. [tenth/std/optim/adamw.th](../../tenth/std/optim/adamw.th)（核心源码）
+13. Tenth 项目. [tenth/std/optim/adam.th](../../tenth/std/optim/adam.th)（原版对比源码）
+14. Tenth 项目. [tenth/std/optim/sgd.th](../../tenth/std/optim/sgd.th)（L2 正则化参照源码）
+15. Tenth 项目. [tenth/std/prelude.th](../../tenth/std/prelude.th)（标准库索引）
 
 ---
 
@@ -1029,18 +1029,18 @@ Tenth 同时提供 `sgd_weight_decay`（L2 正则）与 `adamw_step`（解耦衰
 
 | 本文章节 | 对应 Tenth 文档 |
 |---------|----------------|
-| §1.2 | [`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L1–L19 注释 |
-| §4.1 | [`adam.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adam.th) L18–L36 实现 |
-| §4.3 | [`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L23–L44 实现 |
-| §6.4 | [`sgd.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/sgd.th) L23–L26（L2 正则化参照） |
-| §11.4 | [`prelude.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th) L71（"Transformer 训练推荐"标注） |
+| §1.2 | [`adamw.th`](../../tenth/std/optim/adamw.th) L1–L19 注释 |
+| §4.1 | [`adam.th`](../../tenth/std/optim/adam.th) L18–L36 实现 |
+| §4.3 | [`adamw.th`](../../tenth/std/optim/adamw.th) L23–L44 实现 |
+| §6.4 | [`sgd.th`](../../tenth/std/optim/sgd.th) L23–L26（L2 正则化参照） |
+| §11.4 | [`prelude.th`](../../tenth/std/prelude.th) L71（"Transformer 训练推荐"标注） |
 
 ### 附录 C. 实施建议
 
 本文是**理论分析论文**，不直接修改源码。但对 Tenth 标准库的未来演化提供建议：
 
 1. **维持不实现 Adam+L2**：定理 AW1 证明 Adam+L2 在自适应下被扭曲，提供它无意义。建议维持当前设计（Adam + AdamW 二选一）；
-2. **文档同步**：[`adamw.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/optim/adamw.th) L5 注释中"原 Adam：weight decay 加在梯度上"应明确标注为"假想实现，Tenth 标准库不提供"。建议文档部（加载 `tenth-doc-dept` skill）在下次同步时更新此注释；
+2. **文档同步**：[`adamw.th`](../../tenth/std/optim/adamw.th) L5 注释中"原 Adam：weight decay 加在梯度上"应明确标注为"假想实现，Tenth 标准库不提供"。建议文档部（加载 `tenth-doc-dept` skill）在下次同步时更新此注释；
 3. **AMSGrad 修正**：定理 AW3 的 $v_t$ 一致下界假设（H3）在冷启动期不严格成立。建议在 T52 中考虑实现 AMSGrad 修正（`amsgrad=True` 选项），与 PyTorch 对齐；
 4. **f32 AdamW 的 $\epsilon$ 风险**：§11.3 指出 f32 下 $\epsilon = 10^{-8}$ 接近 f32 精度下限，可能导致 $\epsilon$ 失效。建议在 T45 后续中分析此风险，考虑 f32 版本使用更大 $\epsilon$（如 $10^{-6}$）；
 5. **T52 启动依据**：本文 §1.4 与 §11.4 为 T52（优化器状态空间形式化）提供前置依据。建议 T52 启动时加载本文作为参照。

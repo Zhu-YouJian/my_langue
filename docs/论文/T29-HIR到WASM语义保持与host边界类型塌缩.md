@@ -21,7 +21,7 @@ Tenth 语言的 HIR 拥有 16 种 `BaseType` + 11 种复合类型（共 27 种�
 
 ### 1.1 HIR-WASM 类型差距问题
 
-WebAssembly 1.0 的类型系统极简：值类型仅有 4 种（`i32` / `i64` / `f32` / `f64`），无乘积类型、无求和类型、无引用类型、无类型参数（[WebAssembly Core Specification 1.0, §2.2.1](https://webassembly.github.io/spec/core/bikeshed/#value-types%E2%91%A0)）。而 Tenth 的 HIR 类型系统（[`tenth/src/hir/types.rs:3-42`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs)）拥有 16 种 `BaseType` + `Tensor`/`Array`/`FnType`/`TypeParam`/`Generic`/`Ref`/`MutRef`/`Struct`/`Enum`/`Tuple`/`Unknown` 共 11 种复合构造子。如何把 HIR 的丰富类型系统编译为 WASM 的极简类型系统而不损失语义，是任何 HIR→WASM 编译器必须解决的核心问题。
+WebAssembly 1.0 的类型系统极简：值类型仅有 4 种（`i32` / `i64` / `f32` / `f64`），无乘积类型、无求和类型、无引用类型、无类型参数（[WebAssembly Core Specification 1.0, §2.2.1](https://webassembly.github.io/spec/core/bikeshed/#value-types%E2%91%A0)）。而 Tenth 的 HIR 类型系统（[`tenth/src/hir/types.rs:3-42`](../../tenth/src/hir/types.rs)）拥有 16 种 `BaseType` + `Tensor`/`Array`/`FnType`/`TypeParam`/`Generic`/`Ref`/`MutRef`/`Struct`/`Enum`/`Tuple`/`Unknown` 共 11 种复合构造子。如何把 HIR 的丰富类型系统编译为 WASM 的极简类型系统而不损失语义，是任何 HIR→WASM 编译器必须解决的核心问题。
 
 业界已知有两条路线：
 
@@ -32,7 +32,7 @@ Tenth 选择路线 2 不是偶然：Tenth 的设计哲学是"AI 原生"——张
 
 ### 1.2 值类型塌缩 + host 桥接模式
 
-Tenth 的 `to_val_type` 函数（[`tenth/src/compile/wasm/mod.rs:22-39`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs)）实现了下述塌缩映射：
+Tenth 的 `to_val_type` 函数（[`tenth/src/compile/wasm/mod.rs:22-39`](../../tenth/src/compile/wasm/mod.rs)）实现了下述塌缩映射：
 
 ```
 I8 / I16 / I32 / I64        → I64     (整数统一 64 位)
@@ -43,7 +43,7 @@ Unit                        → None    (无值)
 Ref / MutRef / Struct / Generic / TypeParam / Unknown → I64  (复合类型作指针)
 ```
 
-配合 18 个 host import（[`tenth/src/compile/wasm/mod.rs:71-89`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs)），Tenth 把所有"无法在 WASM 1.0 内表达"的语义外推给 host。这种模式与 Emscripten/AssemblyScript 的本质区别在于：**Tenth 不试图在 WASM 内部重建 heap 语义，而是把 heap 语义整体搬到 host**。
+配合 18 个 host import（[`tenth/src/compile/wasm/mod.rs:71-89`](../../tenth/src/compile/wasm/mod.rs)），Tenth 把所有"无法在 WASM 1.0 内表达"的语义外推给 host。这种模式与 Emscripten/AssemblyScript 的本质区别在于：**Tenth 不试图在 WASM 内部重建 heap 语义，而是把 heap 语义整体搬到 host**。
 
 ### 1.3 研究问题
 
@@ -67,8 +67,8 @@ Ref / MutRef / Struct / Generic / TypeParam / Unknown → I64  (复合类型作�
 
 | 轮次 | 原始断言 | 修正 |
 |------|---------|------|
-| v1.1 | "13 种 BaseType" | 实际 16 种（[`types.rs:3-10`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs)），7 种未显式处理 |
-| v1.2 | "W3 完备性成立" | `tensor_from_vec` 是 stub（[`host.rs:340-343`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs)），改为"在排除 tensor 后成立" |
+| v1.1 | "13 种 BaseType" | 实际 16 种（[`types.rs:3-10`](../../tenth/src/hir/types.rs)），7 种未显式处理 |
+| v1.2 | "W3 完备性成立" | `tensor_from_vec` 是 stub（[`host.rs:340-343`](../../tenth/src/compile/wasm/host.rs)），改为"在排除 tensor 后成立" |
 | v1.3 | "双模拟关系对称" | host 副作用不可逆，改为弱双模拟（仅单向） |
 | v1.4 | "host import 集 ∩ lower 路径" | lower 路径无 host，删除 W4 中"路径覆盖"对比项 |
 
@@ -116,13 +116,13 @@ AssemblyScript（[AssemblyScript docs](https://www.assemblyscript.org/)）把 Ty
 
 ### 2.4 wasm-encoder 标准 ABI 模式
 
-`wasm-encoder` crate（[bytecodealliance/wasm-tools](https://github.com/bytecodealliance/wasm-tools)）是 Rust 生态生成 WASM 字节码的事实标准库。Tenth 使用 `wasm-encoder`（[`mod.rs:15`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs)）生成 WASM 模块。`wasm-encoder` 不规定 ABI，仅提供字节码构造原语——具体的 ABI（参数传递、返回值、host 调用约定）由使用方决定。Tenth 选择"i64 主导 + host import"的 ABI，是 `wasm-encoder` 用户中较保守的一种。
+`wasm-encoder` crate（[bytecodealliance/wasm-tools](https://github.com/bytecodealliance/wasm-tools)）是 Rust 生态生成 WASM 字节码的事实标准库。Tenth 使用 `wasm-encoder`（[`mod.rs:15`](../../tenth/src/compile/wasm/mod.rs)）生成 WASM 模块。`wasm-encoder` 不规定 ABI，仅提供字节码构造原语——具体的 ABI（参数传递、返回值、host 调用约定）由使用方决定。Tenth 选择"i64 主导 + host import"的 ABI，是 `wasm-encoder` 用户中较保守的一种。
 
 ### 2.5 与本文最相关的工作
 
 - **CompCert**（[Leroy 2009](https://dl.acm.org/doi/10.1145/1538788.1538814)）：C→汇编的语义保持证明，本文 W1 模拟关系借鉴其思路，但目标不同（汇编 ↔ WASM）。
 - **CakeML**（[Kumar et al. 2014](https://dl.acm.org/doi/10.1145/2535838.2535841)）：自举编译器形式化验证，本文 W3 的"host 桥接完备性"是 CakeML 未涉及的（CakeML 不依赖 host）。
-- **T12**（[`docs/论文/T12-双侧编译器语义等价性.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T12-双侧编译器语义等价性.md)）：Tenth 双侧编译器等价性，本文 W1/W3 是其路径 C 闭环的前提。
+- **T12**（[`docs/论文/T12-双侧编译器语义等价性.md`](T12-双侧编译器语义等价性.md)）：Tenth 双侧编译器等价性，本文 W1/W3 是其路径 C 闭环的前提。
 - **wasm3 / wasmi host 模式**：嵌入式 WASM 运行时普遍支持 host import，但本文未发现形式化分析"host import 集完备性"的既有工作——这是本文的差异化贡献。
 
 ---
@@ -131,7 +131,7 @@ AssemblyScript（[AssemblyScript docs](https://www.assemblyscript.org/)）把 Ty
 
 ### 3.1 记号约定
 
-- $\mathcal{T}_{\text{HIR}}$：HIR 类型集合，由 [`hir/types.rs:20-42`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs) 的 `Type` 枚举定义。
+- $\mathcal{T}_{\text{HIR}}$：HIR 类型集合，由 [`hir/types.rs:20-42`](../../tenth/src/hir/types.rs) 的 `Type` 枚举定义。
 - $\mathcal{B} = \{$ I8, I16, I32, I64, U8, U16, U32, U64, F16, F32, F64, BF16, Bool, Char, Str, Unit $\}$：16 种 `BaseType`。
 - $\mathcal{V}_{\text{WASM}} = \{$ `i32`, `i64`, `f32`, `f64` $\}$：4 种 WASM 值类型。
 - $\mathcal{V}_{\text{WASM}}^{\bot} = \mathcal{V}_{\text{WASM}} \cup \{\bot\}$：加入"无类型"语义（对应 `None` 返回）。
@@ -143,7 +143,7 @@ AssemblyScript（[AssemblyScript docs](https://www.assemblyscript.org/)）把 Ty
 
 ### 3.2 类型塌缩映射 $\phi$ 的形式化定义
 
-**定义 3.1（类型塌缩映射 $\phi$）**：$\phi : \mathcal{T}_{\text{HIR}} \to \mathcal{V}_{\text{WASM}}^{\bot}$ 由下述分支定义（对应 [`wasm/mod.rs:22-39`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs)）：
+**定义 3.1（类型塌缩映射 $\phi$）**：$\phi : \mathcal{T}_{\text{HIR}} \to \mathcal{V}_{\text{WASM}}^{\bot}$ 由下述分支定义（对应 [`wasm/mod.rs:22-39`](../../tenth/src/compile/wasm/mod.rs)）：
 
 $$
 \phi(t) = \begin{cases}
@@ -158,7 +158,7 @@ $$
 \end{cases}
 $$
 
-**注**：源码中的 `_ => None` 分支（[`mod.rs:30, 37`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs)）实际会捕获 7 种 `BaseType`（U8/U16/U32/U64/F16/BF16/Char）与 `Tensor`/`Array`/`FnType`/`Enum`/`Tuple` 五种复合类型，使它们全部映射为 $\bot$。这意味着 `to_val_type_required` 在遇到这些类型时会触发 `RuntimeError`（[`mod.rs:42-44`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs)）。这一行为在 §9.1 局限中详述。
+**注**：源码中的 `_ => None` 分支（[`mod.rs:30, 37`](../../tenth/src/compile/wasm/mod.rs)）实际会捕获 7 种 `BaseType`（U8/U16/U32/U64/F16/BF16/Char）与 `Tensor`/`Array`/`FnType`/`Enum`/`Tuple` 五种复合类型，使它们全部映射为 $\bot$。这意味着 `to_val_type_required` 在遇到这些类型时会触发 `RuntimeError`（[`mod.rs:42-44`](../../tenth/src/compile/wasm/mod.rs)）。这一行为在 §9.1 局限中详述。
 
 ### 3.3 $\phi$ 的语义分类
 
@@ -166,14 +166,14 @@ $$
 
 | 策略 | 源类型 | 目标类型 | 机制 | 源码位置 |
 |------|--------|---------|------|---------|
-| **保留**（preserve） | `I8/I16/I32/I64`, `F32/F64`, `Bool` | `i64`, `f64`, `i32` | 值直接传递，必要时符号扩展 | [`mod.rs:25-27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) |
-| **指针化**（pointerize） | `Str`, `Ref`, `MutRef`, `Struct`, `Generic` | `i64` | 值变为指向线性内存的指针 | [`mod.rs:28, 32-35`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) |
-| **Reinterpret** | （`F64` 在 host 边界） | `i64` | 通过 `f64_bits` 转为 IEEE 754 位模式 | [`host.rs:300-303`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| **丢弃**（discard） | `Unit` | $\bot$ | 不传递值 | [`mod.rs:29`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) |
+| **保留**（preserve） | `I8/I16/I32/I64`, `F32/F64`, `Bool` | `i64`, `f64`, `i32` | 值直接传递，必要时符号扩展 | [`mod.rs:25-27`](../../tenth/src/compile/wasm/mod.rs) |
+| **指针化**（pointerize） | `Str`, `Ref`, `MutRef`, `Struct`, `Generic` | `i64` | 值变为指向线性内存的指针 | [`mod.rs:28, 32-35`](../../tenth/src/compile/wasm/mod.rs) |
+| **Reinterpret** | （`F64` 在 host 边界） | `i64` | 通过 `f64_bits` 转为 IEEE 754 位模式 | [`host.rs:300-303`](../../tenth/src/compile/wasm/host.rs) |
+| **丢弃**（discard） | `Unit` | $\bot$ | 不传递值 | [`mod.rs:29`](../../tenth/src/compile/wasm/mod.rs) |
 
 ### 3.4 字段布局规则
 
-[`wasm/mod.rs:48-59`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) 的 `field_size_and_type` 进一步规定：**所有结构体字段一律 8 字节对齐**，无论原类型大小。这一保守策略简化了字段访问代码生成，但牺牲内存效率（例如 `I8` 字段也占 8 字节）。
+[`wasm/mod.rs:48-59`](../../tenth/src/compile/wasm/mod.rs) 的 `field_size_and_type` 进一步规定：**所有结构体字段一律 8 字节对齐**，无论原类型大小。这一保守策略简化了字段访问代码生成，但牺牲内存效率（例如 `I8` 字段也占 8 字节）。
 
 ---
 
@@ -220,7 +220,7 @@ $$
 
 ### 4.3 Host 操作语义
 
-Host 函数集 $\mathcal{H} = \{h_0, \ldots, h_{17}\}$，每个 $h_i$ 有签名 $\text{Sig}(h_i) = (\text{params}, \text{ret})$，由 [`sections.rs:26-44`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs) 定义。Host 函数的语义由 Rust 实现（[`host.rs:8-345`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs)）决定。
+Host 函数集 $\mathcal{H} = \{h_0, \ldots, h_{17}\}$，每个 $h_i$ 有签名 $\text{Sig}(h_i) = (\text{params}, \text{ret})$，由 [`sections.rs:26-44`](../../tenth/src/compile/wasm/sections.rs) 定义。Host 函数的语义由 Rust 实现（[`host.rs:8-345`](../../tenth/src/compile/wasm/host.rs)）决定。
 
 **关键观察**：Host 函数的执行**不在 WASM 操作语义内**——WASM 仅看到 `call` 指令与返回值。Host 可读写 WASM 内存（通过 `Caller` 接口），修改 host 状态（如 bump allocator 偏移 `*caller.data_mut()`），甚至调用 WASM 模块外的 Rust 代码（如 `std::fs::write`）。这种"语义外推"是 Tenth 模式的核心特征。
 
@@ -246,7 +246,7 @@ Host 函数集 $\mathcal{H} = \{h_0, \ldots, h_{17}\}$，每个 $h_i$ 有签名 
 
 ### 5.1 定理 W1（语义保持：弱双模拟）
 
-**定理 W1**：设 $P$ 为一 HIR 程序，$W = \text{compile}(P)$ 为经 [`wasm/mod.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) 编译后的 WASM 模块。若：
+**定理 W1**：设 $P$ 为一 HIR 程序，$W = \text{compile}(P)$ 为经 [`wasm/mod.rs`](../../tenth/src/compile/wasm/mod.rs) 编译后的 WASM 模块。若：
 
 1. $P$ 中所有 `BaseType` 出现均属于 $\{\text{I8, I16, I32, I64, F32, F64, Bool, Str, Unit}\}$（"支持子集"）；
 2. $P$ 中不出现 `Tensor` / `Array` / `FnType` / `Enum` / `Tuple` 复合类型在参数或返回位置（这些类型在 $\phi$ 中映射为 $\bot$）；
@@ -264,29 +264,29 @@ $$
 
 需证明三条性质：
 
-**(a) 初始化对齐**：$P$ 的入口 main 对应 $W$ 的入口 main（[`sections.rs:160-172`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)）。两者初始可观察状态均为空。$\text{encode}(\sigma_0) = \sigma'_0$。✓
+**(a) 初始化对齐**：$P$ 的入口 main 对应 $W$ 的入口 main（[`sections.rs:160-172`](../../tenth/src/compile/wasm/sections.rs)）。两者初始可观察状态均为空。$\text{encode}(\sigma_0) = \sigma'_0$。✓
 
 **(b) 单步保持**：对 HIR 任一迁移 $\langle e, \sigma \rangle \to_{\text{HIR}} \langle e', \sigma' \rangle$，分情形：
 
-- **字面量（LIT）**：HIR 推入值 $v:t$。WASM 端 `compile_literal`（[`compile.rs:113-116`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)）生成对应 `i64.const` / `f64.const` / `i32.const` 指令。值经 $\phi$ 编码后入栈。$\sigma' = \text{encode}(\sigma')$。✓
+- **字面量（LIT）**：HIR 推入值 $v:t$。WASM 端 `compile_literal`（[`compile.rs:113-116`](../../tenth/src/compile/wasm/compile.rs)）生成对应 `i64.const` / `f64.const` / `i32.const` 指令。值经 $\phi$ 编码后入栈。$\sigma' = \text{encode}(\sigma')$。✓
 
-- **变量读取（VAR）**：HIR 读取 $\rho(x)$。WASM 端 `local.get`（[`compile.rs:118-129`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)）。若 $x$ 是参数，类型由 $\phi$ 决定；若 $x$ 是局部变量，统一存储为 `i64`，读取时若 $\phi(t) = \texttt{f64}$ 则插入 `f64.reinterpret_i64`，若 $\phi(t) = \texttt{i32}$ 则插入 `i32.wrap_i64`。逆操作在写入时进行，故 $\sigma' = \text{encode}(\sigma')$。✓
+- **变量读取（VAR）**：HIR 读取 $\rho(x)$。WASM 端 `local.get`（[`compile.rs:118-129`](../../tenth/src/compile/wasm/compile.rs)）。若 $x$ 是参数，类型由 $\phi$ 决定；若 $x$ 是局部变量，统一存储为 `i64`，读取时若 $\phi(t) = \texttt{f64}$ 则插入 `f64.reinterpret_i64`，若 $\phi(t) = \texttt{i32}$ 则插入 `i32.wrap_i64`。逆操作在写入时进行，故 $\sigma' = \text{encode}(\sigma')$。✓
 
-- **字符串加法**：HIR 推入 $\text{str\_add}(a, b)$ 调用。WASM 端 `compile.rs:164-168` 生成 `call host.str_add`。host 实现（[`host.rs:52-74`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs)）从 WASM 内存读取 $a, b$，拼接后写回 WASM 内存，返回新指针。HIR 语义"拼接字符串"被精确模拟。✓
+- **字符串加法**：HIR 推入 $\text{str\_add}(a, b)$ 调用。WASM 端 `compile.rs:164-168` 生成 `call host.str_add`。host 实现（[`host.rs:52-74`](../../tenth/src/compile/wasm/host.rs)）从 WASM 内存读取 $a, b$，拼接后写回 WASM 内存，返回新指针。HIR 语义"拼接字符串"被精确模拟。✓
 
-- **结构体构造**：HIR `Struct::new` 在 $\rho$ 中创建结构体。WASM 端经 `tenth_alloc` 分配内存，`i64.store` 写入字段。`build_struct_layouts`（[`wasm/types.rs:13-38`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/types.rs)）保证字段偏移与 HIR 一致。✓
+- **结构体构造**：HIR `Struct::new` 在 $\rho$ 中创建结构体。WASM 端经 `tenth_alloc` 分配内存，`i64.store` 写入字段。`build_struct_layouts`（[`wasm/types.rs:13-38`](../../tenth/src/compile/wasm/types.rs)）保证字段偏移与 HIR 一致。✓
 
-- **Vec 操作**：HIR `Vec::push(v, item)` 对应 WASM `call host.Vec_push`（[`compile.rs:101`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)）。host 实现（[`host.rs:161-203`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs)）维护 Vec header（cap, len, dp），与 HIR 的 `Vec<T>` 语义对齐。✓
+- **Vec 操作**：HIR `Vec::push(v, item)` 对应 WASM `call host.Vec_push`（[`compile.rs:101`](../../tenth/src/compile/wasm/compile.rs)）。host 实现（[`host.rs:161-203`](../../tenth/src/compile/wasm/host.rs)）维护 Vec header（cap, len, dp），与 HIR 的 `Vec<T>` 语义对齐。✓
 
 - **分支与循环**：HIR `if` / `while` 对应 WASM `if`/`loop`/`block` 结构化控制流。控制流图保持。✓
 
 - **函数调用**：HIR `Call(f, args)` 对应 WASM `call`（用户函数）或 `call host.X`（host 函数）。参数经 $\phi$ 编码传递，返回值经 $\phi^{-1}$ 解码。✓
 
-- **闭包**：HIR `Closure` 对应 WASM `call_indirect` + 元素表 + 捕获环境结构体（[`sections.rs:124-158`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs)）。捕获变量通过 `env_ptr` 传递。✓
+- **闭包**：HIR `Closure` 对应 WASM `call_indirect` + 元素表 + 捕获环境结构体（[`sections.rs:124-158`](../../tenth/src/compile/wasm/sections.rs)）。捕获变量通过 `env_ptr` 传递。✓
 
-**(c) 终止对齐**：HIR main 返回 $v:t$。WASM main 经 `wrap_to_i32`（[`compile.rs:63-85`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs)）转换为 `i32` 退出码。退出码作为可观察行为的一部分。$\text{Obs}_{\text{HIR}}(\sigma_f) \equiv \text{Obs}_{\text{WASM}}(\sigma'_f)$。✓
+**(c) 终止对齐**：HIR main 返回 $v:t$。WASM main 经 `wrap_to_i32`（[`compile.rs:63-85`](../../tenth/src/compile/wasm/compile.rs)）转换为 `i32` 退出码。退出码作为可观察行为的一部分。$\text{Obs}_{\text{HIR}}(\sigma_f) \equiv \text{Obs}_{\text{WASM}}(\sigma'_f)$。✓
 
-**注意**：本证明是**弱双模拟**——只证明 HIR→WASM 单向，不证明 WASM→HIR。原因是 host 副作用（如 `compile_host` 调用 Rust 编译器写文件）在 WASM→HIR 方向不可逆（[`host.rs:207-230`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs)）。这是 Tenth 模式的固有局限（§9.4）。
+**注意**：本证明是**弱双模拟**——只证明 HIR→WASM 单向，不证明 WASM→HIR。原因是 host 副作用（如 `compile_host` 调用 Rust 编译器写文件）在 WASM→HIR 方向不可逆（[`host.rs:207-230`](../../tenth/src/compile/wasm/host.rs)）。这是 Tenth 模式的固有局限（§9.4）。
 
 由 (a)(b)(c)，对任意 HIR 终止执行，存在 WASM 执行使得可观察行为等价。$\square$
 
@@ -332,17 +332,17 @@ $\phi(\text{Unit}) = \bot$，不传递值。$\phi(t_2) \neq \bot$。可区分。
 
 **类别 A：字符串操作**
 
-HIR `Str` 类型的操作（由 [`types.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs) 与 `lower.rs` 隐含定义）：
+HIR `Str` 类型的操作（由 [`types.rs`](../../tenth/src/hir/types.rs) 与 `lower.rs` 隐含定义）：
 
 | HIR 操作 | host import | 源码 |
 |---------|-------------|------|
-| 字符串拼接 `s1 + s2` | `h_3 = str_add` | [`host.rs:52-74`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 字符串相等 `s1 == s2` | `h_4 = str_eq` | [`host.rs:76-85`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 整数转字符串 | `h_5 = str_int` | [`host.rs:87-99`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 字符串长度 | `h_{12} = str_len` | [`host.rs:233-239`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 字符串索引 `s[i]` | `h_{13} = str_at` | [`host.rs:244-275`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 字符串比较 `<, >, <=, >=` | `h_{14} = str_cmp` | [`host.rs:278-297`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 字符串切片 `s[a..b]` | `h_{16} = str_slice` | [`host.rs:306-335`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
+| 字符串拼接 `s1 + s2` | `h_3 = str_add` | [`host.rs:52-74`](../../tenth/src/compile/wasm/host.rs) |
+| 字符串相等 `s1 == s2` | `h_4 = str_eq` | [`host.rs:76-85`](../../tenth/src/compile/wasm/host.rs) |
+| 整数转字符串 | `h_5 = str_int` | [`host.rs:87-99`](../../tenth/src/compile/wasm/host.rs) |
+| 字符串长度 | `h_{12} = str_len` | [`host.rs:233-239`](../../tenth/src/compile/wasm/host.rs) |
+| 字符串索引 `s[i]` | `h_{13} = str_at` | [`host.rs:244-275`](../../tenth/src/compile/wasm/host.rs) |
+| 字符串比较 `<, >, <=, >=` | `h_{14} = str_cmp` | [`host.rs:278-297`](../../tenth/src/compile/wasm/host.rs) |
+| 字符串切片 `s[a..b]` | `h_{16} = str_slice` | [`host.rs:306-335`](../../tenth/src/compile/wasm/host.rs) |
 
 字符串操作覆盖完整。✓
 
@@ -350,7 +350,7 @@ HIR `Str` 类型的操作（由 [`types.rs`](file:///d:/史蒂夫/Desktop/AI开�
 
 | HIR 操作 | host import | 源码 |
 |---------|-------------|------|
-| 通用分配（结构体等） | `h_6 = tenth_alloc` | [`host.rs:102-117`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
+| 通用分配（结构体等） | `h_6 = tenth_alloc` | [`host.rs:102-117`](../../tenth/src/compile/wasm/host.rs) |
 
 `tenth_alloc` 是 bump allocator，所有结构体、字符串缓冲、Vec header 等的内存都通过它分配。✓
 
@@ -360,10 +360,10 @@ HIR `Vec<T>` 是 Generic 类型，塌缩为 `i64` 指针。其操作通过 host 
 
 | HIR 操作 | host import | 源码 |
 |---------|-------------|------|
-| `Vec::new()` | `h_7 = Vec_new` | [`host.rs:120-133`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| `Vec::push(v, x)` | `h_8 = Vec_push` | [`host.rs:161-203`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| `Vec::len(v)` | `h_9 = Vec_len` | [`host.rs:136-144`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| `Vec::get(v, i)` | `h_{10} = Vec_get` | [`host.rs:147-158`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
+| `Vec::new()` | `h_7 = Vec_new` | [`host.rs:120-133`](../../tenth/src/compile/wasm/host.rs) |
+| `Vec::push(v, x)` | `h_8 = Vec_push` | [`host.rs:161-203`](../../tenth/src/compile/wasm/host.rs) |
+| `Vec::len(v)` | `h_9 = Vec_len` | [`host.rs:136-144`](../../tenth/src/compile/wasm/host.rs) |
+| `Vec::get(v, i)` | `h_{10} = Vec_get` | [`host.rs:147-158`](../../tenth/src/compile/wasm/host.rs) |
 
 Vec 操作覆盖完整。✓
 
@@ -371,9 +371,9 @@ Vec 操作覆盖完整。✓
 
 | HIR 操作 | host import | 源码 |
 |---------|-------------|------|
-| 标准输出 `println` | `h_0 = println` | [`host.rs:9-14`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 文件写 `write_file` | `h_1 = write_file` | [`host.rs:16-25`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 文件读 `read_file` | `h_2 = read_file` | [`host.rs:28-50`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
+| 标准输出 `println` | `h_0 = println` | [`host.rs:9-14`](../../tenth/src/compile/wasm/host.rs) |
+| 文件写 `write_file` | `h_1 = write_file` | [`host.rs:16-25`](../../tenth/src/compile/wasm/host.rs) |
+| 文件读 `read_file` | `h_2 = read_file` | [`host.rs:28-50`](../../tenth/src/compile/wasm/host.rs) |
 
 I/O 覆盖完整。✓
 
@@ -381,7 +381,7 @@ I/O 覆盖完整。✓
 
 | HIR 操作 | host import | 源码 |
 |---------|-------------|------|
-| `f64` 转 IEEE 754 位模式 | `h_{15} = f64_bits` | [`host.rs:300-303`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
+| `f64` 转 IEEE 754 位模式 | `h_{15} = f64_bits` | [`host.rs:300-303`](../../tenth/src/compile/wasm/host.rs) |
 
 `f64_bits` 是 host 边界 reinterp 的关键：当 `f64` 需要存入 `i64` 局部变量时，先调 `f64_bits` 转为 `i64`。✓
 
@@ -389,7 +389,7 @@ I/O 覆盖完整。✓
 
 | HIR 操作 | host import | 源码 |
 |---------|-------------|------|
-| 调用 Rust 母编译器编译字符串 | `h_{11} = compile_host` | [`host.rs:207-230`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
+| 调用 Rust 母编译器编译字符串 | `h_{11} = compile_host` | [`host.rs:207-230`](../../tenth/src/compile/wasm/host.rs) |
 
 `compile_host` 实现了"在 WASM 内编译 Tenth 源码"的能力——这是路径 C 全 WASM 闭环的关键（与 T12 §6.4 联动）。✓
 
@@ -397,9 +397,9 @@ I/O 覆盖完整。✓
 
 | HIR 操作 | host import | 源码 |
 |---------|-------------|------|
-| `Tensor::from_vec` | `h_{17} = tensor_from_vec` | [`host.rs:340-343`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
+| `Tensor::from_vec` | `h_{17} = tensor_from_vec` | [`host.rs:340-343`](../../tenth/src/compile/wasm/host.rs) |
 
-**v1.2 修正**：源码注释明确写道"Simplified: return total element count (len) as the tensor handle. This provides a deterministic value for parity testing."（[`host.rs:338-339`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs)）。`tensor_from_vec` **不实际构造张量**，仅返回元素数。这是 W3 的反例——张量操作未完备桥接。
+**v1.2 修正**：源码注释明确写道"Simplified: return total element count (len) as the tensor handle. This provides a deterministic value for parity testing."（[`host.rs:338-339`](../../tenth/src/compile/wasm/host.rs)）。`tensor_from_vec` **不实际构造张量**，仅返回元素数。这是 W3 的反例——张量操作未完备桥接。
 
 **定理 W3'（修正版）**：在 W1 假设下，**且排除 HIR 程序中的 `Tensor` 类型操作**，18 个 host import 覆盖 HIR 所需的全部 heap 操作。$\square$
 
@@ -429,19 +429,19 @@ I/O 覆盖完整。✓
 
 2. **类型信息位置**：Emscripten/AssemblyScript 在编译期丢弃类型信息（lowering 后只剩偏移与字节）；Tenth 在运行时**通过 host 重新引入类型信息**（host 知道指针指向的是字符串还是结构体，因为 host 实现了相应操作）。
 
-3. **ABI 稳定性**：Tenth 的 ABI 仅由 18 个 host import 签名决定，扩展时只需追加 import（[`mod.rs:64-71`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) 注释明确说明这一点）；Emscripten 的 ABI 受 C++ name mangling、虚表布局、STL 实现等多重因素影响。
+3. **ABI 稳定性**：Tenth 的 ABI 仅由 18 个 host import 签名决定，扩展时只需追加 import（[`mod.rs:64-71`](../../tenth/src/compile/wasm/mod.rs) 注释明确说明这一点）；Emscripten 的 ABI 受 C++ name mangling、虚表布局、STL 实现等多重因素影响。
 
-4. **自举闭环**：Tenth 通过 `compile_host`（[`host.rs:207-230`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs)）允许 WASM 内调用 Rust 母编译器，这是路径 C 全 WASM 闭环的关键能力；Emscripten/AssemblyScript 不支持。
+4. **自举闭环**：Tenth 通过 `compile_host`（[`host.rs:207-230`](../../tenth/src/compile/wasm/host.rs)）允许 WASM 内调用 Rust 母编译器，这是路径 C 全 WASM 闭环的关键能力；Emscripten/AssemblyScript 不支持。
 
 5. **代价**：Tenth 的代价是**可移植性受限**——Tenth 编译的 WASM 必须配 Tenth 的 host 才能运行，不能在任意 WASM 运行时执行。这是"AI 原生 + 自举"目标的必然取舍。
 
-**证明**：上述对比基于公开文档（[Emscripten docs](https://emscripten.org/)、[AssemblyScript docs](https://www.assemblyscript.org/)）与 Tenth 源码的逐一对照。维度 1-10 由 §3 与 §7 的源码分析直接支持。维度 11（自举闭环）由 [`host.rs:207-230`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) 中 `compile_host` 的存在与实现支持。$\square$
+**证明**：上述对比基于公开文档（[Emscripten docs](https://emscripten.org/)、[AssemblyScript docs](https://www.assemblyscript.org/)）与 Tenth 源码的逐一对照。维度 1-10 由 §3 与 §7 的源码分析直接支持。维度 11（自举闭环）由 [`host.rs:207-230`](../../tenth/src/compile/wasm/host.rs) 中 `compile_host` 的存在与实现支持。$\square$
 
 ### 5.5 定理 W5（自动推导 host 边界 import 集，未来工作）
 
 **定理 W5（声明）**：存在一个算法 $\mathcal{A}$，输入 HIR 程序 $P$，输出 host import 集 $\mathcal{H}_P \subseteq \mathcal{H}$，使得 $\mathcal{H}_P$ 是 $P$ 实际调用的 host import 集的精确刻画（既不过多也不过少）。
 
-**v1.4 备注**：本定理**仅声明存在性，不给完整算法**，标注为未来工作。当前手工维护 18 个常量（[`mod.rs:71-89`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs)）。
+**v1.4 备注**：本定理**仅声明存在性，不给完整算法**，标注为未来工作。当前手工维护 18 个常量（[`mod.rs:71-89`](../../tenth/src/compile/wasm/mod.rs)）。
 
 **算法草图**：
 
@@ -455,7 +455,7 @@ I/O 覆盖完整。✓
 - **闭包内调用**：闭包捕获的变量若调用 host，需通过 `call_indirect` 追踪。
 - **动态分发**：HIR 若支持 trait/dyn，需 vtable 分析。
 
-**与 T22 联动**：T22（[`docs/论文/T22-Closure自由变量分析正确性.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T22-Closure自由变量分析正确性.md)）的闭包自由变量分析可作为 $\mathcal{A}$ 的子模块。
+**与 T22 联动**：T22（[`docs/论文/T22-Closure自由变量分析正确性.md`](T22-Closure自由变量分析正确性.md)）的闭包自由变量分析可作为 $\mathcal{A}$ 的子模块。
 
 $\square$
 
@@ -463,26 +463,26 @@ $\square$
 
 ## 6. 16 种 BaseType → 4 种 WASM 值类型逐一映射
 
-下表逐一列出 [`hir/types.rs:3-10`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs) 中所有 16 种 `BaseType` 经 $\phi$ 的映射：
+下表逐一列出 [`hir/types.rs:3-10`](../../tenth/src/hir/types.rs) 中所有 16 种 `BaseType` 经 $\phi$ 的映射：
 
 | # | BaseType | $\phi$ 输出 | 机制 | 源码分支 | 备注 |
 |---|----------|------------|------|---------|------|
-| 1 | `I8` | `i64` | 保留（符号扩展） | [`mod.rs:25`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | 整数统一 64 位 |
-| 2 | `I16` | `i64` | 保留 | [`mod.rs:25`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | 同上 |
-| 3 | `I32` | `i64` | 保留 | [`mod.rs:25`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | 同上 |
-| 4 | `I64` | `i64` | 保留 | [`mod.rs:25`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | 同上 |
-| 5 | `U8` | $\bot$ | **未显式处理** | [`mod.rs:30, 37`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) `_ => None` | **v1.1 修正**：实际落入 `_` 分支 |
+| 1 | `I8` | `i64` | 保留（符号扩展） | [`mod.rs:25`](../../tenth/src/compile/wasm/mod.rs) | 整数统一 64 位 |
+| 2 | `I16` | `i64` | 保留 | [`mod.rs:25`](../../tenth/src/compile/wasm/mod.rs) | 同上 |
+| 3 | `I32` | `i64` | 保留 | [`mod.rs:25`](../../tenth/src/compile/wasm/mod.rs) | 同上 |
+| 4 | `I64` | `i64` | 保留 | [`mod.rs:25`](../../tenth/src/compile/wasm/mod.rs) | 同上 |
+| 5 | `U8` | $\bot$ | **未显式处理** | [`mod.rs:30, 37`](../../tenth/src/compile/wasm/mod.rs) `_ => None` | **v1.1 修正**：实际落入 `_` 分支 |
 | 6 | `U16` | $\bot$ | **未显式处理** | 同上 | 同上 |
 | 7 | `U32` | $\bot$ | **未显式处理** | 同上 | 同上 |
 | 8 | `U64` | $\bot$ | **未显式处理** | 同上 | 同上 |
 | 9 | `F16` | $\bot$ | **未显式处理** | 同上 | 同上 |
-| 10 | `F32` | `f64` | 保留（精度提升） | [`mod.rs:26`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | F32 提升为 F64 |
-| 11 | `F64` | `f64` | 保留 | [`mod.rs:26`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | |
-| 12 | `BF16` | $\bot$ | **未显式处理** | [`mod.rs:30, 37`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | BF16 无 WASM 对应 |
-| 13 | `Bool` | `i32` | 保留 | [`mod.rs:27`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | WASM i32 表示 0/1 |
-| 14 | `Char` | $\bot$ | **未显式处理** | [`mod.rs:30, 37`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | Char 暂未桥接 |
-| 15 | `Str` | `i64` | 指针化 | [`mod.rs:28`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | 字符串由 host 管理 |
-| 16 | `Unit` | $\bot$ | 丢弃 | [`mod.rs:29`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | 不传递值 |
+| 10 | `F32` | `f64` | 保留（精度提升） | [`mod.rs:26`](../../tenth/src/compile/wasm/mod.rs) | F32 提升为 F64 |
+| 11 | `F64` | `f64` | 保留 | [`mod.rs:26`](../../tenth/src/compile/wasm/mod.rs) | |
+| 12 | `BF16` | $\bot$ | **未显式处理** | [`mod.rs:30, 37`](../../tenth/src/compile/wasm/mod.rs) | BF16 无 WASM 对应 |
+| 13 | `Bool` | `i32` | 保留 | [`mod.rs:27`](../../tenth/src/compile/wasm/mod.rs) | WASM i32 表示 0/1 |
+| 14 | `Char` | $\bot$ | **未显式处理** | [`mod.rs:30, 37`](../../tenth/src/compile/wasm/mod.rs) | Char 暂未桥接 |
+| 15 | `Str` | `i64` | 指针化 | [`mod.rs:28`](../../tenth/src/compile/wasm/mod.rs) | 字符串由 host 管理 |
+| 16 | `Unit` | $\bot$ | 丢弃 | [`mod.rs:29`](../../tenth/src/compile/wasm/mod.rs) | 不传递值 |
 
 **统计**：
 - 显式映射：9 种（I8/I16/I32/I64/F32/F64/Bool/Str/Unit）
@@ -490,7 +490,7 @@ $\square$
 - 真正"无对应"：6 种（U8-U64 + F16 + BF16，理论上应映射到 i64/f64，但被遗漏）
 - 应有专门处理：1 种（Char，可能需要 host 桥接，类似 Str）
 
-**复合类型映射**（来自 [`mod.rs:32-37`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs)）：
+**复合类型映射**（来自 [`mod.rs:32-37`](../../tenth/src/compile/wasm/mod.rs)）：
 
 | 复合类型 | $\phi$ 输出 | 备注 |
 |---------|------------|------|
@@ -510,28 +510,28 @@ $\square$
 
 ## 7. 18 个 host import 的功能分析
 
-下表逐一列出 18 个 host import（[`mod.rs:71-89`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs)）：
+下表逐一列出 18 个 host import（[`mod.rs:71-89`](../../tenth/src/compile/wasm/mod.rs)）：
 
 | # | 常量名 | host 函数 | 签名 | 功能 | 源码 |
 |---|--------|----------|------|------|------|
-| 0 | `HOST_PRINTLN` | `host.println` | `(i32) -> ()` | 打印 null 终止字符串到 stdout | [`host.rs:9-14`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 1 | `HOST_WRITE_FILE` | `host.write_file` | `(i32, i32) -> ()` | 写文件（路径指针 + 内容指针） | [`host.rs:16-25`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 2 | `HOST_READ_FILE` | `host.read_file` | `(i32) -> i32` | 读文件，返回内容指针 | [`host.rs:28-50`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 3 | `HOST_STR_ADD` | `host.str_add` | `(i32, i32) -> i32` | 字符串拼接 | [`host.rs:52-74`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 4 | `HOST_STR_EQ` | `host.str_eq` | `(i32, i32) -> i32` | 字符串相等比较 | [`host.rs:76-85`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 5 | `HOST_STR_INT` | `host.str_int` | `(i64) -> i32` | 整数转字符串 | [`host.rs:87-99`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 6 | `HOST_TENTH_ALLOC` | `host.tenth_alloc` | `(i32) -> i32` | bump 分配 size 字节 | [`host.rs:102-117`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 7 | `HOST_VEC_NEW` | `host.Vec_new` | `() -> i64` | 创建空 Vec（24 字节 header） | [`host.rs:120-133`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 8 | `HOST_VEC_PUSH` | `host.Vec_push` | `(i64, i64) -> i64` | Vec 追加元素 | [`host.rs:161-203`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 9 | `HOST_VEC_LEN` | `host.Vec_len` | `(i64) -> i64` | Vec 长度 | [`host.rs:136-144`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 10 | `HOST_VEC_GET` | `host.Vec_get` | `(i64, i64) -> i64` | Vec 索引访问 | [`host.rs:147-158`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 11 | `HOST_COMPILE_HOST` | `host.compile_host` | `(i32, i32) -> i32` | **调用 Rust 母编译器** | [`host.rs:207-230`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 12 | `HOST_STR_LEN` | `host.str_len` | `(i32) -> i32` | 字符串长度 | [`host.rs:233-239`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 13 | `HOST_STR_AT` | `host.str_at` | `(i32, i64) -> i32` | 字符串索引（返回单字符指针） | [`host.rs:244-275`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 14 | `HOST_STR_CMP` | `host.str_cmp` | `(i32, i32, i32) -> i32` | 字符串比较（op, a, b） | [`host.rs:278-297`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 15 | `HOST_F64_BITS` | `host.f64_bits` | `(f64) -> i64` | **f64 → IEEE 754 位模式** | [`host.rs:300-303`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 16 | `HOST_STR_SLICE` | `host.str_slice` | `(i32, i64, i64) -> i32` | 字符串切片 | [`host.rs:306-335`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
-| 17 | `HOST_TENSOR_FROM_VEC` | `host.tensor_from_vec` | `(i32, i32, i32) -> i64` | **stub**：返回元素数 | [`host.rs:340-343`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) |
+| 0 | `HOST_PRINTLN` | `host.println` | `(i32) -> ()` | 打印 null 终止字符串到 stdout | [`host.rs:9-14`](../../tenth/src/compile/wasm/host.rs) |
+| 1 | `HOST_WRITE_FILE` | `host.write_file` | `(i32, i32) -> ()` | 写文件（路径指针 + 内容指针） | [`host.rs:16-25`](../../tenth/src/compile/wasm/host.rs) |
+| 2 | `HOST_READ_FILE` | `host.read_file` | `(i32) -> i32` | 读文件，返回内容指针 | [`host.rs:28-50`](../../tenth/src/compile/wasm/host.rs) |
+| 3 | `HOST_STR_ADD` | `host.str_add` | `(i32, i32) -> i32` | 字符串拼接 | [`host.rs:52-74`](../../tenth/src/compile/wasm/host.rs) |
+| 4 | `HOST_STR_EQ` | `host.str_eq` | `(i32, i32) -> i32` | 字符串相等比较 | [`host.rs:76-85`](../../tenth/src/compile/wasm/host.rs) |
+| 5 | `HOST_STR_INT` | `host.str_int` | `(i64) -> i32` | 整数转字符串 | [`host.rs:87-99`](../../tenth/src/compile/wasm/host.rs) |
+| 6 | `HOST_TENTH_ALLOC` | `host.tenth_alloc` | `(i32) -> i32` | bump 分配 size 字节 | [`host.rs:102-117`](../../tenth/src/compile/wasm/host.rs) |
+| 7 | `HOST_VEC_NEW` | `host.Vec_new` | `() -> i64` | 创建空 Vec（24 字节 header） | [`host.rs:120-133`](../../tenth/src/compile/wasm/host.rs) |
+| 8 | `HOST_VEC_PUSH` | `host.Vec_push` | `(i64, i64) -> i64` | Vec 追加元素 | [`host.rs:161-203`](../../tenth/src/compile/wasm/host.rs) |
+| 9 | `HOST_VEC_LEN` | `host.Vec_len` | `(i64) -> i64` | Vec 长度 | [`host.rs:136-144`](../../tenth/src/compile/wasm/host.rs) |
+| 10 | `HOST_VEC_GET` | `host.Vec_get` | `(i64, i64) -> i64` | Vec 索引访问 | [`host.rs:147-158`](../../tenth/src/compile/wasm/host.rs) |
+| 11 | `HOST_COMPILE_HOST` | `host.compile_host` | `(i32, i32) -> i32` | **调用 Rust 母编译器** | [`host.rs:207-230`](../../tenth/src/compile/wasm/host.rs) |
+| 12 | `HOST_STR_LEN` | `host.str_len` | `(i32) -> i32` | 字符串长度 | [`host.rs:233-239`](../../tenth/src/compile/wasm/host.rs) |
+| 13 | `HOST_STR_AT` | `host.str_at` | `(i32, i64) -> i32` | 字符串索引（返回单字符指针） | [`host.rs:244-275`](../../tenth/src/compile/wasm/host.rs) |
+| 14 | `HOST_STR_CMP` | `host.str_cmp` | `(i32, i32, i32) -> i32` | 字符串比较（op, a, b） | [`host.rs:278-297`](../../tenth/src/compile/wasm/host.rs) |
+| 15 | `HOST_F64_BITS` | `host.f64_bits` | `(f64) -> i64` | **f64 → IEEE 754 位模式** | [`host.rs:300-303`](../../tenth/src/compile/wasm/host.rs) |
+| 16 | `HOST_STR_SLICE` | `host.str_slice` | `(i32, i64, i64) -> i32` | 字符串切片 | [`host.rs:306-335`](../../tenth/src/compile/wasm/host.rs) |
+| 17 | `HOST_TENSOR_FROM_VEC` | `host.tensor_from_vec` | `(i32, i32, i32) -> i64` | **stub**：返回元素数 | [`host.rs:340-343`](../../tenth/src/compile/wasm/host.rs) |
 
 **按功能分类**：
 
@@ -543,7 +543,7 @@ $\square$
 - **自举**（1 个）：#11
 - **张量**（1 个，stub）：#17
 
-**注意**：#15 `f64_bits` 是关键的 reinterp host——它把 `f64` 转为 `i64` 位模式，使得 `f64` 值可存入 `i64` 局部变量（[`compile.rs:28`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs) 表明所有局部变量统一为 `i64`）。这是 Tenth 模式下"局部变量无类型化"的关键。
+**注意**：#15 `f64_bits` 是关键的 reinterp host——它把 `f64` 转为 `i64` 位模式，使得 `f64` 值可存入 `i64` 局部变量（[`compile.rs:28`](../../tenth/src/compile/wasm/compile.rs) 表明所有局部变量统一为 `i64`）。这是 Tenth 模式下"局部变量无类型化"的关键。
 
 ---
 
@@ -551,7 +551,7 @@ $\square$
 
 ### 8.1 ABI 稳定性
 
-Tenth 的 ABI 由 [`sections.rs:26-44`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs) 显式定义的 18 个 type signature 决定。新增 host import 只需在 [`mod.rs:71-89`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) 追加常量 + [`sections.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs) 追加 type + [`host.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) 追加实现。[`mod.rs:64-71`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) 注释明确说："Adding a new host import only requires appending a `HOST_*` constant below and registering the matching type+import in `sections.rs` (and the implementation in `host.rs`). `IMPORT_COUNT` is derived from the last index, so it stays in sync automatically."
+Tenth 的 ABI 由 [`sections.rs:26-44`](../../tenth/src/compile/wasm/sections.rs) 显式定义的 18 个 type signature 决定。新增 host import 只需在 [`mod.rs:71-89`](../../tenth/src/compile/wasm/mod.rs) 追加常量 + [`sections.rs`](../../tenth/src/compile/wasm/sections.rs) 追加 type + [`host.rs`](../../tenth/src/compile/wasm/host.rs) 追加实现。[`mod.rs:64-71`](../../tenth/src/compile/wasm/mod.rs) 注释明确说："Adding a new host import only requires appending a `HOST_*` constant below and registering the matching type+import in `sections.rs` (and the implementation in `host.rs`). `IMPORT_COUNT` is derived from the last index, so it stays in sync automatically."
 
 Emscripten 的 ABI 受多重因素影响：C++ ABI（itanium ABI）、STL 实现版本、Emscripten 自身版本、`-s ENVIRONMENT=` 选项等。版本升级常需重新编译所有依赖。
 
@@ -571,7 +571,7 @@ AssemblyScript 的"hello world"约 5-10 KB。
 
 ### 8.4 自举闭环支持
 
-Tenth 通过 `compile_host`（#11）允许 WASM 内调用 Rust 母编译器——这是路径 C 全 WASM 闭环的关键（[T12 §6.4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T12-双侧编译器语义等价性.md)）。Emscripten/AssemblyScript 不支持"在 WASM 内调用宿主编译器"。
+Tenth 通过 `compile_host`（#11）允许 WASM 内调用 Rust 母编译器——这是路径 C 全 WASM 闭环的关键（[T12 §6.4](T12-双侧编译器语义等价性.md)）。Emscripten/AssemblyScript 不支持"在 WASM 内调用宿主编译器"。
 
 ### 8.5 数据可见性
 
@@ -593,7 +593,7 @@ Emscripten/AssemblyScript 在 WASM 内部完成 heap 操作，无边界切换开
 
 ### 9.1 7 种 BaseType 未显式处理
 
-**是什么**：[`mod.rs:30, 37`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) 的 `_ => None` 分支捕获了 U8/U16/U32/U64/F16/BF16/Char 共 7 种 `BaseType`，使它们映射为 $\bot$，触发 `to_val_type_required` 时报错。
+**是什么**：[`mod.rs:30, 37`](../../tenth/src/compile/wasm/mod.rs) 的 `_ => None` 分支捕获了 U8/U16/U32/U64/F16/BF16/Char 共 7 种 `BaseType`，使它们映射为 $\bot$，触发 `to_val_type_required` 时报错。
 
 **影响**：HIR 程序若使用这 7 种类型在参数或返回位置，WASM 编译会失败。但 Tenth 标准库可能隐式使用 U8（如字节缓冲）、Char（如字符处理）——这些程序当前**不能编译为 WASM**。
 
@@ -614,7 +614,7 @@ Emscripten/AssemblyScript 在 WASM 内部完成 heap 操作，无边界切换开
 
 ### 9.3 `tensor_from_vec` 是 stub
 
-**是什么**：[`host.rs:340-343`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) 的 `tensor_from_vec` 不实际构造张量，仅返回元素数。源码注释明确："Simplified: return total element count (len) as the tensor handle. This provides a deterministic value for parity testing."
+**是什么**：[`host.rs:340-343`](../../tenth/src/compile/wasm/host.rs) 的 `tensor_from_vec` 不实际构造张量，仅返回元素数。源码注释明确："Simplified: return total element count (len) as the tensor handle. This provides a deterministic value for parity testing."
 
 **影响**：W3 在张量操作上**不成立**——张量算子（如 matmul、broadcast）在 WASM 后端**不可用**。W1 的"支持子集"必须排除 `Tensor` 类型。
 
@@ -636,7 +636,7 @@ Emscripten/AssemblyScript 在 WASM 内部完成 heap 操作，无边界切换开
 
 ### 9.5 闭包的 `call_indirect` 与类型擦除
 
-**是什么**：[`sections.rs:124-158`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/sections.rs) 中闭包类型统一为 `(i64 env_ptr, i64 param1, ..., i64 paramN) -> i64`——所有参数被擦除为 `i64`。这意味着闭包调用时**无类型检查**：若调用者传入错误类型的参数，WASM 不会报错，host 端会读到错误数据。
+**是什么**：[`sections.rs:124-158`](../../tenth/src/compile/wasm/sections.rs) 中闭包类型统一为 `(i64 env_ptr, i64 param1, ..., i64 paramN) -> i64`——所有参数被擦除为 `i64`。这意味着闭包调用时**无类型检查**：若调用者传入错误类型的参数，WASM 不会报错，host 端会读到错误数据。
 
 **影响**：W2 的"塌缩健全性"在闭包边界**部分失效**——HIR 类型检查保证闭包调用类型正确，但 WASM 层无运行时检查。
 
@@ -646,7 +646,7 @@ Emscripten/AssemblyScript 在 WASM 内部完成 heap 操作，无边界切换开
 
 ### 9.6 局部变量统一为 `i64` 的精度漂移
 
-**是什么**：[`compile.rs:28`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/compile.rs) 表明所有局部变量统一为 `i64`。`f64` 值存入局部变量时，需先调 `f64_bits` 转 `i64`，读取时用 `f64.reinterpret_i64` 转回。这一过程**理论上是位保真的**（IEEE 754 位模式 ↔ i64），但若 host `f64_bits` 实现错误，会引入静默精度漂移。
+**是什么**：[`compile.rs:28`](../../tenth/src/compile/wasm/compile.rs) 表明所有局部变量统一为 `i64`。`f64` 值存入局部变量时，需先调 `f64_bits` 转 `i64`，读取时用 `f64.reinterpret_i64` 转回。这一过程**理论上是位保真的**（IEEE 754 位模式 ↔ i64），但若 host `f64_bits` 实现错误，会引入静默精度漂移。
 
 **影响**：W1 在浮点数计算上**依赖 `f64_bits` 实现正确性**——这一假设未被形式化证明。
 
@@ -657,7 +657,7 @@ Emscripten/AssemblyScript 在 WASM 内部完成 heap 操作，无边界切换开
 
 ### 9.7 host panic 的未定义行为
 
-**是什么**：W1 假设"host 函数不抛 panic"。但 [`host.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) 中多处使用 `unwrap`、`unwrap_or`、`unwrap_or(0)` 等，若输入异常（如指针越界），可能 panic。WASM↔host 边界的 panic 行为**依赖 wasmi 实现**。
+**是什么**：W1 假设"host 函数不抛 panic"。但 [`host.rs`](../../tenth/src/compile/wasm/host.rs) 中多处使用 `unwrap`、`unwrap_or`、`unwrap_or(0)` 等，若输入异常（如指针越界），可能 panic。WASM↔host 边界的 panic 行为**依赖 wasmi 实现**。
 
 **影响**：若 host panic，WASM 模块可能进入未定义状态，W1 不再成立。
 
@@ -668,12 +668,12 @@ Emscripten/AssemblyScript 在 WASM 内部完成 heap 操作，无边界切换开
 
 ### 9.8 W3 的不完备性：未覆盖的复合类型操作
 
-**是什么**：W3 排除了 `Tensor` / `Array` / `FnType` / `Enum` / `Tuple` 五种复合类型。这些类型在 `to_val_type` 中映射为 $\bot$（[`mod.rs:37`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) `_ => None`）。
+**是什么**：W3 排除了 `Tensor` / `Array` / `FnType` / `Enum` / `Tuple` 五种复合类型。这些类型在 `to_val_type` 中映射为 $\bot$（[`mod.rs:37`](../../tenth/src/compile/wasm/mod.rs) `_ => None`）。
 
 **影响**：HIR 程序若使用这些类型在参数或返回位置，WASM 编译失败。其中：
 - `Array(T)`：应可通过 `Vec<T>` 桥接，但未实现。
 - `Tuple(types)`：应可通过结构体化 + 字段偏移实现，但未实现。
-- `Enum(name)`：enum 已有布局（[`wasm/types.rs:25-37`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/types.rs)），但 enum 值本身的传递未明确。
+- `Enum(name)`：enum 已有布局（[`wasm/types.rs:25-37`](../../tenth/src/compile/wasm/types.rs)），但 enum 值本身的传递未明确。
 - `FnType`：闭包有专门机制（D5），但函数指针传递未明确。
 
 **如何缓解**：
@@ -687,7 +687,7 @@ Emscripten/AssemblyScript 在 WASM 内部完成 heap 操作，无边界切换开
 
 ### 10.1 T12 路径 C 的依赖关系
 
-[T12](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T12-双侧编译器语义等价性.md) §6.4 定义路径 C（全 WASM 闭环）：tenthc 用 Tenth 编写 → 编译为 WASM → wasmi 执行 → 在 WASM 内调用 `compile_host`（#11）编译 Tenth 源码 → 写出 `.wasm` 文件。
+[T12](T12-双侧编译器语义等价性.md) §6.4 定义路径 C（全 WASM 闭环）：tenthc 用 Tenth 编写 → 编译为 WASM → wasmi 执行 → 在 WASM 内调用 `compile_host`（#11）编译 Tenth 源码 → 写出 `.wasm` 文件。
 
 路径 C 的语义等价性依赖本文的：
 
@@ -703,7 +703,7 @@ T12 §6.4 给出路径 C 闭环的形式化命题：**"路径 C 闭环等价 ⟺
 
 ### 10.3 与 T22 联动（闭包自由变量）
 
-W5 的自动推导算法 $\mathcal{A}$ 需要闭包自由变量分析作为子模块。T22（[`docs/论文/T22-Closure自由变量分析正确性.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T22-Closure自由变量分析正确性.md)）提供了这一分析的正确性证明，可作为 $\mathcal{A}$ 的基础。
+W5 的自动推导算法 $\mathcal{A}$ 需要闭包自由变量分析作为子模块。T22（[`docs/论文/T22-Closure自由变量分析正确性.md`](T22-Closure自由变量分析正确性.md)）提供了这一分析的正确性证明，可作为 $\mathcal{A}$ 的基础。
 
 ---
 
@@ -741,7 +741,7 @@ W5 的自动推导算法 $\mathcal{A}$ 需要闭包自由变量分析作为子�
 
 1. **优先修补 §9.1**：在 `to_val_type` 中显式添加 7 种 BaseType 映射。这是最小修补，可立即扩展"支持子集"。
 2. **修补 §9.3**：要么完整实现 `tensor_from_vec`，要么在 lowering 阶段显式报错。当前 stub 状态最危险（语义静默错误）。
-3. **修补 §9.7**：审查 [`host.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) 所有 `unwrap`，加 `catch_unwind` 包裹。
+3. **修补 §9.7**：审查 [`host.rs`](../../tenth/src/compile/wasm/host.rs) 所有 `unwrap`，加 `catch_unwind` 包裹。
 4. **测试用例设计**：基于 W1 的"支持子集"设计测试用例，覆盖所有显式映射的 BaseType × 所有 host import。
 5. **ABI 文档化**：将 18 个 host import 的签名、语义、局限写入 `docs/语言参考手册.md`。
 
@@ -792,10 +792,10 @@ W5 的自动推导算法 $\mathcal{A}$ 需要闭包自由变量分析作为子�
 7. McKinna, J., Pollack, R. *Some Lambda Calculus and Type Theory Formalized*. Journal of Automated Reasoning 23(3-4), 1999.
 8. Igarashi, A., Pierce, B. C., Wadler, P. *Featherweight Java: A Minimal Core Calculus for Java and GJ*. OOPSLA 1999.
 9. bytecodealliance. *wasm-tools: Rust utilities for WebAssembly*. https://github.com/bytecodealliance/wasm-tools
-10. Tenth 项目数理部. *双侧编译器的语义等价性：Tenth 自举编译器与 Rust 母编译器的形式化对比* (T12). 2026. [`docs/论文/T12-双侧编译器语义等价性.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T12-双侧编译器语义等价性.md)
-11. Tenth 项目数理部. *JIT 特化策略的语义保持证明* (T9). 2026. [`docs/论文/T9-JIT特化语义保持证明.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T9-JIT特化语义保持证明.md)
-12. Tenth 项目数理部. *Closure 自由变量分析正确性* (T22). 2026. [`docs/论文/T22-Closure自由变量分析正确性.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T22-Closure自由变量分析正确性.md)
-13. Tenth 项目数理部. *dtype 提升格与混合 dtype 算术* (T17). 2026. [`docs/论文/T17-dtype提升格与混合dtype算术.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T17-dtype提升格与混合dtype算术.md)
+10. Tenth 项目数理部. *双侧编译器的语义等价性：Tenth 自举编译器与 Rust 母编译器的形式化对比* (T12). 2026. [`docs/论文/T12-双侧编译器语义等价性.md`](T12-双侧编译器语义等价性.md)
+11. Tenth 项目数理部. *JIT 特化策略的语义保持证明* (T9). 2026. [`docs/论文/T9-JIT特化语义保持证明.md`](T9-JIT特化语义保持证明.md)
+12. Tenth 项目数理部. *Closure 自由变量分析正确性* (T22). 2026. [`docs/论文/T22-Closure自由变量分析正确性.md`](T22-Closure自由变量分析正确性.md)
+13. Tenth 项目数理部. *dtype 提升格与混合 dtype 算术* (T17). 2026. [`docs/论文/T17-dtype提升格与混合dtype算术.md`](T17-dtype提升格与混合dtype算术.md)
 
 ---
 
@@ -813,11 +813,11 @@ W5 的自动推导算法 $\mathcal{A}$ 需要闭包自由变量分析作为子�
 
 | 本文章节 | 对应文档 | 关系 |
 |---------|---------|------|
-| §3 类型塌缩形式化 | [`tenth/src/compile/wasm/mod.rs:22-59`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/mod.rs) | 形式化源码 |
-| §7 host import 分析 | [`tenth/src/compile/wasm/host.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) | 逐一对应 |
-| §10 与 T12 联动 | [T12 §6.4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T12-双侧编译器语义等价性.md) | 提供前提条件 |
-| §9.1 BaseType 局限 | [`tenth/src/hir/types.rs:3-10`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs) | 16 种 BaseType |
-| §9.3 tensor 局限 | [`tenth/src/compile/wasm/host.rs:338-339`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/wasm/host.rs) | stub 注释 |
+| §3 类型塌缩形式化 | [`tenth/src/compile/wasm/mod.rs:22-59`](../../tenth/src/compile/wasm/mod.rs) | 形式化源码 |
+| §7 host import 分析 | [`tenth/src/compile/wasm/host.rs`](../../tenth/src/compile/wasm/host.rs) | 逐一对应 |
+| §10 与 T12 联动 | [T12 §6.4](T12-双侧编译器语义等价性.md) | 提供前提条件 |
+| §9.1 BaseType 局限 | [`tenth/src/hir/types.rs:3-10`](../../tenth/src/hir/types.rs) | 16 种 BaseType |
+| §9.3 tensor 局限 | [`tenth/src/compile/wasm/host.rs:338-339`](../../tenth/src/compile/wasm/host.rs) | stub 注释 |
 
 ## 附录 C：实施建议清单
 

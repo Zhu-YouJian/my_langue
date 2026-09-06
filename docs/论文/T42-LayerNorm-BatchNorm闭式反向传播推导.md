@@ -10,7 +10,7 @@
 
 ## 摘要
 
-Tenth 在 [autodiff.rs L496-L596](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 将 `BatchNorm` 与 `LayerNorm` 实现为 Wengert tape 上的复合算子：前向阶段把归一化所需的中间值 `x_hat`、`std_inv`、`gamma`、`beta` 显式持久化到 `TapeNode::input_tensors`，反向阶段以**闭式解**（closed-form）一次性恢复对输入、`gamma`、`beta` 三组梯度，避免展开为 `Mean → Sub → Square → Mean → Add → Sqrt → Div → Mul → Add` 的基本算子链。其中 `LayerNorm` 反向采用了**手写的三层嵌套循环**（外层遍历行，内层两遍：先求 per-row 均值再求 per-row 梯度），相比 PyTorch `native_batch_norm_backward` 的 CUDA kernel 向量化实现更易教学化，同时内存局部性可控。
+Tenth 在 [autodiff.rs L496-L596](../../tenth/src/runtime/autodiff.rs) 将 `BatchNorm` 与 `LayerNorm` 实现为 Wengert tape 上的复合算子：前向阶段把归一化所需的中间值 `x_hat`、`std_inv`、`gamma`、`beta` 显式持久化到 `TapeNode::input_tensors`，反向阶段以**闭式解**（closed-form）一次性恢复对输入、`gamma`、`beta` 三组梯度，避免展开为 `Mean → Sub → Square → Mean → Add → Sqrt → Div → Mul → Add` 的基本算子链。其中 `LayerNorm` 反向采用了**手写的三层嵌套循环**（外层遍历行，内层两遍：先求 per-row 均值再求 per-row 梯度），相比 PyTorch `native_batch_norm_backward` 的 CUDA kernel 向量化实现更易教学化，同时内存局部性可控。
 
 本文形式化 Tenth 的 LayerNorm/BatchNorm 语义，证明五条主定理：
 
@@ -88,7 +88,7 @@ MXNet 的 `mx.nd.BatchNorm` 反向实现位于 [`mxnet/src/operator/nn/batch_nor
 
 ### 2.4 与 T39（Wengert Tape）的关系
 
-T39 定理 AD1 断言 Tenth 的 21 个 `TapeOp` 变体的 backward 实现逐一满足链式法则。但 T39 对 `BatchNorm`、`LayerNorm` 的"逐一验证"未给出完整数学推导，仅在 §6 列出算子表并标注"closed-form"。本文（T42）作为 T39 在归一化算子上的**深化**，给出 N1、N2 两条主定理的完整证明，填补 T39 在这两个算子上的推导空缺。同时，T39 定理 AD3 证明 `input_tensors` 持久化是复合算子闭式反向的必要条件——Tenth 的归一化算子持久化了 `x_hat`、`std_inv`、`gamma`、`beta` 四组中间值（[autodiff.rs L187, L205](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），正是这一必要性的实例化。
+T39 定理 AD1 断言 Tenth 的 21 个 `TapeOp` 变体的 backward 实现逐一满足链式法则。但 T39 对 `BatchNorm`、`LayerNorm` 的"逐一验证"未给出完整数学推导，仅在 §6 列出算子表并标注"closed-form"。本文（T42）作为 T39 在归一化算子上的**深化**，给出 N1、N2 两条主定理的完整证明，填补 T39 在这两个算子上的推导空缺。同时，T39 定理 AD3 证明 `input_tensors` 持久化是复合算子闭式反向的必要条件——Tenth 的归一化算子持久化了 `x_hat`、`std_inv`、`gamma`、`beta` 四组中间值（[autodiff.rs L187, L205](../../tenth/src/runtime/autodiff.rs)），正是这一必要性的实例化。
 
 ---
 
@@ -125,7 +125,7 @@ $$\sigma_c = \sqrt{\mathrm{var}_c + \epsilon}, \quad \mathrm{std\_inv}_c = \frac
 
 $$\hat x_{ck} = (x_{ck} - \mu_c) \cdot \mathrm{std\_inv}_c, \quad y_{ck} = \gamma_c \hat x_{ck} + \beta_c$$
 
-**注**：Tenth 实现使用 biased variance（[methods.rs L1218, L1074](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs) 与 [tensor.rs L970, L997](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），与 PyTorch `BatchNorm` 默认行为一致。
+**注**：Tenth 实现使用 biased variance（[methods.rs L1218, L1074](../../tenth/src/runtime/interpreter/methods.rs) 与 [tensor.rs L970, L997](../../tenth/src/runtime/tensor.rs)），与 PyTorch `BatchNorm` 默认行为一致。
 
 ### 3.3 上游梯度
 
@@ -150,7 +150,7 @@ $$\hat x_{ck} = (x_{ck} - \mu_c) \cdot \mathrm{std\_inv}_c, \quad y_{ck} = \gamm
 
 ### 4.1 TapeNode 数据结构
 
-Tenth 的归一化算子在 tape 上以 `TapeNode` 记录（[autodiff.rs L13-L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+Tenth 的归一化算子在 tape 上以 `TapeNode` 记录（[autodiff.rs L13-L25](../../tenth/src/runtime/autodiff.rs)）：
 
 ```rust
 pub struct TapeNode {
@@ -161,7 +161,7 @@ pub struct TapeNode {
 }
 ```
 
-`TapeOp::BatchNorm` 与 `TapeOp::LayerNorm` 的 `input_tensors` 在 [`autodiff.rs L187, L205`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 都按固定顺序持久化六张量：
+`TapeOp::BatchNorm` 与 `TapeOp::LayerNorm` 的 `input_tensors` 在 [`autodiff.rs L187, L205`](../../tenth/src/runtime/autodiff.rs) 都按固定顺序持久化六张量：
 
 | 索引 | 字段 | 形状（LayerNorm） | 形状（BatchNorm） |
 |------|------|------------------|------------------|
@@ -174,7 +174,7 @@ pub struct TapeNode {
 
 ### 4.2 LayerNorm 前向形式化
 
-Tenth LayerNorm 前向在 [`tensor.rs L925-L1008`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 与 [`methods.rs L1161-L1252`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs) 实现，等价于定义 3.2 中的 LayerNorm 公式。关键实现细节：
+Tenth LayerNorm 前向在 [`tensor.rs L925-L1008`](../../tenth/src/runtime/tensor.rs) 与 [`methods.rs L1161-L1252`](../../tenth/src/runtime/interpreter/methods.rs) 实现，等价于定义 3.2 中的 LayerNorm 公式。关键实现细节：
 
 - `mean = slice.iter().sum::<f64>() / axis_len as f64`（per-row，biased）
 - `var = slice.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / axis_len as f64`（biased）
@@ -183,7 +183,7 @@ Tenth LayerNorm 前向在 [`tensor.rs L925-L1008`](file:///d:/史蒂夫/Desktop/
 
 ### 4.3 BatchNorm 前向形式化
 
-Tenth BatchNorm 前向在 [`methods.rs L1014-L1115`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs) 实现，关键点：
+Tenth BatchNorm 前向在 [`methods.rs L1014-L1115`](../../tenth/src/runtime/interpreter/methods.rs) 实现，关键点：
 
 - 外层循环 `for ci in 0..c`：per-channel 处理
 - 内层 `for ni in 0..n` × `for si in 0..spatial`：遍历 $(N, H, W)$ 求 mean、var
@@ -192,7 +192,7 @@ Tenth BatchNorm 前向在 [`methods.rs L1014-L1115`](file:///d:/史蒂夫/Deskto
 
 ### 4.4 LayerNorm 反向形式化
 
-Tenth LayerNorm 反向在 [`autodiff.rs L523-L596`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 实现，采用**三层嵌套循环**：
+Tenth LayerNorm 反向在 [`autodiff.rs L523-L596`](../../tenth/src/runtime/autodiff.rs) 实现，采用**三层嵌套循环**：
 
 ```
 外层 i ∈ [0, outer_len):           // 遍历行
@@ -224,7 +224,7 @@ $$\left(\frac{\partial L}{\partial x_{ij}}\right)_{\text{strict}} = \mathrm{std\
 
 ### 4.5 BatchNorm 反向形式化
 
-Tenth BatchNorm 反向在 [`autodiff.rs L496-L522`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 实现，采用 ndarray 向量化：
+Tenth BatchNorm 反向在 [`autodiff.rs L496-L522`](../../tenth/src/runtime/autodiff.rs) 实现，采用 ndarray 向量化：
 
 ```rust
 let n = grad.len() as f64;                      // ⚠ 整个张量的元素数
@@ -342,7 +342,7 @@ $$\frac{\partial L}{\partial \gamma_j} = \sum_i \frac{\partial L}{\partial y_{ij
 
 $$\frac{\partial L}{\partial \beta_j} = \sum_i g_{ij} \cdot \frac{\partial y_{ij}}{\partial \beta_j} = \sum_i g_{ij}$$
 
-求和号 $\sum_i$ 是因为 $\gamma_j, \beta_j$ 在所有 $N$ 行间共享。这与 Tenth 实现 [autodiff.rs L548-L566](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 一致（外层循环 $i$ 累加 `d_gamma_data[j]`、`d_beta_data[j]`）。
+求和号 $\sum_i$ 是因为 $\gamma_j, \beta_j$ 在所有 $N$ 行间共享。这与 Tenth 实现 [autodiff.rs L548-L566](../../tenth/src/runtime/autodiff.rs) 一致（外层循环 $i$ 累加 `d_gamma_data[j]`、`d_beta_data[j]`）。
 
 ### 6.2 $\partial \hat x_j/\partial x_k$ 的逐步推导
 
@@ -428,7 +428,7 @@ $$\boxed{\frac{\partial L}{\partial x_{ik}} = \mathrm{std\_inv}^{(i)}\cdot\left(
 
 ### 6.4 与 Tenth 实现的对比
 
-Tenth 实现（[autodiff.rs L583-L588](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+Tenth 实现（[autodiff.rs L583-L588](../../tenth/src/runtime/autodiff.rs)）：
 
 ```rust
 let g = g_slice.get(j).copied().unwrap_or(1.0);
@@ -449,7 +449,7 @@ $$\left(\frac{\partial L}{\partial x_{ik}}\right)_{\text{Tenth}} = \gamma_k \cdo
 
 **推论 6.1**：Tenth LayerNorm 反向 $dX$ 在 $\gamma$ 为 per-feature 时与严格闭式解 (6.7) 不等价；仅当 $\gamma_j \equiv \gamma$ 为常数（含 $\gamma \equiv 1$ 的退化情形）时等价。
 
-**推论 6.2**：$d\gamma$ 与 $d\beta$ 的 Tenth 实现（[autodiff.rs L548-L566](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）与严格公式一致。
+**推论 6.2**：$d\gamma$ 与 $d\beta$ 的 Tenth 实现（[autodiff.rs L548-L566](../../tenth/src/runtime/autodiff.rs)）与严格公式一致。
 
 ---
 
@@ -495,7 +495,7 @@ $$\boxed{\frac{\partial L}{\partial x_{ck}} = \gamma_c \cdot \mathrm{std\_inv}_c
 
 ### 7.4 与 Tenth 实现的对比
 
-Tenth 实现（[autodiff.rs L511-L516](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+Tenth 实现（[autodiff.rs L511-L516](../../tenth/src/runtime/autodiff.rs)）：
 
 ```rust
 let n = grad.len() as f64;                                  // = N·C·H·W
@@ -518,14 +518,14 @@ $$\left(\frac{\partial L}{\partial x_{ck}}\right)_{\text{Tenth}} = \gamma_c\cdot
 
 **推论 7.1**：Tenth BatchNorm 反向 $dX$ 在 $C = 1$ 时与严格闭式解 (7.1) 等价；$C > 1$ 时不等价。
 
-**推论 7.2**：Tenth BatchNorm 反向 $d\gamma$ 与 $d\beta$ 的实现（[autodiff.rs L507-L509](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+**推论 7.2**：Tenth BatchNorm 反向 $d\gamma$ 与 $d\beta$ 的实现（[autodiff.rs L507-L509](../../tenth/src/runtime/autodiff.rs)）：
 
 ```rust
 let d_gamma = &grad * &x_hat_ref.data;   // shape (N,C,H,W)
 let d_beta = grad.clone();                // shape (N,C,H,W)
 ```
 
-为 elementwise 乘法，**缺少**沿 $(N, H, W)$ 维的归约。严格公式要求 $d\gamma_c = \sum_{n,h,w} g_{cnhw}\hat x_{cnhw}$，shape 应为 $(C,)$。当前实现的 $d\gamma$ shape 为 $(N, C, H, W)$，与 `acc_grad` 严格 shape 校验（[tensor.rs L223-L232](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）不兼容，会触发 `"acc_grad shape 不匹配"` 错误。
+为 elementwise 乘法，**缺少**沿 $(N, H, W)$ 维的归约。严格公式要求 $d\gamma_c = \sum_{n,h,w} g_{cnhw}\hat x_{cnhw}$，shape 应为 $(C,)$。当前实现的 $d\gamma$ shape 为 $(N, C, H, W)$，与 `acc_grad` 严格 shape 校验（[tensor.rs L223-L232](../../tenth/src/runtime/tensor.rs)）不兼容，会触发 `"acc_grad shape 不匹配"` 错误。
 
 ---
 
@@ -580,7 +580,7 @@ $$\frac{\|\delta(\partial L/\partial x)\|}{\|\partial L/\partial x\|} \leq C\cdo
 
 ### 8.4 Tenth 的 $\epsilon$ 默认值
 
-Tenth LayerNorm 默认 $\epsilon = 10^{-5}$（[methods.rs L1168](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs) `args.get(2).and_then(|a| a.as_float()).unwrap_or(1e-5)`），BatchNorm 默认 $\epsilon = 10^{-5}$（[methods.rs L1023](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs) `args[2].as_float().unwrap_or(1e-5)`）。与 PyTorch `nn.LayerNorm` 默认 `eps=1e-5`、`nn.BatchNorm2d` 默认 `eps=1e-5` 一致。
+Tenth LayerNorm 默认 $\epsilon = 10^{-5}$（[methods.rs L1168](../../tenth/src/runtime/interpreter/methods.rs) `args.get(2).and_then(|a| a.as_float()).unwrap_or(1e-5)`），BatchNorm 默认 $\epsilon = 10^{-5}$（[methods.rs L1023](../../tenth/src/runtime/interpreter/methods.rs) `args[2].as_float().unwrap_or(1e-5)`）。与 PyTorch `nn.LayerNorm` 默认 `eps=1e-5`、`nn.BatchNorm2d` 默认 `eps=1e-5` 一致。
 
 ---
 
@@ -592,10 +592,10 @@ Tenth LayerNorm 默认 $\epsilon = 10^{-5}$（[methods.rs L1168](file:///d:/史�
 
 | 维度 | Tenth | PyTorch | MXNet | JAX |
 |------|-------|---------|-------|-----|
-| Biased variance（除以 $N$） | ✓ [tensor.rs L970](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) | ✓ | ✓ | ✓ |
-| $\epsilon$ 加在内部 | ✓ [tensor.rs L998](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) | ✓ | ✓ | ✓ |
+| Biased variance（除以 $N$） | ✓ [tensor.rs L970](../../tenth/src/runtime/tensor.rs) | ✓ | ✓ | ✓ |
+| $\epsilon$ 加在内部 | ✓ [tensor.rs L998](../../tenth/src/runtime/tensor.rs) | ✓ | ✓ | ✓ |
 | LayerNorm 归一化最后维 | ✓ | ✓ | n/a | ✓ |
-| BatchNorm 归一化除 channel | ✓ [methods.rs L1031-L1033](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs) | ✓ | ✓ | ✓ |
+| BatchNorm 归一化除 channel | ✓ [methods.rs L1031-L1033](../../tenth/src/runtime/interpreter/methods.rs) | ✓ | ✓ | ✓ |
 | per-feature $\gamma$（LayerNorm） | ✓ | ✓ | n/a | ✓ |
 | per-channel $\gamma$（BatchNorm） | ✓ | ✓ | ✓ | ✓ |
 | 默认 $\epsilon = 10^{-5}$ | ✓ | ✓ | ✓ | ✓ |
@@ -660,7 +660,7 @@ $$\Delta_{ik} = \mathrm{std\_inv}^{(i)}\left[\gamma_k\overline g^{(i)} - \overli
 
 当且仅当 $\gamma_k \equiv \gamma$ 为常数时 $\Delta_{ik} = 0$。
 
-**修复方向**：将 [autodiff.rs L583-L588](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的内层第二遍循环改为：
+**修复方向**：将 [autodiff.rs L583-L588](../../tenth/src/runtime/autodiff.rs) 的内层第二遍循环改为：
 
 ```
 mean_g_gm = mean(dY * gamma)         # per-row
@@ -672,7 +672,7 @@ d_x[i, j] = inv * (dY[i,j] * gamma[j] - mean_g_gm - x_hat[i,j] * mean_g_gm_xh)
 
 ### 10.2 Gap-2：BatchNorm 反向 $dX$ 在多 channel 时不正确
 
-**是什么**：Tenth BatchNorm 反向使用全局均值 $\overline g_{\text{global}}$、$\overline{g\hat x}_{\text{global}}$（[autodiff.rs L512-L514](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），而非 per-channel 均值。
+**是什么**：Tenth BatchNorm 反向使用全局均值 $\overline g_{\text{global}}$、$\overline{g\hat x}_{\text{global}}$（[autodiff.rs L512-L514](../../tenth/src/runtime/autodiff.rs)），而非 per-channel 均值。
 
 **影响**：当 $C > 1$ 时，$dX$ 计算错误。典型 CNN BatchNorm 中 $C = 64$ 甚至 $512$，此 gap 严重。
 
@@ -682,21 +682,21 @@ $$\Delta_{ck} = \gamma_c \mathrm{std\_inv}_c\left[(\overline g^{\,c} - \overline
 
 当 $C = 1$ 时 $\overline g^{\,c} = \overline g_{\text{global}}$，$\Delta_{ck} = 0$。
 
-**修复方向**：将 [autodiff.rs L511-L516](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 改为 per-channel 归约。需要按 channel 维（axis=1）求均值，或采用类似 LayerNorm 的三层嵌套循环（外层 channel，内层 $N \cdot H \cdot W$）。
+**修复方向**：将 [autodiff.rs L511-L516](../../tenth/src/runtime/autodiff.rs) 改为 per-channel 归约。需要按 channel 维（axis=1）求均值，或采用类似 LayerNorm 的三层嵌套循环（外层 channel，内层 $N \cdot H \cdot W$）。
 
 ### 10.3 Gap-3：BatchNorm 反向 $d\gamma$、$d\beta$ 缺少 channel 维归约
 
-**是什么**：Tenth BatchNorm 反向 $d\gamma$、$d\beta$ 为 elementwise（[autodiff.rs L507-L509](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），shape 为 $(N, C, H, W)$；严格公式要求沿 $(N, H, W)$ 归约，shape 为 $(C,)$。
+**是什么**：Tenth BatchNorm 反向 $d\gamma$、$d\beta$ 为 elementwise（[autodiff.rs L507-L509](../../tenth/src/runtime/autodiff.rs)），shape 为 $(N, C, H, W)$；严格公式要求沿 $(N, H, W)$ 归约，shape 为 $(C,)$。
 
-**影响**：调用 `propagate_grad(node, 1, &d_gamma, ...)` 时，`acc_grad` 严格 shape 校验（[tensor.rs L227-L232](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）会触发 `"acc_grad shape 不匹配"` 错误，使整个 BatchNorm 反向无法在带 autodiff 的训练路径上工作。
+**影响**：调用 `propagate_grad(node, 1, &d_gamma, ...)` 时，`acc_grad` 严格 shape 校验（[tensor.rs L227-L232](../../tenth/src/runtime/tensor.rs)）会触发 `"acc_grad shape 不匹配"` 错误，使整个 BatchNorm 反向无法在带 autodiff 的训练路径上工作。
 
 **形式化判据**：设 $d\gamma^{\text{Tenth}}_{ck} = g_{ck}\hat x_{ck}$（未归约），$d\gamma^{\text{strict}}_c = \sum_{n,h,w} g_{cnhw}\hat x_{cnhw}$。当前实现的 shape 为 $(N, C, H, W)$，与 $\gamma$ 的 $(C,)$ 不匹配。
 
-**修复方向**：在 [autodiff.rs L507](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 后增加 `.sum_axis(ndarray::Axis(1))` 等 reduce 操作（需对所有非 channel 维求和）。
+**修复方向**：在 [autodiff.rs L507](../../tenth/src/runtime/autodiff.rs) 后增加 `.sum_axis(ndarray::Axis(1))` 等 reduce 操作（需对所有非 channel 维求和）。
 
 ### 10.4 Gap-4：教学化简化的代价
 
-Tenth LayerNorm 反向的三层嵌套循环（[autodiff.rs L570-L589](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）在内存局部性上优秀（每行 $O(D)$ 辅助空间），但：
+Tenth LayerNorm 反向的三层嵌套循环（[autodiff.rs L570-L589](../../tenth/src/runtime/autodiff.rs)）在内存局部性上优秀（每行 $O(D)$ 辅助空间），但：
 
 1. **性能**：相比 ndarray 向量化（如 `d_x = std_inv[:, None] * (g * gamma - ...)`）慢约 $2$-$5\times$，因为 Rust 编译器对 ndarray 的 SIMD 优化在向量化路径上更激进；
 2. **不可扩展**：若 LayerNorm 归一化维改为非最后维，需重写循环；向量化版本仅需改 `axis` 参数；
@@ -704,7 +704,7 @@ Tenth LayerNorm 反向的三层嵌套循环（[autodiff.rs L570-L589](file:///d:
 
 ### 10.5 Gap-5：本文证明的循环论证风险
 
-本文定理 N1、N2 的证明依赖"前向公式按定义 3.2 计算"这一前置条件。但 Tenth 实际前向实现（[tensor.rs L925-L1008](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）在 `f32` 路径上使用 `eps as f32`，可能引入额外的精度转换误差。本文证明在 `f64` 路径上严格成立，`f32` 路径存在精度退化，不在定理保证范围内。
+本文定理 N1、N2 的证明依赖"前向公式按定义 3.2 计算"这一前置条件。但 Tenth 实际前向实现（[tensor.rs L925-L1008](../../tenth/src/runtime/tensor.rs)）在 `f32` 路径上使用 `eps as f32`，可能引入额外的精度转换误差。本文证明在 `f64` 路径上严格成立，`f32` 路径存在精度退化，不在定理保证范围内。
 
 ### 10.6 Gap-6：bit-exact 实证缺失
 
@@ -753,21 +753,21 @@ Tenth 在归一化算子反向传播上的工程选择体现三重权衡：
 
 | 定理 | 陈述 | 证明 | 源码链接 |
 |------|------|------|---------|
-| N1 | LayerNorm 闭式反向正确性 | §6 | [autodiff.rs L523-L596](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| N2 | BatchNorm 闭式反向正确性 | §7 | [autodiff.rs L496-L522](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| N3 | 数值稳定性 | §8 | [tensor.rs L998](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| N4 | bit-exact 对比 | §9 | [autodiff.rs L496-L596](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| N5 | 教学化优势 | §10.4, §5 | [autodiff.rs L570-L589](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
+| N1 | LayerNorm 闭式反向正确性 | §6 | [autodiff.rs L523-L596](../../tenth/src/runtime/autodiff.rs) |
+| N2 | BatchNorm 闭式反向正确性 | §7 | [autodiff.rs L496-L522](../../tenth/src/runtime/autodiff.rs) |
+| N3 | 数值稳定性 | §8 | [tensor.rs L998](../../tenth/src/runtime/tensor.rs) |
+| N4 | bit-exact 对比 | §9 | [autodiff.rs L496-L596](../../tenth/src/runtime/autodiff.rs) |
+| N5 | 教学化优势 | §10.4, §5 | [autodiff.rs L570-L589](../../tenth/src/runtime/autodiff.rs) |
 
 ## 附录 B：与现有文档的对应
 
 | 本文章节 | 对应现有文档 |
 |---------|-------------|
-| §3-§4（形式化） | [CODE_WIKI.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/CODE_WIKI.md) `runtime/autodiff` 模块 |
+| §3-§4（形式化） | [CODE_WIKI.md](../../CODE_WIKI.md) `runtime/autodiff` 模块 |
 | §6-§7（推导） | T39 §6 算子表（深化） |
-| §8（稳定性） | [语言参考手册.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md) `layer_norm` / `batchnorm` 条目 |
-| §10（局限） | [AUDIT.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/AUDIT.md) 缺陷登记册（建议新增条目） |
-| §11（开放问题） | [MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md) 路线图（建议同步） |
+| §8（稳定性） | [语言参考手册.md](../语言参考手册.md) `layer_norm` / `batchnorm` 条目 |
+| §10（局限） | [AUDIT.md](../../AUDIT.md) 缺陷登记册（建议新增条目） |
+| §11（开放问题） | [MEMO.md](../../MEMO.md) 路线图（建议同步） |
 
 ## 附录 C：实施建议
 
@@ -791,13 +791,13 @@ Tenth 在归一化算子反向传播上的工程选择体现三重权衡：
 5. PyTorch. *BatchNormalize.cu*. https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/cuda/BatchNormalize.cu
 6. Apache MXNet. *batch_norm-inl.h*. https://github.com/apache/mxnet/blob/master/src/operator/nn/batch_norm-inl.h
 7. Higham, N. J. (2002). *Accuracy and Stability of Numerical Algorithms* (2nd ed.). SIAM. (条件数与浮点误差分析)
-8. Tenth 项目. *T39: Wengert Tape 形式化语义与反向模式正确性*. 2026-07-02. [本地文档](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md)
-9. Tenth 项目. *T2: Tape 形式化模型与根因定位可判定性*. [本地文档](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md)
-10. Tenth 项目. *T38: autodiff tape 多路径一致性*. [本地文档](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T38-autodiff-tape多路径一致性.md)
-11. Tenth 项目. *T41: Conv2D im2col-matmul 反向传播正确性*. [本地文档](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T41-Conv2D-im2col-matmul反向传播正确性.md)
-12. Tenth 项目. *autodiff.rs L496-L596: BatchNorm + LayerNorm backward*. [源码](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)
-13. Tenth 项目. *tensor.rs L925-L1008: layer_norm forward*. [源码](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)
-14. Tenth 项目. *methods.rs L1014-L1252: batchnorm + layer_norm forward*. [源码](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/methods.rs)
+8. Tenth 项目. *T39: Wengert Tape 形式化语义与反向模式正确性*. 2026-07-02. [本地文档](T39-Wengert-Tape形式化语义与反向模式正确性.md)
+9. Tenth 项目. *T2: Tape 形式化模型与根因定位可判定性*. [本地文档](T2-Tape形式化模型与根因定位可判定性.md)
+10. Tenth 项目. *T38: autodiff tape 多路径一致性*. [本地文档](T38-autodiff-tape多路径一致性.md)
+11. Tenth 项目. *T41: Conv2D im2col-matmul 反向传播正确性*. [本地文档](T41-Conv2D-im2col-matmul反向传播正确性.md)
+12. Tenth 项目. *autodiff.rs L496-L596: BatchNorm + LayerNorm backward*. [源码](../../tenth/src/runtime/autodiff.rs)
+13. Tenth 项目. *tensor.rs L925-L1008: layer_norm forward*. [源码](../../tenth/src/runtime/tensor.rs)
+14. Tenth 项目. *methods.rs L1014-L1252: batchnorm + layer_norm forward*. [源码](../../tenth/src/runtime/interpreter/methods.rs)
 
 ---
 

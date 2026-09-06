@@ -45,7 +45,7 @@ tenthc TokenKind 是带数据的 tuple variant（`IntLiteral(i64)` 等），从�
 
 ### 1.3 tenthc Token 的冗余存储设计
 
-[tenthc/lexer/token.th:4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/token.th) 定义：
+[tenthc/lexer/token.th:4](../../tenthc/lexer/token.th) 定义：
 
 ```tenth
 struct Token { kind: TokenKind, span: Span, disc: i64, ival: i64, fval: f64, sval: str }
@@ -56,7 +56,7 @@ struct Token { kind: TokenKind, span: Span, disc: i64, ival: i64, fval: f64, sva
 - `disc: i64` —— 与 `kind` 变体序号冗余的整数；
 - `ival/fval/sval` —— 与 `kind` 内 payload 冗余的扁平字段。
 
-对照之下，Rust 母编译器的 Token 极简（[tenth/src/lexer/token.rs:108-112](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs)）：
+对照之下，Rust 母编译器的 Token 极简（[tenth/src/lexer/token.rs:108-112](../../tenth/src/lexer/token.rs)）：
 
 ```rust
 pub struct Token {
@@ -92,7 +92,7 @@ Q3 在工程上尤其重要——若 `disc` 不被使用，则其错误是"沉�
 
 ### 2.3 Rust enum 的内存布局
 
-Rust enum 在内存中通常布局为 `tag + max(payload sizes) + padding`。`TokenKind` 有 70+ 变体（[tenth/src/lexer/token.rs:13-100](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs)），其中最大 payload 是 `InterpolatedString(Vec<StringPart>)`（指针宽度）。Rust 编译器能将 `match` 编译为 jump table 或 binary search，因此 Rust 端无需冗余 `disc`。tenthc 的 `TokenKind` 较小（64 变体，[tenthc/lexer/token.th:3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/token.th)），但 Tenth 运行时不提供等价的 match 优化。
+Rust enum 在内存中通常布局为 `tag + max(payload sizes) + padding`。`TokenKind` 有 70+ 变体（[tenth/src/lexer/token.rs:13-100](../../tenth/src/lexer/token.rs)），其中最大 payload 是 `InterpolatedString(Vec<StringPart>)`（指针宽度）。Rust 编译器能将 `match` 编译为 jump table 或 binary search，因此 Rust 端无需冗余 `disc`。tenthc 的 `TokenKind` 较小（64 变体，[tenthc/lexer/token.th:3](../../tenthc/lexer/token.th)），但 Tenth 运行时不提供等价的 match 优化。
 
 ### 2.4 冗余存储的不变量维护
 
@@ -109,7 +109,7 @@ Rust enum 在内存中通常布局为 `tag + max(payload sizes) + padding`。`To
 
 ### 3.1 TokenKind 代数数据类型
 
-**定义 3.1**（tenthc TokenKind）。设 tenthc TokenKind 的变体集合为 $\mathcal{K}_{\text{tc}}$，按 [tenthc/lexer/token.th:3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/token.th) 中的声明顺序编号：
+**定义 3.1**（tenthc TokenKind）。设 tenthc TokenKind 的变体集合为 $\mathcal{K}_{\text{tc}}$，按 [tenthc/lexer/token.th:3](../../tenthc/lexer/token.th) 中的声明顺序编号：
 
 $$\mathcal{K}_{\text{tc}} = \{ K_0, K_1, \ldots, K_{63} \}$$
 
@@ -119,7 +119,7 @@ $$\mathcal{K}_{\text{tc}} = \{ K_0, K_1, \ldots, K_{63} \}$$
 - **承载变体**（4 个）：$K_0, K_1, K_2, K_3$ 分别携带 `i64`/`f64`/`str`/`str` payload；
 - **单元变体**（60 个）：$K_4, \ldots, K_{63}$ 无 payload。
 
-**定义 3.2**（Rust TokenKind）。Rust 母编译器的 TokenKind 变体集合为 $\mathcal{K}_{\text{rs}}$（[tenth/src/lexer/token.rs:13-100](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs)），共 80 个变体。$\mathcal{K}_{\text{tc}} \subset \mathcal{K}_{\text{rs}}$；差集 $\mathcal{K}_{\text{rs}} \setminus \mathcal{K}_{\text{tc}}$ 包含 16 个 tenthc 未实现的变体（见 §10.2 局限）。
+**定义 3.2**（Rust TokenKind）。Rust 母编译器的 TokenKind 变体集合为 $\mathcal{K}_{\text{rs}}$（[tenth/src/lexer/token.rs:13-100](../../tenth/src/lexer/token.rs)），共 80 个变体。$\mathcal{K}_{\text{tc}} \subset \mathcal{K}_{\text{rs}}$；差集 $\mathcal{K}_{\text{rs}} \setminus \mathcal{K}_{\text{tc}}$ 包含 16 个 tenthc 未实现的变体（见 §10.2 局限）。
 
 ### 3.2 Token 结构
 
@@ -180,7 +180,7 @@ $$t_b.\text{disc} = \text{project}(t_b.\text{kind})$$
 **定理 D2**。投影函数 $\text{project}: \mathcal{K}_{\text{tc}} \to \{0, 1, \ldots, 63\}$ 是**双射**。
 
 **证明**。
-- **满射性**：对任意 $i \in \{0, 1, \ldots, 63\}$，由 [tenthc/lexer/token.th:3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/token.th) 中 TokenKind 声明，存在第 $i$ 个变体 $K_i$（共 64 个变体，序号 0–63），故 $\text{project}(K_i) = i$。
+- **满射性**：对任意 $i \in \{0, 1, \ldots, 63\}$，由 [tenthc/lexer/token.th:3](../../tenthc/lexer/token.th) 中 TokenKind 声明，存在第 $i$ 个变体 $K_i$（共 64 个变体，序号 0–63），故 $\text{project}(K_i) = i$。
 - **单射性**：设 $\text{project}(K_i) = \text{project}(K_j)$，则 $i = j$，故 $K_i = K_j$（变体名唯一）。
 
 因此 project 是双射，覆盖 $\mathcal{K}_{\text{tc}}$ 的全部变体。$\square$
@@ -230,7 +230,7 @@ $$t_b.\text{disc} = \text{project}(t_b.\text{kind})$$
 
 **结论**：tenthc parser 完全依赖 `disc` 进行 token 分发，**不依赖 `kind` 的模式匹配**。若某 lexer 分支写入了错误的 `disc`，将导致 parser 误分发，产生错误的 AST/HIR，最终破坏自举等价性。因此 `disc` 不变量 D1 的正确性是 tenthc 自举正确性的**必要条件**。$\square$
 
-**对比观察**。Rust 母编译器 parser 完全使用 `match token.kind { TokenKind::Gt => ... }`（[tenth/src/parser/parser.rs:60-65](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)），不读取任何 `disc` 字段——因为 Rust Token 根本没有 `disc` 字段。这是 tenthc 与 Rust 母编译器在 Token 表示上的**根本设计差异**。
+**对比观察**。Rust 母编译器 parser 完全使用 `match token.kind { TokenKind::Gt => ... }`（[tenth/src/parser/parser.rs:60-65](../../tenth/src/parser/parser.rs)），不读取任何 `disc` 字段——因为 Rust Token 根本没有 `disc` 字段。这是 tenthc 与 Rust 母编译器在 Token 表示上的**根本设计差异**。
 
 ### 4.5 定理 D5（双侧 Token 等价）
 
@@ -240,10 +240,10 @@ $$t_b.\text{disc} = \text{project}(t_b.\text{kind})$$
 - payload 等价：若 $t.\text{kind} = K_0$ 则 $t.\text{ival} = \text{IntLiteral payload of } t'$；$K_1$ 类似（modulo tenthc 无 `BaseType` 第二参数）；$K_2/K_3$ 类似。
 
 **证明**。
-1. **变体对应**：逐一核对 [tenthc/lexer/token.th:3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/token.th) 与 [tenth/src/lexer/token.rs:13-100](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs)，$\mathcal{K}_{\text{tc}}$ 的 64 个变体在 $\mathcal{K}_{\text{rs}}$ 中均存在同名变体。差集 $\mathcal{K}_{\text{rs}} \setminus \mathcal{K}_{\text{tc}}$ = {`InterpolatedString`, `CharLiteral`, `Try`, `Pub`, `Type`, `Spawn`, `Task`, `Shard`, `Node`, `Macro`, `Where`, `As`, `In`, `Caret`, `Shl`, `QuestionMark`}（16 个变体），这些是 tenthc 自举代码不使用的。
+1. **变体对应**：逐一核对 [tenthc/lexer/token.th:3](../../tenthc/lexer/token.th) 与 [tenth/src/lexer/token.rs:13-100](../../tenth/src/lexer/token.rs)，$\mathcal{K}_{\text{tc}}$ 的 64 个变体在 $\mathcal{K}_{\text{rs}}$ 中均存在同名变体。差集 $\mathcal{K}_{\text{rs}} \setminus \mathcal{K}_{\text{tc}}$ = {`InterpolatedString`, `CharLiteral`, `Try`, `Pub`, `Type`, `Spawn`, `Task`, `Shard`, `Node`, `Macro`, `Where`, `As`, `In`, `Caret`, `Shl`, `QuestionMark`}（16 个变体），这些是 tenthc 自举代码不使用的。
 2. **payload 等价**：
    - `IntLiteral(i64)`：两侧 payload 类型一致；
-   - `FloatLiteral(f64)` (tenthc) vs `FloatLiteral(f64, BaseType)` (Rust)：tenthc 将 dtype 编码到 `ival` 字段（0=F64, 1=F32，见 [tenthc/lexer/lexer.th:68-89](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)），Rust 编码到第二 tuple 字段。两者信息内容等价，编码不同——这是 §10.3 局限。
+   - `FloatLiteral(f64)` (tenthc) vs `FloatLiteral(f64, BaseType)` (Rust)：tenthc 将 dtype 编码到 `ival` 字段（0=F64, 1=F32，见 [tenthc/lexer/lexer.th:68-89](../../tenthc/lexer/lexer.th)），Rust 编码到第二 tuple 字段。两者信息内容等价，编码不同——这是 §10.3 局限。
    - `StringLiteral(str)` / `Identifier(str)`：两侧 payload 类型一致（modulo `String` vs `str` 的所有权差异）。
 3. **span 等价**：tenthc `Span { line: i64, col: i64 }` 与 Rust `Span { line: usize, col: usize }` 在值域上一致（modulo 整数宽度）。
 
@@ -259,7 +259,7 @@ $$t_b.\text{disc} = \text{project}(t_b.\text{kind})$$
 
 ### 5.1 分支枚举
 
-`lexer_next` 函数（[tenthc/lexer/lexer.th:14-194](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)）的 token 返回点共 67 个，分布如下：
+`lexer_next` 函数（[tenthc/lexer/lexer.th:14-194](../../tenthc/lexer/lexer.th)）的 token 返回点共 67 个，分布如下：
 
 | 编号 | 源行 | 触发条件 | kind | 期望 disc = project(kind) | 实际 disc | 一致？ |
 |------|------|----------|------|---------------------------|-----------|--------|
@@ -333,7 +333,7 @@ $$t_b.\text{disc} = \text{project}(t_b.\text{kind})$$
 
 ### 5.2 穷尽性论证
 
-**穷尽性证明**。`lexer_next` 函数（[tenthc/lexer/lexer.th:14-194](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th)）的所有 `return` 语句均位于 §5.1 表格中。具体地：
+**穷尽性证明**。`lexer_next` 函数（[tenthc/lexer/lexer.th:14-194](../../tenthc/lexer/lexer.th)）的所有 `return` 语句均位于 §5.1 表格中。具体地：
 
 1. 函数入口处的注释/空白跳过循环（line 16-43）不构造 Token，仅 advance 位置；
 2. 第一个 token 返回点是 line 45（EOF）；
@@ -347,13 +347,13 @@ $$t_b.\text{disc} = \text{project}(t_b.\text{kind})$$
 
 ### 5.3 不一致发现
 
-**结论**：在 v0.3.3 的 [tenthc/lexer/lexer.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th) 上，**未发现** disc 不变量违反。所有 67 个分支的 `disc` 字面量均等于 `project(kind)`。
+**结论**：在 v0.3.3 的 [tenthc/lexer/lexer.th](../../tenthc/lexer/lexer.th) 上，**未发现** disc 不变量违反。所有 67 个分支的 `disc` 字面量均等于 `project(kind)`。
 
 **诚实声明**：此结论基于**人工核对**，未经过机器验证（如编译期 lint 或定理证明器）。存在人工疏漏风险（见 §10.1 局限）。
 
 ### 5.4 parser 端的 disc 使用验证
 
-进一步验证 [tenthc/parser/parser.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th) 中所有 `disc == N` 比较的 N 值是否落在 $\{0,\ldots,63\}$ 范围内且与 lexer 写入的 disc 语义一致。抽样的关键比较点：
+进一步验证 [tenthc/parser/parser.th](../../tenthc/parser/parser.th) 中所有 `disc == N` 比较的 N 值是否落在 $\{0,\ldots,63\}$ 范围内且与 lexer 写入的 disc 语义一致。抽样的关键比较点：
 
 | parser.th 行 | 比较 | 语义 | 与 lexer 一致？ |
 |--------------|------|------|-----------------|
@@ -405,10 +405,10 @@ tenthc parser 使用 `if d == N` 链进行 token 分发。在没有 jump table �
 ### 6.3 不变量维护的人工成本
 
 当前不变量 D 由人工维护：每次新增 TokenKind 变体（如未来添加 `Pub`、`Try`），开发者必须：
-1. 在 [tenthc/lexer/token.th:3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/token.th) 的 enum 声明末尾添加变体；
-2. 在 [tenthc/lexer/lexer.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th) 添加对应的 token 构造分支，手动写入正确的 `disc: N`；
-3. 在 [tenthc/parser/parser.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th) 添加对应的 `if d == N` 分支；
-4. 同步更新 Rust 侧（[tenth/src/lexer/token.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs) 和 [tenth/src/lexer/lexer.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs)）。
+1. 在 [tenthc/lexer/token.th:3](../../tenthc/lexer/token.th) 的 enum 声明末尾添加变体；
+2. 在 [tenthc/lexer/lexer.th](../../tenthc/lexer/lexer.th) 添加对应的 token 构造分支，手动写入正确的 `disc: N`；
+3. 在 [tenthc/parser/parser.th](../../tenthc/parser/parser.th) 添加对应的 `if d == N` 分支；
+4. 同步更新 Rust 侧（[tenth/src/lexer/token.rs](../../tenth/src/lexer/token.rs) 和 [tenth/src/lexer/lexer.rs](../../tenth/src/lexer/lexer.rs)）。
 
 任一步骤的序号错配都将引入隐蔽 bug。这种四点同步的脆弱性是当前设计的最大工程债务。
 
@@ -564,14 +564,14 @@ tenthc 将 `FloatLiteral` 的 dtype 编码到 `ival`（0=F64, 1=F32），Rust �
 
 ## 参考文献
 
-1. **Tenth 项目工作规范**. `d:\史蒂夫\Desktop\AI开发新语言：头脑风暴与评估\.trae\rules\工作规范.md`. v1.1.
-2. **tenthc Token 定义**. [tenthc/lexer/token.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/token.th).
-3. **tenthc Lexer 实现**. [tenthc/lexer/lexer.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th).
-4. **tenthc Parser 实现**. [tenthc/parser/parser.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th).
-5. **tenthc HIR Lowerer**. [tenthc/hir/lower.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/hir/lower.th).
-6. **Rust Token 定义**. [tenth/src/lexer/token.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs).
-7. **Rust Lexer 实现**. [tenth/src/lexer/lexer.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/lexer.rs).
-8. **Rust Parser 实现**. [tenth/src/parser/parser.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs).
+1. **Tenth 项目工作规范**. `../../.agents/rules/工作规范.md`. v1.1.
+2. **tenthc Token 定义**. [tenthc/lexer/token.th](../../tenthc/lexer/token.th).
+3. **tenthc Lexer 实现**. [tenthc/lexer/lexer.th](../../tenthc/lexer/lexer.th).
+4. **tenthc Parser 实现**. [tenthc/parser/parser.th](../../tenthc/parser/parser.th).
+5. **tenthc HIR Lowerer**. [tenthc/hir/lower.th](../../tenthc/hir/lower.th).
+6. **Rust Token 定义**. [tenth/src/lexer/token.rs](../../tenth/src/lexer/token.rs).
+7. **Rust Lexer 实现**. [tenth/src/lexer/lexer.rs](../../tenth/src/lexer/lexer.rs).
+8. **Rust Parser 实现**. [tenth/src/parser/parser.rs](../../tenth/src/parser/parser.rs).
 9. **Tenth 项目 MEMO**. `MEMO.md`（v0.3.3 变更记录与自举演进化）.
 10. **Tenth 项目能力梳理**. `能力梳理/能力全梳理.md`（500+ 项能力状态）.
 11. Pierce, B. C. *Types and Programming Languages*. MIT Press, 2002.（标签联合与模式匹配的理论基础）
@@ -594,11 +594,11 @@ tenthc 将 `FloatLiteral` 的 dtype 编码到 `ival`（0=F64, 1=F32），Rust �
 
 | 本文节 | 对应源码/文档 |
 |--------|---------------|
-| §3.1 | [tenthc/lexer/token.th:3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/token.th) |
-| §3.2 | [tenthc/lexer/token.th:4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/token.th) 与 [tenth/src/lexer/token.rs:108-112](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs) |
-| §5.1 | [tenthc/lexer/lexer.th:14-194](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/lexer/lexer.th) |
-| §4.4 | [tenthc/parser/parser.th:67-404](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th) |
-| §4.5 | [tenth/src/lexer/token.rs:13-100](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/lexer/token.rs) |
+| §3.1 | [tenthc/lexer/token.th:3](../../tenthc/lexer/token.th) |
+| §3.2 | [tenthc/lexer/token.th:4](../../tenthc/lexer/token.th) 与 [tenth/src/lexer/token.rs:108-112](../../tenth/src/lexer/token.rs) |
+| §5.1 | [tenthc/lexer/lexer.th:14-194](../../tenthc/lexer/lexer.th) |
+| §4.4 | [tenthc/parser/parser.th:67-404](../../tenthc/parser/parser.th) |
+| §4.5 | [tenth/src/lexer/token.rs:13-100](../../tenth/src/lexer/token.rs) |
 
 ## 附录 C：实施建议摘要
 

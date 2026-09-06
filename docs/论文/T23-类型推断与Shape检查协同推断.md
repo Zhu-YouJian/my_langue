@@ -46,7 +46,7 @@ Tenth 语言将张量 shape 作为类型系统的一部分（`Tensor[f64, M, K]`
 
 Tenth 通过三个设计决策实现类型与 shape 的协同推断：
 
-**决策 1：Dim 三值抽象**。维度（`Dim`）取三种值之一：`Known(i64)`（具体维度）、`Symbol(String)`（符号维度变量）、`Any`（未知，运行时确定）。见 [types.rs:13-17](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs) L13-17。这一抽象允许在同一类型系统中表达具体 shape、参数化 shape 与未知 shape。
+**决策 1：Dim 三值抽象**。维度（`Dim`）取三种值之一：`Known(i64)`（具体维度）、`Symbol(String)`（符号维度变量）、`Any`（未知，运行时确定）。见 [types.rs:13-17](../../tenth/src/hir/types.rs) L13-17。这一抽象允许在同一类型系统中表达具体 shape、参数化 shape 与未知 shape。
 
 **决策 2：分阶段启发式协同**。类型推断与 shape 检查在 HIR lowering 阶段分三阶段协同：
 - **Phase 1**：类型重建（自下而上）—— `infer_binary_type`、`resolve_method_type`、`resolve_call_type` 推断算子结果类型与 shape
@@ -173,7 +173,7 @@ $$
 - $s \in \text{String}$ 为符号维度变量（`Dim::Symbol(String)`，如 `M`、`K`、`S_q`）
 - $\star$ 为通配符（`Dim::Any`，表示未知维度，运行时确定）
 
-对应源码：[types.rs:13-17](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs) L13-17：
+对应源码：[types.rs:13-17](../../tenth/src/hir/types.rs) L13-17：
 
 ```rust
 pub enum Dim {
@@ -204,7 +204,7 @@ $$
 
 其中 $\bot$ 表示"不兼容"（编译期报错）。注：当一侧是 $\star$ 而另一侧是 $s$ 或 $k$ 时，取非 $\star$ 侧（保留更精确信息）。
 
-对应实现：[types.rs:580-608](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) L580-608 中 `check_and_merge_tensor_shape` 的逐维合并逻辑。
+对应实现：[types.rs:580-608](../../tenth/src/hir/lower/types.rs) L580-608 中 `check_and_merge_tensor_shape` 的逐维合并逻辑。
 
 ### 4.2 Tensor 类型
 
@@ -216,7 +216,7 @@ $$
 
 其中 $\tau_d$ 是 dtype（必须是 `BaseType` 之一，如 `f64`、`f32`），$\vec{d} = (d_1, \ldots, d_n)$ 是维度向量，$n \geq 0$ 是秩。
 
-对应源码：[types.rs:19-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs) L19-25：
+对应源码：[types.rs:19-25](../../tenth/src/hir/types.rs) L19-25：
 
 ```rust
 Tensor {
@@ -249,7 +249,7 @@ fn scaled_dot_product_attention<T>(
 ) -> Tensor[T, S_q, D_v] { ... }
 ```
 
-对应源码：[attention.th:24-30](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th) L24-30。
+对应源码：[attention.th:24-30](../../tenth/std/nn/attention.th) L24-30。
 
 **符号维度变量**：`S_q`（query 序列长度）、`D_k`（key 维度，query 与 key 共享）、`S_k`（key 序列长度，key 与 value 共享）、`D_v`（value 维度）。
 
@@ -329,7 +329,7 @@ broadcast_shapes(l, r):
     其他 → None（不兼容，由 Phase 2 报错）
 ```
 
-对应实现：[types.rs:18-41](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) L18-41 `broadcast_shapes` 函数。
+对应实现：[types.rs:18-41](../../tenth/src/hir/lower/types.rs) L18-41 `broadcast_shapes` 函数。
 
 **规则 P1-Method**（方法调用推断）：
 $$
@@ -349,7 +349,7 @@ resolveMethod(Tensor[τ_d, M, K], "matmul", [Tensor[τ_d, K', N]]):
     return Tensor[τ_d, Any, Any]      // 保守
 ```
 
-对应实现：[types.rs:219-386](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) L219-386 `resolve_method_type` 函数。
+对应实现：[types.rs:219-386](../../tenth/src/hir/lower/types.rs) L219-386 `resolve_method_type` 函数。
 
 **规则 P1-Call**（函数调用推断）：
 $$
@@ -367,7 +367,7 @@ mergeReturnShape(scope_ret, fn_def_ret):
   else: 取 fn_def_ret
 ```
 
-对应实现：[types.rs:496-521](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) L496-521 `merge_return_shape` 函数。
+对应实现：[types.rs:496-521](../../tenth/src/hir/lower/types.rs) L496-521 `merge_return_shape` 函数。
 
 ### 5.3 Phase 2：Shape 检查（约束收集）
 
@@ -380,7 +380,7 @@ $$
 
 仅在两侧 shape 都含静态信息（Known 或 Symbol，非全 Any）时才检查；任一侧全 Any 则跳过（保守通过）。
 
-对应实现：[types.rs:646-667](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) L646-667 `check_binary_shape_compat` 函数。
+对应实现：[types.rs:646-667](../../tenth/src/hir/lower/types.rs) L646-667 `check_binary_shape_compat` 函数。
 
 **规则 P2-MethodCheck**（方法调用 shape 检查）：
 $$
@@ -393,7 +393,7 @@ $$
 - `Symbol(s) @ Known(_)` 或 `Known(_) @ Symbol(s)`：保守通过（unify 留待 Phase 3）
 - 任一侧 `Any`：保守通过
 
-对应实现：[types.rs:676-718](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) L676-718 `check_method_shape` 函数。
+对应实现：[types.rs:676-718](../../tenth/src/hir/lower/types.rs) L676-718 `check_method_shape` 函数。
 
 **规则 P2-BranchCheck**（分支 shape 检查）：
 $$
@@ -402,7 +402,7 @@ $$
 
 仅在两侧 shape 都含静态信息时检查 if/else 与 match arms 的分支 shape 兼容性。
 
-对应实现：[types.rs:619-640](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) L619-640 `check_branch_shape_compat` 函数。
+对应实现：[types.rs:619-640](../../tenth/src/hir/lower/types.rs) L619-640 `check_branch_shape_compat` 函数。
 
 ### 5.4 Phase 3：符号方程求解
 
@@ -425,7 +425,7 @@ $$
 | Symbol(s) | Symbol(t) (s≠t) | TypeError | 符号不匹配 |
 | Known/Symbol | Symbol/Known | annotation | 假设兼容，保留注解 |
 
-对应实现：[types.rs:538-613](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) L538-613 `check_and_merge_tensor_shape` 函数。
+对应实现：[types.rs:538-613](../../tenth/src/hir/lower/types.rs) L538-613 `check_and_merge_tensor_shape` 函数。
 
 **规则 P3-FnReturnMerge**（函数返回 shape 合并）：与 P3-LetMerge 类似，在函数返回处合并注解返回类型与实际推断返回类型。
 
@@ -580,7 +580,7 @@ $$
 **证明**：
 
 **（1）检查时机差异**：
-- Tenth 在 HIR lowering 阶段（编译期）执行 Phase 1-3，shape mismatch 在编译期即报错。源码：[types.rs:646-667](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) L646-667（`check_binary_shape_compat` 在 `lower_expr` 中调用）。
+- Tenth 在 HIR lowering 阶段（编译期）执行 Phase 1-3，shape mismatch 在编译期即报错。源码：[types.rs:646-667](../../tenth/src/hir/lower/types.rs) L646-667（`check_binary_shape_compat` 在 `lower_expr` 中调用）。
 - jaxtyping 是 Python 装饰器，在函数被调用时（运行时）检查输入 shape 是否匹配注解。检查发生在 `@jaxtyped` 装饰器包裹的函数调用入口。
 
 **（2）检查机制差异**：
@@ -714,7 +714,7 @@ fn scaled_dot_product_attention<T>(
 }
 ```
 
-对应源码：[attention.th:24-41](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th) L24-41。
+对应源码：[attention.th:24-41](../../tenth/std/nn/attention.th) L24-41。
 
 **符号维度变量**：
 - `S_q`：query 的序列长度（query 的第一维）
@@ -799,7 +799,7 @@ fn transformer_encoder_block<T>(
 }
 ```
 
-对应源码：[transformer.th:8-35](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th) L8-35。
+对应源码：[transformer.th:8-35](../../tenth/std/nn/transformer.th) L8-35。
 
 **设计选择**：`transformer_encoder_block` 使用 `..` 而非符号维度，因为：
 - 该函数是更高层组合，不关心具体 shape
@@ -836,7 +836,7 @@ Tenth 协同推断的实现位于 `tenth/src/hir/lower/types.rs`，约 770 行 R
 3. 调用 Phase 2 函数检查 shape 兼容性
 4. 在 let/函数返回处调用 Phase 3 函数合并 shape
 
-例如二元运算的处理（[lower_expr.rs:104-110](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) L104-110）：
+例如二元运算的处理（[lower_expr.rs:104-110](../../tenth/src/hir/lower/lower_expr.rs) L104-110）：
 
 ```rust
 let l = self.lower_expr(left)?;
@@ -846,7 +846,7 @@ let ty = self.infer_binary_type(op, &l.ty, &r.ty);            // Phase 1
 (HirExprKind::Binary { ... }, ty)
 ```
 
-方法调用的处理（[lower_expr.rs:326-351](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/lower_expr.rs) L326-351）：
+方法调用的处理（[lower_expr.rs:326-351](../../tenth/src/hir/lower/lower_expr.rs) L326-351）：
 
 ```rust
 let ret_ty = self.resolve_method_type(&recv.ty, &method.name, &all_args);  // Phase 1
@@ -889,7 +889,7 @@ fn f(a: Tensor[f64, M, K], b: Tensor[f64, 64, N]) -> ... {
 
 但运行时若 `K != 64` 会失败。这是启发式的保守性——避免误报，代价是漏报。
 
-对应源码：[types.rs:671-695](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) L671-695 中 `check_method_shape` 的 matmul 分支：
+对应源码：[types.rs:671-695](../../tenth/src/hir/lower/types.rs) L671-695 中 `check_method_shape` 的 matmul 分支：
 
 ```rust
 let mismatch = match (lk, rk) {
@@ -1022,7 +1022,7 @@ Tenth 协同推断的实际实现与 §5 的形式化模型存在差距：
 
 **影响**：定理 J1-J3 基于形式化模型证明，若形式化模型与实际实现有偏差，定理保证可能不严格适用于实际实现。
 
-**缓解**：形式化模型忠实基于源码（[types.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)），所有规则与函数对应具体源码位置。§8.3 显式记录差距。
+**缓解**：形式化模型忠实基于源码（[types.rs](../../tenth/src/hir/lower/types.rs)），所有规则与函数对应具体源码位置。§8.3 显式记录差距。
 
 ---
 

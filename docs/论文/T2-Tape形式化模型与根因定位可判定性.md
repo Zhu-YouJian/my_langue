@@ -31,11 +31,11 @@
 
 ### 1.2 Tape 根因定位的新颖性
 
-本文论证：在 Tape 上做形式化根因分析可以避免上述问题。Tenth 语言的 `runtime/autodiff.rs` 已经维护了一个统一的 `Tape` 数据结构（见 [autodiff.rs:83-86](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），记录前向操作；21 个算子（含 Conv2D/LayerNorm/BatchNorm/Gelu/CrossEntropy 等复合算子）每个都手写 backward 公式。这意味着：
+本文论证：在 Tape 上做形式化根因分析可以避免上述问题。Tenth 语言的 `runtime/autodiff.rs` 已经维护了一个统一的 `Tape` 数据结构（见 [autodiff.rs:83-86](../../tenth/src/runtime/autodiff.rs)），记录前向操作；21 个算子（含 Conv2D/LayerNorm/BatchNorm/Gelu/CrossEntropy 等复合算子）每个都手写 backward 公式。这意味着：
 
 1. **Tape DAG 已存在**：报错时"反向走到哪个节点、上游是谁"的信息**已经存在**于 Tape 中，只是未被显式暴露给用户。
-2. **shape 信息已存在**：每个 TapeNode 的 `input_tensors` 字段（[autodiff.rs:24](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）持有输入与输出张量的 `Rc<RefCell<Tensor>>` 引用，Tensor 的 `shape()` 方法（[tensor.rs:22](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）返回 shape 元组。
-3. **张量唯一标识已存在**：`Tensor.tape_id: Option<usize>` 字段（[tensor.rs:147](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）可用于判断两个 shape 是否来自同一张量。
+2. **shape 信息已存在**：每个 TapeNode 的 `input_tensors` 字段（[autodiff.rs:24](../../tenth/src/runtime/autodiff.rs)）持有输入与输出张量的 `Rc<RefCell<Tensor>>` 引用，Tensor 的 `shape()` 方法（[tensor.rs:22](../../tenth/src/runtime/tensor.rs)）返回 shape 元组。
+3. **张量唯一标识已存在**：`Tensor.tape_id: Option<usize>` 字段（[tensor.rs:147](../../tenth/src/runtime/tensor.rs)）可用于判断两个 shape 是否来自同一张量。
 
 本文的理论贡献是证明：这些已存在的基础设施足以支撑形式化根因分析，且分析过程可判定、可解释、多项式复杂度。
 
@@ -64,7 +64,7 @@
 - **前向模式**（forward mode）：从输入到输出方向传播导数，对每个输入变量做一次遍历即可得到该输入对所有输出的导数。适合输入变量数少于输出变量数的场景。
 - **反向模式**（reverse mode）：从输出到输入方向传播导数，对每个输出做一次遍历即可得到该输出对所有输入的导数。适合输出变量数少于输入变量数的场景（如神经网络的 loss 是标量输出，参数是大量输入）。
 
-反向模式 AD 的标准实现是 Wengert Tape（Wengert 1964）：前向执行时记录每个原语操作的输入与输出，形成 DAG；反向传播时按 DAG 的拓扑逆序应用链式法则。Tenth 的 `runtime/autodiff.rs` 实现的就是 Wengert Tape 模式（[autodiff.rs:1-4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 注释明确："Tensor-level automatic differentiation via a Wengert tape"）。
+反向模式 AD 的标准实现是 Wengert Tape（Wengert 1964）：前向执行时记录每个原语操作的输入与输出，形成 DAG；反向传播时按 DAG 的拓扑逆序应用链式法则。Tenth 的 `runtime/autodiff.rs` 实现的就是 Wengert Tape 模式（[autodiff.rs:1-4](../../tenth/src/runtime/autodiff.rs) 注释明确："Tensor-level automatic differentiation via a Wengert tape"）。
 
 ### 2.2 PyTorch grad_fn / JAX tracing 的调试能力局限
 
@@ -99,7 +99,7 @@ Tape 根因分析与后向切片在结构上同构：报错节点 $v_{err}$ 对�
 - 体积：$|s| = \prod_{i=1}^n d_i$，约定 $|\epsilon| = 1$（空积）
 - 维数：$\|s\| = n$
 
-**定义 3.3（算子集合）**：Tenth 支持的算子集合 $\mathcal{O}$ 由 21 个 TapeOp 枚举值构成（[autodiff.rs:30-79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+**定义 3.3（算子集合）**：Tenth 支持的算子集合 $\mathcal{O}$ 由 21 个 TapeOp 枚举值构成（[autodiff.rs:30-79](../../tenth/src/runtime/autodiff.rs)）：
 $$\mathcal{O} = \{\text{Input}, \text{Add}, \text{Sub}, \text{Mul}, \text{Div}, \text{Neg}, \text{ReLU}, \text{MatMul}, \text{Transpose}, \text{Sum}, \text{Mean}, \text{Exp}, \text{Log}, \text{Sigmoid}, \text{Softmax}, \text{CrossEntropy}, \text{Dropout}, \text{Conv2D}, \text{BatchNorm}, \text{LayerNorm}, \text{Gelu}\}$$
 
 每个算子 $op \in \mathcal{O}$ 关联固定元数 $k_{op} \in \{0, 1, 2\}$（输入张量数；注意复合算子如 Conv2D 在 TapeNode::input_tensors 中存储的辅助张量如 im2col_result 不计入 $k_{op}$，只计入"上游数据依赖"的张量）。
@@ -114,7 +114,7 @@ $$v = (op_v, s^{in}_v, s^{out}_v, \ell_v)$$
 - $s^{out}_v \in \mathbb{S}$ 是输出 shape
 - $\ell_v \in \text{Span}$ 是源码位置（行号、列号、文件名）
 
-**与实现的对应**：Tenth 的 `TapeNode` 结构（[autodiff.rs:14-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）字段对应：
+**与实现的对应**：Tenth 的 `TapeNode` 结构（[autodiff.rs:14-25](../../tenth/src/runtime/autodiff.rs)）字段对应：
 - `op: TapeOp` → $op_v$
 - `input_tensors: Vec<Rc<RefCell<Tensor>>>` 中的前 $k_v$ 个 → $s^{in}_v$（通过 `Tensor::shape()` 获取 shape）
 - `input_tensors` 的最后一个（result）→ $s^{out}_v$
@@ -125,7 +125,7 @@ $$v = (op_v, s^{in}_v, s^{out}_v, \ell_v)$$
 **定义 3.5（Tape 边）**：Tape 是有向无环图 $G = (V, E)$，其中 $V$ 是节点集合，$E$ 是数据依赖边：
 $$(u, v) \in E \iff \exists j \in \{1, \ldots, k_v\}: \text{Tid}(s^{in}_{v,j}) = \text{Tid}(s^{out}_u)$$
 
-其中 $\text{Tid}: \mathbb{S} \to \text{TensorId} \cup \{\bot\}$ 是张量唯一标识函数，对应 Tenth 的 `Tensor.tape_id` 字段（[tensor.rs:147](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）。$\text{Tid}(s) = \bot$ 表示该 shape 未关联 Tape 节点（如常量张量）。
+其中 $\text{Tid}: \mathbb{S} \to \text{TensorId} \cup \{\bot\}$ 是张量唯一标识函数，对应 Tenth 的 `Tensor.tape_id` 字段（[tensor.rs:147](../../tenth/src/runtime/tensor.rs)）。$\text{Tid}(s) = \bot$ 表示该 shape 未关联 Tape 节点（如常量张量）。
 
 **v3 修正说明**：v2 用 shape 相等（$s^{in}_{v,j} = s^{out}_u$）判断"同一张量"是错误的——两个独立的 `[3, 8]` 张量有相同 shape 但不是同一张量。v3 改为用 `tape_id` 判断同一性，本文沿用此修正。
 
@@ -137,7 +137,7 @@ $$(u, v) \in E \iff \exists j \in \{1, \ldots, k_v\}: \text{Tid}(s^{in}_{v,j}) =
 
 **假设 3.2（Tid 可访问性）**：Tape 节点的输入输出张量携带唯一标识 Tid（`Tensor.tape_id`），可用于判断两个 shape 是否来自同一张量。
 
-**实施验证**：`Tensor.tape_id: Option<usize>` 字段已存在（[tensor.rs:147](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），由 `Tape::input` 等记录函数在注册时设置。假设成立。
+**实施验证**：`Tensor.tape_id: Option<usize>` 字段已存在（[tensor.rs:147](../../tenth/src/runtime/tensor.rs)），由 `Tape::input` 等记录函数在注册时设置。假设成立。
 
 **假设 3.3（无控制流展开）**：Tape 已展开所有控制流，是单一 DAG（不含循环）。
 
@@ -149,7 +149,7 @@ $$(u, v) \in E \iff \exists j \in \{1, \ldots, k_v\}: \text{Tid}(s^{in}_{v,j}) =
 
 **假设 3.5（语义可计算性）**：Tenth 已实现的算子的 $\text{Sem}_{op}$ 与 $\text{Constraint}_{op}$（定义 3.7、3.8）在运行时可计算，复杂度 $O(\|s\|)$。
 
-**实施验证**：`runtime/autodiff.rs` 的 `forward` 函数实现了每个算子的前向语义；`hir/lower/types.rs` 的 `check_method_shape`（[types.rs:676](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)）与 `check_binary_shape_compat`（[types.rs:646](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)）实现了编译期 shape 检查。运行时与编译期均可计算。假设成立。
+**实施验证**：`runtime/autodiff.rs` 的 `forward` 函数实现了每个算子的前向语义；`hir/lower/types.rs` 的 `check_method_shape`（[types.rs:676](../../tenth/src/hir/lower/types.rs)）与 `check_binary_shape_compat`（[types.rs:646](../../tenth/src/hir/lower/types.rs)）实现了编译期 shape 检查。运行时与编译期均可计算。假设成立。
 
 ### 3.4 Shape 变换分类
 
@@ -182,7 +182,7 @@ $$\text{Class}(v) = \begin{cases}
 
 总体 $O(\|s\|)$。$\square$
 
-**定义 3.8（21 个 TapeOp 的分类）**：根据 [autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的前向实现，21 个算子按定义 3.7 分类如下（注：分类依赖于具体输入 shape，下表是"典型分类"）：
+**定义 3.8（21 个 TapeOp 的分类）**：根据 [autodiff.rs](../../tenth/src/runtime/autodiff.rs) 的前向实现，21 个算子按定义 3.7 分类如下（注：分类依赖于具体输入 shape，下表是"典型分类"）：
 
 | 算子 | 元数 $k_{op}$ | 典型分类 | 备注 |
 |------|--------------|---------|------|
@@ -224,9 +224,9 @@ $$\mathcal{O}_{\text{constr}} = \{op \in \mathcal{O} : \exists (s_1, \ldots, s_{
 
 ### 3.6 拓扑逆序回放的语义
 
-**定义 3.12（拓扑逆序）**：Tape $G = (V, E)$ 是 DAG，存在拓扑序 $\sigma: V \to \{1, \ldots, |V|\}$ 使得对所有 $(u, v) \in E$，$\sigma(u) < \sigma(v)$。Tenth 的 Tape 按执行顺序追加节点（[autodiff.rs:99-105](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 `input`、[autodiff.rs:113-122](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 的 `unary` 等），故节点 id 即为拓扑序号。
+**定义 3.12（拓扑逆序）**：Tape $G = (V, E)$ 是 DAG，存在拓扑序 $\sigma: V \to \{1, \ldots, |V|\}$ 使得对所有 $(u, v) \in E$，$\sigma(u) < \sigma(v)$。Tenth 的 Tape 按执行顺序追加节点（[autodiff.rs:99-105](../../tenth/src/runtime/autodiff.rs) 的 `input`、[autodiff.rs:113-122](../../tenth/src/runtime/autodiff.rs) 的 `unary` 等），故节点 id 即为拓扑序号。
 
-**定义 3.13（backward 回放语义）**：Tenth 的 `Tape::backward`（[autodiff.rs:272](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）按节点 id 逆序遍历，对每个节点应用对应算子的 backward 公式：
+**定义 3.13（backward 回放语义）**：Tenth 的 `Tape::backward`（[autodiff.rs:272](../../tenth/src/runtime/autodiff.rs)）按节点 id 逆序遍历，对每个节点应用对应算子的 backward 公式：
 
 ```
 for node in self.nodes.iter().rev() {
@@ -604,7 +604,7 @@ Algorithm FormalExplain(G, e, v_err):
 
 **是什么**：算法 §4.3 步骤 1 假设"运行时报错上下文提供 $v_{err}$"，即运行时在抛出 shape 错误时记录触发节点。这要求 `TapeNode::id` 在报错时被传递到错误信息中。
 
-**当前实现差距**：Tenth 当前的 `TenthError::RuntimeError` 仅携带字符串 message（如 `format!("反向传播 shape 错误（节点 #{} Input）：{}", node.id, e)`，见 [autodiff.rs:296](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），未结构化地携带 `node_id`。F 的实施需要扩展 `TenthError` 增加 `tape_node_id: Option<usize>` 字段。
+**当前实现差距**：Tenth 当前的 `TenthError::RuntimeError` 仅携带字符串 message（如 `format!("反向传播 shape 错误（节点 #{} Input）：{}", node.id, e)`，见 [autodiff.rs:296](../../tenth/src/runtime/autodiff.rs)），未结构化地携带 `node_id`。F 的实施需要扩展 `TenthError` 增加 `tape_node_id: Option<usize>` 字段。
 
 **缓解**：这是实施时的接口要求，不是理论局限。本文的理论结论（F1-F5）在接口扩展后即可落地。
 
@@ -845,16 +845,16 @@ F（MVP，含 DefinitelyRoot + ExplainsError）
 
 | 概念 | 源码位置 | 对应定义/定理 |
 |------|---------|------------|
-| TapeNode 结构 | [autodiff.rs:14-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) | 定义 3.4 |
-| TapeOp 枚举（21 个算子） | [autodiff.rs:30-79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) | 定义 3.3, 定义 3.8 |
-| Tape 结构与记录函数 | [autodiff.rs:83-265](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) | 定义 3.5, 假设 3.1 |
-| Tape::backward | [autodiff.rs:272-...](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) | 定义 3.13 |
-| Tensor::shape | [tensor.rs:22](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) | 定义 3.4 |
-| Tensor::tape_id | [tensor.rs:147](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) | 假设 3.2 |
-| check_method_shape | [types.rs:676](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) | 假设 3.5 |
-| check_binary_shape_compat | [types.rs:646](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) | 假设 3.5 |
-| check_branch_shape_compat | [types.rs:619](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) | 假设 3.5 |
-| backward shape 错误传播 | [autodiff.rs:296](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) | §6.7 接口要求 |
+| TapeNode 结构 | [autodiff.rs:14-25](../../tenth/src/runtime/autodiff.rs) | 定义 3.4 |
+| TapeOp 枚举（21 个算子） | [autodiff.rs:30-79](../../tenth/src/runtime/autodiff.rs) | 定义 3.3, 定义 3.8 |
+| Tape 结构与记录函数 | [autodiff.rs:83-265](../../tenth/src/runtime/autodiff.rs) | 定义 3.5, 假设 3.1 |
+| Tape::backward | [autodiff.rs:272-...](../../tenth/src/runtime/autodiff.rs) | 定义 3.13 |
+| Tensor::shape | [tensor.rs:22](../../tenth/src/runtime/tensor.rs) | 定义 3.4 |
+| Tensor::tape_id | [tensor.rs:147](../../tenth/src/runtime/tensor.rs) | 假设 3.2 |
+| check_method_shape | [types.rs:676](../../tenth/src/hir/lower/types.rs) | 假设 3.5 |
+| check_binary_shape_compat | [types.rs:646](../../tenth/src/hir/lower/types.rs) | 假设 3.5 |
+| check_branch_shape_compat | [types.rs:619](../../tenth/src/hir/lower/types.rs) | 假设 3.5 |
+| backward shape 错误传播 | [autodiff.rs:296](../../tenth/src/runtime/autodiff.rs) | §6.7 接口要求 |
 
 ---
 

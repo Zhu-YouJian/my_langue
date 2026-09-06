@@ -28,7 +28,7 @@
 - **PyTorch**：引入"弱提升"概念，允许 `tensor(f32) + python_int` 保持 `f32`，但 `tensor(f32) + tensor(f64)` 提升为 `f64`。
 - **JAX**：采用严格提升，标量与张量运算时跟随张量 dtype，但标量间运算用 NumPy 规则。
 
-Tenth 语言作为 AI 原生语言，其设计需要在**数值精度安全**与**使用便利性**之间取得平衡。当前 v0.3.3 的提升规则由 `promote_float_dtype` 函数（[hir/lower/types.rs:480-489](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)）和 VM 中 4 个算子函数的 match 分支共同实现，总计 56+ 个数值分支散落在运行时代码中。这种分散式实现存在两个理论问题：
+Tenth 语言作为 AI 原生语言，其设计需要在**数值精度安全**与**使用便利性**之间取得平衡。当前 v0.3.3 的提升规则由 `promote_float_dtype` 函数（[hir/lower/types.rs:480-489](../../tenth/src/hir/lower/types.rs)）和 VM 中 4 个算子函数的 match 分支共同实现，总计 56+ 个数值分支散落在运行时代码中。这种分散式实现存在两个理论问题：
 
 1. **代数性质不明**：提升运算是否构成格？是否满足结合律、交换律？是否存在精度损失回路？
 2. **完备性边界不明**：56 个分支是否覆盖了所有合法类型组合？缺失的分支是设计决策还是 bug？
@@ -147,7 +147,7 @@ Tenth 的提升规则介于 JAX 和 PyTorch 之间：
 
 ### 3.1 dtype 偏序集 (D, ≤)
 
-**定义 3.1**（dtype 域）。Tenth 的 `BaseType` 枚举（[hir/types.rs:4-10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs)）定义了 16 种基础类型：
+**定义 3.1**（dtype 域）。Tenth 的 `BaseType` 枚举（[hir/types.rs:4-10](../../tenth/src/hir/types.rs)）定义了 16 种基础类型：
 
 $$D_{\text{full}} = \{\text{I8}, \text{I16}, \text{I32}, \text{I64}, \text{U8}, \text{U16}, \text{U32}, \text{U64}, \text{F16}, \text{F32}, \text{F64}, \text{BF16}, \text{Bool}, \text{Char}, \text{Str}, \text{Unit}\}$$
 
@@ -163,19 +163,19 @@ $$D_{\text{float}} = \{\text{BF16}, \text{F16}, \text{F32}, \text{F64}\} \subset
 
 $$\text{BF16} \leq_{\text{fp}} \text{F16} \leq_{\text{fp}} \text{F32} \leq_{\text{fp}} \text{F64}$$
 
-即 $\text{BF16}$ 是最小元，$\text{F64}$ 是最大元。此偏序的直观含义是"精度/范围提升方向"，由 `promote_float_dtype` 的 match 分支优先级隐式定义（[hir/lower/types.rs:482-486](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)）：F64 分支最先匹配，故 F64 是最大元；BF16 分支最后匹配（在浮点中），故 BF16 是最小元。
+即 $\text{BF16}$ 是最小元，$\text{F64}$ 是最大元。此偏序的直观含义是"精度/范围提升方向"，由 `promote_float_dtype` 的 match 分支优先级隐式定义（[hir/lower/types.rs:482-486](../../tenth/src/hir/lower/types.rs)）：F64 分支最先匹配，故 F64 是最大元；BF16 分支最后匹配（在浮点中），故 BF16 是最小元。
 
 **注 3.1**（BF16 vs F16 的偏序争议）。从数值精度角度，BF16（8 位指数 + 7 位尾数）与 F16（5 位指数 + 10 位尾数）**不可比较**：BF16 范围更大但精度更低，F16 精度更高但范围更小。Tenth 的 `promote_float_dtype` 强制设定 $\text{BF16} \leq_{\text{fp}} \text{F16}$，这是一个**工程决策**（F16 的尾数更宽，更适合作为"中间精度"），而非数值上的自然偏序。此决策的影响在 §7.2 讨论。
 
 ### 3.2 提升函数 promote
 
-**定义 3.4**（HIR 层提升函数）。`promote_float_dtype: BaseType × BaseType → BaseType`（[hir/lower/types.rs:480-489](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)）定义为：
+**定义 3.4**（HIR 层提升函数）。`promote_float_dtype: BaseType × BaseType → BaseType`（[hir/lower/types.rs:480-489](../../tenth/src/hir/lower/types.rs)）定义为：
 
 $$\text{promote}(l, r) = \begin{cases} \text{F64} & \text{if } l = \text{F64} \text{ or } r = \text{F64} \\ \text{F32} & \text{if } l = \text{F32} \text{ or } r = \text{F32} \\ \text{F16} & \text{if } l = \text{F16} \text{ or } r = \text{F16} \\ \text{BF16} & \text{if } l = \text{BF16} \text{ or } r = \text{BF16} \\ l & \text{otherwise (整数 + 整数)} \end{cases}$$
 
 **关键观察**：前 4 个分支是**对称的**（`l` 或 `r` 任一为某浮点类型即返回该类型），但第 5 个分支（整数 fallback）返回 $l$（左操作数），**非对称**。
 
-**定义 3.5**（运行时标量提升函数）。VM 中的标量提升通过 match 分支隐式实现（[runtime/vm.rs:817-871](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。运行时标量值域为：
+**定义 3.5**（运行时标量提升函数）。VM 中的标量提升通过 match 分支隐式实现（[runtime/vm.rs:817-871](../../tenth/src/runtime/vm.rs)）。运行时标量值域为：
 
 $$V_{\text{scalar}} = \{\text{Int}(i64), \text{Float}(f64), \text{Float32}(f32)\}$$
 
@@ -212,7 +212,7 @@ $$V_{\text{scalar}} = \{\text{Int}(i64), \text{Float}(f64), \text{Float32}(f32)\
 
 ### 3.4 VM 中 56 个分支的归纳
 
-VM 的 4 个算子函数（`add_priv`、`sub_priv`、`mul_priv`、`div_priv`）各有以下 match 分支（以 `add_priv` 为例，[runtime/vm.rs:817-871](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：
+VM 的 4 个算子函数（`add_priv`、`sub_priv`、`mul_priv`、`div_priv`）各有以下 match 分支（以 `add_priv` 为例，[runtime/vm.rs:817-871](../../tenth/src/runtime/vm.rs)）：
 
 | # | 分支 | 结果 dtype | 语义 |
 |---|------|-----------|------|
@@ -272,7 +272,7 @@ VM 的 4 个算子函数（`add_priv`、`sub_priv`、`mul_priv`、`div_priv`）�
 
 **推论 P1.2**。张量 dtype 域 $(\{\text{F32}, \text{F64}\}, \leq_{\text{fp}}, \text{promote}_{\text{tensor}})$ 构成 2 元链上的有限分配格。
 
-**证明**。`TensorData` 枚举（[runtime/tensor.rs:7-10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）仅有 `F32` 和 `F64` 两个变体。张量-张量运算的 dtype 提升由 `add_tensor`/`sub_tensor`/`mul_tensor`/`div_tensor` 的 `_` 分支实现：混合 dtype 提升为 F64（[runtime/tensor.rs:587-596](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）。即 $\text{promote}_{\text{tensor}}(\text{F32}, \text{F64}) = \text{F64} = \max(\text{F32}, \text{F64})$。2 元链是有限分配格。$\square$
+**证明**。`TensorData` 枚举（[runtime/tensor.rs:7-10](../../tenth/src/runtime/tensor.rs)）仅有 `F32` 和 `F64` 两个变体。张量-张量运算的 dtype 提升由 `add_tensor`/`sub_tensor`/`mul_tensor`/`div_tensor` 的 `_` 分支实现：混合 dtype 提升为 F64（[runtime/tensor.rs:587-596](../../tenth/src/runtime/tensor.rs)）。即 $\text{promote}_{\text{tensor}}(\text{F32}, \text{F64}) = \text{F64} = \max(\text{F32}, \text{F64})$。2 元链是有限分配格。$\square$
 
 ### 4.2 定理 P2（健全性：无精度损失回路）
 
@@ -378,9 +378,9 @@ $$\text{promote}(\text{I64}, \text{promote}(\text{I32}, \text{I16})) = \text{pro
 
 **对比 NumPy**：NumPy 的 `int64 ⊕ float32 → float64` 更健全（自动提升到 f64 以容纳大整数）。Tenth 选择了 `i64 ⊕ f32 → f32`（跟随 f32），代价是大整数精度损失。
 
-**（3）Tenth 标量-张量提升**。由 [hir/lower/types.rs:155-157](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)，标量与张量运算时结果 dtype 跟随张量。这与 PyTorch 的弱提升一致，但 Tenth 的标量在进入 `add_scalar` 前先 cast 为 `f64`（[runtime/vm.rs:847-862](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)），再按张量 dtype 处理。
+**（3）Tenth 标量-张量提升**。由 [hir/lower/types.rs:155-157](../../tenth/src/hir/lower/types.rs)，标量与张量运算时结果 dtype 跟随张量。这与 PyTorch 的弱提升一致，但 Tenth 的标量在进入 `add_scalar` 前先 cast 为 `f64`（[runtime/vm.rs:847-862](../../tenth/src/runtime/vm.rs)），再按张量 dtype 处理。
 
-**特殊情况**：`Float(f64) + Tensor[f32]` → `add_scalar(s: f64)`，内部 `F32` 分支执行 `x + (s as f32)`（[runtime/tensor.rs:515](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）。若 $s$ 超出 `f32` 范围（如 $10^{300}$），`s as f32` 会溢出为 `inf`。这是**设计决策**（保持张量 dtype）而非 bug，但用户需知晓。$\square$
+**特殊情况**：`Float(f64) + Tensor[f32]` → `add_scalar(s: f64)`，内部 `F32` 分支执行 `x + (s as f32)`（[runtime/tensor.rs:515](../../tenth/src/runtime/tensor.rs)）。若 $s$ 超出 `f32` 范围（如 $10^{300}$），`s as f32` 会溢出为 `inf`。这是**设计决策**（保持张量 dtype）而非 bug，但用户需知晓。$\square$
 
 ### 4.5 定理 P5（broadcast + promotion 复合代数）
 
@@ -392,14 +392,14 @@ $$\text{promote}(\text{I64}, \text{promote}(\text{I32}, \text{I16})) = \text{pro
 
 **证明**。
 
-**（1）张量-张量**。由 [runtime/tensor.rs:571-597](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)（`add_tensor`），张量-张量运算分 3 分支：
+**（1）张量-张量**。由 [runtime/tensor.rs:571-597](../../tenth/src/runtime/tensor.rs)（`add_tensor`），张量-张量运算分 3 分支：
 - (F64, F64) → F64
 - (F32, F32) → F32
 - (mixed) → F64（通过 `as_f64_view` 提升）
 
 dtype 提升结果 = $\text{promote}_{\text{tensor}}(d_1, d_2) = \max(d_1, d_2)$，由推论 P1.2 这是格 join。shape 提升由 `broadcast_shape` 实现（NumPy 规则），与 dtype 独立。故 $\otimes$ 在 dtype 维度上是 join。
 
-**（2）标量-张量**。由 [hir/lower/types.rs:155-157](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)：
+**（2）标量-张量**。由 [hir/lower/types.rs:155-157](../../tenth/src/hir/lower/types.rs)：
 
 ```rust
 (Type::Tensor { dtype, .. }, _) | (_, Type::Tensor { dtype, .. }) => {
@@ -460,7 +460,7 @@ VM 的 4 个算子函数各覆盖以下有序类型对（取自 $\{\text{Int}, \
 
 ### 5.2 缺失分支分析：(Int, Tensor)
 
-**现象**：`Int + Tensor` 在 VM 中落入 `_` fallback，返回 `"+ 类型不匹配"` 错误（[runtime/vm.rs:870](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。
+**现象**：`Int + Tensor` 在 VM 中落入 `_` fallback，返回 `"+ 类型不匹配"` 错误（[runtime/vm.rs:870](../../tenth/src/runtime/vm.rs)）。
 
 **影响**：用户无法直接写 `1 + tensor`，必须先转换：`1.0 + tensor` 或 `(1 as f64) + tensor`。
 
@@ -469,7 +469,7 @@ VM 的 4 个算子函数各覆盖以下有序类型对（取自 $\{\text{Int}, \
 - PyTorch：`1 + torch.tensor([1.0])` → `tensor([2.0])`（弱提升）。
 - JAX：`1 + jnp.array([1.0])` → `Array([2.0], dtype=float32)`（自动提升）。
 
-**判定**：这是**设计决策**还是 **bug**？从 [hir/lower/types.rs:155-157](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) 的 HIR 推断逻辑看，`Type::Tensor { dtype, .. }` 与 `_`（任意标量）的组合返回 `Tensor { dtype, .. }`——HIR 层**预期** Int + Tensor 是合法的（结果跟随 Tensor dtype）。但 VM 层未实现对应分支，导致 HIR 推断通过但运行时报错。这是 **HIR 与 VM 的语义不一致**，属于实现层面的缺陷（bug）。
+**判定**：这是**设计决策**还是 **bug**？从 [hir/lower/types.rs:155-157](../../tenth/src/hir/lower/types.rs) 的 HIR 推断逻辑看，`Type::Tensor { dtype, .. }` 与 `_`（任意标量）的组合返回 `Tensor { dtype, .. }`——HIR 层**预期** Int + Tensor 是合法的（结果跟随 Tensor dtype）。但 VM 层未实现对应分支，导致 HIR 推断通过但运行时报错。这是 **HIR 与 VM 的语义不一致**，属于实现层面的缺陷（bug）。
 
 **严重性**：中等。不影响已有代码（用户会自然写 `1.0 + tensor`），但对新用户有意外性。
 
@@ -477,7 +477,7 @@ VM 的 4 个算子函数各覆盖以下有序类型对（取自 $\{\text{Int}, \
 
 #### 模式 1：f32 标量与 Tensor 的双重 cast
 
-**现象**：`Float32(s) + Tensor[t]` 在 VM 中先将 `s` cast 为 `f64`，再调用 `t.borrow().add_scalar(s_f64)`（[runtime/vm.rs:855-862](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）。`add_scalar` 内部对 F32 张量执行 `x + (scalar as f32)`（[runtime/tensor.rs:515](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）。
+**现象**：`Float32(s) + Tensor[t]` 在 VM 中先将 `s` cast 为 `f64`，再调用 `t.borrow().add_scalar(s_f64)`（[runtime/vm.rs:855-862](../../tenth/src/runtime/vm.rs)）。`add_scalar` 内部对 F32 张量执行 `x + (scalar as f32)`（[runtime/tensor.rs:515](../../tenth/src/runtime/tensor.rs)）。
 
 **cast 链**：`f32 → f64 → f32`。
 
@@ -521,7 +521,7 @@ VM 的 4 个算子函数各覆盖以下有序类型对（取自 $\{\text{Int}, \
 
 张量-张量运算的复合代数由两个独立运算组成：
 
-1. **Shape broadcast**：`broadcast_shape(a, b)`（[runtime/tensor.rs:552-566](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），NumPy 风格右对齐规则。
+1. **Shape broadcast**：`broadcast_shape(a, b)`（[runtime/tensor.rs:552-566](../../tenth/src/runtime/tensor.rs)），NumPy 风格右对齐规则。
 2. **Dtype promotion**：`promote_float_dtype(d1, d2)`，浮点格上的 join。
 
 两者**独立**：shape 广播不影响 dtype 提升，dtype 提升不影响 shape 广播。这使得复合代数是两个代数的**直积**：
@@ -534,7 +534,7 @@ $$\mathcal{T} = (D_{\text{float}}, \vee) \times (\text{Shape}, \oplus_{\text{bc}
 
 **定理 P6**（直积代数）。张量-张量运算的复合代数 $\mathcal{T}$ 是 dtype 格与 shape 半群的直积。dtype 维度满足分配律（定理 P1），shape 维度满足幂等性（T1 定理 1）。
 
-**证明**。由 `add_tensor` 实现（[runtime/tensor.rs:571-597](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）：
+**证明**。由 `add_tensor` 实现（[runtime/tensor.rs:571-597](../../tenth/src/runtime/tensor.rs)）：
 
 - dtype 提升：3 分支（F64⊕F64→F64, F32⊕F32→F32, mixed→F64），与 `promote_float_dtype` 一致。
 - shape 广播：3 分支共用 `broadcast_shape`，与标量运算无关。
@@ -551,7 +551,7 @@ $$\text{scalar}(d_s) \otimes \text{Tensor}[d_t, s_t] = \text{Tensor}[d_t, s_t]$$
 
 标量的 dtype $d_s$ 被忽略，结果 dtype = 张量 dtype $d_t$。标量值先 cast 为 $f64$（统一中间表示），再按 $d_t$ 处理。
 
-**实现路径**（以 `Tensor + Float` 为例，[runtime/vm.rs:830-837](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs)）：
+**实现路径**（以 `Tensor + Float` 为例，[runtime/vm.rs:830-837](../../tenth/src/runtime/vm.rs)）：
 
 1. VM 调用 `t.borrow().add_scalar(*s)`（`s` 是 `f64`）。
 2. `add_scalar` 内部按 Tensor 的 `data` 分支：
@@ -585,7 +585,7 @@ Tenth 的 `f32 ⊕ f64 → f64` 规则在混合精度训练中可能导致**意�
 
 - `Int(x) + Tensor(t)` → `t.borrow().add_scalar(*x as f64)`（与 `Float + Tensor` 同路径，但 cast 方向为 `i64 → f64`）。
 
-这一补全与 HIR 推断（[hir/lower/types.rs:155-157](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)）一致，消除 HIR-VM 语义不一致。
+这一补全与 HIR 推断（[hir/lower/types.rs:155-157](../../tenth/src/hir/lower/types.rs)）一致，消除 HIR-VM 语义不一致。
 
 ### 7.4 F16/BF16 运行时支持的实现路径
 
@@ -730,19 +730,19 @@ Tenth 的 `f32 ⊕ f64 → f64` 规则在混合精度训练中可能导致**意�
 
 | 概念 | 源码位置 |
 |------|---------|
-| `BaseType` 枚举（16 种类型） | [hir/types.rs:4-10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs) |
-| `promote_float_dtype` 函数 | [hir/lower/types.rs:480-489](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) |
-| `infer_binary_type`（HIR 二元运算类型推断） | [hir/lower/types.rs:135-166](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) |
-| 标量-张量吸收规则 | [hir/lower/types.rs:155-157](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) |
-| `add_priv`（VM 加法，15 分支） | [runtime/vm.rs:817-872](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| `sub_priv`（VM 减法，14 分支） | [runtime/vm.rs:874-930](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| `mul_priv`（VM 乘法，14 分支） | [runtime/vm.rs:932-988](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| `div_priv`（VM 除法，14 分支） | [runtime/vm.rs:990-1053](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/vm.rs) |
-| `TensorData` 枚举（仅 F32/F64） | [runtime/tensor.rs:7-10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| `add_scalar`（标量加法，按 dtype 分支） | [runtime/tensor.rs:512-517](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| `add_tensor`（张量加法，含混合 dtype 提升） | [runtime/tensor.rs:571-597](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| `broadcast_shape`（NumPy 风格广播） | [runtime/tensor.rs:552-566](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| 解释器 `eval_binary`（与 VM 对照） | [runtime/interpreter/binary.rs:17-78](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/binary.rs) |
+| `BaseType` 枚举（16 种类型） | [hir/types.rs:4-10](../../tenth/src/hir/types.rs) |
+| `promote_float_dtype` 函数 | [hir/lower/types.rs:480-489](../../tenth/src/hir/lower/types.rs) |
+| `infer_binary_type`（HIR 二元运算类型推断） | [hir/lower/types.rs:135-166](../../tenth/src/hir/lower/types.rs) |
+| 标量-张量吸收规则 | [hir/lower/types.rs:155-157](../../tenth/src/hir/lower/types.rs) |
+| `add_priv`（VM 加法，15 分支） | [runtime/vm.rs:817-872](../../tenth/src/runtime/vm.rs) |
+| `sub_priv`（VM 减法，14 分支） | [runtime/vm.rs:874-930](../../tenth/src/runtime/vm.rs) |
+| `mul_priv`（VM 乘法，14 分支） | [runtime/vm.rs:932-988](../../tenth/src/runtime/vm.rs) |
+| `div_priv`（VM 除法，14 分支） | [runtime/vm.rs:990-1053](../../tenth/src/runtime/vm.rs) |
+| `TensorData` 枚举（仅 F32/F64） | [runtime/tensor.rs:7-10](../../tenth/src/runtime/tensor.rs) |
+| `add_scalar`（标量加法，按 dtype 分支） | [runtime/tensor.rs:512-517](../../tenth/src/runtime/tensor.rs) |
+| `add_tensor`（张量加法，含混合 dtype 提升） | [runtime/tensor.rs:571-597](../../tenth/src/runtime/tensor.rs) |
+| `broadcast_shape`（NumPy 风格广播） | [runtime/tensor.rs:552-566](../../tenth/src/runtime/tensor.rs) |
+| 解释器 `eval_binary`（与 VM 对照） | [runtime/interpreter/binary.rs:17-78](../../tenth/src/runtime/interpreter/binary.rs) |
 
 ## 附录 C：实施建议
 

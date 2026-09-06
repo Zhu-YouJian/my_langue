@@ -29,8 +29,8 @@
 
 AI 原生语言的核心竞争力之一是 shape（形状）错误的编译期诊断能力。shape 错误是 AI 开发中最常见的 bug 类型之一——典型场景包括：MatMul 内侧维度不匹配、Reshape 元素数不守恒、Broadcast 不可广播、autograd 反向传播梯度 shape 漂移等。现有主流 AI 框架在 shape 错误上的表现存在结构性缺陷：
 
-- **PyTorch**：动态图架构，shape 错误只能运行时崩溃，报错形式为 `RuntimeError: mat1 and mat2 shapes cannot be multiplied (3x8 and 4x8)`，仅定位到代码行，不追溯根因（[战略规划.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md) 方向 F 节）。
-- **JAX**：`check_shading` 仅检查前向 shape，不查反向、不查数值、不查内存（[综合分析.md §3.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md)）。
+- **PyTorch**：动态图架构，shape 错误只能运行时崩溃，报错形式为 `RuntimeError: mat1 and mat2 shapes cannot be multiplied (3x8 and 4x8)`，仅定位到代码行，不追溯根因（[战略规划.md](../shape-check-roadmap/战略规划.md) 方向 F 节）。
+- **JAX**：`check_shading` 仅检查前向 shape，不查反向、不查数值、不查内存（[综合分析.md §3.1](../shape-check-roadmap/综合分析.md)）。
 
 Tenth 作为编译型 AI 语言，已实现护城河 A（Autograd 反向 Shape 静态验证，消除 5 处 silent squeeze）与护城河 D（编译期内存/算力预估，warning 系统），并规划护城河 B（Shape 代数求解器）与护城河 F（张量关系调试器）。这些能力的共同前提是：**编译期 shape 检查能在多大范围内生效**。
 
@@ -49,7 +49,7 @@ Tenth 作为编译型 AI 语言，已实现护城河 A（Autograd 反向 Shape �
 本文的贡献如下：
 
 1. **形式化**（§3）：将 Tenth 程序的 shape 错误严格形式化为程序语义的非平凡性质，满足 Rice 定理的前提条件。
-2. **主定理与证明**（§4）：证明定理 B1——一般程序 shape 检查不可判定。给出从停机问题到 shape 检查的多一归约的完整双向正确性论证，相比 [v3 草稿 §4.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) 的反证法叙述更严格。
+2. **主定理与证明**（§4）：证明定理 B1——一般程序 shape 检查不可判定。给出从停机问题到 shape 检查的多一归约的完整双向正确性论证，相比 [v3 草稿 §4.2](../shape-check-roadmap/形式化分析理论可行性论证.md) 的反证法叙述更严格。
 3. **可判定子集刻画**（§4.3）：刻画 shape 检查的可判定子类（无递归无 while 的程序、单函数内验证、线性约束在整数上可解）。
 4. **与 T3 的互补关系**（§5）：建立"不可判定性上界（T4）+ NP 完全性下界（T3）"的完整复杂度图景。
 5. **工程启示**（§6）：为 Tenth 的"保守近似 + 运行时兜底"双层策略提供理论依据，给出编译期-运行时边界划分原则。
@@ -57,7 +57,7 @@ Tenth 作为编译型 AI 语言，已实现护城河 A（Autograd 反向 Shape �
 
 ### 1.4 本文与 v3 草稿的关系
 
-[v3 草稿 §4.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) 已给出定理 B1 的反证法叙述，但存在以下不足，本文予以严格化：
+[v3 草稿 §4.2](../shape-check-roadmap/形式化分析理论可行性论证.md) 已给出定理 B1 的反证法叙述，但存在以下不足，本文予以严格化：
 
 | v3 草稿的不足 | 本文的严格化 |
 |--------------|------------|
@@ -110,7 +110,7 @@ Tenth 的 shape 系统可视为一种受限的依赖类型系统——shape 是�
 
 ### 2.4 与 T3（NP 完全性）的关系
 
-T3 论证 shape 约束求解在可判定子集上的 NP 完全性（[v3 草稿定理 B2b](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)，归约到 0-1 INTEGER PROGRAMMING）。本文（T4）与 T3 的关系是：
+T3 论证 shape 约束求解在可判定子集上的 NP 完全性（[v3 草稿定理 B2b](../shape-check-roadmap/形式化分析理论可行性论证.md)，归约到 0-1 INTEGER PROGRAMMING）。本文（T4）与 T3 的关系是：
 
 - **T4**：给出不可判定性**上界**——一般 shape 检查超出可判定范围。
 - **T3**：给出可判定子集的 NP 完全性**下界**——即使在可判定子集上，最坏情况也是 NP 完全。
@@ -123,7 +123,7 @@ T3 论证 shape 约束求解在可判定子集上的 NP 完全性（[v3 草稿�
 
 ### 3.1 前置概念
 
-我们沿用 [v3 草稿 §2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) 的 shape 与算子定义：
+我们沿用 [v3 草稿 §2](../shape-check-roadmap/形式化分析理论可行性论证.md) 的 shape 与算子定义：
 
 **定义 3.1（Shape）**：Shape 是非负整数元组 $s = (d_1, ..., d_n)$，其中 $n \geq 0$，$d_i \in \mathbb{N} = \{0, 1, 2, ...\}$。空元组 $\epsilon$ 表示标量。记所有 shape 的集合为 $\mathbb{S} = \bigcup_{n \geq 0} \mathbb{N}^n$。
 
@@ -132,7 +132,7 @@ T3 论证 shape 约束求解在可判定子集上的 NP 完全性（[v3 草稿�
 - 符号维度 $\text{Symbol}(name)$（同名等价）
 - 未知维度 $\text{Any}$
 
-**定义 3.3（算子 shape 语义）**：每个算子 $op$ 关联 shape 语义函数 $\text{Sem}_{op}: \mathbb{S}^{k_{op}} \to \mathbb{S} \cup \{\bot\}$，其中 $\bot$ 表示输入 shape 不合法。详见 [v3 草稿 定义 2.5](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)。
+**定义 3.3（算子 shape 语义）**：每个算子 $op$ 关联 shape 语义函数 $\text{Sem}_{op}: \mathbb{S}^{k_{op}} \to \mathbb{S} \cup \{\bot\}$，其中 $\bot$ 表示输入 shape 不合法。详见 [v3 草稿 定义 2.5](../shape-check-roadmap/形式化分析理论可行性论证.md)。
 
 ### 3.2 Shape 错误的语法与语义定义
 
@@ -406,18 +406,18 @@ Algorithm Halt(M, w):
 
 - **强度**：标准假设，Turing 完备性的等价表述。
 - **不成立情形**：若 Tenth 移除 while 循环或递归（如变为 Coq 的 Gallina 那样全部终止的语言），则假设不成立，归约失效。但此时 Tenth 不再是通用编程语言。
-- **验证**：Tenth 当前实现含 while 与递归（见 [hir/lower.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower.rs)），假设成立。
+- **验证**：Tenth 当前实现含 while 与递归（见 [hir/lower.rs](../../tenth/src/hir/lower.rs)），假设成立。
 
 **假设 A2（simulate 可编码为 Tenth 程序）**：图灵机 $M$ 的状态、转移函数、输入 $w$ 可编码为 Tenth 数据结构，且 `M.step`、`M.init`、`is_halted` 可在 Tenth 中实现。
 
 - **强度**：标准假设，是图灵完备语言的等价表述。
 - **不成立情形**：若 Tenth 的整数类型有界（如 i64），则 `simulate` 在 $M$ 执行超过 $2^{64}$ 步后整数溢出，归约失效。但实际 Tenth 的 i64 足以模拟任何"合理"的图灵机执行（$2^{64}$ 步远超物理可行）。
-- **验证**：Tenth 的 i64 类型足够（[语言参考手册](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md)）。
+- **验证**：Tenth 的 i64 类型足够（[语言参考手册](../语言参考手册.md)）。
 
 **假设 A3（shape 错误可被运行时触发）**：`zeros(3, 8).matmul(zeros(4, 8))` 在运行时确实触发 shape 错误（而非 silent squeeze 或其他行为）。
 
 - **强度**：Tenth 实现的假设，可通过代码验证。
-- **验证**：护城河 A 已消除 autodiff 路径的 silent squeeze（[MEMO.md 第 11 行](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md)），前向 MatMul 的 shape 检查在 [hir/lower/types.rs::check_binary_shape_compat](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs) 与运行时 [autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 中实现。
+- **验证**：护城河 A 已消除 autodiff 路径的 silent squeeze（[MEMO.md 第 11 行](../../MEMO.md)），前向 MatMul 的 shape 检查在 [hir/lower/types.rs::check_binary_shape_compat](../../tenth/src/hir/lower/types.rs) 与运行时 [autodiff.rs](../../tenth/src/runtime/autodiff.rs) 中实现。
 
 **假设 A4（归约的目标是 $\mathcal{Q}_{[2,3]}$ 而非 $\text{Safe}$）**：本文实际归约证明的是"$\mathcal{Q}_{[2,3]}$ 不可判定"，而非直接"$\text{Safe}$ 不可判定"。
 
@@ -431,7 +431,7 @@ Algorithm Halt(M, w):
 
 ### 5.1 完整复杂度图景
 
-T4（本文）与 T3（[v3 草稿 定理 B2b](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)）共同构成 shape 检查的完整复杂度图景：
+T4（本文）与 T3（[v3 草稿 定理 B2b](../shape-check-roadmap/形式化分析理论可行性论证.md)）共同构成 shape 检查的完整复杂度图景：
 
 | 维度 | T4（本文） | T3（v3 草稿 B2b） |
 |------|-----------|------------------|
@@ -462,7 +462,7 @@ T4（本文）与 T3（[v3 草稿 定理 B2b](file:///d:/史蒂夫/Desktop/AI开
 
 ### 5.2 可判定子集的刻画
 
-综合 T4、T3 与 [v3 草稿 §4.3-4.4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)，shape 检查的可判定子集刻画如下：
+综合 T4、T3 与 [v3 草稿 §4.3-4.4](../shape-check-roadmap/形式化分析理论可行性论证.md)，shape 检查的可判定子集刻画如下：
 
 **子集 1（无递归无 while，B5）**：程序不含递归函数调用与 while 循环。可展开为有限 HIR DAG，shape 验证可判定。
 
@@ -484,7 +484,7 @@ $$\text{不可判定} \supset \text{NP 完全} \supset \text{多项式}$$
 - 中层（NP 完全）：线性约束 + 非负整数（T3/B2b）
 - 底层（多项式）：线性约束 + 整数（B2a），或单函数无递归（B3/B5）
 
-**证明**：综合本文定理 B1（顶层不可判定）、[v3 草稿 B2b](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)（中层 NP 完全）、[v3 草稿 B2a, B3, B5](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)（底层多项式）。$\square$
+**证明**：综合本文定理 B1（顶层不可判定）、[v3 草稿 B2b](../shape-check-roadmap/形式化分析理论可行性论证.md)（中层 NP 完全）、[v3 草稿 B2a, B3, B5](../shape-check-roadmap/形式化分析理论可行性论证.md)（底层多项式）。$\square$
 
 **工程含义**：Tenth 的 shape 检查策略应针对不同子集采取不同方法：
 - 顶层：编译期不处理，标记 Any，运行时兜底（护城河 F）
@@ -502,11 +502,11 @@ $$\text{不可判定} \supset \text{NP 完全} \supset \text{多项式}$$
 | 层 | 工具 | 理论依据 | 能力 | 局限 |
 |----|------|---------|------|------|
 | 编译期（保守近似） | 护城河 B（`--strict-shapes`） | T4 不可判定性、T3 NP 完全性、B2a/B3/B5 可判定子集 | 对可判定子集做精确求解；对不可判定区域标记 Any | 不能精确分析含递归/while 的程序 |
-| 运行时（兜底） | 护城河 F（Tape 形式化根因分析） | [T2 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md) 定理 F1-F5 | 在已执行的 Tape 上做精确根因定位 | 仅在程序运行后才生效；依赖 Tape 完整性 |
+| 运行时（兜底） | 护城河 F（Tape 形式化根因分析） | [T2 论文](T2-Tape形式化模型与根因定位可判定性.md) 定理 F1-F5 | 在已执行的 Tape 上做精确根因定位 | 仅在程序运行后才生效；依赖 Tape 完整性 |
 
 **理论依据**：
 - T4 表明编译期不能完整检出所有 shape 错误，故需要运行时兜底。
-- T2（[形式化分析理论可行性论证.md §3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)）表明运行时 Tape 上的根因分析可判定且多项式时间，故运行时兜底可行。
+- T2（[形式化分析理论可行性论证.md §3](../shape-check-roadmap/形式化分析理论可行性论证.md)）表明运行时 Tape 上的根因分析可判定且多项式时间，故运行时兜底可行。
 - 综合分析.md §3.1 的"闭环结构"——编译期防患未然 + 运行期出事能查——正是这一双层策略的工程化表述。
 
 ### 6.2 编译期-运行时边界划分原则
@@ -519,7 +519,7 @@ $$\text{不可判定} \supset \text{NP 完全} \supset \text{多项式}$$
 
 形式化：若编译期检查报告"无 shape 错误"，则必须确实无 shape 错误；若编译期检查报告"可能有 shape 错误"或标记 Any，实际可能无错。
 
-**原则 3（成本可控性）**：编译期 shape 检查的复杂度必须可控（[战略规划.md §编译期成本控制原则](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)）：
+**原则 3（成本可控性）**：编译期 shape 检查的复杂度必须可控（[战略规划.md §编译期成本控制原则](../shape-check-roadmap/战略规划.md)）：
 - "检查"类工作（O(n) 或 O(1)）：默认开启
 - "求解"类工作（可能 NP）：可选开启（`--strict-shapes`），含超时保护
 - 不可判定的工作：禁止（如跨函数传播含递归）
@@ -530,7 +530,7 @@ $$\text{不可判定} \supset \text{NP 完全} \supset \text{多项式}$$
 
 ### 6.3 与护城河闭环（A+D+F）的关系
 
-Tenth 的护城河闭环（[综合分析.md §3.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md)）由 A、D、F 构成，B 是可选层：
+Tenth 的护城河闭环（[综合分析.md §3.1](../shape-check-roadmap/综合分析.md)）由 A、D、F 构成，B 是可选层：
 
 ```
 编译期（防患未然）              运行期（出事能查）
@@ -544,17 +544,17 @@ Tenth 的护城河闭环（[综合分析.md §3.1](file:///d:/史蒂夫/Desktop/
 ```
 
 **T4 对闭环的贡献**：
-- **A 与 D 是已实现层**（[MEMO.md 第 11, 13 行](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md)），它们处理可判定的 shape 检查（前向+反向 shape 规则匹配，O(1) 查表）。
-- **B 是可选层**，T4 表明 B 不能完整求解（不可判定），只能对可判定子集做保守近似。B 的价值定位从"精确求解"修正为"编译期预警"（[v3 草稿 §6.8](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)）。
+- **A 与 D 是已实现层**（[MEMO.md 第 11, 13 行](../../MEMO.md)），它们处理可判定的 shape 检查（前向+反向 shape 规则匹配，O(1) 查表）。
+- **B 是可选层**，T4 表明 B 不能完整求解（不可判定），只能对可判定子集做保守近似。B 的价值定位从"精确求解"修正为"编译期预警"（[v3 草稿 §6.8](../shape-check-roadmap/形式化分析理论可行性论证.md)）。
 - **F 是运行时兜底层**，T2 表明 F 在 Tape 上可精确分析。F 不受 T4 的不可判定性影响——因为 F 分析的是已执行的 Tape（运行时事实），不需要预测。
 
-**关键洞察**：T4 的不可判定性结论**不适用于 F**。F 在运行时 Tape 上工作，Tape 是已发生的事实（DAG，无未执行分支），shape 信息已确定。F 的可判定性（[T2 定理 F1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md)）与 T4 的不可判定性（针对编译期预测）不冲突——前者是"事后分析"，后者是"事前预测"。
+**关键洞察**：T4 的不可判定性结论**不适用于 F**。F 在运行时 Tape 上工作，Tape 是已发生的事实（DAG，无未执行分支），shape 信息已确定。F 的可判定性（[T2 定理 F1](T2-Tape形式化模型与根因定位可判定性.md)）与 T4 的不可判定性（针对编译期预测）不冲突——前者是"事后分析"，后者是"事前预测"。
 
 ---
 
 ## 7. 静态分析的信息论下界（猜想）
 
-本节扩展 [v3 草稿 §6.8](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) 的静态分析本质局限，提出形式化的信息论下界猜想。
+本节扩展 [v3 草稿 §6.8](../shape-check-roadmap/形式化分析理论可行性论证.md) 的静态分析本质局限，提出形式化的信息论下界猜想。
 
 ### 7.1 静态分析的信息量
 
@@ -619,19 +619,19 @@ $$I_{\text{full}}(P) = I_{\text{runtime}}(P, \cdot) \text{ 在所有输入上的
 
 | 本文章节 | 对应文档位置 | 关系 |
 |---------|------------|------|
-| §4 定理 B1 | [v3 草稿 §4.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) | 严格化 v3 草稿的反证法叙述 |
-| §5 T4-T3 互补 | [v3 草稿 §4.3 定理 B2b](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) | 建立 T4-T3 互补图景 |
-| §6.1 双层策略 | [战略规划.md §编译期成本控制原则](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md) | 为双层策略提供理论依据 |
-| §6.3 护城河闭环 | [综合分析.md §3.1](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md) | 形式化闭环结构的理论依据 |
-| §7 信息论下界 | [v3 草稿 §6.8](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) | 扩展 v3 草稿的定性叙述为猜想 |
-| §4.5 推论 B1.1-B1.3 | [v3 草稿 §4.2 推论](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) | 一致 |
+| §4 定理 B1 | [v3 草稿 §4.2](../shape-check-roadmap/形式化分析理论可行性论证.md) | 严格化 v3 草稿的反证法叙述 |
+| §5 T4-T3 互补 | [v3 草稿 §4.3 定理 B2b](../shape-check-roadmap/形式化分析理论可行性论证.md) | 建立 T4-T3 互补图景 |
+| §6.1 双层策略 | [战略规划.md §编译期成本控制原则](../shape-check-roadmap/战略规划.md) | 为双层策略提供理论依据 |
+| §6.3 护城河闭环 | [综合分析.md §3.1](../shape-check-roadmap/综合分析.md) | 形式化闭环结构的理论依据 |
+| §7 信息论下界 | [v3 草稿 §6.8](../shape-check-roadmap/形式化分析理论可行性论证.md) | 扩展 v3 草稿的定性叙述为猜想 |
+| §4.5 推论 B1.1-B1.3 | [v3 草稿 §4.2 推论](../shape-check-roadmap/形式化分析理论可行性论证.md) | 一致 |
 
 ### 8.4 实施建议
 
 基于本文理论结论，对 Tenth shape 检查的实施建议：
 
-1. **默认编译期检查限于可判定子集**：单函数内、无递归、线性约束（B2a, B3, B5）。这是 Tenth 当前实现的范围（[hir/lower/types.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/lower/types.rs)）。
-2. **`--strict-shapes` 模式启用 NP 完全求解**：含超时保护（建议 100ms），应对 B2b 的 NP 完全性（[v3 草稿 §4.5](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)）。
+1. **默认编译期检查限于可判定子集**：单函数内、无递归、线性约束（B2a, B3, B5）。这是 Tenth 当前实现的范围（[hir/lower/types.rs](../../tenth/src/hir/lower/types.rs)）。
+2. **`--strict-shapes` 模式启用 NP 完全求解**：含超时保护（建议 100ms），应对 B2b 的 NP 完全性（[v3 草稿 §4.5](../shape-check-roadmap/形式化分析理论可行性论证.md)）。
 3. **跨函数传播限于无递归子类**：避免 B1.3 的不可判定性。
 4. **运行时兜底必须就位**：护城河 A（已完成）+ 护城河 F（待实现）。在 F 实现前，运行时 shape 错误的诊断能力受限。
 5. **诚实告知用户编译期检查的边界**：在文档中明确"编译期 shape 检查不能检出所有错误"，避免用户期望偏差。
@@ -674,11 +674,11 @@ $$I_{\text{full}}(P) = I_{\text{runtime}}(P, \cdot) \text{ 在所有输入上的
 10. Chaitin, G. J. (1966). On the length of programs for computing finite binary sequences. *JACM*, 13(4), 547-569.（algorithmic information theory，§7 猜想的基础）
 11. Kolmogorov, A. N. (1965). Three approaches to the quantitative definition of information. *Problems of Information Transmission*, 1(1), 1-7.（Kolmogorov 复杂度，§7 猜想的基础）
 12. Tenth 项目内部文档：
-    - [形式化分析理论可行性论证.md v3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md)（§4.2 定理 B1 草稿，本文严格化的基础）
-    - [战略规划.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/战略规划.md)（双层策略的战略定位）
-    - [综合分析.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/综合分析.md)（护城河闭环结构）
-    - [T2-Tape形式化模型与根因定位可判定性.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md)（互补论文，运行时层）
-    - [MEMO.md](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md)（护城河 A/D 实现记录）
+    - [形式化分析理论可行性论证.md v3](../shape-check-roadmap/形式化分析理论可行性论证.md)（§4.2 定理 B1 草稿，本文严格化的基础）
+    - [战略规划.md](../shape-check-roadmap/战略规划.md)（双层策略的战略定位）
+    - [综合分析.md](../shape-check-roadmap/综合分析.md)（护城河闭环结构）
+    - [T2-Tape形式化模型与根因定位可判定性.md](T2-Tape形式化模型与根因定位可判定性.md)（互补论文，运行时层）
+    - [MEMO.md](../../MEMO.md)（护城河 A/D 实现记录）
     - `tenth/src/hir/lower/types.rs`（编译期 shape 检查实现）
     - `tenth/src/runtime/autodiff.rs`（运行时 Tape 实现）
 
@@ -707,7 +707,7 @@ $$I_{\text{full}}(P) = I_{\text{runtime}}(P, \cdot) \text{ 在所有输入上的
 
 ## 附录 B：与 v3 草稿的差异
 
-本文相对 [v3 草稿 §4.2](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/shape-check-roadmap/形式化分析理论可行性论证.md) 的主要差异：
+本文相对 [v3 草稿 §4.2](../shape-check-roadmap/形式化分析理论可行性论证.md) 的主要差异：
 
 | 维度 | v3 草稿 | 本文 |
 |------|--------|------|

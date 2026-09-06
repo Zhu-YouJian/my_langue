@@ -36,7 +36,7 @@ Tenth 是**一种新的可能性**：一门语言同时覆盖通用编程和 AI 
 - f32 / f64 双精度张量，自动微分方案 B 天然支持（前向 f32 + 反向 f64 + 梯度按参数 dtype 写回）
 
 **编译管线**
-- 字节码 VM（45 指令，默认路径，~0.2s 自举）
+- 字节码 VM（65 指令，默认路径，~0.2s 自举）
 - 树遍历解释器（fallback 路径）
 - Cranelift JIT（热点编译）
 - WASM 后端（wasm-encoder + wasmi 闭环）
@@ -50,9 +50,9 @@ Tenth 是**一种新的可能性**：一门语言同时覆盖通用编程和 AI 
 - LSP 服务器：hover/completion/definition/references/rename/formatting 等 13 项能力
 - GPU 后端脚手架：CudaKernel 模板 + Device 抽象 + 算子融合/并行分解
 
-**标准库**：65 模块（63 用户模块 + prelude，71 个 `.th` 文件）覆盖 nn/optim/data/init/collections/string/utils/fs/json/toml/cli/logging/time/random/math/crypto/regex/net/http/process/distributed 等
+**标准库**：以 `tenth/std/` + `prelude.th` 索引为准（`.th` 71 个 / 命名空间约 29）覆盖 nn/optim/data/init/collections/string/utils/fs/json/toml/cli/logging/time/random/math/crypto/regex/net/http/process/distributed 等
 
-**测试**：2377 项测试全部通过（0 failed）；62 个实例双路径可运行；自举验证 `[OK]`
+**测试**：当前记录 2377（以全新 `cargo test --release` 实测为准，0 failed）；63 个可运行实例（另有 .th 文件 72 个，不同口径）双路径可运行；自举验证 `[OK]`
 
 ## Quick Start
 
@@ -138,7 +138,7 @@ fn main() {
 }
 ```
 
-更多示例见 `Tenth实例/` 目录（62 个）和 `tenth/std/` 标准库（65 模块）。
+更多示例见 `Tenth实例/` 目录（63 个可运行实例，另有 .th 文件 72 个，不同口径）和 `tenth/std/` 标准库（以 `tenth/std/` + `prelude.th` 索引为准，`.th` 71 个 / 命名空间约 29）。
 
 ## 自动微分
 
@@ -201,7 +201,7 @@ Tenth 编译器由 Tenth 自身编写（`tenthc/`），三条自举路径通过�
 | `RELEASE_NOTES.md` | 1.0 发布说明（里程碑回顾/关键能力/已知限制/升级指引） |
 | `CODE_WIKI.md` | 模块架构、编译管线、依赖关系 |
 | `MEMO.md` | 逐版变更记录、已知限制演化、重大决策 |
-| `能力梳理/能力全梳理.md` | 479 项能力的逐条完成状态（✅/⚠️/❌） |
+| `能力梳理/能力全梳理.md` | 601 项能力的逐条完成状态（✅/⚠️/❌） |
 | `docs/语言参考手册.md` | 语言语法、类型系统、标准库 API |
 | `docs/shape-check-roadmap/` | Shape 检查战略规划与短期规划 |
 | `AUDIT.md` | 缺陷登记册、测试覆盖矩阵、架构债务 |

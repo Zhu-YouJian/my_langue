@@ -2,6 +2,7 @@
 
 > **版本**：v2.0 | **更新日期**：2026-06-29
 > **本版本由全面安全审查（详见 `security_review.md`）驱动重写**，纠正了此前版本中关于 `unsafe` 数量、执行路径与内存护栏覆盖范围的失实声明。
+> **文档角色**：本文件是 Tenth 项目的**安全威胁模型与公开披露**（面向使用方/维护方的"当前安全态势 + 如何安全使用 + 攻击面清单"），并非审计正文。三份文档分工：**原始安全审计**见 `security_review.md`（审计发现过程与细节）；**安全问题修复登记与验证**见 `AUDIT.md` §十（安全审查记录，2026-06-29）；本文件聚焦威胁模型与披露。三者若口径不一致，以 `security_review.md`（审计）与 `AUDIT.md` §十（修复登记）为准。
 
 ---
 
@@ -54,9 +55,9 @@
 
 `compile/jit/` 下的 `unsafe` 不可消除（JIT 必然涉及可执行内存与 FFI）。所有 `unsafe` 块须满足以下不变量，违反即 UB：
 
-1. **`std::mem::transmute(raw_ptr)` → `JitFn`**（[context.rs:47](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/context.rs#L47)）：`raw_ptr` 必须由 cranelift `JITModule::get_definition` 返回；声明的函数签名必须与 `translator.rs` 生成的函数签名一致。已加尺寸断言。
-2. **`std::slice::from_raw_parts(args_ptr, count)`**（[hostcalls.rs:186, 198, 215, 220, 237, 297, 337](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs#L186)）：`args_ptr` 必须指向 `count` 个 `Value` 的有效内存；`count` 必须 ≤ `MAX_HOSTCALL_ARGS`（1<<20），且所有 `count * N`、`rows * cols` 类运算用 `checked_mul` 防溢出。
-3. **`vm as *mut Vm` 传入 JIT**（[mod.rs:81](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs#L81)）：JIT 调用期间 `Vm` 不可被移动；所有 hostcall 已用 `catch_unwind` 包裹，避免 unwind 跨 FFI 边界（UB）。
+1. **`std::mem::transmute(raw_ptr)` → `JitFn`**（[context.rs:47](tenth/src/compile/jit/context.rs#L47)）：`raw_ptr` 必须由 cranelift `JITModule::get_definition` 返回；声明的函数签名必须与 `translator.rs` 生成的函数签名一致。已加尺寸断言。
+2. **`std::slice::from_raw_parts(args_ptr, count)`**（[hostcalls.rs:186, 198, 215, 220, 237, 297, 337](tenth/src/compile/jit/hostcalls.rs#L186)）：`args_ptr` 必须指向 `count` 个 `Value` 的有效内存；`count` 必须 ≤ `MAX_HOSTCALL_ARGS`（1<<20），且所有 `count * N`、`rows * cols` 类运算用 `checked_mul` 防溢出。
+3. **`vm as *mut Vm` 传入 JIT**（[mod.rs:81](tenth/src/compile/jit/mod.rs#L81)）：JIT 调用期间 `Vm` 不可被移动；所有 hostcall 已用 `catch_unwind` 包裹，避免 unwind 跨 FFI 边界（UB）。
 4. **`std::ptr::write`**（数十处）：偏移量来自翻译器，不得超过缓冲区容量。
 
 ---

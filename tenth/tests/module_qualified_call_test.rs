@@ -10,7 +10,7 @@
 //! - 回归：glob 导入（`use std::env::*`）不受影响
 //!
 //! 说明：泛型函数普通调用（无显式类型参数）为既有语言限制（同文件同样失败，
-//! 见 `.trae/tmp/manual_audit/m_generic_add.th` 系诊断），非本 AUDIT 范围；
+//! 见当时 `.trae` 临时诊断用例），非本 AUDIT 范围；
 //! 泛型模块限定调用需显式类型参数 `mod::fn<T>(...)`。
 
 use std::process::Command;

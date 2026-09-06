@@ -76,9 +76,9 @@ Tenth 的策略独特之处在于：将"Softmax + CrossEntropy"的融合作为**
 
 ### 1.4 与 T39（Wengert Tape）的联动
 
-本文的分析建立在 Tenth 的 Wengert Tape 之上。Tape 的形式化模型已在 T2（[T2-Tape形式化模型与根因定位可判定性](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md)）与 T38（[T38-autodiff-tape多路径一致性](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T38-autodiff-tape多路径一致性.md)）中建立。规划中的 T39（Wengert Tape 形式化模型）将进一步严格化 Tape 节点的代数结构与拓扑回放语义。本文采用以下约定：
+本文的分析建立在 Tenth 的 Wengert Tape 之上。Tape 的形式化模型已在 T2（[T2-Tape形式化模型与根因定位可判定性](T2-Tape形式化模型与根因定位可判定性.md)）与 T38（[T38-autodiff-tape多路径一致性](T38-autodiff-tape多路径一致性.md)）中建立。规划中的 T39（Wengert Tape 形式化模型）将进一步严格化 Tape 节点的代数结构与拓扑回放语义。本文采用以下约定：
 
-- **Tape 节点**：四元组 $(op, s_{in}, s_{out}, \ell)$，其中 $op$ 为算子类型（`TapeOp`），$s_{in}$ 为输入张量引用列表，$s_{out}$ 为输出张量引用，$\ell$ 为上游节点 id 列表（见 [autodiff.rs:14-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **Tape 节点**：四元组 $(op, s_{in}, s_{out}, \ell)$，其中 $op$ 为算子类型（`TapeOp`），$s_{in}$ 为输入张量引用列表，$s_{out}$ 为输出张量引用，$\ell$ 为上游节点 id 列表（见 [autodiff.rs:14-25](../../tenth/src/runtime/autodiff.rs)）；
 - **反向回放**：从 loss 节点出发，按拓扑逆序对每个节点应用链式法则，将梯度累积至叶节点的 `.grad` 字段；
 - **多路径一致性**：VM 与解释器记录的 tape 同构（T38 定理 A1），JIT 在 recording 模式下整体退出至 VM（T38 定理 A2）。
 
@@ -118,7 +118,7 @@ PyTorch 的 `torch.compile`（Dynamo + Inductor）引入了图级融合，但其
 
 ### 2.4 Tenth 的标准算子级融合
 
-Tenth 在 `runtime/autodiff.rs` 中定义了 21 个 `TapeOp` 变体（[autodiff.rs:29-79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），其中 `Softmax` 与 `CrossEntropy` 是两个独立的一等算子。`CrossEntropy` 的前向存储 `softmax(logits)` 作为中间量（[autodiff.rs:152-173](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），反向直接返回 `softmax - target`（[autodiff.rs:723-734](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+Tenth 在 `runtime/autodiff.rs` 中定义了 21 个 `TapeOp` 变体（[autodiff.rs:29-79](../../tenth/src/runtime/autodiff.rs)），其中 `Softmax` 与 `CrossEntropy` 是两个独立的一等算子。`CrossEntropy` 的前向存储 `softmax(logits)` 作为中间量（[autodiff.rs:152-173](../../tenth/src/runtime/autodiff.rs)），反向直接返回 `softmax - target`（[autodiff.rs:723-734](../../tenth/src/runtime/autodiff.rs)）。
 
 这种"在算子定义期就确定融合"的策略，与 XLA 的"图优化期融合"和 PyTorch 的"API 级手写融合"形成对比。本文第 10 节将系统对比三者。
 
@@ -161,7 +161,7 @@ $$
 
 ### 3.3 Tape 节点结构
 
-Tenth 的 `TapeNode` 结构（[autodiff.rs:14-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+Tenth 的 `TapeNode` 结构（[autodiff.rs:14-25](../../tenth/src/runtime/autodiff.rs)）：
 ```rust
 pub struct TapeNode {
     pub id: usize,
@@ -170,8 +170,8 @@ pub struct TapeNode {
     pub input_tensors: Vec<Rc<RefCell<Tensor>>>,  // 输入张量引用（含 result）
 }
 ```
-- `Softmax` 节点：`input_tensors = [input, result]`（[autodiff.rs:739-740](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
-- `CrossEntropy` 节点：`input_tensors = [logits, softmax, target, result]`（[autodiff.rs:170](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）——注意 CE 节点存储了 `softmax` 中间量，这是融合的关键。
+- `Softmax` 节点：`input_tensors = [input, result]`（[autodiff.rs:739-740](../../tenth/src/runtime/autodiff.rs)）；
+- `CrossEntropy` 节点：`input_tensors = [logits, softmax, target, result]`（[autodiff.rs:170](../../tenth/src/runtime/autodiff.rs)）——注意 CE 节点存储了 `softmax` 中间量，这是融合的关键。
 
 ---
 
@@ -179,7 +179,7 @@ pub struct TapeNode {
 
 ### 4.1 Softmax 前向
 
-Tenth 的 softmax 前向实现（[tensor.rs:1153-1202](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）沿最后一轴计算，含减 max：
+Tenth 的 softmax 前向实现（[tensor.rs:1153-1202](../../tenth/src/runtime/tensor.rs)）沿最后一轴计算，含减 max：
 ```rust
 let max_val = slice.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 let exps: Vec<f64> = slice.iter().map(|x| (x - max_val).exp()).collect();
@@ -190,7 +190,7 @@ let probs: Vec<f64> = exps.iter().map(|x| x / sum).collect();
 
 ### 4.2 Softmax 反向（稀疏化形式）
 
-Tenth 的 softmax 反向实现（[autodiff.rs:735-745](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+Tenth 的 softmax 反向实现（[autodiff.rs:735-745](../../tenth/src/runtime/autodiff.rs)）：
 ```rust
 TapeOp::Softmax => {
     // d(softmax(x)_i)/dx_j = y_i * (δ_ij - y_j)
@@ -215,7 +215,7 @@ $$
 
 ### 4.3 CrossEntropy 前向
 
-Tenth 的 CE 前向（[natives.rs:323-371](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)）：
+Tenth 的 CE 前向（[natives.rs:323-371](../../tenth/src/runtime/interpreter/natives.rs)）：
 1. 计算 `sm = softmax(logits)`；
 2. 计算 `loss = -mean(sum(target * log(max(softmax, eps))))`，`eps = 1e-10`；
 3. 在 tape 上记录 `TapeOp::CrossEntropy` 节点，存储 `[logits, softmax, target, result]`。
@@ -224,7 +224,7 @@ Tenth 的 CE 前向（[natives.rs:323-371](file:///d:/史蒂夫/Desktop/AI开发
 
 ### 4.4 CrossEntropy 反向（融合形式）
 
-Tenth 的 CE 反向实现（[autodiff.rs:723-734](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+Tenth 的 CE 反向实现（[autodiff.rs:723-734](../../tenth/src/runtime/autodiff.rs)）：
 ```rust
 TapeOp::CrossEntropy => {
     // d(CE)/d(logits) = softmax - target
@@ -257,7 +257,7 @@ g_j = y_j\bigl(\text{grad}_j - \sum_i \text{grad}_i\,y_i\bigr),\qquad j=1,\dots,
 $$
 与完整雅可比乘法 $g = (J^\sigma)^\top \text{grad}$ 逐元素相等，且计算时间为 $\Theta(n)$，空间为 $\Theta(n)$。
 
-**源码锚点**：[autodiff.rs:735-745](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。
+**源码锚点**：[autodiff.rs:735-745](../../tenth/src/runtime/autodiff.rs)。
 
 **证明**：见 §6。
 
@@ -269,7 +269,7 @@ $$
 $$
 等价于"Softmax → Log → Mul → Neg → Sum"五节点链式法则的解析简化，且计算时间为 $\Theta(n)$，对比朴素（含完整 softmax 雅可比）的 $\Theta(n^2)$。
 
-**源码锚点**：[autodiff.rs:723-734](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)（反向）、[autodiff.rs:152-173](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)（前向存储 softmax）。
+**源码锚点**：[autodiff.rs:723-734](../../tenth/src/runtime/autodiff.rs)（反向）、[autodiff.rs:152-173](../../tenth/src/runtime/autodiff.rs)（前向存储 softmax）。
 
 **证明**：见 §7。
 
@@ -281,7 +281,7 @@ $$
 $$
 进一步，即使将 $m$ 视为 $x$ 的函数 $m(x) = \max_k x_k$（而非 detach 常数），上述雅可比在非 ties 点处仍成立。
 
-**源码锚点**：[tensor.rs:1170-1171](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)（减 max 前向）。
+**源码锚点**：[tensor.rs:1170-1171](../../tenth/src/runtime/tensor.rs)（减 max 前向）。
 
 **证明**：见 §8。
 
@@ -299,7 +299,7 @@ $$
 
 在此条件下，融合保持语义等价；若 (C2) 的化简进一步消去了 $O(n^2)$ 的雅可比物化，则融合同时实现复杂度优化。
 
-**源码锚点**：[autodiff.rs:152-173](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)（CE 节点存储 $S = \{y\}$）。
+**源码锚点**：[autodiff.rs:152-173](../../tenth/src/runtime/autodiff.rs)（CE 节点存储 $S = \{y\}$）。
 
 **证明**：见 §9。
 
@@ -370,7 +370,7 @@ $$
 
 ### 6.3 与 Tenth 源码的逐行对应
 
-Tenth 的反向实现（[autodiff.rs:738-743](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+Tenth 的反向实现（[autodiff.rs:738-743](../../tenth/src/runtime/autodiff.rs)）：
 ```rust
 let y = &result_ref.data;                              // y
 let sum_term = (&grad * y).sum();                       // s = <grad, y>
@@ -485,7 +485,7 @@ $$
 
 融合实现直接计算 $y - t$，**无除法**，因此对 $y_i$ 的下溢免疫。这是融合相对于分离的**独立于复杂度的第二优势**。
 
-Tenth 的 CE 前向还使用了 `eps` 平滑（`max(softmax, 1e-10)`，见 [natives.rs:344](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)），但反向不使用 eps——这是前向-反向不一致的来源之一（见 §13 局限 L1）。
+Tenth 的 CE 前向还使用了 `eps` 平滑（`max(softmax, 1e-10)`，见 [natives.rs:344](../../tenth/src/runtime/interpreter/natives.rs)），但反向不使用 eps——这是前向-反向不一致的来源之一（见 §13 局限 L1）。
 
 ---
 
@@ -545,7 +545,7 @@ $$
 定理 S3 的证明揭示了重要事实：**减 max 的梯度不变性源于 softmax 的平移不变性（引理 8.1），而非 max 的 detach 约定**。这意味着：
 
 1. **理论层面**：即使 autodiff 系统将 max 视为可微函数（不 detach），softmax 的梯度仍正确——因为 $m$ 的贡献在雅可比中精确消去；
-2. **工程层面**：Tenth 的实现（[tensor.rs:1170-1171](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）将 max 作为标量常数参与减法，且 softmax 反向公式（[autodiff.rs:737](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）直接使用稀疏化形式，不经过 max 节点——这等价于 detach，但即使不 detach 也是正确的；
+2. **工程层面**：Tenth 的实现（[tensor.rs:1170-1171](../../tenth/src/runtime/tensor.rs)）将 max 作为标量常数参与减法，且 softmax 反向公式（[autodiff.rs:737](../../tenth/src/runtime/autodiff.rs)）直接使用稀疏化形式，不经过 max 节点——这等价于 detach，但即使不 detach 也是正确的；
 3. **可移植性**：这一性质保证了任何 autodiff 系统（无论 max 是否 detach）都能正确计算 softmax 梯度，只要反向公式使用稀疏化形式。
 
 ### 8.3 减 max 的数值收益
@@ -586,7 +586,7 @@ $$
 
 **中间量**：$h_1 = y$（softmax 输出），$h_2 = \log y$，$h_3 = t\odot\log y$，$h_4 = -t\odot\log y$，$h_5 = L = \sum h_4$。
 
-**存储子集**：$S = \{y\} = \{h_1\}$（CE 节点 `input_tensors[1]`，见 [autodiff.rs:170](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+**存储子集**：$S = \{y\} = \{h_1\}$（CE 节点 `input_tensors[1]`，见 [autodiff.rs:170](../../tenth/src/runtime/autodiff.rs)）。
 
 **验证 (C1)**：$\hat F(x, t) = -\sum_i t_i\log\sigma_i(x) = F(x, t)$。✓（前向相同）
 
@@ -626,11 +626,11 @@ $$
 | **PyTorch** | `F.cross_entropy` 库函数 | 运行时（eager）或编译时（compile） |
 | **XLA** | `HloPassFusion` 图优化 pass | 编译期（IR 优化） |
 
-Tenth 的融合在"算子定义期"就确定——`CrossEntropy` 是 21 个 `TapeOp` 之一，其反向公式写在 [autodiff.rs:723-734](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。这一决定不依赖任何运行时信息或图结构分析。
+Tenth 的融合在"算子定义期"就确定——`CrossEntropy` 是 21 个 `TapeOp` 之一，其反向公式写在 [autodiff.rs:723-734](../../tenth/src/runtime/autodiff.rs)。这一决定不依赖任何运行时信息或图结构分析。
 
 ### 10.2 维度 D2：融合可预测性
 
-- **Tenth**：确定性。用户调用 `cross_entropy(logits, target)` 必然走融合路径（[natives.rs:323-371](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)）。无模式匹配，无 pass 命中问题。
+- **Tenth**：确定性。用户调用 `cross_entropy(logits, target)` 必然走融合路径（[natives.rs:323-371](../../tenth/src/runtime/interpreter/natives.rs)）。无模式匹配，无 pass 命中问题。
 - **PyTorch**：部分确定。`F.cross_entropy` 走融合；但若用户手写 `-(target * log_softmax(logits)).sum()`，则不一定走融合（取决于 `torch.compile` 是否识别）。
 - **XLA**：依赖图结构。若 softmax 与 CE 之间插入了自定义 op，融合 pass 可能不命中。
 
@@ -638,7 +638,7 @@ Tenth 的融合在"算子定义期"就确定——`CrossEntropy` 是 21 个 `Tap
 
 - **XLA**：最强。producer-consumer 融合可自动发现新的 elementwise 链，无需人工干预；
 - **PyTorch**：中等。新融合需手写 C++ kernel 或依赖 `torch.compile` 的 pattern matching；
-- **Tenth**：最弱。新融合需新增 `TapeOp` 变体并手写前向-反向，修改 21 个算子的枚举（[autodiff.rs:29-79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **Tenth**：最弱。新融合需新增 `TapeOp` 变体并手写前向-反向，修改 21 个算子的枚举（[autodiff.rs:29-79](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 10.4 维度 D4：融合的可形式化性
 
@@ -670,11 +670,11 @@ Tenth 的融合粒度是"固定算子对"（CE+Softmax），无法处理"CE+Soft
 
 ### 11.3 多路径一致性
 
-T38 定理 A1 证明 VM 与解释器记录的 tape 同构。CE 融合在两条路径上的行为一致：均调用 `tape.cross_entropy` 记录节点（[natives.rs:360-365](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)），反向均走 [autodiff.rs:723-734](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。JIT 路径在 recording 模式下整体退出至 VM（T38 定理 A2），因此 CE 融合的语义在三条路径上一致。
+T38 定理 A1 证明 VM 与解释器记录的 tape 同构。CE 融合在两条路径上的行为一致：均调用 `tape.cross_entropy` 记录节点（[natives.rs:360-365](../../tenth/src/runtime/interpreter/natives.rs)），反向均走 [autodiff.rs:723-734](../../tenth/src/runtime/autodiff.rs)。JIT 路径在 recording 模式下整体退出至 VM（T38 定理 A2），因此 CE 融合的语义在三条路径上一致。
 
 ### 11.4 dtype 泛化
 
-Tenth 的 softmax 前向支持 f64 与 f32（[tensor.rs:1162-1200](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），但反向（[autodiff.rs:738-743](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）使用 `ArrayD<f64>`——f32 张量在反向时会被提升为 f64。这一设计的正确性依赖 T17（dtype 提升格）的保证，但对 f32 训练的内存开销有影响（梯度占双倍内存）。
+Tenth 的 softmax 前向支持 f64 与 f32（[tensor.rs:1162-1200](../../tenth/src/runtime/tensor.rs)），但反向（[autodiff.rs:738-743](../../tenth/src/runtime/autodiff.rs)）使用 `ArrayD<f64>`——f32 张量在反向时会被提升为 f64。这一设计的正确性依赖 T17（dtype 提升格）的保证，但对 f32 训练的内存开销有影响（梯度占双倍内存）。
 
 ---
 
@@ -715,11 +715,11 @@ Tenth 当前仅支持标准算子级融合。是否引入图级融合 pass（类
 
 ### 13.1 局限 L1：前向-反向标度不一致
 
-**是什么**：Tenth 的 CE 前向（[natives.rs:334-347](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)）计算
+**是什么**：Tenth 的 CE 前向（[natives.rs:334-347](../../tenth/src/runtime/interpreter/natives.rs)）计算
 $$
 L_{\text{fwd}} = -\frac{1}{N}\sum_i t_i\log\max(y_i, \varepsilon),
 $$
-其中 $N$ 为**总元素数**（`sm_slice.len()`，跨 batch 与类别），$\varepsilon = 10^{-10}$。但反向（[autodiff.rs:730](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）返回
+其中 $N$ 为**总元素数**（`sm_slice.len()`，跨 batch 与类别），$\varepsilon = 10^{-10}$。但反向（[autodiff.rs:730](../../tenth/src/runtime/autodiff.rs)）返回
 $$
 g = y - t,
 $$
@@ -742,7 +742,7 @@ Tenth 实现返回 $y_j - t_j$，**少了 $1/N$ 因子**。
 
 ### 13.2 局限 L2：稀疏化的下界非严格 O(n)
 
-**是什么**：定理 S1 声称稀疏化时间为 $\Theta(n)$。严格地，Tenth 实现含一次 `(&grad * y).sum()`（[autodiff.rs:741](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），`sum` 是归约操作，其并行下界为 $\Omega(\log n)$（并行归约树深度）。串行下界为 $\Omega(n)$。
+**是什么**：定理 S1 声称稀疏化时间为 $\Theta(n)$。严格地，Tenth 实现含一次 `(&grad * y).sum()`（[autodiff.rs:741](../../tenth/src/runtime/autodiff.rs)），`sum` 是归约操作，其并行下界为 $\Omega(\log n)$（并行归约树深度）。串行下界为 $\Omega(n)$。
 
 **影响**：在串行执行下，$\Theta(n)$ 成立；在并行执行下，下界为 $\Theta(\log n)$（树归约）而非 $O(1)$。本文的复杂度分析隐含串行假设。
 
@@ -769,7 +769,7 @@ Tenth 实现返回 $y_j - t_j$，**少了 $1/N$ 因子**。
 
 ### 13.5 局限 L5：CE 前向 eps 与反向的不一致
 
-**是什么**：CE 前向使用 $\max(y_i, \varepsilon)$（[natives.rs:344](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/interpreter/natives.rs)），$\varepsilon = 10^{-10}$，但反向返回 $y - t$（无 eps）。严格地，$\partial L_{\text{fwd}}/\partial x_j$ 在 $y_i < \varepsilon$ 时应为 0（因 $\max$ 在饱和区导数为 0），但 Tenth 反向仍返回 $y_j - t_j$。
+**是什么**：CE 前向使用 $\max(y_i, \varepsilon)$（[natives.rs:344](../../tenth/src/runtime/interpreter/natives.rs)），$\varepsilon = 10^{-10}$，但反向返回 $y - t$（无 eps）。严格地，$\partial L_{\text{fwd}}/\partial x_j$ 在 $y_i < \varepsilon$ 时应为 0（因 $\max$ 在饱和区导数为 0），但 Tenth 反向仍返回 $y_j - t_j$。
 
 **影响**：在 $y_i < 10^{-10}$ 的极端情况下（极不自信的预测），反向梯度与前向不一致。实践中罕见（softmax 输出极少低于 $10^{-10}$），但不严格。
 
@@ -797,7 +797,7 @@ Tenth 实现返回 $y_j - t_j$，**少了 $1/N$ 因子**。
 
 本文的诚实贡献在于 §13 的六类局限披露：前向-反向标度不一致（L1）、稀疏化并行下界（L2）、融合泛化性（L3）、ties 点存在性（L4）、eps 不一致（L5）、自举覆盖（L6）。其中 L1 是最重要的工程差距——反向梯度被放大 $N$ 倍——建议在中期修复时同步更新。
 
-理论结论对应 Tenth v0.3.3 已实现的 `TapeOp::Softmax`（[autodiff.rs:735-745](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）与 `TapeOp::CrossEntropy`（[autodiff.rs:723-734](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），所有形式化定义均可锚定到具体源码位置。
+理论结论对应 Tenth v0.3.3 已实现的 `TapeOp::Softmax`（[autodiff.rs:735-745](../../tenth/src/runtime/autodiff.rs)）与 `TapeOp::CrossEntropy`（[autodiff.rs:723-734](../../tenth/src/runtime/autodiff.rs)），所有形式化定义均可锚定到具体源码位置。
 
 ---
 
@@ -807,10 +807,10 @@ Tenth 实现返回 $y_j - t_j$，**少了 $1/N$ 因子**。
 
 | 定理 | 陈述 | 证明 | 源码锚点 |
 |------|------|------|---------|
-| S1 | 雅可比稀疏化正确性 | §6 | [autodiff.rs:735-745](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| S2 | CE+Softmax 融合正确性 | §7 | [autodiff.rs:723-734](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs), [autodiff.rs:152-173](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| S3 | 数值稳定性（减 max） | §8 | [tensor.rs:1170-1171](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| S4 | 算子融合形式化框架 | §9 | [autodiff.rs:152-173](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
+| S1 | 雅可比稀疏化正确性 | §6 | [autodiff.rs:735-745](../../tenth/src/runtime/autodiff.rs) |
+| S2 | CE+Softmax 融合正确性 | §7 | [autodiff.rs:723-734](../../tenth/src/runtime/autodiff.rs), [autodiff.rs:152-173](../../tenth/src/runtime/autodiff.rs) |
+| S3 | 数值稳定性（减 max） | §8 | [tensor.rs:1170-1171](../../tenth/src/runtime/tensor.rs) |
+| S4 | 算子融合形式化框架 | §9 | [autodiff.rs:152-173](../../tenth/src/runtime/autodiff.rs) |
 | S5 | 与 XLA/PyTorch 对比 | §10 | — |
 
 ### 附录 B：与现有文档的对应
@@ -827,7 +827,7 @@ Tenth 实现返回 $y_j - t_j$，**少了 $1/N$ 因子**。
 
 基于本文的理论结论，对 Tenth 实施的建议：
 
-1. **修复 L1（标度不一致）**：将 CE 反向改为 `(softmax - target) / N`，与前向 mean 一致。修改 [autodiff.rs:730](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 为 `(&sm_ref.data - &tgt_ref.data) / N`，其中 $N$ 需在 CE 节点中存储或从 shape 推断。
+1. **修复 L1（标度不一致）**：将 CE 反向改为 `(softmax - target) / N`，与前向 mean 一致。修改 [autodiff.rs:730](../../tenth/src/runtime/autodiff.rs) 为 `(&sm_ref.data - &tgt_ref.data) / N`，其中 $N$ 需在 CE 节点中存储或从 shape 推断。
 2. **修复 L5（eps 不一致）**：前向改用 `log_softmax` 的数值稳定形式，避免 eps；或反向加入 eps 的导数项。
 3. **新增 LabelSmoothing 融合**（§12.3）：作为 `TapeOp::CrossEntropy` 的参数化变体，反向 $g = y - ((1-\alpha)t + \alpha/n)$，仍是 $O(n)$。
 4. **文档化融合行为**：在语言参考手册中说明 CE+Softmax 的融合语义，包括 L1 的标度约定。

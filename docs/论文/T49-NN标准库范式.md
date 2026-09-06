@@ -39,8 +39,8 @@
 
 Tenth v0.3.3 采用了截然不同的范式：**NN 算子被下沉为语言原语**（tensor 方法，如 `x.gelu()`、`x.layer_norm(g, b, eps)`、`x.conv2d(w, kH, kW, stride, pad)`），**标准库 `std::nn::*` 作为薄组合层**调用这些原语方法。具体而言：
 
-- **原语层**（[tenth/src/runtime/tensor.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）：tensor 类型上定义了 `relu`、`sigmoid`、`tanh`、`gelu`、`softmax`、`layer_norm`、`masked_fill` 等方法；这些方法在 [autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 中对应 `TapeOp::ReLU`、`TapeOp::Gelu`、`TapeOp::LayerNorm`、`TapeOp::BatchNorm`、`TapeOp::Conv2D`、`TapeOp::Dropout` 等记录节点。
-- **组合层**（[tenth/std/nn/](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/)）：13 个 `.th` 文件作为标准库函数，是"原语方法的命名空间化组合"，如 `activations.th` 中 `fn gelu(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.gelu() }`、`layer_norm.th` 中 `fn layer_norm<T>(...) { x.layer_norm(gamma, beta, eps) }`。
+- **原语层**（[tenth/src/runtime/tensor.rs](../../tenth/src/runtime/tensor.rs)）：tensor 类型上定义了 `relu`、`sigmoid`、`tanh`、`gelu`、`softmax`、`layer_norm`、`masked_fill` 等方法；这些方法在 [autodiff.rs](../../tenth/src/runtime/autodiff.rs) 中对应 `TapeOp::ReLU`、`TapeOp::Gelu`、`TapeOp::LayerNorm`、`TapeOp::BatchNorm`、`TapeOp::Conv2D`、`TapeOp::Dropout` 等记录节点。
+- **组合层**（[tenth/std/nn/](../../tenth/std/nn/)）：13 个 `.th` 文件作为标准库函数，是"原语方法的命名空间化组合"，如 `activations.th` 中 `fn gelu(x: Tensor[f64, ..]) -> Tensor[f64, ..] { x.gelu() }`、`layer_norm.th` 中 `fn layer_norm<T>(...) { x.layer_norm(gamma, beta, eps) }`。
 
 ### 1.3 贡献
 
@@ -56,7 +56,7 @@ Tenth v0.3.3 采用了截然不同的范式：**NN 算子被下沉为语言原�
 
 | 轮次 | 原始断言 | 修正 |
 |------|---------|------|
-| 第 1 轮（结构） | 声称 "Tenth JIT 已对 `x.gelu()` 内联" | **重大修正**：查阅 [translator.rs:358-366](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) L358-366 发现 `MethodCall(i, n)` 通过 `host_method_call` hostcall 路由，且 [mod.rs:41-43](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) L41-43 在 `is_recording()` 时直接 fallback 到解释器。当前 JIT **未实际内联**张量方法。定理 NN2 重写为"语义前提"而非"已实现优化"，并在局限 L1 详述。 |
+| 第 1 轮（结构） | 声称 "Tenth JIT 已对 `x.gelu()` 内联" | **重大修正**：查阅 [translator.rs:358-366](../../tenth/src/compile/jit/translator.rs) L358-366 发现 `MethodCall(i, n)` 通过 `host_method_call` hostcall 路由，且 [mod.rs:41-43](../../tenth/src/compile/jit/mod.rs) L41-43 在 `is_recording()` 时直接 fallback 到解释器。当前 JIT **未实际内联**张量方法。定理 NN2 重写为"语义前提"而非"已实现优化"，并在局限 L1 详述。 |
 | 第 2 轮（证明） | 定理 NN1 的"语言原语"判定无清晰判据 | 补充定义 4.1：从"定义位置、autodiff 集成、类型签名、可重定义性"四维度判定原语性。 |
 | 第 3 轮（边界） | 未处理 `loss.th` 的 `mse` 返回 f64（非 Tensor）这一非原语调用 | 修正：在 §7.7 显式标注 `loss.th` 是"非原语组合"特例，不满足原语下沉原则，记为局限 L5。 |
 | 第 4 轮（诚实） | 初稿对比矩阵未列出 S4TF 已停滞的事实 | 修正：在 §8 与定理 NN4 中显式标注 S4TF 项目 2021 年归档，避免技术维度上 Tenth 看起来全面胜出而忽略历史经验。 |
@@ -128,7 +128,7 @@ MLIR 是 LLVM 的编译器基础设施：
 
 ### 3.1 T10 的判据 J4
 
-T10 [论文 T10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md) 提出五条 AI 原生语言判据 J1–J5，其中 **J4（NN 标准库性）** 是本文的直接理论前提：
+T10 [论文 T10](T10-AI原生语言范式形式化定义.md) 提出五条 AI 原生语言判据 J1–J5，其中 **J4（NN 标准库性）** 是本文的直接理论前提：
 
 > **定义 J4（NN 标准库性）**（T10 §3.4）：语言 $\mathcal{L}$ 满足 J4 当且仅当：
 > - (J4.a) 标准库包含一组 NN 算子，至少包括：线性层、激活函数、损失函数、归一化、卷积、注意力机制；
@@ -136,11 +136,11 @@ T10 [论文 T10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴�
 > - (J4.c) 这些算子与语言级 autodiff 紧密集成；
 > - (J4.d) 算子签名使用类型化 shape（即满足 J3）。
 
-T10 给出了 J4 的实例化（[T10 §4.4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)）并标记 `multihead_attention` 为 single-head 等价（局限 L3）。**本文在此基础上深入形式化 NN 范式的内部结构**：T10 回答"是否是标准库"，T49 回答"作为标准库的内部架构是什么样的、为什么这样设计、与库范式有何本质差异"。
+T10 给出了 J4 的实例化（[T10 §4.4](T10-AI原生语言范式形式化定义.md)）并标记 `multihead_attention` 为 single-head 等价（局限 L3）。**本文在此基础上深入形式化 NN 范式的内部结构**：T10 回答"是否是标准库"，T49 回答"作为标准库的内部架构是什么样的、为什么这样设计、与库范式有何本质差异"。
 
 ### 3.2 T23 的符号维度
 
-T23 [论文 T23](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T23-类型推断与Shape检查协同推断.md) 形式化了 Tenth 的符号维度系统：维度三值（Known/Symbol/Any）作为类型语言基础，标准库函数签名显式声明符号维度变量（如 `attention.th` 中的 `S_q, D_k, S_k, D_v`）。**本文定理 NN3 直接建立在此基础上**，进一步论证"符号维度标注能力"是 NN 标准库相对库范式的本质优势。
+T23 [论文 T23](T23-类型推断与Shape检查协同推断.md) 形式化了 Tenth 的符号维度系统：维度三值（Known/Symbol/Any）作为类型语言基础，标准库函数签名显式声明符号维度变量（如 `attention.th` 中的 `S_q, D_k, S_k, D_v`）。**本文定理 NN3 直接建立在此基础上**，进一步论证"符号维度标注能力"是 NN 标准库相对库范式的本质优势。
 
 ---
 
@@ -165,23 +165,23 @@ T23 [论文 T23](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴�
 
 ### 4.2 Tenth 双层架构的源码实例化
 
-**下层原语层**（[tenth/src/runtime/tensor.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）：
+**下层原语层**（[tenth/src/runtime/tensor.rs](../../tenth/src/runtime/tensor.rs)）：
 
 | 原语方法 | 源码位置 | TapeOp 节点 | autodiff 反向 |
 |---------|---------|------------|--------------|
-| `relu` | [tensor.rs:871](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L871 | `TapeOp::ReLU` | [autodiff.rs:342](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L342 |
-| `sigmoid` | [tensor.rs:878](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L878 | `TapeOp::Sigmoid` | [autodiff.rs:488](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L488 |
-| `tanh` | [tensor.rs:885](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L885 | （由 `sigmoid` 等推得） | 间接 |
-| `gelu` | [tensor.rs:1012](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L1012 | `TapeOp::Gelu` | [autodiff.rs:597](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L597 |
-| `layer_norm` | [tensor.rs:925](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L925 | `TapeOp::LayerNorm` | [autodiff.rs:523](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L523 |
-| `batchnorm` | （由 `batchnorm` 方法） | `TapeOp::BatchNorm` | [autodiff.rs:496](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L496 |
-| `conv2d` | （由 `conv2d` 方法） | `TapeOp::Conv2D` | [autodiff.rs:615](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L615 |
-| `dropout` | （由 `dropout` 方法） | `TapeOp::Dropout` | [autodiff.rs:712](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L712 |
-| `softmax` | [tensor.rs:1153](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L1153 | `TapeOp::Softmax` | [autodiff.rs:735](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L735 |
-| `masked_fill` | [tensor.rs:1086](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L1086 | （非 TapeOp，作为辅助） | N/A |
-| `embedding_lookup` | （**未实现为张量方法**，2026-07-30 修正） | — | — | nn::embedding 模块改用 `gather(weight, 0, indices)` native 实现，详见 [embedding.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/embedding.th) |
+| `relu` | [tensor.rs:871](../../tenth/src/runtime/tensor.rs) L871 | `TapeOp::ReLU` | [autodiff.rs:342](../../tenth/src/runtime/autodiff.rs) L342 |
+| `sigmoid` | [tensor.rs:878](../../tenth/src/runtime/tensor.rs) L878 | `TapeOp::Sigmoid` | [autodiff.rs:488](../../tenth/src/runtime/autodiff.rs) L488 |
+| `tanh` | [tensor.rs:885](../../tenth/src/runtime/tensor.rs) L885 | （由 `sigmoid` 等推得） | 间接 |
+| `gelu` | [tensor.rs:1012](../../tenth/src/runtime/tensor.rs) L1012 | `TapeOp::Gelu` | [autodiff.rs:597](../../tenth/src/runtime/autodiff.rs) L597 |
+| `layer_norm` | [tensor.rs:925](../../tenth/src/runtime/tensor.rs) L925 | `TapeOp::LayerNorm` | [autodiff.rs:523](../../tenth/src/runtime/autodiff.rs) L523 |
+| `batchnorm` | （由 `batchnorm` 方法） | `TapeOp::BatchNorm` | [autodiff.rs:496](../../tenth/src/runtime/autodiff.rs) L496 |
+| `conv2d` | （由 `conv2d` 方法） | `TapeOp::Conv2D` | [autodiff.rs:615](../../tenth/src/runtime/autodiff.rs) L615 |
+| `dropout` | （由 `dropout` 方法） | `TapeOp::Dropout` | [autodiff.rs:712](../../tenth/src/runtime/autodiff.rs) L712 |
+| `softmax` | [tensor.rs:1153](../../tenth/src/runtime/tensor.rs) L1153 | `TapeOp::Softmax` | [autodiff.rs:735](../../tenth/src/runtime/autodiff.rs) L735 |
+| `masked_fill` | [tensor.rs:1086](../../tenth/src/runtime/tensor.rs) L1086 | （非 TapeOp，作为辅助） | N/A |
+| `embedding_lookup` | （**未实现为张量方法**，2026-07-30 修正） | — | — | nn::embedding 模块改用 `gather(weight, 0, indices)` native 实现，详见 [embedding.th](../../tenth/std/nn/embedding.th) |
 
-**上层组合层**（[tenth/std/nn/](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/)）：13 个 `.th` 文件，每个文件是命名空间化的薄组合函数。典型例子：
+**上层组合层**（[tenth/std/nn/](../../tenth/std/nn/)）：13 个 `.th` 文件，每个文件是命名空间化的薄组合函数。典型例子：
 
 ```tenth
 // activations.th L14
@@ -231,18 +231,18 @@ fn scaled_dot_product_attention<T>(
 
 **(1) 激活函数类**（`relu`、`sigmoid`、`tanh`、`gelu`、`softmax`）：
 
-- P1（定义位置）：原语方法定义在 [tensor.rs:871-1153](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L871-1153，是 Rust 运行时代码，非 Tenth 用户代码。✓
-- P2（autodiff 集成）：`gelu` 对应 `TapeOp::Gelu`（[autodiff.rs:597](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L597）；`relu` 对应 `TapeOp::ReLU`（[autodiff.rs:342](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L342）；`sigmoid` 对应 `TapeOp::Sigmoid`（[autodiff.rs:488](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L488）；`softmax` 对应 `TapeOp::Softmax`（[autodiff.rs:735](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L735）。✓
-- P3（类型签名）：[activations.th:5-14](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) L5-14 签名 `fn gelu(x: Tensor[f64, ..]) -> Tensor[f64, ..]`，使用类型化张量。⚠️ 注意：`..` 是 Any 通配符，非符号维度，故此处仅满足弱原语（不满足 P3 的符号维度要求）。但算子本身的原语方法是 P3 满足的（接受任意 shape 张量）。
+- P1（定义位置）：原语方法定义在 [tensor.rs:871-1153](../../tenth/src/runtime/tensor.rs) L871-1153，是 Rust 运行时代码，非 Tenth 用户代码。✓
+- P2（autodiff 集成）：`gelu` 对应 `TapeOp::Gelu`（[autodiff.rs:597](../../tenth/src/runtime/autodiff.rs) L597）；`relu` 对应 `TapeOp::ReLU`（[autodiff.rs:342](../../tenth/src/runtime/autodiff.rs) L342）；`sigmoid` 对应 `TapeOp::Sigmoid`（[autodiff.rs:488](../../tenth/src/runtime/autodiff.rs) L488）；`softmax` 对应 `TapeOp::Softmax`（[autodiff.rs:735](../../tenth/src/runtime/autodiff.rs) L735）。✓
+- P3（类型签名）：[activations.th:5-14](../../tenth/std/nn/activations.th) L5-14 签名 `fn gelu(x: Tensor[f64, ..]) -> Tensor[f64, ..]`，使用类型化张量。⚠️ 注意：`..` 是 Any 通配符，非符号维度，故此处仅满足弱原语（不满足 P3 的符号维度要求）。但算子本身的原语方法是 P3 满足的（接受任意 shape 张量）。
 - P4（可重定义性）：用户可定义同名 `fn gelu(...)` 但底层 `x.gelu()` 方法的语义由运行时定义，用户不能替换 tensor 类型上的 `gelu` 方法。✓
 
 结论：`relu`/`sigmoid`/`tanh`/`gelu`/`softmax` 满足 P1+P2+P4，P3 部分满足（弱原语）。
 
 **(2) LayerNorm / BatchNorm**：
 
-- P1：`layer_norm` 定义在 [tensor.rs:925](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L925。✓
-- P2：`TapeOp::LayerNorm`（[autodiff.rs:523](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L523）；`TapeOp::BatchNorm`（[autodiff.rs:496](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L496）。✓
-- P3：[layer_norm.th:5-10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/layer_norm.th) L5-10 使用泛型 `T` 与 `Tensor[T, ..]`；[batchnorm.th:13-19](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/batchnorm.th) L13-19 同样。✓（泛型类型化）
+- P1：`layer_norm` 定义在 [tensor.rs:925](../../tenth/src/runtime/tensor.rs) L925。✓
+- P2：`TapeOp::LayerNorm`（[autodiff.rs:523](../../tenth/src/runtime/autodiff.rs) L523）；`TapeOp::BatchNorm`（[autodiff.rs:496](../../tenth/src/runtime/autodiff.rs) L496）。✓
+- P3：[layer_norm.th:5-10](../../tenth/std/nn/layer_norm.th) L5-10 使用泛型 `T` 与 `Tensor[T, ..]`；[batchnorm.th:13-19](../../tenth/std/nn/batchnorm.th) L13-19 同样。✓（泛型类型化）
 - P4：底层 `x.layer_norm(...)` / `x.batchnorm(...)` 不可由用户重定义。✓
 
 结论：LayerNorm/BatchNorm 满足 P1+P2+P3+P4，是**强原语**。
@@ -250,8 +250,8 @@ fn scaled_dot_product_attention<T>(
 **(3) Conv2D**：
 
 - P1：tensor 方法 `conv2d` 由运行时定义。✓
-- P2：`TapeOp::Conv2D`（[autodiff.rs:615](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L615）。✓
-- P3：[conv.th:16-26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/conv.th) L16-26 类型化签名。✓
+- P2：`TapeOp::Conv2D`（[autodiff.rs:615](../../tenth/src/runtime/autodiff.rs) L615）。✓
+- P3：[conv.th:16-26](../../tenth/std/nn/conv.th) L16-26 类型化签名。✓
 - P4：底层不可重定义。✓
 
 结论：Conv2D 是强原语。
@@ -259,24 +259,24 @@ fn scaled_dot_product_attention<T>(
 **(4) Dropout**：
 
 - P1：tensor 方法。✓
-- P2：`TapeOp::Dropout`（[autodiff.rs:712](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L712）。✓
-- P3：[dropout.th:2-4](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/dropout.th) L2-4 类型化。✓
+- P2：`TapeOp::Dropout`（[autodiff.rs:712](../../tenth/src/runtime/autodiff.rs) L712）。✓
+- P3：[dropout.th:2-4](../../tenth/std/nn/dropout.th) L2-4 类型化。✓
 - P4：不可重定义。✓
 
 结论：Dropout 是强原语。
 
 **(5) Embedding**：
 
-- P1：tensor 方法 `embedding_lookup`。❌ **未实现为张量方法**（2026-07-30 修正）。nn::embedding 模块改用 `gather(weight, 0, indices)` native 实现（[embedding.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/embedding.th)）。**已知限制**：`gather` 要求 `weight` 与 `indices` 的 ndim 匹配，`weight[V, D]` + `indices[S]` 会因 ndim 不匹配运行时报错；完整解决需新增 `index_select` native 或 broadcast 支持（推后到 P1 后续）。
-- P2：autodiff 通过 `TapeOp::Gather` 记录（[autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `Gather` 分支：`d_base = scatter_add(grad, dim, index)`，2026-07-06 接入）。✓ P2 满足（通过 Gather 原语反向）。
-- P3：[embedding.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/embedding.th) 类型化。✓
+- P1：tensor 方法 `embedding_lookup`。❌ **未实现为张量方法**（2026-07-30 修正）。nn::embedding 模块改用 `gather(weight, 0, indices)` native 实现（[embedding.th](../../tenth/std/nn/embedding.th)）。**已知限制**：`gather` 要求 `weight` 与 `indices` 的 ndim 匹配，`weight[V, D]` + `indices[S]` 会因 ndim 不匹配运行时报错；完整解决需新增 `index_select` native 或 broadcast 支持（推后到 P1 后续）。
+- P2：autodiff 通过 `TapeOp::Gather` 记录（[autodiff.rs](../../tenth/src/runtime/autodiff.rs) `Gather` 分支：`d_base = scatter_add(grad, dim, index)`，2026-07-06 接入）。✓ P2 满足（通过 Gather 原语反向）。
+- P3：[embedding.th](../../tenth/std/nn/embedding.th) 类型化。✓
 - P4：不可重定义。✓
 
 结论：Embedding 是弱原语（P1 改为 gather 组合实现，P2 通过 Gather 原语满足）。
 
 **(6) Scaled Dot-Product Attention**（`scaled_dot_product_attention`）：
 
-- 这是**组合算子**，不是单一原语：[attention.th:24-41](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th) L24-41 的函数体调用 `matmul`、`transpose`、`masked_fill`、`softmax`、`dropout` 等多个原语。
+- 这是**组合算子**，不是单一原语：[attention.th:24-41](../../tenth/std/nn/attention.th) L24-41 的函数体调用 `matmul`、`transpose`、`masked_fill`、`softmax`、`dropout` 等多个原语。
 - 因此严格意义上，`scaled_dot_product_attention` **不是原语**，而是原语组合。但其内部调用的每个子算子是原语。
 - 这正是"双层架构"的体现：组合层函数不是原语，但其语义完全由原语层提供。
 
@@ -297,14 +297,14 @@ fn scaled_dot_product_attention<T>(
 
 **证明**：
 
-**前提澄清**：本定理论证的是"语义前提"而非"已实现优化"。Tenth 当前 JIT 实现（[mod.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)、[translator.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs)）通过 `host_method_call` hostcall 路由张量方法，**未实际内联** `x.gelu()`；详见局限 L1。本定理证明的是"语义前提"——即从语言规范角度，`x.gelu()` 具备被内联的可能性，而 `F.gelu(x)` 不具备。
+**前提澄清**：本定理论证的是"语义前提"而非"已实现优化"。Tenth 当前 JIT 实现（[mod.rs](../../tenth/src/compile/jit/mod.rs)、[translator.rs](../../tenth/src/compile/jit/translator.rs)）通过 `host_method_call` hostcall 路由张量方法，**未实际内联** `x.gelu()`；详见局限 L1。本定理证明的是"语义前提"——即从语言规范角度，`x.gelu()` 具备被内联的可能性，而 `F.gelu(x)` 不具备。
 
 **Step 1：Tenth `x.gelu()` 的内联前提**
 
-由定理 NN1，`x.gelu()` 的核心语义定义在 [tensor.rs:1012](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L1012，是语言运行时的一部分。这意味着：
+由定理 NN1，`x.gelu()` 的核心语义定义在 [tensor.rs:1012](../../tenth/src/runtime/tensor.rs) L1012，是语言运行时的一部分。这意味着：
 
 - (a) 编译器在编译期可知 `x.gelu()` 的完整语义（不需要穿透用户代码）；
-- (b) 编译器可知 `x.gelu()` 的 autodiff 反向（[autodiff.rs:597](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L597 的 `TapeOp::Gelu` 反向公式）；
+- (b) 编译器可知 `x.gelu()` 的 autodiff 反向（[autodiff.rs:597](../../tenth/src/runtime/autodiff.rs) L597 的 `TapeOp::Gelu` 反向公式）；
 - (c) 编译器可知 `x.gelu()` 没有 Python 式的副作用（运行时方法是纯函数，仅记录 tape 节点）；
 - (d) 编译器可知 `x.gelu()` 的类型签名（输入 `Tensor[f64, ..]`，输出 `Tensor[f64, ..]`）。
 
@@ -341,7 +341,7 @@ PyTorch `F.gelu(x)` 是 Python 函数，其语义定义在 `torch/nn/functional.
 
 **Step 1：Tenth 符号维度标注的源码证据**
 
-- [attention.th:24-30](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th) L24-30：
+- [attention.th:24-30](../../tenth/std/nn/attention.th) L24-30：
 
   ```tenth
   fn scaled_dot_product_attention<T>(
@@ -353,9 +353,9 @@ PyTorch `F.gelu(x)` 是 Python 函数，其语义定义在 `torch/nn/functional.
   ) -> Tensor[T, S_q, D_v]
   ```
 
-  这里 `S_q, D_k, S_k, D_v` 是符号维度变量，编译器在 Phase 2（[T23 §5](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T23-类型推断与Shape检查协同推断.md)）求解符号方程：由 `q: [S_q, D_k]` 与 `k: [S_k, D_k]` 推出 `q.matmul(kT): [S_q, S_k]`，与 `v: [S_k, D_v]` 推出 `dropped.matmul(v): [S_q, D_v]`，与返回类型 `Tensor[T, S_q, D_v]` 一致。
+  这里 `S_q, D_k, S_k, D_v` 是符号维度变量，编译器在 Phase 2（[T23 §5](T23-类型推断与Shape检查协同推断.md)）求解符号方程：由 `q: [S_q, D_k]` 与 `k: [S_k, D_k]` 推出 `q.matmul(kT): [S_q, S_k]`，与 `v: [S_k, D_v]` 推出 `dropped.matmul(v): [S_q, D_v]`，与返回类型 `Tensor[T, S_q, D_v]` 一致。
 
-- [feedforward.th:19-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/feedforward.th) L19-25：
+- [feedforward.th:19-25](../../tenth/std/nn/feedforward.th) L19-25：
 
   ```tenth
   fn feedforward<T>(
@@ -369,9 +369,9 @@ PyTorch `F.gelu(x)` 是 Python 函数，其语义定义在 `torch/nn/functional.
 
   符号方程：`x.matmul(w1): [S, D] @ [D, D_ff] = [S, D_ff]`；`+ b1: [S, D_ff] + [D_ff] = [S, D_ff]`（广播）；`gelu: [S, D_ff]`；`matmul(w2): [S, D_ff] @ [D_ff, D] = [S, D]`；`+ b2: [S, D]`。返回类型 `Tensor[T, S, D]` 一致。
 
-- [linear.th:12](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/linear.th) L12：`fn linear(x: Tensor[f64, M, K], w: Tensor[f64, N, K], b: Tensor[f64, N]) -> Tensor[f64, M, N]`，符号方程 `x.matmul(w.transpose()): [M, K] @ [K, N] = [M, N]`，与返回类型一致。
+- [linear.th:12](../../tenth/std/nn/linear.th) L12：`fn linear(x: Tensor[f64, M, K], w: Tensor[f64, N, K], b: Tensor[f64, N]) -> Tensor[f64, M, N]`，符号方程 `x.matmul(w.transpose()): [M, K] @ [K, N] = [M, N]`，与返回类型一致。
 
-由 T23 [定理 J1 健全性](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T23-类型推断与Shape检查协同推断.md)，编译器在 Phase 1+2+3 协同推断中验证这些符号方程的局部一致性，编译期即可发现 shape 不匹配错误。
+由 T23 [定理 J1 健全性](T23-类型推断与Shape检查协同推断.md)，编译器在 Phase 1+2+3 协同推断中验证这些符号方程的局部一致性，编译期即可发现 shape 不匹配错误。
 
 **Step 2：PyTorch typing 模块的能力边界**
 
@@ -463,25 +463,25 @@ Tenth 在 $\mathcal{D}_P=3$ 上领先 PyTorch（0）与 JAX+Flax（0），在 $\
 **原则 1（原语下沉，Primitive Sinking）**：NN 算子的核心语义应以 tensor 方法形式定义在语言运行时中，标准库函数作为薄组合层调用原语方法。
 
 - **理由**：使 NN 算子与语言原语（`+`、`*`、`matmul`）处于同一语义层级，编译器与类型系统可统一处理。
-- **Tenth 实例化**：`x.gelu()`、`x.layer_norm(g,b,eps)`、`x.conv2d(w,kH,kW,stride,pad)` 等原语方法定义在 [tensor.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)；`std::nn/` 函数体直接调用原语方法（如 [activations.th:14](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) L14 `fn gelu(...) { x.gelu() }`）。
+- **Tenth 实例化**：`x.gelu()`、`x.layer_norm(g,b,eps)`、`x.conv2d(w,kH,kW,stride,pad)` 等原语方法定义在 [tensor.rs](../../tenth/src/runtime/tensor.rs)；`std::nn/` 函数体直接调用原语方法（如 [activations.th:14](../../tenth/std/nn/activations.th) L14 `fn gelu(...) { x.gelu() }`）。
 - **违背案例**：PyTorch `torch.nn.functional.gelu` 是 Python 函数，非 tensor 方法；语义层级低于 `+`。
 
 **原则 2（类型化签名，Typed Signature）**：标准库 NN 函数签名应使用类型化张量参数，并标注符号维度。
 
 - **理由**：使编译器可在编译期验证 shape 合约，避免运行时 shape 错误。
-- **Tenth 实例化**：[attention.th:24-30](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th) L24-30、[feedforward.th:19-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/feedforward.th) L19-25、[linear.th:12](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/linear.th) L12 均使用 `Tensor[T, S_q, D_k]` 等符号维度。
+- **Tenth 实例化**：[attention.th:24-30](../../tenth/std/nn/attention.th) L24-30、[feedforward.th:19-25](../../tenth/std/nn/feedforward.th) L19-25、[linear.th:12](../../tenth/std/nn/linear.th) L12 均使用 `Tensor[T, S_q, D_k]` 等符号维度。
 - **违背案例**：PyTorch `def linear(x: Tensor, w: Tensor, b: Tensor) -> Tensor` 无 shape 信息。
 
 **原则 3（Autodiff 一致性，Autodiff Consistency）**：每个 NN 原语算子应有对应的 autodiff 节点（如 TapeOp），前向记录与反向传播由语言级 autodiff 系统统一管理。
 
 - **理由**：避免每个算子作者手动实现 backward，确保前向/反向语义一致。
-- **Tenth 实例化**：`TapeOp::Gelu`（[autodiff.rs:597](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L597）、`TapeOp::LayerNorm`（[autodiff.rs:523](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L523）、`TapeOp::Conv2D`（[autodiff.rs:615](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L615）、`TapeOp::BatchNorm`（[autodiff.rs:496](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L496）、`TapeOp::Dropout`（[autodiff.rs:712](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L712）等。
+- **Tenth 实例化**：`TapeOp::Gelu`（[autodiff.rs:597](../../tenth/src/runtime/autodiff.rs) L597）、`TapeOp::LayerNorm`（[autodiff.rs:523](../../tenth/src/runtime/autodiff.rs) L523）、`TapeOp::Conv2D`（[autodiff.rs:615](../../tenth/src/runtime/autodiff.rs) L615）、`TapeOp::BatchNorm`（[autodiff.rs:496](../../tenth/src/runtime/autodiff.rs) L496）、`TapeOp::Dropout`（[autodiff.rs:712](../../tenth/src/runtime/autodiff.rs) L712）等。
 - **违背案例**：PyTorch `torch.nn.ReLU` 的 `backward` 由 autograd 引擎处理，但需算子作者显式定义 `backward` 函数；JAX Flax 的 `nn.Dense` 的反向由 `jax.grad` 函数变换推导，但需 Flax 作者确保前向可微。
 
 **原则 4（双层清晰，Two-Layer Clarity）**：原语层与组合层应清晰分离，组合层函数体仅调用原语方法（或已验证的组合），不引入新语义。
 
 - **理由**：使用户可清晰理解"哪些是语言保证的语义"（原语层）、"哪些是组合便利"（组合层）。
-- **Tenth 实例化**：`std::nn/` 中所有 13 个文件的函数体均仅调用原语方法或已验证组合（如 [attention.th:24-41](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th) L24-41 仅调用 `matmul`、`transpose`、`masked_fill`、`softmax`、`dropout`）。
+- **Tenth 实例化**：`std::nn/` 中所有 13 个文件的函数体均仅调用原语方法或已验证组合（如 [attention.th:24-41](../../tenth/std/nn/attention.th) L24-41 仅调用 `matmul`、`transpose`、`masked_fill`、`softmax`、`dropout`）。
 - **违背案例**：PyTorch `torch.nn.Transformer` 内部混合了 Python 控制流、`F.softmax`、`F.linear` 等，用户难以分辨"语言保证"与"框架实现"。
 
 **原则 5（范式完备性，Paradigm Completeness）**：标准库应覆盖 NN 算子的最低完备集——线性层、激活函数、损失函数、归一化、卷积、注意力、嵌入、Dropout、位置编码、Transformer 块。
@@ -564,7 +564,7 @@ Tenth 在 $\mathcal{D}_P=3$ 上领先 PyTorch（0）与 JAX+Flax（0），在 $\
 
 **引理 6.2（多原语组合的语义保持）**：多原语组合函数 $f$（如 `attention`）语义保持，当且仅当其函数体中每个原语调用的语义由 $\mathcal{P}_{\text{nn}}$ 提供，且组合不引入新语义。
 
-**证明**：以 `scaled_dot_product_attention` 为例（[attention.th:24-41](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th) L24-41）：
+**证明**：以 `scaled_dot_product_attention` 为例（[attention.th:24-41](../../tenth/std/nn/attention.th) L24-41）：
 
 - `q.matmul(kT)`: 调用原语 `matmul`，语义由 $\mathcal{P}_{\text{nn}}$ 提供。✓
 - `scores * scale`: 算术运算，语义由语言原语 `*` 提供。✓
@@ -577,7 +577,7 @@ Tenth 在 $\mathcal{D}_P=3$ 上领先 PyTorch（0）与 JAX+Flax（0），在 $\
 
 **引理 6.3（高层组合的语义保持）**：高层组合 `transformer_encoder_block` 语义保持，前提是其调用的子组合（`layer_norm`、`multihead_attention`、`feedforward`）均语义保持。
 
-**证明**：由引理 6.1 与引理 6.2，`layer_norm` 是薄组合（语义保持），`feedforward` 是多原语组合（语义保持），`multihead_attention` 是多原语组合（语义保持，含 `scaled_dot_product_attention` 调用）。`transformer_encoder_block` 的函数体（[transformer.th:8-35](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th) L8-35）仅调用 `layer_norm`、`multihead_attention`、`feedforward`、`+`（残差连接），均为已语义保持的组合或语言原语。故 `transformer_encoder_block` 语义保持。$\square$
+**证明**：由引理 6.1 与引理 6.2，`layer_norm` 是薄组合（语义保持），`feedforward` 是多原语组合（语义保持），`multihead_attention` 是多原语组合（语义保持，含 `scaled_dot_product_attention` 调用）。`transformer_encoder_block` 的函数体（[transformer.th:8-35](../../tenth/std/nn/transformer.th) L8-35）仅调用 `layer_norm`、`multihead_attention`、`feedforward`、`+`（残差连接），均为已语义保持的组合或语言原语。故 `transformer_encoder_block` 语义保持。$\square$
 
 **定理 6.4（NN 标准库整体语义保持）**：Tenth `std::nn/` 中所有 13 个文件的函数均语义保持。
 
@@ -585,7 +585,7 @@ Tenth 在 $\mathcal{D}_P=3$ 上领先 PyTorch（0）与 JAX+Flax（0），在 $\
 
 **定理 6.5（NN 标准库的 autodiff 完备性）**：Tenth `std::nn/` 中所有 13 个文件的函数均支持 autodiff（前向记录 + 反向传播），前提是其调用的每个原语均有对应 TapeOp 节点。
 
-**证明**：由定理 6.4，所有函数语义保持，即函数体的语义由原语调用复合而成。由 [autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 中 `TapeOp::Gelu`、`TapeOp::LayerNorm`、`TapeOp::BatchNorm`、`TapeOp::Conv2D`、`TapeOp::Dropout`、`TapeOp::Softmax`、`TapeOp::MatMul` 等节点的存在，每个原语调用在 `is_recording()` 时记录 tape 节点，反向传播由 autodiff 系统统一处理。
+**证明**：由定理 6.4，所有函数语义保持，即函数体的语义由原语调用复合而成。由 [autodiff.rs](../../tenth/src/runtime/autodiff.rs) 中 `TapeOp::Gelu`、`TapeOp::LayerNorm`、`TapeOp::BatchNorm`、`TapeOp::Conv2D`、`TapeOp::Dropout`、`TapeOp::Softmax`、`TapeOp::MatMul` 等节点的存在，每个原语调用在 `is_recording()` 时记录 tape 节点，反向传播由 autodiff 系统统一处理。
 
 **例外**：`positional_encoding.th` 当前是随机初始化占位，无 tape 节点；待实现真版后将支持 autodiff（局限 L3）。$\square$
 
@@ -595,7 +595,7 @@ Tenth 在 $\mathcal{D}_P=3$ 上领先 PyTorch（0）与 JAX+Flax（0），在 $\
 
 ### 7.1 `activations.th`（激活函数集）
 
-**源码**：[activations.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th)（31 行）
+**源码**：[activations.th](../../tenth/std/nn/activations.th)（31 行）
 
 **函数清单**：`relu`, `sigmoid`, `tanh`, `softmax`, `exp`, `log`, `gelu`, `leaky_relu`, `leaky_relu_default`
 
@@ -604,11 +604,11 @@ Tenth 在 $\mathcal{D}_P=3$ 上领先 PyTorch（0）与 JAX+Flax（0），在 $\
 - **薄组合**：所有激活函数都是 1 行原语调用（如 `fn gelu(x) { x.gelu() }`）。
 - **autodiff 集成**：通过原语 TapeOp 节点（`TapeOp::ReLU`、`TapeOp::Gelu`、`TapeOp::Sigmoid`、`TapeOp::Softmax`）。
 - **符号维度**：使用 `..` 通配符，未标注符号维度（弱原语）。
-- **特殊算子**：`leaky_relu` 通过算术等价实现（[activations.th:24-26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/activations.th) L24-26），详见 T47 [论文 T47](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T47-leaky-relu算术等价与可微分支编码.md)。
+- **特殊算子**：`leaky_relu` 通过算术等价实现（[activations.th:24-26](../../tenth/std/nn/activations.th) L24-26），详见 T47 [论文 T47](T47-leaky-relu算术等价与可微分支编码.md)。
 
 ### 7.2 `linear.th`（线性层）
 
-**源码**：[linear.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/linear.th)（13 行）
+**源码**：[linear.th](../../tenth/std/nn/linear.th)（13 行）
 
 **架构性质**：
 
@@ -619,7 +619,7 @@ Tenth 在 $\mathcal{D}_P=3$ 上领先 PyTorch（0）与 JAX+Flax（0），在 $\
 
 ### 7.3 `attention.th`（缩放点积注意力）
 
-**源码**：[attention.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th)（41 行）
+**源码**：[attention.th](../../tenth/std/nn/attention.th)（41 行）
 
 **架构性质**：
 
@@ -627,118 +627,118 @@ Tenth 在 $\mathcal{D}_P=3$ 上领先 PyTorch（0）与 JAX+Flax（0），在 $\
 - **autodiff**：每步均有对应 TapeOp 节点。
 - **符号维度**：✓ 完整标注 `Tensor[T, S_q, D_k]`, `Tensor[T, S_k, D_k]`, `Tensor[T, S_k, D_v]`，返回 `Tensor[T, S_q, D_v]`。
 - **shape 推导**：编译期可验证 `q: [S_q, D_k]` 与 `kT: [D_k, S_k]` 的 `matmul` 结果 `[S_q, S_k]`，与 `v: [S_k, D_v]` 的 `matmul` 结果 `[S_q, D_v]` 一致。
-- **限制**：仅支持 2D 张量（无 batch 维度），见 [attention.th:20-22](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th) L20-22 注释。
+- **限制**：仅支持 2D 张量（无 batch 维度），见 [attention.th:20-22](../../tenth/std/nn/attention.th) L20-22 注释。
 
 ### 7.4 `multihead_attention.th`（多头注意力）
 
-**源码**：[multihead_attention.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th)（39 行）
+**源码**：[multihead_attention.th](../../tenth/std/nn/multihead_attention.th)（39 行）
 
 **架构性质**：
 
 - **多原语组合 + 调用其他组合**：调用 `matmul` 与 `scaled_dot_product_attention`。
 - **autodiff**：通过子组合的 TapeOp。
 - **符号维度**：⚠️ 使用 `..` 通配符（未标注 `S_q, D_k` 等），是局限。
-- **重要限制**：当前为 single-head 等价实现（[multihead_attention.th:4-11](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th) L4-11 注释），原因：Tenth matmul 仅支持 2D，无法 reshape 为 `(n_heads, seq_len, d_k)` 并行计算。**这是 T10 局限 L3 的来源**。
+- **重要限制**：当前为 single-head 等价实现（[multihead_attention.th:4-11](../../tenth/std/nn/multihead_attention.th) L4-11 注释），原因：Tenth matmul 仅支持 2D，无法 reshape 为 `(n_heads, seq_len, d_k)` 并行计算。**这是 T10 局限 L3 的来源**。
 
 ### 7.5 `feedforward.th`（前馈网络）
 
-**源码**：[feedforward.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/feedforward.th)（42 行）
+**源码**：[feedforward.th](../../tenth/std/nn/feedforward.th)（42 行）
 
 **架构性质**：
 
 - **多原语组合**：3 步（matmul+bias、gelu、matmul+bias）。
 - **autodiff**：通过 `matmul`、`+`、`TapeOp::Gelu`。
 - **符号维度**：✓ 完整标注 `Tensor[T, S, D]`, `Tensor[T, D, D_ff]`, `Tensor[T, D_ff]`, `Tensor[T, D_ff, D]`, `Tensor[T, D]`，返回 `Tensor[T, S, D]`。
-- **shape 推导**：注释中详细推导了每步 shape 变化（[feedforward.th:5-17](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/feedforward.th) L5-17）。
+- **shape 推导**：注释中详细推导了每步 shape 变化（[feedforward.th:5-17](../../tenth/std/nn/feedforward.th) L5-17）。
 - **工厂函数**：`make_feedforward_params<T>(d_model, d_ff)` 使用 He 初始化。
 
 ### 7.6 `transformer.th`（Transformer 编码器块）
 
-**源码**：[transformer.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th)（54 行）
+**源码**：[transformer.th](../../tenth/std/nn/transformer.th)（54 行）
 
 **架构性质**：
 
 - **高层组合**：调用 `layer_norm`、`multihead_attention`、`feedforward`，加上残差连接。
 - **autodiff**：通过子组合的 TapeOp。
 - **符号维度**：⚠️ 使用 `..` 通配符（高层组合难以标注具体符号维度，因为涉及多头 reshape）。
-- **架构选择**：Pre-Norm 架构（[transformer.th:1-3](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th) L1-3 注释），对深层 Transformer 训练更稳定。
+- **架构选择**：Pre-Norm 架构（[transformer.th:1-3](../../tenth/std/nn/transformer.th) L1-3 注释），对深层 Transformer 训练更稳定。
 - **工厂函数**：`make_transformer_block_params<T>(d_model, n_heads, d_ff)` 初始化全部 12 个参数。
 
 ### 7.7 `layer_norm.th`（层归一化）
 
-**源码**：[layer_norm.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/layer_norm.th)（22 行）
+**源码**：[layer_norm.th](../../tenth/std/nn/layer_norm.th)（22 行）
 
 **架构性质**：
 
 - **薄组合**：`fn layer_norm<T>(...) { x.layer_norm(gamma, beta, eps) }`。
-- **autodiff**：`TapeOp::LayerNorm`（[autodiff.rs:523](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L523）。
+- **autodiff**：`TapeOp::LayerNorm`（[autodiff.rs:523](../../tenth/src/runtime/autodiff.rs) L523）。
 - **符号维度**：⚠️ 使用 `..` 通配符。
 - **工厂函数**：`make_layer_norm<T>(dim)` 返回 `(ones, zeros)`。
-- **理论关联**：闭式反向传播推导见 T42 [论文 T42](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T42-LayerNorm-BatchNorm闭式反向传播推导.md)。
+- **理论关联**：闭式反向传播推导见 T42 [论文 T42](T42-LayerNorm-BatchNorm闭式反向传播推导.md)。
 
 ### 7.8 `batchnorm.th`（批归一化）
 
-**源码**：[batchnorm.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/batchnorm.th)（19 行）
+**源码**：[batchnorm.th](../../tenth/std/nn/batchnorm.th)（19 行）
 
 **架构性质**：
 
 - **薄组合**：`fn batchnorm<T>(...) { x.batchnorm(gamma, beta, eps) }`。
-- **autodiff**：`TapeOp::BatchNorm`（[autodiff.rs:496](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L496）。
+- **autodiff**：`TapeOp::BatchNorm`（[autodiff.rs:496](../../tenth/src/runtime/autodiff.rs) L496）。
 - **符号维度**：⚠️ 使用 `..` 通配符。
 - **使用场景**：注释标注 `(N, C, H, W)` 或 `(N, C, L)` 输入，gamma/beta 是 `(C,)` 向量。
 
 ### 7.9 `dropout.th`（Dropout）
 
-**源码**：[dropout.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/dropout.th)（4 行）
+**源码**：[dropout.th](../../tenth/std/nn/dropout.th)（4 行）
 
 **架构性质**：
 
 - **极薄组合**：`fn dropout<T>(x, rate) { x.dropout(rate) }`，仅 1 行。
-- **autodiff**：`TapeOp::Dropout`（[autodiff.rs:712](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L712）。
+- **autodiff**：`TapeOp::Dropout`（[autodiff.rs:712](../../tenth/src/runtime/autodiff.rs) L712）。
 - **符号维度**：⚠️ 使用 `..` 通配符。
 - **设计哲学**：薄组合提供命名空间化访问（`std::nn::dropout::dropout`），底层语义由原语方法提供。
 
 ### 7.10 `conv.th`（卷积层）
 
-**源码**：[conv.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/conv.th)（27 行）
+**源码**：[conv.th](../../tenth/std/nn/conv.th)（27 行）
 
 **架构性质**：
 
 - **薄组合 + bias 加法**：`fn conv2d(x, w, b, stride, pad) { let out = x.conv2d(w, kH, kW, stride, pad); out + b }`。
-- **autodiff**：`TapeOp::Conv2D`（[autodiff.rs:615](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L615）。
+- **autodiff**：`TapeOp::Conv2D`（[autodiff.rs:615](../../tenth/src/runtime/autodiff.rs) L615）。
 - **符号维度**：⚠️ 使用 `..` 通配符。
-- **理论关联**：im2col 反向传播正确性见 T41 [论文 T41](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T41-Conv2D-im2col-matmul反向传播正确性.md)。
+- **理论关联**：im2col 反向传播正确性见 T41 [论文 T41](T41-Conv2D-im2col-matmul反向传播正确性.md)。
 
 ### 7.11 `embedding.th`（嵌入层）
 
-**源码**：[embedding.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/embedding.th)（22 行）
+**源码**：[embedding.th](../../tenth/std/nn/embedding.th)（22 行）
 
 **架构性质**：
 
 - **薄组合**：`fn embedding(weight, indices) { gather(weight, 0, indices) }`（2026-07-30 修正：原 `weight.embedding_lookup(indices)` 已不存在，nn::embedding 改用 `gather` native 实现）。
-- **autodiff**：通过 `TapeOp::Gather` 反向（[autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) Gather 分支：`d_base = scatter_add(grad, dim, index)`，index 不可微，2026-07-06 接入 autodiff）。**已知限制 L4**：`gather` 要求 `weight` 与 `indices` 的 ndim 匹配——`weight[V, D]` + `indices[S]` 会因 ndim 不匹配运行时报错；完整解决需新增 `index_select` native 或 broadcast 支持（推后到 P1 后续）。
+- **autodiff**：通过 `TapeOp::Gather` 反向（[autodiff.rs](../../tenth/src/runtime/autodiff.rs) Gather 分支：`d_base = scatter_add(grad, dim, index)`，index 不可微，2026-07-06 接入 autodiff）。**已知限制 L4**：`gather` 要求 `weight` 与 `indices` 的 ndim 匹配——`weight[V, D]` + `indices[S]` 会因 ndim 不匹配运行时报错；完整解决需新增 `index_select` native 或 broadcast 支持（推后到 P1 后续）。
 - **符号维度**：⚠️ 使用 `..` 通配符。
 
 ### 7.12 `loss.th`（损失函数）
 
-**源码**：[loss.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/loss.th)（26 行）
+**源码**：[loss.th](../../tenth/std/nn/loss.th)（26 行）
 
 **架构性质**：
 
 - **非原语组合**：直接使用算术原语（`-`、`*`、`.abs()`、`.log()`、`.mean()`），无独立 tape 节点。
 - **autodiff**：通过算术原语的 TapeOp（`TapeOp::Sub`、`TapeOp::Mul` 等）。
 - **符号维度**：⚠️ 使用 `..` 通配符。
-- **特殊设计**：`mse` 返回 `f64`（非 Tensor），`mse_loss` 返回 `Tensor`（用于 autodiff）。这是**违背原则 1（原语下沉）**的特例——损失函数未下沉为原语方法，是用户态组合（局限 L5）。**理论关联**：双形式见 T48 [论文 T48](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T48-损失函数双形式.md)。
+- **特殊设计**：`mse` 返回 `f64`（非 Tensor），`mse_loss` 返回 `Tensor`（用于 autodiff）。这是**违背原则 1（原语下沉）**的特例——损失函数未下沉为原语方法，是用户态组合（局限 L5）。**理论关联**：双形式见 T48 [论文 T48](T48-损失函数双形式.md)。
 - **未完成算子**：`huber_loss` 被注释掉，标注 "needs abs and conditional"。
 
 ### 7.13 `positional_encoding.th`（位置编码）
 
-**源码**：[positional_encoding.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th)（26 行）
+**源码**：[positional_encoding.th](../../tenth/std/nn/positional_encoding.th)（26 行）
 
 **架构性质**：
 
-- **占位实现**：当前是 `randn<T>(seq_len, d_model) * 0.01` 随机初始化占位（[positional_encoding.th:22-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th) L22-25）。
-- **真版实现受阻**：注释标注 "Tenth currently does not support element-wise index assignment on tensors"（[positional_encoding.th:8-18](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th) L8-18），无法实现正弦位置编码。
+- **占位实现**：当前是 `randn<T>(seq_len, d_model) * 0.01` 随机初始化占位（[positional_encoding.th:22-25](../../tenth/std/nn/positional_encoding.th) L22-25）。
+- **真版实现受阻**：注释标注 "Tenth currently does not support element-wise index assignment on tensors"（[positional_encoding.th:8-18](../../tenth/std/nn/positional_encoding.th) L8-18），无法实现正弦位置编码。
 - **autodiff**：无（占位）。
 - **符号维度**：⚠️ 使用 `..` 通配符。
 - **重要局限**：这是 `std::nn/` 中唯一未实现真语义的文件（局限 L3）。
@@ -809,11 +809,11 @@ Tenth 在 $\mathcal{D}_P=3$ 上领先 PyTorch（0）与 JAX+Flax（0），在 $\
 
 ### 9.1 Tenth JIT 当前实现
 
-Tenth JIT 基于 Cranelift（[mod.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs)），采用保守策略：
+Tenth JIT 基于 Cranelift（[mod.rs](../../tenth/src/compile/jit/mod.rs)），采用保守策略：
 
-- **保守 JIT**：仅编译纯标量操作，所有复杂操作（calls, heap allocations, field access, tensor ops, autodiff recording）通过 host trampoline 路由（[mod.rs:8-11](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) L8-11）。
-- **autodiff 安全门**：若 `vm.is_recording()` 为 true，立即 fallback 到解释器（[mod.rs:41-43](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) L41-43）。
-- **方法调用 hostcall**：`MethodCall(i, n)` 字节码通过 `host_method_call` hostcall 路由（[translator.rs:358-366](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) L358-366），hostcall 调用 `vm.call_method(&receiver, &method, args)`（[hostcalls.rs:252](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/hostcalls.rs) L252）。
+- **保守 JIT**：仅编译纯标量操作，所有复杂操作（calls, heap allocations, field access, tensor ops, autodiff recording）通过 host trampoline 路由（[mod.rs:8-11](../../tenth/src/compile/jit/mod.rs) L8-11）。
+- **autodiff 安全门**：若 `vm.is_recording()` 为 true，立即 fallback 到解释器（[mod.rs:41-43](../../tenth/src/compile/jit/mod.rs) L41-43）。
+- **方法调用 hostcall**：`MethodCall(i, n)` 字节码通过 `host_method_call` hostcall 路由（[translator.rs:358-366](../../tenth/src/compile/jit/translator.rs) L358-366），hostcall 调用 `vm.call_method(&receiver, &method, args)`（[hostcalls.rs:252](../../tenth/src/compile/jit/hostcalls.rs) L252）。
 
 **结论**：当前 JIT **未实际内联** `x.gelu()` 等张量方法。这是局限 L1。
 
@@ -821,15 +821,15 @@ Tenth JIT 基于 Cranelift（[mod.rs](file:///d:/史蒂夫/Desktop/AI开发新�
 
 尽管当前未实现，Tenth 的语言设计为内联提供了完整的语义前提：
 
-- **前提 1**：`x.gelu()` 的语义在 [tensor.rs:1012](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) L1012 是 Rust 代码，编译器可在编译期读取并展开为 Cranelift IR 循环。
-- **前提 2**：`x.gelu()` 的 autodiff 反向（[autodiff.rs:597](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) L597）是已知公式，编译器可在内联时同步生成 tape 记录代码。
+- **前提 1**：`x.gelu()` 的语义在 [tensor.rs:1012](../../tenth/src/runtime/tensor.rs) L1012 是 Rust 代码，编译器可在编译期读取并展开为 Cranelift IR 循环。
+- **前提 2**：`x.gelu()` 的 autodiff 反向（[autodiff.rs:597](../../tenth/src/runtime/autodiff.rs) L597）是已知公式，编译器可在内联时同步生成 tape 记录代码。
 - **前提 3**：`x.gelu()` 是纯函数（除 tape 记录外无副作用），内联不破坏语义。
 
 ### 9.3 内联的实施路径（未来工作）
 
 若实现内联，路径如下：
 
-1. **Step 1**：在 [translator.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) 中识别 `MethodCall(i, n)` 的方法名（如 `"gelu"`）；
+1. **Step 1**：在 [translator.rs](../../tenth/src/compile/jit/translator.rs) 中识别 `MethodCall(i, n)` 的方法名（如 `"gelu"`）；
 2. **Step 2**：对已知原语方法（如 `gelu`、`relu`、`sigmoid`），直接生成 Cranelift IR 循环（基于 tensor 的 shape 信息）；
 3. **Step 3**：若 `vm.is_recording()` 为 true，同步生成 tape 记录代码（调用 `TapeOp::Gelu` 的记录逻辑）；
 4. **Step 4**：对未知方法，fallback 到 hostcall。
@@ -858,9 +858,9 @@ Tenth JIT 基于 Cranelift（[mod.rs](file:///d:/史蒂夫/Desktop/AI开发新�
 
 ### 10.1 Tenth 符号维度系统回顾
 
-T23 [论文 T23](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T23-类型推断与Shape检查协同推断.md) 形式化了 Tenth 的符号维度系统：
+T23 [论文 T23](T23-类型推断与Shape检查协同推断.md) 形式化了 Tenth 的符号维度系统：
 
-- **Dim 三值**：`Known(i64)` | `Symbol(String)` | `Any`（[types.rs:13-17](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs) L13-17）。
+- **Dim 三值**：`Known(i64)` | `Symbol(String)` | `Any`（[types.rs:13-17](../../tenth/src/hir/types.rs) L13-17）。
 - **协同推断**：Phase 1（类型重建）+ Phase 2（shape 约束检查）+ Phase 3（符号方程局部求解）。
 - **同名等式求解**：通过同名符号维度变量表达维度相等关系（如 `matmul(x: [M, K], w: [K, N]) -> [M, N]` 的内侧 K 相等）。
 
@@ -874,7 +874,7 @@ T23 [论文 T23](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴�
 
 ### 10.3 符号维度的编译期验证
 
-以 `linear` 为例（[linear.th:12](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/linear.th) L12）：
+以 `linear` 为例（[linear.th:12](../../tenth/std/nn/linear.th) L12）：
 
 ```tenth
 fn linear(x: Tensor[f64, M, K], w: Tensor[f64, N, K], b: Tensor[f64, N]) -> Tensor[f64, M, N] {
@@ -948,7 +948,7 @@ Tenth 当前 `std::nn/` 中仅 3/13 文件完整标注符号维度，其余使�
 
 ### 12.1 Tenth 范式的代价
 
-**代价 1：语言复杂度增加**。将 NN 算子下沉为原语，使 tensor 类型方法数量增加（[tensor.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 约 67 个方法），运行时复杂度上升。
+**代价 1：语言复杂度增加**。将 NN 算子下沉为原语，使 tensor 类型方法数量增加（[tensor.rs](../../tenth/src/runtime/tensor.rs) 约 67 个方法），运行时复杂度上升。
 
 **代价 2：标准库维护成本**。13 个 NN 文件需随语言版本同步维护，且需与 autodiff 系统保持一致（每个新算子需添加 TapeOp 节点与反向公式）。
 
@@ -990,7 +990,7 @@ Tenth 的应对策略：
 
 ### 13.1 局限 L1（JIT 当前未实际内联张量方法）
 
-**是什么**：当前 Tenth JIT 通过 `host_method_call` hostcall 路由张量方法调用（[translator.rs:358-366](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/translator.rs) L358-366），未实际内联 `x.gelu()`、`x.layer_norm()` 等原语方法。且在 `vm.is_recording()` 时直接 fallback 到解释器（[mod.rs:41-43](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/mod.rs) L41-43）。
+**是什么**：当前 Tenth JIT 通过 `host_method_call` hostcall 路由张量方法调用（[translator.rs:358-366](../../tenth/src/compile/jit/translator.rs) L358-366），未实际内联 `x.gelu()`、`x.layer_norm()` 等原语方法。且在 `vm.is_recording()` 时直接 fallback 到解释器（[mod.rs:41-43](../../tenth/src/compile/jit/mod.rs) L41-43）。
 
 **影响**：定理 NN2 论证的是"语义前提"而非"已实现优化"。当前 `x.gelu()` 的运行时开销与解释器相同，无内联性能优势。
 
@@ -1008,8 +1008,8 @@ Tenth 的应对策略：
 
 **是什么**：
 
-- `multihead_attention.th` 当前为 single-head 等价实现（[multihead_attention.th:4-11](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th) L4-11），原因：Tenth matmul 仅支持 2D，无法 reshape 为 `(n_heads, seq_len, d_k)` 并行计算。
-- `positional_encoding.th` 当前是随机初始化占位（[positional_encoding.th:22-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th) L22-25），原因：Tenth 不支持元素级索引赋值。
+- `multihead_attention.th` 当前为 single-head 等价实现（[multihead_attention.th:4-11](../../tenth/std/nn/multihead_attention.th) L4-11），原因：Tenth matmul 仅支持 2D，无法 reshape 为 `(n_heads, seq_len, d_k)` 并行计算。
+- `positional_encoding.th` 当前是随机初始化占位（[positional_encoding.th:22-25](../../tenth/std/nn/positional_encoding.th) L22-25），原因：Tenth 不支持元素级索引赋值。
 
 **影响**：定理 NN1 的原语性判据在 `multihead_attention` 与 `positional_encoding` 上不完全满足（P2 autodiff 在 positional_encoding 上不成立）。原则 5（范式完备性）在这些算子上"名义满足但实际不完整"。
 
@@ -1017,7 +1017,7 @@ Tenth 的应对策略：
 
 ### 13.4 局限 L4（Embedding 的 autodiff 集成不完整）
 
-**是什么**：[embedding.th:13](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/embedding.th) L13 注释标注 "gradient flows back to the weight matrix"，但未在 [autodiff.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) grep 到独立 `TapeOp::EmbeddingLookup` 节点。可能通过 `MatMul` 等组合实现，且 sparse gradient 不支持。
+**是什么**：[embedding.th:13](../../tenth/std/nn/embedding.th) L13 注释标注 "gradient flows back to the weight matrix"，但未在 [autodiff.rs](../../tenth/src/runtime/autodiff.rs) grep 到独立 `TapeOp::EmbeddingLookup` 节点。可能通过 `MatMul` 等组合实现，且 sparse gradient 不支持。
 
 **影响**：定理 NN1 中 Embedding 的 P2（autodiff 集成）部分满足，仅是弱原语而非强原语。
 
@@ -1025,7 +1025,7 @@ Tenth 的应对策略：
 
 ### 13.5 局限 L5（loss.th 违背原语下沉原则）
 
-**是什么**：[loss.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/loss.th) 的损失函数（`mse`、`mse_loss`、`binary_cross_entropy`、`l1_loss`）直接使用算术原语（`-`、`*`、`.abs()`、`.log()`、`.mean()`），未下沉为独立原语方法（如 `x.mse(target)`、`x.binary_cross_entropy(target)`）。
+**是什么**：[loss.th](../../tenth/std/nn/loss.th) 的损失函数（`mse`、`mse_loss`、`binary_cross_entropy`、`l1_loss`）直接使用算术原语（`-`、`*`、`.abs()`、`.log()`、`.mean()`），未下沉为独立原语方法（如 `x.mse(target)`、`x.binary_cross_entropy(target)`）。
 
 **影响**：原则 1（原语下沉）在 loss 上不满足。loss 函数是用户态组合，与 PyTorch `F.mse_loss` 的语义层级无本质差异。
 
@@ -1033,9 +1033,9 @@ Tenth 的应对策略：
 
 ### 13.6 局限 L6（make_* 工厂函数仍依赖 f64 native）
 
-**是什么**：[prelude.th:65-68](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th) L65-68 注释标注 `make_layer_norm`、`make_feedforward_params`、`make_transformer_block_params` 等"make_* 仍 f64（依赖 randn native）"。这些工厂函数虽是泛型 `<T>`，但内部 `randn<T>` 在 native 层可能仅支持 f64。
+**是什么**：[prelude.th:65-68](../../tenth/std/prelude.th) L65-68 注释标注 `make_layer_norm`、`make_feedforward_params`、`make_transformer_block_params` 等"make_* 仍 f64（依赖 randn native）"。这些工厂函数虽是泛型 `<T>`，但内部 `randn<T>` 在 native 层可能仅支持 f64。
 
-**影响**：原则 3（autodiff 一致性）在 f32 模式下可能不完整。理论关联：T45 [论文 T45](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T45-f32自动微分精度分析.md)。
+**影响**：原则 3（autodiff 一致性）在 f32 模式下可能不完整。理论关联：T45 [论文 T45](T45-f32自动微分精度分析.md)。
 
 **缓解**：未来工作添加 f32 native 支持，使 `make_*` 真正泛型化。
 
@@ -1146,23 +1146,23 @@ Tenth 的应对策略：
 
 [5] Lattner, C., et al. "MLIR: Scaling Compiler Infrastructure for Domain Specific Computation." CGO 2021.
 
-[6] Tenth 项目数理部. "AI 原生编程语言的判据与 Tenth 的定位：一个形式化定义与范式对比." T10 论文, 2026. [T10](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T10-AI原生语言范式形式化定义.md)
+[6] Tenth 项目数理部. "AI 原生编程语言的判据与 Tenth 的定位：一个形式化定义与范式对比." T10 论文, 2026. [T10](T10-AI原生语言范式形式化定义.md)
 
-[7] Tenth 项目数理部. "带符号维度的联合类型-Shape 推断算法：Tenth 的协同推断框架." T23 论文, 2026. [T23](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T23-类型推断与Shape检查协同推断.md)
+[7] Tenth 项目数理部. "带符号维度的联合类型-Shape 推断算法：Tenth 的协同推断框架." T23 论文, 2026. [T23](T23-类型推断与Shape检查协同推断.md)
 
-[8] Tenth 项目数理部. "Wengert Tape 形式化语义与反向模式正确性." T39 论文, 2026. [T39](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md)
+[8] Tenth 项目数理部. "Wengert Tape 形式化语义与反向模式正确性." T39 论文, 2026. [T39](T39-Wengert-Tape形式化语义与反向模式正确性.md)
 
-[9] Tenth 项目数理部. "LayerNorm/BatchNorm 闭式反向传播推导." T42 论文, 2026. [T42](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T42-LayerNorm-BatchNorm闭式反向传播推导.md)
+[9] Tenth 项目数理部. "LayerNorm/BatchNorm 闭式反向传播推导." T42 论文, 2026. [T42](T42-LayerNorm-BatchNorm闭式反向传播推导.md)
 
-[10] Tenth 项目数理部. "Conv2D im2col-matmul 反向传播正确性." T41 论文, 2026. [T41](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T41-Conv2D-im2col-matmul反向传播正确性.md)
+[10] Tenth 项目数理部. "Conv2D im2col-matmul 反向传播正确性." T41 论文, 2026. [T41](T41-Conv2D-im2col-matmul反向传播正确性.md)
 
-[11] Tenth 项目数理部. "Softmax 雅可比稀疏化与 CrossEntropy 融合." T43 论文, 2026. [T43](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T43-Softmax雅可比稀疏化与CrossEntropy融合.md)
+[11] Tenth 项目数理部. "Softmax 雅可比稀疏化与 CrossEntropy 融合." T43 论文, 2026. [T43](T43-Softmax雅可比稀疏化与CrossEntropy融合.md)
 
-[12] Tenth 项目数理部. "leaky-relu 算术等价与可微分支编码." T47 论文, 2026. [T47](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T47-leaky-relu算术等价与可微分支编码.md)
+[12] Tenth 项目数理部. "leaky-relu 算术等价与可微分支编码." T47 论文, 2026. [T47](T47-leaky-relu算术等价与可微分支编码.md)
 
-[13] Tenth 项目数理部. "损失函数双形式." T48 论文, 2026. [T48](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T48-损失函数双形式.md)
+[13] Tenth 项目数理部. "损失函数双形式." T48 论文, 2026. [T48](T48-损失函数双形式.md)
 
-[14] Tenth 项目数理部. "f32 自动微分精度分析." T45 论文, 2026. [T45](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T45-f32自动微分精度分析.md)
+[14] Tenth 项目数理部. "f32 自动微分精度分析." T45 论文, 2026. [T45](T45-f32自动微分精度分析.md)
 
 [15] Shaw, A. "jaxtyping: Type Annotations and Runtime Checking for Shape and Dtype of JAX Arrays." 2023. http://github.com/google/jaxtyping
 
@@ -1186,10 +1186,10 @@ Tenth 的应对策略：
 
 | 本文节 | 对应 Tenth 文档 |
 |-------|---------------|
-| §4.2 | [tenth/std/prelude.th:55-68](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th) L55-68 |
-| §6.2 | [tenth/std/nn/](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/) 全部 13 文件 |
-| §9.1 | [tenth/src/compile/jit/](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/compile/jit/) |
-| §10.1 | [tenth/src/hir/types.rs:13-17](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/hir/types.rs) L13-17 |
+| §4.2 | [tenth/std/prelude.th:55-68](../../tenth/std/prelude.th) L55-68 |
+| §6.2 | [tenth/std/nn/](../../tenth/std/nn/) 全部 13 文件 |
+| §9.1 | [tenth/src/compile/jit/](../../tenth/src/compile/jit/) |
+| §10.1 | [tenth/src/hir/types.rs:13-17](../../tenth/src/hir/types.rs) L13-17 |
 | §13.3 | T10 §7.2 局限 L3 |
 
 ## 附录 C：实施建议

@@ -37,7 +37,7 @@ Panic-mode 是最简单也最健壮的策略：遇到错误时，丢弃输入 to
 
 ### 1.3 Tenth 的 SYNC_TOKENS 策略
 
-Tenth Rust 母编译器采用经典 panic-mode。其同步 token 集合定义于 [`tenth/src/parser/parser.rs:15-25`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)：
+Tenth Rust 母编译器采用经典 panic-mode。其同步 token 集合定义于 [`tenth/src/parser/parser.rs:15-25`](../../tenth/src/parser/parser.rs)：
 
 ```rust
 const SYNC_TOKENS: &[TokenKind] = &[
@@ -47,9 +47,9 @@ const SYNC_TOKENS: &[TokenKind] = &[
 ];
 ```
 
-恢复函数 `synchronize` ([parser.rs:120-129](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)) 实现为：循环 peek，若当前 token 属于 SYNC_TOKENS 则停止；若到 Eof 则停止；否则前进一位。带恢复的解析入口 `parse_program_with_recovery` ([parser.rs:141-188](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)) 在每个 item 解析失败的分支调用 `synchronize`，将错误压入 `errors` 向量后继续主循环。
+恢复函数 `synchronize` ([parser.rs:120-129](../../tenth/src/parser/parser.rs)) 实现为：循环 peek，若当前 token 属于 SYNC_TOKENS 则停止；若到 Eof 则停止；否则前进一位。带恢复的解析入口 `parse_program_with_recovery` ([parser.rs:141-188](../../tenth/src/parser/parser.rs)) 在每个 item 解析失败的分支调用 `synchronize`，将错误压入 `errors` 向量后继续主循环。
 
-与之对照，tenthc 自举 parser ([`tenthc/parser/parser.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)) **完全没有任何错误恢复机制**——所有 parse_* 函数返回值而非 `Result`，遇到意外 token 时仅通过 `parser_advance` 推进或在 `parse_primary` 的兜底分支返回一个伪 `int 0` 节点（[parser.th:446-449](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)）。
+与之对照，tenthc 自举 parser ([`tenthc/parser/parser.th`](../../tenthc/parser/parser.th)) **完全没有任何错误恢复机制**——所有 parse_* 函数返回值而非 `Result`，遇到意外 token 时仅通过 `parser_advance` 推进或在 `parse_primary` 的兜底分支返回一个伪 `int 0` 节点（[parser.th:446-449](../../tenthc/parser/parser.th)）。
 
 ### 1.4 贡献
 
@@ -111,7 +111,7 @@ GCC 历史上采用 YACC 生成的 LALR(1) parser，错误恢复依赖 YACC 的 
 
 ### 3.1 基本记号
 
-设输入 token 序列为 $T = \langle t_0, t_1, \dots, t_{n-1} \rangle$，其中 $t_i \in \mathcal{K}$（TokenKind 枚举的全集）。记 $|T| = n$。设 EOF 为特殊的 TokenKind，且对 $i \geq n$，$t_i = \text{EOF}$（与 [`parser.rs:27-30`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) 的 `EOF_TOKEN` 一致）。
+设输入 token 序列为 $T = \langle t_0, t_1, \dots, t_{n-1} \rangle$，其中 $t_i \in \mathcal{K}$（TokenKind 枚举的全集）。记 $|T| = n$。设 EOF 为特殊的 TokenKind，且对 $i \geq n$，$t_i = \text{EOF}$（与 [`parser.rs:27-30`](../../tenth/src/parser/parser.rs) 的 `EOF_TOKEN` 一致）。
 
 记 parser 状态为 $\sigma = (\text{pos}, \text{errors}, \text{items})$，初始 $\sigma_0 = (0, \emptyset, \emptyset)$。
 
@@ -120,11 +120,11 @@ GCC 历史上采用 YACC 生成的 LALR(1) parser，错误恢复依赖 YACC 的 
 **定义 3.1**（SYNC_TOKENS）。
 $$\mathcal{S} := \{\text{Fn}, \text{Struct}, \text{Enum}, \text{Trait}, \text{Impl}, \text{Mod}, \text{Use}, \text{RBrace}, \text{Eof}\}$$
 
-源码见 [parser.rs:15-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)。$|\mathcal{S}| = 9$。
+源码见 [parser.rs:15-25](../../tenth/src/parser/parser.rs)。$|\mathcal{S}| = 9$。
 
 ### 3.3 synchronize 函数的算法
 
-`synchronize` ([parser.rs:120-129](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)) 的形式语义：
+`synchronize` ([parser.rs:120-129](../../tenth/src/parser/parser.rs)) 的形式语义：
 
 $$
 \text{sync}(\sigma) := \min\{k \geq \text{pos} \mid t_k \in \mathcal{S}\}
@@ -147,7 +147,7 @@ fn synchronize(&mut self) {
 
 ### 3.4 parse_program_with_recovery 的恢复流程
 
-`parse_program_with_recovery` ([parser.rs:141-188](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)) 的算法骨架：
+`parse_program_with_recovery` ([parser.rs:141-188](../../tenth/src/parser/parser.rs)) 的算法骨架：
 
 ```
 输入: T = <t_0, ..., t_{n-1}>
@@ -196,7 +196,7 @@ fn synchronize(&mut self) {
 
 **证明**.
 
-（$\Rightarrow$）设 $e \in \mathcal{C}$。由定义 3.2，$e$ 经由 `parse_item` 的 `?` 传播路径返回。检查 `parse_item` 实现（[parser.rs:1501-1746](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)），其 `?` 出现于：
+（$\Rightarrow$）设 $e \in \mathcal{C}$。由定义 3.2，$e$ 经由 `parse_item` 的 `?` 传播路径返回。检查 `parse_item` 实现（[parser.rs:1501-1746](../../tenth/src/parser/parser.rs)），其 `?` 出现于：
 - `parse_generic_params()` (L1526, L1570, L1635, L1682)
 - `expect(LParen)` (L1527)
 - `parse_param()` (L1531)
@@ -211,13 +211,13 @@ fn synchronize(&mut self) {
 
 每一个 `?` 都要求上游返回 `TenthResult<_> = Result<_, TenthError>`。检查 `TenthError` 枚举（在 `tenth/src/error.rs`），可知 parser 阶段只构造 `TenthError::ParseError` 变体。故条件 (1) 与 (2) 成立。
 
-（$\Leftarrow$）设 $e$ 满足 (1)(2)。则 $e$ 在某子函数中构造为 `Err(TenthError::ParseError{...})`，通过 `?` 上抛到 `parse_item`，再由 `parse_item` 的某个 `?` 上抛到 `parse_program_with_recovery` 主循环。在主循环中（[parser.rs:147-168](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)）落入 `Err(err)` 分支，被压入 `errors`。故 $e \in \mathcal{C}$。
+（$\Leftarrow$）设 $e$ 满足 (1)(2)。则 $e$ 在某子函数中构造为 `Err(TenthError::ParseError{...})`，通过 `?` 上抛到 `parse_item`，再由 `parse_item` 的某个 `?` 上抛到 `parse_program_with_recovery` 主循环。在主循环中（[parser.rs:147-168](../../tenth/src/parser/parser.rs)）落入 `Err(err)` 分支，被压入 `errors`。故 $e \in \mathcal{C}$。
 
 （不可恢复类）
 - (a) Lexer 错误在 `lexer.tokenize()` 返回前已处理（调用方 `parse_program_with_recovery` 接收的是已 tokenize 完的 `Vec<Token>`），不进入 parser，故不属于 $\mathcal{C}$。
-- (b) 主循环的 `<expr>` 处理逻辑（[parser.rs:149-161](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)）使用模式匹配与字段访问，不构造 `TenthError`，故不会进入 $\mathcal{C}$。
+- (b) 主循环的 `<expr>` 处理逻辑（[parser.rs:149-161](../../tenth/src/parser/parser.rs)）使用模式匹配与字段访问，不构造 `TenthError`，故不会进入 $\mathcal{C}$。
 - (c) `has_main_fn` 检测（L160）仅设置布尔标志，不构造错误。
-- (d) Rust panic（如 `unreachable!()` 在 [parser.rs:963](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) `parse_binary` 的 `unreachable!()`）绕过 `Result` 机制，不属于 $\mathcal{C}$。
+- (d) Rust panic（如 `unreachable!()` 在 [parser.rs:963](../../tenth/src/parser/parser.rs) `parse_binary` 的 `unreachable!()`）绕过 `Result` 机制，不属于 $\mathcal{C}$。
 - (e) HIR 阶段错误在 `hir/lower.rs` 中构造，与 parser 无关。
 
 $\square$
@@ -230,7 +230,7 @@ $\square$
 
 **证明**.
 
-首先枚举 $\mathcal{I}$。由 `parse_program` ([parser.rs:1448-1499](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)) 与 `parse_item` ([parser.rs:1501-1746](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)) 的实现，顶级 item 的起始 TokenKind 为：
+首先枚举 $\mathcal{I}$。由 `parse_program` ([parser.rs:1448-1499](../../tenth/src/parser/parser.rs)) 与 `parse_item` ([parser.rs:1501-1746](../../tenth/src/parser/parser.rs)) 的实现，顶级 item 的起始 TokenKind 为：
 
 | item 类型 | 起始 TokenKind | 源码位置 |
 |-----------|---------------|---------|
@@ -246,16 +246,16 @@ $\square$
 故 $\mathcal{I} = \{\text{Fn}, \text{Struct}, \text{Enum}, \text{Trait}, \text{Impl}, \text{Mod}, \text{Use}, \text{Pub}\}$，$|\mathcal{I}| = 8$。
 
 逐一验证：
-- $\text{Fn} \in \mathcal{S}$ ✓ ([parser.rs:16](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs))
-- $\text{Struct} \in \mathcal{S}$ ✓ ([parser.rs:17](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs))
-- $\text{Enum} \in \mathcal{S}$ ✓ ([parser.rs:18](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs))
-- $\text{Trait} \in \mathcal{S}$ ✓ ([parser.rs:19](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs))
-- $\text{Impl} \in \mathcal{S}$ ✓ ([parser.rs:20](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs))
-- $\text{Mod} \in \mathcal{S}$ ✓ ([parser.rs:21](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs))
-- $\text{Use} \in \mathcal{S}$ ✓ ([parser.rs:22](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs))
+- $\text{Fn} \in \mathcal{S}$ ✓ ([parser.rs:16](../../tenth/src/parser/parser.rs))
+- $\text{Struct} \in \mathcal{S}$ ✓ ([parser.rs:17](../../tenth/src/parser/parser.rs))
+- $\text{Enum} \in \mathcal{S}$ ✓ ([parser.rs:18](../../tenth/src/parser/parser.rs))
+- $\text{Trait} \in \mathcal{S}$ ✓ ([parser.rs:19](../../tenth/src/parser/parser.rs))
+- $\text{Impl} \in \mathcal{S}$ ✓ ([parser.rs:20](../../tenth/src/parser/parser.rs))
+- $\text{Mod} \in \mathcal{S}$ ✓ ([parser.rs:21](../../tenth/src/parser/parser.rs))
+- $\text{Use} \in \mathcal{S}$ ✓ ([parser.rs:22](../../tenth/src/parser/parser.rs))
 - $\text{Pub} \in \mathcal{S}$ ✗（**有意省略**）
 
-前 7 个 item 起始符均属于 $\mathcal{S}$。`Pub` 不属于 $\mathcal{S}$，但 `Pub` 仅作为修饰符前缀，必后跟 7 个 item 起始符之一（由 `parse_item` [L1504-1509](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) 的逻辑保证）。当 `synchronize` 在 `Pub` 处不停止时，下一轮 peek 必然落到 `Fn`/`Struct`/.../`Trait` 之一（属于 $\mathcal{S}$），故仍能正确恢复到 item 边界。
+前 7 个 item 起始符均属于 $\mathcal{S}$。`Pub` 不属于 $\mathcal{S}$，但 `Pub` 仅作为修饰符前缀，必后跟 7 个 item 起始符之一（由 `parse_item` [L1504-1509](../../tenth/src/parser/parser.rs) 的逻辑保证）。当 `synchronize` 在 `Pub` 处不停止时，下一轮 peek 必然落到 `Fn`/`Struct`/.../`Trait` 之一（属于 $\mathcal{S}$），故仍能正确恢复到 item 边界。
 
 因此 $\mathcal{I} \setminus \{\text{Pub}\} \subseteq \mathcal{S}$，且 `Pub` 的省略不破坏恢复能力。
 
@@ -271,7 +271,7 @@ $\square$
 
 **证明**.
 
-考察 `synchronize` 的循环（[parser.rs:120-129](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)）：
+考察 `synchronize` 的循环（[parser.rs:120-129](../../tenth/src/parser/parser.rs)）：
 
 ```
 loop {
@@ -286,7 +286,7 @@ loop {
 - **基础**：$k=0$，$\text{pos} = \text{pos}_0$。$I(0)$ 成立。
 - **归纳**：设 $I(k)$ 成立。若本轮 break，循环终止，结论成立。否则执行 `pos += 1`，故 $\text{pos} = \text{pos}_0 + k + 1$，即 $I(k+1)$ 成立。
 
-**终止性**：考察 $k = |T| - \text{pos}_0$（假设 $\text{pos}_0 \leq |T|$）。此时 $\text{pos} = |T|$。`peek()` 调用 `tokens.get(pos).unwrap_or(&EOF_TOKEN)` ([parser.rs:41](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs))，因 pos ≥ n，返回 `EOF_TOKEN`，其 kind = `Eof`。`SYNC_TOKENS` 含 `Eof`，故第一个 if 触发 break。
+**终止性**：考察 $k = |T| - \text{pos}_0$（假设 $\text{pos}_0 \leq |T|$）。此时 $\text{pos} = |T|$。`peek()` 调用 `tokens.get(pos).unwrap_or(&EOF_TOKEN)` ([parser.rs:41](../../tenth/src/parser/parser.rs))，因 pos ≥ n，返回 `EOF_TOKEN`，其 kind = `Eof`。`SYNC_TOKENS` 含 `Eof`，故第一个 if 触发 break。
 
 因此循环至多在 $k = |T| - \text{pos}_0$ 次迭代后终止，且终止时 $\text{pos}' \leq |T|$（若提前遇到其他 sync token 则更早终止）。
 
@@ -306,13 +306,13 @@ $\square$
 
 **证明**.
 
-(1) `parse_program_with_recovery` 仅在 `Ok(item)` 分支将 item 加入 `items'`（[parser.rs:148-163](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)）。`parse_item` 返回 `Ok(item)` 当且仅当 item 的全部子解析（generic params、params、return type、body 等）均成功——即该 item 是语法合法的。故 $\text{items}'$ 中每个元素合法。
+(1) `parse_program_with_recovery` 仅在 `Ok(item)` 分支将 item 加入 `items'`（[parser.rs:148-163](../../tenth/src/parser/parser.rs)）。`parse_item` 返回 `Ok(item)` 当且仅当 item 的全部子解析（generic params、params、return type、body 等）均成功——即该 item 是语法合法的。故 $\text{items}'$ 中每个元素合法。
 
 (2) 在用户意图清晰（无歧义）、错误局限于被跳过区域的前提下，`synchronize` 跳过的 token 区间恰对应"用户写错的部分"，保留下的 item 恰对应"用户写对的部分"。此时 $\text{items}' \subseteq \text{Tree}^*.\text{items}$。
 
 **注**：此性质依赖"用户意图清晰"假设。若用户输入歧义（如忘记关闭一个 fn 块），`synchronize` 可能跳过本应保留的 item，导致 $\text{items}' \not\subseteq \text{Tree}^*.\text{items}$。这是 panic-mode 的固有局限（见 §10）。
 
-(3) 每个 $e \in \text{errors}'$ 在 `Err(err)` 分支（[parser.rs:164-167](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)）被压入，紧接着 `synchronize` 推进 pos 到下一个 sync token。$e$ 的 span（line, col）由 `parse_item` 内部子函数构造时记录的是错误发生位置，必然在当前 pos 之前（因为 `?` 触发时 pos 尚未推进到 sync token）。被 `synchronize` 跳过的区间是 $[\text{pos at error}, \text{pos after sync})$，包含 $e$ 的 span。
+(3) 每个 $e \in \text{errors}'$ 在 `Err(err)` 分支（[parser.rs:164-167](../../tenth/src/parser/parser.rs)）被压入，紧接着 `synchronize` 推进 pos 到下一个 sync token。$e$ 的 span（line, col）由 `parse_item` 内部子函数构造时记录的是错误发生位置，必然在当前 pos 之前（因为 `?` 触发时 pos 尚未推进到 sync token）。被 `synchronize` 跳过的区间是 $[\text{pos at error}, \text{pos after sync})$，包含 $e$ 的 span。
 
 $\square$
 
@@ -328,7 +328,7 @@ $\square$
 
 **证明**（构造性）。
 
-考虑如下输入 $T$（[counter-example.th](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)）：
+考虑如下输入 $T$（[counter-example.th](../../tenth/src/parser/parser.rs)）：
 
 ```
 fn broken( -> i32 { 1 }
@@ -339,24 +339,24 @@ fn ok() -> i32 { 2 }
 
 **路径 A（Rust 母编译器）**：
 1. 主循环 peek → `Fn`，调用 `parse_item`。
-2. `parse_item` 进入 `Fn` 分支（[parser.rs:1511-1566](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs)）。
+2. `parse_item` 进入 `Fn` 分支（[parser.rs:1511-1566](../../tenth/src/parser/parser.rs)）。
 3. 消费 `fn`、`broken`、`(`。
-4. 进入参数循环：peek = `->` (Arrow)，期望 `Identifier` 或 `Self_`（[parser.rs:1218-1234](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) 的 `parse_param`）。`Arrow` 不匹配，构造 `Err(ParseError{message: "期望参数名"})` 并返回。
+4. 进入参数循环：peek = `->` (Arrow)，期望 `Identifier` 或 `Self_`（[parser.rs:1218-1234](../../tenth/src/parser/parser.rs) 的 `parse_param`）。`Arrow` 不匹配，构造 `Err(ParseError{message: "期望参数名"})` 并返回。
 5. 错误经 `?` 传播到 `parse_program_with_recovery`，压入 `errors`。
 6. 调用 `synchronize`：从 `->` 开始扫描，跳过 `->`、`i32`、`{`、`1`、`}`，停在 `fn`（属于 $\mathcal{S}$）。
 7. 主循环继续：peek = `fn`，调用 `parse_item`，成功解析 `fn ok() -> i32 { 2 }`。
 8. 返回 $(P_R, E_R)$：$P_R.\text{items} = [\text{ok}]$，$|E_R| = 1$，错误 span 在 `fn broken(` 处。
 
 **路径 B（tenthc 自举编译器）**：
-1. `parse_program` ([parser.th:1456-1523](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)) 主循环 peek disc=4 (`Fn`)，调用 `parse_fn`。
-2. `parse_fn` ([parser.th:1128-1240](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th))：
+1. `parse_program` ([parser.th:1456-1523](../../tenthc/parser/parser.th)) 主循环 peek disc=4 (`Fn`)，调用 `parse_fn`。
+2. `parse_fn` ([parser.th:1128-1240](../../tenthc/parser/parser.th))：
    - `parser_advance` 跳过 `fn`。
    - `name_tok = parser_advance` 得到 `broken`，`name = "broken"`。
    - `parse_generic_params`：peek 不是 `<`，返回空。
-   - `parser_advance(p)` 跳过 `(`（[parser.th:1134](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)）。
-   - 参数循环（[parser.th:1136-1200](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)）：peek = `->`。检查 `t.sval == "self"`：`->` 的 sval 是空字符串，false。检查 `t.disc == 38`（Ampersand）：`->` disc 不是 38。进入 else 分支：
+   - `parser_advance(p)` 跳过 `(`（[parser.th:1134](../../tenthc/parser/parser.th)）。
+   - 参数循环（[parser.th:1136-1200](../../tenthc/parser/parser.th)）：peek = `->`。检查 `t.sval == "self"`：`->` 的 sval 是空字符串，false。检查 `t.disc == 38`（Ampersand）：`->` disc 不是 38。进入 else 分支：
      - `pname_tok = parser_advance` 得到 `->`，`pname = ""`（`->` 无 sval）。
-     - `parser_advance(p)` 跳过 `:`——但实际是 `i32`！这里 `parser_advance` 直接消费 `i32` 作为冒号的占位（[parser.th:1185](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)）。
+     - `parser_advance(p)` 跳过 `:`——但实际是 `i32`！这里 `parser_advance` 直接消费 `i32` 作为冒号的占位（[parser.th:1185](../../tenthc/parser/parser.th)）。
      - 进入类型收集循环：从 `{` 开始，`is_end_of_paren` 检查 disc 48/61。`{` disc=49，不是。继续消费 `{`、`1`、`}`。下一 token 是 `fn`（disc=4），不是 48/61，继续消费 `fn`、`ok`、`(`、`)`、`->`、`i32`、`{`、`2`、`}`。到达 Eof（disc=61），break。
      - `params.push(Param{name: "", type_ann: "-> { 1 } fn ok ( ) -> i32 { 2 }"})`。
    - `parser_advance(p)` 跳过 `)`——但 pos 已到 Eof，返回 EOF token。
@@ -471,8 +471,8 @@ Tenth 的简化是工程权衡：以 10 行代码换取"不死循环 + 多错误
 ### 7.1 tenthc 无错误恢复的影响
 
 由 R5 的构造性反例，tenthc parser 在"需要错误恢复的输入"上：
-1. **不报告错误**：`parse_program` 返回 `Program` 而非 `(Program, Vec<Error>)`，无错误收集机制（[parser.th:1456-1523](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)）。
-2. **产出垃圾 AST**：`parse_primary` 的兜底分支返回 `int 0` 节点（[parser.th:446-449](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th)），其他 parse_* 函数在意外 token 处直接 `parser_advance` 推进，导致 AST 结构与用户意图完全脱节。
+1. **不报告错误**：`parse_program` 返回 `Program` 而非 `(Program, Vec<Error>)`，无错误收集机制（[parser.th:1456-1523](../../tenthc/parser/parser.th)）。
+2. **产出垃圾 AST**：`parse_primary` 的兜底分支返回 `int 0` 节点（[parser.th:446-449](../../tenthc/parser/parser.th)），其他 parse_* 函数在意外 token 处直接 `parser_advance` 推进，导致 AST 结构与用户意图完全脱节。
 3. **可能无限循环**：若 `parse_program` 主循环的某个分支既不消费 token 也不 break，理论上可能死循环。审查 tenthc 代码，主循环每次至少调用 `parse_stmt` 或 `parse_*_def`，这些函数至少 `parser_advance` 一次，故实际不死循环——但这是隐式性质，无形式化保证。
 
 ### 7.2 对自举三路径的影响（与 T12 联动）
@@ -523,7 +523,7 @@ panic-mode 的错误信息质量较低：
 - **无建议**：不提供"did you mean X?"建议；
 - **可能漏报**：若 `synchronize` 跳过的区间内包含多个独立错误，仅报告首个。
 
-测试 [`error_recovery_test.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/tests/error_recovery_test.rs) 验证了多错误收集能力（`test_recovery_multiple_errors` 期望至少 2 个错误），但未验证错误信息的精确性。
+测试 [`error_recovery_test.rs`](../../tenth/tests/error_recovery_test.rs) 验证了多错误收集能力（`test_recovery_multiple_errors` 期望至少 2 个错误），但未验证错误信息的精确性。
 
 ### 8.3 多错误收集的能力
 
@@ -654,12 +654,12 @@ phrase-level 恢复**未实现**，列为未来工作。
 
 | 论文节 | 对应源码/文档 |
 |-------|--------------|
-| §3.2 SYNC_TOKENS 定义 | [parser.rs:15-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) |
-| §3.3 synchronize 算法 | [parser.rs:120-129](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) |
-| §3.4 parse_program_with_recovery | [parser.rs:141-188](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/parser/parser.rs) |
-| §4.5 R5 反例 | [tenthc/parser/parser.th:1128-1240](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenthc/parser/parser.th) |
-| §6.3 测试 | [error_recovery_test.rs](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/tests/error_recovery_test.rs) |
-| §7.2 与 T12 联动 | [T12 论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T12-双侧编译器语义等价性.md) §4.5–4.6 |
+| §3.2 SYNC_TOKENS 定义 | [parser.rs:15-25](../../tenth/src/parser/parser.rs) |
+| §3.3 synchronize 算法 | [parser.rs:120-129](../../tenth/src/parser/parser.rs) |
+| §3.4 parse_program_with_recovery | [parser.rs:141-188](../../tenth/src/parser/parser.rs) |
+| §4.5 R5 反例 | [tenthc/parser/parser.th:1128-1240](../../tenthc/parser/parser.th) |
+| §6.3 测试 | [error_recovery_test.rs](../../tenth/tests/error_recovery_test.rs) |
+| §7.2 与 T12 联动 | [T12 论文](T12-双侧编译器语义等价性.md) §4.5–4.6 |
 | §7.3 修补集 | 与 T12 §9 修补表对齐 |
 
 ## 附录 C：实施建议

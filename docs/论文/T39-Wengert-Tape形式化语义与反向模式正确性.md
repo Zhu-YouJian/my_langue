@@ -53,7 +53,7 @@ Wengert tape 的优势在于其**线性序列结构**——无需显式反向图
 
 ### 1.3 Tenth 的 21 算子设计
 
-Tenth 的 tape 实现见 [autodiff.rs L1-L765](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。`TapeOp` 枚举定义了 21 个变体（[autodiff.rs:29-79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+Tenth 的 tape 实现见 [autodiff.rs L1-L765](../../tenth/src/runtime/autodiff.rs)。`TapeOp` 枚举定义了 21 个变体（[autodiff.rs:29-79](../../tenth/src/runtime/autodiff.rs)）：
 
 ```
 Input | Add | Sub | Mul | Div | Neg | ReLU | MatMul | Transpose |
@@ -112,7 +112,7 @@ PyTorch 的 autograd 引擎（Paszke et al. 2017，*Automatic Differentiation in
 - 反向时 `torch.autograd.engine.execute()` 沿反向图拓扑序调度，使用多线程并行累积梯度；
 - `register_hook` 机制允许用户在反向阶段插入副作用。
 
-**关键差异**：PyTorch 的反向图是**节点级动态构建**的，反向遍历依赖显式的拓扑排序（通过 `next_edges` 链）。Tenth 的 tape 则是**单一显式持久化序列**，反向遍历直接 `nodes.iter().rev()`（[autodiff.rs:285](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），无需显式反向图——因为 tape 的记录顺序就是合法的拓扑序。
+**关键差异**：PyTorch 的反向图是**节点级动态构建**的，反向遍历依赖显式的拓扑排序（通过 `next_edges` 链）。Tenth 的 tape 则是**单一显式持久化序列**，反向遍历直接 `nodes.iter().rev()`（[autodiff.rs:285](../../tenth/src/runtime/autodiff.rs)），无需显式反向图——因为 tape 的记录顺序就是合法的拓扑序。
 
 ### 2.3 JAX autodiff
 
@@ -143,7 +143,7 @@ Tenth 的 tape 设计定位为**显式持久化的 Wengert tape**——不同于
 
 ### 3.1 TapeOp 枚举
 
-`TapeOp` 是 `TapeNode` 的算子标签，定义为 21 个变体的枚举（[autodiff.rs:29-79](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+`TapeOp` 是 `TapeNode` 的算子标签，定义为 21 个变体的枚举（[autodiff.rs:29-79](../../tenth/src/runtime/autodiff.rs)）：
 
 ```rust
 pub enum TapeOp {
@@ -165,7 +165,7 @@ pub enum TapeOp {
 
 ### 3.2 TapeNode 与 Tape 结构
 
-`TapeNode`（[autodiff.rs:14-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+`TapeNode`（[autodiff.rs:14-25](../../tenth/src/runtime/autodiff.rs)）：
 
 ```rust
 pub struct TapeNode {
@@ -183,7 +183,7 @@ pub struct TapeNode {
 - $\text{inputs} \subseteq \{0, 1, \dots, id-1\}$ 是上游节点 id 的有序列表（满足 $\forall j \in \text{inputs}: j < id$，保证 DAG 性质）；
 - $\text{input\_tensors}$ 是输入张量的 `Rc<RefCell<Tensor>>` 引用列表，长度与 `op` 的元数匹配（含中间值）。
 
-`Tape`（[autodiff.rs:83-86](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+`Tape`（[autodiff.rs:83-86](../../tenth/src/runtime/autodiff.rs)）：
 
 ```rust
 pub struct Tape {
@@ -192,7 +192,7 @@ pub struct Tape {
 }
 ```
 
-**形式化**：`Tape` 是一个有限序列 $T = [n_0, n_1, \dots, n_{k-1}]$，其中 $n_i.\text{id} = i$（不变量：`counter == nodes.len()`，由 `next_id` 维护，[autodiff.rs:261-265](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+**形式化**：`Tape` 是一个有限序列 $T = [n_0, n_1, \dots, n_{k-1}]$，其中 $n_i.\text{id} = i$（不变量：`counter == nodes.len()`，由 `next_id` 维护，[autodiff.rs:261-265](../../tenth/src/runtime/autodiff.rs)）。
 
 **DAG 性质**：tape 是有向无环图（DAG），因为 $\forall i, \forall j \in n_i.\text{inputs}: j < i$。这一性质是定理 AD2（拓扑逆序正确性）的基础。
 
@@ -200,8 +200,8 @@ pub struct Tape {
 
 Tenth 的 tape 设计严格分离**前向计算**与**反向计算**：
 
-- **前向**（forward）：在 VM/解释器/JIT 中执行实际张量运算，结果张量产生后调用 `tape.unary/binary/cross_entropy/...` 等记录方法，将算子与输入张量持久化到 tape（[autodiff.rs:108-259](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
-- **反向**（backward）：`Tape::backward`（[autodiff.rs:272-749](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）按 `nodes.iter().rev()` 单遍遍历，对每个节点应用对应算子的 backward 公式。
+- **前向**（forward）：在 VM/解释器/JIT 中执行实际张量运算，结果张量产生后调用 `tape.unary/binary/cross_entropy/...` 等记录方法，将算子与输入张量持久化到 tape（[autodiff.rs:108-259](../../tenth/src/runtime/autodiff.rs)）；
+- **反向**（backward）：`Tape::backward`（[autodiff.rs:272-749](../../tenth/src/runtime/autodiff.rs)）按 `nodes.iter().rev()` 单遍遍历，对每个节点应用对应算子的 backward 公式。
 
 **指称语义**：定义两个语义函数：
 
@@ -234,7 +234,7 @@ $$\mathcal{B}[\![op]\!](\text{inputs}, \bar y) = \left( \bar y \cdot \frac{\part
 | `LayerNorm` | `[x, gamma, beta, x_hat, std_inv, result]` | 同 BatchNorm，按行 |
 | `Gelu` | `[input, result]` | 读取 input（即 $x$）计算导数 |
 
-**关键观察**：`result` 总是 `input_tensors` 的最后一个元素，便于 `backward` 取种子梯度（[autodiff.rs:279-282](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+**关键观察**：`result` 总是 `input_tensors` 的最后一个元素，便于 `backward` 取种子梯度（[autodiff.rs:279-282](../../tenth/src/runtime/autodiff.rs)）。
 
 定理 AD3（§4.3）将证明：对于复合算子（`CrossEntropy`、`Conv2D`、`BatchNorm`、`LayerNorm`、`Gelu`、`Softmax`、`Sigmoid`、`Exp`、`Dropout`），持久化输入张量是计算闭式 backward 的**必要条件**——若仅持久化节点 id，则中间值无法重建。
 
@@ -265,7 +265,7 @@ $$\forall \text{inputs}, \bar y: \quad \mathcal{B}_{\text{impl}}[\![op]\!](\text
 
 $$\forall \text{leaf } n_i: \quad \text{acc\_grad}(n_i) = \bar y_L \cdot \frac{\partial \mathcal{F}[\![n_L.\text{op}]\!]}{\partial n_i}$$
 
-其中 $\bar y_L$ 是 loss 节点的种子梯度（[autodiff.rs:282](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 设为 `ones`）。
+其中 $\bar y_L$ 是 loss 节点的种子梯度（[autodiff.rs:282](../../tenth/src/runtime/autodiff.rs) 设为 `ones`）。
 
 **证明**：
 
@@ -285,7 +285,7 @@ $$\bar v_i^* = \sum_{j : i \in n_j.\text{inputs}} \bar v_j^* \cdot \frac{\partia
 
 即 $\bar v_i^*$ 是所有"直接下游"节点 $n_j$ 的贡献之和。
 
-**反向遍历的累积机制**：当 backward 遍历到节点 $n_j$（$j > i$）时，[autodiff.rs:285-289] 取 `node_grads[j]`（即 $\bar v_j^{\text{acc}} = \bar v_j^*$，由归纳假设），调用 `propagate_grad(node, input_idx, g_i, node_grads)`（[autodiff.rs:786-804](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），其中 $g_i = \mathcal{B}_{\text{impl}}[\![n_j.\text{op}]\!](\text{inputs}, \bar v_j^{\text{acc}})_i$（由定理 AD1 等于 $\bar v_j^* \cdot \partial \mathcal{F}/\partial v_i$）。`propagate_grad` 通过 `acc_node_grad`（[autodiff.rs:770-779](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）将 $g_i$ 累加到 `node_grads[i]`：
+**反向遍历的累积机制**：当 backward 遍历到节点 $n_j$（$j > i$）时，[autodiff.rs:285-289] 取 `node_grads[j]`（即 $\bar v_j^{\text{acc}} = \bar v_j^*$，由归纳假设），调用 `propagate_grad(node, input_idx, g_i, node_grads)`（[autodiff.rs:786-804](../../tenth/src/runtime/autodiff.rs)），其中 $g_i = \mathcal{B}_{\text{impl}}[\![n_j.\text{op}]\!](\text{inputs}, \bar v_j^{\text{acc}})_i$（由定理 AD1 等于 $\bar v_j^* \cdot \partial \mathcal{F}/\partial v_i$）。`propagate_grad` 通过 `acc_node_grad`（[autodiff.rs:770-779](../../tenth/src/runtime/autodiff.rs)）将 $g_i$ 累加到 `node_grads[i]`：
 
 ```rust
 fn acc_node_grad(node_grads: &mut [Option<ArrayD<f64>>], id: usize, g: &ArrayD<f64>) {
@@ -318,27 +318,27 @@ $$\mathcal{N} = \{\text{Exp}, \text{Sigmoid}, \text{Softmax}, \text{CrossEntropy
 
 按算子分类论证：
 
-**(1) Exp**（[autodiff.rs:474-480](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar a = \bar c \cdot \exp(a) = \bar c \cdot c$，其中 $c = \exp(a)$ 是前向结果。实现读取 `input_tensors[1]`（即 result $c$）。若仅持久化 id，需重算 $\exp(a)$，代价 $O(|a|)$。
+**(1) Exp**（[autodiff.rs:474-480](../../tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar a = \bar c \cdot \exp(a) = \bar c \cdot c$，其中 $c = \exp(a)$ 是前向结果。实现读取 `input_tensors[1]`（即 result $c$）。若仅持久化 id，需重算 $\exp(a)$，代价 $O(|a|)$。
 
-**(2) Sigmoid**（[autodiff.rs:488-495](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar a = \bar c \cdot c \cdot (1 - c)$，其中 $c = \sigma(a)$。实现读取 `input_tensors[1]`（即 result $c$）。若仅持久化 id，需重算 $\sigma(a)$。
+**(2) Sigmoid**（[autodiff.rs:488-495](../../tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar a = \bar c \cdot c \cdot (1 - c)$，其中 $c = \sigma(a)$。实现读取 `input_tensors[1]`（即 result $c$）。若仅持久化 id，需重算 $\sigma(a)$。
 
-**(3) Softmax**（[autodiff.rs:735-745](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar a_i = c_i (\bar c_i - \sum_j \bar c_j c_j)$，其中 $c = \text{softmax}(a)$。实现读取 `input_tensors[1]`（即 result $c$）。若仅持久化 id，需重算 $\text{softmax}(a)$，且数值稳定性要求保留 max 减法技巧。
+**(3) Softmax**（[autodiff.rs:735-745](../../tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar a_i = c_i (\bar c_i - \sum_j \bar c_j c_j)$，其中 $c = \text{softmax}(a)$。实现读取 `input_tensors[1]`（即 result $c$）。若仅持久化 id，需重算 $\text{softmax}(a)$，且数值稳定性要求保留 max 减法技巧。
 
-**(4) CrossEntropy**（[autodiff.rs:723-734](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar{\text{logits}} = \text{softmax}(\text{logits}) - \text{target}$。实现读取 `input_tensors[1]`（即 softmax 输出，前向已计算并持久化）与 `input_tensors[2]`（即 target）。若仅持久化 id，需重算 $\text{softmax}(\text{logits})$，且 target 也需重新获取。
+**(4) CrossEntropy**（[autodiff.rs:723-734](../../tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar{\text{logits}} = \text{softmax}(\text{logits}) - \text{target}$。实现读取 `input_tensors[1]`（即 softmax 输出，前向已计算并持久化）与 `input_tensors[2]`（即 target）。若仅持久化 id，需重算 $\text{softmax}(\text{logits})$，且 target 也需重新获取。
 
-**(5) Dropout**（[autodiff.rs:712-722](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar a = \bar c \cdot \text{mask}$。实现读取 `input_tensors[1]`（即 mask）。**关键**：mask 是随机生成的，无法从输入重建——若仅持久化 id，backward **根本无法**重算 mask（随机数生成器状态已丢失）。这是"必要"的最强例证。
+**(5) Dropout**（[autodiff.rs:712-722](../../tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar a = \bar c \cdot \text{mask}$。实现读取 `input_tensors[1]`（即 mask）。**关键**：mask 是随机生成的，无法从输入重建——若仅持久化 id，backward **根本无法**重算 mask（随机数生成器状态已丢失）。这是"必要"的最强例证。
 
-**(6) Conv2D**（[autodiff.rs:615-711](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：backward 公式 $\partial L/\partial W = \text{im2col}^T @ \text{dY}$、$\partial L/\partial X = \text{col2im}(\text{dY} @ W_{\text{flat}})$。实现读取 `input_tensors[2]`（即 im2col 矩阵）。im2col 是前向阶段从 $X$ 计算的中间矩阵，重算代价 $O(|X| \cdot k_H \cdot k_W)$，远高于持久化的 $O(1)$ 读取。
+**(6) Conv2D**（[autodiff.rs:615-711](../../tenth/src/runtime/autodiff.rs)）：backward 公式 $\partial L/\partial W = \text{im2col}^T @ \text{dY}$、$\partial L/\partial X = \text{col2im}(\text{dY} @ W_{\text{flat}})$。实现读取 `input_tensors[2]`（即 im2col 矩阵）。im2col 是前向阶段从 $X$ 计算的中间矩阵，重算代价 $O(|X| \cdot k_H \cdot k_W)$，远高于持久化的 $O(1)$ 读取。
 
-**(7) BatchNorm**（[autodiff.rs:496-522](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar X = (\gamma/\sigma) (\bar Y - \text{mean}(\bar Y) - x_{\text{hat}} \cdot \text{mean}(\bar Y \cdot x_{\text{hat}}))$。实现读取 `input_tensors[3]`（即 $x_{\text{hat}}$）与 `input_tensors[4]`（即 $\sigma^{-1}$）。$x_{\text{hat}} = (X - \mu)/\sigma$ 与 $\sigma$ 依赖前向阶段的 batch 统计量，重算需重新计算 $\mu, \sigma$，代价 $O(|X|)$。
+**(7) BatchNorm**（[autodiff.rs:496-522](../../tenth/src/runtime/autodiff.rs)）：backward 公式 $\bar X = (\gamma/\sigma) (\bar Y - \text{mean}(\bar Y) - x_{\text{hat}} \cdot \text{mean}(\bar Y \cdot x_{\text{hat}}))$。实现读取 `input_tensors[3]`（即 $x_{\text{hat}}$）与 `input_tensors[4]`（即 $\sigma^{-1}$）。$x_{\text{hat}} = (X - \mu)/\sigma$ 与 $\sigma$ 依赖前向阶段的 batch 统计量，重算需重新计算 $\mu, \sigma$，代价 $O(|X|)$。
 
-**(8) LayerNorm**（[autodiff.rs:523-596](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：与 BatchNorm 类似，但按行计算。实现读取 `input_tensors[3]`（$x_{\text{hat}}$）与 `input_tensors[4]`（$\sigma^{-1}$）。
+**(8) LayerNorm**（[autodiff.rs:523-596](../../tenth/src/runtime/autodiff.rs)）：与 BatchNorm 类似，但按行计算。实现读取 `input_tensors[3]`（$x_{\text{hat}}$）与 `input_tensors[4]`（$\sigma^{-1}$）。
 
-**(9) Gelu**（[autodiff.rs:597-614](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：backward 公式涉及 $\tanh(\text{inner})$，其中 $\text{inner} = \sqrt{2/\pi}(x + 0.044715 x^3)$。实现读取 `input_tensors[0]`（即 $x$）重算 $\tanh(\text{inner})$。**注**：Gelu 的实现实际是读取 input 而非 result，因此理论上仅需持久化 input；但若选择持久化 result 并从 result 反推 $x$（涉及反 GELU 函数，数值不稳定），则不可行。当前实现的"必要"性在于持久化 input。
+**(9) Gelu**（[autodiff.rs:597-614](../../tenth/src/runtime/autodiff.rs)）：backward 公式涉及 $\tanh(\text{inner})$，其中 $\text{inner} = \sqrt{2/\pi}(x + 0.044715 x^3)$。实现读取 `input_tensors[0]`（即 $x$）重算 $\tanh(\text{inner})$。**注**：Gelu 的实现实际是读取 input 而非 result，因此理论上仅需持久化 input；但若选择持久化 result 并从 result 反推 $x$（涉及反 GELU 函数，数值不稳定），则不可行。当前实现的"必要"性在于持久化 input。
 
 **反例（非必要）**：以下算子的 backward 不依赖 input_tensors 的数据（仅依赖上游梯度或形状）：
 - `Neg`：$\bar a = -\bar c$，仅依赖 $\bar c$；
-- `Sum`/`Mean`：仅依赖 input 的形状（用于 broadcast），但实现仍读取 `input_tensors[0]` 获取形状（[autodiff.rs:455-473](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）——理论上形状可单独持久化，但工程上仍用 `input_tensors`。
+- `Sum`/`Mean`：仅依赖 input 的形状（用于 broadcast），但实现仍读取 `input_tensors[0]` 获取形状（[autodiff.rs:455-473](../../tenth/src/runtime/autodiff.rs)）——理论上形状可单独持久化，但工程上仍用 `input_tensors`。
 
 **结论**：对于 $\mathcal{N}$ 中的 9 个算子，`input_tensors` 的持久化是 backward 闭式解的必要条件；对于其余 12 个算子，持久化是工程便利而非数学必要。$\square$
 
@@ -370,7 +370,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 | 副作用支持 | 命令式（recording 标志） | 命令式（hook） | 禁止（纯函数式） |
 | 循环/分支 | 依赖 tape 展平 | 自然支持 | 通过 `lax.scan`/`lax.cond` |
 
-**步骤 5**：浮点数误差来自不同的运算顺序。Tenth 的 `acc_node_grad` 按下游节点 id 升序累加（[autodiff.rs:770-779](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），PyTorch 的多线程调度顺序非确定，JAX 的 XLA 编译可能重排。三者的浮点结果可能差异 $\sim 10^{-15}$，但数学语义等价。$\square$
+**步骤 5**：浮点数误差来自不同的运算顺序。Tenth 的 `acc_node_grad` 按下游节点 id 升序累加（[autodiff.rs:770-779](../../tenth/src/runtime/autodiff.rs)），PyTorch 的多线程调度顺序非确定，JAX 的 XLA 编译可能重排。三者的浮点结果可能差异 $\sim 10^{-15}$，但数学语义等价。$\square$
 
 **注**：定理 AD4 是"相对等价"——前提是 tape 完整性（T38）与链式法则等式（AD1）。若 tape 不完整（如 T38 §6 发现的 `Neg` 算子 record 缺失），等价性破坏。
 
@@ -417,108 +417,108 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 ### 5.1 Input（叶）
 
 - **前向**：$\mathcal{F}[\![\text{Input}]\!]() = x$（直接返回参数张量）；
-- **反向**：$\mathcal{B}[\![\text{Input}]\!](\bar y) = \text{acc\_grad}(\bar y)$（累积到 `.grad` 字段，[autodiff.rs:292-300](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **反向**：$\mathcal{B}[\![\text{Input}]\!](\bar y) = \text{acc\_grad}(\bar y)$（累积到 `.grad` 字段，[autodiff.rs:292-300](../../tenth/src/runtime/autodiff.rs)）；
 - **语义**：叶节点无计算，仅作为梯度累积终点。
 
 ### 5.2 Add
 
 - **前向**：$\mathcal{F}[\![\text{Add}]\!](a, b) = a + b$（带广播）；
-- **反向**：$\mathcal{B}[\![\text{Add}]\!]((a, b), \bar c) = (\text{unbroadcast}(\bar c, a.\text{shape}), \text{unbroadcast}(\bar c, b.\text{shape}))$（[autodiff.rs:301-314](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{Add}]\!]((a, b), \bar c) = (\text{unbroadcast}(\bar c, a.\text{shape}), \text{unbroadcast}(\bar c, b.\text{shape}))$（[autodiff.rs:301-314](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.3 Sub
 
 - **前向**：$\mathcal{F}[\![\text{Sub}]\!](a, b) = a - b$；
-- **反向**：$\mathcal{B}[\![\text{Sub}]\!]((a, b), \bar c) = (\text{unbroadcast}(\bar c, a.\text{shape}), -\text{unbroadcast}(\bar c, b.\text{shape}))$（[autodiff.rs:301-314](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)，sign = -1）。
+- **反向**：$\mathcal{B}[\![\text{Sub}]\!]((a, b), \bar c) = (\text{unbroadcast}(\bar c, a.\text{shape}), -\text{unbroadcast}(\bar c, b.\text{shape}))$（[autodiff.rs:301-314](../../tenth/src/runtime/autodiff.rs)，sign = -1）。
 
 ### 5.4 Mul
 
 - **前向**：$\mathcal{F}[\![\text{Mul}]\!](a, b) = a \odot b$（element-wise，带广播）；
-- **反向**：$\mathcal{B}[\![\text{Mul}]\!]((a, b), \bar c) = (\text{unbroadcast}(\bar c \odot b, a.\text{shape}), \text{unbroadcast}(\bar c \odot a, b.\text{shape}))$（[autodiff.rs:315-326](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{Mul}]\!]((a, b), \bar c) = (\text{unbroadcast}(\bar c \odot b, a.\text{shape}), \text{unbroadcast}(\bar c \odot a, b.\text{shape}))$（[autodiff.rs:315-326](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.5 Div
 
 - **前向**：$\mathcal{F}[\![\text{Div}]\!](a, b) = a \oslash b$（element-wise，带广播）；
-- **反向**：$\mathcal{B}[\![\text{Div}]\!]((a, b), \bar c) = (\text{unbroadcast}(\bar c \oslash b, a.\text{shape}), \text{unbroadcast}(-\bar c \odot a \oslash b^2, b.\text{shape}))$（[autodiff.rs:327-337](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{Div}]\!]((a, b), \bar c) = (\text{unbroadcast}(\bar c \oslash b, a.\text{shape}), \text{unbroadcast}(-\bar c \odot a \oslash b^2, b.\text{shape}))$（[autodiff.rs:327-337](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.6 Neg
 
 - **前向**：$\mathcal{F}[\![\text{Neg}]\!](a) = -a$；
-- **反向**：$\mathcal{B}[\![\text{Neg}]\!](a, \bar c) = -\bar c$（[autodiff.rs:338-341](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{Neg}]\!](a, \bar c) = -\bar c$（[autodiff.rs:338-341](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.7 ReLU
 
 - **前向**：$\mathcal{F}[\![\text{ReLU}]\!](a) = \max(0, a)$（element-wise）；
-- **反向**：$\mathcal{B}[\![\text{ReLU}]\!](a, \bar c) = \bar c \odot \mathbb{1}_{a > 0}$（[autodiff.rs:342-349](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{ReLU}]\!](a, \bar c) = \bar c \odot \mathbb{1}_{a > 0}$（[autodiff.rs:342-349](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.8 MatMul
 
-- **前向**：$\mathcal{F}[\![\text{MatMul}]\!](A, B) = A @ B$（2D@2D、1D@2D、2D@1D，[autodiff.rs:350-443](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **前向**：$\mathcal{F}[\![\text{MatMul}]\!](A, B) = A @ B$（2D@2D、1D@2D、2D@1D，[autodiff.rs:350-443](../../tenth/src/runtime/autodiff.rs)）；
 - **反向**：$\mathcal{B}[\![\text{MatMul}]\!]((A, B), \bar C) = (\bar C @ B^T, A^T @ \bar C)$（含 1D 提升与 squeeze 回退）。
 
 ### 5.9 Transpose
 
 - **前向**：$\mathcal{F}[\![\text{Transpose}]\!](a) = a^T$（最后两维转置）；
-- **反向**：$\mathcal{B}[\![\text{Transpose}]\!](a, \bar c) = \bar c^T$（最后两维转置回，[autodiff.rs:444-454](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{Transpose}]\!](a, \bar c) = \bar c^T$（最后两维转置回，[autodiff.rs:444-454](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.10 Sum
 
 - **前向**：$\mathcal{F}[\![\text{Sum}]\!](a) = \sum_i a_i$（标量）；
-- **反向**：$\mathcal{B}[\![\text{Sum}]\!](a, \bar c) = \text{ones}(a.\text{shape}) \cdot \bar c$（[autodiff.rs:455-463](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{Sum}]\!](a, \bar c) = \text{ones}(a.\text{shape}) \cdot \bar c$（[autodiff.rs:455-463](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.11 Mean
 
 - **前向**：$\mathcal{F}[\![\text{Mean}]\!](a) = \frac{1}{|a|} \sum_i a_i$；
-- **反向**：$\mathcal{B}[\![\text{Mean}]\!](a, \bar c) = \text{ones}(a.\text{shape}) \cdot \bar c / |a|$（[autodiff.rs:464-473](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{Mean}]\!](a, \bar c) = \text{ones}(a.\text{shape}) \cdot \bar c / |a|$（[autodiff.rs:464-473](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.12 Exp
 
 - **前向**：$\mathcal{F}[\![\text{Exp}]\!](a) = \exp(a)$；
-- **反向**：$\mathcal{B}[\![\text{Exp}]\!](a, \bar c) = \bar c \odot \exp(a) = \bar c \odot c$（[autodiff.rs:474-480](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)，读取 result）。
+- **反向**：$\mathcal{B}[\![\text{Exp}]\!](a, \bar c) = \bar c \odot \exp(a) = \bar c \odot c$（[autodiff.rs:474-480](../../tenth/src/runtime/autodiff.rs)，读取 result）。
 
 ### 5.13 Log
 
 - **前向**：$\mathcal{F}[\![\text{Log}]\!](a) = \ln(a)$；
-- **反向**：$\mathcal{B}[\![\text{Log}]\!](a, \bar c) = \bar c \oslash a$（[autodiff.rs:481-487](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{Log}]\!](a, \bar c) = \bar c \oslash a$（[autodiff.rs:481-487](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.14 Sigmoid
 
 - **前向**：$\mathcal{F}[\![\text{Sigmoid}]\!](a) = \sigma(a) = 1/(1 + e^{-a})$；
-- **反向**：$\mathcal{B}[\![\text{Sigmoid}]\!](a, \bar c) = \bar c \odot c \odot (1 - c)$（[autodiff.rs:488-495](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)，读取 result $c$）。
+- **反向**：$\mathcal{B}[\![\text{Sigmoid}]\!](a, \bar c) = \bar c \odot c \odot (1 - c)$（[autodiff.rs:488-495](../../tenth/src/runtime/autodiff.rs)，读取 result $c$）。
 
 ### 5.15 Softmax
 
 - **前向**：$\mathcal{F}[\![\text{Softmax}]\!](a)_i = e^{a_i} / \sum_j e^{a_j}$（最后一维）；
-- **反向**：$\mathcal{B}[\![\text{Softmax}]\!](a, \bar c)_i = c_i (\bar c_i - \sum_j \bar c_j c_j)$（[autodiff.rs:735-745](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{Softmax}]\!](a, \bar c)_i = c_i (\bar c_i - \sum_j \bar c_j c_j)$（[autodiff.rs:735-745](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.16 CrossEntropy（复合）
 
 - **前向**：$\mathcal{F}[\![\text{CrossEntropy}]\!](\text{logits}, \text{target}) = -\sum_i \text{target}_i \cdot \ln(\text{softmax}(\text{logits})_i)$；
-- **反向**：$\mathcal{B}[\![\text{CrossEntropy}]\!](\text{logits}, \text{target}, \bar L) = \text{softmax}(\text{logits}) - \text{target}$（[autodiff.rs:723-734](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{CrossEntropy}]\!](\text{logits}, \text{target}, \bar L) = \text{softmax}(\text{logits}) - \text{target}$（[autodiff.rs:723-734](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.17 Dropout
 
 - **前向**：$\mathcal{F}[\![\text{Dropout}]\!](a, \text{mask}) = a \odot \text{mask}$（mask = $1/(1-p)$ 保留，0 丢弃）；
-- **反向**：$\mathcal{B}[\![\text{Dropout}]\!](a, \text{mask}, \bar c) = \bar c \odot \text{mask}$（[autodiff.rs:712-722](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{Dropout}]\!](a, \text{mask}, \bar c) = \bar c \odot \text{mask}$（[autodiff.rs:712-722](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.18 Conv2D（复合）
 
-- **前向**：$\mathcal{F}[\![\text{Conv2D}]\!](X, W) = \text{col2im}^{-1}(\text{im2col}(X) @ W_{\text{flat}}^T)$（im2col + MatMul，[autodiff.rs:615-711](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **前向**：$\mathcal{F}[\![\text{Conv2D}]\!](X, W) = \text{col2im}^{-1}(\text{im2col}(X) @ W_{\text{flat}}^T)$（im2col + MatMul，[autodiff.rs:615-711](../../tenth/src/runtime/autodiff.rs)）；
 - **反向**：$\mathcal{B}[\![\text{Conv2D}]\!]((X, W), \bar Y) = (\text{col2im}(\bar Y @ W_{\text{flat}}), \text{reshape}(\text{im2col}^T @ \bar Y, W.\text{shape}))$。
 
 ### 5.19 BatchNorm（复合）
 
 - **前向**：$\mathcal{F}[\![\text{BatchNorm}]\!](X, \gamma, \beta) = \gamma \odot x_{\text{hat}} + \beta$，其中 $x_{\text{hat}} = (X - \mu)/\sigma$，$\mu, \sigma$ 为 batch 统计量；
-- **反向**：$\mathcal{B}[\![\text{BatchNorm}]\!](X, \gamma, \beta, \bar Y) = (\sigma^{-1} \gamma \odot (\bar Y - \text{mean}(\bar Y) - x_{\text{hat}} \odot \text{mean}(\bar Y \odot x_{\text{hat}})), \text{sum}(\bar Y \odot x_{\text{hat}}), \text{sum}(\bar Y))$（[autodiff.rs:496-522](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{BatchNorm}]\!](X, \gamma, \beta, \bar Y) = (\sigma^{-1} \gamma \odot (\bar Y - \text{mean}(\bar Y) - x_{\text{hat}} \odot \text{mean}(\bar Y \odot x_{\text{hat}})), \text{sum}(\bar Y \odot x_{\text{hat}}), \text{sum}(\bar Y))$（[autodiff.rs:496-522](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.20 LayerNorm（复合）
 
 - **前向**：$\mathcal{F}[\![\text{LayerNorm}]\!](X, \gamma, \beta) = \gamma \odot x_{\text{hat}} + \beta$，按最后一维归一化；
-- **反向**：与 BatchNorm 类似，但 mean 按"行"计算（[autodiff.rs:523-596](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：与 BatchNorm 类似，但 mean 按"行"计算（[autodiff.rs:523-596](../../tenth/src/runtime/autodiff.rs)）。
 
 ### 5.21 Gelu（复合）
 
 - **前向**：$\mathcal{F}[\![\text{Gelu}]\!](x) = 0.5 x (1 + \tanh(\sqrt{2/\pi}(x + 0.044715 x^3)))$（tanh 近似）；
-- **反向**：$\mathcal{B}[\![\text{Gelu}]\!](x, \bar c) = \bar c \odot [0.5(1 + \tanh(\text{inner})) + 0.5 x \cdot \text{sech}^2(\text{inner}) \cdot \sqrt{2/\pi} (1 + 3 \cdot 0.044715 x^2)]$，其中 $\text{inner} = \sqrt{2/\pi}(x + 0.044715 x^3)$（[autodiff.rs:597-614](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。
+- **反向**：$\mathcal{B}[\![\text{Gelu}]\!](x, \bar c) = \bar c \odot [0.5(1 + \tanh(\text{inner})) + 0.5 x \cdot \text{sech}^2(\text{inner}) \cdot \sqrt{2/\pi} (1 + 3 \cdot 0.044715 x^2)]$，其中 $\text{inner} = \sqrt{2/\pi}(x + 0.044715 x^3)$（[autodiff.rs:597-614](../../tenth/src/runtime/autodiff.rs)）。
 
 ---
 
@@ -531,7 +531,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$y = x$（恒等）；
 - **雅可比**：$\partial y/\partial x = I$；
 - **链式法则右端**：$\bar y \cdot I = \bar y$；
-- **backward 实现**：`acc_grad(&grad)`（[autodiff.rs:295-299](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`acc_grad(&grad)`（[autodiff.rs:295-299](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\text{acc\_grad}(\bar y) = \bar y$。✓
 
 ### 6.2 Add
@@ -540,7 +540,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **雅可比**：$\partial c_i/\partial a_j = \delta_{ij}$，$\partial c_i/\partial b_j = \delta_{ij}$；
 - **链式法则右端**：$\bar a_j = \sum_i \bar c_i \delta_{ij} = \bar c_j$，$\bar b_j = \bar c_j$；
 - **广播处理**：若 $a$ 被 broadcast 到 $c$ 的形状，则 $\bar a = \text{unbroadcast}(\bar c, a.\text{shape})$（沿广播维求和）；
-- **backward 实现**：`unbroadcast(&grad, a_shape)` 与 `unbroadcast(&grad, b_shape)`（[autodiff.rs:301-314](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`unbroadcast(&grad, a_shape)` 与 `unbroadcast(&grad, b_shape)`（[autodiff.rs:301-314](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\text{unbroadcast}(\bar c, a.\text{shape}) = \bar a$。✓
 
 ### 6.3 Sub
@@ -548,7 +548,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c_i = a_i - b_i$；
 - **雅可比**：$\partial c_i/\partial a_j = \delta_{ij}$，$\partial c_i/\partial b_j = -\delta_{ij}$；
 - **链式法则右端**：$\bar a_j = \bar c_j$，$\bar b_j = -\bar c_j$；
-- **backward 实现**：sign = -1，对 $b$ 应用 `unbroadcast(&grad, b_shape).mapv(|v| v * sign)`（[autodiff.rs:301-314](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：sign = -1，对 $b$ 应用 `unbroadcast(&grad, b_shape).mapv(|v| v * sign)`（[autodiff.rs:301-314](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar b = -\text{unbroadcast}(\bar c, b.\text{shape})$。✓
 
 ### 6.4 Mul
@@ -557,7 +557,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **雅可比**：$\partial c_i/\partial a_j = b_i \delta_{ij}$，$\partial c_i/\partial b_j = a_i \delta_{ij}$；
 - **链式法则右端**：$\bar a_i = \bar c_i b_i$，$\bar b_i = \bar c_i a_i$；
 - **广播处理**：$\bar a = \text{unbroadcast}(\bar c \odot b, a.\text{shape})$；
-- **backward 实现**：`unbroadcast(&(&grad * &b_data), &a_shape)` 与 `unbroadcast(&(&grad * &a_data), &b_shape)`（[autodiff.rs:315-326](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`unbroadcast(&(&grad * &b_data), &a_shape)` 与 `unbroadcast(&(&grad * &a_data), &b_shape)`（[autodiff.rs:315-326](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar a = \text{unbroadcast}(\bar c \odot b, a.\text{shape})$。✓
 
 ### 6.5 Div
@@ -565,7 +565,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c_i = a_i / b_i$；
 - **雅可比**：$\partial c_i/\partial a_j = \delta_{ij}/b_i$，$\partial c_i/\partial b_j = -a_i \delta_{ij}/b_i^2$；
 - **链式法则右端**：$\bar a_i = \bar c_i / b_i$，$\bar b_i = -\bar c_i a_i / b_i^2$；
-- **backward 实现**：`unbroadcast(&(&grad / &b_data), &a_shape)` 与 `unbroadcast(&(-&grad * &a_data / (&b_data * &b_data)), &b_shape)`（[autodiff.rs:327-337](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`unbroadcast(&(&grad / &b_data), &a_shape)` 与 `unbroadcast(&(-&grad * &a_data / (&b_data * &b_data)), &b_shape)`（[autodiff.rs:327-337](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar a = \bar c \oslash b$，$\bar b = -\bar c \odot a \oslash b^2$。✓
 
 ### 6.6 Neg
@@ -573,7 +573,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c = -a$；
 - **雅可比**：$\partial c/\partial a = -1$；
 - **链式法则右端**：$\bar a = -\bar c$；
-- **backward 实现**：`let g = -&grad; propagate_grad(node, 0, &g, ...)`（[autodiff.rs:338-341](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`let g = -&grad; propagate_grad(node, 0, &g, ...)`（[autodiff.rs:338-341](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar a = -\bar c$。✓
 
 ### 6.7 ReLU
@@ -581,7 +581,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c_i = \max(0, a_i)$；
 - **雅可比**：$\partial c_i/\partial a_j = \mathbb{1}_{a_i > 0} \delta_{ij}$；
 - **链式法则右端**：$\bar a_i = \bar c_i \mathbb{1}_{a_i > 0}$；
-- **backward 实现**：`let mask = a.data.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 }); let g_a = &grad * &mask;`（[autodiff.rs:342-349](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`let mask = a.data.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 }); let g_a = &grad * &mask;`（[autodiff.rs:342-349](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar a = \bar c \odot \mathbb{1}_{a > 0}$。✓
 - **边界情况**：$a = 0$ 时实现取 $\mathbb{1}_{0 > 0} = 0$（次梯度取 0），与 PyTorch 一致。
 
@@ -592,8 +592,8 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **链式法则右端**：
   - $\bar A_{pq} = \sum_{ij} \bar C_{ij} \delta_{ip} B_{qj} = \sum_j \bar C_{pj} B_{qj} = (\bar C @ B^T)_{pq}$
   - $\bar B_{pq} = \sum_{ij} \bar C_{ij} A_{ip} \delta_{jq} = \sum_i A_{ip} \bar C_{iq} = (A^T @ \bar C)_{pq}$
-- **backward 实现**：`d_a_2d = matmul_2d(&grad_2d, &b_t)` 与 `d_b_2d = matmul_2d(&a_t, &grad_2d)`（[autodiff.rs:406-407](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
-- **1D 提升与 squeeze**：若 $A$ 是 1D（shape $(k,)$），提升为 $(1, k)$；结果 $(1, n)$ squeeze 回 $(n,)$。校验见 [autodiff.rs:411-436](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)。
+- **backward 实现**：`d_a_2d = matmul_2d(&grad_2d, &b_t)` 与 `d_b_2d = matmul_2d(&a_t, &grad_2d)`（[autodiff.rs:406-407](../../tenth/src/runtime/autodiff.rs)）；
+- **1D 提升与 squeeze**：若 $A$ 是 1D（shape $(k,)$），提升为 $(1, k)$；结果 $(1, n)$ squeeze 回 $(n,)$。校验见 [autodiff.rs:411-436](../../tenth/src/runtime/autodiff.rs)。
 - **验证**：$\bar A = \bar C @ B^T$，$\bar B = A^T @ \bar C$。✓
 
 ### 6.9 Transpose
@@ -601,7 +601,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c_{ij} = a_{ji}$（最后两维转置）；
 - **雅可比**：$\partial c_{ij}/\partial a_{pq} = \delta_{ip} \delta_{jq}$（即转置是置换矩阵）；
 - **链式法则右端**：$\bar a_{pq} = \sum_{ij} \bar c_{ij} \delta_{ip} \delta_{jq} = \bar c_{pq}$——但需注意 $c_{ij} = a_{ji}$，故 $\bar a_{pq} = \bar c_{qp}$，即 $\bar a = \bar c^T$；
-- **backward 实现**：`perm.swap(last-1, last); g_a = grad.permuted_axes(perm)`（[autodiff.rs:444-454](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`perm.swap(last-1, last); g_a = grad.permuted_axes(perm)`（[autodiff.rs:444-454](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar a = \bar c^T$（最后两维转置）。✓
 
 ### 6.10 Sum
@@ -609,7 +609,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c = \sum_i a_i$（标量）；
 - **雅可比**：$\partial c/\partial a_i = 1$；
 - **链式法则右端**：$\bar a_i = \bar c \cdot 1 = \bar c$（即 $\bar a = \text{ones}(a.\text{shape}) \cdot \bar c$）；
-- **backward 实现**：`let s: f64 = grad.iter().sum(); ArrayD::from_elem(a_shape, s)`（[autodiff.rs:455-463](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`let s: f64 = grad.iter().sum(); ArrayD::from_elem(a_shape, s)`（[autodiff.rs:455-463](../../tenth/src/runtime/autodiff.rs)）；
 - **注**：`grad` 可能是张量（若 loss 非标量），实现取 `grad` 所有元素之和作为 $\bar c$。
 - **验证**：$\bar a = \text{ones} \cdot \sum \bar c$。✓
 
@@ -618,7 +618,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c = \frac{1}{n} \sum_i a_i$（$n = |a|$）；
 - **雅可比**：$\partial c/\partial a_i = 1/n$；
 - **链式法则右端**：$\bar a_i = \bar c / n$；
-- **backward 实现**：`let s = grad.iter().sum::<f64>() / n; ArrayD::from_elem(a_shape, s)`（[autodiff.rs:464-473](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`let s = grad.iter().sum::<f64>() / n; ArrayD::from_elem(a_shape, s)`（[autodiff.rs:464-473](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar a = \text{ones} \cdot (\sum \bar c / n)$。✓
 
 ### 6.12 Exp
@@ -626,7 +626,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c = \exp(a)$；
 - **雅可比**：$\partial c_i/\partial a_j = \exp(a_i) \delta_{ij} = c_i \delta_{ij}$；
 - **链式法则右端**：$\bar a_i = \bar c_i c_i$；
-- **backward 实现**：`let result_ref = node.input_tensors[1].borrow(); &grad * &result_ref.data`（[autodiff.rs:474-480](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`let result_ref = node.input_tensors[1].borrow(); &grad * &result_ref.data`（[autodiff.rs:474-480](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar a = \bar c \odot c$（其中 $c = \exp(a)$ 由 `input_tensors[1]` 持久化）。✓
 - **AD3 必要性**：需持久化 $c$（或 $a$），否则需重算 $\exp(a)$。
 
@@ -635,7 +635,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c = \ln(a)$；
 - **雅可比**：$\partial c_i/\partial a_j = \delta_{ij}/a_i$；
 - **链式法则右端**：$\bar a_i = \bar c_i / a_i$；
-- **backward 实现**：`let a_ref = node.input_tensors[0].borrow(); &grad / &a_ref.data`（[autodiff.rs:481-487](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`let a_ref = node.input_tensors[0].borrow(); &grad / &a_ref.data`（[autodiff.rs:481-487](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar a = \bar c \oslash a$。✓
 - **定义域**：$a > 0$，否则 $\ln$ 未定义（实现不显式检查，依赖前向阶段的定义域保证）。
 
@@ -644,7 +644,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c = \sigma(a) = 1/(1 + e^{-a})$；
 - **雅可比**：$\partial c/\partial a = c(1 - c)$（标准 sigmoid 导数）；
 - **链式法则右端**：$\bar a = \bar c \cdot c(1 - c)$；
-- **backward 实现**：`let y = &result_ref.data; &grad * y * &y.mapv(|v| 1.0 - v)`（[autodiff.rs:488-495](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`let y = &result_ref.data; &grad * y * &y.mapv(|v| 1.0 - v)`（[autodiff.rs:488-495](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar a = \bar c \odot c \odot (1 - c)$。✓
 - **AD3 必要性**：需持久化 $c$（避免重算 $\sigma(a)$）。
 
@@ -653,7 +653,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c_i = e^{a_i} / \sum_j e^{a_j}$；
 - **雅可比**：$\partial c_i/\partial a_j = c_i (\delta_{ij} - c_j)$（标准 softmax 导数）；
 - **链式法则右端**：$\bar a_j = \sum_i \bar c_i c_i (\delta_{ij} - c_j) = \bar c_j c_j - c_j \sum_i \bar c_i c_i = c_j (\bar c_j - \sum_i \bar c_i c_i)$；
-- **backward 实现**：`let sum_term = (&grad * y).sum(); &grad * y - &(y.mapv(|v| v * sum_term))`（[autodiff.rs:735-745](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`let sum_term = (&grad * y).sum(); &grad * y - &(y.mapv(|v| v * sum_term))`（[autodiff.rs:735-745](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar a_j = c_j (\bar c_j - \sum_i \bar c_i c_i)$。✓
 - **AD3 必要性**：需持久化 $c = \text{softmax}(a)$。
 - **退化情形**：若 $c_i \to 0$（即 $a_i \to -\infty$），公式仍数学成立，但浮点可能下溢（见 §10 局限）。
@@ -668,7 +668,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
   - $\bar{\text{logits}}_j = \sum_i (-\bar L t_i / s_i) \cdot s_i (\delta_{ij} - s_j) = -\bar L \sum_i t_i (\delta_{ij} - s_j) = -\bar L (t_j - s_j \sum_i t_i)$；
   - 若 $\sum_i t_i = 1$（one-hot target），则 $\bar{\text{logits}}_j = -\bar L (t_j - s_j) = \bar L (s_j - t_j)$；
   - 种子 $\bar L = 1$，故 $\bar{\text{logits}} = s - t$；
-- **backward 实现**：`let g_a = { let sm_ref = ...; let tgt_ref = ...; &sm_ref.data - &tgt_ref.data };`（[autodiff.rs:723-734](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`let g_a = { let sm_ref = ...; let tgt_ref = ...; &sm_ref.data - &tgt_ref.data };`（[autodiff.rs:723-734](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar{\text{logits}} = \text{softmax}(\text{logits}) - \text{target}$。✓
 - **AD5 应用**：C1（代数化简为 $s - t$）、C2（softmax 持久化于 `input_tensors[1]`）、C3（闭式避免 $\ln(0)$ 下溢）。
 - **隐式假设**：$\sum_i t_i = 1$（one-hot），若 target 非归一化则闭式不成立（见 §10 局限）。
@@ -678,7 +678,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
 - **前向**：$c = a \odot \text{mask}$，其中 mask 是随机生成（保留位置 $1/(1-p)$，丢弃位置 0）；
 - **雅可比**：$\partial c_i/\partial a_j = \text{mask}_i \delta_{ij}$；
 - **链式法则右端**：$\bar a_i = \bar c_i \text{mask}_i$；
-- **backward 实现**：`let mask_ref = node.input_tensors[1].borrow(); &grad * &mask_ref.data`（[autodiff.rs:712-722](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+- **backward 实现**：`let mask_ref = node.input_tensors[1].borrow(); &grad * &mask_ref.data`（[autodiff.rs:712-722](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar a = \bar c \odot \text{mask}$。✓
 - **AD3 必要性**：mask 是随机的，无法从 input 重建——必须持久化。
 
@@ -690,12 +690,12 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
   - $\overline{\text{im2col}(X)} = \bar Y @ W_{\text{flat}}$（MatMul 的反向，对 im2col）；
   - $\bar X = \text{col2im}(\overline{\text{im2col}(X)})$（im2col 的反向，即 col2im）；
 - **backward 实现**：
-  - `d_w_flat = matmul_2d(&col_t, &grad_2d)`（[autodiff.rs:650](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
-  - `d_col = matmul_2d(&grad_2d, &w_flat)`（[autodiff.rs:684](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
-  - `d_x = ArrayD::from_shape_vec(x_shape, d_col.iter().cloned().collect())`（[autodiff.rs:699](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+  - `d_w_flat = matmul_2d(&col_t, &grad_2d)`（[autodiff.rs:650](../../tenth/src/runtime/autodiff.rs)）；
+  - `d_col = matmul_2d(&grad_2d, &w_flat)`（[autodiff.rs:684](../../tenth/src/runtime/autodiff.rs)）；
+  - `d_x = ArrayD::from_shape_vec(x_shape, d_col.iter().cloned().collect())`（[autodiff.rs:699](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar W = \text{reshape}(\text{im2col}^T @ \bar Y, W.\text{shape})$，$\bar X = \text{col2im}(\bar Y @ W_{\text{flat}})$。✓
 - **AD5 应用**：C1（im2col 转化为 MatMul）、C2（im2col 持久化于 `input_tensors[2]`）、C3（等价）。
-- **简化**：实现中的 `col2im` 是简化版本——直接 reshape `d_col` 到 $X$ 的形状（[autodiff.rs:699](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），**未处理 stride/padding/dilation 的累积**。这要求 im2col 的输出元素数等于 $X$ 的元素数，即 stride=1, padding=0, dilation=1（见 §10 局限）。
+- **简化**：实现中的 `col2im` 是简化版本——直接 reshape `d_col` 到 $X$ 的形状（[autodiff.rs:699](../../tenth/src/runtime/autodiff.rs)），**未处理 stride/padding/dilation 的累积**。这要求 im2col 的输出元素数等于 $X$ 的元素数，即 stride=1, padding=0, dilation=1（见 §10 局限）。
 
 ### 6.19 BatchNorm（复合，闭式验证）
 
@@ -710,19 +710,19 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
   - $\bar X = \bar x_{\text{hat}} / \sigma + \bar \sigma \cdot 2(X - \mu)/n + \bar \mu / n$；
   - 代入化简：$\bar X = (\gamma/\sigma) (\bar Y - \text{mean}(\bar Y) - x_{\text{hat}} \odot \text{mean}(\bar Y \odot x_{\text{hat}}))$；
 - **backward 实现**：
-  - `d_gamma = &grad * &x_hat_ref.data`（[autodiff.rs:507](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
-  - `d_beta = grad.clone()`（[autodiff.rs:509](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
-  - `d_x = &std_inv_ref.data * &gamma_ref.data * &(&grad - mean_dy - &(&x_hat_ref.data * mean_dy_xhat))`（[autodiff.rs:515-516](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+  - `d_gamma = &grad * &x_hat_ref.data`（[autodiff.rs:507](../../tenth/src/runtime/autodiff.rs)）；
+  - `d_beta = grad.clone()`（[autodiff.rs:509](../../tenth/src/runtime/autodiff.rs)）；
+  - `d_x = &std_inv_ref.data * &gamma_ref.data * &(&grad - mean_dy - &(&x_hat_ref.data * mean_dy_xhat))`（[autodiff.rs:515-516](../../tenth/src/runtime/autodiff.rs)）；
 - **验证**：$\bar X = \sigma^{-1} \gamma \odot (\bar Y - \text{mean}(\bar Y) - x_{\text{hat}} \odot \text{mean}(\bar Y \odot x_{\text{hat}}))$。✓
 - **AD5 应用**：C1（化简为闭式）、C2（$x_{\text{hat}}, \sigma^{-1}, \gamma$ 持久化）、C3（等价）。
-- **简化**：实现的 mean 沿**所有维度**（[autodiff.rs:512](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `n = grad.len()`），即把整个 batch 当作一个统计群体。这与标准 BN（沿 batch 维统计、保留通道维）不同（见 §10 局限）。
+- **简化**：实现的 mean 沿**所有维度**（[autodiff.rs:512](../../tenth/src/runtime/autodiff.rs) `n = grad.len()`），即把整个 batch 当作一个统计群体。这与标准 BN（沿 batch 维统计、保留通道维）不同（见 §10 局限）。
 
 ### 6.20 LayerNorm（复合，闭式验证）
 
 - **前向**：$Y = \gamma \odot x_{\text{hat}} + \beta$，按最后一维归一化（每行独立计算 $\mu, \sigma$）；
 - **雅可比推导**（与 BatchNorm 同形，但 mean 按行）：
   - $\bar X_{\text{row } i} = (\gamma/\sigma_i) (\bar Y_{\text{row } i} - \text{mean}(\bar Y_{\text{row } i}) - x_{\text{hat},\text{row } i} \odot \text{mean}(\bar Y_{\text{row } i} \odot x_{\text{hat},\text{row } i}))$；
-- **backward 实现**：按行循环计算（[autodiff.rs:569-589](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+- **backward 实现**：按行循环计算（[autodiff.rs:569-589](../../tenth/src/runtime/autodiff.rs)）：
   ```rust
   for i in 0..outer_len {
       let inv = std_inv_slice[i];
@@ -735,7 +735,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
   ```
 - **验证**：每行 $\bar X_{\text{row}} = \sigma^{-1} \gamma \odot (\bar Y - \text{mean}(\bar Y) - x_{\text{hat}} \odot \text{mean}(\bar Y \odot x_{\text{hat}}))$。✓
 - **AD5 应用**：C1、C2（$x_{\text{hat}}, \sigma^{-1}, \gamma$ 持久化）、C3。
-- **注**：LayerNorm 的实现是"逐行标量循环"（[autodiff.rs:548-589](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），与 BatchNorm 的"全张量向量化"不同。这是工程选择（避免 axis 求和的复杂 broadcast），数学语义等价。
+- **注**：LayerNorm 的实现是"逐行标量循环"（[autodiff.rs:548-589](../../tenth/src/runtime/autodiff.rs)），与 BatchNorm 的"全张量向量化"不同。这是工程选择（避免 axis 求和的复杂 broadcast），数学语义等价。
 
 ### 6.21 Gelu（复合，闭式验证）
 
@@ -745,7 +745,7 @@ $$\bar x_{\text{Tenth}} = \bar x_{\text{PyTorch}} = \bar x_{\text{JAX}} = \bar y
   - $\frac{d\text{inner}}{dx} = \sqrt{2/\pi} (1 + 3 \cdot 0.044715 x^2)$；
   - 故 $\frac{dc}{dx} = 0.5 (1 + \tanh(\text{inner})) + 0.5 x \cdot \text{sech}^2(\text{inner}) \cdot \sqrt{2/\pi} (1 + 3 \cdot 0.044715 x^2)$；
 - **链式法则右端**：$\bar x = \bar c \cdot \frac{dc}{dx}$；
-- **backward 实现**（[autodiff.rs:601-612](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）：
+- **backward 实现**（[autodiff.rs:601-612](../../tenth/src/runtime/autodiff.rs)）：
   ```rust
   let deriv = x_data.mapv(|x| {
       let inner = sqrt_2_over_pi * (x + 0.044715 * x * x * x);
@@ -864,7 +864,7 @@ Tenth 的选择（显式 tape）在简单性与可调试性上更优，但牺牲
 Tenth 选择 `input_tensors: Vec<Rc<RefCell<Tensor>>>` 持久化张量引用，而非仅持久化节点 id。权衡见定理 AD3——9 个算子的闭式 backward 必需持久化中间值，`Rc<RefCell<>>` 是必要选择。代价是：
 
 1. **内存压力**：所有中间张量被持有，无法 GC；
-2. **借用检查**：`RefCell` 运行时借用检查，可能 panic（实现需谨慎避免双重借用，[autodiff.rs:316-321](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 显式 clone 数据规避）；
+2. **借用检查**：`RefCell` 运行时借用检查，可能 panic（实现需谨慎避免双重借用，[autodiff.rs:316-321](../../tenth/src/runtime/autodiff.rs) 显式 clone 数据规避）；
 3. **不可序列化**：`Rc` 不可跨进程/序列化，限制了分布式训练扩展性。
 
 ---
@@ -893,7 +893,7 @@ Tenth 当前的 `Tape::backward` 仅支持一阶梯度。高阶梯度（如 `gra
 
 ### 9.3 稀疏梯度与梯度累积
 
-当前 `acc_node_grad`（[autodiff.rs:770-779](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）总是 dense 累加。对于稀疏梯度（如 Embedding 的反向），dense 累加浪费内存与计算。
+当前 `acc_node_grad`（[autodiff.rs:770-779](../../tenth/src/runtime/autodiff.rs)）总是 dense 累加。对于稀疏梯度（如 Embedding 的反向），dense 累加浪费内存与计算。
 
 **开放**：是否应引入稀疏梯度支持？若引入，`TapeOp` 需扩展稀疏变体，或 `acc_grad` 需支持稀疏累积。
 
@@ -905,7 +905,7 @@ T38 §11 提出：是否应引入 effect system，将"recording"作为类型系�
 
 ### 9.5 Conv2D 反向的 stride/padding/dilation
 
-当前 `Conv2D` 反向的 col2im 是简化版本（直接 reshape，[autodiff.rs:699](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），未处理 stride/padding/dilation 的累积。这限制了 Conv2D 仅支持 stride=1, padding=0, dilation=1 的情形。
+当前 `Conv2D` 反向的 col2im 是简化版本（直接 reshape，[autodiff.rs:699](../../tenth/src/runtime/autodiff.rs)），未处理 stride/padding/dilation 的累积。这限制了 Conv2D 仅支持 stride=1, padding=0, dilation=1 的情形。
 
 **开放**：是否应扩展 Conv2D 反向以支持通用 stride/padding/dilation？这需要实现真正的 col2im 累积算法，并重新验证链式法则等式。
 
@@ -917,17 +917,17 @@ T38 §11 提出：是否应引入 effect system，将"recording"作为类型系�
 
 ### 10.1 Conv2D 反向的简化
 
-**局限**：`Conv2D` 反向的 col2im 步骤（[autodiff.rs:686-704](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）直接 reshape `d_col` 到 $X$ 的形状，**未实现真正的 col2im 累积**。
+**局限**：`Conv2D` 反向的 col2im 步骤（[autodiff.rs:686-704](../../tenth/src/runtime/autodiff.rs)）直接 reshape `d_col` 到 $X$ 的形状，**未实现真正的 col2im 累积**。
 
-**影响**：当 stride > 1 或 padding > 0 或 dilation > 1 时，im2col 的输出元素数 $\neq$ $X$ 的元素数，`d_col.len() != x_total` 会触发错误（[autodiff.rs:691-698](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）。当前实现仅支持 stride=1, padding=0, dilation=1 的"退化"卷积。
+**影响**：当 stride > 1 或 padding > 0 或 dilation > 1 时，im2col 的输出元素数 $\neq$ $X$ 的元素数，`d_col.len() != x_total` 会触发错误（[autodiff.rs:691-698](../../tenth/src/runtime/autodiff.rs)）。当前实现仅支持 stride=1, padding=0, dilation=1 的"退化"卷积。
 
 **对定理 AD1 的影响**：在 stride=1, padding=0, dilation=1 的退化情形下，链式法则等式成立（§6.18 验证）。一般情形下，定理 AD1 对 `Conv2D` **不成立**——因为 backward 实现本身不正确。
 
-**缓解**：在 [autodiff.rs:691-698](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) 已加入显式 shape 校验，退化情形之外会报错而非静默错误。这是 T38 提出的"方向 A：消除 silent squeeze"的实践。
+**缓解**：在 [autodiff.rs:691-698](../../tenth/src/runtime/autodiff.rs) 已加入显式 shape 校验，退化情形之外会报错而非静默错误。这是 T38 提出的"方向 A：消除 silent squeeze"的实践。
 
 ### 10.2 BatchNorm 反向的简化
 
-**局限**：`BatchNorm` 反向的 mean 计算（[autodiff.rs:512-514](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）使用 `n = grad.len()`，即把整个张量当作一个统计群体。这与标准 BatchNorm（沿 batch 维统计、保留通道维）不同。
+**局限**：`BatchNorm` 反向的 mean 计算（[autodiff.rs:512-514](../../tenth/src/runtime/autodiff.rs)）使用 `n = grad.len()`，即把整个张量当作一个统计群体。这与标准 BatchNorm（沿 batch 维统计、保留通道维）不同。
 
 **影响**：当前 `BatchNorm` 实际是"全张量归一化"而非标准 BN。在通道间不独立归一化的情况下，梯度可能与标准 BN 不一致。
 
@@ -947,7 +947,7 @@ T38 §11 提出：是否应引入 effect system，将"recording"作为类型系�
 
 ### 10.4 Softmax 的数值稳定性
 
-**局限**：`Softmax` 前向（未在 autodiff.rs 中，在 tensor.rs 或 VM 中）应使用 max 减法技巧避免 $e^{a_i}$ 溢出。`Softmax` 反向（[autodiff.rs:735-745](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）依赖 $c = \text{softmax}(a)$ 的持久化值，若前向数值不稳定，反向也不稳定。
+**局限**：`Softmax` 前向（未在 autodiff.rs 中，在 tensor.rs 或 VM 中）应使用 max 减法技巧避免 $e^{a_i}$ 溢出。`Softmax` 反向（[autodiff.rs:735-745](../../tenth/src/runtime/autodiff.rs)）依赖 $c = \text{softmax}(a)$ 的持久化值，若前向数值不稳定，反向也不稳定。
 
 **影响**：当 $a_i$ 极大时，$c_i \to 1$，其他 $c_j \to 0$，反向公式 $c_j(\bar c_j - \sum \bar c_i c_i)$ 在 $c_j \to 0$ 时下溢。
 
@@ -959,7 +959,7 @@ T38 §11 提出：是否应引入 effect system，将"recording"作为类型系�
 
 **影响**：Tenth、PyTorch、JAX 三者的浮点结果差异依赖具体算子顺序，本文未量化。
 
-**缓解**：实际工程中可通过 `cargo test --manifest-path tenth/Cargo.toml -- autodiff` 的数值测试（如 `test_backward_chain`，[autodiff.rs:1018-1046](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）验证相对误差 $\sim 10^{-10}$。
+**缓解**：实际工程中可通过 `cargo test --manifest-path tenth/Cargo.toml -- autodiff` 的数值测试（如 `test_backward_chain`，[autodiff.rs:1018-1046](../../tenth/src/runtime/autodiff.rs)）验证相对误差 $\sim 10^{-10}$。
 
 ### 10.6 循环与分支的 tape 处理未覆盖
 
@@ -1033,9 +1033,9 @@ T38 §11 提出：是否应引入 effect system，将"recording"作为类型系�
 6. Ioffe, S., & Szegedy, C. (2015). Batch normalization: Accelerating deep network training by reducing internal covariate shift. *ICML*.
 7. Ba, J. L., Kiros, J. R., & Hinton, G. E. (2016). Layer normalization. *arXiv:1607.06450*.
 8. Hendrycks, D., & Gimpel, K. (2016). Gaussian error linear units (GELUs). *arXiv:1606.08415*.
-9. Tenth 项目. (2026). *autodiff.rs* (v0.3.3). [源码](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs).
-10. Tenth 数理部. (2026). T38: autodiff tape 多路径一致性. [论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T38-autodiff-tape多路径一致性.md).
-11. Tenth 数理部. (2026). T2: Tape 形式化模型与根因定位可判定性. [论文](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T2-Tape形式化模型与根因定位可判定性.md).
+9. Tenth 项目. (2026). *autodiff.rs* (v0.3.3). [源码](../../tenth/src/runtime/autodiff.rs).
+10. Tenth 数理部. (2026). T38: autodiff tape 多路径一致性. [论文](T38-autodiff-tape多路径一致性.md).
+11. Tenth 数理部. (2026). T2: Tape 形式化模型与根因定位可判定性. [论文](T2-Tape形式化模型与根因定位可判定性.md).
 
 ---
 
@@ -1043,12 +1043,12 @@ T38 §11 提出：是否应引入 effect system，将"recording"作为类型系�
 
 | 定理 | 陈述 | 证明 | 源码引用 |
 |------|------|------|---------|
-| AD1 | 21 算子链式法则等式 | §4.1 + §6 逐一 | [autodiff.rs:291-746](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| AD2 | 拓扑逆序正确性 | §4.2 | [autodiff.rs:285-289](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
-| AD3 | input_tensors 持久化必要性 | §4.3 | [autodiff.rs:14-25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
+| AD1 | 21 算子链式法则等式 | §4.1 + §6 逐一 | [autodiff.rs:291-746](../../tenth/src/runtime/autodiff.rs) |
+| AD2 | 拓扑逆序正确性 | §4.2 | [autodiff.rs:285-289](../../tenth/src/runtime/autodiff.rs) |
+| AD3 | input_tensors 持久化必要性 | §4.3 | [autodiff.rs:14-25](../../tenth/src/runtime/autodiff.rs) |
 | AD4 | 与 PyTorch/JAX 语义等价性 | §4.4 | 全文件 |
 | AD5 | 算子融合形式化框架 | §4.5 | §5 复合算子 |
-| AD2.1 | backward 复杂度 | §4.2 推论 | [autodiff.rs:285](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) |
+| AD2.1 | backward 复杂度 | §4.2 推论 | [autodiff.rs:285](../../tenth/src/runtime/autodiff.rs) |
 
 ## 附录 B：与现有文档的对应
 
@@ -1095,7 +1095,7 @@ T38 §11 提出：是否应引入 effect system，将"recording"作为类型系�
    - 这是一项跨模块（HIR/类型系统/运行时）的护城河级改动，需总师统筹。
 
 6. **测试覆盖**：
-   - 21 算子的链式法则等式应有对应单元测试（当前仅 5 个，[autodiff.rs:909-1046](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)）；
+   - 21 算子的链式法则等式应有对应单元测试（当前仅 5 个，[autodiff.rs:909-1046](../../tenth/src/runtime/autodiff.rs)）；
    - 建议补充 `test_backward_sub`、`test_backward_div`、`test_backward_neg`、`test_backward_exp`、`test_backward_log`、`test_backward_sigmoid`、`test_backward_softmax`、`test_backward_crossentropy`、`test_backward_dropout`、`test_backward_conv2d`、`test_backward_batchnorm`、`test_backward_layernorm`、`test_backward_gelu`、`test_backward_transpose`、`test_backward_sum`、`test_backward_mean` 等 16 个测试（覆盖剩余算子）。
 
 ---

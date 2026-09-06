@@ -3,18 +3,18 @@
 > **论文编号**：T50
 > **数理部分类**：形式化语义 / 张量原语表达能力 / 神经网络架构正确性
 > **关联论文**：T47（leaky-relu 算术等价与可微分支编码）、T49（NN 作为语言级标准库的范式）、T39（Wengert Tape 形式化语义与反向模式正确性）
-> **关联源码**：[`tenth/std/nn/transformer.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th)、[`tenth/std/nn/multihead_attention.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th)、[`tenth/std/nn/positional_encoding.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th)、[`tenth/std/nn/attention.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th)、[`tenth/src/runtime/tensor.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)
+> **关联源码**：[`tenth/std/nn/transformer.th`](../../tenth/std/nn/transformer.th)、[`tenth/std/nn/multihead_attention.th`](../../tenth/std/nn/multihead_attention.th)、[`tenth/std/nn/positional_encoding.th`](../../tenth/std/nn/positional_encoding.th)、[`tenth/std/nn/attention.th`](../../tenth/std/nn/attention.th)、[`tenth/src/runtime/tensor.rs`](../../tenth/src/runtime/tensor.rs)
 > **版本**：v1.0  |  **日期**：2026-07-02
 
 ---
 
 ## 摘要
 
-Tenth 作为 AI 原生语言，其标准库 [`tenth/std/nn/`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/) 以纯函数式风格实现了现代 Transformer 编码器块的所有组件——LayerNorm、Multi-Head Attention、Feed-Forward Network、Positional Encoding、残差连接。然而，由于 Tenth v0.3.3 的张量原语集存在**两个核心能力空缺**——（i）`matmul` 仅支持 1D/2D 张量（[`tensor.rs` L686-L736](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），不支持 batched/3D 矩阵乘法；（ii）张量类型不支持元素索引赋值（无 `IndexAssign`/`index_mut`，源码级确认）——这导致 Transformer 实现中的两个核心组件发生**结构性退化**：Multi-Head Attention 退化为 single-head 等价（[`multihead_attention.th` L4-L11](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th)），Sinusoidal Positional Encoding 退化为随机占位符 `randn * 0.01`（[`positional_encoding.th` L8-L18, L22-L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th)）。
+Tenth 作为 AI 原生语言，其标准库 [`tenth/std/nn/`](../../tenth/std/nn/) 以纯函数式风格实现了现代 Transformer 编码器块的所有组件——LayerNorm、Multi-Head Attention、Feed-Forward Network、Positional Encoding、残差连接。然而，由于 Tenth v0.3.3 的张量原语集存在**两个核心能力空缺**——（i）`matmul` 仅支持 1D/2D 张量（[`tensor.rs` L686-L736](../../tenth/src/runtime/tensor.rs)），不支持 batched/3D 矩阵乘法；（ii）张量类型不支持元素索引赋值（无 `IndexAssign`/`index_mut`，源码级确认）——这导致 Transformer 实现中的两个核心组件发生**结构性退化**：Multi-Head Attention 退化为 single-head 等价（[`multihead_attention.th` L4-L11](../../tenth/std/nn/multihead_attention.th)），Sinusoidal Positional Encoding 退化为随机占位符 `randn * 0.01`（[`positional_encoding.th` L8-L18, L22-L25](../../tenth/std/nn/positional_encoding.th)）。
 
 本文形式化分析 Tenth Transformer 实现的正确性与限制。我们提出五条主定理：
 
-- **定理 TR1（Pre-Norm 架构正确性）**：Tenth 实现采用的 Pre-Norm 残差结构（[`transformer.th` L26, L32](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th)）在单层语义与多层训练稳定性两个层面均与原论文 [Vaswani et al. 2017] 的 Post-Norm 架构"表达等价但梯度流动更优"，并给出参数重写下的单层等价证明与多层残差下界证明。
+- **定理 TR1（Pre-Norm 架构正确性）**：Tenth 实现采用的 Pre-Norm 残差结构（[`transformer.th` L26, L32](../../tenth/std/nn/transformer.th)）在单层语义与多层训练稳定性两个层面均与原论文 [Vaswani et al. 2017] 的 Post-Norm 架构"表达等价但梯度流动更优"，并给出参数重写下的单层等价证明与多层残差下界证明。
 - **定理 TR2（MHA 限制的不可避免性）**：在 2D matmul 限制下，True Multi-Head Attention **不可表达**；任何仅使用 $\mathcal{O}_{2D}$ 原语集的实现必然退化为 single-head 等价。我们通过原语表达能力刻画证明这一退化是**语言能力不足的结构性后果**，而非实现者的疏漏。
 - **定理 TR3（Positional Encoding 退化）**：在不支持张量元素索引赋值的限制下，确定性的 sinusoidal 编码**不可表达**；可用的张量构造原语（`randn`/`zeros`/`ones`）只能产生随机或常数张量，故实现必然退化为随机占位符。
 - **定理 TR4（与 PyTorch transformer 的语义偏差）**：在五个核心维度（架构范式、MHA、PE、激活、mask）上，Tenth 实现与 `torch.nn.TransformerEncoder` 的语义偏差量化为三类——架构一致（Pre-Norm 可选）、组件退化（MHA、PE）、工程性弱化（mask 元数据化）。
@@ -41,13 +41,13 @@ Tenth 作为 AI 原生语言，其标准库 [`tenth/std/nn/`](file:///d:/史蒂�
 
 ### 1.2 Tenth 的能力约束
 
-Tenth v0.3.3 是一款 AI 原生语言，其标准库 [`tenth/std/nn/`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/) 以纯函数式风格实现了 13 个 NN 组件（[`prelude.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/prelude.th) 索引）。Transformer 实现位于 [`transformer.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th)。
+Tenth v0.3.3 是一款 AI 原生语言，其标准库 [`tenth/std/nn/`](../../tenth/std/nn/) 以纯函数式风格实现了 13 个 NN 组件（[`prelude.th`](../../tenth/std/prelude.th) 索引）。Transformer 实现位于 [`transformer.th`](../../tenth/std/nn/transformer.th)。
 
 通过源码级审查，我们确认 Tenth 的张量原语集存在以下两个核心空缺：
 
-**空缺 A（无 batched/3D matmul）**：[`tenth/src/runtime/tensor.rs` L686-L737](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 中 `Tensor::matmul` 仅支持三种情形——`2D @ 2D`、`1D @ 2D`、`2D @ 1D`；对于 `ndim >= 3` 的输入直接返回错误 `"matmul requires 1D/2D tensors"`（[L736](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）。该限制在 [`attention.th` L20-L22](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th) 与 [`multihead_attention.th` L4-L11](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th) 中均被注释明确披露。
+**空缺 A（无 batched/3D matmul）**：[`tenth/src/runtime/tensor.rs` L686-L737](../../tenth/src/runtime/tensor.rs) 中 `Tensor::matmul` 仅支持三种情形——`2D @ 2D`、`1D @ 2D`、`2D @ 1D`；对于 `ndim >= 3` 的输入直接返回错误 `"matmul requires 1D/2D tensors"`（[L736](../../tenth/src/runtime/tensor.rs)）。该限制在 [`attention.th` L20-L22](../../tenth/std/nn/attention.th) 与 [`multihead_attention.th` L4-L11](../../tenth/std/nn/multihead_attention.th) 中均被注释明确披露。
 
-**空缺 B（无张量元素索引赋值）**：通过对 `tensor.rs` 全文检索 `IndexAssign|index_assign|index_mut|set_element` 均无匹配，确认 Tensor 类型无逐元素写入接口。Tenth 仅提供整张量构造原语 `randn`/`zeros`/`ones` 与逐元素运算（`+`, `*`, `softmax`, `transpose`, `matmul`, `layer_norm`, `dropout`, `masked_fill`, `gelu`, `relu`）。这一空缺在 [`positional_encoding.th` L8-L18](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th) 注释中由实现者明确披露。
+**空缺 B（无张量元素索引赋值）**：通过对 `tensor.rs` 全文检索 `IndexAssign|index_assign|index_mut|set_element` 均无匹配，确认 Tensor 类型无逐元素写入接口。Tenth 仅提供整张量构造原语 `randn`/`zeros`/`ones` 与逐元素运算（`+`, `*`, `softmax`, `transpose`, `matmul`, `layer_norm`, `dropout`, `masked_fill`, `gelu`, `relu`）。这一空缺在 [`positional_encoding.th` L8-L18](../../tenth/std/nn/positional_encoding.th) 注释中由实现者明确披露。
 
 这两个空缺直接导致 Transformer 实现中的两个核心组件发生**结构性退化**，本文称之为"语言能力不足导致的 NN 实现不完整"现象。这是一个极具研究价值的样本——它揭示了 AI 原生语言在设计张量原语集时面临的最小完备性问题。
 
@@ -130,7 +130,7 @@ PyTorch `torch.nn.TransformerEncoder` 的关键设计：
 
 ### 4.1 实现概览
 
-Tenth Transformer 编码器块定义于 [`transformer.th` L8-L35](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th)，参数集 12 项（$W^Q, W^K, W^V, W^O$, $\gamma_1, \beta_1$, $W_1, b_1, W_2, b_2$, $\gamma_2, \beta_2$），加 `n_heads` 与 `dropout_p`。
+Tenth Transformer 编码器块定义于 [`transformer.th` L8-L35](../../tenth/std/nn/transformer.th)，参数集 12 项（$W^Q, W^K, W^V, W^O$, $\gamma_1, \beta_1$, $W_1, b_1, W_2, b_2$, $\gamma_2, \beta_2$），加 `n_heads` 与 `dropout_p`。
 
 ### 4.2 形式化定义
 
@@ -143,17 +143,17 @@ x'' &= x' + \text{FFN}_{W_1, b_1, W_2, b_2}\!\big(\text{LN}_{\gamma_2, \beta_2, 
 \end{aligned}
 $$
 
-其中 $\epsilon = 10^{-5}$（[`transformer.th` L26, L32](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th)），$\widetilde{\text{MHA}}$ 为退化 MHA（见定义 4.2）。
+其中 $\epsilon = 10^{-5}$（[`transformer.th` L26, L32](../../tenth/std/nn/transformer.th)），$\widetilde{\text{MHA}}$ 为退化 MHA（见定义 4.2）。
 
-**定义 4.2（退化 MHA）**：[`multihead_attention.th` L13-L39](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th) 实现的 $\widetilde{\text{MHA}}$ 定义为：
+**定义 4.2（退化 MHA）**：[`multihead_attention.th` L13-L39](../../tenth/std/nn/multihead_attention.th) 实现的 $\widetilde{\text{MHA}}$ 定义为：
 
 $$
 \widetilde{\text{MHA}}_{W^Q, W^K, W^V, W^O}(x) = \text{SDA}(xW^Q, xW^K, xW^V, M) \cdot W^O
 $$
 
-其中 `n_heads` 参数被接受但被忽略（[`multihead_attention.th` L20, L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th) 计算了 `d_k = d_model / n_heads` 但未在后续使用）。
+其中 `n_heads` 参数被接受但被忽略（[`multihead_attention.th` L20, L25](../../tenth/std/nn/multihead_attention.th) 计算了 `d_k = d_model / n_heads` 但未在后续使用）。
 
-**定义 4.3（退化 PE）**：[`positional_encoding.th` L22-L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th) 实现的 $\widetilde{\text{PE}} : \mathbb{N} \times \mathbb{N} \to \mathbb{R}^{S \times D}$ 定义为：
+**定义 4.3（退化 PE）**：[`positional_encoding.th` L22-L25](../../tenth/std/nn/positional_encoding.th) 实现的 $\widetilde{\text{PE}} : \mathbb{N} \times \mathbb{N} \to \mathbb{R}^{S \times D}$ 定义为：
 
 $$
 \widetilde{\text{PE}}(S, D) = 0.01 \cdot \xi, \quad \xi \sim \mathcal{N}(0, I_{S \times D})
@@ -189,7 +189,7 @@ $$
 $$
 即梯度通路存在恒等下界。Post-Norm 不具备此性质。
 
-(c) **Tenth 实现一致性**：[`transformer.th` L26, L32](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th) 的 Pre-Norm 形式与 [Xiong et al. 2020] 给出的"良好训练性"条件一致。
+(c) **Tenth 实现一致性**：[`transformer.th` L26, L32](../../tenth/std/nn/transformer.th) 的 Pre-Norm 形式与 [Xiong et al. 2020] 给出的"良好训练性"条件一致。
 
 **证明**：
 
@@ -242,19 +242,19 @@ $$
 
 梯度层面：反向传播时 Pre-Norm 残差路径导数为 $\frac{\partial x_{i+1}}{\partial x_i} = I + \frac{\partial f_i}{\partial x_i} \cdot \frac{\partial \text{LN}}{\partial x_i}$，其中 $I$ 项保证梯度通路存在恒等成分；Post-Norm 的 $\frac{\partial \text{LN}}{\partial x_i}$ 项将归一化统计量引入雅可比，深度堆叠时梯度范数无下界保证。
 
-**(c) Tenth 实现一致性**：[`transformer.th` L26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th) 写 `let x_norm = layer_norm<T>(x, ln1_gamma, ln1_beta, 1e-5)` 后接 `let attn = multihead_attention<T>(x_norm, ...)` 与 `let x = x + attn`，即 $x' = x + f(\text{LN}(x))$，与 (a)(b) 中的 Pre-Norm 形式逐字对应。L32 同理对 FFN 子层。$\square$
+**(c) Tenth 实现一致性**：[`transformer.th` L26](../../tenth/std/nn/transformer.th) 写 `let x_norm = layer_norm<T>(x, ln1_gamma, ln1_beta, 1e-5)` 后接 `let attn = multihead_attention<T>(x_norm, ...)` 与 `let x = x + attn`，即 $x' = x + f(\text{LN}(x))$，与 (a)(b) 中的 Pre-Norm 形式逐字对应。L32 同理对 FFN 子层。$\square$
 
 **注**：(a) 的严格函数族相等依赖 [Nguyen & Salazar 2019] 的构造，本文未展开；本文给出的"稠密相等"论证足以支持"Pre-Norm 不损失表达能力"的工程结论。
 
 ### 5.2 定理 TR2（MHA 限制的不可避免性）
 
-**定理 TR2**：设 $\mathcal{O}_{2D}$ 为 Tenth v0.3.3 张量原语集，其 matmul 仅支持 1D/2D 张量（[`tensor.rs` L686-L736](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)），且无张量切片/索引赋值（源码级确认）。则：
+**定理 TR2**：设 $\mathcal{O}_{2D}$ 为 Tenth v0.3.3 张量原语集，其 matmul 仅支持 1D/2D 张量（[`tensor.rs` L686-L736](../../tenth/src/runtime/tensor.rs)），且无张量切片/索引赋值（源码级确认）。则：
 
 (a) **不可表达性**：True Multi-Head Attention $\text{MHA}_h$（$h \geq 2$）在 $\mathcal{F}(\mathcal{O}_{2D})$ 中**不可表达**。
 
 (b) **退化解的唯一性**：在 $\mathcal{F}(\mathcal{O}_{2D})$ 中，所有接受参数 $(W^Q, W^K, W^V, W^O, h)$ 且使用 `n_heads` 形参的"占位实现"必然退化为 single-head 等价 $\widetilde{\text{MHA}}$（定义 4.2），即 $h$ 被忽略。
 
-(c) **Tenth 实现一致**：[`multihead_attention.th` L13-L39](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th) 的实现正是 $\widetilde{\text{MHA}}$，与 (b) 一致。
+(c) **Tenth 实现一致**：[`multihead_attention.th` L13-L39](../../tenth/std/nn/multihead_attention.th) 的实现正是 $\widetilde{\text{MHA}}$，与 (b) 一致。
 
 **证明**：
 
@@ -277,20 +277,20 @@ $$
 
 Tenth 的 $\mathcal{O}_{2D}$：
 
-- matmul 仅支持 1D/2D（[`tensor.rs` L736](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 明确返回 `Err` 对 `ndim >= 3`）→ **路径 P1 不可达**。
+- matmul 仅支持 1D/2D（[`tensor.rs` L736](../../tenth/src/runtime/tensor.rs) 明确返回 `Err` 对 `ndim >= 3`）→ **路径 P1 不可达**。
 - 无 `slice`/`index_assign`/`concat` 操作（grep 全文无匹配）→ **路径 P2 不可达**。
 
 因此两条自然路径均不可达。我们再排除若干"绕道"：
 
 - **绕道 W1（逐元素运算模拟 matmul）**：3D matmul 可分解为 $\sum_k Q[i,j,k] K[i,k,l]$ 的逐元素乘加。Tenth 无 3D 张量构造原语（`randn` 仅接受 1D/2D shape 参数——[`tensor.rs` 中 `randn<T>(rows, cols)` 形式]），故 3D 张量本身不可构造，绕道 W1 不可达。
 - **绕道 W2（head 维展平到 seq 维）**：将 head 视为额外 seq 维。但这会改变 attention 的语义——不同 head 之间会"互相 attend"，违反 head 独立性。语义不等价。
-- **绕道 W3（解释器 native 函数）**：Tenth 允许通过 Rust 解释器注册 native 函数（[`main.rs` register_natives](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)）。理论上可注册一个 `multihead_attention_native` 函数。但这（i）不在标准库 nn 范畴；（ii）绕过了 Tenth 语言层面的张量原语；（iii）不可微（无对应 `TapeOp`，与 T47 联动）。故 W3 不构成 $\mathcal{F}(\mathcal{O}_{2D})$ 内的表达。
+- **绕道 W3（解释器 native 函数）**：Tenth 允许通过 Rust 解释器注册 native 函数（[`main.rs` register_natives](../../tenth/src/main.rs)）。理论上可注册一个 `multihead_attention_native` 函数。但这（i）不在标准库 nn 范畴；（ii）绕过了 Tenth 语言层面的张量原语；（iii）不可微（无对应 `TapeOp`，与 T47 联动）。故 W3 不构成 $\mathcal{F}(\mathcal{O}_{2D})$ 内的表达。
 
 综上，True MHA 在 $\mathcal{F}(\mathcal{O}_{2D})$ 中不可表达。
 
 **(b) 退化解的唯一性**
 
-考虑实现者面对 [`multihead_attention.th` L13-L22](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th) 的函数签名，需在 $\mathcal{F}(\mathcal{O}_{2D})$ 中给出一个合法实现。可用原语：2D matmul, add, softmax, transpose, layer_norm, dropout, masked_fill, gelu/relu。可表达的"attention 类函数"形如：
+考虑实现者面对 [`multihead_attention.th` L13-L22](../../tenth/std/nn/multihead_attention.th) 的函数签名，需在 $\mathcal{F}(\mathcal{O}_{2D})$ 中给出一个合法实现。可用原语：2D matmul, add, softmax, transpose, layer_norm, dropout, masked_fill, gelu/relu。可表达的"attention 类函数"形如：
 
 $$
 F(X) = \text{SDA}(X A, X B, X C, M) \cdot D
@@ -299,7 +299,7 @@ $$
 
 任何形如 $F(X) = \text{SDA}(X A, X B, X C, M) \cdot D$ 的实现，无论 `n_heads` 参数取何值，输出都不依赖于 $h$。因此 `n_heads` 在 $\mathcal{F}(\mathcal{O}_{2D})$ 中是**冗余形参**，必然被忽略。
 
-**(c) Tenth 实现一致**：[`multihead_attention.th` L28-L35](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th) 实现：
+**(c) Tenth 实现一致**：[`multihead_attention.th` L28-L35](../../tenth/std/nn/multihead_attention.th) 实现：
 ```
 let q = x.matmul(w_q);     // (seq_len, d_model)
 let k = x.matmul(w_k);
@@ -319,7 +319,7 @@ attn_out.matmul(w_o)
 
 (b) **退化解的形式**：在 $\mathcal{F}(\mathcal{O}_{\text{Tenth}}^{0.3.3})$ 中，可用的"PE 类函数"只能由整张量构造原语 `randn`/`zeros`/`ones` 与逐元素运算复合而成，必然属于 $\{c \cdot \mathbf{1}, c \cdot \xi : c \in \mathbb{R}, \xi \sim \mathcal{N}(0, I)\}$ 类（常数或随机张量）。
 
-(c) **Tenth 实现一致**：[`positional_encoding.th` L22-L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th) 实现 `randn<T>(seq_len, d_model) * 0.01`，正是 (b) 中 $c = 0.01$ 的随机类。
+(c) **Tenth 实现一致**：[`positional_encoding.th` L22-L25](../../tenth/std/nn/positional_encoding.th) 实现 `randn<T>(seq_len, d_model) * 0.01`，正是 (b) 中 $c = 0.01$ 的随机类。
 
 **证明**：
 
@@ -328,7 +328,7 @@ attn_out.matmul(w_o)
 $\text{PE}_{\sin/\cos}$ 是 $(pos, i)$ 的二元确定函数。其标准实现需要：
 
 - **路径 P1（逐元素索引赋值）**：构造空张量 `pe = zeros(S, D)`，循环 `for pos, for i: pe[pos][2*i] = sin(angle)`。需要 `IndexAssign`/`index_mut`。Tenth 无此原语（grep `tensor.rs` 无匹配）→ **P1 不可达**。
-- **路径 P2（外积构造）**：$\text{PE} = \sin(\text{pos} \otimes \text{freq})$，其中 $\text{pos} \in \mathbb{R}^S$，$\text{freq} \in \mathbb{R}^{D/2}$。需（i）构造 `pos = arange(S)`——Tenth 无 `arange`；（ii）构造 `freq = 1/10000^[0, 2/D, ..., (D-2)/D]`——需要逐元素索引或 `linspace`，Tenth 均无；（iii）外积 `pos[:, None] * freq[None, :]`——需要 broadcasting + reshape/view，Tenth 的 broadcasting 仅支持标量与 1D 偏置（[`feedforward.th` L26](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/feedforward.th) 中 `+ b1`），不支持 2D 外积。→ **P2 不可达**。
+- **路径 P2（外积构造）**：$\text{PE} = \sin(\text{pos} \otimes \text{freq})$，其中 $\text{pos} \in \mathbb{R}^S$，$\text{freq} \in \mathbb{R}^{D/2}$。需（i）构造 `pos = arange(S)`——Tenth 无 `arange`；（ii）构造 `freq = 1/10000^[0, 2/D, ..., (D-2)/D]`——需要逐元素索引或 `linspace`，Tenth 均无；（iii）外积 `pos[:, None] * freq[None, :]`——需要 broadcasting + reshape/view，Tenth 的 broadcasting 仅支持标量与 1D 偏置（[`feedforward.th` L26](../../tenth/std/nn/feedforward.th) 中 `+ b1`），不支持 2D 外积。→ **P2 不可达**。
 - **路径 P3（向量化 sin/cos）**：若能构造 $\text{angle} = \text{pos} \cdot \text{freq}$（$S \times D/2$），再 `sin(angle)`/`cos(angle)` 交错拼接。但 sin/cos 是逐元素函数（[tensor.rs 有 `sin`/`cos`? 实际审查]——Tenth tensor.rs 中无 `sin`/`cos` 方法，仅 `relu`/`gelu`/`softmax`/`layer_norm`/`dropout`/`masked_fill`/`matmul`/`transpose`），故即便有 angle 张量也无法计算其 sin。→ **P3 不可达**。
 
 排除绕道：
@@ -354,11 +354,11 @@ $\text{PE}_{\sin/\cos}$ 是 $(pos, i)$ 的二元确定函数。其标准实现�
 
 因此，$\mathcal{F}(\mathcal{O}_{\text{Tenth}}^{0.3.3})$ 中"PE 类函数"必属于 $\{c \cdot \mathbf{1}, c \cdot \xi\}$ 类。
 
-**(c) Tenth 实现一致**：[`positional_encoding.th` L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th) `randn<T>(seq_len, d_model) * 0.01` 即 $c = 0.01$ 的随机类，与 (b) 一致。L8-L18 注释明确披露这是"占位符"，待元素索引赋值支持后替换。$\square$
+**(c) Tenth 实现一致**：[`positional_encoding.th` L25](../../tenth/std/nn/positional_encoding.th) `randn<T>(seq_len, d_model) * 0.01` 即 $c = 0.01$ 的随机类，与 (b) 一致。L8-L18 注释明确披露这是"占位符"，待元素索引赋值支持后替换。$\square$
 
 ### 5.4 定理 TR4（与 PyTorch transformer 的语义偏差）
 
-**定理 TR4**：设 $\mathcal{T}^{\text{Tenth}}$ 为 [`transformer.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th) 实现的 Pre-Norm 编码器块，$\mathcal{T}^{\text{PyTorch}}$ 为 `torch.nn.TransformerEncoderLayer`（`norm_first=True`）。则两者在五个维度上的语义偏差可分类如下：
+**定理 TR4**：设 $\mathcal{T}^{\text{Tenth}}$ 为 [`transformer.th`](../../tenth/std/nn/transformer.th) 实现的 Pre-Norm 编码器块，$\mathcal{T}^{\text{PyTorch}}$ 为 `torch.nn.TransformerEncoderLayer`（`norm_first=True`）。则两者在五个维度上的语义偏差可分类如下：
 
 | 维度 | 偏差类型 | 量化 |
 |------|---------|------|
@@ -368,7 +368,7 @@ $\text{PE}_{\sin/\cos}$ 是 $(pos, i)$ 的二元确定函数。其标准实现�
 | 激活（FFN） | **风格选择** | PyTorch 默认 ReLU，可改 GELU；Tenth 固定 GELU，与 GPT/BERT 一致 |
 | Mask | **工程弱化** | PyTorch `masked_fill` 前向 + 反向均可微；Tenth `masked_fill` 仅前向，未注册 `TapeOp`（与 T47 联动） |
 
-**证明**：逐项对比 [`transformer.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th)、[`multihead_attention.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th)、[`positional_encoding.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th)、[`feedforward.th` L29](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/feedforward.th)（`hidden.gelu()`）、[`attention.th` L38](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th)（`scores.masked_fill(mask, -1e9)`）与 PyTorch `nn.TransformerEncoderLayer` 源码。各项结论分别由 TR1（架构）、TR2（MHA）、TR3（PE）、源码审查（激活）、T47（mask 可微性）支撑。$\square$
+**证明**：逐项对比 [`transformer.th`](../../tenth/std/nn/transformer.th)、[`multihead_attention.th`](../../tenth/std/nn/multihead_attention.th)、[`positional_encoding.th`](../../tenth/std/nn/positional_encoding.th)、[`feedforward.th` L29](../../tenth/std/nn/feedforward.th)（`hidden.gelu()`）、[`attention.th` L38](../../tenth/std/nn/attention.th)（`scores.masked_fill(mask, -1e9)`）与 PyTorch `nn.TransformerEncoderLayer` 源码。各项结论分别由 TR1（架构）、TR2（MHA）、TR3（PE）、源码审查（激活）、T47（mask 可微性）支撑。$\square$
 
 ### 5.5 定理 TR5（最小张量操作集）
 
@@ -386,8 +386,8 @@ $\text{PE}_{\sin/\cos}$ 是 $(pos, i)$ 的二元确定函数。其标准实现�
 
 **最小性证明**（反例法）：
 
-- **去掉 P1（softmax）**：attention scores 无法归一化为概率分布，Tenth [`attention.th` L39](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/attention.th) 直接调用 `masked_scores.softmax()`，无法用其他原语复合（softmax 涉及 exp + sum + 除法，Tenth 无逐元素 exp）。
-- **去掉 P2（layer_norm）**：Transformer 核心归一化无法实现，Tenth [`layer_norm.th` L12](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/layer_norm.th) `x.layer_norm(gamma, beta, eps)` 为内建方法。
+- **去掉 P1（softmax）**：attention scores 无法归一化为概率分布，Tenth [`attention.th` L39](../../tenth/std/nn/attention.th) 直接调用 `masked_scores.softmax()`，无法用其他原语复合（softmax 涉及 exp + sum + 除法，Tenth 无逐元素 exp）。
+- **去掉 P2（layer_norm）**：Transformer 核心归一化无法实现，Tenth [`layer_norm.th` L12](../../tenth/std/nn/layer_norm.th) `x.layer_norm(gamma, beta, eps)` 为内建方法。
 - **去掉 P3（matmul 2D）**：所有线性投影失效，attention 的 $QK^\top$ 与 $V$ 加权无法计算。
 - **去掉 P4（batched matmul）**：由 TR2，True MHA 不可表达，必然退化为 single-head。
 - **去掉 P5（索引赋值/scatter）**：由 TR3，sinusoidal PE 不可表达，必然退化为随机/常数。也可证 embedding lookup（`embedding.th`）不可表达——后者是更广泛的 NN 必需组件。
@@ -416,7 +416,7 @@ Pre-Norm 反向传播时，残差路径导数含 $I$ 项（恒等），保证深
 
 ### 6.3 Tenth 的选择
 
-[`transformer.th` L1-L7](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th) 注释明确："Uses pre-norm (LayerNorm before each sub-layer) which is more stable for training deep Transformers." 这是现代 LLM 通行选择（GPT-2/3/4、LLaMA、PaLM 均 Pre-Norm）。Tenth 的选择在工程上正确，理论上有 TR1 支撑。
+[`transformer.th` L1-L7](../../tenth/std/nn/transformer.th) 注释明确："Uses pre-norm (LayerNorm before each sub-layer) which is more stable for training deep Transformers." 这是现代 LLM 通行选择（GPT-2/3/4、LLaMA、PaLM 均 Pre-Norm）。Tenth 的选择在工程上正确，理论上有 TR1 支撑。
 
 ---
 
@@ -435,9 +435,9 @@ single-head 等价 $\widetilde{\text{MHA}}$ 与 True MHA 的核心差异：
 
 ### 7.2 缓解路径
 
-- **路径 A（补齐 P4：3D/batched matmul）**：在 [`tensor.rs` matmul](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 中扩展 `a_ndim == 3 && b_ndim == 3` 路径，沿第一维 batched matmul。这是最直接的修复。
+- **路径 A（补齐 P4：3D/batched matmul）**：在 [`tensor.rs` matmul](../../tenth/src/runtime/tensor.rs) 中扩展 `a_ndim == 3 && b_ndim == 3` 路径，沿第一维 batched matmul。这是最直接的修复。
 - **路径 B（补齐 P5：切片 + concat）**：添加 `tensor.slice(dim, start, end)` 与 `tensor.concat(other, dim)`，支持 head 循环实现。需同时注册到 `TapeOp` 以保持可微。
-- **路径 C（注册 native MHA）**：在 [`main.rs` register_natives](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs) 中注册 `multihead_attention_native`，绕过语言层。但失去可微性，且违背 Tenth "可微 NN 标准库"的范式（T49）。
+- **路径 C（注册 native MHA）**：在 [`main.rs` register_natives](../../tenth/src/main.rs) 中注册 `multihead_attention_native`，绕过语言层。但失去可微性，且违背 Tenth "可微 NN 标准库"的范式（T49）。
 
 ### 7.3 与 T47 的联动
 
@@ -526,11 +526,11 @@ Tenth 在 LayerNorm、残差、Dropout、FFN 几何结构上与 PyTorch 一致�
 
 ### 11.1 退化的"积极意义"
 
-虽然 TR2/TR3 揭示了实现退化，但 [`multihead_attention.th` L4-L11](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th) 与 [`positional_encoding.th` L8-L18](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th) 的注释表明实现者**完全知情**——这是"诚实退化"而非"隐瞒缺陷"。实现者保留了 `n_heads` 形参与 `d_k` 计算（[`multihead_attention.th` L20, L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th)），为未来补齐 P4 后的无缝升级留接口。
+虽然 TR2/TR3 揭示了实现退化，但 [`multihead_attention.th` L4-L11](../../tenth/std/nn/multihead_attention.th) 与 [`positional_encoding.th` L8-L18](../../tenth/std/nn/positional_encoding.th) 的注释表明实现者**完全知情**——这是"诚实退化"而非"隐瞒缺陷"。实现者保留了 `n_heads` 形参与 `d_k` 计算（[`multihead_attention.th` L20, L25](../../tenth/std/nn/multihead_attention.th)），为未来补齐 P4 后的无缝升级留接口。
 
 ### 11.2 测试与验证
 
-[`transformer.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th) 当前无独立测试文件（标准库 nn 模块的测试分布在 [`tenth/std/nn/`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/) 各 test_*.th）。退化的 MHA 与 PE 不影响前向计算的 shape 正确性，但影响语义正确性。建议测试部（与 T49 联动）补充：
+[`transformer.th`](../../tenth/std/nn/transformer.th) 当前无独立测试文件（标准库 nn 模块的测试分布在 [`tenth/std/nn/`](../../tenth/std/nn/) 各 test_*.th）。退化的 MHA 与 PE 不影响前向计算的 shape 正确性，但影响语义正确性。建议测试部（与 T49 联动）补充：
 
 - **MHA 退化测试**：验证 `n_heads` 参数对输出无影响（确认退化）。
 - **PE 随机性测试**：验证两次调用产生不同输出（确认随机占位）。
@@ -538,7 +538,7 @@ Tenth 在 LayerNorm、残差、Dropout、FFN 几何结构上与 PyTorch 一致�
 
 ### 11.3 性能影响
 
-single-head 等价 MHA 与 True MHA 计算复杂度相同（§7.1），但 single-head 丢失 head 并行性，在 GPU 上无法利用 head 维并行。Tenth 当前主要在 CPU 运行（[`tensor.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 基于 ndarray），性能影响有限。
+single-head 等价 MHA 与 True MHA 计算复杂度相同（§7.1），但 single-head 丢失 head 并行性，在 GPU 上无法利用 head 维并行。Tenth 当前主要在 CPU 运行（[`tensor.rs`](../../tenth/src/runtime/tensor.rs) 基于 ndarray），性能影响有限。
 
 ---
 
@@ -546,7 +546,7 @@ single-head 等价 MHA 与 True MHA 计算复杂度相同（§7.1），但 singl
 
 ### 12.1 P4/P5/P6 补齐后的自举影响
 
-补齐 P4（batched matmul）需扩展 [`tensor.rs` matmul](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 与对应的 `TapeOp::MatMul` 反向（已注册，需扩展到 3D）。补齐 P5（索引赋值）需新增 `TapeOp::Scatter` 与对应反向 `Gather`。补齐 P6（可微 masked_fill）需新增 `TapeOp::MaskedFill`。三个扩展均涉及 autodiff 系统（[`autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs)），需 T39 形式化保证反向正确性。是否影响自举三路径（A/B/C）需进一步分析。
+补齐 P4（batched matmul）需扩展 [`tensor.rs` matmul](../../tenth/src/runtime/tensor.rs) 与对应的 `TapeOp::MatMul` 反向（已注册，需扩展到 3D）。补齐 P5（索引赋值）需新增 `TapeOp::Scatter` 与对应反向 `Gather`。补齐 P6（可微 masked_fill）需新增 `TapeOp::MaskedFill`。三个扩展均涉及 autodiff 系统（[`autodiff.rs`](../../tenth/src/runtime/autodiff.rs)），需 T39 形式化保证反向正确性。是否影响自举三路径（A/B/C）需进一步分析。
 
 ### 12.2 算术等价的更广边界
 
@@ -577,7 +577,7 @@ TR5 给出标准 Transformer 的最小集。但现代 LLM 还涉及：
 
 TR2、TR3 的"不可表达"证明假设 $\mathcal{F}(\mathcal{O})$ 是原语集的"有限次复合 + 加法 + 标量乘法 + let 绑定"的闭包。这一假设未涵盖：
 
-- **解释器 native 函数**：Tenth 允许 Rust 侧注册 native 函数（[`main.rs` register_natives](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/main.rs)），可绕过原语集。但 native 函数不可微（无 TapeOp），且不在 T49 的"NN 标准库"范畴。
+- **解释器 native 函数**：Tenth 允许 Rust 侧注册 native 函数（[`main.rs` register_natives](../../tenth/src/main.rs)），可绕过原语集。但 native 函数不可微（无 TapeOp），且不在 T49 的"NN 标准库"范畴。
 - **递归 + 高阶函数**：Tenth 支持函数式编程，理论上可用递归模拟循环。但张量原语集仍受限，递归不引入新原语。
 - **未来扩展**：若 Tenth 后续添加 `sin`/`cos`/`arange`/`linspace` 等原语，TR3 的不可表达性可能失效。
 
@@ -597,9 +597,9 @@ TR5 的"最小"是相对于"标准 Transformer + GPT/BERT 通行扩展"而言。
 
 ### 13.4 工程差距
 
-本文形式化基于 [`transformer.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th) 等源码的当前版本。若实现者后续修改实现（如补齐 True MHA），本文定理需同步更新。本文未涵盖：
+本文形式化基于 [`transformer.th`](../../tenth/std/nn/transformer.th) 等源码的当前版本。若实现者后续修改实现（如补齐 True MHA），本文定理需同步更新。本文未涵盖：
 
-- `feedforward.th` 的 GELU 是否可微（[`feedforward.th` L29](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/feedforward.th) `hidden.gelu()`，需查 TapeOp 是否含 GELU）；
+- `feedforward.th` 的 GELU 是否可微（[`feedforward.th` L29](../../tenth/std/nn/feedforward.th) `hidden.gelu()`，需查 TapeOp 是否含 GELU）；
 - `attention.th` 的 `masked_fill` 在反向传播中的实际行为（T47 已部分分析）；
 - `dropout` 在训练/推理模式下的切换机制。
 
@@ -620,7 +620,7 @@ TR5 的"最小性"部分依赖 TR2/TR3 的"不可表达"，而 TR2/TR3 的"不�
 本文形式化分析了 Tenth v0.3.3 Transformer 实现的正确性与限制。核心结论：
 
 1. **正确性**：Pre-Norm 架构选择正确（TR1），与原论文 Post-Norm 在单层语义稠密相等，在多层训练稳定性上更优，与 GPT/BERT 通行实践一致。
-2. **限制的结构性**：MHA 退化（TR2）与 PE 退化（TR3）是 Tenth 张量原语集能力不足的结构性后果，非实现者疏漏。源码注释（[`multihead_attention.th` L4-L11](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th)、[`positional_encoding.th` L8-L18](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th)）证实实现者完全知情，是"诚实退化"。
+2. **限制的结构性**：MHA 退化（TR2）与 PE 退化（TR3）是 Tenth 张量原语集能力不足的结构性后果，非实现者疏漏。源码注释（[`multihead_attention.th` L4-L11](../../tenth/std/nn/multihead_attention.th)、[`positional_encoding.th` L8-L18](../../tenth/std/nn/positional_encoding.th)）证实实现者完全知情，是"诚实退化"。
 3. **与 PyTorch 偏差**：五维偏差分类（TR4）揭示 Tenth 在架构、激活、LayerNorm、残差、Dropout 上与 PyTorch 一致或风格差异，在 MHA、PE、mask 上退化或弱化。
 4. **最小张量操作集**：AI 原生语言完整表达标准 Transformer 需 7 个不可约原语（TR5），Tenth 已具备 4 个，缺失 3 个（batched matmul、索引赋值/scatter、可微 masked_fill/select）。
 5. **联动结论**：与 T47（可微分支编码）联动明确算术等价技巧的能力边界——分段线性函数可绕过 select，非线性复合 mask 不可；与 T49（NN 标准库范式）联动明确 NN 标准库表达力上限等于语言张量原语集表达力，TR5 是 T49 范式落地的必要条件。
@@ -638,12 +638,12 @@ TR5 的"最小性"部分依赖 TR2/TR3 的"不可表达"，而 TR2/TR3 的"不�
 5. Hendrycks, D. & Gimpel, K. (2016). *Gaussian Error Linear Units (GELU)*. arXiv:1606.08415.
 6. Ba, J. L. et al. (2016). *Layer Normalization*. arXiv:1607.06450.
 7. Su, J. et al. (2021). *RoFormer: Enhanced Transformer with Rotary Position Embedding*. arXiv:2104.09864.
-8. Tenth Project (2026). *Tenth 语言参考手册 v0.3.3*. [`docs/语言参考手册.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md).
-9. Tenth Project (2026). *T47: leaky_relu 算术等价技巧与可微分支编码*. [`docs/论文/T47-leaky-relu算术等价与可微分支编码.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T47-leaky-relu算术等价与可微分支编码.md).
-10. Tenth Project (2026). *T39: Wengert Tape 形式化语义与反向模式正确性*. [`docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md).
-11. Tenth Project (2026). *T49: 神经网络组件作为语言级标准库的范式*（规划中，参见 [`docs/理论分析点调研报告.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/理论分析点调研报告.md) §7.T49）.
-12. Tenth Project (2026). *T46: 21 算子代数性质与融合正确性*. [`docs/论文/T46-21算子代数性质与融合正确性.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/论文/T46-21算子代数性质与融合正确性.md).
-13. Tenth Project (2026). *能力梳理/能力全梳理.md*. [`能力梳理/能力全梳理.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/能力梳理/能力全梳理.md).
+8. Tenth Project (2026). *Tenth 语言参考手册 v0.3.3*. [`docs/语言参考手册.md`](../语言参考手册.md).
+9. Tenth Project (2026). *T47: leaky_relu 算术等价技巧与可微分支编码*. [`docs/论文/T47-leaky-relu算术等价与可微分支编码.md`](T47-leaky-relu算术等价与可微分支编码.md).
+10. Tenth Project (2026). *T39: Wengert Tape 形式化语义与反向模式正确性*. [`docs/论文/T39-Wengert-Tape形式化语义与反向模式正确性.md`](T39-Wengert-Tape形式化语义与反向模式正确性.md).
+11. Tenth Project (2026). *T49: 神经网络组件作为语言级标准库的范式*（规划中，参见 [`docs/理论分析点调研报告.md`](../理论分析点调研报告.md) §7.T49）.
+12. Tenth Project (2026). *T46: 21 算子代数性质与融合正确性*. [`docs/论文/T46-21算子代数性质与融合正确性.md`](T46-21算子代数性质与融合正确性.md).
+13. Tenth Project (2026). *能力梳理/能力全梳理.md*. [`能力梳理/能力全梳理.md`](../../能力梳理/能力全梳理.md).
 14. Paszke, A. et al. (2019). *PyTorch: An Imperative Style, High-Performance Deep Learning Library*. NeurIPS 2019.
 15. Bradbury, J. et al. (2018). *JAX: Composable Transformations of Python+NumPy Programs*. 
 
@@ -653,25 +653,25 @@ TR5 的"最小性"部分依赖 TR2/TR3 的"不可表达"，而 TR2/TR3 的"不�
 
 | 定理 | 简称 | 内容 | 源码依据 |
 |------|------|------|---------|
-| TR1 | Pre-Norm 架构正确性 | 单层稠密等价 + 多层残差下界 + 实现一致 | [`transformer.th` L26, L32](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th) |
-| TR2 | MHA 限制不可避免性 | 2D matmul 下 True MHA 不可表达，退化为 single-head | [`multihead_attention.th` L4-L11, L28-L35](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/multihead_attention.th)、[`tensor.rs` L686-L736](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) |
-| TR3 | PE 退化 | 无索引赋值下 sinusoidal 不可表达，退化为随机 | [`positional_encoding.th` L8-L18, L22-L25](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/positional_encoding.th) |
-| TR4 | PyTorch 对比 | 五维偏差分类 | [`transformer.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/transformer.th) 全文 |
+| TR1 | Pre-Norm 架构正确性 | 单层稠密等价 + 多层残差下界 + 实现一致 | [`transformer.th` L26, L32](../../tenth/std/nn/transformer.th) |
+| TR2 | MHA 限制不可避免性 | 2D matmul 下 True MHA 不可表达，退化为 single-head | [`multihead_attention.th` L4-L11, L28-L35](../../tenth/std/nn/multihead_attention.th)、[`tensor.rs` L686-L736](../../tenth/src/runtime/tensor.rs) |
+| TR3 | PE 退化 | 无索引赋值下 sinusoidal 不可表达，退化为随机 | [`positional_encoding.th` L8-L18, L22-L25](../../tenth/std/nn/positional_encoding.th) |
+| TR4 | PyTorch 对比 | 五维偏差分类 | [`transformer.th`](../../tenth/std/nn/transformer.th) 全文 |
 | TR5 | 最小张量操作集 | 7 个不可约原语，Tenth 缺 3 | 综合依据 |
 
 ## 附录 B：实施建议
 
 基于本文理论结论，对 Tenth 后续版本的建议：
 
-1. **优先级 1（补齐 P6）**：在 [`autodiff.rs`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/autodiff.rs) `TapeOp` 枚举中新增 `MaskedFill` 变体，实现前向（已有，[`tensor.rs` L1086-L1118](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs)）+ 反向（mask 位置梯度为 0）。涉及 T39 反向正确性形式化。
-2. **优先级 2（补齐 P4）**：在 [`tensor.rs` matmul](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/src/runtime/tensor.rs) 中扩展 `a_ndim == 3 && b_ndim == 3` 路径，沿第一维 batched matmul。同步扩展 `TapeOp::MatMul` 反向到 3D。
+1. **优先级 1（补齐 P6）**：在 [`autodiff.rs`](../../tenth/src/runtime/autodiff.rs) `TapeOp` 枚举中新增 `MaskedFill` 变体，实现前向（已有，[`tensor.rs` L1086-L1118](../../tenth/src/runtime/tensor.rs)）+ 反向（mask 位置梯度为 0）。涉及 T39 反向正确性形式化。
+2. **优先级 2（补齐 P4）**：在 [`tensor.rs` matmul](../../tenth/src/runtime/tensor.rs) 中扩展 `a_ndim == 3 && b_ndim == 3` 路径，沿第一维 batched matmul。同步扩展 `TapeOp::MatMul` 反向到 3D。
 3. **优先级 3（补齐 P5）**：新增 `tensor.slice(dim, start, end)` 与 `tensor[pos][i] = value`（或 `tensor.scatter(indices, values)`）。同步新增 `TapeOp::Scatter`（反向为 `Gather`）。
 4. **短期缓解（不补齐原语）**：
    - PE：改用 learned PE（`randn(S, D)` 作为可训练参数，不乘 0.01），避开 sinusoidal 的不可表达性。
    - MHA：保留当前 single-head 退化，在文档中明确披露。
    - mask：保持 `masked_fill` 仅前向，在训练时避免依赖 mask 反向梯度（与 T47 联动）。
-5. **测试补充**：补齐 [`tenth/std/nn/test_transformer.th`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/tenth/std/nn/) 形式的测试，覆盖 MHA 退化（`n_heads` 无影响）、PE 随机性、Pre-Norm 形式（§11.2）。
-6. **文档同步**：补齐 P4/P5/P6 后，更新 [`MEMO.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/MEMO.md) 变更记录、[`能力梳理/能力全梳理.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/能力梳理/能力全梳理.md) 中 Transformer 相关条目状态、[`docs/语言参考手册.md`](file:///d:/史蒂夫/Desktop/AI开发新语言：头脑风暴与评估/docs/语言参考手册.md) 张量方法章节。
+5. **测试补充**：补齐 [`tenth/std/nn/test_transformer.th`](../../tenth/std/nn/) 形式的测试，覆盖 MHA 退化（`n_heads` 无影响）、PE 随机性、Pre-Norm 形式（§11.2）。
+6. **文档同步**：补齐 P4/P5/P6 后，更新 [`MEMO.md`](../../MEMO.md) 变更记录、[`能力梳理/能力全梳理.md`](../../能力梳理/能力全梳理.md) 中 Transformer 相关条目状态、[`docs/语言参考手册.md`](../语言参考手册.md) 张量方法章节。
 
 ---
 
