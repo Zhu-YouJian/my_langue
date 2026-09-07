@@ -116,7 +116,7 @@ phi 节点的存在是 SSA 形式的产物——因为 SSA 要求每个值只有
 ### 3.1 基本记号
 
 - $\mathbb{N}$：自然数集；$\mathbb{Z}$：整数集；$\mathbb{B} = \{0, 1\}$。
-- $\mathrm{Op}$：Tenth 字节码指令集（46 个 Op，见 [`runtime/vm.rs`](../../tenth/src/runtime/vm.rs) 中的 `enum Op`）。
+- $\mathrm{Op}$：Tenth 字节码指令集（46 个 Op，见 [`runtime/vm.rs`](../../tenth/src/runtime/vm.rs) 中的 `enum Op`；注：旧版本快照，现行 VM opcode 数以 CODE_WIKI 为准 = 65）。
 - $\mathrm{Value}$：Tenth 运行时值域（Int/Float/Bool/String/Unit/Vec/Map/Struct/Enum/Closure/Tensor 等）。
 - $V_{\mathrm{size}} := \mathrm{size\_of}(\mathrm{Value})$：单个 Value 的字节大小（32+ 字节，含 `Rc`/`Vec`/`String` 等，见 [`hostcalls.rs:1-7`](../../tenth/src/compile/jit/hostcalls.rs)）。
 - $D_{\max} := 256$：栈区容量（[`translator.rs:32`](../../tenth/src/compile/jit/translator.rs)）。

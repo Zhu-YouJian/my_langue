@@ -11,7 +11,7 @@
 
 ## 摘要
 
-本文对 Tenth 语言的 JIT 编译策略进行形式化语义保持证明。Tenth JIT 采取"autodiff 录制时回退 VM + 全 46 Op 显式处理无默认分支 + `catch_unwind` 安全闸门"三重保守策略，构成"特化-退化"对偶：当 chunk 满足可特化条件时由 Cranelift 生成机器码，否则三层 fallback（L1：autodiff 录制时回退；L2：不支持的 opcode 回退；L3：编译失败回退）之一接管，统一退化为 `Vm::call` 解释执行。本文给出五个主定理：（E1）特化健全性，证明 JIT 编译产物在支持的 opcode 子集上与 VM 语义构成弱双模拟；（E2）fallback 语义保持，证明三层 fallback 触发后 VM 状态与"从未进入 JIT 路径"的状态同构；（E3）autodiff 安全门正确性，证明 L1 闸门保证 Tape 一致性；（E4）hostcall 协议安全性，证明 FFI 边界 UB 自由；（E5）特化-退化对偶，证明特化函数 S 与退化函数 D 构成 Galois 连接。本文诚实记录 7 处理论局限，包括 JIT 缓存的不动点假设、`is_pic = false` 的不可重定位、`PushFloat32` 降级为 f64 的精度漂移、`MAX_STACK_DEPTH = 256` 的静默溢出风险等，为后续 effect system 强制 recording 注解、自动推导特化安全 opcode 子集等未来工作奠定形式化基础。
+本文对 Tenth 语言的 JIT 编译策略进行形式化语义保持证明。Tenth JIT 采取"autodiff 录制时回退 VM + 全 46 Op 显式处理无默认分支（注：旧版本快照；现行 VM opcode 数以 CODE_WIKI 为准 = 65） + `catch_unwind` 安全闸门"三重保守策略，构成"特化-退化"对偶：当 chunk 满足可特化条件时由 Cranelift 生成机器码，否则三层 fallback（L1：autodiff 录制时回退；L2：不支持的 opcode 回退；L3：编译失败回退）之一接管，统一退化为 `Vm::call` 解释执行。本文给出五个主定理：（E1）特化健全性，证明 JIT 编译产物在支持的 opcode 子集上与 VM 语义构成弱双模拟；（E2）fallback 语义保持，证明三层 fallback 触发后 VM 状态与"从未进入 JIT 路径"的状态同构；（E3）autodiff 安全门正确性，证明 L1 闸门保证 Tape 一致性；（E4）hostcall 协议安全性，证明 FFI 边界 UB 自由；（E5）特化-退化对偶，证明特化函数 S 与退化函数 D 构成 Galois 连接。本文诚实记录 7 处理论局限，包括 JIT 缓存的不动点假设、`is_pic = false` 的不可重定位、`PushFloat32` 降级为 f64 的精度漂移、`MAX_STACK_DEPTH = 256` 的静默溢出风险等，为后续 effect system 强制 recording 注解、自动推导特化安全 opcode 子集等未来工作奠定形式化基础。
 
 **关键词**：JIT 编译、部分求值、双模拟、语义保持、fallback、autodiff、Cranelift、Tenth 语言
 
@@ -30,7 +30,7 @@ Tenth 语言的 JIT 基于 Cranelift（[`tenth/src/compile/jit/mod.rs:1-21`](../
 Tenth JIT 的保守性体现在三个层次（详见 §3）：
 
 1. **L1 — Autodiff 安全门**：函数入口处检查 `vm.is_recording()`，若为真立即回退 VM（[`mod.rs:41-43`](../../tenth/src/compile/jit/mod.rs)）。autodiff 录制时 Tape 写入发生在解释器内部，JIT 编译的标量算术可能跳过这些写入，因此 L1 是关键安全闸门。
-2. **L2 — 不支持的 opcode**：translator 对全部 46 个 Op 显式处理，无默认 fallback 分支（[`translator.rs:221-483`](../../tenth/src/compile/jit/translator.rs)）。当前仅 `IsStruct` 因结构模式匹配未 JIT 化而显式返回 `Err("JIT: IsStruct not supported, fallback to VM")`（[`translator.rs:483-486`](../../tenth/src/compile/jit/translator.rs)）。无默认分支意味着新增 Op 而不同步 translator 会立即触发 L2 回退，而非静默生成错误代码。
+2. **L2 — 不支持的 opcode**：translator 对全部 46 个 Op 显式处理，无默认 fallback 分支（注：旧版本快照；现行 VM opcode 数以 CODE_WIKI 为准 = 65）（[`translator.rs:221-483`](../../tenth/src/compile/jit/translator.rs)）。当前仅 `IsStruct` 因结构模式匹配未 JIT 化而显式返回 `Err("JIT: IsStruct not supported, fallback to VM")`（[`translator.rs:483-486`](../../tenth/src/compile/jit/translator.rs)）。无默认分支意味着新增 Op 而不同步 translator 会立即触发 L2 回退，而非静默生成错误代码。
 3. **L3 — 编译失败**：Cranelift `translate` 或 `define_function` 返回 `Err` 时（如 StackSlot 过大、`declare_function` 失败），`get_or_compile` 返回 `Err`，触发 `Err(_) => return vm.call(name)`（[`mod.rs:62-65`](../../tenth/src/compile/jit/mod.rs)）。
 
 此外，所有 hostcall trampoline 经 `catch_unwind` 包裹（[`hostcalls.rs:41-61`](../../tenth/src/compile/jit/hostcalls.rs)），构成第四道（隐式）安全网，防止 panic 跨 FFI 边界（Rust 中跨 FFI unwind 是 UB）。
@@ -75,7 +75,7 @@ Tenth JIT 的保守性体现在三个层次（详见 §3）：
 - **第二投影**：$\mathrm{spec}(\mathrm{spec}, \mathrm{int}) = \mathrm{compiler}$，将特化器特化到解释器得到编译器。
 - **第三投影**：$\mathrm{spec}(\mathrm{spec}, \mathrm{spec}) = \mathrm{cogen}$，自举生成生成器。
 
-Tenth JIT 的视角是**退化版的第一投影**：以 VM 解释器为 $\mathrm{int}$、字节码 chunk 为 $p$、Cranelift 为代码生成后端，生成原生机器码 $p'$。但 Tenth 不做激进 binding-time analysis（BTA），而是采用"全显式枚举"策略——translator 对 46 个 Op 逐一处理，无法处理的 op 直接回退。这相当于 BTA 在编译器内部硬编码为静态表，而非数据流分析产物。
+Tenth JIT 的视角是**退化版的第一投影**：以 VM 解释器为 $\mathrm{int}$、字节码 chunk 为 $p$、Cranelift 为代码生成后端，生成原生机器码 $p'$。但 Tenth 不做激进 binding-time analysis（BTA），而是采用"全显式枚举"策略——translator 对 46 个 Op 逐一处理（注：旧版本快照；现行 VM opcode 数以 CODE_WIKI 为准 = 65），无法处理的 op 直接回退。这相当于 BTA 在编译器内部硬编码为静态表，而非数据流分析产物。
 
 ### 2.2 V8 deoptimization 与 PyPy guards
 
@@ -102,7 +102,7 @@ CompCert（[Leroy 2009]）使用 simulation（单向模拟）证明 C 编译器�
 
 ### 3.1 三层 Fallback 的形式定义
 
-**定义 3.1（chunk 与可特化性）**。设 $\mathcal{C}$ 为所有 chunk 的集合，$\mathcal{O} = \{\mathrm{Op}_1, \ldots, \mathrm{Op}_{46}\}$ 为 46 个 opcode 的集合。定义 **可特化 opcode 子集** $\mathcal{O}_{\mathrm{jit}} \subset \mathcal{O}$ 为 translator 显式生成 Cranelift IR 而非返回 `Err` 的 opcode 集合。
+**定义 3.1（chunk 与可特化性）**。设 $\mathcal{C}$ 为所有 chunk 的集合，$\mathcal{O} = \{\mathrm{Op}_1, \ldots, \mathrm{Op}_{46}\}$ 为 46 个 opcode 的集合（注：旧版本快照；现行 VM opcode 数以 CODE_WIKI 为准 = 65）。定义 **可特化 opcode 子集** $\mathcal{O}_{\mathrm{jit}} \subset \mathcal{O}$ 为 translator 显式生成 Cranelift IR 而非返回 `Err` 的 opcode 集合。
 
 **实现对应**：[`translator.rs:221-487`](../../tenth/src/compile/jit/translator.rs) 的 `emit_op` 函数中，45 个 opcode 走 `match` 臂生成 IR，仅 `IsStruct(_)` 显式返回 `Err`（[`translator.rs:483-486`](../../tenth/src/compile/jit/translator.rs)）。因此 $|\mathcal{O}_{\mathrm{jit}}| = 45$，$|\mathcal{O} \setminus \mathcal{O}_{\mathrm{jit}}| = 1$。
 
@@ -561,7 +561,7 @@ $$
 
 **推论 E5.1（特化保守性）**。$\mathrm{Spec}$ 是保守的：仅当 chunk 的所有 opcode 在 $\mathcal{O}_{\mathrm{jit}}$ 中且 Cranelift 编译成功时才特化。任何不确定情形一律退化。
 
-**推论 E5.2（部分求值视角）**。$\mathrm{Spec}$ 是退化版的第一 Futamura 投影：以 VM 为解释器、chunk 为程序、Cranelift 为后端，生成机器码 $p'$。但与经典部分求值的差异是：BTA 是硬编码的静态表（46-op 显式枚举），而非数据流分析。
+**推论 E5.2（部分求值视角）**。$\mathrm{Spec}$ 是退化版的第一 Futamura 投影：以 VM 为解释器、chunk 为程序、Cranelift 为后端，生成机器码 $p'$。但与经典部分求值的差异是：BTA 是硬编码的静态表（46-op 显式枚举；注：旧版本快照，现行 VM opcode 数以 CODE_WIKI 为准 = 65），而非数据流分析。
 
 ---
 
@@ -638,7 +638,7 @@ JIT 时根据 effect 标注决定是否特化：
 
 **理论价值**：自动化的 BTA（binding-time analysis），减少手动维护成本。
 
-**实施难度**：中。需要静态分析 VM 源码或 HIR，但 Tenth 的 `Op` 枚举是封闭的（46 个变体），分析可行。
+**实施难度**：中。需要静态分析 VM 源码或 HIR，但 Tenth 的 `Op` 枚举是封闭的（46 个变体；注：旧版本快照，现行 VM opcode 数以 CODE_WIKI 为准 = 65），分析可行。
 
 ---
 

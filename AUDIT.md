@@ -26,7 +26,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 ## 三、测试矩阵
 
-> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。统计日期：2026-07-12（--release 模式）。
+> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。**现行统计基线以 `能力梳理/能力全梳理.md` §统计基线为准（2026-09-07：2416 passed / 0 failed / 17 ignored）**；下表 per-文件 明细为较旧口径的存档记录（统计日期：2026-07-12，--release 模式），可能与合计数字不完全同步（合计见本行下行【总计】）。
 
 ### 基础管线
 
@@ -167,7 +167,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试目标 | 数量 | 说明 |
 |----------|------|------|
-| **总计** | **1121 passed / 0 failed / 14 ignored** | 63 个测试套件（--release 模式，0 栈溢出；debug 模式下 6 个文件栈溢出为预存问题） |
+| **总计** | **2416 passed / 0 failed / 17 ignored** | 现行基线（2026-09-07，`cargo test --release` 实测，套件数以实际为准）. 权威合计见 `能力梳理/能力全梳理.md` §统计基线。 |
 
 > **2026-07-08 张量修复测试状态**：本次张量修复（f16/bf16 Phase 1 + 序列化 v2 + 4 项小修复）的代码改动已通过现有测试套件验证（lib 16 + integration 14 + native_parity 35 + stdlib 114 = 179 passed；autodiff 5 passed；自举通过），**未新增独立测试文件**——`native_parity_test.rs` 的 35 项已含序列化 v2 parity 测试（test_save_load_weights_parity + test_save_load_weights_nonzero_parity）。Wave 3 测试部补测试任务进行中（accumulate_loop 功能测试 / autodiff unbroadcast shape 测试 / AdamW 单值返回版本测试 / clip_grad_by_norm JIT 路径测试 / 序列化 f32 读写测试 / f16/bf16 基本运算测试），完成后由测试部同步 §三 测试矩阵新增 tensor_features_test 行 + 总计数字。
 

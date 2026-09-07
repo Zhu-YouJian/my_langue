@@ -50,9 +50,9 @@ Tenth 是**一种新的可能性**：一门语言同时覆盖通用编程和 AI 
 - LSP 服务器：hover/completion/definition/references/rename/formatting 等 13 项能力
 - GPU 后端脚手架：CudaKernel 模板 + Device 抽象 + 算子融合/并行分解
 
-**标准库**：以 `tenth/std/` + `prelude.th` 索引为准（`.th` 71 个 / 命名空间约 29）覆盖 nn/optim/data/init/collections/string/utils/fs/json/toml/cli/logging/time/random/math/crypto/regex/net/http/process/distributed 等
+**标准库**：以 `tenth/std/` + `prelude.th` 索引为准（模块数见 `能力梳理/能力全梳理.md` §统计基线；命名空间约 29）覆盖 nn/optim/data/init/collections/string/utils/fs/json/toml/cli/logging/time/random/math/crypto/regex/net/http/process/distributed 等
 
-**测试**：2416 passed / 0 failed / 17 ignored（实测，`cargo test --release`）；63 个可运行实例（另有 .th 文件 72 个，不同口径）双路径可运行；自举验证 `[OK]`
+**测试**：测试数/实例数见 `能力梳理/能力全梳理.md` §统计基线（实测，`cargo test --release`）；实例双路径可运行；自举验证 `[OK]`
 
 ## Quick Start
 
@@ -138,7 +138,7 @@ fn main() {
 }
 ```
 
-更多示例见 `Tenth实例/` 目录（63 个可运行实例，另有 .th 文件 72 个，不同口径）和 `tenth/std/` 标准库（以 `tenth/std/` + `prelude.th` 索引为准，`.th` 71 个 / 命名空间约 29）。
+更多示例见 `Tenth实例/` 目录（实例数见 `能力梳理/能力全梳理.md` §统计基线）和 `tenth/std/` 标准库（以 `tenth/std/` + `prelude.th` 索引为准，模块数见 `能力梳理/能力全梳理.md` §统计基线）。
 
 ## 自动微分
 
@@ -201,12 +201,14 @@ Tenth 编译器由 Tenth 自身编写（`tenthc/`），三条自举路径通过�
 | `RELEASE_NOTES.md` | 1.0 发布说明（里程碑回顾/关键能力/已知限制/升级指引） |
 | `CODE_WIKI.md` | 模块架构、编译管线、依赖关系 |
 | `MEMO.md` | 逐版变更记录、已知限制演化、重大决策 |
-| `能力梳理/能力全梳理.md` | 601 项能力的逐条完成状态（✅/⚠️/❌） |
+| `能力梳理/能力全梳理.md` | 594 项能力的逐条完成状态（✅/⚠️/❌） |
 | `docs/语言参考手册.md` | 语言语法、类型系统、标准库 API |
 | `docs/shape-check-roadmap/` | Shape 检查战略规划与短期规划 |
 | `AUDIT.md` | 缺陷登记册、测试覆盖矩阵、架构债务 |
 | `DEPS.md` | 环境配置、构建命令、依赖清单 |
 | `SECURITY.md` | 威胁模型与沙箱选项 |
+
+> 注：内部 AI 协作/编排文档（`.agents/`、`docs/信息地图.md`、`docs/决策记录/` 等）仅本地工作流使用，不随公开仓库与发布产物。
 
 ## Roadmap
 

@@ -43,15 +43,26 @@ Tenth 是一门面向 AI/ML 研究的编程语言，核心特性包括：
 
 ```
 项目根目录/
+├── .github/                # CI
+│   └── workflows/
+│       └── release.yml    # 三平台构建 + 基准门槛 + 发布
+├── scripts/                # 发布/校验脚本
+│   ├── release/            # package.ps1 / package.sh / verify.ps1 / sync-public.ps1
+│   └── check_local_path_leaks.py  # 本地路径泄漏检查
 ├── tenth/                  # 主编译器与运行时（Rust 实现）
 │   ├── src/                # 源码
 │   │   ├── lexer/          # 词法分析
 │   │   ├── parser/         # 语法分析
-│   │   ├── hir/            # 高级中间表示
-│   │   ├── compile/        # 编译后端（字节码 + WASM + GPU + 优化 Pass）
+│   │   ├── hir/            # 高级中间表示（hir.rs / mod.rs / types.rs）
+│   │   │   ├── hir.rs
+│   │   │   ├── mod.rs
+│   │   │   ├── types.rs
+│   │   │   └── lower/      # HIR lowering（lower_expr.rs / lower_stmt.rs 等）
+│   │   ├── compile/        # 编译后端（字节码 + WASM + JIT + GPU + 优化 Pass）
 │   │   │   ├── mod.rs
 │   │   │   ├── bytecode.rs # HIR→字节码编译器
-│   │   │   ├── wasm.rs     # HIR→WASM 编译器
+│   │   │   ├── wasm/       # HIR→WASM 编译器
+│   │   │   ├── jit/        # Cranelift JIT（默认路径）
 │   │   │   ├── bridge.rs   # 自举编译器桥接
 │   │   │   ├── gpu/        # GPU 后端脚手架
 │   │   │   │   ├── mod.rs  # GpuBackend / GpuConfig / GpuCompiler / GpuProgram
@@ -62,39 +73,46 @@ Tenth 是一门面向 AI/ML 研究的编程语言，核心特性包括：
 │   │   │       ├── fusion.rs       # FusionPass 算子融合
 │   │   │       └── parallel.rs     # ParallelPass 自动并行
 │   │   ├── runtime/        # 运行时（解释器 + VM + 张量 + 自动微分）
+│   │   │   ├── vm/         # 字节码 VM
+│   │   │   ├── interpreter/  # 树遍历解释器
+│   │   │   ├── tensor/     # 张量
+│   │   │   ├── autodiff/   # 自动微分
+│   │   │   └── native_registry.rs / relation_debugger.rs / async_io.rs
 │   │   ├── error.rs        # 统一错误类型
 │   │   ├── lib.rs          # 库入口
 │   │   ├── main.rs         # CLI 入口
 │   │   └── repl.rs         # REPL 交互环境
 │   ├── std/                # Tenth 标准库（.th 文件）
 │   ├── tests/              # 集成测试
+│   ├── tools/              # 生态工具
+│   │   ├── tenthpm/        # tenthpm 包管理器
+│   │   │   ├── Cargo.toml  # 依赖：serde, serde_json, toml
+│   │   │   └── src/
+│   │   │       ├── main.rs # CLI 入口
+│   │   │       ├── manifest.rs # Tenth.toml 解析
+│   │   │       └── commands/   # 子命令（init/build/run/publish）
+│   │   ├── lsp/            # LSP 服务器
+│   │   │   ├── Cargo.toml  # 依赖：serde, serde_json, tenth (path)
+│   │   │   └── src/
+│   │   │       ├── main.rs # LSP 入口
+│   │   │       ├── lsp_types.rs # LSP 协议类型
+│   │   │       ├── io.rs   # stdio 通信
+│   │   │       └── handlers/ # 请求处理器
+│   │   ├── debugger/       # 调试器
+│   │   └── profiler/       # 剖析器
 │   ├── Cargo.toml          # Rust 项目配置
 │   └── build.rs            # 构建脚本
-├── tools/                  # 生态工具
-│   ├── tenthpm/            # tenthpm 包管理器
-│   │   ├── Cargo.toml      # 依赖：serde, serde_json, toml
-│   │   └── src/
-│   │       ├── main.rs     # CLI 入口
-│   │       ├── manifest.rs # Tenth.toml 解析
-│   │       └── commands/   # 子命令（init/build/run/publish）
-│   └── lsp/                # LSP 服务器
-│       ├── Cargo.toml      # 依赖：serde, serde_json, tenth (path)
-│       └── src/
-│           ├── main.rs     # LSP 入口
-│           ├── lsp_types.rs # LSP 协议类型
-│           ├── io.rs       # stdio 通信
-│           └── handlers/   # 请求处理器
 ├── tenthc/                 # 自举编译器（Tenth 编写）
 │   ├── main.th             # 入口（拼接各模块源码后调用 compile_host）
 │   ├── lexer/              # Tenth 实现的词法分析
 │   ├── parser/             # Tenth 实现的语法分析
 │   ├── hir/                # Tenth 实现的 HIR
 │   └── compile/            # Tenth 实现的 WASM 编译
-├── Tenth实例/              # 49 个语言示例
+├── Tenth实例/              # 63 个实例目录（72 个 .th）
 ├── docs/                   # 文档
 │   ├── 语言参考手册.md
 │   └── superpowers/plans/  # 开发计划
-├── dist/                   # 分发脚本
+├── dist/                   # 1.0 发布产物（zip + 解压目录 + SHA256SUMS.txt，gitignored）
 ├── README.md
 ├── DEPS.md                 # 依赖说明
 ├── MEMO.md                 # 开发备忘录
@@ -119,21 +137,21 @@ Tenth 采用经典的多阶段编译架构，执行流程如下：
     ▼              ▼               ▼
   Token[]        AST           HirProgram
                                   │
-                    ┌─────────────┼─────────────┐
-                    ▼             ▼              ▼
-            ┌──────────┐  ┌──────────┐   ┌──────────┐
-            │ Bytecode │  │Interpreter│   │   WASM   │
-            │ Compiler │  │(树遍历)   │   │ Compiler │
-            └──────────┘  └──────────┘   └──────────┘
-                    │             │              │
-                    ▼             ▼              ▼
-              ┌────────┐   ┌──────────┐   ┌──────────┐
-              │   VM   │   │ 直接执行  │   │ wasmi    │
-              │(栈式VM)│   │          │   │ 执行验证  │
-              └────────┘   └──────────┘   └──────────┘
+                    ┌─────────────┼─────────────┬────────────┐
+                    ▼             ▼              ▼            ▼
+            ┌──────────┐  ┌──────────┐   ┌──────────┐  ┌───────────┐
+            │ Bytecode │  │Interpreter│   │   WASM   │  │    JIT    │
+            │ Compiler │  │(树遍历)   │   │ Compiler │  │ (Cranelift)│
+            └──────────┘  └──────────┘   └──────────┘  └───────────┘
+                    │             │              │            │
+                    ▼             ▼              ▼            ▼
+              ┌────────┐   ┌──────────┐   ┌──────────┐  ┌───────────┐
+              │   VM   │   │ 直接执行  │   │ wasmi    │  │ 原生机器码 │
+              │(栈式VM)│   │          │   │ 执行验证  │  │ 热点函数   │
+              └────────┘   └──────────┘   └──────────┘  └───────────┘
 ```
 
-**执行优先级**：VM 优先 → 解释器 fallback。VM 已支持 for-in 循环、闭包调用、字符串切片、张量字面量（MakeTensor）和闭包创建（MakeClosure）。
+**执行优先级**：VM 优先 → 解释器 fallback。JIT 为热点路径（对满足特化条件的 chunk 由 Cranelift 生成机器码，失败/不支持时回退 VM）。VM 已支持 for-in 循环、闭包调用、字符串切片、张量字面量（MakeTensor）和闭包创建（MakeClosure）。
 
 ---
 
@@ -395,7 +413,7 @@ pub enum Op {
 - 通过 `wasmi` 解释器执行和验证
 - 支持函数导出和 import
 
-#### GPU 后端（v0.3.3 — CUDA C 源代码生成 + 模拟设备，未接 CUDA Runtime）
+#### GPU 后端（v1.0.0 — CUDA C 源代码生成 + 模拟设备，未接 CUDA Runtime）
 
 GPU 后端为 Phase 4 铺路。**当前状态**：仅生成 CUDA C 源代码字符串 + 模拟设备抽象，**未接 nvcc / CUDA Runtime API / cuLaunchKernel**，不编译、不加载、不执行任何 kernel。`CudaDevice::is_available()` 永远返回 `true`（注释自承 "Simulated"），`total_memory` 硬编码 24GB。详见 `AUDIT.md` §11.4 AUDIT-11.4.6。
 
@@ -423,7 +441,7 @@ pub struct CpuDevice { name: String, memory_limit: usize }   // 16 GB simulated
 pub struct CudaDevice { device_id: usize, name: String, total_memory: usize, compute_capability: (u32, u32) }  // 24 GB simulated，is_available() 永远 true
 ```
 
-#### 编译优化 Pass（v0.3.3 脚手架）
+#### 编译优化 Pass（v1.0.0 脚手架）
 
 ```rust
 // optimizations/mod.rs — 优化 Pass trait
@@ -779,7 +797,7 @@ tenth/std/
 
 ## 7. 示例集 (Tenth实例)
 
-**位置**：`Tenth实例/`，共 49 个示例，涵盖算法、数据结构和 AI/ML：
+**位置**：`Tenth实例/`（实例数见 `能力梳理/能力全梳理.md` §统计基线），涵盖算法、数据结构和 AI/ML：
 
 ### 经典算法
 
@@ -907,13 +925,13 @@ Tenth 提供四种运行模式：
 | Phase 2 | 解释器夯实 | ✅ 完成 |
 | Phase 3A | 类型系统深化 | ✅ 完成 |
 | ~~Phase 3B~~ | ~~编译后端 (C)~~ | ❌ 已移除 |
-| Phase 4 | GPU 与性能 | 🔧 脚手架就绪（gpu/ + optimizations/） |
-| Phase 5 | AI 全栈 | 🚧 进行中 |
-| Phase 6 | 生态与工具 | 🔧 脚手架就绪（tenthpm/ + lsp/） |
+| Phase 4 | GPU 与性能 | 🔧 脚手架就绪（gpu/ + optimizations/；随 v1.0.0 落地） |
+| Phase 5 | AI 全栈 | 🚧 进行中（核心已实现：张量/自动微分/标准库；随 v1.0.0 落地） |
+| Phase 6 | 生态与工具 | ✅ 已落地（tenthpm + lsp + debugger + profiler；随 v1.0.0） |
 | Phase 7 | 核心标准库 | ✅ 完成 |
 | Phase 8 | 自举编译器 | ✅ 完成 |
 
-> 完整能力清单（601 项逐条状态）见 `能力梳理/能力全梳理.md`。
+> 完整能力清单（594 项逐条状态）见 `能力梳理/能力全梳理.md`；统计量基线见其 §统计基线。
 
 ---
 
