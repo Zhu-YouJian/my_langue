@@ -514,120 +514,120 @@ fn unpack_shared(v: &Value) -> Value {
     }
 }
 
+/// 值 → 用户可读字符串的**单一权威**实现。
+///
+/// `fmt::Display for Value` 与解释器的 `value_to_string` 都转发到这里，
+/// 确保 VM 与解释器两条执行路径对同一值在 print / println / to_string /
+/// 字符串插值下的**输出一致**（P2-B6：消除值字符串化双实现）。
+///
+/// 显示语义（用户可观察，刻意保留类型信息，便于 round-trip 与调试）：
+/// - Float32 输出 `1.5f32`（带 `f32` 后缀，区别于 f64）；
+/// - Float 走 `format_f64`，保证整数值显示 `.0` 后缀（`2.0` 而非 `2`）；
+/// - Char 单引号包裹 `'a'`；引用带 `&` / `&mut` 前缀；
+/// - 包装类型带 `Box(..)` / `Rc(..)` / `Pin(..)` / `Weak<..>` 前缀；
+/// - `dyn Trait<Type>(..)`；`Future<v>`（保留 Future 类型信息）。
+pub fn value_to_display_string(v: &Value) -> String {
+    match v {
+        Value::Int(n, _) => format!("{}", n),
+        Value::Float(n) => format!("{}", format_f64(*n)),
+        Value::Float32(n) => format!("{}f32", format_f32(*n)),
+        Value::Bool(b) => format!("{}", b),
+        Value::Char(c) => format!("'{}'", c),
+        Value::String(s) => s.clone(),
+        Value::Tensor(t) => format!("{}", t.borrow()),
+        Value::Unit => "()".to_string(),
+        Value::Array(items) => {
+            let items = items.borrow();
+            let inner: Vec<String> = items.iter().map(|it| value_to_display_string(it)).collect();
+            format!("[{}]", inner.join(", "))
+        }
+        Value::FnRef { name, .. } => format!("<fn {}>", name),
+        Value::Closure { .. } => "<closure>".to_string(),
+        Value::Union { name, active_field, value } => {
+            format!("union {} {{ {}: {} }}", name, active_field, value_to_display_string(value))
+        }
+        Value::Struct { name, fields } => {
+            let fields = fields.borrow();
+            let inner: Vec<String> = fields.iter()
+                .map(|(fname, fval)| format!("{}: {}", fname, value_to_display_string(fval)))
+                .collect();
+            format!("{} {{ {} }}", name, inner.join(", "))
+        }
+        Value::Ref(v) => format!("&{}", value_to_display_string(&v.borrow())),
+        Value::MutRef(v) => {
+            match v.upgrade() {
+                Some(rc) => format!("&mut {}", value_to_display_string(&rc.borrow())),
+                None => "&mut <dangling>".to_string(),
+            }
+        }
+        Value::Shared(v) => value_to_display_string(&v.borrow()),
+        Value::Moved => "<moved>".to_string(),
+        Value::Vec(items) => {
+            let items = items.borrow();
+            let inner: Vec<String> = items.iter().map(|it| value_to_display_string(it)).collect();
+            format!("[{}]", inner.join(", "))
+        }
+        Value::Range { start, end, inclusive } => {
+            let op = if *inclusive { "..=" } else { ".." };
+            format!("{}{}{}", start, op, end)
+        }
+        Value::Iterator(_) => "<iterator>".to_string(),
+        Value::Tuple(items) => {
+            let inner: Vec<String> = items.iter().map(|it| value_to_display_string(it)).collect();
+            format!("({})", inner.join(", "))
+        }
+        Value::Future(state) => {
+            match &*state.borrow() {
+                FutureState::Ready(v) => format!("Future<{}>", value_to_display_string(v)),
+                FutureState::Pending(waiters) => format!("Future<Pending({})>", waiters.len()),
+            }
+        }
+        Value::Map(entries) => {
+            let entries = entries.borrow();
+            let inner: Vec<String> = entries.iter()
+                .map(|(k, v)| format!("{}: {}", k, value_to_display_string(v)))
+                .collect();
+            format!("{{{}}}", inner.join(", "))
+        }
+        Value::Enum { enum_name, variant, fields } => {
+            let fields = fields.borrow();
+            if fields.is_empty() {
+                format!("{}::{}", enum_name, variant)
+            } else {
+                let inner: Vec<String> = fields.iter()
+                    .map(|(fname, fval)| format!("{}: {}", fname, value_to_display_string(fval)))
+                    .collect();
+                format!("{}::{}({})", enum_name, variant, inner.join(", "))
+            }
+        }
+        Value::HeapBox(v) => format!("Box({})", value_to_display_string(v)),
+        Value::SharedBox(v) => format!("Rc({})", value_to_display_string(&v.borrow())),
+        Value::Pin(v) => format!("Pin({})", value_to_display_string(v)),
+        Value::Weak(w) => {
+            match w.upgrade() {
+                Some(rc) => format!("Weak<{}>", value_to_display_string(&rc.borrow())),
+                None => "Weak<dangling>".to_string(),
+            }
+        }
+        Value::Dyn { trait_name, type_name, value } => {
+            format!("dyn {}<{}>({})", trait_name, type_name, value_to_display_string(value))
+        }
+        Value::BigInt(s) => format!("{}bi", s),
+        Value::Complex(re, im) => {
+            if *im < 0.0 {
+                format!("({}{}i)", re, im)
+            } else {
+                format!("({}+{}i)", re, im)
+            }
+        }
+        Value::Decimal(s) => format!("{}dec", s),
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Value::Int(n, _) => write!(f, "{}", n),
-            Value::Float(n) => write!(f, "{}", format_f64(*n)),
-            Value::Float32(n) => write!(f, "{}f32", format_f32(*n)),
-            Value::Bool(b) => write!(f, "{}", b),
-            Value::Char(c) => write!(f, "'{}'", c),
-            Value::String(s) => write!(f, "{}", s),
-            Value::Tensor(t) => write!(f, "{}", t.borrow()),
-            Value::Unit => write!(f, "()"),
-            Value::Array(items) => {
-                let items = items.borrow();
-                write!(f, "[")?;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
-                    write!(f, "{}", item)?;
-                }
-                write!(f, "]")
-            }
-            Value::FnRef { name, .. } => write!(f, "<fn {}>", name),
-            Value::Closure { .. } => write!(f, "<closure>"),
-            Value::Union { name, active_field, value } => {
-                write!(f, "union {} {{ {}: {} }}", name, active_field, value)
-            }
-            Value::Struct { name, fields } => {
-                let fields = fields.borrow();
-                write!(f, "{} {{ ", name)?;
-                for (i, (fname, fval)) in fields.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
-                    write!(f, "{}: {}", fname, fval)?;
-                }
-                write!(f, " }}")
-            }
-            Value::Ref(v) => write!(f, "&{}", v.borrow()),
-            Value::MutRef(v) => {
-                match v.upgrade() {
-                    Some(rc) => write!(f, "&mut {}", rc.borrow()),
-                    None => write!(f, "&mut <dangling>"),
-                }
-            }
-            Value::Shared(v) => write!(f, "{}", v.borrow()),
-            Value::Moved => write!(f, "<moved>"),
-            Value::Vec(items) => {
-                let items = items.borrow();
-                write!(f, "[")?;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
-                    write!(f, "{}", item)?;
-                }
-                write!(f, "]")
-            }
-            Value::Range { start, end, inclusive } => {
-                let op = if *inclusive { "..=" } else { ".." };
-                write!(f, "{}{}{}", start, op, end)
-            }
-            Value::Iterator(_) => write!(f, "<iterator>"),
-            Value::Tuple(items) => {
-                write!(f, "(")?;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
-                    write!(f, "{}", item)?;
-                }
-                write!(f, ")")
-            }
-            Value::Future(state) => {
-                match &*state.borrow() {
-                    FutureState::Ready(v) => write!(f, "Future<{}>", v),
-                    FutureState::Pending(waiters) => {
-                        write!(f, "Future<Pending({})>", waiters.len())
-                    }
-                }
-            }
-            Value::Map(entries) => {
-                let entries = entries.borrow();
-                write!(f, "{{")?;
-                for (i, (k, v)) in entries.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
-                    write!(f, "{}: {}", k, v)?;
-                }
-                write!(f, "}}")
-            }
-            Value::Enum { enum_name, variant, fields } => {
-                let fields = fields.borrow();
-                if fields.is_empty() {
-                    write!(f, "{}::{}", enum_name, variant)
-                } else {
-                    write!(f, "{}::{}(", enum_name, variant)?;
-                    for (i, (fname, fval)) in fields.iter().enumerate() {
-                        if i > 0 { write!(f, ", ")?; }
-                        write!(f, "{}: {}", fname, fval)?;
-                    }
-                    write!(f, ")")
-                }
-            }
-            Value::HeapBox(v) => write!(f, "Box({})", v),
-            Value::SharedBox(v) => write!(f, "Rc({})", v.borrow()),
-            Value::Pin(v) => write!(f, "Pin({})", v),
-            Value::Weak(w) => match w.upgrade() {
-                Some(rc) => write!(f, "Weak<{}>", rc.borrow()),
-                None => write!(f, "Weak<dangling>"),
-            },
-            Value::Dyn { trait_name, type_name, value } => {
-                write!(f, "dyn {}<{}>({})", trait_name, type_name, value)
-            }
-            Value::BigInt(s) => write!(f, "{}bi", s),
-            Value::Complex(re, im) => {
-                if *im < 0.0 {
-                    write!(f, "({}{}i)", re, im)
-                } else {
-                    write!(f, "({}+{}i)", re, im)
-                }
-            }
-            Value::Decimal(s) => write!(f, "{}dec", s),
-        }
+        // 单一权威：所有字符串化经由 value_to_display_string，
+        // 与解释器 value_to_string 保持输出一致。
+        write!(f, "{}", value_to_display_string(self))
     }
 }

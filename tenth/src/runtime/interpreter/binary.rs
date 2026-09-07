@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
-use crate::runtime::value::{Value, FutureState, check_int_overflow, int_overflow_err};
+use crate::runtime::value::{Value, check_int_overflow, int_overflow_err, value_to_display_string};
 use crate::runtime::tensor::Tensor;
 use crate::runtime::autodiff::TapeOp;
 
@@ -386,101 +386,11 @@ impl super::Interpreter {
         }
     }
 
+    /// 值 → 字符串。**仅转发**到单一权威实现 `value_to_display_string`
+    /// （P2-B6：消除值字符串化双实现）。解释器的 to_string native 与字符串插值
+    /// 都调用这里，从而与 VM 的 print/println/to_string（也走 Display）输出一致。
     pub(super) fn value_to_string(&self, val: &Value) -> String {
-        match val {
-            Value::Int(n, _) => n.to_string(),
-            Value::Float(f) => f.to_string(),
-            Value::Float32(f) => f.to_string(),
-            Value::Bool(b) => b.to_string(),
-            Value::Char(c) => c.to_string(),
-            Value::String(s) => s.clone(),
-            Value::Unit => "()".to_string(),
-            Value::Enum { enum_name, variant, fields } => {
-                let borrowed = fields.borrow();
-                if borrowed.is_empty() {
-                    format!("{}::{}", enum_name, variant)
-                } else if borrowed.len() == 1 {
-                    format!("{}::{}({})", enum_name, variant, self.value_to_string(&borrowed[0].1))
-                } else {
-                    let inner: Vec<String> = borrowed.iter().map(|(_, v)| self.value_to_string(v)).collect();
-                    format!("{}::{}({})", enum_name, variant, inner.join(", "))
-                }
-            }
-            Value::Vec(v) => {
-                let items: Vec<String> = v.borrow().iter().map(|x| self.value_to_string(x)).collect();
-                format!("[{}]", items.join(", "))
-            }
-            Value::Array(v) => {
-                let items: Vec<String> = v.borrow().iter().map(|x| self.value_to_string(x)).collect();
-                format!("[{}]", items.join(", "))
-            }
-            Value::Map(m) => {
-                let items: Vec<String> = m.borrow().iter()
-                    .map(|(k, v)| format!("{}: {}", k, self.value_to_string(v)))
-                    .collect();
-                format!("{{{}}}", items.join(", "))
-            }
-            Value::Tensor(t) => format!("{:?}", t.borrow().data),
-            Value::Closure { .. } => "<closure>".to_string(),
-            Value::FnRef { name, .. } => format!("<fn {}>", name),
-            Value::Union { name, active_field, value } => {
-                format!("union {} {{ {}: {} }}", name, active_field, self.value_to_string(value))
-            }
-            Value::Struct { name, fields } => {
-                let borrowed = fields.borrow();
-                let items: Vec<String> = borrowed.iter()
-                    .map(|(k, v)| format!("{}: {}", k, self.value_to_string(v)))
-                    .collect();
-                format!("{} {{{}}}", name, items.join(", "))
-            }
-            Value::Ref(r) => self.value_to_string(&r.borrow()),
-            Value::MutRef(r) => {
-                if let Some(rc) = r.upgrade() {
-                    self.value_to_string(&rc.borrow())
-                } else {
-                    "<dangling mut ref>".to_string()
-                }
-            }
-            Value::Shared(r) => self.value_to_string(&r.borrow()),
-            Value::Moved => "<moved>".to_string(),
-            Value::Range { start, end, inclusive } => {
-                if *inclusive { format!("{}..={}", start, end) } else { format!("{}..{}", start, end) }
-            }
-            Value::Iterator(_) => "<iterator>".to_string(),
-            Value::Tuple(items) => {
-                let strs: Vec<String> = items.iter().map(|x| self.value_to_string(x)).collect();
-                format!("({})", strs.join(", "))
-            }
-            Value::Future(state) => {
-                match &*state.borrow() {
-                    // Phase 1：Future 总是 Ready，解包显示内部值（保持旧输出格式）。
-                    FutureState::Ready(v) => self.value_to_string(v),
-                    FutureState::Pending(_) => "Future<Pending>".to_string(),
-                }
-            }
-            Value::HeapBox(v) => format!("Box({})", self.value_to_string(v)),
-            Value::SharedBox(v) => format!("Rc({})", self.value_to_string(&v.borrow())),
-            Value::Pin(v) => format!("Pin({})", self.value_to_string(v)),
-            Value::Weak(w) => {
-                if let Some(rc) = w.upgrade() {
-                    format!("Weak<{}>", self.value_to_string(&rc.borrow()))
-                } else {
-                    "Weak<dangling>".to_string()
-                }
-            }
-            Value::Dyn { trait_name, type_name, value } => {
-                format!("dyn {}<{}>({})", trait_name, type_name, self.value_to_string(value))
-            }
-            Value::BigInt(s) => format!("{}bi", s),
-            Value::Complex(re, im) => {
-                if *im < 0.0 {
-                    format!("({}{}i)", re, im)
-                } else {
-                    format!("({}+{}i)", re, im)
-                }
-            }
-            Value::Decimal(s) => format!("{}dec", s),
-        }
+        value_to_display_string(val)
     }
 
     pub(super) fn eval_unary(&self, op: &UnaryOp, val: &Value) -> TenthResult<Value> {
