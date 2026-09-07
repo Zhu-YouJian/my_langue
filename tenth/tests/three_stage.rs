@@ -242,11 +242,11 @@ mod three_stage {
     fn three_stage_selfhost() {
         // 128MB stack to accommodate wasmi's interpreter overhead when running
         // the full tenthc compiler (lexer/parser/lowerer/codegen) in WASM.
-        // Only the wasmi path runs in the default test suite — the wasmtime
-        // path's host imports in `wasmtime_host.rs` have been补全 (17/18 真实现，
-        // 仅 tensor_from_vec 简化版)，但运行时 tenthc 编译器产出的 WASM-B
-        // 仍为 0 字节，根因是 tenthc 在 wasmtime 下的 Vec 写回逻辑有问题。
-        // wasmtime 路径保持 `#[ignore]`，详见 AUDIT.md §六 #5。
+        // The wasmtime path (`three_stage_selfhost_wasmtime`) now runs in the
+        // default test suite too — the Vec 写回 bug (main returned len=0) was
+        // fixed in `wasmtime_host.rs` via `safe_vec_ptr` (previously the faulty
+        // `safe_offset(vec as i32, 1)` guard returned 0 for all real bump offsets).
+        // AUDIT.md §六 #5 resolved.
         println!("------ wasmi path ------");
         std::thread::Builder::new()
             .stack_size(128 * 1024 * 1024)
@@ -257,14 +257,13 @@ mod three_stage {
     }
 
     /// Wasmtime JIT path for three-stage self-hosting verification.
-    /// Marked `#[ignore]` because，虽然 `wasm/wasmtime_host.rs` 中 17/18 个 host
-    /// import 已补全真实现，但运行时 tenthc 编译器产出的 WASM-B 仍为 0
-    /// 字节（Vec 写回逻辑问题）。wasmi 路径已通过，wasmtime 仅是 JIT 性能
-    /// 优化，深度调试 ROI 不高。Run explicitly via:
-    ///   `cargo test --release --test three_stage -- three_stage_selfhost_wasmtime --ignored --nocapture`
-    /// Tracking: AUDIT.md §六 #5.
+    /// Was previously `#[ignore]`d because the Vec 写回 host imports in
+    /// `wasm/wasmtime_host.rs` used a faulty guard (`safe_offset(vec as i32, 1)`)
+    /// that rejected every real bump offset, so main returned a Vec of len=0 and
+    /// WASM-B was 0 bytes. Fixed by switching those guards to `safe_vec_ptr`
+    /// (only rejects negative/high-bit offsets). Wasmi path already passed; this
+    /// validates wasmi/wasmtime semantic parity. AUDIT.md §六 #5 resolved.
     #[test]
-    #[ignore]
     fn three_stage_selfhost_wasmtime() {
         println!("------ wasmtime path ------");
         std::thread::Builder::new()

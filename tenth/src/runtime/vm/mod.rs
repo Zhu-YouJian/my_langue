@@ -13,7 +13,7 @@ use crate::hir::types::BaseType;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
-use super::value::{Value, FutureState, check_int_overflow};
+use super::value::{Value, FutureState};
 use super::autodiff::{Tape, CustomOpRegistry, CustomBackward};
 
 mod chunk;
@@ -567,18 +567,10 @@ impl Vm {
         self.rem_priv(a, b)
     }
     pub fn neg(&mut self, a: &Value) -> TenthResult<Value> {
-        match a {
-            // AUDIT-11.4.17：checked_neg 拦截 i64::MIN 取负溢出；check_int_overflow 与 VM Op::Neg 一致做 dtype 范围检查
-            Value::Int(n, dt) => {
-                let r = n.checked_neg().ok_or_else(|| super::value::int_overflow_err(*dt))?;
-                check_int_overflow(r, *dt)?;
-                Ok(Value::Int(r, BaseType::I32))
-            }
-            Value::Float(n) => Ok(Value::Float(-n)),
-            Value::Float32(n) => Ok(Value::Float32(-n)),
-            Value::Tensor(t) => Ok(Value::Tensor(Rc::new(RefCell::new(t.borrow().neg())))),
-            _ => Err(TenthError::RuntimeError { line: None, col: None, message: "无法取负".into() }),
-        }
+        // 委托 neg_priv（同 add/sub/mul/div/rem 包装）：解包包裹值 + 保留操作数 dtype +
+        // checked_neg 拦 i64::MIN + check_int_overflow 窄 dtype 检查，与解释器 UnaryOp::Neg 一致。
+        // 此前此处内联实现丢失 dtype（恒返回 I32），JIT host_neg 路径随之与解释器分叉。
+        self.neg_priv(a)
     }
     pub fn not(&mut self, a: &Value) -> TenthResult<Value> {
         Ok(Value::Bool(!a.is_truthy()))

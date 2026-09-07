@@ -490,19 +490,22 @@ impl Vm {
                     }
                 }
                 16 => {
+                    // R2 快路径：裸 Int 直接计算（保留 dtype + checked_neg + 行号）；其余走 neg_priv
+                    // 慢路径（解包包裹值 + 语义一致）。此前包装内联实现丢失 dtype 恒返回 I32，与解释器
+                    // UnaryOp::Neg（保留操作数 dtype）不一致。
                     let v = self.stack.pop().unwrap_or(Value::Unit);
-                    match v {
+                    match &v {
                         Value::Int(n, dt) => {
                             // AUDIT-11.4.17：checked_neg 拦截 i64::MIN 取负溢出
                             // M2-A5：溢出错误补行号（对齐 JIT 标量路径）
-                            let r = n.checked_neg().ok_or_else(|| int_overflow_err(dt)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
-                            check_int_overflow(r, dt).map_err(|e| self.with_line(chunk_idx, ip, e))?;
-                            self.stack.push(Value::Int(r, dt));
+                            let r = n.checked_neg().ok_or_else(|| int_overflow_err(*dt)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                            check_int_overflow(r, *dt).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                            self.stack.push(Value::Int(r, *dt));
                         }
-                        Value::Float(n) => self.stack.push(Value::Float(-n)),
-                        Value::Float32(n) => self.stack.push(Value::Float32(-n)),
-                        Value::Tensor(t) => self.stack.push(Value::Tensor(Rc::new(RefCell::new(t.borrow().neg())))),
-                        _ => return Err(self.err_here(chunk_idx, ip, "无法取负".into())),
+                        _ => {
+                            let r = self.neg_priv(&v).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                            self.stack.push(r);
+                        }
                     }
                 }
                 17 => {
@@ -1950,6 +1953,27 @@ impl Vm {
                 Value::Int(r, *dt)
             }
             _ => return err("取模仅支持整数"),
+        })
+    }
+
+    pub(super) fn neg_priv(&mut self, a: &Value) -> TenthResult<Value> {
+        // AUDIT-11.4.21：运算前解包包裹值（对齐解释器前置 deref 语义）
+        if Self::is_wrapped(a) {
+            let a = Self::deref_wrapped(a);
+            return self.neg_priv(&a);
+        }
+        Ok(match a {
+            // AUDIT-11.4.17：checked_neg 拦截 i64::MIN 取负溢出（overflow-checks=true 下直接 - 会 panic）
+            // 保留操作数 dtype（与解释器 eval_unary Neg 分支一致）——此前包装丢失 dtype 恒返回 I32
+            Value::Int(n, dt) => {
+                let r = n.checked_neg().ok_or_else(|| int_overflow_err(*dt))?;
+                check_int_overflow(r, *dt)?;
+                Value::Int(r, *dt)
+            }
+            Value::Float(n) => Value::Float(-n),
+            Value::Float32(n) => Value::Float32(-n),
+            Value::Tensor(t) => Value::Tensor(Rc::new(RefCell::new(t.borrow().neg()))),
+            _ => return err("无法取负"),
         })
     }
 

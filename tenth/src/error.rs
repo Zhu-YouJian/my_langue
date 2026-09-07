@@ -265,7 +265,12 @@ impl TenthError {
                 }
             }
             TenthError::LexerError { message, .. } => {
-                if message.contains("未终止") || message.contains("未闭合") {
+                // 区分"未闭合"的两种根因：块注释（`/* ... */`）与字符串/字节串/原始串/
+                // 多行串/字符字面量。前者锚定在 "块注释"，应提示检查缺少 `*/`；
+                // 后者才提示检查引号。避免对输入 `/*` 的用户错误地提示"检查字符串引号"。
+                if message.contains("块注释") {
+                    "\n  提示：块注释未闭合，检查是否缺少 `*/`".to_string()
+                } else if message.contains("未终止") || message.contains("未闭合") {
                     "\n  提示：检查字符串是否缺少右引号".to_string()
                 } else if message.contains("意外字符") {
                     "\n  提示：该字符在此位置不合法，检查是否拼写错误".to_string()
@@ -353,4 +358,58 @@ pub fn read_source(path: impl AsRef<std::path::Path>) -> TenthResult<String> {
         })?;
     let s = raw.strip_prefix('\u{FEFF}').unwrap_or(&raw);
     Ok(s.replace("\r\n", "\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lexer_error(msg: &str) -> TenthError {
+        TenthError::LexerError {
+            line: 1,
+            col: 1,
+            message: msg.to_string(),
+        }
+    }
+
+    fn suggest(msg: &str) -> String {
+        lexer_error(msg).suggestion()
+    }
+
+    #[test]
+    fn unclosed_block_comment_suggests_missing_star_slash() {
+        let s = suggest("块注释未闭合，缺少 `*/`");
+        assert!(s.contains("*/"), "块注释建议应提示缺少 */，实际: {}", s);
+        assert!(!s.contains("右引号"), "块注释建议不应提示字符串引号，实际: {}", s);
+    }
+
+    #[test]
+    fn unclosed_string_suggests_quote() {
+        for msg in [
+            "字符串未闭合",
+            "字节串未闭合",
+            "原始字符串未闭合",
+            "多行字符串未闭合",
+            "字符字面量未闭合（缺少结尾 '）",
+        ] {
+            let s = suggest(msg);
+            assert!(s.contains("右引号"), "{} 应提示右引号，实际: {}", msg, s);
+            assert!(!s.contains("*/"), "{} 不应提示 */，实际: {}", msg, s);
+        }
+    }
+
+    #[test]
+    fn unexpected_char_suggests_spelling_check() {
+        let s = suggest("意外字符：'@'");
+        assert!(s.contains("该字符在此位置不合法"));
+    }
+
+    #[test]
+    fn display_with_source_uses_block_comment_suggestion() {
+        // 有 source 时也走到 suggestion()：确认块注释提示出现在最终输出，且不含"右引号"。
+        let err = lexer_error("块注释未闭合，缺少 `*/`");
+        let out = err.display_with_source(Some("42 /* x"));
+        assert!(out.contains("*/"), "输出应含块注释修复提示: {}", out);
+        assert!(!out.contains("右引号"), "输出不应含字符串引号提示: {}", out);
+    }
 }
