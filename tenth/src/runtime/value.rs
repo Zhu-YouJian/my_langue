@@ -502,6 +502,50 @@ fn flatten_values(arr: &[Value]) -> TenthResult<(Vec<usize>, Vec<f64>)> {
     }
 }
 
+/// 判断 `v` 是否为需要自动解包的包裹值。
+///
+/// P2-B5：`deref_wrapped` 的配套守卫。解释器 `eval_binary` 与 VM 的
+/// `add_priv`/`sub_priv`/`vm_eq` 等都在运算前用此判断是否需要先解壳。
+/// 统一到共享层，避免解释器/VM 各自维护一份（VMs 含 SharedBox 而解释器仅
+/// Shared/Ref/MutRef 曾是不一致来源）。
+pub fn is_wrapped(v: &Value) -> bool {
+    matches!(v, Value::Shared(_) | Value::Ref(_) | Value::MutRef(_) | Value::SharedBox(_))
+}
+
+/// 自动解包 Shared/Ref/MutRef/SharedBox 包裹值，返回内部值的 owned 副本。
+///
+/// **单一权威实现**（P2-B5 收敛，解释器/VM 双后端一致）。此前解释器
+/// `interpreter/natives.rs` 与 VM `vm/execute.rs` 各有一份且语义分叉：
+/// - 解释器对 Shared/Ref **递归一层**（防 `Shared<Shared<T>>`），`MutRef` 悬垂
+///   返回 `Value::Unit`，且**无 SharedBox 分支**；
+/// - VM **不递归**（单层），有 `SharedBox` 分支，`MutRef` 悬垂返回 `Value::Moved`。
+///
+/// 收敛后的统一语义：
+/// - **递归剥壳**：解包后若仍是包裹值（如 `Shared<Shared<T>>` 双重包裹）继续解包，
+///   直到非包裹类型——解释器的鲁棒行为，VM 一并获得（对常见单层无行为变化）。
+/// - **`MutRef` 悬垂 → `Value::Moved`**：`&mut` 引用失效（原强引用已 drop）时返回
+///   `Value::Moved`，对齐 VM 的"失效引用=移动"哨兵。解释器此前用 `Unit` 属演化
+///   分叉——解释器**别处的显式解引用/赋值对悬垂 `&mut` 均报错或返回 `Moved`**，
+///   仅 `deref_wrapped` 用 `Unit`，因此 `Unit` 不是有意的解释器语义，统一到 `Moved`
+///   无行为回归（`Unit`/`Moved` 在数值/比较上下文中都落入同样的兜底 false/错误分支）。
+/// - **`SharedBox` 解包**：`Rc<T>`/`Arc<T>` 与 VM 一致地自动解包。
+///
+/// 返回 owned `Value` 是因为 `RefCell::borrow()` 返回 `Ref<'_, Value>`，无法直接
+/// 转为 `&Value`；调用方拿到 owned Value 后可按值 match（Copy 字段如 f64/i64/bool
+/// 直接 by-value 绑定，无需额外解引用）。
+pub fn deref_wrapped(v: &Value) -> Value {
+    match v {
+        Value::Shared(rc) => deref_wrapped(&rc.borrow().clone()),
+        Value::Ref(rc) => deref_wrapped(&rc.borrow().clone()),
+        Value::MutRef(weak) => match weak.upgrade() {
+            Some(rc) => deref_wrapped(&rc.borrow().clone()),
+            None => Value::Moved,
+        },
+        Value::SharedBox(rc) => deref_wrapped(&rc.borrow().clone()),
+        other => other.clone(),
+    }
+}
+
 /// 解包 Value::Shared / Value::SharedBox，返回内部值的 owned 副本。
 /// 返回 owned Value 是因为 `RefCell::borrow()` 返回 `Ref<'_, Value>`，
 /// 无法直接转为 `&Value`；调用方拿到 owned Value 后可按值 match（Copy 字段

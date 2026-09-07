@@ -1640,18 +1640,15 @@ impl Vm {
     /// AUDIT-11.4.21：解包 Shared/Ref/MutRef/SharedBox（对齐解释器 natives::deref_wrapped）。
     /// `&mut` 后变量槽位变为 Value::Shared，算术/比较/取整前需解包再运算——
     /// 否则 VM 在 &mut 之后对变量做算术会报类型不匹配（解释器 eval_binary 已前置解包）。
+    /// P2-B5：**委托到共享权威实现** `crate::runtime::value::deref_wrapped`，消除与
+    /// 解释器 `deref_wrapped` 的语义分叉（MutRef 悬垂 `Unit` vs `Moved`、递归深度、
+    /// SharedBox 分支）——实际解壳逻辑仅此一处。
     fn deref_wrapped(v: &Value) -> Value {
-        match v {
-            Value::Shared(rc) => rc.borrow().clone(),
-            Value::Ref(rc) => rc.borrow().clone(),
-            Value::MutRef(w) => w.upgrade().map(|rc| rc.borrow().clone()).unwrap_or(Value::Moved),
-            Value::SharedBox(rc) => rc.borrow().clone(),
-            other => other.clone(),
-        }
+        crate::runtime::value::deref_wrapped(v)
     }
 
     fn is_wrapped(v: &Value) -> bool {
-        matches!(v, Value::Shared(_) | Value::Ref(_) | Value::MutRef(_) | Value::SharedBox(_))
+        crate::runtime::value::is_wrapped(v)
     }
 
     pub(super) fn add_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {

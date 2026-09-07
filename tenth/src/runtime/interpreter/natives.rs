@@ -48,7 +48,7 @@ fn ok_result(value: Value) -> Value {
     }
 }
 
-/// 自动解引用 Shared/Ref/MutRef 包裹的值，返回一个 clone 后的内部 Value。
+/// 自动解引用 Shared/Ref/MutRef/SharedBox 包裹的值，返回一个 clone 后的内部 Value。
 /// 用于原生数值函数（to_f64/to_float/to_f32 等）接收 Vec.get() 返回值时
 /// 自动剥壳——解释器路径下 Vec.push 会用 Shared 包裹元素（便于索引赋值变更），
 /// 而 to_f64 等仅识别 Int/Float/Float32/Tensor，需要此处解壳以对齐 VM 行为。
@@ -56,35 +56,11 @@ fn ok_result(value: Value) -> Value {
 /// L2.3a-a2：提升为 pub(super)，供 binary.rs 的 eval_binary 复用以对齐 VM
 /// （VM 的 Vec 元素不包裹，sum/product 的 `acc + Vec.get(i)` 在解释器路径
 /// 因 Shared 包裹而报"加法类型不匹配"，解壳后行为与 VM 一致）。
+/// P2-B5：**委托到共享权威实现** `crate::runtime::value::deref_wrapped`，消除与
+/// VM 侧 `deref_wrapped` 的语义分叉（MutRef 悬垂 `Unit` vs `Moved`、递归深度、
+/// SharedBox 分支）——实际解壳逻辑仅此一处。
 pub(super) fn deref_wrapped(v: &Value) -> Value {
-    match v {
-        Value::Shared(rc) => {
-            let inner = rc.borrow();
-            let inner_val = inner.clone();
-            // 递归一层，防止 Shared<Shared<T>> 之类的双重包裹
-            match &inner_val {
-                Value::Shared(_) | Value::Ref(_) | Value::MutRef(_) => deref_wrapped(&inner_val),
-                _ => inner_val,
-            }
-        }
-        Value::Ref(rc) => {
-            let inner = rc.borrow();
-            let inner_val = inner.clone();
-            match &inner_val {
-                Value::Shared(_) | Value::Ref(_) | Value::MutRef(_) => deref_wrapped(&inner_val),
-                _ => inner_val,
-            }
-        }
-        Value::MutRef(weak) => {
-            if let Some(rc) = weak.upgrade() {
-                let inner = rc.borrow();
-                inner.clone()
-            } else {
-                Value::Unit
-            }
-        }
-        other => other.clone(),
-    }
+    crate::runtime::value::deref_wrapped(v)
 }
 
 /// 构造 Result::Err(message)

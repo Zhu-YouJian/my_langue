@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
-use crate::runtime::value::{Value, check_int_overflow, int_overflow_err, value_to_display_string};
+use crate::runtime::value::{Value, check_int_overflow, int_overflow_err, value_to_display_string, deref_wrapped, is_wrapped};
 use crate::runtime::tensor::Tensor;
 use crate::runtime::autodiff::TapeOp;
 
@@ -18,13 +18,11 @@ impl super::Interpreter {
         // L2.3a-a2：解释器路径 Vec.push 会用 Shared 包裹元素，导致 `acc + Vec.get(i)`
         // （std::collections::iter::sum / collections::product 等）在解释器路径报
         // "加法类型不匹配"，而 VM 路径正常（VM 的 Vec 元素不包裹）。
-        // 运算前统一解壳 Shared/Ref/MutRef，使解释器与 VM 行为一致。deref_wrapped
-        // 递归处理多层包裹；非包裹值直接返回 clone（无性能影响路径仅多一次 clone）。
-        if matches!(l, Value::Shared(_) | Value::Ref(_) | Value::MutRef(_))
-            || matches!(r, Value::Shared(_) | Value::Ref(_) | Value::MutRef(_))
-        {
-            let l = super::natives::deref_wrapped(l);
-            let r = super::natives::deref_wrapped(r);
+        // 运算前统一解壳 Shared/Ref/MutRef/SharedBox，使解释器与 VM 行为一致。
+        // deref_wrapped 递归处理多层包裹；非包裹值直接返回 clone（无性能影响路径仅多一次 clone）。
+        if is_wrapped(l) || is_wrapped(r) {
+            let l = deref_wrapped(l);
+            let r = deref_wrapped(r);
             return self.eval_binary(op, &l, &r);
         }
         match op {
@@ -379,7 +377,7 @@ impl super::Interpreter {
                 let b = b.borrow();
                 a.len() == b.len()
                     && a.iter().zip(b.iter()).all(|(x, y)| {
-                        self.values_eq(&super::natives::deref_wrapped(x), &super::natives::deref_wrapped(y))
+                        self.values_eq(&deref_wrapped(x), &deref_wrapped(y))
                     })
             }
             _ => false,
