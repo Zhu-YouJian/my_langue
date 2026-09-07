@@ -9,6 +9,8 @@ use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::runtime::value::{Value, FutureState, check_int_overflow, int_overflow_err};
 use crate::runtime::autodiff::TapeOp;
+use crate::runtime::autodiff::record_binary as tape_record_binary;
+use crate::runtime::autodiff::record_unary as tape_record_unary;
 use crate::runtime::tensor::Tensor;
 use crate::runtime::async_io::ASYNC_IO;
 
@@ -2093,35 +2095,12 @@ impl Vm {
     // ── Autodiff recording helpers ─────────────────────────────────────
 
     pub(super) fn record_unary(&mut self, op: TapeOp, input: &Rc<RefCell<Tensor>>, result: &Rc<RefCell<Tensor>>) {
-        if let Some(ref mut tape) = self.tape {
-            let node_id = match input.borrow().tape_id {
-                Some(input_id) => tape.unary(op, input_id, input.clone(), result.clone()),
-                None => {
-                    let dummy = tape.input(input.clone());
-                    tape.unary(op, dummy, input.clone(), result.clone())
-                }
-            };
-            result.borrow_mut().tape_id = Some(node_id);
-        }
+        // P2/B4：委托到共享实现（runtime::autodiff::record），与解释器单点一致。
+        tape_record_unary(&mut self.tape, op, input, result);
     }
 
     pub(super) fn record_binary(&mut self, op: TapeOp, t1: &Rc<RefCell<Tensor>>, t2: &Rc<RefCell<Tensor>>, result: &Rc<RefCell<Tensor>>) {
-        if let Some(ref mut tape) = self.tape {
-            let id1 = t1.borrow().tape_id;
-            let id2 = t2.borrow().tape_id;
-            let node_id = match (id1, id2) {
-                (Some(a), Some(b)) => tape.binary(op, a, b, t1.clone(), t2.clone(), result.clone()),
-                (Some(a), None) => {
-                    let dummy = tape.input(t2.clone());
-                    tape.binary(op, a, dummy, t1.clone(), t2.clone(), result.clone())
-                }
-                (None, Some(b)) => {
-                    let dummy = tape.input(t1.clone());
-                    tape.binary(op, dummy, b, t1.clone(), t2.clone(), result.clone())
-                }
-                (None, None) => tape.binary_direct(op, t1.clone(), t2.clone(), result.clone()),
-            };
-            result.borrow_mut().tape_id = Some(node_id);
-        }
+        // P2/B4：委托到共享实现（runtime::autodiff::record），与解释器单点一致。
+        tape_record_binary(&mut self.tape, op, t1, t2, result);
     }
 }

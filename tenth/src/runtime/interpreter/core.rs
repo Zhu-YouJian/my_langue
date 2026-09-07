@@ -41,6 +41,13 @@ pub struct Interpreter {
     // 因此标 `pub(super)`（对 interpreter 模块及其子模块可见）。
     pub(super) functions: Vec<HirFnDef>,
     pub(super) generic_funcs: HashMap<String, HirFnDef>,
+    /// 程序级泛型函数定义（源列表）。`generic_funcs` 运行时映射由
+    /// `register_functions` 从本字段填充，供 `GenericCall` 查找（eval.rs）。
+    /// 单独存储是因为 `new` 时 `generic_funcs` 尚为空。
+    pub(super) generic_func_defs: Vec<HirFnDef>,
+    /// `use path::name` 导入（别名列表，见 HirProgram.uses）。
+    /// 由 `register_functions` 处理，注入被导入函数的 FnRef。
+    pub(super) uses: Vec<(Vec<String>, String)>,
     /// M3.5：程序级顶层 `let` 全局（常量与可变状态）。在 main 之前于 depth 0 初始化。
     pub(super) globals: Vec<HirGlobal>,
     pub(super) methods: HashMap<String, HashMap<String, HirFnDef>>,
@@ -110,6 +117,8 @@ impl Interpreter {
             scope_vars: vec![Vec::new()],
             functions: program.functions.clone(),
             generic_funcs: HashMap::new(),
+            generic_func_defs: program.generic_funcs.clone(),
+            uses: program.uses.clone(),
             globals: program.globals.clone(),
             methods: program.methods.clone(),
             modules: program.modules.clone(),
@@ -254,7 +263,9 @@ impl Interpreter {
         Rc::clone(&self.custom_ops)
     }
 
-    pub fn execute_program(&mut self, program: &HirProgram) -> TenthResult<Option<Value>> {
+    /// 注册内建函数（native FnRef 注入）。单点实现，`execute_program` 与
+    /// `execute_program_inner` 共用，杜绝子集漂移（P2/B7）。
+    fn register_builtins(&mut self) {
         self.insert_var(
             "tensor".to_string(),
             Value::FnRef {
@@ -430,26 +441,35 @@ impl Interpreter {
                 captures: vec![],
             },
         );
+    }
 
-        for func in &program.functions {
+    /// 注册程序级函数与泛型函数映射 & use 导入。单点实现，
+    /// `execute_program` 与 `execute_program_inner` 共用（P2/B7）。
+    fn register_functions(&mut self) {
+        // 普通函数 FnRef 注入（clone 列表，避免 uses 处理期间 push 引起的借用冲突）
+        let funcs = self.functions.clone();
+        for func in &funcs {
             let params = func.params.clone();
             let ret = func.return_type.clone();
             self.insert_var(
                 func.name.clone(),
                 Value::FnRef {
                     name: func.name.clone(),
-                    params: params.clone(),
-                    return_type: ret.clone(),
+                    params,
+                    return_type: ret,
                     captures: vec![],
                 },
             );
         }
 
-        for func in &program.generic_funcs {
+        // 泛型函数映射（供 GenericCall 查找）
+        for func in &self.generic_func_defs {
             self.generic_funcs.insert(func.name.clone(), func.clone());
         }
 
-        for (use_path, alias) in &program.uses {
+        // use 导入（`use path::name`）
+        let uses = self.uses.clone();
+        for (use_path, alias) in &uses {
             if use_path.len() >= 2 {
                 let mod_name = &use_path[0];
                 let fn_name = &use_path[1];
@@ -471,6 +491,12 @@ impl Interpreter {
                 }
             }
         }
+    }
+
+    pub fn execute_program(&mut self, program: &HirProgram) -> TenthResult<Option<Value>> {
+        // 单点注入（与 execute_program_inner 共用，杜绝子集漂移）
+        self.register_builtins();
+        self.register_functions();
 
         // Reset arena at the start of each top-level evaluation.
         // Any temporary allocations from previous evaluations are freed.
@@ -513,67 +539,12 @@ impl Interpreter {
     }
 
     /// Internal: run initialization without executing main.
+    /// 复用 `register_builtins` / `register_functions`（与 `execute_program` 单点，
+    /// P2/B7），使测试路径（`execute_fn_test`）也能拿到完整内建/函数/泛型/use 注入。
     fn execute_program_inner(&mut self) -> TenthResult<()> {
-        // Register builtins from execute_program
-        self.insert_var("tensor".to_string(), Value::FnRef {
-            name: "tensor".to_string(),
-            params: vec![("data".to_string(), Type::Unknown)],
-            return_type: Type::Unknown,
-            captures: vec![],
-        });
-        for name in &["start_grad", "new_grad", "stop_grad", "zero_grad"] {
-            self.insert_var(name.to_string(), Value::FnRef {
-                name: name.to_string(), params: vec![], return_type: Type::unit(), captures: vec![],
-            });
-        }
-        self.insert_var("cross_entropy".to_string(), Value::FnRef {
-            name: "cross_entropy".to_string(),
-            params: vec![("logits".to_string(), Type::Unknown), ("target".to_string(), Type::Unknown)],
-            return_type: Type::Unknown,
-            captures: vec![],
-        });
-        self.insert_var("select".to_string(), Value::FnRef {
-            name: "select".to_string(),
-            params: vec![("cond".to_string(), Type::Unknown), ("then".to_string(), Type::Unknown), ("else".to_string(), Type::Unknown)],
-            return_type: Type::Unknown,
-            captures: vec![],
-        });
-        self.insert_var("scatter".to_string(), Value::FnRef {
-            name: "scatter".to_string(),
-            params: vec![("base".to_string(), Type::Unknown), ("dim".to_string(), Type::Unknown), ("index".to_string(), Type::Unknown), ("src".to_string(), Type::Unknown)],
-            return_type: Type::Unknown,
-            captures: vec![],
-        });
-        self.insert_var("gather".to_string(), Value::FnRef {
-            name: "gather".to_string(),
-            params: vec![("base".to_string(), Type::Unknown), ("dim".to_string(), Type::Unknown), ("index".to_string(), Type::Unknown)],
-            return_type: Type::Unknown,
-            captures: vec![],
-        });
-        for name in &["abs", "sqrt", "sin", "cos", "ln", "pow"] {
-            self.insert_var(name.to_string(), Value::FnRef {
-                name: name.to_string(), params: vec![("x".to_string(), Type::Unknown)], return_type: Type::Unknown, captures: vec![],
-            });
-        }
-        for name in &["zeros", "ones"] {
-            self.insert_var(name.to_string(), Value::FnRef {
-                name: name.to_string(), params: vec![("dims".to_string(), Type::Unknown)], return_type: Type::Unknown, captures: vec![],
-            });
-        }
-        // Register all program functions as FnRefs
-        for func in self.functions.clone() {
-            let params = func.params.clone();
-            let ret = func.return_type.clone();
-            self.insert_var(func.name.clone(), Value::FnRef { name: func.name.clone(), params, return_type: ret, captures: vec![] });
-        }
-        // Register module functions
-        for module in self.modules.clone().values() {
-            for func in &module.functions {
-                let params = func.params.clone();
-                let ret = func.return_type.clone();
-                self.insert_var(func.name.clone(), Value::FnRef { name: func.name.clone(), params, return_type: ret, captures: vec![] });
-            }
-        }
+        self.register_builtins();
+        self.register_functions();
+
         // M3.5：初始化程序级顶层 let 全局（test 路径也能读取全局常量/状态）
         self.init_program_globals()?;
         // Reset arena

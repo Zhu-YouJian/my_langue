@@ -17,9 +17,12 @@ mod tape_op;
 mod grad;
 mod backward;
 mod custom;
+mod record;
 
 pub use tape_op::{TapeNode, TapeOp};
 pub use custom::{CustomBackward, CustomOpRegistry};
+// P2/B4：record_binary / record_unary 单点共享（解释器与 VM 均委托到此）。
+pub(crate) use record::{record_binary, record_unary};
 
 // 护城河 F Phase 1：op_name 去重——re-export 供 relation_debugger 复用。
 // grad 模块本身是私有子模块，通过此 re-export 暴露 op_name 到 crate 内。
