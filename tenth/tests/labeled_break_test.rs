@@ -208,6 +208,24 @@ fn labeled_break_with_value() {
     assert_parity(src, 5, "带值 break + 标签");
 }
 
+// ── 4b. 带值 break 的表达式 lowering 失败：错误必须向上传播 ──
+
+#[test]
+fn break_with_illegal_value_errors() {
+    // 静默失败防护：break 携带的表达式若 lowering 失败，错误必须向上传播，
+    // 而不是被 unwrap_or_else 静默降级为 Unit（否则掩盖真实的类型/语法错误）。
+    let src = r#"
+        let mut s = 0;
+        loop {
+            s = s + 1;
+            if s == 5 { break s + undefined_var; }
+        }
+        s
+    "#;
+    let err = lower_error(src).expect_err("break 带非法类型表达式应编译期报错");
+    assert!(err.contains("未定义变量"), "错误消息不符: {}", err);
+}
+
 // ── 5. 未定义标签报错 ──
 
 #[test]

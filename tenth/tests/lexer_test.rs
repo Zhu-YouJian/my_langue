@@ -247,3 +247,41 @@ fn test_float_starting_with_zero_still_works() {
     assert_eq!(tokens[0], TokenKind::FloatLiteral(0.5, BaseType::F64));
     assert_eq!(tokens[1], TokenKind::FloatLiteral(0.0, BaseType::F64));
 }
+
+// --- 静默失败防护：未闭合块注释 ---
+
+#[test]
+fn test_unclosed_block_comment_errors() {
+    // 块注释到达 EOF 仍未闭合（缺 `*/`）必须报 LexerError，而非静默吞掉整段代码。
+    let mut lexer = Lexer::new("42 /* unclosed comment");
+    let first = lexer.next_token().expect("第一个 token 应为 42");
+    assert_eq!(first.kind, TokenKind::IntLiteral(42, BaseType::I32));
+    let err = lexer.next_token().expect_err("未闭合块注释应返回 LexerError");
+    match err {
+        tenth::error::TenthError::LexerError { message, .. } => {
+            assert!(message.contains("未闭合"), "错误消息不符: {}", message);
+        }
+        other => panic!("预期 LexerError，实际 {:?}", other),
+    }
+}
+
+#[test]
+fn test_unclosed_nested_block_comment_errors() {
+    // 嵌套块注释：内层 `*/` 只关闭内层，到 EOF 仍未闭合外层 → 应报错。
+    let mut lexer = Lexer::new("/* a /* b */ unclosed");
+    let err = lexer.next_token().expect_err("嵌套未闭合块注释应返回 LexerError");
+    match err {
+        tenth::error::TenthError::LexerError { message, .. } => {
+            assert!(message.contains("未闭合"), "错误消息不符: {}", message);
+        }
+        other => panic!("预期 LexerError，实际 {:?}", other),
+    }
+}
+
+#[test]
+fn test_closed_block_comment_ok() {
+    // 正常闭合的块注释不报错，其后 token 正常读取。
+    let tokens = tokenize("42 /* closed */ 7");
+    assert_eq!(tokens[0], TokenKind::IntLiteral(42, BaseType::I32));
+    assert_eq!(tokens[1], TokenKind::IntLiteral(7, BaseType::I32));
+}

@@ -1,4 +1,4 @@
-﻿//! Wasmtime JIT runtime for Tenth WASM modules.
+//! Wasmtime JIT runtime for Tenth WASM modules.
 //!
 //! Parallel runtime to the wasmi interpreter (`wasm.rs`). Implements the same
 //! 18 host imports using the wasmtime v46 API, enabling JIT execution of the
@@ -42,6 +42,21 @@ fn read_cstr<'a>(data: &'a [u8], ptr: i32) -> &'a str {
     };
     let end = data[off..].iter().position(|&b| b == 0).unwrap_or(0);
     std::str::from_utf8(&data[off..off + end]).unwrap_or("")
+}
+
+/// 将 WASM 传入的 Vec 指针（i64）安全转为 `usize` 偏移。
+/// Vec 指针实际是 bump-allocator 偏移（i32 语意）。若 i64 截断为 i32 后为负
+/// （即高位被设置，可能是负数或 >= 2^31 的非法偏移），返回 `None`。
+///
+/// 注意：不要用 `safe_offset(..., 1)` 直接校验 Vec 指针——那会把所有真实的
+/// bump 偏移（>=1）都判为非法，导致 Vec 操作恒返回 0。这里只校验非负。
+#[inline]
+fn safe_vec_ptr(vec: i64) -> Option<usize> {
+    let p = vec as i32;
+    if p < 0 {
+        return None;
+    }
+    Some(p as usize)
 }
 
 /// Register all host imports (module "host") on the given wasmtime linker.
@@ -198,8 +213,8 @@ pub fn register_wasmtime_host_functions(linker: &mut Linker<u32>) -> TenthResult
     // 8. Vec_len(vec: i64) -> i64 — read length field from Vec header.
     linker.func_wrap("host", "Vec_len",
         |mut caller: Caller<'_, u32>, vec: i64| -> i64 {
-            // 安全：vec 是 i64 但实际偏移是 i32。先转 i32 再校验。
-            let vec_ptr = match safe_offset(vec as i32, 1) {
+            // 安全：vec 是 i64 但实际偏移是 i32。先经 safe_vec_ptr 校验非负。
+            let vec_ptr = match safe_vec_ptr(vec) {
                 Some(p) => p,
                 None => return 0,
             };
@@ -213,7 +228,7 @@ pub fn register_wasmtime_host_functions(linker: &mut Linker<u32>) -> TenthResult
     // 9. Vec_get(vec: i64, idx: i64) -> i64 — read element at index.
     linker.func_wrap("host", "Vec_get",
         |mut caller: Caller<'_, u32>, vec: i64, idx: i64| -> i64 {
-            let vec_ptr = match safe_offset(vec as i32, 1) {
+            let vec_ptr = match safe_vec_ptr(vec) {
                 Some(p) => p,
                 None => return 0,
             };
@@ -238,7 +253,7 @@ pub fn register_wasmtime_host_functions(linker: &mut Linker<u32>) -> TenthResult
     // 10. Vec_push(vec: i64, item: i64) -> i64 — append element, grow if needed.
     linker.func_wrap("host", "Vec_push",
         |mut caller: Caller<'_, u32>, vec: i64, item: i64| -> i64 {
-            let vec_ptr = match safe_offset(vec as i32, 1) {
+            let vec_ptr = match safe_vec_ptr(vec) {
                 Some(p) => p,
                 None => return 0,
             };
@@ -263,7 +278,11 @@ pub fn register_wasmtime_host_functions(linker: &mut Linker<u32>) -> TenthResult
                 if dp != 0 && len > 0 {
                     let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
                     let data = mem.data_mut(&mut caller);
-                    let old_sz = len as usize * 8;
+                    // 安全：len * 8 用 checked_mul 防溢出
+                    let old_sz = match (len as usize).checked_mul(8) {
+                        Some(s) => s,
+                        None => return 0,
+                    };
                     // 安全：copy_within 范围校验
                     let src_end = match (dp as usize).checked_add(old_sz) {
                         Some(e) if e <= data.len() => e,
@@ -288,7 +307,12 @@ pub fn register_wasmtime_host_functions(linker: &mut Linker<u32>) -> TenthResult
                 data[vp..vp+8].copy_from_slice(&new_cap.to_le_bytes());
                 data[vp+8..vp+16].copy_from_slice(&(len + 1).to_le_bytes());
                 data[vp+16..vp+20].copy_from_slice(&new_dp.to_le_bytes());
-                let pos = match (new_dp as usize).checked_add((len as usize) * 8) {
+                // 安全：len * 8 用 checked_mul 防溢出
+                let elem_off = match (len as usize).checked_mul(8) {
+                    Some(v) => v,
+                    None => return 0,
+                };
+                let pos = match (new_dp as usize).checked_add(elem_off) {
                     Some(p) => p,
                     None => return 0,
                 };

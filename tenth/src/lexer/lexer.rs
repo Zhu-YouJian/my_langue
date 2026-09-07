@@ -50,7 +50,7 @@ impl Lexer {
         }
     }
 
-    fn skip_whitespace_and_comments(&mut self) {
+    fn skip_whitespace_and_comments(&mut self) -> TenthResult<()> {
         while let Some(ch) = self.peek() {
             if ch.is_whitespace() {
                 self.advance();
@@ -66,6 +66,7 @@ impl Lexer {
                 }
             } else if ch == '/' && self.peek_next() == Some('*') {
                 // Block comment: skip until */
+                let comment_span = self.span(); // 记录注释起点，未闭合时报错定位到 `/*`
                 self.advance(); // skip /
                 self.advance(); // skip *
                 let mut depth: i32 = 1;
@@ -85,8 +86,15 @@ impl Lexer {
                             self.advance();
                         }
                         (None, _) => {
-                            // Reached EOF inside block comment — let parser handle the error
-                            break;
+                            // 静默失败防护：到达 EOF 但块注释仍嵌套（depth > 0），说明
+                            // 缺少 `*/`。这里必须返回 LexerError，而不是像字符串/字符
+                            // 字面量那样静默吞掉——否则整段后续代码被无声"切开"，用户零
+                            // 诊断（parser 根本不知道注释被截断），违背"静默失败防护"护城河。
+                            return Err(TenthError::LexerError {
+                                line: comment_span.line,
+                                col: comment_span.col,
+                                message: "块注释未闭合，缺少 `*/`".to_string(),
+                            });
                         }
                     }
                 }
@@ -94,6 +102,7 @@ impl Lexer {
                 break;
             }
         }
+        Ok(())
     }
 
     fn read_number(&mut self, first: char) -> TenthResult<Token> {
@@ -830,7 +839,7 @@ impl Lexer {
     }
 
     pub fn next_token(&mut self) -> TenthResult<Token> {
-        self.skip_whitespace_and_comments();
+        self.skip_whitespace_and_comments()?;
 
         let ch = match self.peek() {
             Some(c) => c,

@@ -561,16 +561,10 @@ impl Vm {
     pub fn mul(&mut self, a: &Value, b: &Value) -> TenthResult<Value> { self.mul_priv(a, b) }
     pub fn div(&mut self, a: &Value, b: &Value) -> TenthResult<Value> { self.div_priv(a, b) }
     pub fn rem(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
-        match (a, b) {
-            (Value::Int(x, dt), Value::Int(y, _)) => {
-                if *y == 0 { return Err(TenthError::RuntimeError { line: None, col: None, message: "整数取模除零".into() }); }
-                // AUDIT-11.4.17：checked_rem 拦截 i64::MIN % -1 等溢出（overflow-checks=true 下直接 % 会 panic）
-                let r = x.checked_rem(*y).ok_or_else(|| super::value::int_overflow_err(*dt))?;
-                check_int_overflow(r, *dt)?;
-                Ok(Value::Int(r, BaseType::I32))
-            }
-            _ => Err(TenthError::RuntimeError { line: None, col: None, message: "% 需要整数".into() }),
-        }
+        // 委托 rem_priv（同 add/sub/mul/div 包装）：保留左操作数 dtype + 解包包裹值 +
+        // checked_rem 拦 i64::MIN % -1 + 窄 dtype 检查，与解释器 Mod 分支一致。
+        // 此前此处内联实现丢失 dtype（恒返回 I32），JIT host_mod 路径随之不一致。
+        self.rem_priv(a, b)
     }
     pub fn neg(&mut self, a: &Value) -> TenthResult<Value> {
         match a {

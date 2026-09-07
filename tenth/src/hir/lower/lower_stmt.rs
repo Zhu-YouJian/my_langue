@@ -298,12 +298,17 @@ impl Lowerer {
             }
             StmtKind::Break { label, value } => {
                 self.check_loop_label(&label, &span, "break")?;
+                let lowered_value = match value.as_ref() {
+                    // 仅当 break 确实携带表达式时才 lowering；错误必须与整条管线
+                    // 其余分支一致地用 `?` 传播，而不是 `unwrap_or_else` 静默降级为
+                    // Unit——否则 break 表达式里的真实类型/语法错误被掩盖，违反
+                    // "静默失败防护"moat。
+                    Some(e) => Some(Box::new(self.lower_expr(e)?)),
+                    None => None,
+                };
                 HirStmtKind::Break {
                     label: label.clone(),
-                    value: value.as_ref().map(|e| Box::new(self.lower_expr(e).unwrap_or_else(|_| {
-                        // Fallback: if lowering fails, create a unit expression
-                        HirExpr { kind: HirExprKind::Block { stmts: vec![], final_expr: None }, ty: Type::unit(), span: span.clone() }
-                    }))),
+                    value: lowered_value,
                 }
             }
             StmtKind::Continue { label } => {

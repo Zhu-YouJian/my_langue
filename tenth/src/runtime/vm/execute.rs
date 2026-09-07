@@ -455,15 +455,39 @@ impl Vm {
                 }
                 // 15 Mod / 16 Neg / 17 Not
                 15 => {
-                    let b = self.pop_int()?; let a = self.pop_int()?;
-                    if b == 0 {
-                        return Err(self.err_here(chunk_idx, ip, "整数取模除零".into()));
+                    // R2 快路径：同 add/sub/mul/div 模式——从栈顶读回带 dtype 的 Value，
+                    // Int-Int 分支保留左操作数 dtype（checked_rem 拦 i64::MIN % -1 + 窄 dtype 检查），
+                    // 其余走 rem_priv 慢路径（解包包裹值 + 语义一致）。此前用 pop_int 取裸 i64
+                    // 丢失 dtype、恒返回 I32，与解释器（保留左操作数 dtype）不一致。
+                    let n = self.stack.len();
+                    if n >= 2 {
+                        let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
+                            (Value::Int(x, dt), Value::Int(y, _)) => {
+                                if *y == 0 {
+                                    return Err(self.err_here(chunk_idx, ip, "整数取模除零".into()));
+                                }
+                                // AUDIT-11.4.17：checked_rem 拦截 i64::MIN % -1 等溢出（overflow-checks=true 下直接 % 会 panic）
+                                // M2-A5：溢出错误补行号（对齐 JIT 标量路径）
+                                let r = x.checked_rem(*y).ok_or_else(|| int_overflow_err(*dt)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                                check_int_overflow(r, *dt).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                                Some(Value::Int(r, *dt))
+                            }
+                            _ => None,
+                        };
+                        if let Some(r) = fast {
+                            self.stack.pop();
+                            self.stack.pop();
+                            self.stack.push(r);
+                        } else {
+                            let (a, b) = self.pop2();
+                            let r = self.rem_priv(&a, &b).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                            self.stack.push(r);
+                        }
+                    } else {
+                        let (a, b) = self.pop2();
+                        let r = self.rem_priv(&a, &b).map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                        self.stack.push(r);
                     }
-                    // AUDIT-11.4.17：checked_rem 拦截 i64::MIN % -1 等溢出（overflow-checks=true 下直接 % 会 panic）
-                    // M2-A5：溢出错误补行号（对齐 JIT 标量路径）
-                    let r = a.checked_rem(b).ok_or_else(|| int_overflow_err(BaseType::I32)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
-                    self.stack.push(Value::Int(r, BaseType::I32));
-                    // 注：Mod 指令通过 pop_int 获取值，丢失 dtype，默认 I32
                 }
                 16 => {
                     let v = self.stack.pop().unwrap_or(Value::Unit);
@@ -1904,6 +1928,28 @@ impl Vm {
                 Value::Tensor(result)
             }
             _ => return err("/ 类型不匹配"),
+        })
+    }
+
+    pub(super) fn rem_priv(&mut self, a: &Value, b: &Value) -> TenthResult<Value> {
+        // AUDIT-11.4.21：运算前解包包裹值
+        if Self::is_wrapped(a) || Self::is_wrapped(b) {
+            let a = Self::deref_wrapped(a);
+            let b = Self::deref_wrapped(b);
+            return self.rem_priv(&a, &b);
+        }
+        Ok(match (a, b) {
+            (Value::Int(x, dt), Value::Int(y, _)) => {
+                if *y == 0 {
+                    return err("整数取模除零");
+                }
+                // AUDIT-11.4.17：checked_rem 拦截 i64::MIN % -1 等溢出（overflow-checks=true 下直接 % 会 panic）
+                // 保留左操作数 dtype（与解释器 eval_binary Mod 分支一致）
+                let r = x.checked_rem(*y).ok_or_else(|| int_overflow_err(*dt))?;
+                check_int_overflow(r, *dt)?;
+                Value::Int(r, *dt)
+            }
+            _ => return err("取模仅支持整数"),
         })
     }
 
