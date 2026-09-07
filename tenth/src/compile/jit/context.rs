@@ -410,10 +410,15 @@ impl JitContext {
 
 impl Drop for JitContext {
     fn drop(&mut self) {
-        // 显式释放编译产物与代码映射，避免依赖 JITModule 的隐式 Drop 语义
-        // （未来 cranelift 版本变更 Drop 行为时不易察觉）。
-        // `Module::finish` 消费 self，这里只能尽力清理；失败可忽略。
-        // 安全：清空 cache 后所有函数指针不再被引用，模块可安全释放。
+        // 说明（诚实版）：真正持有并释放机器码的字段是 JITModule 与 Cranelift Module，
+        // 由 Rust 自身的 Drop 处理，无需在此显式释放。这里只清空本模块维护的映射/缓存
+        // （cache 等里的裸函数指针是 Copy、不拥有资源，clear 只是丢弃指针，非释码）。
+        // 与 spec_cache / table / spec_table / all_chunks 一样，清理它们是为释放
+        // 本模块持有的所有权（如 all_chunks 的 Chunk 克隆、表格），保持自洽与内存干净。
         self.cache.clear();
+        self.spec_cache.clear();
+        self.table.clear();
+        self.spec_table.clear();
+        self.all_chunks.clear();
     }
 }
