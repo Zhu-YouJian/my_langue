@@ -433,7 +433,7 @@ impl Vm {
             }
             Ok(out)
         } else {
-            let (line, msg) = self.take_last_error().unwrap_or((None, "JIT 调用失败".into()));
+            let (line, msg) = self.take_last_error().unwrap_or((None, "JIT 执行失败".into()));
             Err(TenthError::RuntimeError { line, col: None, message: msg })
         }
     }
