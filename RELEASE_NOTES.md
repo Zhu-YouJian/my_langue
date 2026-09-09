@@ -11,8 +11,8 @@
 | 里程碑 | 内容 | 成果 |
 |--------|------|------|
 | **M1 语言核心 ≈84%** | WASM 后端 4 缺口 / true letrec 递归闭包 / 运行时小缺口（broadcast_to·内联 mod·1D 张量迭代）/ 语义杂项（VM 引用语义·顶层 let·命名空间）/ 语言规范 7 章定稿 | 语言核心 **≈84%**；62 个实例全部双路径（VM=JIT 与解释器）可运行；规范覆盖语言核心 ✅84 项 |
-| **M2 性能叙事** | A1 JIT-to-JIT 直接调用 / A2 小函数内联 / A3 opcode 覆盖 / A5 一致性套件 + 基准门槛 / A6 入参标量 ABI | fib(28) **180ms → 8ms（~20×）**、loop 1e7 **488ms → 60-65ms（~7.4×）**、matmul 0-1ms；基准门槛 CI（D4） |
-| **M2.6-P 系列** | P1 纯标量固定开销消除 / P2 JIT 静默错值 5 维审计 / P3 f64+Int 特化 / P4 CallClosure JIT-to-JIT | fib **8ms**（每次调用 ~9.6ns）；f64 特化 fp_fib ~3ms / fp_poly ~7ms；closure-heavy **~6×**；修 AUDIT-11.4.36/11.4.37 |
+| **M2 性能叙事** | A1 JIT-to-JIT 直接调用 / A2 小函数内联 / A3 opcode 覆盖 / A5 一致性套件 + 基准门槛 / A6 入参标量 ABI | fib(28) **180ms → 8ms（~20×）**、loop 1e7 **488ms → 60-65ms（~7.4×）**、matmul 0-1ms；基准门槛固化（D4，`tenth/tests/bench_gate_test.rs`，`#[ignore]` 本机/专用机执行） |
+| **M2.6-P 系列** | P1 纯标量固定开销消除 / P2 JIT 静默错值 5 维审计 / P3 f64+Int 特化 / P4 CallClosure JIT-to-JIT | fib **8ms**（每次调用 ~9.6ns）；f64 特化 fp_fib ~3ms / fp_poly ~7ms；closure-heavy **~6×**（口径注见 §三）；修 AUDIT-11.4.36/11.4.37 |
 | **M3 护城河** | shape 参数一致化 / typestate（G1-G6）/ 静默失败防护（丢弃 + 误用拦截）/ lossy 格 / 内存·算力预估 | 编译期 + 运行时**双层 shape 防御**；typestate 状态参数 + 调用点检查；`db_query().len()` 等误用编译期 warning |
 | **M4 生态工具链** | tenthpm（M4.1）/ LSP（M4.2）/ 标准库 AI 生态（M4.3）/ 调试器·剖析器（M4.4） | 包管理器（传递依赖/锁文件/本地 registry）、语言服务器 13 项能力、3 优化器 + datasets + 分布式本地语义、CLI 调试器 + 热点剖析器 |
 | **M5 稳定化与 1.0** | M5.1 API 冻结 + 规范定稿 / M5.2 fuzz + 大规模回归 / M5.3 跨平台产物 / M5.4 1.0 release | **API 冻结**（语法/标准库/CLI/native 四面）；fuzz 6 项 + 实例批量守护；Windows 5 产物 + CI matrix（Win/Linux/macOS）+ WASM 自举；**测试数见 `能力梳理/能力全梳理.md` §统计基线**（实测，`cargo test --release`） |
@@ -27,7 +27,7 @@
 - **标准库**：以 `tenth/std/` + `prelude.th` 索引为准（模块数见 `能力梳理/能力全梳理.md` §统计基线；命名空间约 29），覆盖 nn / optim / data / init / collections / string / json / toml / cli / logging / time / random / math / crypto / regex / net / http / fs / process / distributed 等；prelude 150+ native 符号
 - **工具链**：`tenthpm`（10 子命令：init/build/test/run/add/remove/list/clean/publish/install，传递依赖解析 + 锁文件 + 本地 registry）、`tenth-lsp`（13 项能力）、`tenth-debug`（断点/单步/变量查看）、`tenth-prof`（top-N 热点剖析）
 
-## 三、性能数据（release + JIT 默认路径，同机 5 次中位数）
+## 三、性能数据（release + JIT 默认路径；v1.0.0 发布时记录，同机多次取中位数）
 
 | 基准 | 数值 | 对比 |
 |------|------|------|
@@ -35,10 +35,16 @@
 | loop 1e7 | **60-65ms** | v0.4.0 基线 488ms → **~7.4×** |
 | matmul 150×150 | 0-1ms | — |
 | f64 特化 fp_fib | ~3ms | P3 成果 |
-| 闭包密集（CallClosure JIT-to-JIT） | ~6× 加速 | P4 成果 |
+| 闭包密集（CallClosure JIT-to-JIT） | ~6× 加速 | P4 成果（口径注见下） |
 | 自举 | ~0.2s | — |
 
-CI 基准门槛（`bench_gate_test -- --ignored`）：fib <100ms / loop <200ms / matmul <20ms（3× 裕量）。
+> 上表为 **v1.0.0 发布时**的性能记录（历史，只追加）；**现行性能数据以 `docs/性能基线.md` 为唯一事实源（SSOT）**，本文件不再新增性能数字。表中「对比」列是 Tenth 自身 v0.4.0 → v1.0.0 的**纵向对比**，非外部参照。
+
+> **口径注（闭包 ~6×）**：上表「闭包密集 ~6×」与 §一 M2.6-P 系列「closure-heavy ~6×」是**同一口径**——**P4 前后对比且闭包体较重**（闭包体含 100 次循环、5000 次调用：75-84ms → 12-14ms ≈ 6×，闭包体跑 JIT 机器码）；**薄闭包 1e6 次仅 ~1.25×**（356→274-302ms，trampoline 固定开销主导）、HOF 1e6 次 ~1.27×（680→538-563ms）。两者**口径不同，不可直接比较**；vm-vs-jit 口径见 `docs/性能基线.md`（性能数据 SSOT）。
+
+**硬回归门槛**（`tenth/tests/bench_gate_test.rs`，`#[ignore]`，本机/专用机 release 执行）：fib(28) <100ms / loop 1e7 <200ms / matmul150 <20ms（≈3× 裕量，防抖动误报）。
+
+**CI 接线（如实）**：`.github/workflows/release.yml` **无基准步骤**（三平台构建 + 自举冒烟 + 关键测试套件 + 打包发布）；性能基线由 `.github/workflows/perf.yml`（`workflow_dispatch` + 每周 `schedule`）执行，**软门槛——仅报告不阻塞**（`continue-on-error`）。硬阈值不在 CI 卡红，由本机/专用机执行。
 
 ## 四、API 冻结与语义版本（v1.0.0 起）
 

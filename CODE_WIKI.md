@@ -45,7 +45,8 @@ Tenth 是一门面向 AI/ML 研究的编程语言，核心特性包括：
 项目根目录/
 ├── .github/                # CI
 │   └── workflows/
-│       └── release.yml    # 三平台构建 + 基准门槛 + 发布
+│       ├── release.yml    # 三平台构建 + 冒烟 + 发布（无基准步骤）
+│       └── perf.yml       # 性能基线巡检（workflow_dispatch + 周跑；仅报告不阻塞）
 ├── scripts/                # 发布/校验脚本
 │   ├── release/            # package.ps1 / package.sh / verify.ps1 / sync-public.ps1
 │   └── check_local_path_leaks.py  # 本地路径泄漏检查

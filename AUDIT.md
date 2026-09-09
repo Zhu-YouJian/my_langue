@@ -26,7 +26,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 ## 三、测试矩阵
 
-> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。**现行统计基线以 `能力梳理/能力全梳理.md` §统计基线为准（2026-09-07：2416 passed / 0 failed / 17 ignored）**；下表 per-文件 明细为较旧口径的存档记录（统计日期：2026-07-12，--release 模式），可能与合计数字不完全同步（合计见本行下行【总计】）。
+> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。**现行统计基线以 `能力梳理/能力全梳理.md` §统计基线为准（2026-09-09：2426 passed / 0 failed / 23 ignored）**；下表 per-文件 明细为较旧口径的存档记录（统计日期：2026-07-12，--release 模式），可能与合计数字不完全同步（合计见本行下行【总计】）。
 
 ### 基础管线
 
@@ -167,7 +167,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试目标 | 数量 | 说明 |
 |----------|------|------|
-| **总计** | **2416 passed / 0 failed / 17 ignored** | 现行基线（2026-09-07，`cargo test --release` 实测，套件数以实际为准）. 权威合计见 `能力梳理/能力全梳理.md` §统计基线。 |
+| **总计** | **2426 passed / 0 failed / 23 ignored** | 现行基线（2026-09-09，`cargo test --release` 实测，需 `RUST_MIN_STACK=33554432`，套件数以实际为准）. 权威合计见 `能力梳理/能力全梳理.md` §统计基线。 |
 
 > **2026-07-08 张量修复测试状态**：本次张量修复（f16/bf16 Phase 1 + 序列化 v2 + 4 项小修复）的代码改动已通过现有测试套件验证（lib 16 + integration 14 + native_parity 35 + stdlib 114 = 179 passed；autodiff 5 passed；自举通过），**未新增独立测试文件**——`native_parity_test.rs` 的 35 项已含序列化 v2 parity 测试（test_save_load_weights_parity + test_save_load_weights_nonzero_parity）。Wave 3 测试部补测试任务进行中（accumulate_loop 功能测试 / autodiff unbroadcast shape 测试 / AdamW 单值返回版本测试 / clip_grad_by_norm JIT 路径测试 / 序列化 f32 读写测试 / f16/bf16 基本运算测试），完成后由测试部同步 §三 测试矩阵新增 tensor_features_test 行 + 总计数字。
 
@@ -460,6 +460,10 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 | AUDIT-11.4.44 | JIT 标量专用化「分析/发射资格漂移」系统性风险面——分析器（`analyze_scalar_kinds`）与发射端（`emit_binop`/`emit_native_cmp` 等）的专用化资格判定为**两处独立代码路径**，任何不对齐即静默错值（UB）或整函数回退 | QA-20260831 修复轮实证（2026-08-31 登记，⚠️ 待排期） | **同族第三例**（前两例：AUDIT-11.4.35 内联优先于特化 ABI 的预测漂移、AUDIT-11.4.36 binop 专用化集合漂移）：本轮 probe5——分析器对比较指令**无条件**预测 Bool 标量，发射端比较专用化资格更窄（仅同类 I32/F64→Bool）→ 分析预测某槽为标量而发射端未为其建标量槽 → `Load` 专用化读「仅由未执行分支创建」的**未初始化标量槽**（布局敏感 UB，main_expr 裸表达式 `&&` 链静默错值 false/true 翻转）。已修复（分析端比较预测与发射端逐一对齐），但**结构性风险仍在**——「两处独立资格表」意味着未来任何一端单独修改（新增 opcode 专用化、调整白名单）都可能再造同族缺陷；现有守护（`jit_silent_audit_test` 34 项组合矩阵 + `jit_consistency_test`）只覆盖已知组合，无法系统性防住新增漂移。**性质**：架构债务 + 静默错值风险面（历史同族：11.4.35 / 11.4.36 / 11.4.44）。 | ⚠️ 待排期（运行时部建议）：重构为**单一资格表**——专用化资格判定收敛为一个共享数据结构/函数（opcode + 操作数类型 → 是否专用化 + 预测类型），分析与发射两端共同消费同一张表，从结构上消除双源漂移；重构落地前，任何一端改动必须在另一端逐条核对，并全量跑 jit_silent_audit + jit_consistency + jit_spec_abi 套件。 |
 
 | AUDIT-11.4.45 | 代码架构摸底发现的一批治理大项（涉及改指令格式 / 前端类型系统 / 自举三路径），经总师评估后**全部归档、暂不执行**（2026-09-08 用户决定） | 2026-09-08 代码架构摸底（code-arch-audit workflow，8 子代理并行）发现并评估；用户拍板全部归档暂不执行 | 5 项（详见 `.agents/tmp/big-items-registry.md` 原始评估留档）：①**A 后缀字面量 dtype 丢失**——`Op::PushInt` 只存 i64 不存 dtype，`42u8` 运行时实际 I32（违反手册 L166 承诺）；改需动 PushInt 指令格式、跨 bytecode/VM/解释器/JIT/WASM + 可能 tenthc（工作量较高、危险度中）。②**B tenthc 块注释错误信号**——tenthc lexer 返回 `Token` 直出无 Result，Rust 侧已修成返回 LexerError 但接口不对称无法照搬；改触及自举三路径 B/C（工作量、危险度最高，只影响错误提示优雅度、非正确性红线）。③**C VM 前端 char 字面量建模为整型码点**——`let ch='x'` 时 VM `to_string=120` 而解释器保留 `Value::Char`，双后端不一致；改需确认 char 语言语义（工作量中低、危险度中低）。④**D 重载分派两套兼容判定收敛**——`resolve_fn_overload`（scope.rs L227-297）用"精确==→数量兜底"而 `types_compatible`（types.rs L357-480）未用于兜底，形成两套口径；改会**改变重载解析行为**（兼容但不完全== 参数从报错变匹配成功），牵动 typestate/泛型/调用点检查、需同步 tenthc（工作量中、危险度**高**、改语义）。⑤**E native 注册一致性守卫测试**——native 名称在 `runtime/natives.rs`/`interpreter/natives.rs`/`hir/lower/types.rs` 多处手工同步无守卫，漏一处静默漂移；实测双端 native 集合有差异（VM 独有 8 个、解释器独有 4 个带下划线前缀，下划线可能是内部半公开命名）；实现守卫测试纯源码扫描易误报、需结构化 API（工作量低、危险度低）。**性质**：架构债务 / 治理建议（非当前正确性红线）。 | ⚠️ **已归档，暂不执行**（2026-09-08 用户决定，全部不做）。原始评估（工作量/危险度分级 + 每项各自建议）留档于 `.agents/tmp/big-items-registry.md`，供今后重启参考。 |
+
+| AUDIT-11.4.46 | 同一函数体内链式两次调用同一 std 泛型函数编译期失败（符号维度 `[M,N]` 与 `[M,K]` 不统一） | 2026-09-09 性能基线巡检运行时部探针复现（`.agents/tmp/perf_profile_20260909.md` §7.3；2026-09-09 登记，⚠️ 待排期） | 实证：`tenth/std/nn/linear.th:14 linear<T>(x: Tensor[T,M,K], w: Tensor[T,N,K], b: Tensor[T,N]) -> Tensor[T,M,N]`——同一函数体内**链式两次调用** `linear<f64>`（linear → relu → linear）**编译期失败**：第一次调用返回类型带**符号维度** `[M,N]`，第二次要求 `[M,K]`，符号名 `N` ≠ `K` 被判为不兼容（维度符号未做上下文重命名/统一），报「函数 'linear_F64' 的第 1 个实参（x）类型不兼容」。**绕行（已实测编译+运行通过）**：中间结果加**具体维度标注** `let h: Tensor[f64, 64, 256] = linear<f64>(x, w1, b1);`。**性质**：类型推断局限——**响亮失败，非静默错值**（不影响正确性，影响可用性）。**相关既有工作**：`AUDIT-11.4.13`（`Dim::Symbol` 支持）、M3.1 shape 参数一致化。**交叉引用**：`docs/决策记录/2026-09-09-架构议题台账.md` ARCH-3（类型系统 / 符号维度架构，本轮仅登记不启动）。 | ⚠️ 待排期（编译器部议题，HIR 类型推断 / 符号维度统一）：ARCH-3 探讨要点——① 符号维度的统一表示与传播（泛型实例化后 shape 如何收敛）；② 与 `tenthc` 侧 shape 检查的双侧同步（自举一致性）；③ 与 shape 护城河边界（**收紧属改进、放宽属破坏**，见 `docs/API冻结清单.md` semver 约定）。**判据**：链式调用可用且既有 shape 检查不放松（shape 相关套件全绿）。 |
+
+| AUDIT-11.4.47 | `elementwise_binary` 无条件物化全量副本（`broadcast().to_owned()`）→ 逐元素二元算子比归约慢约 **50×** | 2026-09-09 性能基线巡检实测（`tenth/src/runtime/tensor/methods.rs` 约 585-657 行；2026-09-09 登记，⚠️ 待排期） | `elementwise_binary` **无条件** `broadcast().to_owned()` 物化全量副本 + `ArrayD::zeros` + 两次 `zip_mut_with`——即使两操作数 shape 相同也走广播物化路径。**实测（2026-09-09，1M f64）**：`elementwise_mul_1k` ≈ 7-19ms（约 1.1-2 GB/s）vs `reduce_sum_1k` ≈ 0.11-0.27ms（约 38 GB/s），约 **50×** 差距（2026-09-09 权威基线重跑、每测试独立进程：`jit` 7.110/7.295ms vs 0.112/0.136ms ≈ **53×**，见 `docs/性能基线.md` §四 G2）。**性质**：性能缺陷——**正确性不受影响**（数值结果正确，仅慢）。数值口径与现行数据见 `docs/性能基线.md`（性能数据 SSOT）；G2 矩阵已含 `elementwise_mul_1k` / `reduce_sum_1k` 两场景。**交叉引用**：`docs/决策记录/2026-09-09-架构议题台账.md` ARCH-2（tensor 内核分层架构，本轮仅登记不启动）。 | ⚠️ 待排期（运行时部议题）：ARCH-2 探讨要点——① 内核分派分层（**同 shape 无拷贝快路径** / 广播惰性 stride 视图 / in-place 路径）；② SIMD 与 autovectorization、分块与并行；③ BLAS 接入（GEMM 当前 33-48 GFLOPS 单线程）；④ **红线**：in-place 与 autodiff tape 的交互（写坏梯度是静默错值）。**判据**：逐元素算子达到内存带宽 ≥60%，既有 autodiff 对拍套件全绿。 |
 
 ### 11.4.38 P 系列（M2.6-P1~P4）遗留难题登记（10 项，2026-08-04 P5 收尾留档）
 
