@@ -1,0 +1,149 @@
+# perf.yml — Tenth 性能基线巡检（G1–G6，软门槛）
+#
+# 目的：把「Tenth 性能到底怎样」变成可复现、可引用、有 SSOT 的数据。
+# 权威契约：任务黑板 `.agents/tmp/task_board.md`「总师契约 v1」；
+# 数据落档：`docs/性能基线.md`（文档部维护）。
+#
+# 触发：
+#   - workflow_dispatch（手动；可选 strict 严格模式）
+#   - schedule：每周一 03:00 UTC 自动跑
+#
+# 跑什么（release 构建后）：
+#   1. perf_baseline_test -- --ignored --nocapture   → PERF| 结构化基线行（min/median/GFLOPS/比值）
+#   2. bench_gate_test   -- --ignored               → 硬回归门槛（fib28<100ms / loop 1e7<200ms / matmul150<20ms）
+#
+# ⚠️ 软门槛：**CI 仅报告，硬阈值在本机/专用机执行**。
+#    共享 runner 的 CPU 噪声/频率/邻居干扰不可控，故两步都 `continue-on-error: true`
+#    （等价写法），阈值失败只标红该 step，不阻塞 workflow；需要阻塞时手动触发并勾选 strict。
+#
+# 产物：job summary 内嵌 PERF 行 + 两份完整日志 artifact。
+
+name: perf
+
+on:
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: "严格模式：阈值/断言失败时让 job 失败（默认关闭，CI 仅报告）"
+        type: boolean
+        default: false
+  schedule:
+    # 每周一 03:00 UTC（北京时间 11:00）。
+    - cron: "0 3 * * 1"
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: "1"
+
+jobs:
+  baseline:
+    name: perf baseline (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    # 软门槛：不因阈值 fail（strict=true 时恢复阻塞语义）。
+    continue-on-error: ${{ inputs.strict != true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            tenth/target
+          key: ${{ runner.os }}-cargo-perf-${{ hashFiles('tenth/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-perf-
+            ${{ runner.os }}-cargo-
+
+      - name: Build tenth (release)
+        run: cargo build --release -j 2 --manifest-path tenth/Cargo.toml
+
+      # ── 基线数据（G1–G6 jit + vm 参考 + interp 参考）─────────────────
+      # **每个测试一个独立进程**（规范跑法）：同进程内前一组的堆状态会把后续张量算子
+      # 膨胀 2–3×（实测 matmul_512 6.5ms → 15–20ms），VM 长循环也会膨胀后续 jit；
+      # 一进程一组 + 每组前 ~400ms CPU 频率预热，得到可比的 jit 数据。
+      - name: Perf baseline (soft)
+        id: baseline
+        continue-on-error: true
+        shell: bash
+        run: |
+          : > perf_baseline.log
+          for t in perf_g1_scalar_controlflow perf_g2_tensor_ops perf_g3_autodiff \
+                   perf_g4_nn_optim perf_g5_compile_startup perf_g6_three_path_compare \
+                   perf_vm_reference perf_interp_reference; do
+            echo "===== $t =====" | tee -a perf_baseline.log
+            cargo test --release --manifest-path tenth/Cargo.toml \
+              --test perf_baseline_test -- --ignored --nocapture "$t" 2>&1 | tee -a perf_baseline.log
+          done
+
+      # ── 硬回归门槛（本机为硬，CI 内软）───────────────────────────────
+      - name: Hard gate bench_gate_test (soft in CI)
+        id: gate
+        continue-on-error: true
+        shell: bash
+        run: |
+          cargo test --release --manifest-path tenth/Cargo.toml \
+            --test bench_gate_test -- --ignored --nocapture 2>&1 | tee bench_gate.log
+
+      # ── job summary：内嵌 PERF 行，便于周度巡检直接阅读 ──────────────
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Tenth 性能基线巡检 — ${{ runner.os }}"
+            echo ""
+            echo "> **CI 仅报告**：阈值不阻塞（\`continue-on-error\`）。硬阈值在本机/专用机执行。"
+            echo "> 触发：\`${{ github.event_name }}\`｜commit：\`${{ github.sha }}\`"
+            echo ""
+            echo "### 基线数据（\`PERF|<group>|<scenario>|<path>|<metric>|<value>|<unit>\`）"
+            echo ""
+            echo '```text'
+            grep -E '^PERF\|' perf_baseline.log || echo '(no PERF lines: 基线步骤未产出或未运行)'
+            echo '```'
+            echo ""
+            echo "### 不可用场景（n/a 原因）"
+            echo ""
+            echo '```text'
+            grep -E '^PERF-NA' perf_baseline.log || echo '(none)'
+            echo '```'
+            echo ""
+            echo "### 口径与披露（PERF-NOTE，必须与数据同读）"
+            echo ""
+            echo '```text'
+            grep -E '^PERF-NOTE' perf_baseline.log || echo '(none)'
+            echo '```'
+            echo ""
+            echo "### 硬回归门槛（bench_gate_test）"
+            echo ""
+            echo '```text'
+            grep -E 'bench_gate 中位数|test result:|^run [0-9]+:' bench_gate.log || echo '(no gate output)'
+            echo '```'
+            echo ""
+            echo "### 结果"
+            echo ""
+            echo "- 基线步骤：\`${{ steps.baseline.outcome }}\`"
+            echo "- 硬门槛步骤：\`${{ steps.gate.outcome }}\`（CI 内软，仅报告）"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── artifact：完整日志（含未通过时的报错上下文）──────────────────
+      - name: Upload baseline logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-baseline-${{ matrix.os }}
+          path: |
+            perf_baseline.log
+            bench_gate.log
+          if-no-files-found: warn
