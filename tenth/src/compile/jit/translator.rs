@@ -2412,6 +2412,11 @@ impl<'a, M: Module> Translator<'a, M> {
                 let out = self.stack_addr_at_sp();
                 self.call_hostcall_2_val("host_index_get", target_addr, idx_addr, out);
                 self.bump_sp()?;
+                // AUDIT-11.4.54 同族（JIT 侧）：host_index_get 越界时写 Unit + set_jit_error，
+                // 此前**不检查**立即继续执行 —— 后续指令读到静默的 ()（如 println 先输出 `()`），
+                // 错误直到 run_jit 末尾才浮出（副作用已发生）。此处与 MethodCall/CallClosure 的
+                // B2 模式一致：有错立即按约定中止（同 emit_binop 的 11.4.17 修法）。
+                self.emit_err_check_abort();
             }
             SliceStr => {
                 self.sp -= VALUE_SIZE as i32;

@@ -364,15 +364,26 @@ impl BytecodeCompiler {
 
             Assign { target, value } => {
                 self.compile_expr(value)?;
-                self.chunk.emit(Op::Dup);
                 // rposition：写最近绑定的槽位（同名重绑定/循环变量场景）
-                let is_local = if let Some(pos) = self.locals.iter().rposition(|n| n == target) {
+                let target_slot = self.locals.iter().rposition(|n| n == target);
+                // AUDIT-11.4.55：目标是**程序全局**（顶层 let / use 导入）且当前 chunk
+                // 尚无同名 local 槽位时，**不得新建 local 槽**——否则该 chunk 后续对同名
+                // 变量的读（Var → Load(slot)）/写全部落在这份 local 阴影上，与全局表分叉：
+                // `main` 写 A 建 local 后只读 local，函数内 `A = A + 1` 写全局表 → 函数侧
+                // 写入对 main 不可见（VM 静默错值，解释器为单一全局表故正确）。
+                // 解释器语义：全局赋值即写全局表，后续按名解析仍取全局表。
+                let is_program_global = target_slot.is_none() && self.global_names.contains(target);
+                let is_local = if let Some(pos) = target_slot {
+                    self.chunk.emit(Op::Dup);
                     self.chunk.emit(Op::Store(pos));
                     true
+                } else if is_program_global {
+                    false
                 } else {
                     // New local
                     let pos = self.locals.len();
                     self.locals.push(target.clone());
+                    self.chunk.emit(Op::Dup);
                     self.chunk.emit(Op::Store(pos));
                     false
                 };

@@ -132,7 +132,12 @@ impl Vm {
                 "get" => {
                     if args.len() == 1 {
                         let idx = args[0].as_int().unwrap_or(0) as usize;
-                        Ok(items.borrow().get(idx).cloned().unwrap_or(Value::Unit))
+                        // AUDIT-11.4.54 同族：Vec.get 越界此前静默返回 ()，
+                        // 解释器 methods.rs 报「Vec 索引 N 越界」。
+                        items.borrow().get(idx).cloned().ok_or_else(|| TenthError::RuntimeError {
+                            line: None, col: None,
+                            message: format!("Vec 索引 {} 越界", idx),
+                        })
                     } else { err("get 需要 1 个参数") }
                 }
                 "pop" => {

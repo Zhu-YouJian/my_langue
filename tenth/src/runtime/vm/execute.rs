@@ -947,12 +947,22 @@ impl Vm {
                     match target {
                         Value::Vec(items) => {
                             let i = idx.as_int().unwrap_or(0) as usize;
-                            let v = items.borrow().get(i).cloned().unwrap_or(Value::Unit);
+                            // AUDIT-11.4.54：越界**响亮报错**（对齐解释器
+                            // interpreter/index.rs 的「Vec 索引 N 越界」）。
+                            // 此前 `unwrap_or(Value::Unit)` 静默返回 ()、exit 0，
+                            // 与解释器（报错 exit 1）分叉——静默错值。
+                            let v = items.borrow().get(i).cloned().ok_or_else(|| {
+                                self.err_here(chunk_idx, ip, format!("Vec 索引 {} 越界", i))
+                            })?;
                             self.stack.push(v);
                         }
                         Value::String(s) => {
                             let i = idx.as_int().unwrap_or(0) as usize;
-                            let c = s.chars().nth(i).map(|c| c.to_string()).unwrap_or_default();
+                            // 同族静默兜底：越界字符索引此前 `unwrap_or_default()` 静默
+                            // 返回空串，解释器报「字符串索引 N 越界」exit 1。
+                            let c = s.chars().nth(i).map(|c| c.to_string()).ok_or_else(|| {
+                                self.err_here(chunk_idx, ip, format!("字符串索引 {} 越界", i))
+                            })?;
                             self.stack.push(Value::String(c));
                         }
                         Value::Tensor(t) => {
@@ -2085,6 +2095,14 @@ impl Vm {
             (Value::Vec(a), Value::Vec(b)) => {
                 let a = a.borrow();
                 let b = b.borrow();
+                a.len() == b.len()
+                    && a.iter().zip(b.iter()).all(|(x, y)| self.vm_eq(x, y))
+            }
+            // AUDIT-11.4.50：元组相等——此前无此分支，落入 `_ => false`，导致
+            // VM/JIT 下 `(1,2)==(1,2)` 恒 false 而解释器 true（跨后端静默错值）。
+            // 对齐解释器 values_eq：长度相等 + 逐元素递归（元素包裹值由 vm_eq
+            // 入口的 deref 前置统一解壳，与解释器逐元素 deref_wrapped 等价）。
+            (Value::Tuple(a), Value::Tuple(b)) => {
                 a.len() == b.len()
                     && a.iter().zip(b.iter()).all(|(x, y)| self.vm_eq(x, y))
             }

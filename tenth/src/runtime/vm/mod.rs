@@ -609,11 +609,20 @@ impl Vm {
         match target {
             Value::Vec(items) => {
                 let i = idx.as_int().unwrap_or(0) as usize;
-                Ok(items.borrow().get(i).cloned().unwrap_or(Value::Unit))
+                // AUDIT-11.4.54 同族（JIT host_index_get 经此路径）：越界响亮报错，
+                // 对齐解释器 index.rs「Vec 索引 N 越界」（此前静默返回 ()）。
+                items.borrow().get(i).cloned().ok_or_else(|| TenthError::RuntimeError {
+                    line: None, col: None,
+                    message: format!("Vec 索引 {} 越界", i),
+                })
             }
             Value::String(s) => {
                 let i = idx.as_int().unwrap_or(0) as usize;
-                Ok(Value::String(s.chars().nth(i).map(|c| c.to_string()).unwrap_or_default()))
+                // 同族静默兜底：越界字符索引此前静默返回空串。
+                s.chars().nth(i).map(|c| Value::String(c.to_string())).ok_or_else(|| TenthError::RuntimeError {
+                    line: None, col: None,
+                    message: format!("字符串索引 {} 越界", i),
+                })
             }
             Value::Tensor(t) => {
                 // NumPy 语义：单索引沿第 0 维降维。
