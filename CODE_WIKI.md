@@ -393,12 +393,13 @@ pub enum Op {
     MakeEnum(usize, usize, usize), IsEnumVariant(usize), EnumGetField(usize),
     PushRange(i64, i64, bool), MoveOp,
     // v0.3.1 新增
-    MakeTensor(i64, i64),    // opcode 43: 从栈上 f64 值构建 Tensor(rows, cols)
-    MakeClosure(i64, i64),   // opcode 44: 创建闭包(params_count, chunk_idx)
+    MakeTensor(usize, usize, u8),    // rows, cols, dtype(0=F64,1=F32) — 弹出 rows*cols 个值
+    MakeClosure(usize, usize, usize), // params_count, captures_count, chunk_idx — 创建闭包值
+    // 注：本代码块为**节选**（列 45 / 共 65 条）；完整定义见 tenth/src/runtime/vm/op.rs
 }
 ```
 
-> **2026-09-17（`AUDIT-11.4.53` 修复）**：`PushInt` 由 `i64` 扩为 **`(i64, BaseType)`**——整型值在**字节码层携带 dtype tag**（编码 **8B 值 + 1B tag**），此前 dtype 在 `compile/bytecode.rs` 被丢弃、`vm/execute.rs` 又补回硬编码 `I32`，导致「整型算术被硬限 i32」。配套：注解驱动 dtype 入口 **`hir::lower::coerce_int_dtype`**；整数混合提升（宽度优先、可交换）在 **`runtime/value.rs::promote_int_dtype`** + VM/解释器算术入口；JIT 标量槽只承载 `Int`/f64（`ChunkSig` 特化仅 `Int`/f64，i64 注解走通用 ABI——见 `AUDIT.md` `P-11`）。`tenthc` **无需同步**（无字节码后端）。
+> **2026-09-17（`AUDIT-11.4.53` 修复）**：`PushInt` 由 `i64` 扩为 **`(i64, BaseType)`**——整型值在**字节码层携带 dtype tag**（编码 **8B 值 + 1B tag**），此前 dtype 在 `compile/bytecode.rs` 被丢弃、`vm/execute.rs` 又补回硬编码 `I32`，导致「整型算术被硬限 i32」。配套：注解驱动 dtype 入口 **`hir/lower/types.rs::coerce_int_dtype`**；整数混合提升（宽度优先、可交换）在 **`runtime/value.rs::promote_int_dtype`** + VM/解释器算术入口；JIT 标量槽只承载 `Int`/f64（`ChunkSig` 特化仅 `Int`/f64，i64 注解走通用 ABI——见 `AUDIT.md` `P-11`）。`tenthc` **无需同步**（无字节码后端）。
 
 #### BytecodeCompiler 关键方法
 
@@ -443,6 +444,22 @@ pub trait Device {
 pub struct CpuDevice { name: String, memory_limit: usize }   // 16 GB simulated
 pub struct CudaDevice { device_id: usize, name: String, total_memory: usize, compute_capability: (u32, u32) }  // 24 GB simulated，is_available() 永远 true
 ```
+
+#### JIT 后端（Cranelift）：M0 资格守卫与 `TENTH_JIT_POISON`
+
+JIT 不维护 per-native 名表：native 调用按名透传（`host_call` → `vm.natives.contains_key`），因此**新增/改名 native 对 JIT 自动生效**（无需改 JIT 侧名单）。
+
+**M0（`AUDIT-11.4.44` 的第一步）——资格守卫与毒化设施：**
+
+- **D1 `Load` 资格守卫**（已落地）：`Load` 专用化前比对「分析预测的 `ScalarKind`」与「发射端标量槽种类」，两种不一致都**响亮 `Err`** → 走既有「整函数回退 VM」通路（功能正确，仅放弃本轮专用化）：
+  - 槽种类 ≠ 分析种类（分析/发射漂移）
+  - 分析预测该局部为具体标量，但发射端**没有**标量槽（原为**全 JIT 唯一无护栏点**，UB 本体：后续专用化读未初始化标量槽 → 宿主栈残留 → 随二进制布局翻转的静默错值）
+- **D1 是防御性守卫**：`jit_silent_audit_test` 143 个目标全绿、未触发 ⇒ 已如实标注（不是"已修复一个活缺陷"，而是"补上了无护栏的点"）。
+- **D2 `Store` 侧守卫：实测过度保守 ⇒ 未纳入**（见 `AUDIT-11.4.74`）：给 `Store` 补同型块入口守卫会**回退正确语料**（`audit_d2_dup_pop_block_boundary`）⇒ 宁缺勿滥，D2 的精确闭合依赖 M1–M5 单表化（归 W10）。
+- **`TENTH_JIT_POISON`（调试设施，环境变量开启）**：入口毒化三层——① 虚拟栈区、② 全部局部 `Value` 槽、③ **标量伴随槽**（M0/D10 新补：此前标量槽在发射期**懒创建**，创建点可能落在运行期不执行的分支内，未写先读读到的是宿主栈残留、不可探测；现改为入口按上界预创建并写毒值 `0xAAAA…`，两个取槽函数在毒化模式下复用这些槽）。
+  - **范围限制**：`spec_mode`（特化入口）**排除**标量槽池化——实测「池化 + 非零毒值」会使 `spec_f64_recursive_mixed` 以 `0xC0000005` 中止，且与毒值内容相关（`0`→绿、`42`/`2^40`→崩、不池化→绿）⇒ 该入口下的标量槽 UB **仍不可探测**（见 `AUDIT-11.4.75`）。
+
+**剩余工作（M1–M5，排 W10）**：把「分析端资格判定」与「发射端资格判定」两处独立代码路径收敛为**单一资格表**（单一数据结构/函数）。现状一旦两端单独修改（新增 opcode 专用化、调整白名单）就可能再造同族静默错值（历史同族：`11.4.35` / `11.4.36` / `11.4.44`）。
 
 #### 编译优化 Pass（v1.0.0 脚手架）
 
@@ -557,6 +574,41 @@ pub struct Vm {
 | `call(name)` | 调用函数 |
 | `run(chunk_idx)` | 执行字节码主循环 |
 
+#### native 注册同步点（16 类）与一致性守卫
+
+新增一个 native **不是改一处**：全仓共有 **16 类同步点**（另有 1 类 `tenthc` 附带项），其中 **A 路径（Rust 全栈）必须改的有 9 类**。漏改后果分「响亮」与「静默」两档：
+
+| 类别 | 同步点 | 形态 | 漏改后果 |
+|------|--------|------|---------|
+| ① VM 注册 | `runtime/natives.rs` | `vm.add_native("名", …)` 序列 | VM `未定义的原生函数`（响亮） |
+| ② 解释器分派 | `runtime/interpreter/natives.rs` | `match name { "名" => … }` 臂 | `undefined function`（响亮） |
+| ③ **HIR 返回类型表** | `hir/lower/types.rs::resolve_builtin` | `"名" \| … => Ok(Type::…)` | **静默**：落到 `_ => Ok(Type::Unknown)` ⇒ 静态类型丢失、shape 检查失能 |
+| ④ 裸名白名单 | `hir/lower/lower_expr.rs` | Var 白名单长 `\|` 链 | 编译期「未定义变量」（响亮） |
+| ⑤ 闭包自由变量排除表 | `hir/lower/closures.rs` | 内建名排除 `match` | 读码判定**良性**（按名回落），建议补齐 |
+| ⑥ 解释器 FnRef 白名单 | `runtime/interpreter/eval.rs` | `Var → FnRef` 白名单 | 解释器「未定义变量」（响亮） |
+| ⑦ 解释器预注册子集 | `runtime/interpreter/core.rs` | `insert_var` | 多被 ⑤⑥ 兜住 |
+| ⑧ **污点逃逸点** | `hir/lower/taint.rs` | 逃逸 sink 名单 | **静默**（输出类 native 漏登 ⇒ 污点漏报） |
+| ⑨ 泛型构造 dtype→名映射 | `hir/lower/mod.rs` **＋** `lower_expr.rs`（**同表两份拷贝**） | `NATIVE_GENERIC_CTORS` + 映射臂 | 静默用错 dtype |
+| ⑩ `main.rs::vm_run` dead code | `main.rs` | 重复 `add_native` | 隐患：将来误启用会变「三源真相」 |
+| ⑪ **方法分派对偶表**（非 native 表） | `runtime/vm/natives.rs` ↔ `runtime/interpreter/methods.rs` | 方法名匹配臂 | 一端漏改 ⇒ 另一端「没有方法 'x'」 |
+| ⑫ WASM ABI 5 子点 | `compile/wasm/*`（常量/type 段/import 段/`resolve_func` 白名单/两个宿主 stub） | 序号 + 导入 + stub | 漏 ⇒ 响亮；**序号错位 ⇒ 静默错值**（历史高危） |
+| ⑬ LSP 补全表 | `tenth/tools/lsp/.../completion.rs` | `("名", 说明)` | 仅无补全，无正确性影响 |
+| ⑭ **文档/权威符号清单** | `docs/语言参考手册.md`、`docs/API冻结清单.md`、`tenth/std/prelude.th` | 手册条目 + prelude 清单 | 对外承诺与实现漂移 |
+| ⑮ `std/*.th` 包装 | `tenth/std/**` | wrapper 调用 native | 用户按文档 `use` 后不可用 |
+| ⑯ 测试内手抄副本 | `tenth/tests/native_parity_test.rs` | 手抄 native 子集 | 测试自欺（测的是副本） |
+| 附 | `tenthc/hir/lower.th::is_builtin_name` | 63 项 `if name == "…"` | 仅影响 tenthc 自由变量分析与路径 C |
+
+**为什么不能用朴素源码扫描做守卫**（已实证）：`runtime/natives.rs` 存在「**注册名是公开名、同一行错误文案却含旧内部名**」的残留（如注册 `to_utf8`、文案写 `_to_utf8`）⇒ 扫 `"_to_utf8"` 会误判；`prelude.th` 有 150+ 名注释清单会被误认成注册点；match 臂跨行续写与 `#[cfg]` 会让正则漏匹配。
+**推荐守卫（A2 结构化集合相等 + 差集棘轮）**：VM 侧名集合**无需扫描**——`Vm.natives: HashMap<String, NativeFn>` 是 `pub`，`Vm::new()` + `register_all_natives(&mut vm)` 即可取真实集合；解释器侧因 `call_named_fn` 是 `match`（无数据结构、且**不能用空参探测**：`exit`/`read_line`/`tcp_accept`/`http_*` 空参会阻塞或退出进程）只能**新增 `pub const NATIVE_NAMES`**，用「集合差 == 显式豁免台账」断言（豁免项"变一致"也报红，防台账腐烂）。再配「双路径行为对拍」（同源三轴 + 金标准断言）反守护 const 与语义漂移。
+
+**三处集合的口径与 SSOT（as-of 2026-09-17）**：
+
+- **VM 注册集合**：`runtime/natives.rs` 中 `add_native("名", …)` 的**公开注册名**去重——结构化真表可直接直取（`Vm.natives` 是 `pub`），不扫描源码。
+- **解释器分派集合**：`interpreter/natives.rs::call_named_fn` 的 `match name` 臂名（**严格锚点**：同缩进 + 行首引号串或 `|`，且只取 `=>` 之前）。两侧差集现状＝既定设计差异（解释器硬编码拒绝 `async_*`）＋ 1 个 f-string codegen 内部名；**公开名两侧已对齐**（此前的 4 项真缺口已由 W4 修复，见 `AUDIT-11.4.63`）。
+- **`resolve_builtin` 返回类型集合**：`hir/lower/types.rs::resolve_builtin` 是 **native 静态返回类型的权威**；未覆盖者落 `_ => Ok(Type::Unknown)`（**静默**：静态类型丢失、编译期 shape 检查失能）。这类漏登是静默的 ⇒ 守卫**额外**断言「`vm.natives` 名集合 ⊆ `resolve_builtin` 可识别名集合」，否则该类漂移仍无守护（这是 A2 方案唯一未闭环处）。
+
+> **本文档不复述覆盖/缺口数字**：历史上该类统计出现过互不一致的口径，且统计量硬编码进多份必然漂移（AGENTS §三）。**SSOT = 常驻守卫 `tenth/tests/native_registry_guard_test.rs`** 的三份显式棘轮台账：`KNOWN_VM_ONLY`（VM 有、解释器无）、`KNOWN_INTERP_ONLY`（解释器独有臂）、`KNOWN_NO_STATIC_RETURN_TYPE`（`resolve_builtin` 未覆盖＝欠债台账，记残差不记真相表）。台账**双向**断言：出现新差集报红，台账项已被修复却仍留在台账里也报红（防台账腐烂）。
+
 #### Tensor（张量运算）
 
 ```rust
@@ -580,7 +632,7 @@ pub struct Tensor {
 | **归一化** | `softmax`, `batchnorm` (通过方法调用) |
 | **卷积** | `conv2d` (im2col 实现), `dropout` |
 | **高级运算** | `gelu` — GELU 激活 (tanh 近似), `layer_norm` — LayerNorm 归一化, `cat` — 沿维度拼接 (2D), `masked_fill` — 掩码填充, `permute` — 维度重排, `broadcast_to` — 广播到目标形状, `max_val` — 最大值 |
-| **索引** | `get`, `im2col` |
+| **索引** | `get`, `im2col`, `index_select`（**静态关联函数，非方法**：`Tensor::index_select(base, dim, 1-D index)`，可微；反向为 `scatter_add_along_dim`/重复 index 累加） |
 
 #### Autodiff（自动微分）
 
@@ -591,9 +643,11 @@ pub struct Tape {
 }
 
 pub enum TapeOp {
-    Add, Sub, Mul, Div, Neg, ReLU, MatMul, Transpose,
+    Add, Sub, Mul, Div, Neg, ReLU, MatMul, BatchedMatMul, Transpose,
     Sum, Mean, Exp, Log, Sigmoid, Softmax,
-    CrossEntropy, Dropout, Conv2D, BatchNorm, LayerNorm, Gelu, Input,
+    CrossEntropy, Dropout, Conv2D, BatchNorm, LayerNorm, Gelu, Select,
+    Abs, Scatter, Gather, IndexSelect, Reshape, MaskedFill,
+    MaxPool2D, AvgPool2D, Custom(usize), Input,
 }
 ```
 
@@ -789,6 +843,7 @@ tenth/std/
 ├── random/      ← 随机数（rand_int/rand_float/choice/shuffle）
 ├── math/        ← 数学函数与常量
 ├── runtime.th   ← 资源限制（with_step_limit/with_timeout_ms）
+├── process.th   ← 子进程（new/arg/run/output/output_ex）
 └── prelude.th   ← 可用项总目录
 ```
 
