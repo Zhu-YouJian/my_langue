@@ -230,6 +230,12 @@ impl TenthError {
                     "\n  提示：检查是否缺少右圆括号 `)`".to_string()
                 } else if msg.contains("意外") && msg.contains("=") {
                     "\n  提示：你是否想用 `==` 进行相等比较？".to_string()
+                } else if msg.contains("路径段") {
+                    // AUDIT-11.4.60(d)：`use` 路径段非法（典型：目录名含 `-`）。
+                    // 语言不提供含 `-` 的标识符，也不（尚未）提供 `use "路径"`
+                    // 字符串形式 ⇒ 只能给「怎么办」的三条出路。
+                    "\n  提示：`use` 的每一段都必须是合法标识符，`-`（减号）不在其中。若模块目录名含 `-`（如 `tenth-lens`），可选：① 把目录/文件名改成合法标识符（如 `tenth_lens`）；② 把模块文件放到某个搜索路径下并用合法段名引用；③ 暂时保持单文件。"
+                        .to_string()
                 } else if msg.contains("未定义") {
                     extract_var_hint(message)
                 } else {

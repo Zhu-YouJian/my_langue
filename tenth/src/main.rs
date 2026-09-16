@@ -105,58 +105,79 @@ fn run_main() -> TenthResult<()> {
     Ok(())
 }
 
+/// 搜索路径去重追加（AUDIT-11.4.60(a) 的假歧义防护）。
+fn push_unique_search_path(paths: &mut Vec<String>, p: String) {
+    if !paths.iter().any(|q| *q == p) {
+        paths.push(p);
+    }
+}
+
 /// lex → parse → lower → HIR (shared pipeline)
-fn source_to_hir(source: &str) -> TenthResult<tenth::hir::hir::HirProgram> {
+///
+/// `source_path`：脚本自身的路径（`None` = 无来源文件，如 REPL 单行）。
+/// AUDIT-11.4.60(a)：脚本自身所在目录必须是**最高优先**搜索路径——
+/// 否则「脚本 + 同目录模块」的多文件项目无法编译。
+fn source_to_hir(source: &str, source_path: Option<&str>) -> TenthResult<tenth::hir::hir::HirProgram> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(tokens);
     let program = parser.parse_program()?;
 
     // Build search paths for file imports:
-    //   1. The directory of the source file (if running from a file)
-    //   2. The `std/` directory relative to the executable
-    let mut search_paths = Vec::new();
+    //   1. The directory of the script itself (highest priority — AUDIT-11.4.60(a)；
+    //      此前注释声称有这一条、代码里却没有，属失实注释，已一并更正)
+    //   2. The current working directory
+    //   3. The `std/` directory relative to the executable
+    //   4. `tenth/` 与 `tenth/std`（development layout）
+    //
+    // 去重表：按字符串去重（`tenth.exe run ./x/main.th` 时脚本目录与 cwd 相同，
+    // 不去重会让同一个文件在 `try_import_file` 里变成「两个候选」的假歧义）。
+    let mut search_paths: Vec<String> = Vec::new();
 
-    // Add current directory
-    if let Ok(cwd) = std::env::current_dir() {
-        search_paths.push(cwd.to_string_lossy().to_string());
+    // 1. 脚本自身目录（最高优先）
+    if let Some(src) = source_path {
+        if let Some(dir) = std::path::Path::new(src).parent() {
+            let dir = dir.to_string_lossy().to_string();
+            if !dir.is_empty() {
+                push_unique_search_path(&mut search_paths, dir);
+            }
+        }
     }
 
-    // Add std/ directory relative to Cargo.toml / executable
+    // 2. Current directory
+    if let Ok(cwd) = std::env::current_dir() {
+        push_unique_search_path(&mut search_paths, cwd.to_string_lossy().to_string());
+    }
+
+    // 3. std/ directory relative to Cargo.toml / executable
     if let Ok(exe_dir) = std::env::current_exe()
         .map(|p| p.parent().map(|d| d.to_path_buf()).unwrap_or_default())
     {
         let std_near_exe = exe_dir.join("std");
         if std_near_exe.exists() {
-            search_paths.push(std_near_exe.to_string_lossy().to_string());
+            push_unique_search_path(&mut search_paths, std_near_exe.to_string_lossy().to_string());
         }
     }
 
-    // Add tenth/std/ relative to working directory (for development)
+    // 4. tenth/std/ relative to working directory (for development)
     let std_dev = std::path::Path::new("tenth/std");
     if std_dev.exists() {
         // Add the parent of std/ (i.e., tenth/) so that `use std::json::json::parse`
         // resolves to tenth/std/json/json.th
         if let Some(parent) = std_dev.parent() {
-            search_paths.push(parent.to_string_lossy().to_string());
+            push_unique_search_path(&mut search_paths, parent.to_string_lossy().to_string());
         }
         // Also add tenth/std/ itself for use statements without the std:: prefix
-        search_paths.push(std_dev.to_string_lossy().to_string());
+        push_unique_search_path(&mut search_paths, std_dev.to_string_lossy().to_string());
     }
 
     // Also handle the case where cwd is already inside tenth/ (e.g., cwd = tenth/)
     let std_local = std::path::Path::new("std");
     if std_local.exists() {
         if let Some(parent) = std_local.parent() {
-            let parent_str = parent.to_string_lossy().to_string();
-            if !search_paths.iter().any(|p| *p == parent_str) {
-                search_paths.push(parent_str);
-            }
+            push_unique_search_path(&mut search_paths, parent.to_string_lossy().to_string());
         }
-        let std_str = std_local.to_string_lossy().to_string();
-        if !search_paths.iter().any(|p| *p == std_str) {
-            search_paths.push(std_str);
-        }
+        push_unique_search_path(&mut search_paths, std_local.to_string_lossy().to_string());
     }
 
     let mut lowerer = tenth::hir::lower::Lowerer::with_search_paths(search_paths);
@@ -166,7 +187,7 @@ fn source_to_hir(source: &str) -> TenthResult<tenth::hir::hir::HirProgram> {
 /// Run a .th source file — try VM first, fall back to tree-walk interpreter.
 fn run_file(path: &str, config: MemoryConfig, sandbox: Option<FsSandbox>, timeout_ms: Option<u128>) -> TenthResult<()> {
     let source = tenth::error::read_source(path)?;
-    let hir = match source_to_hir(&source) {
+    let hir = match source_to_hir(&source, Some(path)) {
         Ok(hir) => hir,
         Err(e) => {
             eprintln!("{}", e.display_with_source(Some(&source)));
@@ -351,7 +372,7 @@ fn vm_execute(hir: &tenth::hir::hir::HirProgram, sandbox: Option<FsSandbox>, tim
 /// Compile a .th file to a .wasm binary.
 fn build_wasm(path: &str) -> TenthResult<()> {
     let source = tenth::error::read_source(path)?;
-    let hir = source_to_hir(&source)?;
+    let hir = source_to_hir(&source, Some(path))?;
     let wasm_bytes = compile::compile_to_wasm(&hir)?;
 
     let out_path = path.replace(".th", ".wasm");
@@ -366,7 +387,7 @@ fn build_wasm(path: &str) -> TenthResult<()> {
 /// Compile a .th file to WASM and execute it via wasmi.
 fn run_wasm(path: &str) -> TenthResult<()> {
     let source = tenth::error::read_source(path)?;
-    let hir = source_to_hir(&source)?;
+    let hir = source_to_hir(&source, Some(path))?;
     compile::run_wasm(&hir)
 }
 
@@ -374,7 +395,7 @@ fn run_wasm(path: &str) -> TenthResult<()> {
 #[allow(dead_code)]
 fn vm_run(path: &str) -> TenthResult<()> {
     let source = tenth::error::read_source(path)?;
-    let hir = source_to_hir(&source)?;
+    let hir = source_to_hir(&source, Some(path))?;
     let mut vm = Vm::new();
 
     // M3.5：程序级全局名集合（供 bytecode 的 shadow 判定）

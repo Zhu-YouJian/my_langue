@@ -10,7 +10,7 @@
 //! - 特质：`trait Name<T> { fn ...; type T; }`
 
 use crate::error::{TenthError, TenthResult};
-use crate::lexer::token::TokenKind;
+use crate::lexer::token::{Span, TokenKind};
 use super::ast::*;
 use super::parser::Parser;
 
@@ -268,16 +268,50 @@ impl Parser {
             }
             TokenKind::Use => {
                 self.advance();
-                let mut path = vec![self.expect_ident()?];
-                while matches!(self.peek_kind(), TokenKind::ColonColon) {
-                    self.advance();
+                // AUDIT-11.4.60(d)：`use` 的路径段必须是**合法标识符**。
+                // 此前是 `path = vec![expect_ident()?]` + `while ColonColon`：
+                // `use tenth-lens::src::x` 只吃下 `tenth`，把 `-lens::src::x`
+                // 留给上层，最终报出一句与 use 无关的「意外的标记：`::`」。
+                // 现在：段非法 / 段后拖了断掉的路径，都在 **use 语境**里报错，
+                // 并附可操作提示（`error.rs` 的 `suggestion()` 按「路径段」追加）。
+                //
+                // 既有合法写法（不可回归）：`use a` 之后不写 `;`、直接接下一条
+                // 语句是允许的（段序列遇到非 `::` 即结束）。因此这里**只**对
+                // 「明确还想继续拼路径」的 token 报错——`-` 与裸 `use x::` 之后的
+                // `::`；其余 token 一律按「段序列结束」处理。
+                let mut path: Vec<Ident> = Vec::new();
+                loop {
+                    let tspan = self.span();
+                    if let TokenKind::Identifier(name) = self.peek_kind() {
+                        let name = name.clone();
+                        self.advance();
+                        path.push(Ident { name, span: tspan });
+                    } else {
+                        // 该出现路径段的地方出现了别的东西（如 `-`、数字、字符串）。
+                        return Err(self.use_path_segment_error(&tspan));
+                    }
+                    if !matches!(self.peek_kind(), TokenKind::ColonColon) {
+                        // 段序列结束：要么 `use a;`，要么后面跟别的语句
+                        // （`use tenth-lens::…` ⇒ 此处见到 `-`）。
+                        break;
+                    }
+                    self.advance(); // `::`
                     // Check for glob: `use path::*`
                     if matches!(self.peek_kind(), TokenKind::Star) {
                         self.advance();
                         self.match_token(TokenKind::Semicolon);
                         return Ok(Item { kind: ItemKind::Use { path, glob: true }, span });
                     }
-                    path.push(self.expect_ident()?);
+                }
+                match self.peek_kind() {
+                    TokenKind::Semicolon | TokenKind::Eof | TokenKind::RBrace => {}
+                    // 断掉的路径：`use tenth-lens::src::x`（`-`）、`use x::;`（`::`）。
+                    // 报 use 语境错误，别掉到上层变成「意外的标记：`::`」。
+                    TokenKind::Minus | TokenKind::ColonColon => {
+                        let cur = self.span();
+                        return Err(self.use_path_segment_error(&cur));
+                    }
+                    _ => {}
                 }
                 self.match_token(TokenKind::Semicolon);
                 Ok(Item { kind: ItemKind::Use { path, glob: false }, span })
@@ -405,5 +439,27 @@ impl Parser {
             },
             span,
         })
+    }
+
+    /// AUDIT-11.4.60(d)：`use` 路径段非法时的**可操作**诊断。
+    ///
+    /// 设计约束（总师裁定）：不新增对外语法（`use "路径"` 记 ADR），
+    /// 标识符**不允许**含 `-`（会吃掉减法、破坏自举）⇒ 这里只能把
+    /// 「响亮但难懂」改成「响亮且可操作」：说明路径段的词法规则、给出
+    /// 见到的是哪个 token、并给三条出路。
+    /// 详细建议由 `error.rs` 的 `suggestion()` 按「路径段」关键词追加。
+    fn use_path_segment_error(&self, span: &Span) -> TenthError {
+        let what = match self.peek_kind() {
+            TokenKind::Minus => "`-`".to_string(),
+            k => format!("{}", k),
+        };
+        TenthError::ParseError {
+            line: span.line,
+            col: span.col,
+            message: format!(
+                "use 路径段必须是合法标识符，但遇到了 {}（标识符只能由字母 / 数字 / `_` 组成，不能含 `-`）",
+                what
+            ),
+        }
     }
 }
