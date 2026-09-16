@@ -432,3 +432,213 @@ fn bad(cond: bool) -> str {
 "#;
     assert_compile_error(src, "lossy 污点");
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// 8. sink 名单补全（G5）与普通串插值（G4）——AUDIT-11.4.48 回归守护
+// ══════════════════════════════════════════════════════════════════════
+//
+// 背景：`is_exact_sink` 原缺 `print`/`json_encode`/`json_encode_pretty`；
+// `HirExprKind::InterpolatedString` 原先不遍历 parts（整条静默漏报）。
+// 两处均已修，本节把修复钉住，防日后静默回退。
+//
+// 注意两条路径不同：f-string `f"{x}"` 在 lowering 期脱糖成 `format(...)` 调用
+// （lower_expr.rs:1677-1721），而 `format` 原本就在 sink 名单，故 f-string 从来
+// 不是缺口；真正的缺口是普通双引号串插值 `"{x}"`（lower_expr.rs:1666-1672
+// 只把 `InterpPart::Expr(String)` 透传）。
+
+// ── 8.1 正向：必须报错 ────────────────────────────────────────────────
+
+#[test]
+fn print_of_lossy_is_sink_error() {
+    // G5：`print` 原先不在 sink 名单 → 静默通过（实测漏报）
+    let src = r#"
+fn bad() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    print(x);
+    ""
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn json_encode_of_lossy_is_sink_error_even_if_result_unused() {
+    // G5 纯漏报口径：编码结果**不再传入任何 sink**。
+    // （若写成 println(json_encode(x))，污点会穿过 json_encode 传到 println，
+    //   改前就已报错，那样测不出 sink 名单缺失。）
+    let src = r#"
+fn bad() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    let s = json_encode(x);
+    ""
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn json_encode_pretty_of_lossy_is_sink_error_even_if_result_unused() {
+    // 同 json_encode：纯漏报口径
+    let src = r#"
+fn bad() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    let s = json_encode_pretty(x);
+    ""
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn plain_interp_let_binding_of_lossy_is_sink_error() {
+    // G4：普通串插值 `"{x}"` 原先不遍历 parts → 静默通过。
+    // 语义上等同于 to_string(x)：VM 为每个 Expr 部件 emit 一次 to_string
+    // （compile/bytecode.rs 的 InterpolatedString 分支），解释器调 value_to_string。
+    let src = r#"
+fn bad() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    let s = "{x}";
+    ""
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn plain_interp_inside_println_of_lossy_is_sink_error() {
+    // G4 + 外层 sink 组合：插值体先报错（逃逸点是插值本身，不是外层 println）
+    let src = r#"
+fn bad() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    println("{x}");
+    ""
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn plain_interp_bare_return_of_lossy_is_sink_error() {
+    // 直接返回插值串（无任何外层 sink）也必须报错
+    let src = r#"
+fn bad() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    "{x}"
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+// ── 8.2 零误报：必须编译通过 ──────────────────────────────────────────
+
+#[test]
+fn plain_interp_of_exact_int_no_false_positive() {
+    // 既有 std/测试大量使用 `"{val}"`（Int）→ 不得误报
+    let src = r#"
+fn ok() -> str {
+    let val = 42;
+    "{val}"
+}
+"#;
+    assert_compiles(src);
+}
+
+#[test]
+fn plain_interp_of_exact_f32_tensor_no_false_positive() {
+    // f32 张量 × f32 标量 = 同精度（无降级）→ Exact → 不报
+    let src = r#"
+fn ok() -> str {
+    let x = zeros_f32(2, 2) * 1.5f32;
+    "{x}"
+}
+"#;
+    assert_compiles(src);
+}
+
+#[test]
+fn plain_interp_after_lossy_accept_no_false_positive() {
+    // lossy(...) 归零后插值放行。
+    // 注意：普通串插值只接受标识符（lexer.rs 的 is_valid_ident），**无法内联写
+    // `"{lossy(x)}"`**——含括号会被当字面文本，故必须先 `let y = lossy(x);` 再插值。
+    let src = r#"
+fn ok() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    let y = lossy(x);
+    "{y}"
+}
+"#;
+    assert_compiles(src);
+}
+
+#[test]
+fn fstring_after_lossy_accept_no_false_positive() {
+    // f-string 路径（format 脱糖）在显式接受后同样放行
+    let src = r#"
+fn ok() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    let y = lossy(x);
+    f"{y}"
+}
+"#;
+    assert_compiles(src);
+}
+
+// ── 8.3 已知残留漏报：钉住现状（不是期望行为）────────────────────────
+
+#[test]
+fn known_residual_gap_dotted_interp_path_still_silent() {
+    // ⚠ 已知残留漏报（AUDIT-11.4.48 遗留 1）——**本断言记录的是缺口现状，
+    //   不是期望行为**，保留它只为让缺口显形、防被顺手删掉。
+    //
+    // 成因：普通串插值的部件是 `InterpPart::Expr("x.shape")`（词法层允许 '.'，
+    // 见 lexer.rs 的 is_valid_ident 校验），而污点表的键是简单变量名 →
+    // `vt.get("x.shape")` 取不到 → 返回 Exact → 静默通过。
+    //
+    // 为何本轮不修：真修复需 HIR 存表达式而非变量名字符串（跨模块）；
+    // 若退化成「按根变量 x 取污点」，`"{t.shape}"` 这类精确字段访问会被误伤
+    // （shape 是精确的整数元组）→ 引入误报，更不可接受。
+    //
+    // 本断言的作用是**钉住**：谁修好了这条路径，本测试即失败 →
+    // 请同步更新本断言与 AUDIT-11.4.48 遗留条目，不要直接删断言了事。
+    let src = r#"
+fn gap() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    let s = "{x.shape}";
+    ""
+}
+"#;
+    match lower(src) {
+        Ok(()) => {}
+        Err(e) => panic!(
+            "已知残留漏报已被修复（这是进步）：`\"{{x.shape}}\"` 现在会报错：{:?}\n请同步更新本断言与 AUDIT-11.4.48 遗留条目，而不是删除断言。",
+            e
+        ),
+    }
+}
+
+#[test]
+fn fstring_of_lossy_is_caught_via_format_desugar() {
+    // 绊线（总师补，2026-09-16）：**f-string 不是缺口这件事，完全依赖一个实现细节**——
+    // `ExprKind::FString` 在 lower 期被脱糖为 `Call{ func: Var("format"), .. }`
+    // （`hir/lower/lower_expr.rs:1677-1721`），而 `format` 恰好早就在 sink 名单里。
+    // 一旦该脱糖目标改名（或不再走 Call），f-string 里的 lossy 值会**静默不再被拦**，
+    // 而本节其他用例都不会变红。故此处显式钉住「lossy 值经 f-string 必须报错」。
+    let src = r#"
+fn bad() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    let s = f"{x}";
+    s
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}

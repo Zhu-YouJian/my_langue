@@ -96,10 +96,16 @@ fn merge_vt(vt: &mut VarTaint, branch: &VarTaint, branch_depth: usize) {
 }
 
 /// 需要 Exact 值的使用点（sink）：打印 / 序列化 / 写盘——把可能算错的值当确定值输出。
+///
+/// G5 补全（AUDIT-11.4.48）：`print`（native 注册见 `runtime/natives.rs:2123`）、
+/// `json_encode`（`runtime/natives.rs:1349`）、`json_encode_pretty`
+/// （`runtime/natives.rs:1356`）——三者与既有 `println`/`to_string` 同为逃逸点：
+/// 前一个是「打印」，后两者把张量**序列化成字符串**（与 `to_string` 同语义）。
 fn is_exact_sink(name: &str) -> bool {
     matches!(
         name,
-        "println" | "eprintln" | "eprint" | "to_string" | "format"
+        "println" | "eprintln" | "eprint" | "to_string" | "format" | "print"
+            | "json_encode" | "json_encode_pretty"
             | "write_file" | "write_bytes" | "save_weights"
     )
 }
@@ -111,6 +117,26 @@ fn sink_error(expr: &HirExpr, sink: &str) -> TenthError {
         message: format!(
             "检测到可能算错的值（lossy 污点，来源：标量被静默转换为更低精度的张量 dtype）被用于需要精确值的上下文：作为 {} 的输出。若确认此值可以近似正确，请用 lossy(...) 显式接受（污点归零）。",
             sink
+        ),
+    }
+}
+
+/// 普通字符串插值（`"{x}"`）使用点错误（G4）。
+///
+/// `"{x}"` 的运行时语义就是 `to_string(x)` 的字符串拼接（VM：`compile/bytecode.rs`
+/// 的 `InterpolatedString` 分支为每个 `Expr` 部件 emit 一次 `to_string` 转换；
+/// 解释器：`runtime/interpreter/eval.rs` 对 `InterpPart::Expr` 调 `value_to_string`），
+/// 故与 `to_string` 同属 sink，报错信息单独定制的原因是：
+/// 普通串插值语法只接受 `{identifier}`（`lexer.rs` 对 `is_fstring=false` 分支的
+/// 标识符校验），**无法内联写 `{lossy(x)}`**——那会被当作字面文本。
+/// 因此这里提示「先 let 绑定再插值」这一可行写法。
+fn interp_sink_error(expr: &HirExpr, name: &str) -> TenthError {
+    TenthError::TypeError {
+        line: expr.span.line,
+        col: expr.span.col,
+        message: format!(
+            "检测到可能算错的值（lossy 污点，来源：标量被静默转换为更低精度的张量 dtype）被用于需要精确值的上下文：字符串插值（变量 {}）。若确认此值可以近似正确，请先 `let y = lossy({});` 显式接受（污点归零）再插值 `{{y}}`（普通字符串插值只接受标识符，无法内联写 lossy(...)）。",
+            name, name
         ),
     }
 }
@@ -435,7 +461,29 @@ impl<'a> TaintAnalyzer<'a> {
                 if let Some(i) = inner { self.expr_taint(i, vt, ret, depth); }
                 Lossiness::Exact
             }
-            HirExprKind::InterpolatedString { .. } => Lossiness::Exact,
+            HirExprKind::InterpolatedString { parts } => {
+                // G4：插值体纳入分析。`"{x}"` 与 `to_string(x)` / f-string 的
+                // `format(...)` 同语义——把值转成字符串就是「把可能算错的值当确定值用」
+                // 的逃逸点（见 `interp_sink_error` 的语义依据）。此前此处不遍历 parts，
+                // 导致 `"{x}"` 静默漏报。
+                //
+                // 注意：HIR 的 `InterpPart::Expr` 只存**变量名字符串**（词法层普通串
+                // 仅接受 `{identifier}`，见 `lexer.rs` 的 is_fstring=false 分支），
+                // 故这里按变量名查污点表，而非递归分析子表达式。
+                // 含 `.` 的路径（`"{a.b}"`）不是变量表键 → 返回 Exact（不报）：
+                // 这是**残留漏报**而非误报——若退化成按根变量取污点，`"{t.shape}"`
+                // 这类精确字段访问会被误伤（shape 是精确的整数元组）。
+                for p in parts {
+                    if let InterpPart::Expr(name) = p {
+                        if vt.get(name).is_lossy() {
+                            self.errors.push(interp_sink_error(e, name));
+                        }
+                    }
+                }
+                // 与 MethodCall 的 `to_string` sink 一致：报错即消耗污点，字符串结果
+                // 归 Exact，避免同一逃逸点被外层 sink（`println("{x}")`）重复报错。
+                Lossiness::Exact
+            }
             HirExprKind::Tuple(elems) => {
                 let mut acc = Lossiness::Exact;
                 for el in elems { acc = acc.join(self.expr_taint(el, vt, ret, depth)); }
