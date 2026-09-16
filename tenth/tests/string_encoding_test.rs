@@ -652,3 +652,165 @@ fn test_from_utf16_alias() {
     let v = run_vm("from_utf16(str_to_utf16(\"hello\"))").expect("VM 执行失败");
     assert_eq!(as_str(&v), "hello");
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// AUDIT-11.4.63：编码族**双路径**覆盖（VM + 解释器）
+//
+// 缺口长期隐身的原因：上方第 43/44 项与别名断言**只跑 VM**（无解释器覆盖），
+// 而解释器侧缺 4 个公开名（`to_utf8` / `to_utf16` / `utf16_to_str` /
+// `bytes_to_str`；只有 `_` 前缀私有名且**无别名映射**）⇒ 套件全绿之下
+// `TENTH_NO_VM=1` 用公开名会响亮报 `undefined function`。
+// 以下每条断言都同时跑两条路径，并逐值结构比对（先 peel 解释器侧的
+// `Value::Shared` 包裹再比较）。
+// ══════════════════════════════════════════════════════════════════════
+
+/// peel 解释器侧容器元素包装（Value::Shared），便于双路径结构比较。
+fn peel_shared(v: &Value) -> Value {
+    match v {
+        Value::Shared(rc) => peel_shared(&rc.borrow().clone()),
+        Value::Ref(rc) => peel_shared(&rc.borrow().clone()),
+        other => other.clone(),
+    }
+}
+
+/// 跨路径结构等价（Int 只比数值，不比较 dtype 标签）。
+fn values_equal(a: &Value, b: &Value) -> bool {
+    match (peel_shared(a), peel_shared(b)) {
+        (Value::Int(x, _), Value::Int(y, _)) => x == y,
+        (Value::Float(x), Value::Float(y)) => x == y,
+        (Value::Float32(x), Value::Float32(y)) => x == y,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::String(x), Value::String(y)) => x == y,
+        (Value::Unit, Value::Unit) => true,
+        (Value::Vec(x), Value::Vec(y)) => {
+            let xs = x.borrow();
+            let ys = y.borrow();
+            xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(p, q)| values_equal(p, q))
+        }
+        (
+            Value::Enum { variant: va, fields: fa, .. },
+            Value::Enum { variant: vb, fields: fb, .. },
+        ) => {
+            if va != vb {
+                return false;
+            }
+            let xs = fa.borrow();
+            let ys = fb.borrow();
+            xs.len() == ys.len()
+                && xs
+                    .iter()
+                    .zip(ys.iter())
+                    .all(|((ka, p), (kb, q))| ka == kb && values_equal(p, q))
+        }
+        (x, y) => format!("{x:?}") == format!("{y:?}"),
+    }
+}
+
+/// 断言同一源码在 VM 与解释器两条路径都成功且结果结构相等，返回 VM 侧结果。
+fn assert_both_paths(src: &str) -> Value {
+    let vm = run_vm(src).unwrap_or_else(|e| panic!("VM 执行失败: {e}\n源码: {src}"));
+    let ip = run_interp(src).unwrap_or_else(|e| panic!("解释器执行失败: {e}\n源码: {src}"));
+    assert!(
+        values_equal(&vm, &ip),
+        "VM 与解释器结果不一致\n源码: {src}\nVM: {vm:?}\n解释器: {ip:?}"
+    );
+    vm
+}
+
+#[test]
+fn test_dual_path_str_to_utf16() {
+    let v = assert_both_paths("str_to_utf16(\"hello\")");
+    assert_eq!(as_i64_vec(&v), vec![104, 101, 108, 108, 111]);
+}
+
+#[test]
+fn test_dual_path_utf16_to_str_public_name() {
+    // `utf16_to_str` 是公开名：解释器侧此前只有 `_utf16_to_str` ⇒ TENTH_NO_VM 下
+    // `undefined function 'utf16_to_str'`。
+    let v = assert_both_paths("utf16_to_str(str_to_utf16(\"hello\"))");
+    assert_eq!(as_str(&v), "hello");
+}
+
+#[test]
+fn test_dual_path_str_to_bytes() {
+    let v = assert_both_paths("str_to_bytes(\"AB\")");
+    assert_eq!(as_i64_vec(&v), vec![65, 66]);
+}
+
+#[test]
+fn test_dual_path_bytes_to_str_public_name() {
+    // `bytes_to_str` 公开名：解释器侧此前只有 `_bytes_to_str`。
+    let v = assert_both_paths("bytes_to_str(str_to_bytes(\"hello\"))");
+    assert_eq!(as_str(&v), "hello");
+}
+
+#[test]
+fn test_dual_path_to_utf8_public_alias() {
+    // `to_utf8` 公开别名：解释器侧此前只有 `_to_utf8`。
+    let v = assert_both_paths("to_utf8(\"AB\")");
+    assert_eq!(as_i64_vec(&v), vec![65, 66]);
+}
+
+#[test]
+fn test_dual_path_to_utf16_public_alias() {
+    // `to_utf16` 公开别名：解释器侧此前只有 `_to_utf16`。
+    let v = assert_both_paths("to_utf16(\"hello\")");
+    assert_eq!(as_i64_vec(&v), vec![104, 101, 108, 108, 111]);
+}
+
+#[test]
+fn test_dual_path_from_utf16_public_alias() {
+    let v = assert_both_paths("from_utf16(str_to_utf16(\"hello\"))");
+    assert_eq!(as_str(&v), "hello");
+}
+
+#[test]
+fn test_dual_path_utf16_chinese() {
+    let v = assert_both_paths("str_to_utf16(\"你\")");
+    assert_eq!(as_i64_vec(&v), vec![0x4F60]);
+}
+
+#[test]
+fn test_dual_path_gbk_roundtrip() {
+    let v = assert_both_paths("from_gbk(to_gbk(\"你好\"))");
+    assert_eq!(as_str(&v), "你好");
+    let v = assert_both_paths("to_gbk(\"你\")");
+    assert_eq!(as_i64_vec(&v), vec![0xC4, 0xE3]);
+}
+
+#[test]
+fn test_dual_path_base64_hex_url() {
+    let v = assert_both_paths("base64_encode(str_to_bytes(\"Hello\"))");
+    assert_eq!(as_str(&v), "SGVsbG8=");
+    let v = assert_both_paths("hex_encode([255, 0, 128])");
+    assert_eq!(as_str(&v), "ff0080");
+    let v = assert_both_paths("url_encode(\"hello world\")");
+    assert_eq!(as_str(&v), "hello%20world");
+}
+
+/// AUDIT-11.4.61 同族：**容器元素经 `Vec.push` 包装（Value::Shared）**后再交给
+/// 编码 native。解释器侧读取元素时未 peel ⇒ 全部元素落 `_ => 0`（`bytes_to_str`
+/// 静默返回 `"\0\0"`、`utf16_to_str` 静默返回 `"\0\0"`），与 VM 分叉且**无报错**。
+#[test]
+fn test_dual_path_bytes_to_str_from_pushed_vec() {
+    let src = r#"
+let v = Vec::new();
+v.push(65);
+v.push(66);
+bytes_to_str(v)
+"#;
+    let v = assert_both_paths(src);
+    assert_eq!(as_str(&v), "AB", "Vec.push 包装元素后 bytes_to_str 应得 \"AB\"");
+}
+
+#[test]
+fn test_dual_path_utf16_to_str_from_pushed_vec() {
+    let src = r#"
+let v = Vec::new();
+v.push(104);
+v.push(105);
+utf16_to_str(v)
+"#;
+    let v = assert_both_paths(src);
+    assert_eq!(as_str(&v), "hi", "Vec.push 包装元素后 utf16_to_str 应得 \"hi\"");
+}

@@ -2126,7 +2126,9 @@ pub fn register_all_natives(vm: &mut Vm) {
     });
     vm.add_native("abs".into(), |_vm, args| {
         match args.first() {
-            Some(Value::Int(n, _)) => Ok(Value::Int(n.abs(), BaseType::I32)),
+            // P-4：dtype 跟随输入（静态 `infer_abs_dtype` 已对齐）；此前硬编码 I32
+            // 使 abs(i64) 的运行期 dtype 标签与静态类型分叉（AUDIT-11.4.53 R4 同类）。
+            Some(Value::Int(n, dt)) => Ok(Value::Int(n.abs(), *dt)),
             Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
             Some(Value::Float32(f)) => Ok(Value::Float32(f.abs())),
             _ => Err(TenthError::RuntimeError { line: None, col: None, message: "abs() 需要一个数值参数".into() }),
@@ -3050,14 +3052,14 @@ pub fn register_all_natives(vm: &mut Vm) {
         if let Some(Value::String(s)) = args.first() {
             Ok(Value::String(s.chars().nfc().collect::<String>()))
         } else {
-            Err(TenthError::RuntimeError { line: None, col: None, message: "_unicode_nfc 需要 1 个 String 参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "unicode_nfc 需要 1 个 String 参数".into() })
         }
     });
     vm.add_native("unicode_nfd".into(), |_vm, args| {
         if let Some(Value::String(s)) = args.first() {
             Ok(Value::String(s.chars().nfd().collect::<String>()))
         } else {
-            Err(TenthError::RuntimeError { line: None, col: None, message: "_unicode_nfd 需要 1 个 String 参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "unicode_nfd 需要 1 个 String 参数".into() })
         }
     });
 
@@ -3070,7 +3072,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 .collect();
             Ok(Value::Vec(Rc::new(RefCell::new(result))))
         } else {
-            Err(TenthError::RuntimeError { line: None, col: None, message: "_str_to_utf16 需要 1 个 String 参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "str_to_utf16 需要 1 个 String 参数".into() })
         }
     });
     vm.add_native("utf16_to_str".into(), |_vm, args| {
@@ -3116,7 +3118,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 });
             Ok(Value::String(result))
         } else {
-            Err(TenthError::RuntimeError { line: None, col: None, message: "_utf16_to_str 需要 1 个 Vec 参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "utf16_to_str 需要 1 个 Vec 参数".into() })
         }
     });
 
@@ -3128,7 +3130,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 .collect();
             Ok(Value::Vec(Rc::new(RefCell::new(bytes))))
         } else {
-            Err(TenthError::RuntimeError { line: None, col: None, message: "_str_to_bytes 需要 1 个 String 参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "str_to_bytes 需要 1 个 String 参数".into() })
         }
     });
     vm.add_native("bytes_to_str".into(), |_vm, args| {
@@ -3142,7 +3144,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             let result = String::from_utf8_lossy(&bytes).to_string();
             Ok(Value::String(result))
         } else {
-            Err(TenthError::RuntimeError { line: None, col: None, message: "_bytes_to_str 需要 1 个 Vec 参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "bytes_to_str 需要 1 个 Vec 参数".into() })
         }
     });
 
@@ -3174,7 +3176,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 Err(e) => Ok(err_result(format!("Base64 解码失败: {e}"))),
             }
         } else {
-            Ok(err_result("_base64_decode 需要 1 个 String 参数"))
+            Ok(err_result("base64_decode 需要 1 个 String 参数"))
         }
     });
 
@@ -3212,7 +3214,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 Err(e) => Ok(err_result(format!("十六进制解码失败: {e}"))),
             }
         } else {
-            Ok(err_result("_hex_decode 需要 1 个 String 参数"))
+            Ok(err_result("hex_decode 需要 1 个 String 参数"))
         }
     });
 
@@ -3233,7 +3235,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 Err(_) => Ok(err_result("URL 解码失败：无效的百分号编码序列")),
             }
         } else {
-            Ok(err_result("_url_decode 需要 1 个 String 参数"))
+            Ok(err_result("url_decode 需要 1 个 String 参数"))
         }
     });
 
@@ -3336,7 +3338,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 .collect();
             Ok(Value::Vec(Rc::new(RefCell::new(bytes))))
         } else {
-            Err(TenthError::RuntimeError { line: None, col: None, message: "_to_utf8 需要 1 个 String 参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "to_utf8 需要 1 个 String 参数".into() })
         }
     });
     vm.add_native("to_utf16".into(), |_vm, args| {
@@ -3347,7 +3349,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 .collect();
             Ok(Value::Vec(Rc::new(RefCell::new(result))))
         } else {
-            Err(TenthError::RuntimeError { line: None, col: None, message: "_to_utf16 需要 1 个 String 参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "to_utf16 需要 1 个 String 参数".into() })
         }
     });
     vm.add_native("from_utf16".into(), |_vm, args| {
@@ -3392,7 +3394,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 });
             Ok(Value::String(result))
         } else {
-            Err(TenthError::RuntimeError { line: None, col: None, message: "_from_utf16 需要 1 个 Vec 参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "from_utf16 需要 1 个 Vec 参数".into() })
         }
     });
 
@@ -3405,7 +3407,7 @@ pub fn register_all_natives(vm: &mut Vm) {
                 .collect();
             Ok(Value::Vec(Rc::new(RefCell::new(result))))
         } else {
-            Err(TenthError::RuntimeError { line: None, col: None, message: "_to_gbk 需要 1 个 String 参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "to_gbk 需要 1 个 String 参数".into() })
         }
     });
     vm.add_native("from_gbk".into(), |_vm, args| {
@@ -3419,7 +3421,7 @@ pub fn register_all_natives(vm: &mut Vm) {
             let (result, _, _) = encoding_rs::GBK.decode(&bytes);
             Ok(Value::String(result.to_string()))
         } else {
-            Err(TenthError::RuntimeError { line: None, col: None, message: "_from_gbk 需要 1 个 Vec 参数".into() })
+            Err(TenthError::RuntimeError { line: None, col: None, message: "from_gbk 需要 1 个 Vec 参数".into() })
         }
     });
 }

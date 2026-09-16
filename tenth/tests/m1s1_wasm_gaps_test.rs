@@ -342,4 +342,34 @@ fn h(b: f64, e: f64) -> f64 { pow(b, e) }"#;
         let src = "operator @@ = fn(a: i64, b: i64) -> i64 { a + b }\nfn f() -> i64 { 1 @@ 2 }";
         assert_eq!(call_fn_i64(src, "f", &[]), 3);
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // P-4（AUDIT-11.4.32 遗留②）：WASM `abs(i64)` 返回类型与签名/静态类型不一致
+    // ════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn p4_abs_i64_returns_i64() {
+        // 修复前：`abs` 走位技巧后 F64ConvertI64S 转 F64（静态类型 `infer_scalar_dtype`
+        // 默认 f64），而函数签名返回 i64 ⇒ wasmi 校验期报类型不符（"type mismatch"）。
+        // 修复后：静态 `infer_abs_dtype` 对齐为输入整数类型 + WASM 整数 abs 保持 i64。
+        let src = r#"fn f(x: i64) -> i64 { abs(x) }"#;
+        assert_eq!(call_fn_i64(src, "f", &[-7]), 7, "abs(-7) 应为 7");
+        assert_eq!(call_fn_i64(src, "f", &[5]), 5, "abs(5) 应为 5");
+        assert_eq!(call_fn_i64(src, "f", &[0]), 0, "abs(0) 应为 0");
+    }
+
+    #[test]
+    fn p4_abs_i64_in_expression() {
+        // 整数 abs 参与整数算术 + 返回 i64（静态/运行期 dtype 均 i64）
+        let src = r#"fn f(a: i64, b: i64) -> i64 { abs(a) + abs(b) }"#;
+        assert_eq!(call_fn_i64(src, "f", &[-3, -4]), 7, "abs(-3)+abs(-4) 应为 7");
+    }
+
+    #[test]
+    fn p4_abs_f64_unchanged() {
+        // f64 abs 语义不变（F64Abs）
+        let src = r#"fn f(x: f64) -> f64 { abs(x) }"#;
+        let v = call_fn_f64(src, "f", &[-2.5]);
+        assert!((v - 2.5).abs() < 1e-12, "abs(-2.5f64) 应为 2.5，实际 {v}");
+    }
 }

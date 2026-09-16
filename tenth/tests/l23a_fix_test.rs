@@ -303,3 +303,146 @@ t.get("name")
         other => panic!("期望 String(\"Tenth\")，实际 {:?}", other),
     }
 }
+
+// ══════════════════════════════════════════════════════════════════
+// AUDIT-11.4.61 / GAP-013：解释器容器取值（Vec.get / Map.get 返回值）丢运行时
+// 类型标签——只在三个只读消费点 peel（type_name / map_key_to_string /
+// command_arg），**不动** Value::Shared 包装（index.rs 写穿透依赖它）。
+// 探针：tenth-lens/probes/gap013_interp_tag_loss.th
+// ══════════════════════════════════════════════════════════════════
+
+/// 从 Result::Ok 中取 String（peel 可能的 Shared 包装）。
+fn ok_string(v: &Value) -> String {
+    fn peel(v: &Value) -> Value {
+        match v {
+            Value::Shared(rc) => peel(&rc.borrow().clone()),
+            other => other.clone(),
+        }
+    }
+    match peel(v) {
+        Value::Enum { ref variant, ref fields, .. } if variant == "Ok" => {
+            let f = fields.borrow();
+            match f.first().map(|(_, v)| peel(v)) {
+                Some(Value::String(s)) => s,
+                other => panic!("期望 Result::Ok(String)，实际 {:?}", other),
+            }
+        }
+        Value::String(s) => s, // 源码内已 match 解包
+        other => panic!("期望 Result::Ok 或 String，实际 {:?}", other),
+    }
+}
+
+#[test]
+fn test_gap013_type_name_container_element_parity() {
+    // X2：容器元素标签——VM `string` vs 解释器（修复前）`unknown`
+    let src = r#"
+let v = Vec::new();
+v.push("alpha");
+type_name(v.get(0))
+"#;
+    let v = assert_parity(src);
+    match v {
+        Value::String(s) => assert_eq!(s, "string", "容器元素标签应为 string，实际 '{}'", s),
+        other => panic!("期望 String(\"string\")，实际 {:?}", other),
+    }
+}
+
+#[test]
+fn test_gap013_map_key_from_container_parity() {
+    // 容器取出的临时值直接作 HashMap 键：VM 返回 1；解释器（修复前）报
+    // 「HashMap 键类型不支持: alpha（仅支持 str/int/bool/float）」
+    let src = r#"
+let v = Vec::new();
+v.push("alpha");
+let m = HashMap::new();
+m.insert("alpha", 1);
+format("{}", m.get(v.get(0)))
+"#;
+    let v = assert_parity(src);
+    match v {
+        Value::String(s) => assert_eq!(s, "1", "容器元素作键应取到 1，实际 '{}'", s),
+        other => panic!("期望 String(\"1\")，实际 {:?}", other),
+    }
+}
+
+#[test]
+fn test_gap013_split_element_label_parity() {
+    // X1：split 建 Vec 不包装元素 → 两路径均 string（对照，守护「包装承重」不被误删）
+    let src = r#"
+type_name("a|b".split("|").get(0))
+"#;
+    let v = assert_parity(src);
+    match v {
+        Value::String(s) => assert_eq!(s, "string", "split 元素标签应为 string，实际 '{}'", s),
+        other => panic!("期望 String(\"string\")，实际 {:?}", other),
+    }
+}
+
+#[test]
+fn test_gap013_bound_local_still_ok_parity() {
+    // X4：先绑局部再使用（既有绕行写法）不得回归
+    let src = r#"
+let v = Vec::new();
+v.push("alpha");
+let local = v.get(0);
+let m = HashMap::new();
+m.insert("alpha", 1);
+type_name(local) + "|" + format("{}", m.get(local))
+"#;
+    let v = assert_parity(src);
+    match v {
+        Value::String(s) => assert_eq!(s, "string|1", "绑定局部后应为 'string|1'，实际 '{}'", s),
+        other => panic!("期望 String(\"string|1\")，实际 {:?}", other),
+    }
+}
+
+/// 子进程实参从**容器取出的临时值**直接传入（`command_arg(h, v.get(i))`）——
+/// 解释器修复前 `if let` 不匹配 `Value::Shared` 即静默 `Ok(Unit)`，实参被吞：
+/// 子进程退回用法提示、退出码随之改变（GAP-013 影响面②）。
+#[test]
+fn test_gap013_command_arg_from_container_parity() {
+    let marker = "TENTH_GAP013_ARG_OK";
+    // 三参：program / arg0 / arg1（POSIX 下第三个参数是 $0，无害）
+    let (prog, a0, a1) = if cfg!(windows) {
+        ("cmd.exe", "/C", "echo")
+    } else {
+        ("sh", "-c", "echo")
+    };
+    let src = format!(
+        r#"
+fn run_probe(p0: String, p1: String, p2: String, p3: String) -> String {{
+    let v = Vec::new();
+    v.push(p1);
+    v.push(p2);
+    v.push(p3);
+    let h = command_new(p0);
+    match h {{
+        Result::Ok(hh) => {{
+            command_arg(hh, v.get(0));
+            command_arg(hh, v.get(1));
+            command_arg(hh, v.get(2));
+            match command_output(hh) {{
+                Result::Ok(s) => s,
+                Result::Err(e) => "SPAWN_ERR:" + e,
+            }}
+        }},
+        Result::Err(e) => "SPAWN_ERR:" + e,
+    }}
+}}
+run_probe("{prog}", "{a0}", "{a1}", "{marker}")
+"#
+    );
+    let vm = run_vm(&src).unwrap_or_else(|e| panic!("VM 执行失败: {e}"));
+    let ip = run_interp(&src).unwrap_or_else(|e| panic!("解释器执行失败: {e}"));
+    let vm_s = ok_string(&vm);
+    let ip_s = ok_string(&ip);
+    assert!(
+        vm_s.contains(marker),
+        "VM：容器元素实参被吞（stdout={vm_s:?}）"
+    );
+    assert!(
+        ip_s.contains(marker),
+        "解释器：容器元素实参被吞（stdout={ip_s:?}）"
+    );
+    assert!(values_eq(&vm, &ip), "VM/解释器输出不一致: {vm_s:?} vs {ip_s:?}");
+}

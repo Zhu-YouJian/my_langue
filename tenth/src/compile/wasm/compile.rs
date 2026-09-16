@@ -591,8 +591,11 @@ impl WasmCompiler {
                                 Type::Base(BaseType::F32) => { body.instruction(&Instruction::F32Abs); }
                                 Type::Base(BaseType::F64) => { body.instruction(&Instruction::F64Abs); }
                                 Type::Base(BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64) => {
-                                    // abs(x) = (x ^ (x>>63)) - (x>>63)；类型系统 abs→F64
-                                    // （infer_scalar_dtype 默认 f64），故 i64 结果转 F64。
+                                    // abs(x) = (x ^ (x>>63)) - (x>>63)；P-4 修复：静态类型
+                                    // 已对齐为输入整数类型（`infer_abs_dtype`），故整数 abs
+                                    // **保持 i64**（WASM 后端统一以 i64 表示全部整型），不再
+                                    // F64ConvertI64S 转 F64——此前 stack 为 f64 而函数签名/
+                                    // 静态类型为 i64，wasmi 校验期报错。
                                     let t = self.local_count;
                                     self.local_count += 1;
                                     body.instruction(&Instruction::LocalSet(t));
@@ -605,7 +608,6 @@ impl WasmCompiler {
                                     body.instruction(&Instruction::I64Const(63));
                                     body.instruction(&Instruction::I64ShrS);
                                     body.instruction(&Instruction::I64Sub);
-                                    body.instruction(&Instruction::F64ConvertI64S);
                                 }
                                 _ => { body.instruction(&Instruction::F64Abs); }
                             }

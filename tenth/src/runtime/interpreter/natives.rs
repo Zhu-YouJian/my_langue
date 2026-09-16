@@ -289,7 +289,10 @@ impl super::Interpreter {
             }
             "env_set" => {
                 if args.len() >= 2 {
-                    if let (Value::String(name), Value::String(val)) = (&args[0], &args[1]) {
+                    // AUDIT-11.4.61 同族：容器取出的临时值需先 peel（否则静默 no-op）。
+                    let a0 = deref_wrapped(&args[0]);
+                    let a1 = deref_wrapped(&args[1]);
+                    if let (Value::String(name), Value::String(val)) = (&a0, &a1) {
                         // Rust 2024 edition: set_var is unsafe
                         unsafe { std::env::set_var(name, val); }
                     }
@@ -618,7 +621,11 @@ impl super::Interpreter {
             }
             "command_arg" => {
                 if args.len() >= 2 {
-                    if let (Value::Int(handle, _), Value::String(arg)) = (&args[0], &args[1]) {
+                    // AUDIT-11.4.61：实参可能来自容器取出（Value::Shared 包装）。
+                    // 不解包则下面的 if let 不匹配 → 参数被静默丢弃（子进程收不到参数）。
+                    let a0 = deref_wrapped(&args[0]);
+                    let a1 = deref_wrapped(&args[1]);
+                    if let (Value::Int(handle, _), Value::String(arg)) = (&a0, &a1) {
                         let idx = *handle as usize;
                         if idx > 0 && idx <= self.commands.len() {
                             if let Some(ref mut cmd) = self.commands[idx - 1] {
@@ -819,7 +826,11 @@ impl super::Interpreter {
             }
             "type_name" => {
                 if let Some(arg) = args.first() {
-                    let tn = match arg {
+                    // AUDIT-11.4.61：容器取出的临时值带 Value::Shared 包装（Vec.push /
+                    // 数组字面量的写入端包装，index.rs 的写穿透依赖它，**不可删包装**），
+                    // 只读消费点必须先 peel，否则落到 `_ => "unknown"` 丢运行时类型标签。
+                    let arg = deref_wrapped(arg);
+                    let tn = match &arg {
                         Value::Int(_, _) => "int",
                         Value::Float(_) => "float",
                         Value::Bool(_) => "bool",
@@ -1017,7 +1028,8 @@ impl super::Interpreter {
                 if let Some(arg) = args.first() {
                     let arg = deref_wrapped(arg);
                     return Ok(Some(match &arg {
-                        Value::Int(n, _) => Value::Int(n.abs(), BaseType::I32),
+                        // P-4：dtype 跟随输入（与 VM 侧 abs 及静态 infer_abs_dtype 一致）。
+                        Value::Int(n, dt) => Value::Int(n.abs(), *dt),
                         Value::Float(n) => Value::Float(n.abs()),
                         _ => return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "abs() 期望一个数值参数".into(),
@@ -2401,8 +2413,9 @@ impl super::Interpreter {
             }
             // M1-S4a：设置确定性随机种子（线程局部）；配合 shuffle/rand_int 可复现序列。
             "random_seed" => {
-                let seed = match args.first() {
-                    Some(Value::Int(n, _)) => *n as u64,
+                // AUDIT-11.4.61 同族：容器取出的临时值需先 peel（否则静默落 seed=0）。
+                let seed = match args.first().map(deref_wrapped) {
+                    Some(Value::Int(n, _)) => n as u64,
                     _ => 0,
                 };
                 crate::runtime::natives::set_seeded_rng(Some(seed));
@@ -2412,12 +2425,13 @@ impl super::Interpreter {
             // 与 VM 路径（runtime/natives.rs 第 941-963 行）对齐。
             // 历史 `DefaultHasher` + SystemTime 方案可被攻击者枚举纳秒时刻预测输出。
             "random_int" => {
-                let lo = match args.first() {
-                    Some(Value::Int(n, _)) => *n,
+                // AUDIT-11.4.61 同族：容器取出的临时值需先 peel（否则静默按 0 取范围）。
+                let lo = match args.first().map(deref_wrapped) {
+                    Some(Value::Int(n, _)) => n,
                     _ => 0,
                 };
-                let hi = match args.get(1) {
-                    Some(Value::Int(n, _)) => *n,
+                let hi = match args.get(1).map(deref_wrapped) {
+                    Some(Value::Int(n, _)) => n,
                     _ => lo,
                 };
                 use rand::Rng;
@@ -2443,93 +2457,127 @@ impl super::Interpreter {
                 return Ok(Some(Value::Float(r)));
             }
             // Math functions
+            // AUDIT-11.4.61 同族（解释器侧）：下列 arms 按**裸变体** match 实参，
+            // 容器取出的临时值（`Vec.get`/`Map.get` 返回的 `Value::Shared`）不匹配
+            // ⇒ 落 `_ => 0.0` 兜底，**静默错值**（VM 侧容器元素不包装故正常）。
+            // 均为只读标量消费点 ⇒ 统一 `deref_wrapped` 后判定。
             "math_tan" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.tan())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.tan())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_asin" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.asin())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.asin())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_acos" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.acos())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.acos())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_atan" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.atan())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.atan())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_atan2" => {
-                if let (Some(Value::Float(y)), Some(Value::Float(x))) = (args.first(), args.get(1)) {
-                    return Ok(Some(Value::Float(y.atan2(*x))));
+                if let (Some(a), Some(b)) = (args.first(), args.get(1)) {
+                    if let (Value::Float(y), Value::Float(x)) = (deref_wrapped(a), deref_wrapped(b)) {
+                        return Ok(Some(Value::Float(y.atan2(x))));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_sinh" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.sinh())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.sinh())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_cosh" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.cosh())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.cosh())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_tanh" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.tanh())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.tanh())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_log10" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.log10())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.log10())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_log2" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.log2())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.log2())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_exp" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.exp())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.exp())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_pow" => {
-                if let (Some(Value::Float(base)), Some(Value::Float(exp))) = (args.first(), args.get(1)) {
-                    return Ok(Some(Value::Float(base.powf(*exp))));
+                if let (Some(a), Some(b)) = (args.first(), args.get(1)) {
+                    if let (Value::Float(base), Value::Float(exp)) = (deref_wrapped(a), deref_wrapped(b)) {
+                        return Ok(Some(Value::Float(base.powf(exp))));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_floor" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.floor())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.floor())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_ceil" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.ceil())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.ceil())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
             "math_round" => {
-                if let Some(Value::Float(x)) = args.first() {
-                    return Ok(Some(Value::Float(x.round())));
+                if let Some(v) = args.first() {
+                    if let Value::Float(x) = deref_wrapped(v) {
+                        return Ok(Some(Value::Float(x.round())));
+                    }
                 }
                 return Ok(Some(Value::Float(0.0)));
             }
@@ -2786,13 +2834,13 @@ impl super::Interpreter {
                 if let Some(Value::String(s)) = args.first() {
                     return Ok(Some(Value::String(s.chars().nfc().collect::<String>())));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_unicode_nfc 需要 1 个 String 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "unicode_nfc 需要 1 个 String 参数".into() });
             }
             "unicode_nfd" => {
                 if let Some(Value::String(s)) = args.first() {
                     return Ok(Some(Value::String(s.chars().nfd().collect::<String>())));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_unicode_nfd 需要 1 个 String 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "unicode_nfd 需要 1 个 String 参数".into() });
             }
             // ── B批：UTF-8 ↔ UTF-16 ──
             "str_to_utf16" => {
@@ -2803,12 +2851,18 @@ impl super::Interpreter {
                         .collect();
                     return Ok(Some(Value::Vec(Rc::new(RefCell::new(result)))));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_str_to_utf16 需要 1 个 String 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "str_to_utf16 需要 1 个 String 参数".into() });
             }
-            "_utf16_to_str" => {
+            // AUDIT-11.4.63：规范名＝无下划线公开名（与 VM 侧 register_all_natives
+            // 注册名逐字一致：str_to_utf16 / utf16_to_str / str_to_bytes /
+            // bytes_to_str / to_utf8 / to_utf16 / from_utf16）。解释器侧此前只保留
+            // 了 `_` 前缀私有名且**无别名映射** ⇒ TENTH_NO_VM=1 下公开名响亮报
+            // `undefined function`。此处直接改名为公开名（保留 `_` 名会重新造成
+            // 「解释器有、VM 无」的反向双端差异）。
+            "utf16_to_str" => {
                 if let Some(Value::Vec(arr)) = args.first() {
                     let code_units: Vec<u16> = arr.borrow().iter()
-                        .map(|v| match v {
+                        .map(|v| match &deref_wrapped(v) {
                             Value::Int(n, _) => *n as u16,
                             _ => 0,
                         })
@@ -2841,7 +2895,7 @@ impl super::Interpreter {
                         });
                     return Ok(Some(Value::String(result)));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_utf16_to_str 需要 1 个 Vec 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "utf16_to_str 需要 1 个 Vec 参数".into() });
             }
             // ── B批：UTF-8 ↔ 字节数组 ──
             "str_to_bytes" => {
@@ -2851,19 +2905,19 @@ impl super::Interpreter {
                         .collect();
                     return Ok(Some(Value::Vec(Rc::new(RefCell::new(bytes)))));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_str_to_bytes 需要 1 个 String 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "str_to_bytes 需要 1 个 String 参数".into() });
             }
-            "_bytes_to_str" => {
+            "bytes_to_str" => {
                 if let Some(Value::Vec(arr)) = args.first() {
                     let bytes: Vec<u8> = arr.borrow().iter()
-                        .map(|v| match v {
+                        .map(|v| match &deref_wrapped(v) {
                             Value::Int(n, _) => *n as u8,
                             _ => 0,
                         })
                         .collect();
                     return Ok(Some(Value::String(String::from_utf8_lossy(&bytes).to_string())));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_bytes_to_str 需要 1 个 Vec 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "bytes_to_str 需要 1 个 Vec 参数".into() });
             }
             // ── B批：Base64 ──
             "base64_encode" => {
@@ -2892,7 +2946,7 @@ impl super::Interpreter {
                         Err(e) => return Ok(Some(err_result(format!("Base64 解码失败: {e}")))),
                     }
                 }
-                return Ok(Some(err_result("_base64_decode 需要 1 个 String 参数")));
+                return Ok(Some(err_result("base64_decode 需要 1 个 String 参数")));
             }
             // ── B批：十六进制 ──
             "hex_encode" => {
@@ -2927,7 +2981,7 @@ impl super::Interpreter {
                         Err(e) => return Ok(Some(err_result(format!("十六进制解码失败: {e}")))),
                     }
                 }
-                return Ok(Some(err_result("_hex_decode 需要 1 个 String 参数")));
+                return Ok(Some(err_result("hex_decode 需要 1 个 String 参数")));
             }
             // ── B批：URL 编解码 ──
             "url_encode" => {
@@ -2935,7 +2989,7 @@ impl super::Interpreter {
                     use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
                     return Ok(Some(Value::String(utf8_percent_encode(s, NON_ALPHANUMERIC).to_string())));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_url_encode 需要 1 个 String 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "url_encode 需要 1 个 String 参数".into() });
             }
             "url_decode" => {
                 if let Some(Value::String(s)) = args.first() {
@@ -2945,7 +2999,7 @@ impl super::Interpreter {
                         Err(_) => return Ok(Some(err_result("URL 解码失败：无效的百分号编码序列"))),
                     }
                 }
-                return Ok(Some(err_result("_url_decode 需要 1 个 String 参数")));
+                return Ok(Some(err_result("url_decode 需要 1 个 String 参数")));
             }
             // ── 哈希函数（SHA-256/SHA-512/MD5） ──
             // 接受 Vec<u8>（Vec<i64>，每个元素 0-255），返回小写 hex 字符串
@@ -3033,16 +3087,16 @@ impl super::Interpreter {
                 return Err(TenthError::RuntimeError { line: None, col: None, message: "md5_str 需要 1 个 String 参数".into() });
             }
             // ── B批：编码转换新 API 别名 ──
-            "_to_utf8" => {
+            "to_utf8" => {
                 if let Some(Value::String(s)) = args.first() {
                     let bytes: Vec<Value> = s.bytes()
                         .map(|b| Value::Int(b as i64, BaseType::I32))
                         .collect();
                     return Ok(Some(Value::Vec(Rc::new(RefCell::new(bytes)))));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_to_utf8 需要 1 个 String 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "to_utf8 需要 1 个 String 参数".into() });
             }
-            "_to_utf16" => {
+            "to_utf16" => {
                 if let Some(Value::String(s)) = args.first() {
                     let encoded: Vec<u16> = s.encode_utf16().collect();
                     let result: Vec<Value> = encoded.into_iter()
@@ -3050,12 +3104,12 @@ impl super::Interpreter {
                         .collect();
                     return Ok(Some(Value::Vec(Rc::new(RefCell::new(result)))));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_to_utf16 需要 1 个 String 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "to_utf16 需要 1 个 String 参数".into() });
             }
             "from_utf16" => {
                 if let Some(Value::Vec(arr)) = args.first() {
                     let code_units: Vec<u16> = arr.borrow().iter()
-                        .map(|v| match v {
+                        .map(|v| match &deref_wrapped(v) {
                             Value::Int(n, _) => *n as u16,
                             _ => 0,
                         })
@@ -3088,7 +3142,7 @@ impl super::Interpreter {
                         });
                     return Ok(Some(Value::String(result)));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_from_utf16 需要 1 个 Vec 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "from_utf16 需要 1 个 Vec 参数".into() });
             }
             // ── B批：GBK 编码 ──
             "to_gbk" => {
@@ -3099,7 +3153,7 @@ impl super::Interpreter {
                         .collect();
                     return Ok(Some(Value::Vec(Rc::new(RefCell::new(result)))));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_to_gbk 需要 1 个 String 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "to_gbk 需要 1 个 String 参数".into() });
             }
             "from_gbk" => {
                 if let Some(Value::Vec(arr)) = args.first() {
@@ -3112,7 +3166,7 @@ impl super::Interpreter {
                     let (result, _, _) = encoding_rs::GBK.decode(&bytes);
                     return Ok(Some(Value::String(result.to_string())));
                 }
-                return Err(TenthError::RuntimeError { line: None, col: None, message: "_from_gbk 需要 1 个 Vec 参数".into() });
+                return Err(TenthError::RuntimeError { line: None, col: None, message: "from_gbk 需要 1 个 Vec 参数".into() });
             }
             _ => {}
         }

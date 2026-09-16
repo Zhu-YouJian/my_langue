@@ -389,6 +389,9 @@ pub fn translate<M: Module>(
             spec_args,
             spec_sig: spec.cloned(),
             call_spec_results: HashMap::new(),
+            poison_scalars: std::env::var("TENTH_JIT_POISON").is_ok(),
+            poison_stack_scalar_slots: Vec::new(),
+            poison_local_scalar_slots: Vec::new(),
         };
         t.translate_body()?;
         // translate_body calls builder.finalize() internally (consuming it).
@@ -461,6 +464,18 @@ struct Translator<'a, M: Module> {
     /// M2.5-A6：分析期预测各 CallN/Call 是否走特化（发射期防漂移护栏：预测特化
     /// 而发射期不可特化 → Err → 整函数回退解释器，杜绝静默错值）。
     call_spec_results: HashMap<usize, bool>,
+    /// M0/D10（`TENTH_JIT_POISON`）：是否毒化——除既有「虚拟栈区 + 局部 Value 槽」
+    /// 外，**标量伴随槽**也在函数入口预创建并写入 0xAAAA… 毒值。
+    /// 目的：AUDIT-11.4.44 的「读未初始化标量槽」此前读到的是宿主栈残留（不可
+    /// 复现、因此不可探测）；毒化后该读取持有确定性毒值，可被既有 JIT 静默审计
+    /// 套件/对拍发现。
+    poison_scalars: bool,
+    /// M0/D10：栈偏移索引（`off / VALUE_SIZE`）→ 入口预创建并已毒化的标量槽。
+    /// 仅 `poison_scalars` 为真时非空；`stack_scalar_slot` 优先复用（等价于按需
+    /// 创建，只是创建点提前到入口并加毒值写入）。
+    poison_stack_scalar_slots: Vec<StackSlot>,
+    /// M0/D10：局部索引 → 入口预创建并已毒化的标量槽（仅毒化模式非空）。
+    poison_local_scalar_slots: Vec<StackSlot>,
 }
 
 // Cranelift re-exports — `Value` clashes with our runtime `Value`, so alias.
@@ -522,7 +537,7 @@ impl<'a, M: Module> Translator<'a, M> {
 
         // ── Initialise locals ─────────────────────────────────────────────
         // DEBUG（TENTH_JIT_POISON）：入口毒化虚拟栈区 + 全部局部槽（参数复制前）。
-        if std::env::var("TENTH_JIT_POISON").is_ok() {
+        if self.poison_scalars {
             let poison = self.builder.ins().iconst(self.ptr, 0xAAAA_AAAA_AAAA_AAAA_u64 as i64);
             let total = (VALUE_SIZE * MAX_STACK_DEPTH) as i32;
             let mut off = 0i32;
@@ -546,6 +561,49 @@ impl<'a, M: Module> Translator<'a, M> {
                     loff += self.ptr.bytes() as i32;
                 }
             }
+            // ── M0/D10：标量伴随槽纳入毒化 ─────────────────────────────────
+            // 槽此前在 `stack_scalar_slot`/`local_scalar_slot` **懒创建**（发射期，
+            // 且创建点可能落在「运行期不执行的分支」内）⇒ 未写先读的槽读到宿主栈
+            // 残留（非确定性），与本设施的确定性毒值不同，故该类 UB 不可探测。
+            // 此处按上界在**入口**预创建全部标量槽并写毒值；两个取槽函数在毒化模式
+            // 下复用这些槽（本意：凡读必先写，毒值只在「未写先读」时可见）。
+            //
+            // **范围限制（实测）**：`spec_mode`（M2.5-A6 特化入口）函数**不**预创建
+            // 标量槽池，退回既有懒创建。依据：全池化 + 0xAAAA 毒值下
+            // `jit_spec_f64_test::spec_f64_recursive_mixed` 以 0xC0000005
+            // （STATUS_ACCESS_VIOLATION）中止，且该中止**与毒值内容相关**——毒值改 0
+            // 即绿、改 42 / 2^40 同样中止、完全不池化（懒创建）亦绿 ⇒ 池化 + 非零内容
+            // 在特化帧内的组合不安全（触发点未定位到具体槽/读取点，属 M1–M5 单表化
+            // 的范围）。特化入口的参数槽由 `init_spec_args` 即时写入，D10 关注面主要
+            // 在通用/局部路径，故此限制不阻断本设施的主要用途。
+            let n_stack_slots = MAX_STACK_DEPTH as usize;
+            let pool_enabled = !self.spec_mode;
+            let mut stack_slots: Vec<StackSlot> = Vec::with_capacity(n_stack_slots);
+            if pool_enabled {
+                for _ in 0..n_stack_slots {
+                    stack_slots.push(self.builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        8,
+                        8,
+                    )));
+                }
+            }
+            let mut local_slots: Vec<StackSlot> = Vec::with_capacity(n_loc);
+            if pool_enabled {
+                for _ in 0..n_loc {
+                    local_slots.push(self.builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        8,
+                        8,
+                    )));
+                }
+            }
+            for slot in stack_slots.iter().chain(local_slots.iter()) {
+                let addr = self.builder.ins().stack_addr(self.ptr, *slot, 0);
+                self.builder.ins().store(MemFlags::new(), poison, addr, 0);
+            }
+            self.poison_stack_scalar_slots = stack_slots;
+            self.poison_local_scalar_slots = local_slots;
         }
         let num_args = self.chunk.num_args;
         let num_locals = self.chunk.num_locals.max(num_args);
@@ -608,6 +666,16 @@ impl<'a, M: Module> Translator<'a, M> {
                     let n = self.chunk.num_locals.max(self.chunk.num_args);
                     self.cur_local_kinds = vec![ScalarKind::Unknown; n];
                 }
+                // ── M0/D2（AUDIT-11.4.44 同族）：**未纳入**块入口级「分析预测标量 ∧
+                // 发射端缺槽 → Err」守卫。实测（`jit_silent_audit_test::
+                // audit_d2_dup_pop_block_boundary`，语料本身三路径一致且正确）该谓词
+                // 在 ip=164/local 3 命中并导致整函数回退 ⇒ **过度保守**：D2 漂移
+                // （一条路径的 Store 走通用路径 → `local_scalars.remove`）并不必然
+                // 产生可观测的过期读（过期读还需该槽被后续专用化 Store 重建）。
+                // D2 的 Store 侧后果由既有发射期缓解承担：通用路径 `set_local_kind
+                // (Unknown)` + `local_scalars.remove(&i)`（下方 Store 臂），使随后的
+                // Load 退回通用路径（读 Value 槽 = 正确）。D2 的**精确**闭合需分析/发射
+                // 单表化（M1–M5，本波不做）。仅保留 Load 侧（实际消费点）守卫。
                 self.terminated = false;
             } else if self.terminated {
                 // QA-20260831（M2-A7）：死代码跳过。bytecode.rs 的 if 编译在
@@ -1269,11 +1337,16 @@ impl<'a, M: Module> Translator<'a, M> {
     // ── A2b：标量辅助（槽 / 清空 / 物化 / 原生运算）────────────────────────
 
     /// 获取栈偏移 `off` 的标量伴随槽（按需创建）。槽存 8 字节裸标量。
+    /// M0/D10：毒化模式下改用入口预创建（已写毒值）的槽——见 `poison_scalars`。
     fn stack_scalar_slot(&mut self, off: i32, kind: ScalarKind) -> StackSlot {
         if let Some(&(k, slot)) = self.stack_scalars.get(&off) {
             if k == kind {
                 return slot;
             }
+        }
+        if let Some(slot) = self.poisoned_stack_scalar_slot(off) {
+            self.stack_scalars.insert(off, (kind, slot));
+            return slot;
         }
         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
@@ -1284,12 +1357,27 @@ impl<'a, M: Module> Translator<'a, M> {
         slot
     }
 
-    /// 获取局部 `i` 的标量伴随槽（按需创建）。
+    /// M0/D10：毒化模式下 `off` 对应的入口预创建槽（`off` 必须是 VALUE_SIZE 的
+    /// 非负整数倍且在上界内）；非毒化模式/越界 → None（走既有懒创建）。
+    fn poisoned_stack_scalar_slot(&self, off: i32) -> Option<StackSlot> {
+        if !self.poison_scalars || off < 0 || off % VALUE_SIZE as i32 != 0 {
+            return None;
+        }
+        self.poison_stack_scalar_slots
+            .get((off / VALUE_SIZE as i32) as usize)
+            .copied()
+    }
+
+    /// 获取局部 `i` 的标量伴随槽（按需创建）。M0/D10：毒化模式下复用入口预创建槽。
     fn local_scalar_slot(&mut self, i: usize, kind: ScalarKind) -> StackSlot {
         if let Some(&(k, slot)) = self.local_scalars.get(&i) {
             if k == kind {
                 return slot;
             }
+        }
+        if let Some(slot) = self.poisoned_local_scalar_slot(i) {
+            self.local_scalars.insert(i, (kind, slot));
+            return slot;
         }
         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
@@ -1298,6 +1386,14 @@ impl<'a, M: Module> Translator<'a, M> {
         ));
         self.local_scalars.insert(i, (kind, slot));
         slot
+    }
+
+    /// M0/D10：毒化模式下局部 `i` 对应的入口预创建槽（越界 → None 走懒创建）。
+    fn poisoned_local_scalar_slot(&self, i: usize) -> Option<StackSlot> {
+        if !self.poison_scalars {
+            return None;
+        }
+        self.poison_local_scalar_slots.get(i).copied()
     }
 
     /// 清空单个栈偏移的标量跟踪。
@@ -2050,13 +2146,34 @@ impl<'a, M: Module> Translator<'a, M> {
                     && lk != ScalarKind::Unknown
                     && lk != ScalarKind::Top
                 {
-                    if let Some(&(_, lslot)) = self.local_scalars.get(&i) {
-                        let dst_off = self.sp;
-                        let dslot = self.stack_scalar_slot(dst_off, lk);
-                        self.copy_scalar_slot(lslot, dslot, lk);
-                        true
-                    } else {
-                        false
+                    match self.local_scalars.get(&i) {
+                        Some(&(slot_kind, lslot)) => {
+                            // ── M0/D1 资格守卫（AUDIT-11.4.44）─────────────────
+                            // 分析端（`analyze_scalar_kinds`/`transfer`）预测该局部为
+                            // `lk`，发射端槽却是另一种类 ⇒ 按错误种类拷贝标量位模式
+                            // 会静默错值。此处补同型护栏：响亮 Err → 既有「Err → 整
+                            // 函数回退 VM」通路（功能正确，仅放弃本轮专用化）。
+                            if slot_kind != lk {
+                                return Err(format!(
+                                    "JIT M0/D1 资格守卫：Load({i}) 分析预测 {lk:?} 而发射端标量槽为 {slot_kind:?}（分析/发射漂移，AUDIT-11.4.44）"
+                                ));
+                            }
+                            let dst_off = self.sp;
+                            let dslot = self.stack_scalar_slot(dst_off, lk);
+                            self.copy_scalar_slot(lslot, dslot, lk);
+                            true
+                        }
+                        None => {
+                            // ── M0/D1 资格守卫（AUDIT-11.4.44 UB 本体）──────────
+                            // 块入口分析预测该局部恒为标量（`lk` 具体），但发射端没有
+                            // 对应标量槽 ⇒ 此前**静默走通用路径**，而块入口分析仍按标量
+                            // ⇒ 后续 Load 专用化读未初始化标量槽（宿主栈残留 → 随二进制
+                            // 布局翻转的静默错值）。全 JIT 唯一无护栏的资格点（call 路径
+                            // 已有两个防御性 Err），此处补齐：响亮 Err → 整函数回退 VM。
+                            return Err(format!(
+                                "JIT M0/D1 资格守卫：Load({i}) 分析预测 {lk:?} 而发射端缺标量槽（AUDIT-11.4.44）"
+                            ));
+                        }
                     }
                 } else {
                     false

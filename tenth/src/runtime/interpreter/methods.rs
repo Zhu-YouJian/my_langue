@@ -23,7 +23,11 @@ use crate::runtime::autodiff::TapeOp;
 /// 支持 String / Int / Bool / Float（浮点键按整数部分转字符串，仅推荐整数场景）。
 /// 其他类型返回 TypeError。
 fn map_key_to_string(v: &Value) -> TenthResult<String> {
-    match v {
+    // AUDIT-11.4.61：`v.get(k)` / 数组字面量元素带 Value::Shared 包装（写入端包装
+    // 承重：index.rs 的写穿透依赖它）。此处只读消费，必须先 peel 再判类型，
+    // 否则合法的 str/int/bool/float 键被误判为「不支持的类型」。
+    let v = crate::runtime::value::deref_wrapped(v);
+    match &v {
         Value::String(s) => Ok(s.clone()),
         Value::Int(n, _) => Ok(n.to_string()),
         Value::Bool(b) => Ok(b.to_string()),

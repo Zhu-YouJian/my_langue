@@ -994,7 +994,10 @@ impl Lowerer {
             "parse_int" => Ok(Type::Enum("Option".to_string())),
             "parse_float" => Ok(Type::Enum("Option".to_string())),
             // 标量数学函数：dtype 跟随输入
-            "abs" | "sqrt" | "sin" | "cos" | "ln" | "pow" => Ok(Self::infer_scalar_dtype(args, Type::f64())),
+            // `abs` 单列（P-4 / AUDIT-11.4.32 遗留②）：运行时对整数输入返回 **Int**、
+            // 浮点返回同精度浮点，故静态 dtype 也必须跟随**输入**而非一律 f64。
+            "abs" => Ok(Self::infer_abs_dtype(args)),
+            "sqrt" | "sin" | "cos" | "ln" | "pow" => Ok(Self::infer_scalar_dtype(args, Type::f64())),
             // to_float 保留为 f64 别名（向后兼容）；新增 to_f32 / to_f64
             "to_float" | "to_f64" => Ok(Type::f64()),
             "to_f32" => Ok(Type::f32()),
@@ -1194,6 +1197,33 @@ impl Lowerer {
     }
 
     /// 标量函数 dtype 推断：若输入为 F32 则返回 F32，否则返回默认（fallback）。
+    /// P-4（`AUDIT-11.4.32` 遗留②）：`abs` 的静态返回 dtype = **输入 dtype**。
+    ///
+    /// 运行时两侧对整数输入返回 `Value::Int`（dtype 跟随输入），对浮点返回同精度
+    /// 浮点；静态类型此前一律走 `infer_scalar_dtype(args, f64())` 记为 f64 ⇒
+    /// 与运行时（以及 WASM 后端：wasmi 校验期类型不符而出错）分叉。
+    ///
+    /// - 整数（i8/i16/i32/i64/u8/u16/u32/u64）→ 同类型（与 VM/解释器 `abs` 一致）
+    /// - f32 → f32；其余浮点/未知/张量 → f64（保持历史行为；张量 `abs` 走 Tensor
+    ///   方法/TapeOp，不依赖此标量分支）
+    pub(super) fn infer_abs_dtype(args: &[HirExpr]) -> Type {
+        match args.first().map(|a| &a.ty) {
+            Some(Type::Base(BaseType::F32)) => Type::f32(),
+            Some(Type::Base(
+                b @ (BaseType::I8
+                | BaseType::I16
+                | BaseType::I32
+                | BaseType::I64
+                | BaseType::U8
+                | BaseType::U16
+                | BaseType::U32
+                | BaseType::U64),
+            )) => Type::Base(*b),
+            _ => Type::f64(),
+        }
+    }
+
+    /// 标量 dtype 跟随输入：f32 优先，否则 fallback（f64）。
     pub(super) fn infer_scalar_dtype(args: &[HirExpr], fallback: Type) -> Type {
         for a in args {
             if matches!(&a.ty, Type::Base(BaseType::F32)) {
