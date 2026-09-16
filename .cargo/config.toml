@@ -1,0 +1,61 @@
+# Cargo configuration for the Tenth repository.
+#
+# WHY THIS FILE LIVES AT THE REPOSITORY ROOT
+# ------------------------------------------
+# Cargo discovers `.cargo/config.toml` by walking up from the CURRENT WORKING
+# DIRECTORY (and its ancestors) -- NOT from the directory holding the manifest
+# passed to `--manifest-path`. The canonical test command is run from the
+# repository root:
+#
+#     cargo test --release --manifest-path tenth/Cargo.toml ...
+#
+# so any config that lives only in `tenth/.cargo/` is never read by that
+# command. Placing it here also covers `cd tenth && cargo test`, because cargo
+# merges every ancestor config it finds.
+#
+# WHAT WAS REMOVED AND WHY (AUDIT-11.4.49)
+# ----------------------------------------
+# `tenth/.cargo/config.toml` used to contain:
+#
+#     [target.'cfg(test)']
+#     rustflags = ["-C", "link-args=/STACK:33554432"]
+#
+# That was a DEAD CONFIG. Two independent reasons:
+#
+#   1. `cfg(test)` is not a cfg that the `[target]` table can evaluate -- that
+#      table is keyed by target TRIPLE. Verified 2026-09-16 by forcing a full
+#      recompile of the test target from BOTH the repository root and `tenth/`
+#      (`cargo test --no-run -v`): the rustc command line only ever carried
+#      `-C link-arg=/STACK:67108864` from `tenth/build.rs`; `33554432` never
+#      appeared. The produced executable hash was byte-identical from both
+#      cwds, and its PE OptionalHeader `SizeOfStackReserve` read 67108864
+#      (64 MiB), never 33554432.
+#   2. Even if it HAD applied it would not have worked: a PE
+#      `SizeOfStackReserve` only sizes the MAIN thread. libtest runs each test
+#      case on a SPAWNED thread, whose stack is sized by `RUST_MIN_STACK`.
+#
+# A mitigation that looks like it works but silently does nothing is worse than
+# no mitigation, so the key was deleted rather than adjusted.
+
+[env]
+# AUDIT-11.4.19 / AUDIT-11.4.49.
+#
+# libtest spawns a thread per test case; that thread's stack comes from
+# RUST_MIN_STACK. Declaring it here (a) makes the canonical command work with
+# no manual `$env:RUST_MIN_STACK = ...` prepended by the caller, and (b) keeps
+# the stack budget identical across shells/CI instead of depending on an
+# ambient variable that is easy to forget.
+#
+# Measured on this tree (release, MSVC): `parity_test` passes down to a
+# 512 KiB explicit stack; `jit_stack_overflow_test` passes at 2 MiB but
+# overflows at 512 KiB. So neither target strictly requires 32 MiB today --
+# this value keeps the historical baseline plus a healthy margin.
+#
+# Safety note: this does NOT hollow out `jit_stack_overflow_test`. That test
+# targets the JIT translator's *virtual* stack (a compile-time constant,
+# VALUE_SIZE * MAX_STACK_DEPTH), not the OS thread stack; its overflow path
+# fires identically with RUST_MIN_STACK unset, 2 MiB, 32 MiB or 128 MiB.
+#
+# If you ever want this to win over an already-exported value, use
+# `RUST_MIN_STACK = { value = "33554432", force = true }`.
+RUST_MIN_STACK = "33554432"
