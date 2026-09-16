@@ -1,0 +1,6 @@
+// GAP-005 探针子进程 D：运行时错误（诊断走 stderr，退出码 1）
+fn main() {
+    let v = Vec::new();
+    let x = v[7];
+    println(x);
+}

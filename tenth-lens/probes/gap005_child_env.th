@@ -1,0 +1,8 @@
+// GAP-005 探针子进程 C：回显环境变量 TENTH_LENS_PROBE
+fn main() {
+    let r = env_get("TENTH_LENS_PROBE");
+    match r {
+        Result::Ok(v) => println("CHILD_ENV=" + v),
+        Result::Err(_) => println("CHILD_ENV=<unset>"),
+    };
+}

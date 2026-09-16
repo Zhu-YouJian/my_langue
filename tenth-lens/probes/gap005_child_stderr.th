@@ -1,0 +1,5 @@
+// GAP-005 探针子进程 S：专测 stderr 捕获（stdout / stderr 各一个唯一标记）
+fn main() {
+    println("PROBE_OUT_S");
+    eprintln("PROBE_ERR_S");
+}

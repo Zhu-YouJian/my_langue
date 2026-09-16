@@ -1,0 +1,6 @@
+// GAP-005 探针子进程 B：写 stdout + stderr 后以退出码 3 结束
+fn main() {
+    println("PROBE_OUT_B");
+    eprintln("PROBE_ERR_B");
+    exit(3);
+}

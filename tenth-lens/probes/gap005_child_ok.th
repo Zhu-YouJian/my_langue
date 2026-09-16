@@ -1,0 +1,5 @@
+// GAP-005 探针子进程 A：正常写 stdout + stderr，退出码 0
+fn main() {
+    println("PROBE_OUT_A");
+    eprintln("PROBE_ERR_A");
+}

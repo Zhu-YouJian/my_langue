@@ -1,0 +1,215 @@
+// GAP-005 探针 —— Tenth 侧子进程捕获能力实测（P0 地基）
+//
+// 目的：实测能否 spawn tenth.exe、捕获 stdout / stderr / 退出码 / 环境变量 / 超时。
+// 跑法（项目根目录）：
+//   tenth\target\release\tenth.exe run tenth-lens\probes\gap005_probe.th
+// 输出：每行 `GAP005|<项>|<结论>|<证据>`，结论取 OK / PARTIAL / MISSING。
+//
+// 说明：只用现成 native（command_new/arg/run/output、env_set/get、to_string、exit），
+// 不绕行、不 hack；缺什么就如实打印 MISSING，并在 GAPS.md 登记。
+
+// 注：Tenth 无 `const` 关键字（用顶层 `let K: i64 = 7;` 亦可在函数体内引用，已实测可用）；
+// 这里用辅助函数只是为免重复字面量。
+fn exe() -> String {
+    "tenth/target/release/tenth.exe"
+}
+
+fn flatten(s: String) -> String {
+    let r = s.replace("\r", "\\r");
+    r.replace("\n", "\\n")
+}
+
+fn evidence(tag: String, verdict: String, raw: String) {
+    println("GAP005|" + tag + "|" + verdict + "|" + flatten(raw));
+}
+
+// ── 项 1：spawn tenth.exe run <child>，捕获 stdout（command_output） ──
+fn probe_stdout() {
+    let r = command_new(exe());
+    match r {
+        Result::Ok(h) => {
+            command_arg(h, "run");
+            command_arg(h, "tenth-lens/probes/gap005_child_ok.th");
+            let out = command_output(h);
+            match out {
+                Result::Ok(s) => {
+                    if s.contains("PROBE_OUT_A") {
+                        evidence("stdout_capture", "OK", s);
+                    } else {
+                        evidence("stdout_capture", "MISSING", s);
+                    };
+                },
+                Result::Err(e) => evidence("stdout_capture", "MISSING", "ERR:" + e),
+            };
+        },
+        Result::Err(e) => evidence("stdout_capture", "MISSING", "spawn_new_failed:" + e),
+    };
+}
+
+// ── 项 2：stderr 是否可捕获 ──
+// 子进程写 PROBE_OUT_S(stdout) + PROBE_ERR_S(stderr)；看返回值里有没有 stderr 那半。
+fn probe_stderr() {
+    let r = command_new(exe());
+    match r {
+        Result::Ok(h) => {
+            command_arg(h, "run");
+            command_arg(h, "tenth-lens/probes/gap005_child_stderr.th");
+            let out = command_output(h);
+            match out {
+                Result::Ok(s) => {
+                    if s.contains("PROBE_ERR_S") {
+                        evidence("stderr_capture", "OK", "stderr 在返回值中:" + s);
+                    } else {
+                        evidence("stderr_capture", "MISSING",
+                                 "返回值只含 stdout=[" + flatten(s) + "]，stderr 不可得");
+                    };
+                },
+                Result::Err(e) => evidence("stderr_capture", "MISSING", "ERR:" + e),
+            };
+        },
+        Result::Err(e) => evidence("stderr_capture", "MISSING", "spawn_new_failed:" + e),
+    };
+}
+
+// ── 项 3：退出码（command_run；子进程 exit(3)） ──
+fn probe_exit_nonzero() {
+    let r = command_new(exe());
+    match r {
+        Result::Ok(h) => {
+            command_arg(h, "run");
+            command_arg(h, "tenth-lens/probes/gap005_child_fail.th");
+            let run_r = command_run(h);
+            match run_r {
+                Result::Ok(code) => {
+                    if code == 3 {
+                        evidence("exit_code_nonzero", "OK", "code=" + to_string(code));
+                    } else {
+                        evidence("exit_code_nonzero", "MISSING", "code=" + to_string(code));
+                    };
+                },
+                Result::Err(e) => evidence("exit_code_nonzero", "MISSING", "ERR:" + e),
+            };
+        },
+        Result::Err(e) => evidence("exit_code_nonzero", "MISSING", "spawn_new_failed:" + e),
+    };
+}
+
+// ── 项 4：退出码 0（对照） ──
+fn probe_exit_zero() {
+    let r = command_new(exe());
+    match r {
+        Result::Ok(h) => {
+            command_arg(h, "run");
+            command_arg(h, "tenth-lens/probes/gap005_child_ok.th");
+            let run_r = command_run(h);
+            match run_r {
+                Result::Ok(code) => evidence("exit_code_zero", "OK", "code=" + to_string(code)),
+                Result::Err(e) => evidence("exit_code_zero", "MISSING", "ERR:" + e),
+            };
+        },
+        Result::Err(e) => evidence("exit_code_zero", "MISSING", "spawn_new_failed:" + e),
+    };
+}
+
+// ── 项 5：子进程是否继承父进程环境变量（env_set 后 spawn） ──
+fn probe_env_inherit() {
+    env_set("TENTH_LENS_PROBE", "yes");
+    let r = command_new(exe());
+    match r {
+        Result::Ok(h) => {
+            command_arg(h, "run");
+            command_arg(h, "tenth-lens/probes/gap005_child_env.th");
+            let out = command_output(h);
+            match out {
+                Result::Ok(s) => {
+                    if s.contains("CHILD_ENV=yes") {
+                        evidence("env_inherit", "OK", s);
+                    } else {
+                        evidence("env_inherit", "MISSING", s);
+                    };
+                },
+                Result::Err(e) => evidence("env_inherit", "MISSING", "ERR:" + e),
+            };
+        },
+        Result::Err(e) => evidence("env_inherit", "MISSING", "spawn_new_failed:" + e),
+    };
+}
+
+// ── 项 6：能否按子进程设置环境变量（per-child env，不动父进程） ──
+// NEED: 无 command_env；只能 env_set 污染父进程后靠继承（见 GAPS.md GAP-006）。
+fn probe_env_perchild() {
+    evidence("env_per_child", "MISSING", "NEED: 无 command_env（只能全局 env_set + 继承）");
+}
+
+// ── 项 7：能否取消/删除环境变量（决定能否保证子进程走「默认 VM 路径」） ──
+// NEED: 无 env_unset/env_remove；而 tenth.exe 判 `TENTH_NO_VM` 用的是 is_ok()，
+//       设为空串 "" 仍算「已设置」→ 父进程若带 TENTH_NO_VM，子进程无法回到默认路径。
+fn probe_env_unset() {
+    evidence("env_unset", "MISSING", "NEED: 无 env_unset（且 TENTH_NO_VM=空串 仍算已设置）");
+}
+
+// ── 项 8：超时控制 ──
+// NEED: command_* 无 timeout 参数，句柄为不透明 i64，无法取消（见 GAPS.md GAP-007）。
+fn probe_timeout() {
+    evidence("child_timeout", "MISSING", "NEED: 无子进程超时/取消能力");
+}
+
+// ── 项 9：诊断（stderr + 非零退出码）能否被捕获 ──
+fn probe_diagnostics() {
+    let r = command_new(exe());
+    match r {
+        Result::Ok(h) => {
+            command_arg(h, "run");
+            command_arg(h, "tenth-lens/probes/gap005_child_bad.th");
+            let out = command_output(h);
+            match out {
+                Result::Ok(s) => {
+                    evidence("diagnostics_via_output", "PARTIAL",
+                             "stdout=[" + flatten(s) + "]（错误消息走 stderr，此处不可见）");
+                },
+                Result::Err(e) => evidence("diagnostics_via_output", "MISSING", "ERR:" + e),
+            };
+        },
+        Result::Err(e) => evidence("diagnostics_via_output", "MISSING", "spawn_new_failed:" + e),
+    };
+}
+
+// ── 项 10：同一次 spawn 能否同时拿到 stdout 与退出码 ──
+// command_output 消费句柄（只回 stdout，无退出码）；command_run 回退出码但输出会泄漏到本进程。
+// 先 run 后 output：输出已泄漏（污染检查器自己的 stdout），看句柄是否还在。
+fn probe_both_axes() {
+    let r = command_new(exe());
+    match r {
+        Result::Ok(h) => {
+            command_arg(h, "run");
+            command_arg(h, "tenth-lens/probes/gap005_child_fail.th");
+            let run_r = command_run(h);
+            match run_r {
+                Result::Ok(code) => {
+                    let out = command_output(h);
+                    match out {
+                        Result::Ok(s) => evidence("both_axes_same_spawn", "PARTIAL",
+                            "code=" + to_string(code) + " stdout=[" + flatten(s) + "]，但 run 阶段输出已泄漏到本进程"),
+                        Result::Err(e) => evidence("both_axes_same_spawn", "MISSING",
+                            "code=" + to_string(code) + " 但随后 command_output 失败:" + e),
+                    };
+                },
+                Result::Err(e) => evidence("both_axes_same_spawn", "MISSING", "run ERR:" + e),
+            };
+        },
+        Result::Err(e) => evidence("both_axes_same_spawn", "MISSING", "spawn_new_failed:" + e),
+    };
+}
+
+fn main() {
+    probe_stdout();
+    probe_stderr();
+    probe_exit_nonzero();
+    probe_exit_zero();
+    probe_env_inherit();
+    probe_env_perchild();
+    probe_env_unset();
+    probe_timeout();
+    probe_diagnostics();
+    probe_both_axes();
+}
