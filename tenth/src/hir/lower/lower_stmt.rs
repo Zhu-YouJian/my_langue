@@ -52,8 +52,9 @@ impl Lowerer {
             span.line,
             span.col,
             format!(
-                "{} 被忽略，可能静默失败——用 or_die(值, \"消息\") 或 ? 显式处理",
-                type_name
+                "{} 被忽略，可能静默失败——用 {} 显式处理",
+                type_name,
+                discard_consume_hint(type_name)
             ),
         ));
     }
@@ -91,8 +92,8 @@ impl Lowerer {
             span.line,
             span.col,
             format!(
-                "{} 值被当作普通值使用（{}），可能掩盖错误——请用 ? / or_die / match 消费",
-                name, context
+                "{} 值被当作普通值使用（{}），可能掩盖错误——请用 {} 消费",
+                name, context, misuse_consume_hint(name)
             ),
         ));
     }
@@ -113,8 +114,8 @@ impl Lowerer {
             span.line,
             span.col,
             format!(
-                "{} 值被当作普通值使用（方法 '{}'），可能掩盖错误——请用 ? / or_die / match 消费",
-                name, method
+                "{} 值被当作普通值使用（方法 '{}'），可能掩盖错误——请用 {} 消费",
+                name, method, misuse_consume_hint(name)
             ),
         ));
     }
@@ -1660,6 +1661,29 @@ impl Lowerer {
 /// is_ok/is_err/unwrap/ok_or 等 native 方法再补入。白名单外的任何方法调用
 /// 都是"误用"（运行时也无对应方法，会报「此类型不支持方法」）。
 const RESULT_OPTION_CONSUMING_METHODS: &[&str] = &[];
+
+/// AUDIT-11.4.67：丢弃（层1）警告的消费建议——**Result / Option 必须分开**。
+///
+/// 旧文案对两者一律推荐 `?`，而 `?` 对 Option 在运行时是**直通**（不解包、不早退）
+/// ⇒ 会把整个 Option 当值用（静默错值）。本轮已把 `?`-on-Option 改为**编译期报错**，
+/// 故对 Option 不得再推荐 `?`（推荐 `match`）。Result 文案**逐字不变**。
+fn discard_consume_hint(type_name: &str) -> &'static str {
+    if type_name == "Option" {
+        "or_die(值, \"消息\") 或 match"
+    } else {
+        "or_die(值, \"消息\") 或 ?"
+    }
+}
+
+/// AUDIT-11.4.67：误用（层2）警告的消费建议——Result / Option 分开（同
+/// `discard_consume_hint`）。Result 文案**逐字不变**。
+fn misuse_consume_hint(type_name: &str) -> &'static str {
+    if type_name == "Option" {
+        "or_die / match"
+    } else {
+        "? / or_die / match"
+    }
+}
 
 /// 识别"真实"的 Result/Option 类型名（"Result"/"Option"），否则返回 None。
 /// 保守原则见 `check_silent_failure_misuse`：

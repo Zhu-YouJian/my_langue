@@ -394,6 +394,14 @@ impl Lowerer {
                         ast::UnaryOp::Not => UnaryOp::Not,
                         ast::UnaryOp::Try => UnaryOp::Try,
                     };
+                    // AUDIT-11.4.67（红线）：`?` 作用于 **Option** ⇒ 编译期响亮报错。
+                    // 三路径对 Option 都是"直通"（不解包、不早退、类型不脱壳）⇒
+                    // `let x = v.get_opt(i)?;` 会把**整个 Option** 绑给 x = 静默错值。
+                    // 裁定：**不为 Option 发明早退语义**（需推断外层返回类型，另案），
+                    // 先让它响亮。Result 路径**逐字不变**（下方类型推断 match 未改动）。
+                    if matches!(hir_op, UnaryOp::Try) {
+                        Self::check_try_operand_not_option(&e.ty, &span)?;
+                    }
                     // Try 操作符类型推断：Result<T> → T；其他类型保持不变（运行时处理）。
                     // M3.4：修复「? 后静态类型仍为 Result」的两个缺口（否则把 ? 解包
                     // 结果当普通值使用会触发"误用"误报）：
@@ -2172,6 +2180,44 @@ impl Lowerer {
             UnaryOp::Not => Some(("Not", "not")),
             UnaryOp::Try => None,
         }
+    }
+
+    /// AUDIT-11.4.67：`?` 的操作数是 `Option` 时 ⇒ 编译期 `TypeError`。
+    ///
+    /// **为什么必须拦**：`?` 对 Option 在三条路径上都是"**直通**"——
+    ///   - VM：`Op::Try`（opcode 52）只认 `enum_name == "Result"`，非 Result 原样压栈；
+    ///   - 解释器：`Try` 同样只认 Result，其余 `Ok(val.clone())` 直通；
+    ///   - 类型层：`?` 对 `Option<T>` 不脱壳（保持原类型）。
+    /// ⇒ `let x = v.get_opt(i)?;` 在 `Some` / `None` 两种情况下都把**整个 Option**
+    /// 绑给 `x`（不解包、不早退、不报错）= **静默错值**（护城河红线）。
+    ///
+    /// **裁定**：不发明早退语义（那需要推断外层返回类型，另案），先让它**响亮**。
+    /// Result 的 `?` 行为不受本检查影响（`Option` 之外一律放行，逐字不变）。
+    ///
+    /// 判定范围（静态类型名为 `Option` 的三种形态，与 `result_option_name` 口径一致
+    /// 之外**额外**包含裸 `Enum("Option")`——静态既然说它是 Option，`?` 在其上就没有
+    /// 成立语义，宁响亮不静默）：
+    ///   - `Generic{base: Enum("Option") | TypeParam("Option")}`：`Option::Some/None`
+    ///     字面量、`get_opt`/`try_get`/`weak_upgrade`、`Option<T>` 注解；
+    ///   - 裸 `Enum("Option")`：`parse_int`/`parse_float` 与 `Vec.get()/pop()`（静态误标）；
+    ///   - 裸 `TypeParam("Option")`：裸注解 `-> Option`。
+    pub(super) fn check_try_operand_not_option(ty: &Type, span: &Span) -> TenthResult<()> {
+        let is_option = match ty {
+            Type::Generic { base, .. } => match base.as_ref() {
+                Type::Enum(name) | Type::TypeParam { name } => name == "Option",
+                _ => false,
+            },
+            Type::Enum(name) | Type::TypeParam { name } => name == "Option",
+            _ => false,
+        };
+        if is_option {
+            return Err(TenthError::TypeError {
+                line: span.line,
+                col: span.col,
+                message: "`?` 不支持 Option（`?` 对 Option 既不解包也不提前返回，会把整个 Option 当作值——静默错值）；请用 match 或 or_die(值, \"消息\") 消费".to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// 检查指定类型是否实现了指定 trait。

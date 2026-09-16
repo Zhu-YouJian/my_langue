@@ -16,9 +16,16 @@ use super::types::{has_static_info, fmt_dims, fmt_dim};
 
 /// 计算可微算子的反向梯度 shapes。
 ///
-/// 输入：算子名、前向输入 shapes、前向输出 shape
+/// 输入：算子名、前向输入 shapes、前向输出 shape、
+///       各输入的整型字面量常量（与 `fwd_in_shapes` 一一对应；非字面量 → `None`）
 /// 输出：每个可微输入的梯度 shape（不可微输入返回空 vec）
 /// 返回 `Err(msg)` 表示反向 shape 与前向输入 shape 不兼容。
+///
+/// `fwd_int_consts`（AUDIT-11.4.66）：静态值通道。`gather(w, 0, idx)` /
+/// `index_select(w, 0, idx)` 的 dim、`reshape(2, 3)` 的维度都是字面量——它们以
+/// **标量**（空 shape）出现在 `fwd_in_shapes` 里，值本身只能靠本参数传递
+/// （`Literal → Known` 的静态值）。Phase 1 的单算子检查不经过 grad 区域，
+/// 传 `&[]` 即可（那里由前向类型推断直接看字面量）。
 ///
 /// 规则表详见护城河 A Phase 1 任务说明，此处按算子逐一实现。
 /// 跳过检查的算子（element-wise 一元 / softmax / dropout / transpose / conv2d）
@@ -27,6 +34,7 @@ pub(super) fn backward_shape(
     op: &str,
     fwd_in_shapes: &[Vec<Dim>],
     fwd_out_shape: &[Dim],
+    fwd_int_consts: &[Option<i64>],
 ) -> Result<Vec<Vec<Dim>>, String> {
     match op {
         // ── 二元算术（add/sub/mul/div）──────────────────────────────────
@@ -144,12 +152,35 @@ pub(super) fn backward_shape(
         }
 
         // ── gather ────────────────────────────────────────────────────
-        // 前向: base, index → result（result shape == index shape）
-        // 反向: d_base = base_shape（通过 scatter-add），index 不传梯度
+        // 前向: gather(base, dim, index) → result（result shape == index shape）
+        //       （方法形态 `base.gather(dim, index)` lowering 后同样是这三个位置）
+        // 反向: d_base = base_shape（通过 scatter-add），dim/index 不传梯度
+        //
+        // AUDIT-11.4.66：本 arm 过去把位置 1 当作 index（2 参假定的残留），且**从不报错**；
+        // 叠加 `collect_tensor_op` 对字面量实参直接跳过，等于"名义覆盖"（假覆盖）。
+        // 现在按真实 3 参签名定位 index，并加上**可失败**的校验：
+        //   scatter-add 把 grad 按 index 给出的坐标写回 base ⇒ 要求 index 与 base **同秩**
+        //   （运行时 `Tensor::gather` 同判据：`index.ndim() == base.ndim()`）。
+        //   秩不一致 ⇒ 反向无法定位写回坐标 ⇒ 提升为**编译期**报错（而非运行期）。
         "gather" => {
+            let index_pos = fwd_in_shapes.len().saturating_sub(1);
+            if fwd_in_shapes.len() >= 2 {
+                let base_shape = &fwd_in_shapes[0];
+                let index_shape = &fwd_in_shapes[index_pos];
+                if has_static_info(base_shape)
+                    && has_static_info(index_shape)
+                    && base_shape.len() != index_shape.len()
+                {
+                    return Err(format!(
+                        "gather 反向 shape 不兼容：index 秩 {} ≠ base 秩 {}（反向 scatter-add 需要 index 与 base 同秩才能把梯度写回 base 坐标）",
+                        index_shape.len(),
+                        base_shape.len()
+                    ));
+                }
+            }
             let mut grads = Vec::with_capacity(fwd_in_shapes.len());
             for (i, in_shape) in fwd_in_shapes.iter().enumerate() {
-                if i == 1 {
+                if i == index_pos && fwd_in_shapes.len() >= 2 {
                     // index 不可微
                     grads.push(vec![]);
                 } else {
@@ -163,7 +194,24 @@ pub(super) fn backward_shape(
         // 前向: base, dim, index → result
         //   result.shape = base.shape 的 dim 槽替换为 index.len()（其余维与 base 一致）
         // 反向: d_base = base_shape（通过 scatter-add），dim/index 不传梯度
+        //
+        // AUDIT-11.4.66：dim 是**字面量**（`index_select(w, 0, idx)`），过去
+        // `collect_tensor_op` 直接跳过整个算子 ⇒ 本校验从未运行（假覆盖）。
+        // 现在字面量 dim 的静态值经 `fwd_int_consts` 传到这里，可做**可失败**校验：
+        //   scatter-add 必须能定位 base 的 dim 槽 ⇒ dim 必须落在 base 秩内
+        //   （运行时 `Tensor::index_select` 同判据：`dim >= base.ndim()` → 越界）。
         "index_select" => {
+            if let (Some(base_shape), Some(Some(dim))) =
+                (fwd_in_shapes.first(), fwd_int_consts.get(1))
+            {
+                if has_static_info(base_shape) && (*dim < 0 || *dim as usize >= base_shape.len()) {
+                    return Err(format!(
+                        "index_select 反向 shape 不兼容：dim={} 超出 base 秩 {}（反向 scatter-add 无法定位 base 的 dim 槽）",
+                        dim,
+                        base_shape.len()
+                    ));
+                }
+            }
             let mut grads = Vec::with_capacity(fwd_in_shapes.len());
             for (i, in_shape) in fwd_in_shapes.iter().enumerate() {
                 if i == 0 {
@@ -242,7 +290,7 @@ pub(super) fn check_backward_shape_compat(
         return Ok(());
     }
 
-    match backward_shape(op, fwd_in_shapes, fwd_out_shape) {
+    match backward_shape(op, fwd_in_shapes, fwd_out_shape, &[]) {
         Ok(_grads) => Ok(()),
         Err(msg) => Err(TenthError::TypeError {
             line: span.line,
@@ -265,7 +313,12 @@ pub(super) fn check_backward_shape_compat(
 /// - target 维 != 1 且 != grad 维 → 不可行（报错）
 ///
 /// target 全 Any 时直接返回 Ok（无法检查）。
-fn unbroadcast_feasible(grad_shape: &[Dim], target_shape: &[Dim]) -> Result<(), String> {
+///
+/// **前提（调用方契约）**：`grad_shape.len() >= target_shape.len()`。左补 1 只用于把
+/// **target** 对齐到 grad 的秩；`target 秩 > grad 秩` 时本函数按"左对齐"比较（不拦截），
+/// 这在广播语义下不可达（前向输出秩天然 ≥ 任一输入秩，add/select 两个调用点都满足）。
+/// 需要**严格方向判据**的调用方见 `backward_shape_pass::shape_compatible`。
+pub(super) fn unbroadcast_feasible(grad_shape: &[Dim], target_shape: &[Dim]) -> Result<(), String> {
     // target 全 Any 时跳过
     if !has_static_info(target_shape) {
         return Ok(());

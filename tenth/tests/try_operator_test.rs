@@ -437,3 +437,115 @@ fn test_vm_try_block_catches_err() {
         v => panic!("VM try 捕获应得到单层 Err 且 match 解出消息, got {:?}", v),
     }
 }
+
+// ─── 6. AUDIT-11.4.67：`?` 作用于 Option ⇒ **编译期报错**（不再静默直通）────────
+//
+// 病灶（三路径"直通"）：VM `Op::Try`（opcode 52）只认 `enum_name == "Result"`
+// （非 Result 原样压栈）、解释器 `Try` 同样只认 Result、类型层 `?` 对 Option 不脱壳
+// ⇒ `let x = v.get_opt(i)?;` 在 Some/None 下都把**整个 Option** 绑给 x = 静默错值。
+//
+// 裁定（总师）：**不发明早退语义**（那需推断外层返回类型，另案），先让它**响亮**
+// ⇒ `?` 的操作数静态类型是 Option 时，lower 阶段报 `TypeError`，提示 match / or_die。
+//
+// Result 的 `?` 行为**逐字不变**：本节之上的第 1-5 节（17 个用例，解释器 + VM
+// 两路径）即回归守护，本改动未触碰 Result 分支的任何一行。
+
+/// 断言源码在 **lower（编译）阶段**就报 `?`-on-Option 错误，且提示 match / or_die。
+fn assert_try_on_option_is_compile_error(src: &str) {
+    match run(src) {
+        Err(msg) => {
+            assert!(
+                msg.contains("不支持 Option"),
+                "错误应点名「`?` 不支持 Option」且为编译期错误，实际: {msg}"
+            );
+            assert!(
+                msg.contains("match") && msg.contains("or_die"),
+                "错误应提示用 match / or_die 消费，实际: {msg}"
+            );
+        }
+        Ok(v) => panic!("期望编译期报错（`?`-on-Option），实际执行成功: {:?}", v),
+    }
+}
+
+/// 用户函数返回 `Option<i64>`（注解 `Option<T>` → `Generic{base: TypeParam("Option")}`）。
+#[test]
+fn test_try_on_option_from_user_fn_is_compile_error() {
+    assert_try_on_option_is_compile_error(
+        r#"
+        fn find() -> Option<i64> {
+            Option::Some(1)
+        }
+        fn main() -> i64 {
+            let x = find()?;
+            x
+        }
+    "#,
+    );
+}
+
+/// `Option::None` / `Option::Some(..)` 字面量（→ `Generic{base: Enum("Option")}`）。
+#[test]
+fn test_try_on_option_literal_is_compile_error() {
+    assert_try_on_option_is_compile_error(
+        r#"
+        fn main() -> i64 {
+            let x = Option::None?;
+            x
+        }
+    "#,
+    );
+    assert_try_on_option_is_compile_error(
+        r#"
+        fn main() -> i64 {
+            let x = Option::Some(1)?;
+            x
+        }
+    "#,
+    );
+}
+
+/// 红线原始复现：`let x = v.get_opt(i)?;`（真 Option：`Generic{Enum("Option"), [inner]}`）。
+#[test]
+fn test_try_on_get_opt_is_compile_error() {
+    assert_try_on_option_is_compile_error(
+        r#"
+        let v = Vec::new();
+        v.push(7);
+        let x = v.get_opt(0)?;
+        x
+    "#,
+    );
+}
+
+/// 裸 `Enum("Option")`（`parse_int`/`parse_float` 的静态标注；`Vec.get()/pop()` 同族）：
+/// 静态既然说它是 Option，`?` 在其上就没有成立语义 ⇒ 一并响亮（宁响亮，不静默错值）。
+#[test]
+fn test_try_on_bare_option_native_is_compile_error() {
+    assert_try_on_option_is_compile_error(
+        r#"
+        fn main() -> i64 {
+            let x = parse_int("42")?;
+            x
+        }
+    "#,
+    );
+}
+
+/// 反向守护：`?` 作用在 **Result** 上必须仍然放行（编译期不报错）。
+/// 与 `test_try_on_bare_option_native_is_compile_error` 构成对照——同一 native 家族
+/// （`parse_int` = Option）与 Result 的处置必须**分开**。
+#[test]
+fn test_try_on_result_still_allowed() {
+    let src = r#"
+        fn main() -> i64 {
+            let x = Result::Ok(42)?;
+            x
+        }
+    "#;
+    let out = run(src).expect("`?`-on-Result 不得变成编译期错误");
+    match out {
+        Some(Value::Int(42, _)) => {}
+        v => panic!("期望 Int(42), got {:?}", v),
+    }
+}
+

@@ -70,6 +70,60 @@ fn assert_compiles(src: &str) {
     lower(src).unwrap_or_else(|e| panic!("期望编译通过但失败: {:?}", e));
 }
 
+/// 辅助：端到端跑源码（lower + 解释器），返回程序结果值。
+/// 用于"编译通过 **且** 数值正确"的绿用例（W12 广播可还原形态）。
+fn run_source(src: &str) -> Result<tenth::runtime::value::Value, TenthError> {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize()?;
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse_program()?;
+    let mut lowerer = Lowerer::new();
+    let hir = lowerer.lower_program(&program)?;
+    let mut interp = tenth::runtime::interpreter::Interpreter::new(&hir);
+    interp.fs_sandbox = None;
+    interp.deadline_ms = None;
+    match interp.execute_program(&hir)? {
+        Some(v) => Ok(v),
+        None => Ok(tenth::runtime::value::Value::Unit),
+    }
+}
+
+/// 辅助：从 Value 提取 F64 Tensor 的扁平数据（形状用元素数间接断言）。
+fn extract_f64_data(v: &tenth::runtime::value::Value) -> Vec<f64> {
+    match v {
+        tenth::runtime::value::Value::Tensor(t) => {
+            let t = t.borrow();
+            match &t.data {
+                tenth::runtime::tensor::TensorData::F64(arr) => arr.iter().cloned().collect(),
+                other => panic!("期望 F64 Tensor，got {:?}", other.dtype()),
+            }
+        }
+        other => panic!("期望 Tensor，got {:?}", other),
+    }
+}
+
+/// 辅助：断言两组 f64 数据近似相等（逐元素）。
+fn assert_f64_approx(actual: &[f64], expected: &[f64], msg: &str) {
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "{}: 元素数不匹配（等价于 shape 还原失败）actual={:?} expected={:?}",
+        msg,
+        actual,
+        expected
+    );
+    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+        assert!(
+            (a - e).abs() < 1e-9,
+            "{}: 第 {} 个元素不匹配 actual={} expected={}",
+            msg,
+            i,
+            a,
+            e
+        );
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // 1. CrossEntropy shape 检查（最高优先级）
 //
@@ -572,8 +626,10 @@ fn main() {
 //   中实际写法为 `new_grad(); let t_param = param(t);`。本节测试统一沿用 Phase 1 的
 //   `new_grad()` + `param()` + `backward()` 范式，确保与现有 autodiff 语义一致。
 //
-// 注意：编译器部 Phase 2 实现（backward_shape_pass.rs）尚在进行中。
-//       pass case 应在实现完成后直接通过；fail case 标注 #[ignore] 待实现后确认。
+// 状态（W11/W12）：Phase 2 pass（backward_shape_pass.rs）已落地；W11 修掉了
+// `find_grad_regions` 只遍历 `stmts`、而 `lower_expr` 把函数体最后一条 Expr 提升为
+// `final_expr` 的缺陷（此前 `fn main() { …; backward(loss); }` 这种最常见写法下整个
+// pass **空跑** ⇒ 既有 pass case 都是空转）。fail case 现有真实构造，本文件**无 `#[ignore]`**。
 // ════════════════════════════════════════════════════════════════════════════
 
 // ─── A. 直线代码 pass case（跨算子反向 shape 传播成功） ─────────────────────
@@ -778,29 +834,34 @@ fn main() {
 
 // ─── B. 直线代码 fail case（编译期报错） ───────────────────────────────────
 //
-// 跨算子 fail case 难以构造：合法的前向算子链路天然产生兼容的反向 shape。
-// 前向 shape 不兼容会被 Phase 1 的单算子检查拦截；跨算子传播的额外价值主要在
-// "不误报"（不破坏正常代码）。以下 fail case 标注 #[ignore]，待编译器部实现后
-// 确认能否触发，或由编译器部提供能触发跨算子检查的构造方式。
+// 跨算子 fail case：链路上**每个算子单独看都合法**（前向 shape 兼容、单算子反向
+// shape 也兼容），只有把**上游算子的输出 shape 传播到下游**之后才暴露出反向 shape
+// 约束不满足 ⇒ 编译期报错。这正是不做跨算子反向 shape 传播就抓不到的一类错误。
+//
+// 与下文 E 节（AUDIT-11.4.66 守卫）的红色用例**不重复**：E 节两条红用例的 base 直接
+// 是 `param(zeros(...))`（把字面量 dim 纳入校验即可抓到）；本用例的 base **秩由上游
+// `reshape` 产生**（[2,3] → [6]），index 秩 2 ⇒ 必须真的跨算子传播才会报错。
+//
+// AUDIT-11.4.66 / 11.4.67 落地后 fail 构造已存在，`#[ignore]` 于 W12 移除。
 
 #[test]
-#[ignore = "Phase 2 跨算子 fail case 待编译器部实现后确认构造方式"]
 fn test_phase2_cross_op_shape_mismatch_fail() {
-    // 预期场景：构造跨算子传播后 grad shape 与 param shape 不兼容。
-    // 当前难点：合法前向算子链路的反向 shape 天然兼容，难以构造 fail case。
-    // 待编译器部实现 backward_shape_pass.rs 后，若存在能触发跨算子检查的构造，
-    // 在此补充具体源码并将 #[ignore] 移除。
+    // 链路：w[2,3] --reshape(6)--> flat[6] --gather(dim=0, idx[2,3])--> y
+    // gather 反向 scatter-add 要求 index 与 base **同秩**：idx 秩 2 ≠ base(flat) 秩 1 ⇒ 报错
     let src = r#"
 fn main() {
     new_grad();
-    let x = zeros(3, 4);
-    let t = param(x);
-    let loss = t.sum();
+    let w = param(zeros(2, 3));
+    let flat = w.reshape(6);
+    let idx = zeros(2, 3);
+    let y = gather(flat, 0, idx);
+    let loss = y.sum();
     backward(loss);
 }
 "#;
-    // 占位：当前为 pass case，待编译器部提供 fail 构造后改为 assert_compile_error_any
-    assert_compiles(src);
+    // 错误原文：编译期跨算子反向 shape 传播失败（gather）：gather 反向 shape 不兼容：
+    //           index 秩 2 ≠ base 秩 1（反向 scatter-add 需要 index 与 base 同秩…）
+    assert_compile_error(src, "反向 shape 不兼容");
 }
 
 // ─── C. 控制流回退 pass case（编译通过，不验证） ───────────────────────────
@@ -936,3 +997,238 @@ fn main() {
 "#;
     assert_compiles(src);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// E. AUDIT-11.4.66 守卫：**字面量实参**的算子必须真的进反向 shape 校验
+//
+// 病灶：`collect_tensor_op` 对非 `Var` 实参（**字面量**）直接 `return None`
+//       ⇒ `gather(w, 0, idx)` / `index_select(w, 0, idx)` 这类**最常见用法**
+//       整个算子被排除在校验集合外 = **假覆盖**（守卫长得像守卫，实为装饰）。
+// 修法：字面量按**位置占位**纳入（整型字面量的值经 `input_int_consts` 传入，
+//       即 `Literal → Known` 静态值），并让这两条 arm 具备**可失败**的校验：
+//       - `gather`：反向 scatter-add 需要 index 与 base **同秩**（运行时同判据）；
+//       - `index_select`：反向 scatter-add 需定位 base 的 dim 槽 ⇒ dim 必须落在秩内。
+//
+// 红色用例证明"校验真的跑"（dim 是字面量 ⇒ 修复前必然跳过 ⇒ 编译期不报错）；
+// 绿色用例证明"合法用法不误报"。
+//
+// 注：同文件 `test_phase2_cross_op_shape_mismatch_fail` 曾是标着 "待编译器部提供
+//     fail 构造" 的 `#[ignore]` 占位；W12 已按本节红色用例的构造方式与 helper 转正
+//     （改为"上游 reshape 改秩 → 下游 gather 秩不匹配"的链式形态，与本节两条红用例
+//     不重复），`ignored` 基线随之 23 → 22。
+// ════════════════════════════════════════════════════════════════════════════
+
+/// 红色（gather）：字面量 dim + index 与 base **不同秩** ⇒ 编译期报错。
+///
+/// `dim=0` 是字面量 ⇒ 修复前 `collect_tensor_op` 直接跳过整个 `gather`
+/// ⇒ 该错误不但运行期才发现，而且**编译期根本没有任何校验**。
+#[test]
+fn test_phase2_gather_literal_dim_rank_mismatch_fails() {
+    let src = r#"
+fn main() {
+    new_grad();
+    let w = param(zeros(2, 3));
+    let idx = zeros(2, 3, 4);
+    let y = gather(w, 0, idx);
+    let loss = y.sum();
+    backward(loss);
+}
+"#;
+    assert_compile_error_any(src, &["反向 shape", "gather"]);
+}
+
+/// 绿色（gather）：字面量 dim + index 与 base 同秩 ⇒ 编译通过（不误报）。
+#[test]
+fn test_phase2_gather_literal_dim_rank_match_ok() {
+    let src = r#"
+fn main() {
+    new_grad();
+    let w = param(zeros(4, 4));
+    let idx = zeros(2, 4);
+    let y = gather(w, 0, idx);
+    let loss = y.sum();
+    backward(loss);
+}
+"#;
+    assert_compiles(src);
+}
+
+/// 红色（index_select）：字面量 dim **越界**（base 秩 2，dim=5） ⇒ 编译期报错。
+///
+/// 前向类型推断对越界 dim 保守降级为同秩全 `Any`（不报错），故本错误**只能**来自
+/// 反向传播 pass ⇒ 报错即证明"字面量真的进了校验集合"（修复前 dim 是字面量 ⇒ 跳过）。
+#[test]
+fn test_phase2_index_select_literal_dim_out_of_range_fails() {
+    let src = r#"
+fn main() {
+    new_grad();
+    let w = param(zeros(2, 3));
+    let idx = zeros(2);
+    let y = index_select(w, 5, idx);
+    let loss = y.sum();
+    backward(loss);
+}
+"#;
+    assert_compile_error_any(src, &["反向 shape", "index_select"]);
+}
+
+/// 绿色（index_select）：字面量 dim 在秩内 ⇒ 编译通过（不误报）。
+#[test]
+fn test_phase2_index_select_literal_dim_in_range_ok() {
+    let src = r#"
+fn main() {
+    new_grad();
+    let w = param(zeros(2, 4));
+    let idx = zeros(3);
+    let y = index_select(w, 0, idx);
+    let loss = y.sum();
+    backward(loss);
+}
+"#;
+    assert_compiles(src);
+}
+
+/// 对照（非字面量 dim 不得破坏）：dim 用**变量**（符号）时两条 arm 也必须不误报
+/// （变量 dim 无法静态判越界 ⇒ 保守放行；gather 的秩校验仍生效且此处同秩）。
+#[test]
+fn test_phase2_literal_dim_variable_dim_both_ok() {
+    let src = r#"
+fn main() {
+    new_grad();
+    let w = param(zeros(4, 4));
+    let idx = zeros(2, 4);
+    let d = 0;
+    let y = gather(w, d, idx);
+    let loss = y.sum();
+    backward(loss);
+}
+"#;
+    assert_compiles(src);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// F. W12：**秩扩展广播**的参数梯度 shape（编译期判据 vs 运行期 unbroadcast）
+//
+// 病灶：`backward_shape_pass.rs::shape_compatible` 旧判据要求**秩相等**，而运行期
+// `unbroadcast`（`runtime/autodiff/backward.rs`）是"param 左补 1 → 对 param 维为 1 的
+// 轴求和 → 按元素数 reshape 回 param" ⇒ `Add` 的秩扩展广播（param [4] 与 [1,4]）
+// 在运行期**本就可还原**，却被编译期 Phase 2 误拒（W12 报的误报）。
+//
+// 修法：判据改成"运行期可还原"（grad 秩 ≥ param 秩，且右对齐后每维 param==1 或
+// param==grad），逐维规则与 `backward_shapes.rs::unbroadcast_feasible` 共用单一权威；
+// 不可还原的形态（秩不足 / 两个 >1 维度不等 / param>1 而 grad 为 1）**仍然报错**
+// ——见 E 节三条红色用例（gather / index_select / reshape→gather）与
+// `backward_shape_pass.rs` 内的 `shape_compatible` 单元测试。
+//
+// 下列绿用例**同时**断言"编译通过"与"数值正确"：只断言编译通过会漏掉运行期失败
+// （元素数断言同时证明真的 unbroadcast 过，而不是把上游 [1,4] 梯度直接透传）。
+// ════════════════════════════════════════════════════════════════════════════
+
+/// 绿色（W12 原报构造）：`param [4] + b [1,4]` ⇒ 编译必须通过（旧判据因秩不等误拒）。
+#[test]
+fn test_phase2_rank_extended_broadcast_add_compiles() {
+    let src = r#"
+fn main() {
+    new_grad();
+    let t = param(zeros(4));
+    let b = zeros(1, 4);
+    let y = t + b;
+    let loss = y.sum();
+    backward(loss);
+}
+"#;
+    assert_compiles(src);
+}
+
+/// 绿色（W12 原报构造）+ **数值**：grad(t) 必须还原成 shape [4]、值 `[1,1,1,1]`。
+///
+/// 运行期实测（探针 B/`.agents/tmp/w12_probe_b.th`）同构造打印 `[1.0, 1.0, 1.0, 1.0]`。
+#[test]
+fn test_phase2_rank_extended_broadcast_add_grad_value() {
+    let src = r#"
+fn run() -> Tensor[f64, ..] {
+    new_grad();
+    let t = param(tensor([1.0, 2.0, 3.0, 4.0]));
+    let b = tensor([[10.0, 20.0, 30.0, 40.0]]);
+    let y = t + b;
+    let loss = y.sum();
+    backward(loss);
+    grad(t)
+}
+run()
+"#;
+    let v = run_source(src).expect("秩扩展广播 Add 反向应成功");
+    // 元素数 4（不是 8）⇒ 梯度确实被 unbroadcast 回 [4] 而非透传 [1,4]
+    assert_f64_approx(
+        &extract_f64_data(&v),
+        &[1.0, 1.0, 1.0, 1.0],
+        "rank-extended Add grad(t)",
+    );
+}
+
+/// 绿色：标量式参数 `param [1] * m [2,3]` ⇒ grad(s) = sum(m) = `[21]`（shape [1]）。
+///
+/// 覆盖"左补 1 后 param 维仍为 1 ⇒ 全部广播轴都要求和"的还原形态。
+#[test]
+fn test_phase2_scalarish_param_broadcast_mul_grad_value() {
+    let src = r#"
+fn run() -> Tensor[f64, ..] {
+    new_grad();
+    let s = param(tensor([2.0]));
+    let m = tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+    let y = s * m;
+    let loss = y.sum();
+    backward(loss);
+    grad(s)
+}
+run()
+"#;
+    let v = run_source(src).expect("标量式参数广播 Mul 反向应成功");
+    assert_f64_approx(&extract_f64_data(&v), &[21.0], "scalar-ish Mul grad(s)");
+}
+
+/// 绿色：列广播 `param [3,1] + b [3,4]` ⇒ grad(t) = `[[4],[4],[4]]`（沿被广播的轴求和）。
+#[test]
+fn test_phase2_col_broadcast_param_grad_value() {
+    let src = r#"
+fn run() -> Tensor[f64, ..] {
+    new_grad();
+    let t = param(tensor([[1.0], [2.0], [3.0]]));
+    let b = tensor([[10.0, 20.0, 30.0, 40.0], [50.0, 60.0, 70.0, 80.0], [90.0, 100.0, 110.0, 120.0]]);
+    let y = t + b;
+    let loss = y.sum();
+    backward(loss);
+    grad(t)
+}
+run()
+"#;
+    let v = run_source(src).expect("列广播 Add 反向应成功");
+    assert_f64_approx(&extract_f64_data(&v), &[4.0, 4.0, 4.0], "col-broadcast Add grad(t)");
+}
+
+/// 绿色：grad 比 param **多一维且该维为 1**：`param [2,3] * q [1,2,3]` ⇒ grad(p) = q 广播值。
+///
+/// 这是"秩扩展 + 求和"复合形态：运行期 sum 掉 lead 维并 reshape 回 [2,3]；
+/// 值 `[[1,2,3],[4,5,6]]`（行优先）证明维度归约与内存布局都正确。
+#[test]
+fn test_phase2_leading_dim1_broadcast_param_grad_value() {
+    let src = r#"
+fn run() -> Tensor[f64, ..] {
+    new_grad();
+    let p = param(tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]));
+    let q = tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).reshape(1, 2, 3);
+    let y = p * q;
+    let loss = y.sum();
+    backward(loss);
+    grad(p)
+}
+run()
+"#;
+    let v = run_source(src).expect("lead-dim-1 广播 Mul 反向应成功");
+    assert_f64_approx(
+        &extract_f64_data(&v),
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        "lead-dim-1 Mul grad(p)",
+    );
+}
+

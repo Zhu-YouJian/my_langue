@@ -33,7 +33,7 @@
 //                                  消费：or_die(r) / assume_ok(r) / match（`?` 对 Result 可用）
 //   get_opt, try_get             — Vec 的**真 Option** 读取方法（不是 native）：
 //                                  v.get_opt(i) → Option<T>，越界/空 ⇒ None（不报错）
-//                                  消费：or_die(v.get_opt(i)) / match（`?` 对 Option 未支持）
+//                                  消费：or_die(v.get_opt(i)) / match（`?` 对 Option 是编译期报错）
 //   index_select(base, dim, index) — 沿 dim 维按 **1-D** index 收集切片（native 自由函数）
 //                                   out.shape = base.shape 的 dim 槽替换为 index.len()
 //                                   dtype 跟随 base；index NaN/非整数 → 响亮报错

@@ -381,6 +381,114 @@ fn test_discarded_option_triggers_warning() {
     assert_has_warning(&warnings, "Option 被忽略");
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// AUDIT-11.4.67：Result / Option 的消费建议文案必须**分开**
+// （`?` 对 Option 现为**编译期报错**——旧文案把 `?` 与 `or_die` 并列推荐给 Option，
+//   正是诱导用户踩"静默错值"的入口。Result 文案**逐字不变**。）
+// ══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_option_discard_warning_no_longer_recommends_try() {
+    let src = r#"
+        fn find() -> Option<i64> {
+            Option::Some(1)
+        }
+        fn main() {
+            find();
+            println("ok");
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    let w = warnings
+        .iter()
+        .find(|w| w.message.contains("Option 被忽略"))
+        .expect("应有 Option 丢弃 warning");
+    assert!(
+        !w.message.contains('?'),
+        "Option 丢弃 warning 不得再推荐 `?`（`?`-on-Option 是编译期报错），实际: {}",
+        w.message
+    );
+    assert!(
+        w.message.contains("match") && w.message.contains("or_die"),
+        "Option 丢弃 warning 应推荐 or_die / match，实际: {}",
+        w.message
+    );
+}
+
+#[test]
+fn test_result_discard_warning_text_unchanged() {
+    // Result 侧文案**逐字不变**（旧文案：`用 or_die(值, "消息") 或 ? 显式处理`）
+    let src = r#"
+        fn main() {
+            read_line();
+            println("ok");
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    let w = warnings
+        .iter()
+        .find(|w| w.message.contains("Result 被忽略"))
+        .expect("应有 Result 丢弃 warning");
+    assert_eq!(
+        w.message,
+        "Result 被忽略，可能静默失败——用 or_die(值, \"消息\") 或 ? 显式处理",
+        "Result 丢弃 warning 文案必须逐字不变"
+    );
+}
+
+#[test]
+fn test_option_misuse_warning_no_longer_recommends_try() {
+    // 误用（层2）文案同样按 Result / Option 分开
+    let src = r#"
+        fn find() -> Option<i64> {
+            Option::Some(1)
+        }
+        fn main() {
+            let n = find().len();
+            println(n);
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    let w = warnings
+        .iter()
+        .find(|w| w.message.contains("Option 值被当作普通值使用"))
+        .expect("应有 Option 误用 warning");
+    assert!(
+        !w.message.contains('?'),
+        "Option 误用 warning 不得再推荐 `?`，实际: {}",
+        w.message
+    );
+    assert!(
+        w.message.contains("or_die") && w.message.contains("match"),
+        "Option 误用 warning 应推荐 or_die / match，实际: {}",
+        w.message
+    );
+}
+
+#[test]
+fn test_result_misuse_warning_text_unchanged() {
+    let src = r#"
+        fn db_query() -> Result<i64, str> {
+            Result::Ok(42)
+        }
+        fn main() {
+            let n = db_query().len();
+            println(n);
+        }
+    "#;
+    let warnings = lower_warnings(src);
+    let w = warnings
+        .iter()
+        .find(|w| w.message.contains("Result 值被当作普通值使用"))
+        .expect("应有 Result 误用 warning");
+    assert_eq!(
+        w.message,
+        "Result 值被当作普通值使用（方法 'len'），可能掩盖错误——请用 ? / or_die / match 消费",
+        "Result 误用 warning 文案必须逐字不变"
+    );
+}
+
+
 #[test]
 fn test_discarded_result_has_line_col() {
     let src = r#"

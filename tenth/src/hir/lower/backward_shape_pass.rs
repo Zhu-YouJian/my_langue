@@ -13,6 +13,11 @@
 //! - 任一 shape 全 `Any`（无静态信息）→ 跳过兼容性检查
 //! - pass 整体是 O(n) 遍历，n 为函数体内的操作数
 //!
+//! W12：参数梯度 shape 判据（`shape_compatible`）与运行期能力**对齐**——从"秩必须相等"
+//! 改为"运行期 `unbroadcast` 可还原"（grad 秩 ≥ param 秩，右对齐后每维 `param == 1` 或
+//! `param == grad`），消除"运行期能算、编译期被拒"的误报；逐维规则委托
+//! `backward_shapes.rs::unbroadcast_feasible`（单一权威）。
+//!
 //! 与 Phase 1（单算子级 `backward_shapes.rs`）的关系：
 //! - Phase 1 在 lower 表达式时对单个算子调用 `backward_shape` 验证
 //! - Phase 2 在 lowering 完成后对整个 grad 区域做跨算子传播
@@ -25,7 +30,7 @@ use crate::error::TenthError;
 use crate::hir::hir::*;
 use crate::hir::types::{Dim, Type};
 use crate::lexer::token::Span;
-use super::backward_shapes::backward_shape;
+use super::backward_shapes::{backward_shape, unbroadcast_feasible};
 use super::types::{has_static_info, fmt_dims};
 
 /// grad 区域：start_grad/new_grad 到 backward 之间的代码段
@@ -59,6 +64,12 @@ struct TensorOp {
     input_vars: Vec<String>,
     /// 输入 shapes（与 input_vars 一一对应）
     input_shapes: Vec<Vec<Dim>>,
+    /// 输入的**整型字面量常量值**（与 input_vars 一一对应；非字面量/非整型 → None）。
+    ///
+    /// AUDIT-11.4.66：`gather(w, 0, idx)` / `index_select(w, 0, idx)` 的 dim 是字面量，
+    /// 单靠 shape 无法表达"dim=0"这个静态值；用本字段把 `Literal → Known` 的
+    /// 静态值带到反向校验里（dim 槽能否定位）。
+    input_int_consts: Vec<Option<i64>>,
     /// 操作的 span（用于错误定位）
     span: Span,
 }
@@ -92,13 +103,25 @@ pub(super) fn backward_shape_pass(fn_defs: &[HirFnDef]) -> Vec<TenthError> {
 fn find_grad_regions(body: &HirExpr) -> Vec<GradRegion> {
     let mut regions = Vec::new();
     // body 通常是 Block；如果不是，无法识别区域
-    let stmts = match &body.kind {
-        HirExprKind::Block { stmts, .. } => stmts,
+    let (stmts, final_expr) = match &body.kind {
+        HirExprKind::Block { stmts, final_expr } => (stmts, final_expr),
         _ => return regions,
     };
 
+    // AUDIT-11.4.66 同族（**本 pass 能否工作的前提**）：Block lowering 会把**最后一条**
+    // `Expr` 语句提升为 `final_expr`（源码带不带分号都一样，见 `lower_expr` 的
+    // `final_expr` 提取），于是 `fn main() { ...; backward(loss); }` 里的
+    // `backward(loss)` **不在 `stmts` 里**。此前只遍历 `stmts` ⇒ 区域永远闭不上 ⇒
+    // 整个 Phase 2 反向 shape 校验对**最常见写法**完全失效（守卫长得像守卫、实为装饰）。
+    // 修法：把 `final_expr` 也当作一个候选语句（合成一个 `Expr` stmt）参与识别。
+    let final_stmt: Option<HirStmt> = final_expr.as_ref().map(|fe| HirStmt {
+        kind: HirStmtKind::Expr((**fe).clone()),
+        span: fe.span.clone(),
+    });
+    let all_stmts: Vec<&HirStmt> = stmts.iter().chain(final_stmt.iter()).collect();
+
     let mut current: Option<GradRegion> = None;
-    for stmt in stmts {
+    for stmt in all_stmts {
         // 检查是否是控制流语句 — 若区域已开启，回退（放弃该区域）
         if let Some(mut region) = current.take() {
             if stmt_has_control_flow(stmt) {
@@ -349,7 +372,10 @@ fn try_consume_region_stmt(stmt: &HirStmt, region: &mut GradRegion) -> Option<bo
 ///   （add/sub/mul/div）
 ///
 /// 输入变量提取：递归收集所有 `Var(name)`，但排除 op_name 本身（如 `Var("matmul")` 是函数名）。
-/// 输入 shape：从每个输入变量的 Type 提取 dims。若任一输入不是简单 Var，返回 None（保守跳过）。
+/// 输入 shape：从每个输入变量的 Type 提取 dims。
+/// **字面量实参**（AUDIT-11.4.66）：按位置占位纳入（名 `#lit{pos}`、shape 取字面量类型维度、
+/// 整型值记入 `input_int_consts`）——否则 `gather(w, 0, idx)` 这类最常见用法会让整个算子
+/// 被跳过（假覆盖）。其余非 Var/非字面量的嵌套表达式仍返回 None（保守跳过，不假装能校验）。
 ///
 /// 输出 shape：从 init_expr.ty 提取 dims。
 fn collect_tensor_op(names: &[String], init_expr: &HirExpr) -> Option<TensorOp> {
@@ -399,7 +425,8 @@ fn collect_tensor_op(names: &[String], init_expr: &HirExpr) -> Option<TensorOp> 
     // 提取输入变量名和 shape
     let mut input_vars = Vec::new();
     let mut input_shapes = Vec::new();
-    for input_expr in input_exprs {
+    let mut input_int_consts: Vec<Option<i64>> = Vec::new();
+    for (pos, input_expr) in input_exprs.iter().enumerate() {
         match &input_expr.kind {
             HirExprKind::Var(var_name) => {
                 input_vars.push(var_name.clone());
@@ -409,8 +436,28 @@ fn collect_tensor_op(names: &[String], init_expr: &HirExpr) -> Option<TensorOp> 
                     // 输入是 Var 但非 Tensor 类型（如标量）— 记录空 shape
                     input_shapes.push(Vec::new());
                 }
+                input_int_consts.push(None);
             }
-            // 输入不是简单 Var（嵌套表达式）— 保守跳过整个操作
+            // AUDIT-11.4.66：**字面量实参**过去直接 `return None` ⇒ 整个算子被排除在
+            // 编译期反向 shape 校验之外 = **假覆盖**。而 `gather(w, 0, idx)` /
+            // `index_select(w, 0, idx)` 的 dim **正是字面量**、`masked_fill(m, -1.0)`、
+            // `scatter(0, idx, src)`、`reshape(2, 3)` 同理 ⇒ 最常见用法根本没跑校验。
+            //
+            // 现在按**位置占位**纳入（保持与算子签名一一对应）：
+            //   - 变量名用 `#lit{pos}` 占位（`#` 不可能是合法的 Tenth 标识符 ⇒ 绝不与
+            //     任何 `param(...)` 变量重名，不会污染"参数梯度 shape"校验）；
+            //   - shape 取字面量自身的类型维度（标量字面量 → 空 = 与标量变量实参同语义，
+            //     不会让算术广播臂误判）；
+            //   - 整型字面量的**值**单独记入 `input_int_consts`（Literal → Known dim）。
+            HirExprKind::Literal(lit) => {
+                input_vars.push(format!("#lit{}", pos));
+                input_shapes.push(tensor_dims(&input_expr.ty).unwrap_or_default());
+                input_int_consts.push(match lit {
+                    Literal::Int(v, _) => Some(*v),
+                    _ => None,
+                });
+            }
+            // 其余（嵌套调用/字段访问/索引等）仍**保守跳过**整个操作（不假装能校验）
             _ => return None,
         }
     }
@@ -421,6 +468,7 @@ fn collect_tensor_op(names: &[String], init_expr: &HirExpr) -> Option<TensorOp> 
         op_name,
         input_vars,
         input_shapes,
+        input_int_consts,
         span,
     })
 }
@@ -490,7 +538,8 @@ fn propagate_backward(region: &GradRegion) -> Vec<TenthError> {
         };
 
         // 调用 Phase 1 的 backward_shape 计算各输入的梯度 shape
-        match backward_shape(&op.op_name, &op.input_shapes, &op.output_shape) {
+        // AUDIT-11.4.66：一并传入各输入的整型字面量常量（dim 槽定位用）
+        match backward_shape(&op.op_name, &op.input_shapes, &op.output_shape, &op.input_int_consts) {
             Ok(input_grads) => {
                 // 将梯度 shape 写入 grad_shapes
                 for (i, input_var) in op.input_vars.iter().enumerate() {
@@ -542,32 +591,32 @@ fn propagate_backward(region: &GradRegion) -> Vec<TenthError> {
     errors
 }
 
-/// 验证两个 shape 是否兼容（用于梯度 shape 与参数 shape 比较）。
+/// 验证梯度 shape 能否被**运行期**还原回参数 shape（W12：编译期判据与运行时能力对齐）。
 ///
-/// 规则（与 `backward_shapes.rs::unbroadcast_feasible` 一致，但从右往左对齐）：
-/// - 维度数不同 → 不兼容
-/// - 任一维为 `Any` 或 `Symbol` → 该维兼容（保守）
-/// - 都 `Known`：必须相等
-/// - `Known(1)` 与 `Known(n)`：兼容（梯度可广播/求和回参数 shape）
+/// 判据以运行期 `runtime/autodiff/backward.rs::unbroadcast` 的**实际行为**为准：
+/// 它把 `param_shape` **左补 1** 对齐到 grad 的秩，对 `param 维 == 1 && grad 维 > 1` 的轴求和，
+/// 最后按元素数 reshape 回 `param_shape`；随后链路上的 `acc_grad`
+/// （`runtime/autodiff/backward.rs` 的 `TapeOp::Input` 分支 + `tensor/methods.rs::acc_grad`）
+/// 要求梯度 shape 与参数 shape **逐维相等**。因此"可还原" ⟺
+///   1. `grad 秩 >= param 秩`（左补 1 只能把 param 对齐到 grad，运行期不会给 grad 补维）；
+///   2. 右对齐后每一维：`param == 1`（沿该轴求和回 1）或 `param == grad`（原样保留）。
 ///
-/// 注：与 unbroadcast_feasible 不同，这里允许 grad 维度为 1（广播回 n），
-/// 也允许参数维度为 1（梯度求和回 1）。即双向广播兼容。
+/// 仍判为不兼容（编译期报错，与运行期一致）：
+/// - `grad 秩 < param 秩`（如 param `[1, 4]` / grad `[4]`：运行期把 grad 唯一的维 sum 掉后
+///   只剩 1 个元素，reshape 回 `[1, 4]` 必然失败）；
+/// - 右对齐后 `param > 1` 且 `param != grad`（如 param `[3, 4]` / grad `[3, 5]`）；
+/// - `param > 1` 而 grad 同维为 1（如 param `[3, 4]` / grad `[1, 4]`：运行期不求和、
+///   reshape 元素数 4 ≠ 12 ⇒ 必然失败）。
+///
+/// 逐维判据**委托** `backward_shapes.rs::unbroadcast_feasible`（单一权威：与 Phase 1
+/// 单算子校验、运行期 `unbroadcast` 同一套规则），本函数只额外加秩方向守卫。
 fn shape_compatible(grad_shape: &[Dim], param_shape: &[Dim]) -> bool {
-    if grad_shape.len() != param_shape.len() {
+    // 方向守卫：unbroadcast 只会把 param 左补 1（降秩还原），不会给 grad 补维。
+    // 注：旧实现要求"秩必须相等"，在本方向（grad 秩 < param 秩）结论相同 ⇒ 非新增严格性。
+    if grad_shape.len() < param_shape.len() {
         return false;
     }
-    for (g, p) in grad_shape.iter().zip(param_shape.iter()) {
-        let ok = match (g, p) {
-            (Dim::Any, _) | (_, Dim::Any) => true,
-            (Dim::Symbol(_), _) | (_, Dim::Symbol(_)) => true,
-            (Dim::Known(1), _) | (_, Dim::Known(1)) => true, // 广播兼容
-            (Dim::Known(a), Dim::Known(b)) => a == b,
-        };
-        if !ok {
-            return false;
-        }
-    }
-    true
+    unbroadcast_feasible(grad_shape, param_shape).is_ok()
 }
 
 // ── 辅助函数 ────────────────────────────────────────────────────────────
@@ -577,5 +626,49 @@ fn tensor_dims(ty: &Type) -> Option<Vec<Dim>> {
     match ty {
         Type::Tensor { dims, .. } => Some(dims.clone()),
         _ => None,
+    }
+}
+
+// ── 单元测试：判据本身（W12 对齐，红线"不许退化成恒真"的钉子） ──────────────
+//
+// 集成测试（`tenth/tests/autodiff_backward_shape_test.rs`）只能从 Tenth 源码侧触发判据；
+// 这里直接钉住 `shape_compatible` 的接受/拒绝集合。
+
+#[cfg(test)]
+mod tests {
+    use super::shape_compatible;
+    use crate::hir::types::Dim;
+
+    fn known(n: i64) -> Dim {
+        Dim::Known(n)
+    }
+
+    #[test]
+    fn shape_compatible_accepts_unbroadcast_restorable_grad() {
+        // 秩扩展（左补 1 后逐维相等）——W12 误报的正主：运行期 unbroadcast([1,4] → [4]) 可还原
+        assert!(shape_compatible(&[known(1), known(4)], &[known(4)]));
+        assert!(shape_compatible(&[known(1), known(2), known(3)], &[known(2), known(3)]));
+        // 参数维为 1（运行期沿该轴求和回 1）
+        assert!(shape_compatible(&[known(3), known(4)], &[known(3), known(1)]));
+        // 标量式参数 [1]：运行期 sum 掉全部轴后 reshape 回 [1]
+        assert!(shape_compatible(&[known(2), known(3)], &[known(1)]));
+        // 同秩同形
+        assert!(shape_compatible(&[known(3), known(4)], &[known(3), known(4)]));
+        // 动态维：保守放行（与 has_static_info 门一致）
+        assert!(shape_compatible(&[Dim::Any, known(4)], &[Dim::Any, known(4)]));
+        assert!(shape_compatible(&[Dim::Symbol("N".to_string()), known(4)], &[Dim::Symbol("N".to_string()), known(4)]));
+    }
+
+    #[test]
+    fn shape_compatible_rejects_non_restorable_grad() {
+        // 秩不足：运行期只把 param 左补 1，不会给 grad 补维
+        assert!(!shape_compatible(&[known(4)], &[known(1), known(4)]));
+        assert!(!shape_compatible(&[known(6)], &[known(2), known(3)]));
+        // 同秩但两个 >1 的维度不相等（param [3,4] / grad [3,5]）
+        assert!(!shape_compatible(&[known(3), known(5)], &[known(3), known(4)]));
+        // param > 1 而 grad 同维为 1：运行期不求和 ⇒ reshape 元素数 4 ≠ 12
+        assert!(!shape_compatible(&[known(1), known(4)], &[known(3), known(4)]));
+        // param 维 > 1 且 != grad 维：非广播对（前向不可能产生该 grad/param 组合）
+        assert!(!shape_compatible(&[known(1), known(6)], &[known(2), known(3)]));
     }
 }
