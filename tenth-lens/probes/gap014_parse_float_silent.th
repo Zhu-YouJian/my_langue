@@ -1,0 +1,21 @@
+// GAP-014 最小复现：`parse_float` 对非法输入**静默返回 0**
+//
+// 跑法（项目根）：
+//   tenth\target\release\tenth.exe run tenth-lens\probes\gap014_parse_float_silent.th
+//
+// 实测（两条路径一致）：
+//   parse_float("n/a") = 0.000000
+//   parse_float("")    = 0.000000
+//   parse_float("abc") = 0.000000
+// 没有 Err / Option，也没有告警。对「消费日志/配置」的工具是静默错值（本守卫因此
+// 只能显式判 `n/a` 字面量，而不能依赖 parse_float 报错）。
+//
+// 注：本探针不看 `PERF-NA`；只看 parse_float 本身是否有失败信道。
+
+fn main() {
+    println("P1|parse_float(n/a)=" + format("{:.6f}", parse_float("n/a")));
+    println("P2|parse_float(空串)=" + format("{:.6f}", parse_float("")));
+    println("P3|parse_float(abc)=" + format("{:.6f}", parse_float("abc")));
+    println("P4|parse_float(12.5)=" + format("{:.6f}", parse_float("12.5")));
+    println("P5|parse_int(abc)=" + format("{}", parse_int("abc")));
+}

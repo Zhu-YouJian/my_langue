@@ -1,0 +1,38 @@
+// GAP-012 最小复现：**VM 路径下「全局标量被 main 与函数同时写」会静默丢失函数侧写入**
+//
+// 跑法（项目根）：
+//   tenth\target\release\tenth.exe run tenth-lens\probes\gap012_vm_global_write.th
+//   （对照）set TENTH_NO_VM=1 后再跑一次
+//
+// 期望（语言语义）：N1=1 N2=1 N3=2 N4=3 N5=4 N6=2
+// 实测：解释器路径 = 期望；VM 路径 N3=1、N5=2（函数里的 A = A + 1 被吞），
+//       **两路径退出码都是 0，没有任何报错** —— 静默失败 + 跨后端分歧。
+//
+// A 既在 main 里被写、又在函数 bumpA 里被写；B 只在函数里被写（对照组，两侧都对）。
+
+let mut A: i32 = 0
+let mut B: i32 = 0
+
+fn bumpA() {
+    A = A + 1;
+}
+
+fn bumpB() {
+    B = B + 1;
+}
+
+fn main() {
+    bumpB();
+    println("N1|B_只被函数写=" + format("{}", B));
+    A = A + 1;
+    println("N2|A_先被main写=" + format("{}", A));
+    bumpA();
+    println("N3|A_再被函数写=" + format("{}", A));
+    let cur = A;
+    A = cur + 1;
+    println("N4|A_再被main写=" + format("{}", A));
+    bumpA();
+    println("N5|A_再被函数写=" + format("{}", A));
+    bumpB();
+    println("N6|B_只被函数写2=" + format("{}", B));
+}

@@ -1,0 +1,15 @@
+# 验收 3：干净集内部自比
+#
+# 三个来源按构造都是「隔离测量」：perScenario 每场景一独立进程（vm 参考），
+# g2-run1/run2 同会话逐组独立进程（jit 列）。期望：无红。
+#
+# 诚实提示（守卫自身会打印在 SCOPE/汇总里）：这三份日志的 key 集**互不重叠**
+# （perScenario 只有 vm 列与 G6 ratio 列；g2-run 只有 jit 列），因此本清单真正
+# 做比较的 key 数为 0 —— 即「绿得空转」。要与「有可比对象的干净集」对照，
+# 见 manifest_clean_cross.txt（含 full-rerun 的 jit 列），并用 --metric min
+# 取 PERF-NOTE 指定的可比统计量。
+#
+# 格式：标签|路径（相对项目根）
+perscenario-isolated|.agents/tmp/perf_vm_perScenario_20260916.log
+g2-run1|.agents/tmp/perf_g2_run1_20260916.log
+g2-run2|.agents/tmp/perf_g2_run2_20260916.log

@@ -1,0 +1,10 @@
+# 验收 1：已知污染源 vs 已知干净源
+#
+# 断言：同一 (group,scenario,path,metric) 跨来源必须一致（默认容差 ±20%）。
+# 期望：G2|matmul_512|vm|min 判红（vmref ≈15.4ms 为「旧单进程跑全部组」的脏值，
+#       perScenario ≈5.6ms 为「每场景一独立进程」的干净值，差约 2.9×）。
+# 由来：docs/决策记录/2026-09-16-tenth-lens-P0门未通过与次序调整.md
+#
+# 格式：标签|路径（相对项目根）
+vmref-grouped-polluted|.agents/tmp/perf_vmref_20260916.log
+perscenario-isolated|.agents/tmp/perf_vm_perScenario_20260916.log

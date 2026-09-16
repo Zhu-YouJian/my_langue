@@ -1,0 +1,10 @@
+PERF-NOTE|X|methodology|all|合成自检夹具（不是性能数据）
+PERF|X1|s1|jit|min|11.000000|ms
+PERF|X1|s1|jit|median|12.500000|ms
+PERF|X2|s2|jit|min|150.000000|ms
+PERF|X3|s3|jit|min|1.000000|s
+PERF|X4|s4|jit|min|n/a|ms
+PERF-NA|X4|s4|jit|合成：该 metric 在本来源不可用
+PERF|X5|s5|jit|min|1.000000|ms
+PERF|X7|s7|jit|min|2.000000|ms
+PERF|X6|s6|jit|min

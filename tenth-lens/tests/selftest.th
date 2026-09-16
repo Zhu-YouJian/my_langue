@@ -1,0 +1,194 @@
+// tenth-lens 自检：用**合成夹具**证明守卫的判红 / 标注 / 容差 / 退出码行为
+//
+// 跑法（项目根）：
+//   tenth\target\release\tenth.exe run tenth-lens\tests\selftest.th
+// 通过标准：末行 `SELFTEST|n|PASS|n 项全过`，退出码 0；任一 FAIL → 退出码 1。
+//
+// 为什么自检要 spawn 子进程：守卫的判决是**进程级**的（报告 + 退出码），只能在进程边界上断言。
+// 已知代价（GAP-010）：`command_run` 拿退出码时子进程输出会**泄漏到本进程 stdout**——
+// 本自检是确定性的（守卫无副作用、不写文件），因此这里接受该泄漏，仅在断言里用 `command_output` 的信道。
+//
+// 断言集见下方 assert_* 调用；FAIL 时打印期望的原文片段，便于直接定位。
+
+// 结果用容器累积（不用全局标量计数器：VM 对「main 与函数同时写的全局标量」会静默丢失函数侧写入，见 GAP-012）
+let mut RESULTS: Vec = Vec::new()
+
+fn exe() -> String {
+    "tenth/target/release/tenth.exe"
+}
+
+fn guard_args(tail: Vec) -> Vec {
+    // 固定前缀：run tenth-lens/main.th
+    let mut a = Vec::new();
+    a.push("run");
+    a.push("tenth-lens/main.th");
+    let mut i = 0;
+    while i < tail.len() {
+        // 先绑局部：解释器路径下「容器取出的临时值」丢类型标签，直接当 native 实参会被忽略（GAP-013）
+        let tv = tail.get(i);
+        a.push(tv);
+        i = i + 1;
+    };
+    a
+}
+
+fn spawn_capture(tail: Vec) -> String {
+    let h = command_new(exe());
+    match h {
+        Result::Ok(hh) => {
+            let a = guard_args(tail);
+            let mut i = 0;
+            while i < a.len() {
+                let av = a.get(i);
+                command_arg(hh, av);
+                i = i + 1;
+            };
+            match command_output(hh) {
+                Result::Ok(s) => s,
+                Result::Err(e) => "SPAWN_ERR:" + e,
+            }
+        },
+        Result::Err(e) => "SPAWN_ERR:" + e,
+    }
+}
+
+fn spawn_code(tail: Vec) -> i32 {
+    let h = command_new(exe());
+    match h {
+        Result::Ok(hh) => {
+            let a = guard_args(tail);
+            let mut i = 0;
+            while i < a.len() {
+                let av = a.get(i);
+                command_arg(hh, av);
+                i = i + 1;
+            };
+            match command_run(hh) {
+                Result::Ok(c) => c,
+                Result::Err(e) => -1,
+            }
+        },
+        Result::Err(e) => -1,
+    }
+}
+
+fn args1(k: String, v: String) -> Vec {
+    let mut a = Vec::new();
+    a.push(k);
+    a.push(v);
+    a
+}
+
+fn assert_has(tag: String, text: String, needle: String) {
+    if text.contains(needle) {
+        RESULTS.push("PASS|" + tag + "|" + needle);
+    } else {
+        RESULTS.push("FAIL|" + tag + "|未找到: " + needle);
+    };
+}
+
+fn assert_absent(tag: String, text: String, needle: String) {
+    if text.contains(needle) {
+        RESULTS.push("FAIL|" + tag + "|不应出现: " + needle);
+    } else {
+        RESULTS.push("PASS|" + tag + "|确实不含 " + needle);
+    };
+}
+
+fn assert_code(tag: String, code: i32, expect: i32) {
+    if code == expect {
+        RESULTS.push("PASS|" + tag + "|退出码=" + format("{}", code));
+    } else {
+        RESULTS.push("FAIL|" + tag + "|退出码=" + format("{}", code) + " 期望=" + format("{}", expect));
+    };
+}
+
+// 判红必须排在非红之前
+fn assert_red_first(tag: String, text: String) {
+    let pr = text.find("[RED]");
+    let po = text.find("[OK ]");
+    if pr < 0 {
+        RESULTS.push("FAIL|" + tag + "|报告里没有 [RED] 行");
+    } else {
+        if po < 0 {
+            RESULTS.push("PASS|" + tag + "|有红行；无 [OK ] 行可比（视为通过）");
+        } else {
+            if pr < po {
+                RESULTS.push("PASS|" + tag + "|红行位置 " + format("{}", pr) + " < 绿行位置 " + format("{}", po));
+            } else {
+                RESULTS.push("FAIL|" + tag + "|红行位置 " + format("{}", pr) + " 不早于绿行 " + format("{}", po));
+            };
+        };
+    };
+}
+
+fn main() {
+    // ── 夹具集（合成，见 tests/fixtures/）──
+    let fixman = "tenth-lens/tests/fixtures/manifest_selftest.txt";
+    let repman = "tenth-lens/corpus/manifest_g2_repeat.txt";
+    let vmdif = "tenth-lens/corpus/manifest_vm_diff.txt";
+
+    let rep = spawn_capture(args1("--manifest", fixman));
+    assert_has("A01_超容差判红", rep, "[RED] X2|s2|jit|min  dev=50.00%");
+    assert_has("A02_单位不一致判红", rep, "why=UNIT_MISMATCH(ms vs s)");
+    assert_has("A03_NA口径分歧判红", rep, "why=NA_DIVERGE");
+    assert_has("A04_同源重复数值判红", rep, "why=DUP_IN_SOURCE(gamma)");
+    assert_has("A05_格式漂移判红", rep, "[RED] MALFORMED_PERF_LINE(beta)");
+    assert_has("A06_单来源如实标注", rep, "[ONE] X7|s7|jit|min");
+    assert_has("A07_缺key如实标注", rep, "alpha=MISSING");
+    assert_has("A08_一致不可用标注", rep, "[NA ] X8|s8|jit|min");
+    assert_has("A09_汇总计数", rep, "KEYS|11  RED|5  OK|3  NA(一致不可用)|1  ONE(仅单来源)|2");
+    assert_has("A10_汇总含NOTE忽略数", rep, "NOTE_LINES_IGNORED(非数据)|3");
+    assert_has("A11_结论为红", rep, "VERDICT|RED");
+    assert_red_first("A12_红行优先", rep);
+    assert_code("A13_红时退出码", spawn_code(args1("--manifest", fixman)), 1);
+
+    // ── 同会话重复：默认容差应全绿；收紧到 ±1% 应变红（证明容差真的被使用）──
+    let r20 = spawn_capture(args1("--manifest", repman));
+    assert_has("A14_同会话重复默认容差全绿", r20, "VERDICT|GREEN（全部可比 key 均在容差内）");
+    assert_has("A15_同会话重复14键全OK", r20, "KEYS|14  RED|0  OK|14");
+    assert_code("A16_绿时退出码", spawn_code(args1("--manifest", repman)), 0);
+
+    let mut t1 = Vec::new();
+    t1.push("--manifest");
+    t1.push(repman);
+    t1.push("--tolerance");
+    t1.push("1");
+    let r1 = spawn_capture(t1);
+    assert_has("A17_容差收紧后判红", r1, "VERDICT|RED");
+    assert_has("A18_容差生效(tol=±1)", r1, "tol=±1.00%");
+
+    // ── 已知污染源 vs 干净源：G2|matmul_512|vm|min 必须判红（验收 1 的核心断言）──
+    let mut v1 = Vec::new();
+    v1.push("--manifest");
+    v1.push(vmdif);
+    v1.push("--only");
+    v1.push("G2:matmul_512");
+    let rv = spawn_capture(v1);
+    assert_has("A19_污染源判红", rv, "[RED] G2|matmul_512|vm|min");
+    assert_has("A20_偏离量约1.7倍", rv, "dev=174.64% (2.75x)");
+    assert_has("A21_窄范围自我标注", rv, "SCOPE|narrowed");
+    assert_absent("A22_不静默跳过", rv, "MISSING|SKIP");
+
+    // ── 汇总 ──
+    let mut n_pass = 0;
+    let mut n_fail = 0;
+    let mut i = 0;
+    while i < RESULTS.len() {
+        let r = RESULTS.get(i);
+        println("SELFTEST-CASE|" + r);
+        if r.starts_with("PASS|") {
+            n_pass = n_pass + 1;
+        } else {
+            n_fail = n_fail + 1;
+        };
+        i = i + 1;
+    };
+    println("SELFTEST|" + format("{}", RESULTS.len()) + "|PASS|" + format("{}", n_pass) + "|FAIL|" + format("{}", n_fail));
+    if n_fail > 0 {
+        println("SELFTEST-VERDICT|FAIL");
+        exit(1);
+    };
+    println("SELFTEST-VERDICT|PASS|" + format("{}", n_pass) + " 项全过");
+    exit(0);
+}

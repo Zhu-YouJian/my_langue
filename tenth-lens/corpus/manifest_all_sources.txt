@@ -1,0 +1,12 @@
+# 诊断用：任务下达时列出的全部 6 份来源（含已知污染与分组跑）
+#
+# 用途：不是验收项，而是「全量红图」——用来确认守卫的红点不止命中已知污染源
+# （perScenario 之外的 vm 列在 full-rerun / 9-9 基线里同样带污染签名）。
+#
+# 格式：标签|路径（相对项目根）
+vmref-grouped-polluted|.agents/tmp/perf_vmref_20260916.log
+perscenario-isolated|.agents/tmp/perf_vm_perScenario_20260916.log
+full-rerun-grouped|.agents/tmp/perf_full_rerun_20260916.log
+g2-run1|.agents/tmp/perf_g2_run1_20260916.log
+g2-run2|.agents/tmp/perf_g2_run2_20260916.log
+baseline-0909-grouped|.agents/tmp/perf_baseline_run_20260909.log

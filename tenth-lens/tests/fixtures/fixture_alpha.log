@@ -1,0 +1,9 @@
+PERF-NOTE|X|methodology|all|合成自检夹具（不是性能数据）：用于证明守卫的判红/标注行为
+PERF|X1|s1|jit|min|10.000000|ms
+PERF|X1|s1|jit|median|12.000000|ms
+PERF|X2|s2|jit|min|100.000000|ms
+PERF|X3|s3|jit|min|1.000000|ms
+PERF|X4|s4|jit|min|5.000000|ms
+PERF|X5|s5|jit|min|1.000000|ms
+PERF|X6|s6|jit|min|1.000000|ms
+这不是 PERF 行，属于噪声（应被计数而非当数据）

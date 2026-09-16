@@ -1,0 +1,18 @@
+# 自检夹具清单（非真实性能数据）：alpha / beta / gamma
+#
+# 期望（默认容差 ±20%）：
+#   X1|s1|jit|min    OK    （10 vs 11，10%）
+#   X1|s1|jit|median OK    （12 vs 12.5，4.17%）
+#   X2|s2|jit|min    RED   （100 vs 150，50%）
+#   X3|s3|jit|min    RED   UNIT_MISMATCH（ms vs s，不可比）
+#   X4|s4|jit|min    RED   NA_DIVERGE（alpha 有数值 vs beta 声明不可用）
+#   X5|s5|jit|min    OK    （1 vs 1）
+#   X6|s6|jit|min    ONE   （beta 该行字段数不足 → 记 MALFORMED 判红；仅 alpha 有值）
+#   X7|s7|jit|min    ONE   （仅 beta 有值；alpha 标 MISSING）
+#   X8|s8|jit|min    NA    （各来源一致不可用）
+#   X9|s9|jit|min    RED   DUP_IN_SOURCE（gamma 同 key 两条数值）
+#   另加一条 RED：MALFORMED_PERF_LINE
+# 汇总期望：KEYS|11 RED|5 OK|3 NA|1 ONE|2
+alpha|tenth-lens/tests/fixtures/fixture_alpha.log
+beta|tenth-lens/tests/fixtures/fixture_beta.log
+gamma|tenth-lens/tests/fixtures/fixture_gamma.log

@@ -1,0 +1,10 @@
+# 补充：干净集**有可比对象**的交叉自比（三种独立测量源，同一 jit 路径）
+#
+# 用途：让「干净集内部自比」不再是空转——三个来源两两之间确实有共同的
+# (group,scenario,path,metric) key。建议配 --metric min 使用：
+# PERF-NOTE 明示「min 为可比统计量」（median 在亚毫秒量级上是噪声主导）。
+#
+# 格式：标签|路径（相对项目根）
+full-rerun-grouped|.agents/tmp/perf_full_rerun_20260916.log
+g2-run1|.agents/tmp/perf_g2_run1_20260916.log
+g2-run2|.agents/tmp/perf_g2_run2_20260916.log

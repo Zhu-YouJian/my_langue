@@ -1,0 +1,31 @@
+// GAP-013 最小复现：**解释器路径下，容器取出的临时值丢运行时类型标签**
+//
+// 跑法（项目根）：
+//   tenth\target\release\tenth.exe run tenth-lens\probes\gap013_interp_tag_loss.th
+//   （对照）set TENTH_NO_VM=1 后再跑一次
+//
+// 实测：
+//   VM    ：X1=string X2=string X3=1 X4=1
+//   解释器：X1=string X2=**unknown** X3=1 X4=**运行时错误：HashMap 键类型不支持: alpha**
+// 即：`Vec.get()` 的返回值**直接当实参**时丢标签；**先绑定到局部变量**再使用则恢复正常。
+// 影响面不止 HashMap 键：`command_arg(h, v.get(i))` 这类 native 实参同样被吞
+//（见 tests/selftest.th 修复前的表现：子进程收不到参数）。
+
+fn seed(v: Vec) {
+    v.push("alpha");
+}
+
+fn main() {
+    let mut v = Vec::new();
+    seed(v);
+
+    println("X1|split元素标签=" + type_name("alpha|x".split("|").get(0)));
+    println("X2|容器元素标签=" + type_name(v.get(0)));
+
+    let m = HashMap::new();
+    m.insert("alpha", 1);
+    println("X3|字面量作键=" + format("{}", m.get("alpha")));
+
+    let local = v.get(0);
+    println("X4|绑定后标签=" + type_name(local) + " 绑定后作键=" + format("{}", m.get(local)));
+}
