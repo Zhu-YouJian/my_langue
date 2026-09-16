@@ -678,6 +678,49 @@ impl super::Interpreter {
                 }
                 return Ok(Some(err_result("command_output 需要 1 个 i64 参数")));
             }
+            // command_output_ex(handle, timeout_ms?) — 一次 spawn 同源返回三轴 + 超时标志。
+            // 与 VM 侧 runtime/natives.rs 的同名 native 逐字同构（返回 4 元组，
+            // timed_out 为值级标志；超时不得接 deadline_ms，见 run_command_bounded 文档）。
+            "command_output_ex" => {
+                if args.is_empty() {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: "command_output_ex(handle, timeout_ms?) 至少需要 1 个参数".into(),
+                    });
+                }
+                let fail = |msg: String| -> Value {
+                    Value::Tuple(vec![
+                        Value::String(String::new()),
+                        Value::String(msg),
+                        Value::Int(-1, BaseType::I64),
+                        Value::Bool(false),
+                    ])
+                };
+                let handle = match &args[0] {
+                    Value::Int(n, _) => *n,
+                    _ => return Ok(Some(fail("command_output_ex 需要 1 个 i64 句柄参数".to_string()))),
+                };
+                let timeout_ms: Option<u64> = match args.get(1) {
+                    Some(Value::Int(ms, _)) if *ms > 0 => Some(*ms as u64),
+                    _ => None,
+                };
+                let idx = handle as usize;
+                if idx == 0 || idx > self.commands.len() {
+                    return Ok(Some(fail("无效的命令句柄".to_string())));
+                }
+                let cmd_opt = std::mem::take(&mut self.commands[idx - 1]);
+                let Some(mut cmd) = cmd_opt else {
+                    return Ok(Some(fail("命令已释放".to_string())));
+                };
+                return Ok(Some(match crate::runtime::natives::run_command_bounded(&mut cmd, timeout_ms) {
+                    Ok((stdout, stderr, code, timed_out)) => Value::Tuple(vec![
+                        Value::String(stdout),
+                        Value::String(stderr),
+                        Value::Int(code, BaseType::I64),
+                        Value::Bool(timed_out),
+                    ]),
+                    Err(e) => fail(format!("执行失败: {e}")),
+                }));
+            }
             // —— 正则表达式原语（句柄表方案，handle 1-based，0 表示无效）——
             // 与 std/regex.th 对齐：Tenth 层不暴露 Regex 类型，仅用 i64 handle。
             "regex_compile" => {
@@ -1384,6 +1427,35 @@ impl super::Interpreter {
                     if let Some(ref mut tape) = self.tape {
                         let base_id = base.borrow().tape_id;
                         let node_id = tape.gather(base_id, base.clone(), index.clone(), result.clone(), dim);
+                        result.borrow_mut().tape_id = Some(node_id);
+                    }
+                }
+                return Ok(Some(Value::Tensor(result)));
+            }
+            "index_select" => {
+                // index_select(base, dim, index) — 沿 dim 维按 1-D index 收集切片
+                // （AUDIT-11.4.11）。与 VM 侧 runtime/natives.rs 的同名 native 逐字同构。
+                // out.shape = base.shape[..dim] + [index.len()] + base.shape[dim+1..]；
+                // dtype 跟随 base；index 严格化（NaN/非整数/越界 → 响亮报错）。
+                if args.len() < 3 {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: "index_select(base, dim, index) 期望三个参数".into(),
+                    });
+                }
+                let dim = args[1].as_int().unwrap_or(0) as usize;
+                let (base, index) = match (&args[0], &args[2]) {
+                    (Value::Tensor(b), Value::Tensor(i)) => (b.clone(), i.clone()),
+                    _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: "index_select(base, dim, index) 期望 base/index 为张量".into(),
+                    }),
+                };
+                let result_tensor = Tensor::index_select(&base.borrow(), dim, &index.borrow())
+                    .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
+                let result = Rc::new(RefCell::new(result_tensor));
+                if self.recording {
+                    if let Some(ref mut tape) = self.tape {
+                        let base_id = base.borrow().tape_id;
+                        let node_id = tape.index_select(base_id, base.clone(), index.clone(), result.clone(), dim);
                         result.borrow_mut().tape_id = Some(node_id);
                     }
                 }
@@ -2298,6 +2370,35 @@ impl super::Interpreter {
                 }
                 return Err(TenthError::RuntimeError { line: None, col: None,
                     message: "parse_float() 期望一个字符串参数".into(),
+                })
+            }
+            // AUDIT-11.4.62：带失败信道的解析（真 Result<整数/浮点, str>）。
+            // 与 VM 侧 runtime/natives.rs 的 parse_int_or / parse_float_or 逐字同构；
+            // 旧 API parse_int / parse_float 行为不变（仍在上面）。
+            "parse_int_or" => {
+                if let Some(arg) = args.first() {
+                    if let Value::String(s) = arg {
+                        return Ok(Some(match s.trim().parse::<i64>() {
+                            Ok(v) => ok_result(Value::Int(v, BaseType::I64)),
+                            Err(e) => err_result(format!("parse_int_or: 无法把 \"{}\" 解析为整数（{}）", s, e)),
+                        }));
+                    }
+                }
+                return Err(TenthError::RuntimeError { line: None, col: None,
+                    message: "parse_int_or() 期望一个字符串参数".into(),
+                })
+            }
+            "parse_float_or" => {
+                if let Some(arg) = args.first() {
+                    if let Value::String(s) = arg {
+                        return Ok(Some(match s.trim().parse::<f64>() {
+                            Ok(v) => ok_result(Value::Float(v)),
+                            Err(e) => err_result(format!("parse_float_or: 无法把 \"{}\" 解析为浮点数（{}）", s, e)),
+                        }));
+                    }
+                }
+                return Err(TenthError::RuntimeError { line: None, col: None,
+                    message: "parse_float_or() 期望一个字符串参数".into(),
                 })
             }
             // Time functions

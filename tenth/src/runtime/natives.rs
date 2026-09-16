@@ -49,6 +49,133 @@ pub(crate) fn err_result(msg: impl Into<String>) -> Value {
     }
 }
 
+/// 有界运行一个子进程，一次 spawn 同源取回三轴 + 超时标志。
+///
+/// 返回 `(stdout, stderr, exit_code, timed_out)`：
+/// - 正常退出：`timed_out = false`，`exit_code` = 子进程退出码（无码则 -1）；
+/// - 超时：`timed_out = true`，`exit_code = -1`，**保留已产生的部分 stdout/stderr**
+///   （卡死程序的部分输出正是定位证据，故超时**不走 `Err`**——`Err` 会被 `?`/`or_die`
+///   变成 panic，用户再也拿不到部分输出）。
+///
+/// # 为什么不用 `with_timeout_ms` / `deadline_ms`（设计红线）
+/// `with_timeout_ms` 是**协作式**超时：只在 VM 主循环每 4096 条指令（解释器每 4096 tick）
+/// 检查 deadline，**native 内部不 tick**（论文 T34 §明确列为已知代价：native 内可无限循环）。
+/// 所以 `with_timeout_ms(1000, || command_output_ex(...))` 形同无超时。
+/// 子进程没有 socket 超时可下推（对比 `tcp_set_timeout`），故本函数在 **native 自身内**
+/// 用墙钟界定，机制与全仓一致：**双读线程 drain 两根管道 + `try_wait` 轮询 + 到期
+/// `kill()`/`wait()`**（骨架同 `tenth/tests/instance_batch_test.rs` 的有界等待；
+/// 读法同既有 `command_output` 的"并发读双管道"——**绝不**顺序读 stdout → stderr → wait，
+/// 那是经典双管道死锁）。
+///
+/// `timeout_ms = None` 表示不设超时（阻塞至结束，语义与 `command_output` 一致）。
+pub(crate) fn run_command_bounded(
+    cmd: &mut std::process::Command,
+    timeout_ms: Option<u64>,
+) -> std::io::Result<(String, String, i64, bool)> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    // 两条管道各起一个读线程，**分块**投递到 channel（不是"读到 EOF 才发一次"）。
+    //
+    // 为什么必须分块：超时被 kill 的往往只是直接子进程，它派生的孙进程仍持有这两根
+    // 管道写端的句柄 ⇒ `read_to_end` 不会返回 EOF（会一直阻塞到孙进程退出）。
+    // 若把整段输出攒到 EOF 才发，超时路径就只能拿到**空** stdout——恰恰丢掉最有诊断
+    // 价值的"卡住前的部分输出"。分块投递让已经产生的字节立即可回收。
+    // 同时这也保持了"并发读双管道"的形态（**绝不**顺序读 stdout → stderr → wait，
+    // 那是经典双管道死锁）。
+    let (otx, orx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let (etx, erx) = std::sync::mpsc::channel::<Vec<u8>>();
+    if let Some(mut pipe) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            loop {
+                match pipe.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if otx.send(buf[..n].to_vec()).is_err() { break; }
+                    }
+                }
+            }
+        });
+    }
+    if let Some(mut pipe) = child.stderr.take() {
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            loop {
+                match pipe.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if etx.send(buf[..n].to_vec()).is_err() { break; }
+                    }
+                }
+            }
+        });
+    }
+
+    let mut timed_out = false;
+    let exit_code: i64 = match timeout_ms {
+        None => {
+            let status = child.wait()?;
+            status.code().unwrap_or(-1) as i64
+        }
+        Some(ms) => {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+            loop {
+                match child.try_wait()? {
+                    Some(status) => break status.code().unwrap_or(-1) as i64,
+                    None => {
+                        if std::time::Instant::now() >= deadline {
+                            // 到期：先 kill 再 wait（回收僵尸；也保证直接子进程的句柄被关掉）
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            timed_out = true;
+                            break -1;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                }
+            }
+        }
+    };
+
+    // 回收两路输出：
+    //   - 正常结束：读线程很快读到 EOF（channel 断开）⇒ drain 完就返回，无额外延迟，
+    //     grace 5s 只作为"孙进程仍持有管道"的兜底上界；
+    //   - 超时（已 kill）：只给 500ms 收集**已经产生**的部分输出，然后返回。
+    let grace = if timed_out {
+        std::time::Duration::from_millis(500)
+    } else {
+        std::time::Duration::from_secs(5)
+    };
+    let drain = |rx: &std::sync::mpsc::Receiver<Vec<u8>>| -> Vec<u8> {
+        // 每条管道各自一份 grace（否则 stdout drain 会耗尽共用额度，stderr 拿不到字节）
+        let deadline = std::time::Instant::now() + grace;
+        let remaining = || deadline.saturating_duration_since(std::time::Instant::now());
+        let mut acc = Vec::new();
+        loop {
+            match rx.recv_timeout(remaining()) {
+                Ok(chunk) => acc.extend_from_slice(&chunk),
+                // Timeout（到期）或 Disconnected（EOF，读线程已退出）都结束
+                Err(_) => break,
+            }
+        }
+        acc
+    };
+    let out_buf = drain(&orx);
+    let err_buf = drain(&erx);
+    Ok((
+        String::from_utf8_lossy(&out_buf).to_string(),
+        String::from_utf8_lossy(&err_buf).to_string(),
+        exit_code,
+        timed_out,
+    ))
+}
+
 /// 将 Tenth 格式说明符应用到值上，返回格式化后的字符串。
 /// 支持：`>5`（右对齐）、`<5`（左对齐）、`^5`（居中）、`.2f`（小数点精度）、
 /// `x`/`X`/`o`/`b`/`d`（整数进制，可带宽度/补零/`#` 前缀，如 `08x`、`#x`）。
@@ -695,6 +822,59 @@ pub fn register_all_natives(vm: &mut Vm) {
             }
         } else {
             Ok(err_result("command_output 需要 1 个 i64 参数"))
+        }
+    });
+
+    // command_output_ex(handle, timeout_ms?) —— 一次 spawn 同源返回三轴 + 超时标志。
+    //
+    // 返回 **4 元组** `(stdout: str, stderr: str, exit_code: i64, timed_out: bool)`：
+    //   - 静态类型见 hir/lower/types.rs 的 `"command_output_ex"`（Type::Tuple）。
+    //     元组返回已是一等（先例 date_from_unix_days `-> (i64,i64,i64)`），
+    //     不动 VM/JIT/WASM 指令与 hir/hir.rs 结构；HIR 侧只需注册 4 张表 + 白名单。
+    //   - `timed_out` 是**值级**标志（不走 `Err`）：卡死程序的部分输出正是定位证据。
+    //   - 句柄无效 / 命令已释放 / spawn 失败 → 同样返回 4 元组，错误消息落在 stderr，
+    //     exit_code = -1（静态类型保持纯 Tuple，不引入 Result 外壳）。
+    //   - `timeout_ms` 缺省或 ≤ 0 ⇒ 不设超时（阻塞至结束）。**不得**接 `deadline_ms`，
+    //     详见 `run_command_bounded` 的文档。
+    vm.add_native("command_output_ex".into(), |vm, args| {
+        if args.is_empty() {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "command_output_ex(handle, timeout_ms?) 至少需要 1 个参数".into(),
+            });
+        }
+        let fail = |msg: String| -> TenthResult<Value> {
+            Ok(Value::Tuple(vec![
+                Value::String(String::new()),
+                Value::String(msg),
+                Value::Int(-1, BaseType::I64),
+                Value::Bool(false),
+            ]))
+        };
+        let handle = match &args[0] {
+            Value::Int(n, _) => *n,
+            _ => return fail("command_output_ex 需要 1 个 i64 句柄参数".to_string()),
+        };
+        let timeout_ms: Option<u64> = match args.get(1) {
+            Some(Value::Int(ms, _)) if *ms > 0 => Some(*ms as u64),
+            _ => None,
+        };
+        let idx = handle as usize;
+        if idx == 0 || idx > vm.commands.len() {
+            return fail("无效的命令句柄".to_string());
+        }
+        // output()/有界运行都消费 Command 语义：用 mem::take 取出所有权，槽位变 None
+        let cmd_opt = std::mem::take(&mut vm.commands[idx - 1]);
+        let Some(mut cmd) = cmd_opt else {
+            return fail("命令已释放".to_string());
+        };
+        match run_command_bounded(&mut cmd, timeout_ms) {
+            Ok((stdout, stderr, code, timed_out)) => Ok(Value::Tuple(vec![
+                Value::String(stdout),
+                Value::String(stderr),
+                Value::Int(code, BaseType::I64),
+                Value::Bool(timed_out),
+            ])),
+            Err(e) => fail(format!("执行失败: {e}")),
         }
     });
 
@@ -1619,6 +1799,36 @@ pub fn register_all_natives(vm: &mut Vm) {
             if let Some(ref mut tape) = vm.tape {
                 let base_id = base.borrow().tape_id;
                 let node_id = tape.gather(base_id, base.clone(), index.clone(), result.clone(), dim);
+                result.borrow_mut().tape_id = Some(node_id);
+            }
+        }
+        Ok(Value::Tensor(result))
+    });
+    // index_select（AUDIT-11.4.11）— 沿 dim 维按 1-D index 收集切片（native 自由函数，
+    // 不是张量方法：两后端方法表都没有 gather 臂，方法形态是"lower 过、运行时报没有方法"的陷阱）。
+    // out.shape = base.shape[..dim] + [index.len()] + base.shape[dim+1..]；dtype 跟随 base。
+    // 可微：d_base = scatter-add 语义（与 Gather 反向共用内核，见 autodiff/backward.rs），
+    //       index/dim 不可微（不写入 inputs）。
+    vm.add_native("index_select".into(), |vm, args| {
+        if args.len() < 3 {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "index_select(base, dim, index) 期望三个参数".into(),
+            });
+        }
+        let dim = args[1].as_int().unwrap_or(0) as usize;
+        let (base, index) = match (&args[0], &args[2]) {
+            (Value::Tensor(b), Value::Tensor(i)) => (b.clone(), i.clone()),
+            _ => return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "index_select(base, dim, index) 期望 base/index 为张量".into(),
+            }),
+        };
+        let result_tensor = Tensor::index_select(&base.borrow(), dim, &index.borrow())
+            .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })?;
+        let result = Rc::new(RefCell::new(result_tensor));
+        if vm.recording {
+            if let Some(ref mut tape) = vm.tape {
+                let base_id = base.borrow().tape_id;
+                let node_id = tape.index_select(base_id, base.clone(), index.clone(), result.clone(), dim);
                 result.borrow_mut().tape_id = Some(node_id);
             }
         }
@@ -2807,6 +3017,37 @@ pub fn register_all_natives(vm: &mut Vm) {
         } else {
             Err(TenthError::RuntimeError { line: None, col: None,
                 message: "parse_float() 期望一个字符串参数".into(),
+            })
+        }
+    });
+    // 17b. parse_int_or(s) / parse_float_or(s) — **带失败信道**的解析（AUDIT-11.4.62）。
+    //
+    // 动机：`parse_int("n/a")` 静默返回 0（0 是合法值，调用方无法区分"解析失败"与"确实是 0"）。
+    // 本对新增原语改为返回真 `Result<整数/浮点, str>`（Generic 形态，见 hir/lower/types.rs），
+    // 失败时 `Err(含原文与原因的消息)`。**旧 API `parse_int`/`parse_float` 行为逐字不变**。
+    //
+    // 内型取 i64（与静态标注 `Result<i64, str>` 一致——静态与运行时 dtype 必须同源）。
+    vm.add_native("parse_int_or".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            match s.trim().parse::<i64>() {
+                Ok(v) => Ok(ok_result(Value::Int(v, BaseType::I64))),
+                Err(e) => Ok(err_result(format!("parse_int_or: 无法把 \"{}\" 解析为整数（{}）", s, e))),
+            }
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None,
+                message: "parse_int_or() 期望一个字符串参数".into(),
+            })
+        }
+    });
+    vm.add_native("parse_float_or".into(), |_vm, args| {
+        if let Some(Value::String(s)) = args.first() {
+            match s.trim().parse::<f64>() {
+                Ok(v) => Ok(ok_result(Value::Float(v))),
+                Err(e) => Ok(err_result(format!("parse_float_or: 无法把 \"{}\" 解析为浮点数（{}）", s, e))),
+            }
+        } else {
+            Err(TenthError::RuntimeError { line: None, col: None,
+                message: "parse_float_or() 期望一个字符串参数".into(),
             })
         }
     });

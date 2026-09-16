@@ -368,6 +368,21 @@ impl Interpreter {
                 captures: vec![],
             },
         );
+        // index_select 原语（AUDIT-11.4.11）：沿 dim 维按 1-D index 收集切片
+        // （与 PyTorch torch.index_select 对齐；index 必须 1-D，多维用 gather）
+        self.insert_var(
+            "index_select".to_string(),
+            Value::FnRef {
+                name: "index_select".to_string(),
+                params: vec![
+                    ("base".to_string(), Type::Unknown),
+                    ("dim".to_string(), Type::Unknown),
+                    ("index".to_string(), Type::Unknown),
+                ],
+                return_type: Type::Unknown,
+                captures: vec![],
+            },
+        );
         // Scalar math
         for name in &["abs", "sqrt", "sin", "cos", "ln", "pow"] {
             self.insert_var(

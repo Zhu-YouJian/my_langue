@@ -147,6 +147,36 @@ impl Vm {
                         None => err("对空 Vec 调用 pop()"),
                     }
                 }
+                // AUDIT-11.4.40（本轮"部分缓解"路线②）：**新增**真 Option 版本方法。
+                //
+                // 为什么不改 `get`/`pop` 本身：`tenth/std/**` 有约 178 处 `.get(` 依赖
+                // `get` 的"裸元素"运行时行为（如 `toml.th` 的 `parts.get(i).trim()`），
+                // 改语义/标注会放开全部下游类型解析（风险远超收益）。
+                //
+                // 落点说明（重要）：这是**方法**不是 native——方法调用路径从不查 native 表，
+                // 把 `get_opt` 加成 native 会得到"有注册、无能力"的死条目。故本处（VM 方法
+                // 分派）+ interpreter/methods.rs + hir/lower/types.rs 三处必须齐改。
+                //
+                // 值形态照真 Option 活样本 weak_upgrade（Value::Enum{Option,Some/None}）：
+                // 越界/空 → None（**不报错**）；命中 → Some(裸元素)，与同侧 `get` 的取值形态
+                // 逐字一致（VM 返 `.cloned()` 原值，不做任何新包装/解包）。
+                "get_opt" | "try_get" => {
+                    if args.len() == 1 {
+                        let idx = args[0].as_int().unwrap_or(0) as usize;
+                        match items.borrow().get(idx).cloned() {
+                            Some(v) => Ok(Value::Enum {
+                                enum_name: "Option".to_string(),
+                                variant: "Some".to_string(),
+                                fields: Rc::new(RefCell::new(vec![("_0".to_string(), v)])),
+                            }),
+                            None => Ok(Value::Enum {
+                                enum_name: "Option".to_string(),
+                                variant: "None".to_string(),
+                                fields: Rc::new(RefCell::new(vec![])),
+                            }),
+                        }
+                    } else { err("get_opt 需要 1 个参数") }
+                }
                 "set" => {
                     if args.len() != 2 { return err("set() 需要 2 个参数 (索引, 值)"); }
                     let idx = args[0].as_int().unwrap_or(0) as usize;

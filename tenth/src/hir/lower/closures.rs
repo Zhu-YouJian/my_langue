@@ -40,6 +40,10 @@ impl Lowerer {
                     | "select"
                     | "scatter"
                     | "gather"
+                    // AUDIT-11.4.62 / 11.4.11 / command_output_ex：新增自由函数 native
+                    // （本表已腐烂但读码判定良性；新增名顺手补齐，避免闭包内误判为自由变量）
+                    | "parse_int_or" | "parse_float_or"
+                    | "index_select" | "command_output_ex"
                     // PROJ-006：自定义可微算子调用 native（Rust 端 register_custom_op + .th wrapper）
                     | "__call_custom_op"
                     // Wave 2 第 4 项：张量比较 native（返回 F64 0.0/1.0 张量）

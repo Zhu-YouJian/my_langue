@@ -209,8 +209,20 @@ impl Lowerer {
                     }
                 }
 
-                for name in names {
-                    self.scope.define_var(name.name.clone(), ty.clone(), *mutable);
+                // AUDIT-11.4.65：`let (a, b, c, d) = init` 必须**按位分解元素类型**
+                // （与 match 模式的 bind_pattern_vars 对称）。此前每个名字都拿到 init 的
+                // 整体类型（`Type::Tuple`），解构后各变量静态类型全错 = 静默错型。
+                // 仅当名字数 ≥2（解析层无法区分 `let a = …` 与 `let (a) = …`）且元数吻合时分解。
+                let elem_tys: Option<&Vec<Type>> = match &ty {
+                    Type::Tuple(elems) if names.len() >= 2 && elems.len() == names.len() => Some(elems),
+                    _ => None,
+                };
+                for (i, name) in names.iter().enumerate() {
+                    let name_ty = match elem_tys {
+                        Some(elems) => elems[i].clone(),
+                        None => ty.clone(),
+                    };
+                    self.scope.define_var(name.name.clone(), name_ty, *mutable);
                 }
 
                 // 跨语句借用跟踪（AUDIT-11.1.1 / T19 B6 + AUDIT-11.1.2 / T20 PB2 修复）：

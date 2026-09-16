@@ -840,9 +840,9 @@ th_lower_test!(th_lower_nn_feedforward, "std/nn/feedforward.th");
 th_lower_test!(th_lower_nn_layer_norm, "std/nn/layer_norm.th");
 th_lower_test!(th_lower_nn_multihead_attention, "std/nn/multihead_attention.th");
 
-// L2.2 修复：embedding.th 已改为「reshape + 加法广播构造 [S,D] index 再 gather」
-// 的实现（见 embedding.th 注释），gather ndim 限制已绕过，lower 现应成功。
-// 原 ndim 限制测试（期望 lower 失败）升级为 th_lower_test（期望 lower 成功）。
+// AUDIT-11.4.11：embedding.th 已切到 `index_select(weight, 0, indices)` 新原语
+// （见 embedding.th 注释），gather 的 ndim 限制彻底消失，lower 应成功；
+// 数值与反向由 tests/index_select_test.rs 的 `embedding_th_*` 用例实跑守护。
 th_lower_test!(th_lower_nn_embedding, "std/nn/embedding.th");
 
 // transformer.th 的 lower 受跨文件泛型函数解析限制：transformer.th 调用

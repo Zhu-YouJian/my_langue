@@ -168,6 +168,7 @@ impl Lowerer {
                             | "select"
                             | "scatter"
                             | "gather"
+                            | "index_select"
                             // PROJ-006：自定义可微算子调用 native（Rust 端 register_custom_op + .th wrapper）
                             | "__call_custom_op"
                             // Wave 2 第 4 项：张量比较 native（返回 F64 0.0/1.0 张量）
@@ -177,6 +178,7 @@ impl Lowerer {
                             | "zeros" | "ones"
                             | "save_weights" | "load_weights"
                             | "format" | "parse_int" | "parse_float"
+                            | "parse_int_or" | "parse_float_or"
                             | "to_string" | "type_name"
                             | "assert" | "assert_eq"
                             | "with_step_limit" | "with_timeout_ms" | "is_timeout"
@@ -197,6 +199,7 @@ impl Lowerer {
                             // UDP 原语（基本功核查第 69 项；handle table 模式，与 tcp_* 同构）
                             | "udp_bind" | "udp_recv_from" | "udp_send_to" | "udp_close" | "udp_set_timeout"
                             | "command_new" | "command_arg" | "command_run" | "command_output"
+                            | "command_output_ex"
                             | "http_get" | "http_post"
                             // Phase 2 Step 5：异步 I/O 原语（返回 Future）
                             | "async_sleep_ms" | "async_tcp_read" | "async_tcp_write"

@@ -755,6 +755,9 @@ impl Tape {
                     // input_tensors = [base, index, result]
                     // inputs = [base_id]
                     // dim 存于 node.aux
+                    //
+                    // 内核与 IndexSelect 反向共用 `scatter_add_along_dim`（单一权威实现，
+                    // 避免两份 scatter-add 长期漂移；回归门 = gather_test 的 4 个 backward 用例）。
                     if node.input_tensors.len() >= 3 {
                         let dim = node.aux;
                         let (base_shape, index_data, index_shape) = {
@@ -762,46 +765,53 @@ impl Tape {
                             let index_ref = node.input_tensors[1].borrow();
                             (base_ref.shape(), index_ref.data.clone(), index_ref.shape().to_vec())
                         };
-                        // Gather 是 index-based 操作，用 f64 视图计算，最后按 node.dtype 转换存储
-                        let grad_view = grad.as_f64_view();
                         let index_view = index_data.as_f64_view();
-                        let total: usize = index_shape.iter().product();
-                        let unflatten = |flat: usize| -> Vec<usize> {
-                            let mut multi = vec![0usize; index_shape.len()];
-                            let mut rem = flat;
-                            for i in (0..index_shape.len()).rev() {
-                                multi[i] = rem % index_shape[i];
-                                rem /= index_shape[i];
-                            }
-                            multi
+                        // Gather：index 与 out 同形，逐元素对应 idx = index[multi]
+                        let d_base = scatter_add_along_dim(
+                            &grad,
+                            &index_shape,
+                            &base_shape,
+                            dim,
+                            |multi| Some(index_view[IxDyn(multi)] as usize),
+                            node.dtype,
+                            "Gather",
+                        )?;
+                        propagate_grad(node, 0, &d_base, &mut node_grads)?;
+                    }
+                }
+                TapeOp::IndexSelect => {
+                    // IndexSelect backward（AUDIT-11.4.11）:
+                    //   forward: out[..., k, ...] = base[..., index[k], ...]（index 为 1-D）
+                    //   d_base = zeros_like(base)
+                    //   对 out 的每个 multi: d_base[actual] += grad[multi]，
+                    //     其中 actual = multi，但 actual[dim] = index[multi[dim]]（1-D index 广播）
+                    //   index 不可微（无梯度）
+                    //   重复 index → 累加（与 gather 同语义）
+                    // input_tensors = [base, index, result]
+                    // inputs = [base_id]
+                    // dim 存于 node.aux
+                    if node.input_tensors.len() >= 3 {
+                        let dim = node.aux;
+                        let (base_shape, index_data, out_shape) = {
+                            let base_ref = node.input_tensors[0].borrow();
+                            let index_ref = node.input_tensors[1].borrow();
+                            let result_ref = node.input_tensors[2].borrow();
+                            (base_ref.shape(), index_ref.data.clone(), result_ref.shape().to_vec())
                         };
-                        let base_total: usize = base_shape.iter().product();
-                        let mut d_base_data: Vec<f64> = vec![0.0; base_total];
-                        for flat in 0..total {
-                            let multi = unflatten(flat);
-                            let mut actual = multi.clone();
-                            let v = index_view[IxDyn(&multi)];
-                            actual[dim] = v as usize;
-                            let actual_flat = flatten_index(&actual, &base_shape);
-                            let g = grad_view.get(IxDyn(&multi)).copied().unwrap_or(0.0);
-                            if let Some(slot) = d_base_data.get_mut(actual_flat) {
-                                *slot += g;
-                            }
-                        }
-                        let d_base = match node.dtype {
-                            BaseType::F32 => TensorData::F32(
-                                ArrayD::from_shape_vec(IxDyn(&base_shape), d_base_data.iter().map(|v| *v as f32).collect())
-                                    .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
-                                        message: "Gather 反向 d_base reshape 失败".into(),
-                                    })?
-                            ),
-                            _ => TensorData::F64(
-                                ArrayD::from_shape_vec(IxDyn(&base_shape), d_base_data)
-                                    .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
-                                        message: "Gather 反向 d_base reshape 失败".into(),
-                                    })?
-                            ),
-                        };
+                        let index_view = index_data.as_f64_view();
+                        // IndexSelect：index 是 1-D 位置列表，按 multi[dim] 查一次、对 leading/trailing 广播
+                        let d_base = scatter_add_along_dim(
+                            &grad,
+                            &out_shape,
+                            &base_shape,
+                            dim,
+                            |multi| {
+                                let k = *multi.get(dim)?;
+                                index_view.get(IxDyn(&[k])).map(|v| *v as usize)
+                            },
+                            node.dtype,
+                            "IndexSelect",
+                        )?;
                         propagate_grad(node, 0, &d_base, &mut node_grads)?;
                     }
                 }
@@ -1277,6 +1287,78 @@ fn flatten_index(multi: &[usize], shape: &[usize]) -> usize {
         stride *= shape[d];
     }
     flat
+}
+
+/// 与 `flatten_index` 对偶：把线性索引展平回多维索引（row-major / C order）。
+fn unflatten_index(flat: usize, shape: &[usize]) -> Vec<usize> {
+    let mut multi = vec![0usize; shape.len()];
+    let mut rem = flat;
+    for i in (0..shape.len()).rev() {
+        multi[i] = if shape[i] == 0 { 0 } else { rem % shape[i] };
+        rem = if shape[i] == 0 { 0 } else { rem / shape[i] };
+    }
+    multi
+}
+
+/// 沿 `dim` 维把 `grad` **scatter-add** 进 `d_base`（Gather / IndexSelect 反向共用的
+/// 单一权威内核，符合"同一份信息只写一处"）。
+///
+/// 语义：对 out（shape = `out_shape`）的每个 row-major 位置 `multi`：
+///   - `target = idx_of(&multi)`（返回 None → 跳过该元素）
+///   - `actual = multi; actual[dim] = target`
+///   - `d_base[flatten(actual)] += grad[multi]`
+/// 重复目标位置**自然累加**（PyTorch gather / index_select 的反向语义）。
+///
+/// `dtype`：F32 → 返回 `TensorData::F32`；其余（F64/F16/BF16）→ `TensorData::F64`。
+fn scatter_add_along_dim(
+    grad: &TensorData,
+    out_shape: &[usize],
+    base_shape: &[usize],
+    dim: usize,
+    idx_of: impl Fn(&[usize]) -> Option<usize>,
+    dtype: BaseType,
+    op_label: &str,
+) -> Result<TensorData, crate::error::TenthError> {
+    let grad_view = grad.as_f64_view();
+    let total: usize = out_shape.iter().product();
+    let base_total: usize = base_shape.iter().product();
+    let mut d_base_data: Vec<f64> = vec![0.0; base_total];
+    let dim_bound = base_shape.get(dim).copied().unwrap_or(0);
+    for flat in 0..total {
+        let multi = unflatten_index(flat, out_shape);
+        let target = match idx_of(&multi) {
+            Some(t) => t,
+            None => continue,
+        };
+        // index 越界（前向已校验；此处 defense in depth，越界则丢弃该元素而非 panic）
+        if target >= dim_bound {
+            continue;
+        }
+        let mut actual = multi.clone();
+        actual[dim] = target;
+        let actual_flat = flatten_index(&actual, base_shape);
+        let g = grad_view.get(IxDyn(&multi)).copied().unwrap_or(0.0);
+        if let Some(slot) = d_base_data.get_mut(actual_flat) {
+            *slot += g;
+        }
+    }
+    match dtype {
+        BaseType::F32 => Ok(TensorData::F32(
+            ArrayD::from_shape_vec(
+                IxDyn(base_shape),
+                d_base_data.iter().map(|v| *v as f32).collect(),
+            )
+            .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
+                message: format!("{} 反向 d_base reshape 失败", op_label),
+            })?,
+        )),
+        _ => Ok(TensorData::F64(
+            ArrayD::from_shape_vec(IxDyn(base_shape), d_base_data)
+                .map_err(|_| crate::error::TenthError::RuntimeError { line: None, col: None,
+                    message: format!("{} 反向 d_base reshape 失败", op_label),
+                })?,
+        )),
+    }
 }
 
 /// Reduce `grad` from the output shape down to `target_shape` by summing

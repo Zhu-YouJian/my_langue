@@ -356,6 +356,35 @@ impl Tape {
         id
     }
 
+    /// Record an index_select node: out = base.index_select(dim, index)
+    /// （沿 dim 维按 **1-D** index 收集切片；AUDIT-11.4.11）。
+    /// `base_id` — 上游节点 id（index 阻断链式传播，不写入 inputs）。
+    /// `base` / `index` — 实际输入张量。
+    /// `result` — 输出张量（shape == base.shape 的 dim 槽替换为 index.len()）。
+    /// inputs 固定为 [base_id]（若为 None 则用 dummy input 占位），
+    /// 保证 backward 时 propagate_grad(node, 0, d_base) 索引对齐。
+    pub fn index_select(
+        &mut self,
+        base_id: Option<usize>,
+        base: Rc<RefCell<Tensor>>,
+        index: Rc<RefCell<Tensor>>,
+        result: Rc<RefCell<Tensor>>,
+        dim: usize,
+    ) -> usize {
+        let bid = base_id.unwrap_or_else(|| self.input(base.clone()));
+        let dtype = result.borrow().dtype;
+        let id = self.next_id();
+        self.nodes.push(TapeNode {
+            id,
+            op: TapeOp::IndexSelect,
+            inputs: vec![bid],
+            input_tensors: vec![base, index, result],
+            aux: dim,
+            dtype,
+        });
+        id
+    }
+
     /// Record a masked_fill node: result = input.masked_fill(mask, value).
     /// `input_id` — 上游节点 id（mask 阻断链式传播，不写入 inputs）。
     /// `input` / `mask` — 实际输入张量（mask 用于反向 0/1 屏蔽）。

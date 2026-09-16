@@ -306,6 +306,35 @@ impl super::Interpreter {
                     }),
                 }
             }
+            // AUDIT-11.4.40（本轮"部分缓解"路线②）：真 Option 版本的读取方法。
+            // 与 VM 侧 runtime/vm/natives.rs 的同名臂逐字同构（值形态照 weak_upgrade）：
+            // 越界 / 空 Vec → Option::None（不报错）；命中 → Some(v.clone())。
+            // 注意：解释器 `push` 把元素包成 Value::Shared（见上方注释"此包装承重勿删"），
+            // 因此这里**照同侧 `get` 一样**原样返回（v.clone()），不得引入新的包装/解包，
+            // 否则 `or_die(v.get_opt(i))` 与 `v.get(i)` 不等价（11.4.61 同族问题）。
+            // `get`/`pop` 的语义与标注一律不动。
+            "get_opt" | "try_get" => {
+                if args.len() != 1 {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: "get_opt() 需要 1 个参数".into(),
+                    });
+                }
+                let idx = args[0].as_int().unwrap_or(0) as usize;
+                let vec = items.borrow();
+                let value = match vec.get(idx) {
+                    Some(v) => Value::Enum {
+                        enum_name: "Option".to_string(),
+                        variant: "Some".to_string(),
+                        fields: Rc::new(RefCell::new(vec![("_0".to_string(), v.clone())])),
+                    },
+                    None => Value::Enum {
+                        enum_name: "Option".to_string(),
+                        variant: "None".to_string(),
+                        fields: Rc::new(RefCell::new(vec![])),
+                    },
+                };
+                Ok(Some(value))
+            }
             "set" => {
                 if args.len() != 2 {
                     return Err(TenthError::RuntimeError { line: None, col: None,

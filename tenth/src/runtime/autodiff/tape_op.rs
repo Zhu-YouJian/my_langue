@@ -173,6 +173,12 @@ pub enum TapeOp {
     /// input_tensors = [base, index, result]
     /// inputs = [base_id]（index 阻断链式传播，不写入 inputs）
     Gather,
+    /// IndexSelect: out[..., k, ...] = base[..., index[k], ...]（沿 dim 维按 **1-D** index 收集切片）。
+    /// index 不可微；out.shape = base.shape 的 dim 槽替换为 index.len()（AUDIT-11.4.11）。
+    /// input_tensors = [base, index, result]
+    /// inputs = [base_id]（index 阻断链式传播，不写入 inputs）
+    /// dim 存于 TapeNode.aux
+    IndexSelect,
     /// Reshape: result = input.reshape(target_shape)（元素数不变，仅重排）。
     /// input_tensors = [input, result]（原始 shape 从 input.shape() 读取）
     /// backward: d_input = grad.reshape(input.shape())

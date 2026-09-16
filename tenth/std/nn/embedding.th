@@ -10,16 +10,18 @@
 // Returns: (N, dim) — embedded vectors
 //
 // Autodiff: gradient flows back to the weight matrix.
-// 实现：基于 gather native（base=weight 可微，梯度通过 scatter-add 传播；
-//       index=indices 不可微，符合 embedding 语义）。
-// gather 已接入 TapeOp::Gather（runtime/natives.rs + interpreter/natives.rs）。
+// 实现：基于 index_select native（AUDIT-11.4.11；base=weight 可微，梯度通过
+//       scatter-add 传播；index=indices 不可微，符合 embedding 语义）。
+// index_select 已接入 TapeOp::IndexSelect（runtime/natives.rs + interpreter/natives.rs
+// + runtime/autodiff/{tape_op,backward,mod,grad}.rs）。
 // Sparse gradient updates are not yet supported; full dense update is used.
 //
-// 运行时限制：Tenth 的 gather 要求 index.ndim() == base.ndim()，且除 dim 维外
-// 其他维度 shape 一致（PyTorch gather 语义）。直接对 weight [V,D] + indices [S]
-// 调用会因 ndim 不匹配报错。实际执行需调用方将 indices 扩展为 [S, D] 形式
-// （每行重复同一 token id），或等运行时部提供 index_select / interpreter 端
-// broadcast_to 支持。.th 文件本身的 parse/lower 由 stdlib_test 覆盖。
+// 原 L2.2 运行时限制已消失：旧实现要求 index.ndim() == base.ndim()（gather 语义），
+// 必须把 indices [S] 手工扩成 [S, D] 的 f64 索引张量（reshape + 加法广播），
+// 额外付出 O(S·D) 的索引内存与 2 个 tape 节点（Reshape + 广播 Add）。
+// index_select 接受 **1-D** index，out.shape = weight.shape 的 dim 槽替换为
+// index.len()，即 weight [V,D] + indices [S] → [S,D]（PyTorch embedding 语义），
+// 1 个 tape 节点、O(S) 索引。
 //
 // 符号维度标注（Phase 2 短期规划方向 3）：
 //   weight: [V, D]      embedding 矩阵（vocab_size, dim）
@@ -29,21 +31,15 @@
 // Embedding lookup: weight[indices]
 // Each index selects a row from the weight matrix.
 //
-// L2.2 修复（方案 b：改实现，不动 runtime）：
-//   gather native 要求 index.ndim == base.ndim（PyTorch gather 语义），
-//   直接 gather(weight, 0, indices)（indices 1D vs weight 2D）会报 ndim 不匹配。
-//   改为先构造 [S, D] 的 index 张量：indices [S] → reshape [S,1] →
-//   `+ zeros(seq_len, dim)`（加法广播 [S,1]→[S,D]）使 index[i,j] = indices[i]，
-//   再 gather(weight, 0, idx2d)：out[i,j] = weight[indices[i], j]（PyTorch embedding 语义）。
-//   VM 与解释器双路径均支持 reshape/加法广播/gather。
-//   seq_len/dim 显式传入（运行时无 shape()/to_vec()，与 multihead_attention.th 模式一致）。
-// 注：indices 类型保留 f64（元数据语义，非数据；gather 内部按 as_int 整数处理）。
+// seq_len/dim 参数保留（签名不变，零破坏）：运行时无 shape()/to_vec()，
+// 与 multihead_attention.th 模式的 4 参形态一致；index_select 本身不需要它们。
+// 注：indices 类型保留 f64（元数据语义，非数据；index_select 内部按整数校验，
+//     NaN/非整数会**响亮报错**而非静默截断）。
 fn embedding<T>(
     weight: Tensor[T, ..],
     indices: Tensor[f64, ..],
     seq_len: i64,
     dim: i64,
 ) -> Tensor[T, ..] {
-    let idx2d = indices.reshape(seq_len, 1) + zeros(seq_len, dim);
-    gather(weight, 0, idx2d)
+    index_select(weight, 0, indices)
 }

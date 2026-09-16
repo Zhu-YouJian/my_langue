@@ -126,6 +126,9 @@ pub fn classify_tape_op(op: &TapeOp, registry: Option<&CustomOpRegistry>) -> Tap
         | TapeOp::Scatter
         // Gather：输出 shape == index.shape（从输入张量继承 shape，非新构造）
         | TapeOp::Gather
+        // IndexSelect：输出 shape = base.shape 的 dim 槽替换为 index.len()，
+        // 秩与 base 相同（同样是从输入继承，非新构造）
+        | TapeOp::IndexSelect
         // MaskedFill：保留 input shape（仅覆盖部分位置，shape 不变）
         | TapeOp::MaskedFill => TapeOpClass::Preserve,
 

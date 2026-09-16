@@ -259,7 +259,11 @@ const M16_NN_EMBEDDING: &str = r#"
 use std::nn::embedding::embedding
 
 let weight = tensor[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
-let indices = tensor[[0.0, 2.0]];
+// AUDIT-11.4.11：embedding.th 已切到 index_select 原语，**index 必须 1-D**
+// （旧 gather 实现要求 index.ndim == base.ndim，故此处曾是 2-D 的 tensor[[0.0, 2.0]]）。
+// `embedding.th` 的契约本就是 1-D、`indices: (N,)`，故这里显式 flatten；
+// 期望值不变：weight 第 0/2 行 → [[1,2],[5,6]]，numel=4、sum=14。
+let indices = tensor[[0.0, 2.0]].flatten();
 let e = embedding<f64>(weight, indices, 2, 2);
 e.numel() == 4 && e.sum() == 14.0
 "#;

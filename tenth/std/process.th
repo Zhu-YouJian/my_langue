@@ -21,3 +21,12 @@ fn run(cmd_handle: i64) -> Result<i64> {
 fn output(cmd_handle: i64) -> Result<String> {
     command_output(cmd_handle)
 }
+
+// 一次 spawn 同源返回三轴 + 超时标志（AUDIT 未登记；W6 新增）：
+//   (stdout, stderr, exit_code, timed_out)
+// timeout_ms ≤ 0 或缺省 ⇒ 不设超时（阻塞至结束，与 output 一致）。
+// **第 4 元素必须检查**：timed_out=true 时 exit_code 为 -1，stdout/stderr 是
+// 进程被 kill 前已产生的**部分输出**（它们正是定位卡死的证据，故超时不走 Err）。
+fn output_ex(cmd_handle: i64, timeout_ms: i64) -> (String, String, i64, bool) {
+    command_output_ex(cmd_handle, timeout_ms)
+}

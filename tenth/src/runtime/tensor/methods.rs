@@ -1909,8 +1909,167 @@ impl Tensor {
         }
     }
 
+    /// IndexSelect（AUDIT-11.4.11）：沿 `dim` 维按 **1-D** `index` 收集切片
+    /// （与 PyTorch `torch.index_select(input, dim, index)` 对齐）。
+    ///
+    /// - `out.shape = base.shape[..dim] + [index.len()] + base.shape[dim+1..]`
+    ///   （embedding 场景：`base[V,D]` + `index[S]` → `[S,D]`）
+    /// - `index` 必须 **1-D**（2-D 及以上是 `gather` 的语义，两者不通用）
+    /// - `index` 元素严格化：NaN / 非整数 → **响亮报错**（`gather` 现状是 `as i64`
+    ///   静默截断——NaN→0、1.7→1，静默选错行；那是另立的 `AUDIT-11.4.68`，本原语不继承）
+    /// - dtype 跟随 `base`（f64/f32/f16/bf16 四臂）
+    /// - 空 `index`（len==0）→ dim 维为 0 的空张量，不 panic
+    /// - `dim` 越界 / base 为标量 → 响亮报错
+    pub fn index_select(base: &Tensor, dim: usize, index: &Tensor) -> Result<Tensor, String> {
+        let base_shape = base.shape();
+        if base_shape.is_empty() {
+            return Err("index_select: base 必须为非标量张量".into());
+        }
+        if dim >= base.ndim() {
+            return Err(format!(
+                "index_select: dim={} 越界（base ndim={}）",
+                dim,
+                base.ndim()
+            ));
+        }
+        if index.ndim() != 1 {
+            return Err(format!(
+                "index_select: index 必须是一维张量（ndim=1），实际 ndim={}（多维 index 请用 gather）",
+                index.ndim()
+            ));
+        }
+        let dim_len = base_shape[dim];
+        let idx_len = index.shape()[0];
+        // 严格校验 index 元素（NaN / 非整数 / 越界 → 响亮）
+        let index_view = index.data.as_f64_view();
+        let mut idxs: Vec<usize> = Vec::with_capacity(idx_len);
+        for (i, v) in index_view.iter().enumerate() {
+            if !v.is_finite() || v.fract() != 0.0 {
+                return Err(format!(
+                    "index_select: index[{}]={} 不是整数（index 必须为整数张量）",
+                    i, v
+                ));
+            }
+            if *v < 0.0 || (*v as usize) >= dim_len {
+                return Err(format!(
+                    "index_select: index[{}]={} 越界（base 第 {} 维长度={}）",
+                    i, v, dim, dim_len
+                ));
+            }
+            idxs.push(*v as usize);
+        }
+        // 输出 shape：base.shape 的 dim 槽替换为 index.len()
+        let mut out_shape: Vec<usize> = Vec::with_capacity(base_shape.len());
+        out_shape.extend_from_slice(&base_shape[..dim]);
+        out_shape.push(idx_len);
+        out_shape.extend_from_slice(&base_shape[dim + 1..]);
+        let leading: usize = base_shape[..dim].iter().product();
+        let trailing: usize = base_shape[dim + 1..].iter().product();
+        let total = leading * idx_len * trailing;
+
+        // f64 视图取值 + 按 base dtype 回写（f64→f32/f16/bf16 的窄化是精确往返：
+        // 值本就来自同 dtype，先 widen 再 narrow 不引入误差）
+        //
+        // 下标构造：把 (leading 下标, index 位置, trailing 下标) 还原成 base 的**完整**
+        // 多维下标（leading/trailing 各自可能不止一维，不能直接用 [l,k,t] 三元组索引）。
+        let ndim = base_shape.len();
+        let base_view = base.data.as_f64_view();
+        let mut actual = vec![0usize; ndim];
+        match base.data {
+            TensorData::F32(_) => {
+                let mut out: Vec<f32> = Vec::with_capacity(total);
+                for l in 0..leading {
+                    let mut rem = l;
+                    for i in (0..dim).rev() {
+                        actual[i] = rem % base_shape[i];
+                        rem /= base_shape[i];
+                    }
+                    for &k in &idxs {
+                        actual[dim] = k;
+                        for t in 0..trailing {
+                            let mut rem2 = t;
+                            for i in ((dim + 1)..ndim).rev() {
+                                actual[i] = rem2 % base_shape[i];
+                                rem2 /= base_shape[i];
+                            }
+                            out.push(base_view[IxDyn(&actual)] as f32);
+                        }
+                    }
+                }
+                Ok(Tensor::from_vec_f32(out, out_shape))
+            }
+            TensorData::F16(_) => {
+                let mut out: Vec<f16> = Vec::with_capacity(total);
+                for l in 0..leading {
+                    let mut rem = l;
+                    for i in (0..dim).rev() {
+                        actual[i] = rem % base_shape[i];
+                        rem /= base_shape[i];
+                    }
+                    for &k in &idxs {
+                        actual[dim] = k;
+                        for t in 0..trailing {
+                            let mut rem2 = t;
+                            for i in ((dim + 1)..ndim).rev() {
+                                actual[i] = rem2 % base_shape[i];
+                                rem2 /= base_shape[i];
+                            }
+                            out.push(f16::from_f64(base_view[IxDyn(&actual)]));
+                        }
+                    }
+                }
+                Ok(Tensor::from_vec_f16(out, out_shape))
+            }
+            TensorData::BF16(_) => {
+                let mut out: Vec<bf16> = Vec::with_capacity(total);
+                for l in 0..leading {
+                    let mut rem = l;
+                    for i in (0..dim).rev() {
+                        actual[i] = rem % base_shape[i];
+                        rem /= base_shape[i];
+                    }
+                    for &k in &idxs {
+                        actual[dim] = k;
+                        for t in 0..trailing {
+                            let mut rem2 = t;
+                            for i in ((dim + 1)..ndim).rev() {
+                                actual[i] = rem2 % base_shape[i];
+                                rem2 /= base_shape[i];
+                            }
+                            out.push(bf16::from_f64(base_view[IxDyn(&actual)]));
+                        }
+                    }
+                }
+                Ok(Tensor::from_vec_bf16(out, out_shape))
+            }
+            _ => {
+                let mut out: Vec<f64> = Vec::with_capacity(total);
+                for l in 0..leading {
+                    let mut rem = l;
+                    for i in (0..dim).rev() {
+                        actual[i] = rem % base_shape[i];
+                        rem /= base_shape[i];
+                    }
+                    for &k in &idxs {
+                        actual[dim] = k;
+                        for t in 0..trailing {
+                            let mut rem2 = t;
+                            for i in ((dim + 1)..ndim).rev() {
+                                actual[i] = rem2 % base_shape[i];
+                                rem2 /= base_shape[i];
+                            }
+                            out.push(base_view[IxDyn(&actual)]);
+                        }
+                    }
+                }
+                Ok(Tensor::from_vec(out, out_shape))
+            }
+        }
+    }
+
     /// Permute dimensions. Only supports 2D/3D/4D tensors.
     pub fn permute(&self, dims: &[usize]) -> Result<Tensor, String> {
+
         let ndim = self.ndim();
         if dims.len() != ndim {
             return Err(format!("permute: expected {} dims, got {}", ndim, dims.len()));

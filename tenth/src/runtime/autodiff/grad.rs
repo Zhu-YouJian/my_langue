@@ -132,6 +132,7 @@ pub(crate) fn op_name(op: &TapeOp) -> Cow<'static, str> {
         TapeOp::Abs => Cow::Borrowed("Abs"),
         TapeOp::Scatter => Cow::Borrowed("Scatter"),
         TapeOp::Gather => Cow::Borrowed("Gather"),
+        TapeOp::IndexSelect => Cow::Borrowed("IndexSelect"),
         TapeOp::Reshape => Cow::Borrowed("Reshape"),
         TapeOp::MaskedFill => Cow::Borrowed("MaskedFill"),
         TapeOp::MaxPool2D => Cow::Borrowed("MaxPool2D"),

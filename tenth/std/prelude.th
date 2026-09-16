@@ -28,6 +28,17 @@
 //   read_file, write_bytes, read_bytes — file I/O
 //   save_weights, load_weights — model serialization
 //   format, parse_int, parse_float — formatting & parsing
+//   parse_int_or, parse_float_or — 带**失败信道**的解析：返回真 Result<i64/f64, str>
+//                                  （解析失败 ⇒ Err（含原文与原因），不再静默返回 0/0.0）。
+//                                  消费：or_die(r) / assume_ok(r) / match（`?` 对 Result 可用）
+//   get_opt, try_get             — Vec 的**真 Option** 读取方法（不是 native）：
+//                                  v.get_opt(i) → Option<T>，越界/空 ⇒ None（不报错）
+//                                  消费：or_die(v.get_opt(i)) / match（`?` 对 Option 未支持）
+//   index_select(base, dim, index) — 沿 dim 维按 **1-D** index 收集切片（native 自由函数）
+//                                   out.shape = base.shape 的 dim 槽替换为 index.len()
+//                                   dtype 跟随 base；index NaN/非整数 → 响亮报错
+//                                   （与 gather 的区别：index 必须 1-D，两者不通用）
+//   select, gather, scatter      — 条件选择 / 沿 dim 收集 / 不可变散布原语（可微）
 //   path_join, path_exists, path_is_file, path_is_dir — path operations
 //   mkdir, list_dir, file_size, remove_file, copy_file, rename_file — filesystem
 //   print                    — output without newline
@@ -115,6 +126,10 @@
 //   command_run(handle)      — spawn & wait -> Result<i64> (exit code)
 //   command_output(handle)   — spawn & capture stdout -> Result<String>
 //                              (consumes handle; subsequent calls return Err)
+//   command_output_ex(handle, timeout_ms) — 一次 spawn 同源返回
+//                              (stdout: str, stderr: str, exit_code: i64, timed_out: bool)
+//                              timeout_ms ≤ 0 ⇒ 不设超时；超时 ⇒ timed_out=true 且
+//                              stdout/stderr 为**部分输出**（不走 Err）。**第 4 元素必须检查**。
 
 // ── HTTP (built-in native functions) ──
 //   http_get(url)            — HTTP/1.1 GET request -> Result<String>
@@ -197,7 +212,7 @@
 //   std::net::connect, read, write, close, set_timeout           // TCP 客户端（包装 tcp_* native，handle table 模式；net.th 在 std 根目录）
 //   std::net::listen, accept, listener_close                     // TCP 服务端（包装 tcp_listen/tcp_accept/tcp_listener_close native）
 //   (built-in, no import needed) udp_bind, udp_recv_from, udp_send_to, udp_close, udp_set_timeout  // UDP native（基本功核查第 69 项，直接暴露，无 wrapper）
-//   std::process::new, arg, run, output                          // 子进程执行（包装 command_new/command_arg/command_run/command_output native，handle table 模式）
+//   std::process::new, arg, run, output, output_ex                // 子进程执行（包装 command_new/command_arg/command_run/command_output/command_output_ex native，handle table 模式）
 //   std::http::get, post                                         // HTTP/1.1 客户端（手写协议，无 HTTPS；http.th 在 std 根目录）
 //   std::async                                                  // 异步 I/O 文档（async_sleep_ms/async_tcp_read/async_tcp_write 为 built-in native）
 //   std::json::json::parse, stringify, stringify_pretty, load, save   // L2.3b 勘误：API 实为 parse/stringify/stringify_pretty（encode/decode/encode_pretty 不存在）

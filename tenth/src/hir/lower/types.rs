@@ -816,6 +816,16 @@ impl Lowerer {
                 "push" => Type::unit(),
                 "pop" => Type::Enum("Option".to_string()),
                 "get" => Type::Enum("Option".to_string()),
+                // AUDIT-11.4.40（本轮"部分缓解"路线②）：**新增**的真 Option 方法标注。
+                // 必须是 `Generic{base: Enum("Option"), args:[inner]}`，**不是**裸 `Enum("Option")`：
+                //   ① `or_die`/`assume_ok` 只从 Generic 抽内型；
+                //   ② M3.4 误用告警只认 Generic（裸 `Enum("Option")` 被 lower_stmt 刻意跳过）。
+                // 上面 `pop`/`get` 的标注**有意不动**（改它会放开 `tenth/std/**` 约 178 处
+                // `.get(` 的下游类型解析，风险远超收益；`get` 的运行时语义也不动）。
+                "get_opt" | "try_get" => Type::Generic {
+                    base: Box::new(Type::Enum("Option".to_string())),
+                    args: vec![inner.as_ref().clone()],
+                },
                 "map" | "filter" => Type::Array { inner: inner.clone(), size: *size },
                 "is_empty" => Type::bool_(),
                 "iter" => Type::Unknown,
@@ -895,6 +905,17 @@ impl Lowerer {
             | "tcp_listen" | "tcp_accept" | "command_new" | "command_run" | "command_output" => {
                 Ok(Type::Enum("Result".to_string()))
             }
+            // command_output_ex(handle, timeout_ms?)：一次 spawn 同源返回
+            // **4 元组** `(stdout: str, stderr: str, exit_code: i64, timed_out: bool)`。
+            // 元组返回已是一等（先例 date_from_unix_days 的 `-> (i64,i64,i64)`），
+            // 故无需 VM/JIT/WASM 指令或 hir/hir.rs 结构变更。
+            // `timed_out` 是值级标志（不是 Result 外壳）：超时的部分输出必须能被用户拿到。
+            "command_output_ex" => Ok(Type::Tuple(vec![
+                Type::str_(),
+                Type::str_(),
+                Type::Base(BaseType::I64),
+                Type::bool_(),
+            ])),
             // UDP 原语（基本功核查第 69 项）：close/set_timeout 返回 Unit；bind/recv_from/send_to 返回 Result
             // recv_from 内部返回 Tuple<Vec<i64>, String>，但 HIR 类型推断保守返回 Result 枚举
             // （Tuple 内部类型在运行时由 native 填充，与 tcp_read 的 Vec<i64> 同模式）。
@@ -993,6 +1014,22 @@ impl Lowerer {
             "is_timeout" => Ok(Type::bool_()),
             "parse_int" => Ok(Type::Enum("Option".to_string())),
             "parse_float" => Ok(Type::Enum("Option".to_string())),
+            // AUDIT-11.4.62：带失败信道的解析原语——返回**真 `Result<T, str>`**。
+            //
+            // 形态必须是 `Type::Generic{base: Enum("Result"), args:[T, str]}`，
+            // **绝不能**写裸 `Type::Enum("Result")`（那正是 AUDIT-11.4.40 的老路）：
+            //   ① `or_die`/`assume_ok` 只从 Generic 抽 `args[0]`（见本文件上方分支），
+            //      裸标 ⇒ `or_die(parse_int_or(s))` 静态得 Unknown，类型链路断在这里；
+            //   ② M3.4 误用告警只认 Generic、**刻意跳过**裸 `Type::Enum("Option")`。
+            // 内型 i64/f64 与运行时构造的值 dtype 同源（VM 与解释器都返 Int(v, I64) / Float(v)）。
+            "parse_int_or" => Ok(Type::Generic {
+                base: Box::new(Type::Enum("Result".to_string())),
+                args: vec![Type::Base(BaseType::I64), Type::str_()],
+            }),
+            "parse_float_or" => Ok(Type::Generic {
+                base: Box::new(Type::Enum("Result".to_string())),
+                args: vec![Type::f64(), Type::str_()],
+            }),
             // 标量数学函数：dtype 跟随输入
             // `abs` 单列（P-4 / AUDIT-11.4.32 遗留②）：运行时对整数输入返回 **Int**、
             // 浮点返回同精度浮点，故静态 dtype 也必须跟随**输入**而非一律 f64。
@@ -1055,8 +1092,55 @@ impl Lowerer {
                 };
                 Ok(Type::tensor(base_dtype, index_dims))
             },
+            // index_select(base, dim, index)（AUDIT-11.4.11）——native 自由函数。
+            //   out.shape = base.shape 的 dim 槽替换为 index.len()（其余维不变）
+            //   dtype 跟随 base
+            // 静态判据：
+            //   - index 的 ndim 静态可知且 != 1 → **编译期 TypeError**（运行时再校验一次）
+            //   - dim 非字面量 → 同秩全 `Dim::Any`（**不得**原样返回 base dims——
+            //     那会静默宣称"shape 不变"，正是护城河要防的静默错值）
+            "index_select" => {
+                let (base_dtype, base_dims) = match args.first().map(|a| &a.ty) {
+                    Some(Type::Tensor { dtype, dims }) => ((**dtype).clone(), dims.clone()),
+                    _ => (
+                        Type::Base(Self::infer_tensor_dtype(args)),
+                        vec![Dim::Any],
+                    ),
+                };
+                // index 静态 ndim 校验（1-D 是硬要求）
+                let index_first_dim = match args.get(2).map(|a| &a.ty) {
+                    Some(Type::Tensor { dims, .. }) => {
+                        if dims.len() != 1 {
+                            return Err(TenthError::TypeError {
+                                line: _span.line,
+                                col: _span.col,
+                                message: format!(
+                                    "index_select: index 必须是一维张量（ndim=1），静态类型为 {} 维；多维 index 请用 gather",
+                                    dims.len()
+                                ),
+                            });
+                        }
+                        dims.first().cloned().unwrap_or(Dim::Any)
+                    }
+                    _ => Dim::Any,
+                };
+                let dims = match args.get(1).map(|a| &a.kind) {
+                    Some(HirExprKind::Literal(Literal::Int(d, _)))
+                        if *d >= 0 && (*d as usize) < base_dims.len() =>
+                    {
+                        let mut ds = base_dims.clone();
+                        ds[*d as usize] = index_first_dim;
+                        ds
+                    }
+                    // dim 非字面量 / 越界 / 缺参 → 同秩全 Any
+                    // （**不得**原样返回 base dims：那会静默宣称 shape 不变）
+                    _ => vec![Dim::Any; base_dims.len().max(1)],
+                };
+                Ok(Type::Tensor { dtype: Box::new(base_dtype), dims })
+            },
             // PROJ-006：__call_custom_op(op_id, ...inputs)
             // 编译期无法预知用户算子的 forward_shape（CustomBackward::forward_shape 默认 None），
+
             // 保守返回 Tensor[Dim::Any]（dtype 跟随输入张量，护城河 A 走运行时兜底）。
             "__call_custom_op" => {
                 // 从 args[1..] 推断 dtype（若任一为 F32 则 F32，否则 F64）

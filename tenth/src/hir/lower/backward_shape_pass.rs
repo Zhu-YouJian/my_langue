@@ -445,7 +445,7 @@ fn is_tensor_op(name: &str) -> bool {
         // shape 变换
         | "reshape" | "view"
         // 索引/掩码
-        | "scatter" | "gather" | "masked_fill" | "select"
+        | "scatter" | "gather" | "index_select" | "masked_fill" | "select"
         // 逐元素一元（反向 shape 与输入一致，传播时直接传递）
         | "neg" | "relu" | "exp" | "log" | "sigmoid" | "abs"
         | "softmax" | "dropout" | "batch_norm" | "layer_norm" | "gelu"

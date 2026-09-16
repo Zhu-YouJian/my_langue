@@ -159,6 +159,23 @@ pub(super) fn backward_shape(
             Ok(grads)
         }
 
+        // ── index_select ──────────────────────────────────────────────
+        // 前向: base, dim, index → result
+        //   result.shape = base.shape 的 dim 槽替换为 index.len()（其余维与 base 一致）
+        // 反向: d_base = base_shape（通过 scatter-add），dim/index 不传梯度
+        "index_select" => {
+            let mut grads = Vec::with_capacity(fwd_in_shapes.len());
+            for (i, in_shape) in fwd_in_shapes.iter().enumerate() {
+                if i == 0 {
+                    grads.push(in_shape.clone());
+                } else {
+                    // dim(index 1) / index(index 2) 不可微
+                    grads.push(vec![]);
+                }
+            }
+            Ok(grads)
+        }
+
         // ── masked_fill ───────────────────────────────────────────────
         // 前向: input, mask → result（result shape == input shape）
         // 反向: d_input = grad * (1 - mask)，shape == input shape
@@ -216,10 +233,10 @@ pub(super) fn check_backward_shape_compat(
     span: &Span,
 ) -> TenthResult<()> {
     // 对于依赖 output shape 的算子，output 全 Any 时跳过
-    // cross_entropy/sum/mean/gather/scatter/reshape 的检查不依赖 output 静态信息
+    // cross_entropy/sum/mean/gather/scatter/index_select/reshape 的检查不依赖 output 静态信息
     let depends_on_output = !matches!(
         op,
-        "cross_entropy" | "sum" | "mean" | "gather" | "scatter" | "reshape" | "view"
+        "cross_entropy" | "sum" | "mean" | "gather" | "scatter" | "index_select" | "reshape" | "view"
     );
     if depends_on_output && !fwd_out_shape.is_empty() && !has_static_info(fwd_out_shape) {
         return Ok(());
