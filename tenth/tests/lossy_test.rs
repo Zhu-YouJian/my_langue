@@ -642,3 +642,327 @@ fn bad() -> str {
 "#;
     assert_compile_error(src, "lossy 污点");
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// 9. 残余三处（G1/G2/G3）——AUDIT-11.4.48 回归守护
+// ══════════════════════════════════════════════════════════════════════
+//
+// 背景（上一轮已修 G4「普通串插值不求值」/ G5「sink 名单缺 print/json_encode」）：
+// `hir/lower/taint.rs` 是「标量→张量静默降精度」的**唯一**防线（静态类型层
+// `types.rs` 对「Tensor × 标量」直接返回原 dtype，不报错）。残余三处同族缺口：
+//
+// - **G1** 复合赋值 `+= -= *= /=`：左侧是**变量名**（HIR 无 `HirExpr.ty`），
+//   原实现只取「左污点 ⊔ 右值污点」并丢弃算子效应 ⇒ `f16张量 += f64标量`
+//   （逐元素写回 f16）既不报错、变量也保持 Exact，下游 sink 集体漏报。
+// - **G2** 闭包体：原实现 `Closure { .. } => Exact` **整体不求值** ⇒ 闭包体内的
+//   降精度使用点漏报（闭包在 HIR 里是内联体，没有 `HirFnDef`，此处是唯一入口）。
+// - **G3** 方法调用实参：原实现只 `join` 实参污点、**不做**接收者×实参的收缩判定
+//   ⇒ `t.clamp(0.0, 1.0)` / `t.masked_fill(mask, 1.234…)` 这类「实参被静默 cast 到
+//   张量 dtype」的调用不产生任何污点。
+//
+// 防误报原则不变：类型静态已知（低精度张量 × 高精度标量）才判 Lossy；
+// 泛型/未知一律 Exact。三条修复都**复用** `scalar_tensor_contraction`
+// （单一判定来源，不手写第二份）。
+
+// ── 9.1 G1 复合赋值 ───────────────────────────────────────────────────
+
+#[test]
+fn compound_assign_all_ops_scalar_to_f16_tensor_is_lossy() {
+    // G1 正向：`t <op>= 高精度标量`（f16 张量）——四种复合赋值全部必须被拦。
+    // 结果被后续 sink（to_string）使用 ⇒ 报错。
+    for op in ["+=", "-=", "*=", "/="] {
+        let src = format!(
+            r#"
+fn bad() -> str {{
+    let mut t = zeros_f16(2, 2);
+    t {op} 1.23456789012345;
+    to_string(t)
+}}
+"#
+        );
+        assert_compile_error(&src, "lossy 污点");
+    }
+}
+
+#[test]
+fn compound_assign_scalar_to_f32_tensor_is_lossy() {
+    // f32 张量 += f64 标量（f64 → f32 静默截断）同样必须被拦
+    let src = r#"
+fn bad() -> str {
+    let mut t = zeros_f32(2, 2);
+    t += 1.23456789012345;
+    to_string(t)
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn compound_assign_lossy_propagates_to_later_sink() {
+    // 污点必须**落在变量上**并在后续语句继续生效（不是只在当行报一次）
+    let src = r#"
+fn bad() -> str {
+    let mut t = zeros_f16(2, 2);
+    t += 1.23456789012345;
+    let y = t;
+    to_string(y)
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn compound_assign_same_dtype_scalar_no_false_positive() {
+    // 零误报：f32 += f32 标量 / f64 += f64 标量 / f16 += f16 张量——同精度，无降级。
+    // 注：词法层只支持 `f32` / `f64` 后缀（lexer.rs:218-241），f16 标量没有字面量形态，
+    // 故 f16 一侧用**张量**右操作数（张量×张量不是收缩，判定天然放行）。
+    let cases = [
+        ("zeros_f32(2, 2)", "let u = ones_f32(2, 2);\n    ", "t += 1.5f32;"),
+        ("zeros(2, 2)", "", "t += 1.5;"),
+        ("zeros_f16(2, 2)", "let u = ones_f16(2, 2);\n    ", "t += u;"),
+    ];
+    for (ctor, decl, stmt) in cases {
+        let src = format!(
+            r#"
+fn ok() -> str {{
+    let mut t = {ctor};
+    {decl}{stmt}
+    to_string(t)
+}}
+"#
+        );
+        assert_compiles(&src);
+    }
+}
+
+#[test]
+fn compound_assign_scalar_variable_no_false_positive() {
+    // 零误报：标量变量自身复合赋值（无张量参与）
+    let src = r#"
+fn ok() -> str {
+    let mut x = 1.0;
+    x += 1.23456789012345;
+    to_string(x)
+}
+"#;
+    assert_compiles(src);
+}
+
+#[test]
+fn compound_assign_lossy_accept_via_rewrite_no_false_positive() {
+    // 可操作逃生口：`t += 标量` 的降精度无法用「只包右值」的 lossy() 消掉
+    // （算子效应看的是**静态类型**，与二元算子 `t + lossy(标量)` 的既有语义一致），
+    // 但把整条运算包起来即可显式接受 —— `t = lossy(t + 标量)`。
+    let src = r#"
+fn ok() -> str {
+    let mut t = zeros_f16(2, 2);
+    t = lossy(t + 1.23456789012345);
+    to_string(t)
+}
+"#;
+    assert_compiles(src);
+}
+
+// ── 9.2 G2 闭包体 ─────────────────────────────────────────────────────
+
+#[test]
+fn closure_body_sink_of_captured_lossy_is_caught() {
+    // G2 正向：闭包体整体原本不求值 → 体内 sink 漏报
+    let src = r#"
+fn bad() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    let f = |u| to_string(x);
+    ""
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn closure_body_own_lossy_arithmetic_is_caught() {
+    // G2 正向（体内自行产生降精度，不依赖捕获变量的污点）
+    let src = r#"
+fn bad() -> str {
+    let t = zeros_f16(2, 2);
+    let f = |u| to_string(t * 1.23456789012345);
+    ""
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn closure_body_nested_closure_sink_is_caught() {
+    // G2 正向：嵌套闭包（体内闭包）同样要被递归分析
+    let src = r#"
+fn bad() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    let f = |u| |v| to_string(x);
+    ""
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn closure_body_exact_only_no_false_positive() {
+    // 零误报：闭包体只做精确运算
+    let src = r#"
+fn ok() -> str {
+    let x = 1.0;
+    let f = |u| u + x;
+    "done"
+}
+"#;
+    assert_compiles(src);
+}
+
+#[test]
+fn closure_capturing_lossy_without_sink_no_false_positive() {
+    // 零误报：闭包捕获 Lossy 变量但**不在 sink 使用** → 不报
+    // （闭包值本身也不是那个污点值——见下一条）
+    let src = r#"
+fn ok() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    let f = |u| u + 1.0;
+    "done"
+}
+"#;
+    assert_compiles(src);
+}
+
+#[test]
+fn closure_value_itself_not_tainted_by_body_no_false_positive() {
+    // 零误报（关键）：闭包值 = 函数值，**不是**它将来产出的值。
+    // 若把闭包体的返回污点当成闭包表达式的污点，`to_string(f)` 会误报。
+    let src = r#"
+fn ok() -> str {
+    let t = zeros_f16(2, 2);
+    let x = t * 1.23456789012345;
+    let f = |u| x;
+    "done"
+}
+"#;
+    assert_compiles(src);
+}
+
+// ── 9.3 G3 方法调用实参 ───────────────────────────────────────────────
+
+#[test]
+fn method_arg_scalar_to_f16_tensor_is_lossy() {
+    // G3 正向：masked_fill 的 value 实参（f64）被静默 cast 到 f16 张量 dtype
+    let src = r#"
+fn bad() -> str {
+    let a = zeros_f16(3, 4);
+    let mask = zeros_f16(3, 4);
+    let r = a.masked_fill(mask, 1.23456789012345);
+    to_string(r)
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn method_arg_scalar_to_f32_tensor_is_lossy() {
+    // f32 张量 + f64 实参 → f64 被静默截断到 f32
+    let src = r#"
+fn bad() -> str {
+    let a = zeros_f32(3, 4);
+    let mask = zeros_f32(3, 4);
+    let r = a.masked_fill(mask, 1.23456789012345);
+    to_string(r)
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn method_arg_lossy_propagates_through_chain() {
+    // 污点必须穿过方法调用结果继续生效（不是只在当行报一次）
+    let src = r#"
+fn bad() -> str {
+    let a = zeros_f16(3, 4);
+    let mask = zeros_f16(3, 4);
+    let r = a.masked_fill(mask, 1.23456789012345);
+    let s = r + r;
+    to_string(s)
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+
+#[test]
+fn method_arg_same_dtype_no_false_positive() {
+    // 零误报：接收者与实参同精度
+    // ① f32 张量 + f32 字面量；② f64 张量 + f64 字面量；
+    // ③ f16 张量 + f16 张量实参（张量实参不是标量，不参与收缩判定）。
+    let cases = [
+        (
+            "zeros_f32(3, 4)",
+            "zeros_f32(3, 4)",
+            "1.5f32",
+        ),
+        ("zeros(3, 4)", "zeros(3, 4)", "1.5"),
+        ("zeros_f16(3, 4)", "zeros_f16(3, 4)", "mask"),
+    ];
+    for (dt, mask_dt, value) in cases {
+        let src = format!(
+            r#"
+fn ok() -> str {{
+    let a = {dt};
+    let mask = {mask_dt};
+    let r = a.masked_fill(mask, {value});
+    to_string(r)
+}}
+"#
+        );
+        assert_compiles(&src);
+    }
+}
+
+#[test]
+fn method_arg_int_args_no_false_positive() {
+    // 零误报：整数实参（reshape/permute 等）不是浮点标量 → 不参与收缩判定
+    let src = r#"
+fn ok() -> str {
+    let a = zeros_f16(2, 3);
+    to_string(a.reshape(3, 2))
+}
+"#;
+    assert_compiles(src);
+}
+
+#[test]
+fn method_arg_lossy_accept_no_false_positive() {
+    // 可操作逃生口：把**结果**包进 lossy(...) 即显式接受（污点归零）
+    let src = r#"
+fn ok() -> str {
+    let a = zeros_f16(3, 4);
+    let mask = zeros_f16(3, 4);
+    let r = a.masked_fill(mask, 1.23456789012345);
+    to_string(lossy(r))
+}
+"#;
+    assert_compiles(src);
+}
+
+#[test]
+fn method_arg_lossy_on_arg_alone_does_not_suppress() {
+    // 语义一致性钉住：算子效应看**静态类型**而非污点，故只包实参
+    // （`masked_fill(mask, lossy(标量))`）不归零结果污点——与二元算子
+    // `t + lossy(标量)` 的既有语义完全一致（不许为「更好用」弱化既有检查）。
+    // 显式接受要包住结果：见上一条。
+    let src = r#"
+fn bad() -> str {
+    let a = zeros_f16(3, 4);
+    let mask = zeros_f16(3, 4);
+    let r = a.masked_fill(mask, lossy(1.23456789012345));
+    to_string(r)
+}
+"#;
+    assert_compile_error(src, "lossy 污点");
+}
+

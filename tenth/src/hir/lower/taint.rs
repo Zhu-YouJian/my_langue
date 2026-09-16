@@ -66,6 +66,13 @@ impl Lossiness {
 struct VarTaint {
     taints: HashMap<String, Lossiness>,
     scopes: HashMap<String, usize>,
+    /// G1（AUDIT-11.4.48）：变量的**静态类型**（`let` / 形参绑定处记录，赋值时跟随右值）。
+    ///
+    /// 复合赋值 `t += x` 的左侧在 HIR 里只是变量名（`HirExprKind::AssignOp.target: String`），
+    /// **没有 `HirExpr.ty` 可读**；要判定「f16 张量 += f64 标量 → 逐元素写回低精度 dtype」
+    /// 这条与二元算子完全同源的隐式收缩，必须知道左侧变量的类型。
+    /// 取不到类型时一律判 Exact（宁可漏报，不可误报）。
+    types: HashMap<String, Type>,
 }
 
 impl VarTaint {
@@ -76,9 +83,25 @@ impl VarTaint {
         self.taints.insert(name.to_string(), t);
         self.scopes.insert(name.to_string(), depth);
     }
+    /// 带静态类型的绑定（类型可用于算子效应判定，G1）。
+    fn let_bind_typed(&mut self, name: &str, t: Lossiness, depth: usize, ty: &Type) {
+        self.let_bind(name, t, depth);
+        self.types.insert(name.to_string(), ty.clone());
+    }
+    /// 变量静态类型（未记录 → None → 不做收缩判定）。
+    fn type_of(&self, name: &str) -> Option<&Type> {
+        self.types.get(name)
+    }
     /// 赋值保持原定义作用域深度（赋值不改变绑定所在作用域）。
     fn assign(&mut self, name: &str, t: Lossiness) {
         self.taints.insert(name.to_string(), t);
+    }
+    /// 赋值：污点与静态类型都跟随右值。
+    /// 与 `lower_expr` 的 `scope.define_var(name, v.ty, true)`（lower_expr.rs:1219）同语义
+    /// ——否则 `t = <f64 张量>` 之后 `t += f64标量` 会按旧的低精度类型误判（G1 误报面）。
+    fn assign_typed(&mut self, name: &str, t: Lossiness, ty: &Type) {
+        self.assign(name, t);
+        self.types.insert(name.to_string(), ty.clone());
     }
 }
 
@@ -90,6 +113,12 @@ fn merge_vt(vt: &mut VarTaint, branch: &VarTaint, branch_depth: usize) {
             if sd < branch_depth {
                 let old = vt.taints.get(k).copied().unwrap_or(Lossiness::Exact);
                 vt.taints.insert(k.clone(), old.join(*v));
+                // G1：外部变量的静态类型也随分支赋值合并（`t` 在分支内被赋成另一种
+                // dtype 后，其后的 `t += 标量` 必须按新类型判定；否则按 `let` 的旧类型
+                // 判定会 ① 误报（f16 → f64）或 ② 漏报（f64 → f16））。
+                if let Some(ty) = branch.types.get(k) {
+                    vt.types.insert(k.clone(), ty.clone());
+                }
             }
         }
     }
@@ -141,15 +170,25 @@ fn interp_sink_error(expr: &HirExpr, name: &str) -> TenthError {
     }
 }
 
-/// 算子静态效应：`结果污点 = 左 ⊔ 右 ⊔ op_effect`。
-fn op_effect(op: &BinOp, left: &HirExpr, right: &HirExpr) -> Lossiness {
-    let mut e = Lossiness::Exact;
+/// 算子静态效应的**类型版**：`左类型 × 右类型 → 效应`。
+///
+/// G1（AUDIT-11.4.48）与 `op_effect` 共用本函数——复合赋值 `t += x` 只有
+/// 「左侧变量的静态类型 + 右侧表达式类型」可用，**不能**再手写一份判定
+/// （两份手写判定必然漂移，这是本项目的高危模式）。
+fn op_effect_ty(op: &BinOp, left: &Type, right: &Type) -> Lossiness {
     // Lossy：隐式标量 → 张量 dtype 收缩（唯一现实的语言级静默降级路径）
     if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
-        && scalar_tensor_contraction(&left.ty, &right.ty)
+        && scalar_tensor_contraction(left, right)
     {
-        e = e.join(Lossiness::Lossy);
+        Lossiness::Lossy
+    } else {
+        Lossiness::Exact
     }
+}
+
+/// 算子静态效应：`结果污点 = 左 ⊔ 右 ⊔ op_effect`。
+fn op_effect(op: &BinOp, left: &HirExpr, right: &HirExpr) -> Lossiness {
+    let mut e = op_effect_ty(op, &left.ty, &right.ty);
     // PossibleOverflow：浮点字面量组合溢出（如 1e308 + 1e308 → inf，当前静默）
     if float_literal_comb_overflow(op, left, right) {
         e = e.join(Lossiness::PossibleOverflow);
@@ -168,6 +207,19 @@ fn op_effect(op: &BinOp, left: &HirExpr, right: &HirExpr) -> Lossiness {
         // 静态非零除数：明确豁免 PossibleNaN（无操作——精确化的落点）。
     }
     e
+}
+
+/// G3（AUDIT-11.4.48）：方法实参的隐式「标量 → 张量 dtype」收缩。
+///
+/// 与二元算子共用 `scalar_tensor_contraction`——两处必须是**同一条判定**
+/// （手写第二份必然漂移）。接收者类型静态已知（低精度张量）且实参是更高精度
+/// 浮点标量时才判 Lossy；泛型/未知类型一律 Exact（防误报）。
+fn method_arg_effect(recv_ty: &Type, arg_ty: &Type) -> Lossiness {
+    if scalar_tensor_contraction(recv_ty, arg_ty) {
+        Lossiness::Lossy
+    } else {
+        Lossiness::Exact
+    }
 }
 
 /// 标量 F32/F64 与 Tensor[F16/BF16/F32] 参与算术时，标量被静默 cast 到张量 dtype
@@ -313,9 +365,9 @@ impl<'a> TaintAnalyzer<'a> {
             Some(def) => {
                 let mut vt = VarTaint::default();
                 // 实参污点绑定到形参（参数初始为 Exact 的情况即退化为普通调用）
-                for (i, (pname, _)) in def.params.iter().enumerate() {
+                for (i, (pname, pty)) in def.params.iter().enumerate() {
                     let p = arg_taints.get(i).copied().unwrap_or(Lossiness::Exact);
-                    vt.let_bind(pname, p, 0);
+                    vt.let_bind_typed(pname, p, 0, pty);
                 }
                 let mut ret = Lossiness::Exact;
                 let val = self.expr_taint(&def.body, &mut vt, &mut ret, 0);
@@ -362,7 +414,16 @@ impl<'a> TaintAnalyzer<'a> {
                     return Lossiness::Exact;
                 }
                 let mut acc = tr;
-                for a in args { acc = acc.join(self.expr_taint(a, vt, ret, depth)); }
+                for a in args {
+                    let ta = self.expr_taint(a, vt, ret, depth);
+                    // G3（AUDIT-11.4.48）：方法实参此前**只传播不检查**——接收者是
+                    // 低精度张量而实参是更高精度标量时（如 `t.clamp(0.0, 1.0)`、
+                    // `t.masked_fill(mask, 1.234…)`、`t.pow(2.0)`），实参在方法内部被
+                    // 静默 cast 到张量 dtype（`scalar_tensor_contraction` 判定的正是
+                    // 这条语言级静默降级路径，与二元算子同源），结果张量因此是近似值
+                    // 却一路带着 Exact 污点用到 sink。
+                    acc = acc.join(ta).join(method_arg_effect(&receiver.ty, &a.ty));
+                }
                 acc
             }
             HirExprKind::Index { target, .. } => self.expr_taint(target, vt, ret, depth),
@@ -404,20 +465,46 @@ impl<'a> TaintAnalyzer<'a> {
                     None => Lossiness::Exact,
                 }
             }
-            // 闭包体是独立函数作用域，创建时即 Exact；闭包调用（间接）只传播实参。
-            HirExprKind::Closure { .. } => Lossiness::Exact,
+            // G2（AUDIT-11.4.48）：闭包体此前**整体不求值**（直接 `Exact`）⇒
+            // 闭包体内的降精度使用点（sink）静默漏报。
+            //
+            // 闭包在 HIR 里是**内联体**（`HirExprKind::Closure { body }`，不生成
+            // `HirFnDef`），因此没有别的分析入口会走到它的 body——本分支是唯一机会。
+            //
+            // 语义（与既有注释一致，不改变闭包值本身的污点）：
+            // - 捕获变量继承当前作用域污点（闭包是独立函数体，故用克隆的作用域）；
+            // - 形参按 Exact 绑定（调用点未知）；
+            // - `return` 只累计到**闭包自己的**返回污点（`ret_body`），不外泄到外层；
+            // - 闭包值本身仍返回 `Exact`——函数值不是它将来产出的值，把 body 的
+            //   返回污点当闭包值的污点会让 `to_string(closure)` 误报（防误报底线）。
+            HirExprKind::Closure { params, body, .. } => {
+                let mut vt_body = vt.clone();
+                for (pname, pty) in params {
+                    vt_body.let_bind_typed(pname, Lossiness::Exact, depth + 1, pty);
+                }
+                let mut ret_body = Lossiness::Exact;
+                self.expr_taint(body, &mut vt_body, &mut ret_body, depth + 1);
+                Lossiness::Exact
+            }
             HirExprKind::Assign { target, value } => {
                 let t = self.expr_taint(value, vt, ret, depth);
-                vt.assign(target, t);
+                // 类型跟随右值（与 lower_expr.rs:1219 的 `scope.define_var(name, v.ty, true)`
+                // 同语义）——否则 `t = <f64张量>` 后 `t += f64标量` 会按旧的低精度类型误判。
+                vt.assign_typed(target, t, &value.ty);
                 Lossiness::Exact
             }
             HirExprKind::AssignOp { target, op, value } => {
                 let tv = vt.get(target);
                 let t = self.expr_taint(value, vt, ret, depth);
-                // op_effect 需两侧操作数表达式；赋值左侧是变量，保守只取右值污点
-                // （右值若为标量×张量收缩，Lossy 已体现在 t 中）。
-                let _ = op;
-                vt.assign(target, tv.join(t));
+                // G1（AUDIT-11.4.48）：`t += x` 与 `t = t + x` 同语义。此前只取
+                // 「左污点 ⊔ 右值污点」并**丢弃算子效应** ⇒ `f16张量 += f64标量`
+                // （标量被静默 cast 到 f16 后逐元素写回）既不报错、变量污点也保持
+                // Exact，下游所有 sink 一起漏报（静默丢精度）。
+                let effect = match vt.type_of(target) {
+                    Some(lty) => op_effect_ty(op, lty, &value.ty),
+                    None => Lossiness::Exact,
+                };
+                vt.assign(target, tv.join(t).join(effect));
                 Lossiness::Exact
             }
             HirExprKind::StructLiteral { fields, .. } | HirExprKind::EnumLiteral { fields, .. } => {
@@ -545,10 +632,15 @@ impl<'a> TaintAnalyzer<'a> {
         depth: usize,
     ) {
         match &s.kind {
-            HirStmtKind::Let { names, init, .. } => {
+            HirStmtKind::Let { names, type_ann, init, .. } => {
                 if let Some(init) = init {
                     let t = self.expr_taint(init, vt, ret, depth);
-                    for n in names { vt.let_bind(n, t, depth); }
+                    // 记录变量静态类型（G1：复合赋值左侧的类型来源）。
+                    // 有显式注解时以注解为准（与 lower_stmt.rs:178-186 的
+                    // `scope.define_var(.., ty, ..)` 合并规则一致，避免
+                    // `let t: Tensor[f64,..] = ...; t += 标量` 被按旧 dtype 误判）。
+                    let ty = type_ann.clone().unwrap_or_else(|| init.ty.clone());
+                    for n in names { vt.let_bind_typed(n, t, depth, &ty); }
                 }
             }
             HirStmtKind::Expr(e) => {

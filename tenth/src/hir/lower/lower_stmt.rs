@@ -7,6 +7,7 @@ use crate::hir::hir::*;
 use crate::hir::types::*;
 use super::Scope;
 use super::build_generics_bounds;
+use super::import::ImportResolution;
 use super::Lowerer;
 
 impl Lowerer {
@@ -791,14 +792,54 @@ impl Lowerer {
     ///
     /// 入参为独立 clone 的全局切片（不借用 self），调用点负责先 clone 模块
     /// 的 globals 再传入，避免与 `self.modules` 的不可变借用冲突。
-    fn merge_module_globals(&mut self, globals: &[HirGlobal]) {
+    fn merge_module_globals(&mut self, globals: &[HirGlobal], span: &Span) {
         for g in globals {
-            if self.globals.iter().any(|x| x.name == g.name) {
+            if let Some(existing) = self.globals.iter().find(|x| x.name == g.name) {
+                // AUDIT-11.4.41 附带：同名**先注册者胜**（保留既有语义——避免破坏合法
+                // 同名场景），但**改响亮诊断**：此前是纯静默 `continue`，后者被悄悄丢弃。
+                // 只在**同名不同源**时应提示；同一模块被二次导入时类型/可变性一致，
+                // 不打扰用户（幂等导入是常态）。
+                if existing.ty != g.ty || existing.mutable != g.mutable {
+                    self.warnings.push(TenthWarning::new(
+                        span.line,
+                        span.col,
+                        format!(
+                            "导入的模块全局 '{}' 与已存在的同名全局冲突（类型/可变性不同：已为 {:?}{}，新为 {:?}{}）——保留先注册者，后者的定义被忽略",
+                            g.name,
+                            existing.ty,
+                            if existing.mutable { " mut" } else { "" },
+                            g.ty,
+                            if g.mutable { " mut" } else { "" },
+                        ),
+                    ));
+                }
                 continue;
             }
             self.scope.define_var(g.name.clone(), g.ty.clone(), g.mutable);
             self.globals.push(g.clone());
         }
+    }
+
+    /// AUDIT-11.4.41：`use` 整条**解析不到模块、也没命中 inline mod 导航**
+    /// （或命中但名不存在）时，此前**静默产出空**（无绑定、无诊断、无告警）。
+    ///
+    /// 护城河要压制的正是「静默丢」。此处响亮化：push 一条编译期警告
+    /// （`main.rs` 对 `hir.warnings` 逐条打印），**不**改成硬错误——
+    /// 既有程序存在「use 写了但实际靠其它路径解析」的合法写法，
+    /// 硬失败会把它们变成编译失败（行为变更超出本波范围）。
+    fn warn_unresolved_use(&mut self, path: &[String], span: &Span, detail: Option<&str>) {
+        let p = path.join("::");
+        let message = match detail {
+            Some(d) => format!(
+                "use '{}' 未能解析（{}）——这条 use 不产生任何绑定，请检查模块路径与搜索路径",
+                p, d
+            ),
+            None => format!(
+                "use '{}' 未能解析——模块文件与内联 mod 均未命中，这条 use 不产生任何绑定（此前为静默空转）",
+                p
+            ),
+        };
+        self.warnings.push(TenthWarning::new(span.line, span.col, message));
     }
 
     pub fn lower_program(&mut self, program: &ast::Program) -> TenthResult<HirProgram> {
@@ -1139,13 +1180,22 @@ impl Lowerer {
                         // First try to load the file at <path>.th
                         let mut loaded_module: Option<&HirProgram> = None;
                         let mod_key = path_strs.join("::");
+                        // AUDIT-11.4.41：已导入但缓存缺失时的响亮化原因
+                        let mut unresolved: Option<String> = None;
                         if !self.modules.contains_key(&mod_key) {
                             match self.try_import_file(&path_strs) {
-                                Ok(Some(imported_hir)) => {
+                                Ok(ImportResolution::Resolved(imported_hir)) => {
                                     self.modules.insert(mod_key.clone(), imported_hir);
                                 }
-                                Ok(None) => {
-                                    // File not found or circular import — fall back to inline mod navigation below
+                                Ok(ImportResolution::NotFound) => {
+                                    // File not found — fall back to inline mod navigation below
+                                }
+                                Ok(ImportResolution::AlreadyImported) => {
+                                    // AUDIT-11.4.41：不再与「文件不存在」共用返回值
+                                    unresolved = Some(format!(
+                                        "模块 '{}' 此前已导入，但模块缓存中缺失其 HIR（内部缓存回流缺陷）",
+                                        mod_key
+                                    ));
                                 }
                                 Err(e) => {
                                     // Propagate the import error so the user sees the real cause
@@ -1177,7 +1227,7 @@ impl Lowerer {
                             }
                             // M3.5：模块顶层 let 全局随 use 导入合并（常量/状态）
                             let module_globals = module.globals.clone();
-                            self.merge_module_globals(&module_globals);
+                            self.merge_module_globals(&module_globals, &item.span);
                         } else {
                             // Fall back to nested module navigation (for inline mod blocks)
                             let mod_name = &path_strs[0];
@@ -1212,7 +1262,13 @@ impl Lowerer {
                                 }
                                 // M3.5：模块顶层 let 全局随 use 导入合并（常量/状态）
                                 let module_globals = module.globals.clone();
-                                self.merge_module_globals(&module_globals);
+                                self.merge_module_globals(&module_globals, &item.span);
+                            } else {
+                                // AUDIT-11.4.41：两条路都没命中 ⇒ 这条 use **不产生任何绑定**。
+                                // 此前完全静默（无诊断、无告警）——护城河要压制的正是「静默丢」。
+                                // 取警告而非硬错误：既有程序存在「use 写了但靠其它路径解析」
+                                // 的合法写法，硬失败会破坏它们；响亮（可被 main.rs 打印）即可。
+                                self.warn_unresolved_use(&path_strs, &item.span, unresolved.as_deref());
                             }
                         }
                     } else if path_strs.len() >= 2 {
@@ -1231,25 +1287,39 @@ impl Lowerer {
                         let full_key = path_strs.join("::");
                         let parent_key = parent_path.join("::");
                         // 先尝试完整 path（如 std/nn/gelu.th）
+                        // AUDIT-11.4.41：已导入但缓存缺失时的响亮化原因
+                        let mut unresolved: Option<String> = None;
                         if !self.modules.contains_key(&full_key) {
                             match self.try_import_file(&path_strs) {
-                                Ok(Some(imported_hir)) => {
+                                Ok(ImportResolution::Resolved(imported_hir)) => {
                                     self.modules.insert(full_key.clone(), imported_hir);
                                 }
-                                Ok(None) => {
+                                Ok(ImportResolution::NotFound) => {
                                     // 完整 path 找不到文件，回退到 parent_path
                                     // （如 std/nn/activations.th）
                                     if !self.modules.contains_key(&parent_key) {
                                         match self.try_import_file(parent_path) {
-                                            Ok(Some(imported_hir)) => {
+                                            Ok(ImportResolution::Resolved(imported_hir)) => {
                                                 self.modules.insert(parent_key.clone(), imported_hir);
                                             }
-                                            Ok(None) => {
+                                            Ok(ImportResolution::NotFound) => {
                                                 // 两者都失败 — fall back to inline mod navigation below
+                                            }
+                                            Ok(ImportResolution::AlreadyImported) => {
+                                                unresolved = Some(format!(
+                                                    "模块 '{}' 此前已导入，但模块缓存中缺失其 HIR（内部缓存回流缺陷）",
+                                                    parent_key
+                                                ));
                                             }
                                             Err(e) => return Err(e),
                                         }
                                     }
+                                }
+                                Ok(ImportResolution::AlreadyImported) => {
+                                    unresolved = Some(format!(
+                                        "模块 '{}' 此前已导入，但模块缓存中缺失其 HIR（内部缓存回流缺陷）",
+                                        full_key
+                                    ));
                                 }
                                 Err(e) => return Err(e),
                             }
@@ -1283,7 +1353,7 @@ impl Lowerer {
                                 self.generic_funcs.insert(fn_def.name.clone(), fn_def.clone());
                             }
                             // M3.5：模块顶层 let 全局随 use 导入合并（常量/状态）
-                            self.merge_module_globals(&module.globals);
+                            self.merge_module_globals(&module.globals, &item.span);
                             // 目标函数可能在 functions（非泛型）或 generic_funcs（泛型）中。
                             let found = module.functions.iter().find(|f| &f.name == fn_name)
                                 .or_else(|| module.generic_funcs.iter().find(|f| &f.name == fn_name));
@@ -1313,6 +1383,12 @@ impl Lowerer {
                                     self.scope.define_fn(fn_def.name.clone(), param_types, ret_ty);
                                 }
                             }
+                            // 注（AUDIT-11.4.41）：`loaded_module` 命中但末段既不是函数、
+                            // 也不是模块文件时，本处**不**发诊断——`use std::date::Date`
+                            // 这类**类型导入**（struct/enum 的合并走别的路径）是合法写法，
+                            // 在此报「未产生绑定」会是误报（实测 `tenth/std/test_date.th`
+                            // 命中此形态）。真正的空转（模块文件与内联 mod 都没命中）由
+                            // 下方 fallback 的 `warn_unresolved_use` 响亮化。
                         } else {
                             // Fall back to nested module navigation (for inline mod blocks)
                             let mod_name = &path_strs[0];
@@ -1335,7 +1411,7 @@ impl Lowerer {
                                 // 的不可变借用与下方 self.merge_module_globals 的可变借用冲突。
                                 let module = module.clone();
                                 // M3.5：模块顶层 let 全局随 use 导入合并（常量/状态）
-                                self.merge_module_globals(&module.globals);
+                                self.merge_module_globals(&module.globals, &item.span);
                                 // 目标函数可能在 functions 或 generic_funcs 中
                                 let found = module.functions.iter().find(|f| &f.name == fn_name)
                                     .or_else(|| module.generic_funcs.iter().find(|f| &f.name == fn_name));
@@ -1349,6 +1425,15 @@ impl Lowerer {
                                         self.functions.push(fn_def.clone());
                                     }
                                 }
+                                // 注：inline mod 命中但没有该函数名时同样不报
+                                // （可能是该 mod 内的类型/常量导入，报会是误报）。
+                            } else {
+                                // AUDIT-11.4.41：模块文件与 inline mod 都没命中 ⇒
+                                // 这条 use **不产生任何绑定**。此前完全静默（无诊断、无告警）
+                                // ——护城河要压制的正是「静默丢」。取警告而非硬错误：既有程序
+                                // 存在「use 写了但靠其它路径解析」的合法写法，硬失败会破坏它们；
+                                // 响亮（可被 main.rs 打印）即可。
+                                self.warn_unresolved_use(&path_strs, &item.span, unresolved.as_deref());
                             }
                         }
                     }

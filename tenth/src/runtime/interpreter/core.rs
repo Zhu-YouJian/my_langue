@@ -468,26 +468,37 @@ impl Interpreter {
         }
 
         // use 导入（`use path::name`）
+        //
+        // AUDIT-11.4.41 附带修复：此处原先只取 `use_path[0]` / `use_path[1]`
+        // （`mod_name = "std"`、`fn_name = "random"`），对 3 段及以上的 use
+        // （如 `use std::random::random::shuffle`）**恒不命中** ⇒ 这段回填是死代码。
+        // 语义上：
+        // - 末段 = 被导入的函数名（`alias` 也取末段，两者相同）；
+        // - 模块键 = **能命中缓存的那些前缀**：文件模块的键是完整模块路径
+        //   （`std::json::json`），inline mod 的键是首段（`foo`）——从长到短取首个命中。
         let uses = self.uses.clone();
         for (use_path, alias) in &uses {
-            if use_path.len() >= 2 {
-                let mod_name = &use_path[0];
-                let fn_name = &use_path[1];
-                if let Some(module) = self.modules.get(mod_name) {
-                    if let Some(fn_def) = module.functions.iter().find(|f| &f.name == fn_name) {
-                        let params = fn_def.params.clone();
-                        let ret = fn_def.return_type.clone();
-                        self.functions.push(fn_def.clone());
-                        self.insert_var(
-                            alias.clone(),
-                            Value::FnRef {
-                                name: alias.clone(),
-                                params,
-                                return_type: ret,
-                                captures: vec![],
-                            },
-                        );
-                    }
+            if use_path.len() < 2 {
+                continue;
+            }
+            let fn_name = use_path.last().expect("len>=2");
+            let module = (1..use_path.len()).rev().find_map(|k| {
+                self.modules.get(&use_path[..k].join("::"))
+            });
+            if let Some(module) = module {
+                if let Some(fn_def) = module.functions.iter().find(|f| &f.name == fn_name) {
+                    let params = fn_def.params.clone();
+                    let ret = fn_def.return_type.clone();
+                    self.functions.push(fn_def.clone());
+                    self.insert_var(
+                        alias.clone(),
+                        Value::FnRef {
+                            name: alias.clone(),
+                            params,
+                            return_type: ret,
+                            captures: vec![],
+                        },
+                    );
                 }
             }
         }
