@@ -81,10 +81,22 @@ jobs:
           : > perf_baseline.log
           for t in perf_g1_scalar_controlflow perf_g2_tensor_ops perf_g3_autodiff \
                    perf_g4_nn_optim perf_g5_compile_startup perf_g6_three_path_compare \
-                   perf_vm_reference perf_interp_reference; do
+                   perf_interp_reference; do
             echo "===== $t =====" | tee -a perf_baseline.log
             cargo test --release --manifest-path tenth/Cargo.toml \
               --test perf_baseline_test -- --ignored --nocapture "$t" 2>&1 | tee -a perf_baseline.log
+          done
+          # VM 参考路径：每场景一个独立进程（AUDIT-11.4.52）；清单与 docs/性能基线.md §六 保持一致
+          for s in G1:fib28 G1:loop_mod_1e7 G1:closure_1e6 G1:method_vec_1e6 G1:tail_rec_1e6 \
+                   G2:matmul_512 G2:matmul_1024 G2:elementwise_mul_1k G2:broadcast_add_1k \
+                   G2:reduce_sum_1k G2:transpose_1k \
+                   G3:mlp_fwd_bwd G3:transformer_block_fwd_bwd G3:tape_overhead \
+                   G4:linear_fwd_bwd G4:mha_fwd_bwd G4:layer_norm_fwd_bwd \
+                   G4:softmax_ce_fwd_bwd G4:adamw_step_1e6 \
+                   G6:fib28 G6:loop_mod_1e7 G6:matmul_512; do
+            echo "===== vm $s =====" | tee -a perf_baseline.log
+            PERF_VM_SCENARIO="$s" cargo test --release --manifest-path tenth/Cargo.toml \
+              --test perf_baseline_test -- --ignored --nocapture perf_vm_scenario 2>&1 | tee -a perf_baseline.log
           done
 
       # ── 硬回归门槛（本机为硬，CI 内软）───────────────────────────────

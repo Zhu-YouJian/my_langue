@@ -18,8 +18,13 @@
 //! ```text
 //! for t in perf_g1_scalar_controlflow perf_g2_tensor_ops perf_g3_autodiff \
 //!          perf_g4_nn_optim perf_g5_compile_startup perf_g6_three_path_compare \
-//!          perf_vm_reference perf_interp_reference; do
+//!          perf_interp_reference; do
 //!   cargo test --release --test perf_baseline_test -- --ignored --nocapture "$t"
+//! done
+//! # VM 参考路径：**每场景一个独立进程**（AUDIT-11.4.52 第二步；规格清单见 docs/性能基线.md §六）
+//! for s in G1:fib28 G1:loop_mod_1e7 ... G6:matmul_512; do
+//!   PERF_VM_SCENARIO="$s" cargo test --release --test perf_baseline_test \
+//!     -- --ignored --nocapture perf_vm_scenario
 //! done
 //! ```
 //! 为什么必须一进程一组：同进程内前一组的堆状态会把后续张量算子膨胀 2–3×
@@ -33,7 +38,9 @@
 //! - 每场景 **warm-up 1 次**（排除 JIT 编译 / 首调用缓存冷启）→ **测量 5 次** → 报 `min` 与 `median`。
 //! - 张量短任务在 Tenth 源码内**内部重复 R 次**（见各场景 `repeats`），报单次耗时 = 总耗时 / R。
 //! - **进程隔离**（总师裁定 #10① 的落地方式）：规范跑法一进程一组；各组 jit 测试内**不跑 VM**
-//!   （VM 由 `perf_vm_reference` 独立进程测），避免 VM 长循环与同进程堆状态膨胀 jit 2–3×。
+//!   （VM 由 `perf_vm_g*` **每组独立进程**测），避免 VM 长循环与同进程堆状态膨胀 jit 2–3×。
+//!   **AUDIT-11.4.52**：VM 参考路径原先是一个测试跑完 6 个组（先全组 JIT 再全组 VM），
+//!   使「组间堆状态污染」在进程内部重现（实测 `reduce_sum_1k` 的 vm 漂到 +88%），已按组拆分。
 //! - **interp 隔离**（总师裁定 #10②）：解释器路径（≈4–9s/次，满核负载）移出主基线，
 //!   由独立 `perf_interp_reference` 测量；数据保留但**标注「参考路径、仅比值可用」**。
 //! - **频率预热**（总师裁定 #10③）：每组开始前 ~400ms 纯 CPU 忙循环把核心拉到稳态频率。
@@ -42,7 +49,7 @@
 //!   故**绝对值为热态测量，`min` 才是可比统计量，跨次/跨机不可直接比**
 //!   （发 `PERF-NOTE|...|methodology|...` 行）。
 //! - **正确性**：每条路径内部做自洽性检查（warm-up + 5 次测量的校验和必须一致）；
-//!   `perf_vm_reference` 以 VM 为参考对拍 JIT、`perf_interp_reference` 对拍 VM，
+//!   `perf_vm_g*` 以 VM 为参考对拍 JIT、`perf_interp_reference` 对拍 VM，
 //!   不一致立即 fail——禁止「测了个错的」（三路径同源 Rust 实现，理论逐位一致，容差 1e-6）。
 //! - 路径标识：`vm`（`Vm::call`）/ `jit`（`jit::run_jit`，默认路径）/ `interp`（`Interpreter`）/
 //!   `cli`（G5 子进程端到端 `tenth.exe run <file>`，含进程启动 + 编译 + 执行）。
@@ -360,7 +367,7 @@ fn run_reference(sc: &Scenario) -> Result<f64, String> {
 ///
 /// - `expected` 为 `Some` 时，每条记录（含 warm-up）都与该基准对拍；为 `None` 时
 ///   仅做**自洽性**检查（warm-up + 5 次测量的校验和必须一致，抓非确定性）。
-/// - 跨路径正确性对拍由 `perf_vm_reference` / `perf_interp_reference` 以 VM 为参考完成
+/// - 跨路径正确性对拍由 `perf_vm_g*` / `perf_interp_reference` 以 VM 为参考完成
 ///   （各组 jit 测试内不跑 VM，避免污染本进程后续测量）。
 fn measure_path(sc: &Scenario, path: Path, expected: Option<f64>) -> Result<(Stats, f64), String> {
     let hir = lower(sc.src)?;
@@ -450,7 +457,7 @@ fn emit_stats(sc: &Scenario, path: Path, st: Stats) {
 /// 只测 JIT（产品默认路径）。各组 jit 测试内**不跑 VM**：
 /// VM 长循环（G1 `loop_mod_1e7` ≈ 3–5s）会把后续组的 jit 膨胀 2–3×；同进程内
 /// 前一组的堆状态也会把张量算子膨胀 2–3×（实测 matmul_512 单独进程 6.5ms → G1 之后 15–20ms）。
-/// 故规范跑法是**每组一个独立进程**（见文件头），跨路径对拍由 `perf_vm_reference` 完成。
+/// 故规范跑法是**每组一个独立进程**（见文件头），跨路径对拍由 `perf_vm_g*` 完成。
 fn run_group_jit(scenarios: &[&Scenario]) {
     for sc in scenarios {
         assert!(
@@ -1360,7 +1367,7 @@ fn perf_g6_three_path_compare() {
     }
     cpu_freq_warmup();
     emit_methodology_note("G6");
-    // 只测 JIT；VM 与 interp 分别在 perf_vm_reference / perf_interp_reference 测量。
+    // 只测 JIT；VM 与 interp 分别在 perf_vm_g* / perf_interp_reference 测量。
     let scs = scenario_g6();
     for sc in &scs {
         let (st, _ck) = measure_path(sc, Path::Jit, None)
@@ -1371,7 +1378,7 @@ fn perf_g6_three_path_compare() {
         "G6",
         "vm_reference",
         "all",
-        "vm 列与 jit/vm 比值见 perf_vm_reference（同 group 行）；interp 列见 perf_interp_reference",
+        "vm 列与 jit/vm 比值见 perf_vm_g*（同 group 行）；interp 列见 perf_interp_reference",
     );
 }
 
@@ -1382,39 +1389,45 @@ fn perf_g6_three_path_compare() {
 ///
 /// 规范跑法中本测试与各组 jit 测试**各占一个独立进程**（见文件头），故 VM 长循环
 /// 不会污染任何 jit 测量。
-#[test]
-#[ignore = "性能基线（非门槛）：VM 参考路径，独立进程跑；需 release + --ignored --nocapture"]
-fn perf_vm_reference() {
+// ── 测试：VM 参考路径（AUDIT-11.4.52：每组一个独立进程）────────────────────
+//
+// 本组此前是**一个测试跑完全部组**（阶段 1 全部组 JIT、阶段 2 全部组 VM），
+// 使「前一组堆状态污染后续组」在**同一进程内部**重现，而 VM 列恰由该进程产出。
+// 实测（2026-09-16）：`reduce_sum_1k`（归约，不含 `elementwise_binary`、改动不可能触及）
+// 的 vm 由 0.115ms 漂到 0.216ms（**+88%**），而同场次其 jit 仅 +10%。
+// 现按组拆分，与 jit 组同口径。**G5 不在此列**：G5 是子进程端到端（`cli` 路径），本无 vm 列。
+
+/// 单个组的 VM 参考测量 —— 阶段 1 先测**本组** JIT（本进程内尚无 VM 运行 → 干净），
+/// 作校验和对拍与 G6 比值基准（**不输出 jit 数据**，jit 列由 `perf_g*` 单独测）；
+/// 阶段 2 测本组 VM 并输出 vm 列。
+fn run_group_vm(label: &str, scenarios: &[&Scenario]) {
     let _g = serial_guard();
     if cfg!(debug_assertions) {
         eprintln!("perf_baseline: 非 release 构建，跳过（基线只在 release 有意义）");
         return;
     }
     cpu_freq_warmup();
+    eprintln!(
+        "perf_baseline: VM 参考组 {label}（独立进程，{} 个场景）",
+        scenarios.len()
+    );
     emit_methodology_note("vm");
     emit_note(
         "vm",
         "methodology",
         "vm",
-        "VM 参考路径：绝对值为热态、仅作同组 jit/vm 比值与跨路径对拍（VM 为参考）",
+        "VM 参考路径：每组一个独立进程（AUDIT-11.4.52）；绝对值为热态、仅作同组 jit/vm 比值与跨路径对拍（VM 为参考）",
     );
 
-    let mut scs: Vec<&Scenario> = scenario_g1();
-    scs.extend(scenario_g2());
-    scs.extend(scenario_g3());
-    scs.extend(scenario_g4());
-    let g6 = scenario_g6();
-    scs.extend(g6);
-
-    // 阶段 1：先测全部 JIT（本进程内尚无 VM 运行 → jit 干净），作为对拍与比值基准。
-    let mut jit_results: Vec<(Stats, f64)> = Vec::with_capacity(scs.len());
-    for sc in &scs {
+    // 阶段 1：本组 JIT（对拍与 G6 比值基准，不输出）
+    let mut jit_results: Vec<(Stats, f64)> = Vec::with_capacity(scenarios.len());
+    for sc in scenarios {
         let r = measure_path(sc, Path::Jit, None)
-            .unwrap_or_else(|e| panic!("[{}/{}] jit 计时失败: {e}", sc.group, sc.name));
+            .unwrap_or_else(|e| panic!("[{}/{}] jit(对拍基准) 计时失败: {e}", sc.group, sc.name));
         jit_results.push(r);
     }
-    // 阶段 2：测全部 VM（VM 为参考），与 JIT 校验和对拍；输出 vm 数据与 G6 比值。
-    for (i, sc) in scs.iter().enumerate() {
+    // 阶段 2：本组 VM，输出 vm 列；G6 额外输出 jit/vm 比值
+    for (i, sc) in scenarios.iter().enumerate() {
         let (jit_st, jit_ck) = jit_results[i];
         let (st, vm_ck) = measure_path(sc, Path::Vm, None)
             .unwrap_or_else(|e| panic!("[{}/{}] vm 计时失败: {e}", sc.group, sc.name));
@@ -1431,6 +1444,44 @@ fn perf_vm_reference() {
             );
         }
     }
+}
+
+/// 在全部 VM 参考组里按 `group:name` 找场景（`PERF_VM_SCENARIO` 规格串）。
+/// 不含 G5：G5 是子进程端到端（`cli`），本无 vm 列。
+fn find_vm_scenario(spec: &str) -> &'static Scenario {
+    let (g, n) = spec
+        .split_once(':')
+        .unwrap_or_else(|| panic!("PERF_VM_SCENARIO 需形如 G2:matmul_512，实际收到 {spec:?}"));
+    let all: Vec<&'static Scenario> = scenario_g1()
+        .into_iter()
+        .chain(scenario_g2())
+        .chain(scenario_g3())
+        .chain(scenario_g4())
+        .chain(scenario_g6())
+        .collect();
+    all.into_iter()
+        .find(|s| s.group == g && s.name == n)
+        .unwrap_or_else(|| panic!("未找到场景 {spec:?}（可用规格见 docs/性能基线.md §六）"))
+}
+
+/// VM 参考路径：**每场景一个独立进程**（AUDIT-11.4.52 第二步）。
+///
+/// 演进：最初是「一个测试跑完全部组」（跨组污染，G2 `matmul_512` 的 vm 被抬到 15.4ms，
+/// 而它本应 ≈ jit 5.5ms）→ 改为「每组一个进程」后跨组污染消除，但**组内顺序效应残留**：
+/// 实测同一 `matmul_512` 在 G2 进程 vm=5.49ms、在 G6 进程 vm=15.83ms（后者前面跑了
+/// 18s 的 VM 长循环）——同一场景跨进程差 **2.9×**，故按组隔离对 VM 仍不够。
+/// 现按场景隔离：一个进程只测一个场景（阶段 1 测本场景 JIT 作对拍/G6 比值基准，阶段 2 测 VM）。
+///
+/// 用法：`PERF_VM_SCENARIO=<GROUP>:<name>`（如 `G2:matmul_512`）；
+/// 规范跑法见文件头与 `docs/性能基线.md` §六（每场景一进程的循环）。
+#[test]
+#[ignore = "性能基线（非门槛）：VM 参考路径，每场景一个独立进程（需 PERF_VM_SCENARIO=<G>:<name>）；需 release + --ignored --nocapture"]
+fn perf_vm_scenario() {
+    let spec = std::env::var("PERF_VM_SCENARIO").unwrap_or_else(|_| {
+        panic!("需设置 PERF_VM_SCENARIO=<GROUP>:<name>，例如 PERF_VM_SCENARIO=G2:matmul_512（清单见 docs/性能基线.md §六）")
+    });
+    let sc = find_vm_scenario(&spec);
+    run_group_vm(&spec, &[sc]);
 }
 
 // ── 测试：interp 参考路径（独立，隔离热污染）───────────────────────────────
