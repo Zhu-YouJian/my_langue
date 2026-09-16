@@ -1,7 +1,7 @@
 use super::{Tensor, TensorData};
 use crate::hir::types::BaseType;
 use half::{bf16, f16};
-use ndarray::{ArrayD, IxDyn};
+use ndarray::{ArrayD, IxDyn, Zip};
 
 impl Tensor {
     // ── helpers ────────────────────────────────────────────────────────
@@ -579,9 +579,35 @@ impl Tensor {
         }
     }
 
+    /// AUDIT-11.4.47：按「计算结果 dtype = f64」取操作数视图。
+    /// dtype 已是 F64 时**零拷贝借用**；否则按 dtype 提升规则 cast 出临时数组
+    /// （cast 语义与 `TensorData::as_f64_view` 完全一致，逐位相同）。
+    fn operand_f64(t: &Tensor) -> std::borrow::Cow<'_, ArrayD<f64>> {
+        match t.data.as_f64() {
+            Some(a) => std::borrow::Cow::Borrowed(a),
+            None => std::borrow::Cow::Owned(t.data.as_f64_view()),
+        }
+    }
+
+    /// AUDIT-11.4.47：按「计算结果 dtype = f32」取操作数视图。
+    /// dtype 已是 F32 时**零拷贝借用**（F32→F64→F32 往返无损，等价于原 cast 路径）；
+    /// 否则走 `as_f64_view().mapv(as f32)`，与原 F32 分支的 cast 语义逐位一致。
+    fn operand_f32(t: &Tensor) -> std::borrow::Cow<'_, ArrayD<f32>> {
+        match t.data.as_f32() {
+            Some(a) => std::borrow::Cow::Borrowed(a),
+            None => std::borrow::Cow::Owned(t.data.as_f64_view().mapv(|v| v as f32)),
+        }
+    }
+
     /// 通用元素级二元运算（带广播 + dtype 提升）。
     /// `f32_op` / `f64_op` 接收 f32/f64 返回 f32/f64，按提升后的 dtype 分发。
     /// F16/BF16 路径：转 f32 计算，结果转回 F16/BF16。
+    ///
+    /// **AUDIT-11.4.47 快路径**：两操作数 shape **完全相同**时不走广播物化
+    /// （不 `broadcast().to_owned()`、不复制操作数），直接在结果数组上三路
+    /// `Zip` 逐元素迭代；dtype 已匹配的操作数零拷贝借用。
+    /// shape 不同时**完全保持原广播路径不变**（广播语义 / dtype 提升 / 返回
+    /// dtype 推导规则均未改动）。两条路径对同一输入逐位一致。
     fn elementwise_binary(
         &self,
         other: &Tensor,
@@ -594,9 +620,20 @@ impl Tensor {
         let b_shape = other.data.shape();
         let out_shape = Self::broadcast_shape(a_shape, b_shape)
             .ok_or_else(|| format!("广播失败：无法广播 shape {:?} 与 {:?}（运算符 {}）", self.shape(), other.shape(), op_symbol))?;
+        // 同 shape ⟹ out_shape == a_shape == b_shape，可用无广播直算快路径。
+        let same_shape = a_shape == b_shape;
 
         match result_dtype {
             BaseType::F64 => {
+                if same_shape {
+                    // 快路径：无广播、无操作数副本（F64+F64 时两层都是借用）、
+                    // 输出由 map_collect 按迭代结果直接分配（无零填充趟）
+                    let a = Self::operand_f64(self);
+                    let b = Self::operand_f64(other);
+                    let out = Zip::from(a.as_ref()).and(b.as_ref())
+                        .map_collect(|&x, &y| f64_op(x, y));
+                    return Ok(Tensor::from_data(out));
+                }
                 let a = self.data.as_f64_view();
                 let b = other.data.as_f64_view();
                 let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
@@ -608,6 +645,14 @@ impl Tensor {
                 Ok(Tensor::from_data(out))
             }
             BaseType::F32 => {
+                if same_shape {
+                    // 快路径：无广播、无操作数副本（F32+F32 时两层都是借用）、无零填充趟
+                    let a = Self::operand_f32(self);
+                    let b = Self::operand_f32(other);
+                    let out = Zip::from(a.as_ref()).and(b.as_ref())
+                        .map_collect(|&x, &y| f32_op(x, y));
+                    return Ok(Tensor::from_data_f32(out));
+                }
                 let a = self.data.as_f64_view().mapv(|v| v as f32);
                 let b = other.data.as_f64_view().mapv(|v| v as f32);
                 let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
@@ -622,6 +667,12 @@ impl Tensor {
                 // 仅 F16+F16 走此路径；转 f32 计算，结果转回 f16
                 let a = self.data.as_f16().expect("F16 op requires F16 self").mapv(|v| v.to_f32());
                 let b = other.data.as_f16().expect("F16 op requires F16 other").mapv(|v| v.to_f32());
+                if same_shape {
+                    // 快路径：无广播；f16→f32→f16 往返无损，结果逐位同广播路径；无零填充趟
+                    let out = Zip::from(&a).and(&b)
+                        .map_collect(|&x, &y| f16::from_f32(f32_op(x, y)));
+                    return Ok(Tensor::from_data_f16(out));
+                }
                 let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
                 let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
                 let mut out: ArrayD<f16> = ArrayD::from_elem(IxDyn(&out_shape), f16::from_f32(0.0));
@@ -633,6 +684,12 @@ impl Tensor {
             BaseType::BF16 => {
                 let a = self.data.as_bf16().expect("BF16 op requires BF16 self").mapv(|v| v.to_f32());
                 let b = other.data.as_bf16().expect("BF16 op requires BF16 other").mapv(|v| v.to_f32());
+                if same_shape {
+                    // 快路径：无广播；bf16→f32→bf16 往返无损，结果逐位同广播路径；无零填充趟
+                    let out = Zip::from(&a).and(&b)
+                        .map_collect(|&x, &y| bf16::from_f32(f32_op(x, y)));
+                    return Ok(Tensor::from_data_bf16(out));
+                }
                 let a_br = a.broadcast(IxDyn(&out_shape)).unwrap();
                 let b_br = b.broadcast(IxDyn(&out_shape)).unwrap();
                 let mut out: ArrayD<bf16> = ArrayD::from_elem(IxDyn(&out_shape), bf16::from_f32(0.0));
