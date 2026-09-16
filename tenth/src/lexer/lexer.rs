@@ -151,8 +151,13 @@ impl Lexer {
                         col: span.col,
                         message: format!("无效的进制字面量：0{}{}", prefix, digits),
                     })?;
+                    // AUDIT-11.4.53 R5：进制字面量与十进制行为对齐——
+                    // 默认 I32，**超出 i32 范围自动提升为 I64**（十进制在下方 :291 有，
+                    // 此处此前硬编码 I32 ⇒ `0x1_0000_0000` 会被误判超范围）。
+                    // tenthc 侧早已实现（`tenthc/lexer/lexer.th:92-94`），本改动消除双侧不一致。
+                    let dt = if n > 2147483647 { BaseType::I64 } else { BaseType::I32 };
                     return Ok(Token {
-                        kind: TokenKind::IntLiteral(n, BaseType::I32),
+                        kind: TokenKind::IntLiteral(n, dt),
                         span,
                     });
                 }

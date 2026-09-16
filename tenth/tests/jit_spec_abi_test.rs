@@ -12,6 +12,13 @@
 //!
 //! 注意：签名从 `Chunk.scalar_sig`（BytecodeCompiler 编译时从 HIR 推导）读取，
 //! 测试 helper 与 main.rs 同构（compile → add_fn），因此特化自动生效。
+//!
+//! **AUDIT-11.4.53（R2）后的语料注解变更**：特化签名现在只接受
+//! `Int`（`TypeParam("Int")`，其运行期语义本就是「I32 标量槽」）与 `f64`；
+//! `BaseType::I64` 已从 `ChunkSig::from_hir` **移除**——裸 i64 寄存器传参会把
+//! i64 形参按 i32 语义做范围检查（误报溢出）。因此本套件中「特化」形态的
+//! 函数注解由 `i64` 改为 `Int`（**特化机制与覆盖意图不变**，仅注解拼写变化），
+//! 并新增 `spec_i64_not_eligible_and_i64_semantics_hold` 反向守护 i64 走通用 ABI。
 
 use tenth::compile::bytecode::BytecodeCompiler;
 use tenth::compile::jit;
@@ -128,7 +135,7 @@ fn assert_vm_jit_int(src: &str, expected: i64, label: &str) {
 #[test]
 fn spec_fib_recursive() {
     let src = r#"
-        fn fib(n: i64) -> i64 {
+        fn fib(n: Int) -> Int {
             if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
         }
         fn main() -> i64 { fib(20) }
@@ -160,8 +167,8 @@ fn spec_fib_recursive_vm_jit_parity() {
 fn spec_multi_arg_i64() {
     // add3 含调用（add2）→ 不可内联 → 特化入口编译（3 个 i64 寄存器参数）。
     let src = r#"
-        fn add2(a: i64, b: i64) -> i64 { a + b }
-        fn add3(a: i64, b: i64, c: i64) -> i64 { add2(a, b) + c }
+        fn add2(a: Int, b: Int) -> Int { a + b }
+        fn add3(a: Int, b: Int, c: Int) -> Int { add2(a, b) + c }
         fn main() -> i64 { add3(10, 20, 30) }
     "#;
     let (v, vm) = run_jit_with_vm(src).unwrap();
@@ -187,10 +194,10 @@ fn spec_multi_arg_vm_jit_parity() {
 fn spec_nested_recursion() {
     // 递归调用后跟 `+ 0`（非尾位置）→ CallN 特化路径（不是 TailCall 保守路径）。
     let src = r#"
-        fn even(n: i64) -> i64 {
+        fn even(n: Int) -> Int {
             if n == 0 { 1 } else { odd(n - 1) + 0 }
         }
-        fn odd(n: i64) -> i64 {
+        fn odd(n: Int) -> Int {
             if n == 0 { 0 } else { even(n - 1) + 0 }
         }
         fn main() -> i64 { even(20) }
@@ -212,7 +219,7 @@ fn spec_mixed_signature_generic() {
     // P3：scale 含 f64 参数 → **特化**（I64+F64 混合签名 [I64,F64]→I64）；含 to_float
     // 调用 → 不可内联 → 特化 ABI 路径（真实覆盖「f64 参数 → 特化」逻辑）。
     let src = r#"
-        fn scale(a: i64, k: f64) -> i64 {
+        fn scale(a: Int, k: f64) -> Int {
             let f = to_float(a) * k;
             if f > 100.0 { a } else { a + 1 }
         }
@@ -240,10 +247,36 @@ fn spec_mixed_signature_vm_jit_parity() {
     assert_vm_jit_int(src, 8, "scale-parity");
 }
 
+/// **AUDIT-11.4.53 R2**：`i64` 注解函数**不得**走特化 ABI。
+///
+/// 特化 ABI 以裸 i64 寄存器传参、体内按 I32 标量语义做范围检查 ⇒ 对声明为 `i64`
+/// 的形参是错的（`fn scale(x: i64) -> i64 { x * 100 }` 会被误报「溢出 i32 范围」）。
+/// 故 `BaseType::I64` 已从 `ChunkSig::from_hir` 移除：断言 `!is_spec_compiled`
+/// **且**大值 i64 语义三路径一致（VM=JIT=解释器）。
+#[test]
+fn spec_i64_not_eligible_and_i64_semantics_hold() {
+    let src = r#"
+        fn scale(x: i64) -> i64 {
+            let a = x * 100;
+            let b = a + 1;
+            let c = b - 1;
+            c
+        }
+        fn main() -> i64 { scale(2000000000) }
+    "#;
+    let (v, vm) = run_jit_with_vm(src).unwrap();
+    assert_eq!(int_of(v, "i64-not-spec"), 200000000000);
+    let ctx = vm.jit_ctx.as_ref().unwrap();
+    let scale = chunk_idx(&vm, "scale");
+    assert!(!ctx.is_spec_compiled(scale),
+        "i64 注解函数不得编译特化入口（裸 i64 寄存器会按 i32 语义检查）");
+    assert_eq!(int_of(run_vm(src).unwrap(), "i64-not-spec-vm"), 200000000000,
+        "VM 侧 i64 语义必须正确");
+}
+
 /// 非标量返回（str）→ 不特化。
 #[test]
-fn spec_non_scalar_return_not_spec() {
-    let src = r#"
+fn spec_non_scalar_return_not_spec() {    let src = r#"
         fn label(a: i64) -> str { to_string(a) }
         fn main() -> i64 { parse_int(label(7)) + parse_int(label(8)) }
     "#;
@@ -285,7 +318,7 @@ fn spec_error_div_zero_with_line() {
 /// 特化函数内整数溢出 → 错误（不静默），带源码行号。
 #[test]
 fn spec_error_overflow_with_line() {
-    let src = "fn f(a: i64) -> i64 { a + 1 }\nfn main() -> i64 { f(2147483647) }";
+    let src = "fn f(a: Int) -> Int { a + 1 }\nfn main() -> i64 { f(2147483647) }";
     let err = run_jit(src).unwrap_err();
     match &err {
         TenthError::RuntimeError { line, message, .. } => {
@@ -307,7 +340,7 @@ fn spec_dual_entry_generic_and_spec() {
     // fib 既被「非标量参数」调用（parse_int 结果 → 通用入口 A1），又被「标量参数」
     // 调用（5 → 特化入口）——双入口共存且各自正确。fib 不可内联（递归）。
     let src = r#"
-        fn fib(n: i64) -> i64 {
+        fn fib(n: Int) -> Int {
             if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
         }
         fn main() -> i64 {
@@ -341,7 +374,7 @@ fn spec_indirect_via_function_value() {
 #[test]
 fn spec_with_hostcall_inside() {
     let src = r#"
-        fn f(a: i64) -> i64 {
+        fn f(a: Int) -> Int {
             let s = to_string(a);
             println(s);
             a + 1
@@ -352,7 +385,7 @@ fn spec_with_hostcall_inside() {
     assert_eq!(int_of(v, "hostcall"), 42);
     let ctx = vm.jit_ctx.as_ref().unwrap();
     let f = chunk_idx(&vm, "f");
-    assert!(ctx.is_spec_compiled(f), "含 hostcall 的 i64 函数仍可特化");
+    assert!(ctx.is_spec_compiled(f), "含 hostcall 的 Int 函数仍可特化");
 }
 
 // ── 8. 特化调用点参数来自 native（非标量槽）→ 回退通用，结果仍正确 ───────
@@ -376,8 +409,8 @@ fn spec_arg_from_native_falls_back_generic() {
 #[test]
 fn spec_chained_calls() {
     let src = r#"
-        fn double(a: i64) -> i64 { a * 2 }
-        fn quad(a: i64) -> i64 { double(double(a)) }
+        fn double(a: Int) -> Int { a * 2 }
+        fn quad(a: Int) -> Int { double(double(a)) }
         fn main() -> i64 { quad(5) + 1 }
     "#;
     let (v, vm) = run_jit_with_vm(src).unwrap();
@@ -409,10 +442,10 @@ fn spec_param_in_branches() {
 #[test]
 fn spec_param_branches_noninline() {
     let src = r#"
-        fn step(x: i64, d: i64) -> i64 {
+        fn step(x: Int, d: Int) -> Int {
             if d <= 0 { x } else { step(x + 1, d - 1) }
         }
-        fn classify(x: i64) -> i64 {
+        fn classify(x: Int) -> Int {
             let v = step(x, 0);
             if v < 0 { -1 } else if v == 0 { 0 } else { 1 }
         }

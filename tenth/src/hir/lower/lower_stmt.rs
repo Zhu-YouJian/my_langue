@@ -185,6 +185,18 @@ impl Lowerer {
                     (None, None) => Type::Unknown,
                 };
 
+                // AUDIT-11.4.53 R1：注解驱动的整数 dtype 强制。
+                // `let x: i64 = 2000000000;` 的字面量值在 i32 范围内 → lexer 不提升，
+                // 若不在此改写 init 的 dtype，运行期 x 仍是 Int(n, I32)，
+                // `x * 100` 会被 i32 范围检查误报溢出（探针①）。注解生效；
+                // 注解放不下的字面量 → 编译期 TypeError（手册承诺）。
+                if let (Some(ann), Some(init_expr)) = (type_ann.as_ref(), lowered_init.as_mut()) {
+                    let ann_ty = self.annotation_type(ann);
+                    if let Some(target) = super::types::int_base_of(&ann_ty) {
+                        super::types::coerce_int_dtype(init_expr, target, &span)?;
+                    }
+                }
+
                 // M1.3：dyn 类型注解驱动的隐式升级——`let d: dyn Draw = rect;`
                 // ① 编译期检查：具体类型必须实现该 trait（未实现 → TypeError，防误报）；
                 // ② init 改写为 `into_dyn(rect, "Draw")`，运行时包装为 Value::Dyn。
@@ -1361,6 +1373,14 @@ impl Lowerer {
                     }
 
                     let lowered_body = self.lower_expr(body)?;
+
+                    // AUDIT-11.4.53 R1：返回类型注解驱动的整数 dtype 强制。
+                    // `fn f() -> i64 { 2000000000 * 1000 }` 若不改写，两操作数仍是 I32
+                    // ⇒ 运行期按 i32 范围检查误报溢出（手册承诺 i64 返回类型生效）。
+                    let mut lowered_body = lowered_body;
+                    if let Some(target) = super::types::int_base_of(&ret_ty) {
+                        super::types::coerce_int_dtype(&mut lowered_body, target, &item.span)?;
+                    }
 
                     // 函数体作用域结束：弹回父作用域（函数局部变量不外泄到后续函数）。
                     self.scope = *self.scope.parent.take().unwrap();

@@ -185,7 +185,7 @@ impl BytecodeCompiler {
         self.tail_call_ok = false;
         match &expr.kind {
             Literal(lit) => match lit {
-                crate::hir::hir::Literal::Int(n, _) => self.chunk.emit(Op::PushInt(*n)),
+                crate::hir::hir::Literal::Int(n, dt) => self.chunk.emit(Op::PushInt(*n, *dt)),
                 crate::hir::hir::Literal::Float(f, dt) => match dt {
                     crate::hir::types::BaseType::F32 => self.chunk.emit(Op::PushFloat32(*f as f32)),
                     _ => self.chunk.emit(Op::PushFloat(*f)),
@@ -509,12 +509,12 @@ impl BytecodeCompiler {
                             if let Some(s) = start {
                                 self.compile_expr(s)?;
                             } else {
-                                self.chunk.emit(Op::PushInt(0));
+                                self.chunk.emit(Op::PushInt(0, crate::hir::types::BaseType::I32));
                             }
                             if let Some(e) = end {
                                 self.compile_expr(e)?;
                             } else {
-                                self.chunk.emit(Op::PushInt(i64::MAX));
+                                self.chunk.emit(Op::PushInt(i64::MAX, crate::hir::types::BaseType::I32));
                             }
                             self.chunk.emit(Op::SliceStr);
                         }
@@ -678,7 +678,7 @@ impl BytecodeCompiler {
                             // `0 => body` or `0 if guard => body`
                             self.chunk.emit(Op::Dup); // [scrut, scrut]
                             match lit {
-                                crate::hir::hir::Literal::Int(n, _) => self.chunk.emit(Op::PushInt(*n)),
+                                crate::hir::hir::Literal::Int(n, dt) => self.chunk.emit(Op::PushInt(*n, *dt)),
                                 crate::hir::hir::Literal::Float(f, dt) => match dt {
                                     crate::hir::types::BaseType::F32 => self.chunk.emit(Op::PushFloat32(*f as f32)),
                                     _ => self.chunk.emit(Op::PushFloat(*f)),
@@ -1080,7 +1080,18 @@ impl BytecodeCompiler {
                 | Some(Type::Base(BaseType::I32)) | Some(Type::Base(BaseType::I64))
                 | Some(Type::Base(BaseType::U8)) | Some(Type::Base(BaseType::U16))
                 | Some(Type::Base(BaseType::U32)) | Some(Type::Base(BaseType::U64))
-                | Some(Type::Base(BaseType::BigInt)) => self.chunk.emit(Op::PushInt(0)),
+                | Some(Type::Base(BaseType::BigInt)) => {
+                // AUDIT-11.4.53：零值默认必须携带**声明的 dtype**（此前 8 种整型塌缩为
+                // `PushInt(0)` → 运行时补 I32），否则 `let x: i64;` 之后参与算术会被按
+                // i32 范围检查。BigInt 无窄整型语义 → 保持 I32（历史行为）。
+                let dt = match ty {
+                    Some(Type::Base(b @ (BaseType::I8 | BaseType::I16 | BaseType::I32
+                        | BaseType::I64 | BaseType::U8 | BaseType::U16
+                        | BaseType::U32 | BaseType::U64))) => *b,
+                    _ => BaseType::I32,
+                };
+                self.chunk.emit(Op::PushInt(0, dt));
+            }
             _ => self.chunk.emit(Op::PushUnit),
         }
     }
@@ -1214,7 +1225,7 @@ impl BytecodeCompiler {
                         if let Some(s) = start {
                             self.compile_expr(s)?;
                         } else {
-                            self.chunk.emit(Op::PushInt(0));
+                            self.chunk.emit(Op::PushInt(0, crate::hir::types::BaseType::I32));
                         }
                         self.chunk.emit(Op::Store(var_slot));
 
@@ -1231,7 +1242,7 @@ impl BytecodeCompiler {
                         if let Some(e) = end {
                             self.compile_expr(e)?;
                         } else {
-                            self.chunk.emit(Op::PushInt(i64::MAX));
+                            self.chunk.emit(Op::PushInt(i64::MAX, crate::hir::types::BaseType::I32));
                         }
                         if *inclusive {
                             self.chunk.emit(Op::Lte);
@@ -1247,7 +1258,7 @@ impl BytecodeCompiler {
                         // var += 1 — continue 跳到这里（跳过 body 剩余、执行增量）
                         self.label(continue_label);
                         self.chunk.emit(Op::Load(var_slot));
-                        self.chunk.emit(Op::PushInt(1));
+                        self.chunk.emit(Op::PushInt(1, crate::hir::types::BaseType::I32));
                         self.chunk.emit(Op::Add);
                         self.chunk.emit(Op::Store(var_slot));
 
@@ -1279,7 +1290,7 @@ impl BytecodeCompiler {
                         self.chunk.emit(Op::Store(iter_slot));
 
                         // __idx = 0
-                        self.chunk.emit(Op::PushInt(0));
+                        self.chunk.emit(Op::PushInt(0, crate::hir::types::BaseType::I32));
                         self.chunk.emit(Op::Store(idx_slot));
 
                         let loop_start = self.chunk.code.len();
@@ -1309,7 +1320,7 @@ impl BytecodeCompiler {
                         // __idx += 1 — continue 跳到这里（跳过 body 剩余、执行增量）
                         self.label(continue_label);
                         self.chunk.emit(Op::Load(idx_slot));
-                        self.chunk.emit(Op::PushInt(1));
+                        self.chunk.emit(Op::PushInt(1, crate::hir::types::BaseType::I32));
                         self.chunk.emit(Op::Add);
                         self.chunk.emit(Op::Store(idx_slot));
 

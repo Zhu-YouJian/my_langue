@@ -486,6 +486,103 @@ fn main() {
     ])
 );
 
+// ── AUDIT-11.4.53：整型 dtype 贯通（i64 注解/后缀/形参/返回/混合提升/radix） ──
+// 修复前：算术一律按 i32 检查；i64 后缀 / `let x: i64` / i64 形参 / i64 返回**全部无效**。
+// 下列语料把「手册承诺」变成两路径共同守护的事实（差分 + 金标准双保险）。
+
+guard_case!(
+    guard_i64_annotation_suffix_and_promotion,
+    "i64_annotation_suffix_promotion",
+    "i64 注解 / i64 后缀 / 无后缀超 i32 自动提升，三路径同值",
+    "AUDIT-11.4.53",
+    r#"
+fn main() {
+    let x: i64 = 2000000000;
+    println("A=" + format("{}", x * 100));
+    let a = 3000000000;
+    println("B=" + format("{}", a + a));
+    println("C=" + format("{}", 2000000000i64 * 100i64));
+    println("D=" + format("{}", a));
+}
+"#,
+    Expect::ParityLines(&[
+        "A=200000000000",
+        "B=6000000000",
+        "C=200000000000",
+        "D=3000000000",
+    ])
+);
+
+guard_case!(
+    guard_i64_param_return_and_commutativity,
+    "i64_param_return_commutativity",
+    "i64 形参 / i64 返回 + 混合运算交换律（a op b == b op a）",
+    "AUDIT-11.4.53/R4",
+    r#"
+fn scale(x: i64) -> i64 { x * 100 }
+fn main() {
+    println("P=" + format("{}", scale(2000000000)));
+    let y: i64 = 2000000000;
+    println("L=" + format("{}", y + 1));
+    println("R=" + format("{}", 1 + y));
+    println("ML=" + format("{}", y * 3));
+    println("MR=" + format("{}", 3 * y));
+}
+"#,
+    Expect::ParityLines(&[
+        "P=200000000000",
+        "L=2000000001",
+        "R=2000000001",
+        "ML=6000000000",
+        "MR=6000000000",
+    ])
+);
+
+guard_case!(
+    guard_radix_literal_promotes_like_decimal,
+    "radix_literal_promotion",
+    "radix 字面量与十进制对齐（默认 i32、超范围提升 i64）",
+    "AUDIT-11.4.53/R5",
+    r#"
+fn main() {
+    println("H=" + format("{}", 0x1_0000_0000));
+    let r = 0x1_0000_0000;
+    println("R=" + format("{}", r + r));
+    println("S=" + format("{}", 0xFF));
+}
+"#,
+    Expect::ParityLines(&["H=4294967296", "R=8589934592", "S=255"])
+);
+
+guard_case!(
+    guard_i32_overflow_is_loud,
+    "i32_overflow_loud",
+    "显式 i32 溢出必须两路径都响亮报错（不许回绕/饱和）",
+    "AUDIT-11.4.53 反向守护（护城河：溢出必须响亮）",
+    r#"
+fn main() {
+    let p: i32 = 2000000000;
+    println("X=" + format("{}", p * 2));
+}
+"#,
+    Expect::ParityLoud { stderr_contains: &["溢出 i32 范围"] }
+);
+
+guard_case!(
+    guard_narrow_dtype_overflow_is_loud,
+    "narrow_dtype_overflow_loud",
+    "窄 dtype（i8）越界必须两路径都响亮报错",
+    "AUDIT-11.4.53 反向守护（窄 dtype 范围检查）",
+    r#"
+fn main() {
+    let s: i8 = 100;
+    let t: i8 = 100;
+    println("X=" + format("{}", s + t));
+}
+"#,
+    Expect::ParityLoud { stderr_contains: &["溢出 i8 范围"] }
+);
+
 // ── 已知分歧台账（ratchet）：AUDIT-11.4.56 闭包体内写全局 ────────────
 // 实测（波次 1 之后）：默认路径 VM 写穿全局表 → C=2；解释器按值捕获 → C=0；
 // **两侧 exit 均 0**（静默分歧）。按台账断言「仍然分歧」：修好即报红，提示移除台账。

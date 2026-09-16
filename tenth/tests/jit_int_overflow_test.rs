@@ -9,8 +9,13 @@
 //! 说明：
 //! - JIT 整数算术全部经 hostcall（host_add 等）走与 VM 相同的 `add_priv` 等原语，
 //!   因此本文件同时覆盖 VM 与 JIT 路径；解释器路径独立断言。
-//! - i64 字面量后缀在运行时丢失为 I32（既有 dtype 保留问题，不在本 AUDIT 范围），
-//!   故消息中出现 "i32 范围"；i64 层溢出由 `checked_*` 拦截，仍能干净报错。
+//! - **AUDIT-11.4.53（2026-09-17）修正**：i64 dtype 现已贯通到字节码/运行时，
+//!   字面量后缀、`let x: i64` 标注、i64 形参/返回均**真实生效**；且整数混合运算
+//!   按「宽度优先」的**公共 dtype** 做范围检查（可交换）。
+//!   因此 `-2147483648` 这类**无后缀但词法上超出 i32 范围**的字面量经 `unary neg`
+//!   后是 **i64**（手册 §字面量：无后缀且超出 i32 范围自动提升为 i64）——
+//!   `a - 1` 不再溢出 i32。要断言「i32 溢出响亮报错」，须**显式标注 i32**
+//!   （下方 3 个用例已按此修正；期望消息逐字未变）。
 
 use tenth::lexer::lexer::Lexer;
 use tenth::parser::parser::Parser;
@@ -140,7 +145,8 @@ fn test_int_add_overflow_mid_chain() {
 
 #[test]
 fn test_int_sub_overflow_consistent() {
-    let src = "fn main() -> Int { let a = -2147483648; let b = 1; a - b }";
+    // AUDIT-11.4.53：显式 i32 注解（无注解的 -2147483648 按手册是 i64 字面量取负）
+    let src = "fn main() -> Int { let a: i32 = -2147483648; let b = 1; a - b }";
     let (vm_r, jit_r, interp_r) = assert_consistent(src);
     assert_err_contains(vm_r, jit_r, interp_r, "整数运算结果 -2147483649 溢出 i32 范围");
 }
@@ -155,7 +161,8 @@ fn test_int_mul_overflow_consistent() {
 #[test]
 fn test_int_div_overflow_consistent() {
     // i32::MIN / -1 = 2147483648，超出 i32 范围 → 报错（与 VM 一致）
-    let src = "fn main() -> Int { let a = -2147483648; let b = -1; a / b }";
+    // AUDIT-11.4.53：显式 i32 注解（同 sub 用例的理由）
+    let src = "fn main() -> Int { let a: i32 = -2147483648; let b = -1; a / b }";
     let (vm_r, jit_r, interp_r) = assert_consistent(src);
     assert_err_contains(vm_r, jit_r, interp_r, "整数运算结果 2147483648 溢出 i32 范围");
 }
@@ -163,15 +170,17 @@ fn test_int_div_overflow_consistent() {
 #[test]
 fn test_int_neg_overflow_consistent() {
     // -i32::MIN = 2147483648，超出 i32 范围 → 报错
-    let src = "fn main() -> Int { let a = -2147483648; -a }";
+    // AUDIT-11.4.53：显式 i32 注解（同 sub 用例的理由）
+    let src = "fn main() -> Int { let a: i32 = -2147483648; -a }";
     let (vm_r, jit_r, interp_r) = assert_consistent(src);
     assert_err_contains(vm_r, jit_r, interp_r, "整数运算结果 2147483648 溢出 i32 范围");
 }
 
 #[test]
 fn test_i64_layer_overflow_consistent() {
-    // i64 字面量后缀在运行时丢失为 I32（既有 dtype 保留问题），但值本身触发
-    // checked_add 的 i64 层溢出（9223372036854775807 + 1 超出 i64）→ 干净报错。
+    // AUDIT-11.4.53：i64 dtype 现已真实贯通（后端到端携带），9223372036854775807i64
+    // 是 i64；+1 触发 checked_add 的 **i64 层**溢出 → 三路径干净报错（文案为
+    // 「整数运算结果溢出 i64 范围」，前缀断言对 i32/i64 两种文案都成立）。
     let src = "fn main() -> Int { let a = 9223372036854775807i64; let b = 1i64; a + b }";
     let (vm_r, jit_r, interp_r) = assert_consistent(src);
     assert_err_contains(vm_r, jit_r, interp_r, "整数运算结果溢出");

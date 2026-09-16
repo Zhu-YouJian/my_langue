@@ -452,7 +452,7 @@ impl Lowerer {
 
                 // Process call arguments: resolve named args, fill defaults, collect variadic
                 let processed_args = self.process_call_args(func, args, &span)?;
-                let lowered_args = processed_args;
+                let mut lowered_args = processed_args;
 
                 // If the func is an EnumLiteral, merge args as tuple fields
                 if let HirExprKind::EnumLiteral { enum_name, variant, fields } = &f.kind {
@@ -507,6 +507,20 @@ impl Lowerer {
                 }
 
                 let ret_ty = self.resolve_call_type(&f, &lowered_args, &span)?;
+                // AUDIT-11.4.53 R1：形参类型注解驱动的整数 dtype 强制（④ i64 形参）。
+                // `fn scale(x: i64)` 以 `scale(2000000000)` 调用时，实参字面量的值在
+                // i32 范围内 ⇒ lexer 不提升 ⇒ 形参 x 运行期是 Int(n, I32)，`x * 100`
+                // 被 i32 范围检查误报溢出。此处按声明形参 dtype 改写实参。
+                if let HirExprKind::Var(name) = &f.kind {
+                    let arg_tys: Vec<Type> = lowered_args.iter().map(|a| a.ty.clone()).collect();
+                    if let Ok((params, _)) = self.scope.resolve_fn_overload(name, &arg_tys, &span) {
+                        for (arg, (_, pty)) in lowered_args.iter_mut().zip(params.iter()) {
+                            if let Some(target) = super::types::int_base_of(pty) {
+                                super::types::coerce_int_dtype(arg, target, &span)?;
+                            }
+                        }
+                    }
+                }
                 // 编译期内存预估：构造函数返回大 tensor 时发 warning
                 self.emit_memory_estimate(&ret_ty, &span, "函数调用");
                 // 方向 A：对 param(t) 调用，提示梯度 shape 应与 t 一致（让用户意识到梯度 shape 约束）

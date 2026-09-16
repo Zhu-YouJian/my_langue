@@ -126,8 +126,37 @@ fn get_field_clone(fields: &[(String, Value)], name: &str) -> Value {
     Value::Unit
 }
 
-fn get_field_i64(fields: &[(String, Value)], name: &str) -> TenthResult<i64> {
+/// 可选读取 i64 字段（缺失/非整数 → None，不报错）。
+fn get_field_i64_opt(fields: &[(String, Value)], name: &str) -> Option<i64> {
     match get_field_clone(fields, name) {
+        Value::Int(n, _) => Some(n),
+        Value::Shared(rc) => match &*rc.borrow() {
+            Value::Int(n, _) => Some(*n),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// AUDIT-11.4.53：把 tenthc `Expr.dtype`（hir.th BaseType 编码）映射为 Rust `BaseType`。
+/// 只接受整型编码；其余（含字段缺失的默认 0 以外的非整型）→ I32（历史行为）。
+/// 说明：`parser.th:159` 对 `kind="int"` 节点总是显式写入 token dtype
+/// （默认 1=I32），因此此处不会把「默认 0」误读成 I64。
+fn bridge_int_dtype(fields: &[(String, Value)]) -> BaseType {
+    match get_field_i64_opt(fields, "dtype") {
+        Some(8) => BaseType::I8,
+        Some(9) => BaseType::I16,
+        Some(1) => BaseType::I32,
+        Some(0) => BaseType::I64,
+        Some(10) => BaseType::U8,
+        Some(11) => BaseType::U16,
+        Some(12) => BaseType::U32,
+        Some(13) => BaseType::U64,
+        _ => BaseType::I32,
+    }
+}
+
+fn get_field_i64(fields: &[(String, Value)], name: &str) -> TenthResult<i64> {    match get_field_clone(fields, name) {
         Value::Int(n, _) => Ok(n),
         Value::Shared(rc) => {
             let inner = rc.borrow();
@@ -629,6 +658,13 @@ fn clone_struct_fields_opt(val: &Value) -> Option<Vec<(String, Value)>> {
 
 // ── Expression conversion ──────────────────────────────────────────────────
 
+/// 紧凑索引 → 递归 AST。
+///
+/// AUDIT-11.4.53 注记（路径 B 的 dtype 通道）：真正带 dtype 的字面量只有
+/// `kind == "int"` 一处（已改为按 tenthc `Expr.dtype` 映射，见 `bridge_int_dtype`）。
+/// 本函数内其余 `Literal::Int(0, BaseType::I32)` 全部是**索引缺失时的 nil 占位**
+/// （`left == 0` / 越界 → 合成 0），**没有 dtype 来源**，保持 I32 是唯一可行选择；
+/// 模式字面量同理由 `parse_match_pattern` 的 I32 承担（比较忽略 dtype）。
 fn convert_expr(
     idx: usize,
     arrays: &ProgArrays,
@@ -676,7 +712,12 @@ fn convert_expr_depth(
 
     match kind.as_str() {
         "int" => Ok(ast::Expr {
-            kind: ast::ExprKind::Literal(ast::Literal::Int(ival, BaseType::I32)),
+            // AUDIT-11.4.53：路径 B 的整数字面量此前硬编码 I32，丢弃 tenthc 前端
+            // （`parser.th:159` 把 token dtype 写入 Expr.dtype）已携带的 dtype。
+            // dtype 用 tenthc 的 hir.th BaseType 编码（0:I64 1:I32 2:F64 3:F32
+            // 4:Bool 5:Str 6:Unit 7:Char 8:I8 9:I16 10:U8 11:U16 12:U32 13:U64
+            // 14:F16 15:BF16）；字段缺失/非整型编码 → 回退 I32（历史行为）。
+            kind: ast::ExprKind::Literal(ast::Literal::Int(ival, bridge_int_dtype(&fields))),
             span: span.clone(),
         }),
         "float" => Ok(ast::Expr {
@@ -1265,6 +1306,11 @@ fn parse_match_pattern(pat_kind: &str, pat_name: &str, pat_bind: &str) -> TenthR
             } else if pat_name == "false" {
                 Ok(ast::Pattern::Literal(ast::Literal::Bool(false)))
             } else if let Ok(n) = pat_name.parse::<i64>() {
+                // AUDIT-11.4.53：此处保持 I32——**本函数只收到字符串**（tenthc 侧
+                // `pat_name`），dtype 信息未随 `pat_kind/pat_name/pat_bind` 传递；
+                // 且模式字面量只用于 `Op::Eq` 相等比较（`Value::Int` 比较忽略 dtype），
+                // 故 dtype 选择无语义影响。若将来要携带 dtype，须改 tenthc 的
+                // pattern 传递通道（不在本轮范围）。
                 Ok(ast::Pattern::Literal(ast::Literal::Int(n, BaseType::I32)))
             } else {
                 // Fallback: treat as binding

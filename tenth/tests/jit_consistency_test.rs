@@ -350,10 +350,13 @@ fn consistency_inline_i64_2param_1param_loop_accumulate() {
 }
 
 #[test]
-fn consistency_inline_i64_3param_loop_overflow() {
-    // 3 参小函数循环累加至溢出：JIT 与 VM 一致报「溢出 i32 范围」（修复前 JIT
-    // 静默 0 无报错——静默错值红线）。行号均指向被调函数体内（第 2 行）。
-    assert_vm_jit_err_line_parity(r#"fn f3(a: i64, b: i64, c: i64) -> i64 {
+fn consistency_inline_i64_3param_loop_no_overflow() {
+    // AUDIT-11.4.53（R3）：i64 形参/返回注解现已**真实生效**——3e6 轮累加
+    // s += i + 1 得到 4500001500000（≈4.5e12，远超 i32 但远在 i64 内）⇒
+    // **不再溢出**。旧期望「报溢出 i32 范围」是缺陷当契约（i64 被静默降级为 i32），
+    // 按手册语义（无后缀超 i32 自动 i64 + 注解生效）修正为「三路径同值」。
+    // 溢出必须响亮的守护由 i32 变体（下一测试）承担。
+    assert_vm_jit_int(r#"fn f3(a: i64, b: i64, c: i64) -> i64 {
     a + b + c
 }
 fn main() -> i64 {
@@ -365,7 +368,28 @@ fn main() -> i64 {
     };
     s
 }
-"#, 2, "err-inline-i64-3param-loop-overflow");
+"#, 4500001500000, "inline-i64-3param-loop-accumulate");
+}
+
+#[test]
+fn consistency_inline_i32_3param_loop_overflow() {
+    // 3 参小函数循环累加至 i32 溢出：JIT 与 VM 一致报「溢出 i32 范围」（修复前 JIT
+    // 静默 0 无报错——静默错值红线）。行号均指向被调函数体内（第 2 行）。
+    // AUDIT-11.4.53：**显式 i32 形参**——这是「窄 dtype 溢出必须响亮」的正向守护，
+    // 不得因 i64 生效而丢失（原用例误用 i64 形参来触发 i32 报错）。
+    assert_vm_jit_err_line_parity(r#"fn f3(a: i32, b: i32, c: i32) -> i32 {
+    a + b + c
+}
+fn main() -> i32 {
+    let mut s = 0;
+    let mut i = 0;
+    while i < 3000000 {
+        s = f3(s, i, 1);
+        i = i + 1;
+    };
+    s
+}
+"#, 2, "err-inline-i32-3param-loop-overflow");
 }
 
 #[test]

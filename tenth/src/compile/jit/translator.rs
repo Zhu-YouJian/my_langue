@@ -38,8 +38,10 @@ const VALUE_SIZE: u32 = size_of::<Value>() as u32;
 ///   恒为标量（must 分析，跨块 GFP）。
 /// - 栈值**延迟物化**：专用化算子只写标量槽；Value 槽在通用消费者/块边界前物化。
 ///
-/// I32 = `Value::Int(i64, I32)`——JIT 可达的 Int 链均为 I32（PushInt→host_make_int
-/// 固定 I32；算术结果 dtype = 第一操作数 dtype = I32；native 返回值为 Unknown 不参与）。
+/// I32 = `Value::Int(i64, I32)`——JIT 标量槽只承载 **I32 dtype** 的 Int 链
+/// （AUDIT-11.4.53 后：非 I32 dtype 的 PushInt 走 `host_make_int_dtype` 通用
+/// hostcall 物化为带真实 dtype 的 Value，绝不进入 I32 标量槽；算术结果 dtype
+/// = 两操作数提升后的 dtype = I32；native 返回值为 Unknown 不参与）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ScalarKind {
     Unknown,
@@ -155,8 +157,12 @@ fn inline_eligible(all_chunks: &[Chunk], callee_idx: usize, n: usize) -> bool {
         if count > INLINE_MAX_INSTR {
             return false;
         }
+        // AUDIT-11.4.53：非 I32 dtype 的 PushInt 走 host_make_int_dtype（通用 hostcall），
+        // 其副作用与既有 `PushFloat32` **完全一致**（物化 Value + 失效栈标量跟踪），
+        // 而 PushFloat32 已在白名单内且分析期按「push Unknown + clear_stack」建模
+        // （见 analyze_scalar_kinds::transfer）⇒ 无需为此取消内联/纯标量资格。
         let is_simple = matches!(op,
-            PushInt(_) | PushFloat(_) | PushFloat32(_) | PushBool(_) | PushChar(_) | PushUnit
+            PushInt(..) | PushFloat(_) | PushFloat32(_) | PushBool(_) | PushChar(_) | PushUnit
             | Pop | Dup | Load(_) | Store(_)
             | Add | Sub | Mul | Div | Mod | Neg | Not
             | Eq | Neq | Lt | Gt | Lte | Gte
@@ -196,8 +202,10 @@ fn spec_body_pure_scalar(
     while ip < len {
         let start = ip;
         let op = chunk.read_op(&mut ip);
+        // AUDIT-11.4.53：非 I32 dtype 的 PushInt 与 PushFloat32 同构（通用 hostcall，
+        // 不读 chunk 字符串表）⇒ 仍满足 skip-chunk-ctx 的「纯标量、不读字符串表」前提。
         let safe = matches!(op,
-            PushInt(_) | PushFloat(_) | PushFloat32(_) | PushBool(_) | PushChar(_) | PushUnit
+            PushInt(..) | PushFloat(_) | PushFloat32(_) | PushBool(_) | PushChar(_) | PushUnit
             | Pop | Dup | Load(_) | Store(_)
             | Add | Sub | Mul | Div | Mod | Neg | Not
             | Eq | Neq | Lt | Gt | Lte | Gte
@@ -824,7 +832,17 @@ impl<'a, M: Module> Translator<'a, M> {
             for idx in start..end {
                 let (ip, ref op, _) = insns[idx];
                 match op {
-                    PushInt(_) => stack.push(I32),
+                    // AUDIT-11.4.53：只有 I32 dtype 的 PushInt 走原生标量槽；非 I32
+                    // 经 host_make_int_dtype（通用 hostcall）→ 失效栈标量跟踪，
+                    // 与发射端 `call_hostcall_i64_i64` 的 invalidate 语义一致。
+                    PushInt(_, dt) => {
+                        if matches!(dt, crate::hir::types::BaseType::I32) {
+                            stack.push(I32);
+                        } else {
+                            stack.push(Unknown);
+                            clear_stack(&mut stack);
+                        }
+                    }
                     PushFloat(_) => stack.push(F64),
                     PushBool(_) => stack.push(Bool),
                     PushChar(_) => stack.push(I32),
@@ -1900,17 +1918,26 @@ impl<'a, M: Module> Translator<'a, M> {
         // 9c：记录当前 opcode 的源码行号（0 = 无），供 hostcall 报错时携带。
         self.cur_line = self.chunk.line_at(op_start).unwrap_or(0);
         match op {
-            PushInt(n) => {
-                if self.scalar_enabled {
+            PushInt(n, dt) => {
+                // AUDIT-11.4.53：只有 I32 dtype 才能走原生 I32 标量槽（该槽的全部
+                // 消费者——emit_binop 的原生算术、host_set_int_*、标量物化——都按
+                // I32 语义）。非 I32（i64/i8/u8/...）一律经 host_make_int_dtype
+                // 物化为带真实 dtype 的 Value 并失效栈标量跟踪，与 VM 逐字节一致。
+                if self.scalar_enabled && matches!(dt, crate::hir::types::BaseType::I32) {
                     // A2b：专用化——写标量槽（原生常量），Value 槽延迟物化（通用消费者前）。
                     let off = self.sp;
                     let slot = self.stack_scalar_slot(off, ScalarKind::I32);
                     let addr = self.builder.ins().stack_addr(self.ptr, slot, 0);
                     let v = self.builder.ins().iconst(types::I64, n);
                     self.builder.ins().store(MemFlags::new(), v, addr, 0);
-                } else {
+                } else if matches!(dt, crate::hir::types::BaseType::I32) {
                     let out = self.stack_addr_at_sp();
                     self.call_hostcall_i64("host_make_int", n, out);
+                } else {
+                    let out = self.stack_addr_at_sp();
+                    self.call_hostcall_i64_i64(
+                        "host_make_int_dtype", n,
+                        crate::runtime::value::int_dtype_tag(dt) as i64, out);
                 }
                 self.bump_sp()?;
             }
@@ -2805,8 +2832,19 @@ impl<'a, M: Module> Translator<'a, M> {
         self.builder.ins().call_indirect(sig, callee, &[self.vm, a, out]);
     }
 
-    fn call_hostcall_f64(&mut self, name: &str, arg: f64, out: Value_) {
+    /// AUDIT-11.4.53：`fn(vm, i64 n, i64 tag, *mut Value)` — 携带 dtype 载荷的整数常量
+    /// 物化（`host_make_int_dtype`）。非 I32 dtype 的 PushInt 专用此路径。
+    fn call_hostcall_i64_i64(&mut self, name: &str, arg: i64, tag: i64, out: Value_) {
         self.invalidate_stack_scalars();
+        self.emit_line_hint();
+        let callee = self.hostcall_addr(name).unwrap();
+        let sig = self.import_sig(&[types::I64, types::I64, self.ptr], None);
+        let a = self.builder.ins().iconst(types::I64, arg);
+        let t = self.builder.ins().iconst(types::I64, tag);
+        self.builder.ins().call_indirect(sig, callee, &[self.vm, a, t, out]);
+    }
+
+    fn call_hostcall_f64(&mut self, name: &str, arg: f64, out: Value_) {        self.invalidate_stack_scalars();
         self.emit_line_hint();
         let callee = self.hostcall_addr(name).unwrap();
         let sig = self.import_sig(&[types::F64, self.ptr], None);
@@ -3265,8 +3303,9 @@ impl<'a, M: Module> Translator<'a, M> {
             if count > INLINE_MAX_INSTR {
                 return None;
             }
+            // AUDIT-11.4.53：与 `inline_eligible` 同一白名单（分析/发射一致，防漂移）。
             let is_simple = matches!(op,
-                PushInt(_) | PushFloat(_) | PushFloat32(_) | PushBool(_) | PushChar(_) | PushUnit
+                PushInt(..) | PushFloat(_) | PushFloat32(_) | PushBool(_) | PushChar(_) | PushUnit
                 | Pop | Dup | Load(_) | Store(_)
                 | Add | Sub | Mul | Div | Mod | Neg | Not
                 | Eq | Neq | Lt | Gt | Lte | Gte

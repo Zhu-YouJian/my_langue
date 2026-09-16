@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
 use crate::hir::hir::*;
-use crate::runtime::value::{Value, check_int_overflow, int_overflow_err, value_to_display_string, deref_wrapped, is_wrapped};
+use crate::runtime::value::{Value, check_int_overflow, int_overflow_err, promote_int_dtype, value_to_display_string, deref_wrapped, is_wrapped};
 use crate::runtime::tensor::Tensor;
 use crate::runtime::autodiff::TapeOp;
 
@@ -27,7 +27,10 @@ impl super::Interpreter {
         }
         match op {
             BinOp::Add => match (l, r) {
-                (Value::Int(a, dt), Value::Int(b, _)) => {
+                (Value::Int(a, dt), Value::Int(b, rt)) => {
+                    // AUDIT-11.4.53 R4：整数混合提升（可交换）——两边 dtype 的公共 dtype，
+                    // 与 VM `add_priv` 同规则，消除 `x_i64 + 1` / `1 + x_i64` 的 dtype 分叉。
+                    let dt = &promote_int_dtype(*dt, *rt);
                     // AUDIT-11.4.17：checked_add 拦截 i64 层溢出
                     let s = a.checked_add(*b).ok_or_else(|| int_overflow_err(*dt))?;
                     check_int_overflow(s, *dt)?;
@@ -92,8 +95,9 @@ impl super::Interpreter {
                 }),
             },
             BinOp::Sub => match (l, r) {
-                // AUDIT-11.4.17：与 VM sub_priv 对齐——保留左操作数 dtype + 范围检查
-                (Value::Int(a, dt), Value::Int(b, _)) => {
+                // AUDIT-11.4.17：与 VM sub_priv 对齐——公共 dtype + 范围检查
+                (Value::Int(a, dt), Value::Int(b, rt)) => {
+                    let dt = &promote_int_dtype(*dt, *rt);
                     let s = a.checked_sub(*b).ok_or_else(|| int_overflow_err(*dt))?;
                     check_int_overflow(s, *dt)?;
                     Ok(Value::Int(s, *dt))
@@ -158,7 +162,9 @@ impl super::Interpreter {
                 }),
             },
             BinOp::Mul => match (l, r) {
-                (Value::Int(a, dt), Value::Int(b, _)) => {
+                (Value::Int(a, dt), Value::Int(b, rt)) => {
+                    // AUDIT-11.4.53 R4：公共 dtype（可交换）
+                    let dt = &promote_int_dtype(*dt, *rt);
                     // AUDIT-11.4.17：checked_mul 拦截 i64 层溢出
                     let s = a.checked_mul(*b).ok_or_else(|| int_overflow_err(*dt))?;
                     check_int_overflow(s, *dt)?;
@@ -222,7 +228,9 @@ impl super::Interpreter {
                 }),
             },
             BinOp::Div => match (l, r) {
-                (Value::Int(a, dt), Value::Int(b, _)) => {
+                (Value::Int(a, dt), Value::Int(b, rt)) => {
+                    // AUDIT-11.4.53 R4：公共 dtype（可交换）
+                    let dt = &promote_int_dtype(*dt, *rt);
                     if *b == 0 {
                         return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "整数除零".into(),
@@ -283,7 +291,9 @@ impl super::Interpreter {
                 }),
             },
             BinOp::Mod => match (l, r) {
-                (Value::Int(a, dt), Value::Int(b, _)) => {
+                (Value::Int(a, dt), Value::Int(b, rt)) => {
+                    // AUDIT-11.4.53 R4：公共 dtype（可交换）
+                    let dt = &promote_int_dtype(*dt, *rt);
                     if *b == 0 {
                         return Err(TenthError::RuntimeError { line: None, col: None,
                             message: "整数取模除零".into(),

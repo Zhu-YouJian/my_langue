@@ -81,7 +81,7 @@ impl Chunk {
         // 编译期唯一持有者（refcount==1），make_mut 原地写零拷贝
         let code = Rc::make_mut(&mut self.code);
         code.push(match &op {
-            PushInt(_) => 0, PushFloat(_) => 1, PushBool(_) => 2, PushStr(_) => 3,
+            PushInt(..) => 0, PushFloat(_) => 1, PushBool(_) => 2, PushStr(_) => 3,
             PushUnit => 4, Pop => 5, Dup => 6,
             Load(_) => 7, Store(_) => 8, LoadGlobal(_) => 9, StoreGlobal(_) => 10,
             Add => 11, Sub => 12, Mul => 13, Div => 14, Mod => 15,
@@ -123,7 +123,9 @@ impl Chunk {
         // Emit operands
         macro_rules! w { ($n:expr, $t:ty) => { code.extend_from_slice(&($n as $t).to_le_bytes()) } }
         match &op {
-            PushInt(n) => w!(*n, i64), PushFloat(f) => w!(*f, f64),
+            // AUDIT-11.4.53：值（8B）+ dtype tag（1B）
+            PushInt(n, dt) => { w!(*n, i64); code.push(crate::runtime::value::int_dtype_tag(*dt)); }
+            PushFloat(f) => w!(*f, f64),
             PushFloat32(f) => w!(*f, f32),
             PushBool(b) => code.push(if *b {1} else {0}),
             PushChar(c) => w!(*c, u32),
@@ -163,7 +165,9 @@ impl Chunk {
         let b = self.code[*ip]; *ip += 1;
         macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if *ip + n > self.code.len() { return Ret; } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&self.code[*ip..*ip+n]); *ip += n; <$t>::from_le_bytes(buf) }}; }
         match b {
-            0 => PushInt(r!(i64)), 1 => PushFloat(r!(f64)),
+            0 => { let n = r!(i64); if *ip >= self.code.len() { return Ret; } let t = self.code[*ip]; *ip += 1;
+                   PushInt(n, crate::runtime::value::int_dtype_from_tag(t)) }
+            1 => PushFloat(r!(f64)),
             2 => { let v = self.code[*ip] != 0; *ip += 1; PushBool(v) },
             3 => PushStr(r!(u64) as usize),
             4 => PushUnit, 5 => Pop, 6 => Dup,

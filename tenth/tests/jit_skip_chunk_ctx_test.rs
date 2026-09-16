@@ -12,7 +12,10 @@
 //! - 全程 VM=JIT 对拍一致
 //!
 //! 注意：签名从 `Chunk.scalar_sig`（BytecodeCompiler 编译时从 HIR 推导）读取，
-//! 与 main.rs 同构（compile → add_fn），特化自动生效。仅显式 `i64` 注解函数
+//! 与 main.rs 同构（compile → add_fn），特化自动生效。**AUDIT-11.4.53 后**：
+//! 特化 ABI 只对 `Int`/`f64` 注解生效（`i64` 注解改为通用 ABI——裸 i64 寄存器
+//! 传参会把 i64 形参按 i32 语义检查，是错的），故本文件语料的标量注解用 `Int`
+//! （特化 + 跳过切换机制不变，覆盖意图不变）。仅显式 `Int`/`f64` 注解函数
 //! 有 scalar_sig（`Int` 别名不纳入）。
 
 use tenth::compile::bytecode::BytecodeCompiler;
@@ -152,11 +155,11 @@ fn assert_vm_jit_int(src: &str, expected: i64, label: &str) {
 
 // ── 1. 跳过判定：递归纯标量函数（fib）────────────────────────────────────
 
-/// fib（递归 + i64 注解）→ 判定为可跳过切换（skip=true）；结果正确。
+/// fib（递归 + Int 注解，特化 ABI）→ 判定为可跳过切换（skip=true）；结果正确。
 #[test]
 fn skip_eligible_fib_recursive() {
     let src = r#"
-        fn fib(n: i64) -> i64 {
+        fn fib(n: Int) -> Int {
             if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
         }
         fn main() -> i64 { fib(20) }
@@ -169,7 +172,7 @@ fn skip_eligible_fib_recursive() {
 #[test]
 fn skip_eligible_fib_parity() {
     let src = r#"
-        fn fib(n: i64) -> i64 {
+        fn fib(n: Int) -> Int {
             if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
         }
         fn main() -> i64 { fib(28) }
@@ -183,10 +186,10 @@ fn skip_eligible_fib_parity() {
 #[test]
 fn skip_eligible_even_odd_nested() {
     let src = r#"
-        fn even(n: i64) -> i64 {
+        fn even(n: Int) -> Int {
             if n == 0 { 1 } else { odd(n - 1) + 0 }
         }
-        fn odd(n: i64) -> i64 {
+        fn odd(n: Int) -> Int {
             if n == 0 { 0 } else { even(n - 1) + 0 }
         }
         fn main() -> i64 { even(20) }
@@ -201,12 +204,12 @@ fn skip_eligible_even_odd_nested() {
 
 // ── 3. 跳过判定：多参纯标量（add3，内联嵌套调用）────────────────────────
 
-/// add3（3 个 i64 参数 + 内联嵌套调用 add2）→ 可跳过（skip=true）。
+/// add3（3 个 Int 参数 + 内联嵌套调用 add2）→ 可跳过（skip=true）。
 #[test]
 fn skip_eligible_add3_multiparam() {
     let src = r#"
-        fn add2(a: i64, b: i64) -> i64 { a + b }
-        fn add3(a: i64, b: i64, c: i64) -> i64 { add2(a, b) + c }
+        fn add2(a: Int, b: Int) -> Int { a + b }
+        fn add3(a: Int, b: Int, c: Int) -> Int { add2(a, b) + c }
         fn main() -> i64 { add3(10, 20, 30) }
     "#;
     let (v, vm) = run_jit_with_vm(src).unwrap();
@@ -223,7 +226,7 @@ fn skip_eligible_add3_multiparam() {
 #[test]
 fn skip_error_div_zero_keeps_line() {
     let src_ok = r#"
-        fn divrec(n: i64, d: i64) -> i64 {
+        fn divrec(n: Int, d: Int) -> Int {
             if n < 2 { n / d } else { divrec(n - 1, d) + 1 }
         }
         fn main() -> i64 { divrec(3, 2) }
@@ -232,7 +235,7 @@ fn skip_error_div_zero_keeps_line() {
     assert_eq!(int_of(v, "divrec"), 2, "divrec(3,2) = 2（1/2=0 整数除法）");
     assert!(skip_ctx(&vm, "divrec"), "divrec 应为纯标量（skip=true）");
     let src_err = r#"
-        fn divrec(n: i64, d: i64) -> i64 {
+        fn divrec(n: Int, d: Int) -> Int {
             if n < 2 { n / d } else { divrec(n - 1, d) + 1 }
         }
         fn main() -> i64 { divrec(3, 0) }
@@ -247,7 +250,7 @@ fn skip_error_div_zero_keeps_line() {
 #[test]
 fn skip_error_overflow_keeps_line() {
     let src_ok = r#"
-        fn ovf(n: i64) -> i64 {
+        fn ovf(n: Int) -> Int {
             if n < 2 { n + 2147483646 + 1 } else { ovf(n - 1) + 1 }
         }
         fn main() -> i64 { ovf(0) }
@@ -256,7 +259,7 @@ fn skip_error_overflow_keeps_line() {
     assert_eq!(int_of(v, "ovf"), 2147483647, "ovf(0) = i32::MAX（不溢出）");
     assert!(skip_ctx(&vm, "ovf"), "ovf 应为纯标量（skip=true）");
     let src_err = r#"
-        fn ovf(n: i64) -> i64 {
+        fn ovf(n: Int) -> Int {
             if n < 2 { n + 2147483646 + 1 } else { ovf(n - 1) + 1 }
         }
         fn main() -> i64 { ovf(1) }
@@ -274,7 +277,7 @@ fn skip_error_overflow_keeps_line() {
 #[test]
 fn no_skip_with_pushstr() {
     let src = r#"
-        fn add_num(x: i64) -> i64 {
+        fn add_num(x: Int) -> Int {
             let s = "10";
             x + parse_int(s)
         }
@@ -291,7 +294,7 @@ fn no_skip_with_pushstr() {
 #[test]
 fn no_skip_with_methodcall() {
     let src = r#"
-        fn mlen(x: i64) -> i64 {
+        fn mlen(x: Int) -> Int {
             let s = "abc";
             x + s.len()
         }
@@ -308,7 +311,7 @@ fn no_skip_with_methodcall() {
 #[test]
 fn no_skip_with_tailcall() {
     let src = r#"
-        fn gcd(a: i64, b: i64) -> i64 {
+        fn gcd(a: Int, b: Int) -> Int {
             if b == 0 { a } else { gcd(b, a % b) }
         }
         fn main() -> i64 { gcd(48, 36) }
@@ -325,7 +328,7 @@ fn no_skip_with_tailcall() {
 #[test]
 fn no_skip_string_parity() {
     let src = r#"
-        fn tag(x: i64) -> i64 {
+        fn tag(x: Int) -> Int {
             let t = "T";
             x + t.len()
         }

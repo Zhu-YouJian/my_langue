@@ -28,11 +28,11 @@ fn default_value_for(ty: Option<&Type>) -> Value {
         Some(Type::Base(BaseType::F64)) => Value::Float(0.0),
         Some(Type::Base(BaseType::F32)) | Some(Type::Base(BaseType::F16))
             | Some(Type::Base(BaseType::BF16)) => Value::Float32(0.0),
-        Some(Type::Base(BaseType::I8)) | Some(Type::Base(BaseType::I16))
-            | Some(Type::Base(BaseType::I32)) | Some(Type::Base(BaseType::I64))
-            | Some(Type::Base(BaseType::U8)) | Some(Type::Base(BaseType::U16))
-            | Some(Type::Base(BaseType::U32)) | Some(Type::Base(BaseType::U64))
-            | Some(Type::Base(BaseType::BigInt)) => Value::Int(0, BaseType::I32),
+        // AUDIT-11.4.53：零值默认携带**声明的 dtype**（与 VM `emit_default_value` 对齐）。
+        // BigInt 无窄整型语义 → 保持 I32（历史行为）。
+        Some(Type::Base(b @ (BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64
+            | BaseType::U8 | BaseType::U16 | BaseType::U32 | BaseType::U64))) => Value::Int(0, *b),
+        Some(Type::Base(BaseType::BigInt)) => Value::Int(0, BaseType::I32),
         _ => Value::Unit,
     }
 }
@@ -45,7 +45,7 @@ impl super::Interpreter {
         match &expr.kind {
             HirExprKind::Literal(lit) => {
                 Ok(Some(match lit {
-                    Literal::Int(n, _) => Value::Int(*n, BaseType::I32),
+                    Literal::Int(n, dt) => Value::Int(*n, *dt),
                     Literal::Float(n, dt) => match dt {
                         crate::hir::types::BaseType::F32 => Value::Float32(*n as f32),
                         _ => Value::Float(*n),

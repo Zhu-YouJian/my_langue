@@ -365,6 +365,66 @@ pub fn int_dtype_name(dtype: BaseType) -> &'static str {
     }
 }
 
+/// AUDIT-11.4.53：`Op::PushInt` 载荷 dtype 的 1 字节编码。
+///
+/// 只覆盖整型（PushInt 的 dtype 语义域）；非整型回退 I32（= 历史行为，
+/// 保证编码/解码对称且不 panic）。与 `int_dtype_from_tag` 严格互逆。
+pub fn int_dtype_tag(dtype: BaseType) -> u8 {
+    match dtype {
+        BaseType::I8 => 0, BaseType::I16 => 1, BaseType::I32 => 2, BaseType::I64 => 3,
+        BaseType::U8 => 4, BaseType::U16 => 5, BaseType::U32 => 6, BaseType::U64 => 7,
+        _ => 2,
+    }
+}
+
+/// `int_dtype_tag` 的逆映射。未知字节回退 I32（解码宽容，不 panic）。
+pub fn int_dtype_from_tag(tag: u8) -> BaseType {
+    match tag {
+        0 => BaseType::I8, 1 => BaseType::I16, 2 => BaseType::I32, 3 => BaseType::I64,
+        4 => BaseType::U8, 5 => BaseType::U16, 6 => BaseType::U32, 7 => BaseType::U64,
+        _ => BaseType::I32,
+    }
+}
+
+/// 混合整数运算的公共 dtype（AUDIT-11.4.53 R4：**可交换**提升规则）。
+///
+/// 规则（用户 2026-09-17 裁定「宽度优先」）：
+/// - rank：`i8/u8 < i16/u16 < i32/u32 < i64/u64`
+/// - 取两操作数中 **rank 更大**者
+/// - rank 相同且同型 → 该型
+/// - rank 相同但异号 → 提升到**下一个更宽的有符号类型**
+///   （`u8+i8→i16`、`u16+i16→i32`、`u32+i32→i64`、`u64+i64→i64`）
+/// - 非整型参与时保持 `l`（浮点混算由调用方各自的浮点分支处理）
+///
+/// 交换性由构造保证：`rank(l)` 与 `rank(r)` 的比较、以及「同 rank 异号」
+/// 分支都只依赖两操作数的**对称**属性（rank / 符号），与左右次序无关。
+pub fn promote_int_dtype(l: BaseType, r: BaseType) -> BaseType {
+    use BaseType::*;
+    fn rank(t: BaseType) -> Option<u8> {
+        match t {
+            I8 | U8 => Some(0), I16 | U16 => Some(1), I32 | U32 => Some(2), I64 | U64 => Some(3),
+            _ => None,
+        }
+    }
+    let (rl, rr) = match (rank(l), rank(r)) {
+        (Some(a), Some(b)) => (a, b),
+        // 任一操作数非整型：保持既有语义（返回左操作数）
+        _ => return l,
+    };
+    if rl != rr {
+        return if rl > rr { l } else { r };
+    }
+    if l == r { return l; }
+    // 同 rank 异号 → 下一个更宽的**有符号**类型
+    match rl {
+        0 => I16,
+        1 => I32,
+        2 => I64,
+        // u64 + i64 → i64（已是最宽有符号；u64 超出 i64 范围的值由运行期范围检查兜底）
+        _ => I64,
+    }
+}
+
 /// 整数算术在 i64 层溢出（如 `i64::MAX + 1`、`i64::MIN / -1`）的错误。
 /// 与 `check_int_overflow` 的窄 dtype 范围检查互补：checked_* 先拦截 i64 层溢出，
 /// 再交给 `check_int_overflow` 做窄 dtype 范围检查。AUDIT-11.4.17。

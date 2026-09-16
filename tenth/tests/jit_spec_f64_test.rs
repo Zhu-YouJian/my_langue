@@ -216,12 +216,13 @@ fn assert_spec_not_compiled(vm: &Vm, name: &str, label: &str) {
 // 1. f64 递归（混合 i64+f64 签名 / 纯 f64 双递归）
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// 混合 i64+f64 签名递归：`fn fp_sum(n: i64, x: f64) -> f64`。
+/// 混合 i64+f64 签名递归：`fn fp_sum(n: Int, x: f64) -> f64`（AUDIT-11.4.53 R2：
+/// `i64` 注解已退出特化 ABI，整数侧注解用 `Int`——特化机制不变）。
 /// 特化签名 [I64, F64] → F64；递归调用点实参 [I32, F64] 匹配 → 特化 ABI 全链路。
 #[test]
 fn spec_f64_recursive_mixed() {
     let src = r#"
-        fn fp_sum(n: i64, x: f64) -> f64 {
+        fn fp_sum(n: Int, x: f64) -> f64 {
             if n <= 0 { 0.0 } else { x + fp_sum(n - 1, x) }
         }
         fn main() -> f64 { fp_sum(28, 1.5) }
@@ -236,7 +237,7 @@ fn spec_f64_recursive_mixed() {
 #[test]
 fn spec_f64_recursive_fib() {
     let src = r#"
-        fn fp_fib(n: i64) -> f64 {
+        fn fp_fib(n: Int) -> f64 {
             if n < 2 { 1.0 } else { fp_fib(n - 1) + fp_fib(n - 2) }
         }
         fn main() -> f64 { fp_fib(20) }
@@ -286,7 +287,7 @@ fn spec_f64_multi_arg() {
 #[test]
 fn spec_f64_loop() {
     let src = r#"
-        fn fp_loop(n: i64, x: f64) -> f64 {
+        fn fp_loop(n: Int, x: f64) -> f64 {
             let mut acc = 0.0;
             let mut p = 1.0;
             let mut i = 0;
@@ -586,7 +587,7 @@ fn spec_int_recursive() {
 #[test]
 fn spec_mixed_i64_f64_sig() {
     let src = r#"
-        fn scale(a: i64, k: f64) -> i64 {
+        fn scale(a: Int, k: f64) -> Int {
             let f = to_float(a) * k;
             if f > 100.0 { a } else { a + 1 }
         }
@@ -638,7 +639,7 @@ fn spec_f64_non_scalar_return_not_spec() {
 #[test]
 fn spec_f64_slow_path_first_call() {
     let src = r#"
-        fn fp_sum(n: i64, x: f64) -> f64 {
+        fn fp_sum(n: Int, x: f64) -> f64 {
             if n <= 0 { 0.0 } else { x + fp_sum(n - 1, x) }
         }
         fn main() -> f64 {

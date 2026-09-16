@@ -7,6 +7,128 @@ use crate::hir::hir::*;
 use crate::hir::types::*;
 use super::Lowerer;
 
+/// AUDIT-11.4.53 R1：**注解驱动的整数 dtype 强制**（lower 期）。
+///
+/// 背景：`let x: i64 = 2000000000;` 的字面量值在 i32 范围内 → lexer 不提升
+/// （`lexer.rs:291` 只处理超范围），而 lower 此前只做 shape 兼容合并、**不改写
+/// init 的 dtype** ⇒ 运行时 x 仍是 `Value::Int(n, I32)`，`x * 100` 被 i32 范围检查
+/// 误报溢出。手册承诺「注解生效；超出注解范围报编译期错误」（§字面量/整数）。
+///
+/// 规则（用户 2026-09-17 裁定）：
+/// - 注解是整型 → init 的 dtype **强制**为注解 dtype（宽度双向：放宽与收窄都改写）
+/// - init 是整型字面量且值 **放不进** 注解 dtype → **编译期 TypeError**（手册承诺）
+/// - 递归下推到 `Binary(+,-,*,/,%)` / `Unary(Neg)` 的操作数，使
+///   `let x: i64 = 1 + 2;` 整棵算术树都按 i64 求值（否则操作数仍是 I32，
+///   运行期按公共 dtype 提升后仍会得到 I32 结果）
+///
+/// 已知边界（本轮不做窄化转换报错，登记为待办）：init 是不是字面量而是**运行时
+/// 表达式**（如 `let x: i64 = f();`）时，此处只改写静态 HIR dtype；运行期
+/// `Value::Int` 的 dtype 仍由生产者决定。
+pub(super) fn coerce_int_dtype(expr: &mut HirExpr, target: BaseType, span: &Span) -> TenthResult<()> {
+    let target = match target {
+        BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64
+        | BaseType::U8 | BaseType::U16 | BaseType::U32 | BaseType::U64 => target,
+        _ => return Ok(()),
+    };
+    // 递归下推：算术节点的两个操作数都强制为目标 dtype
+    match &mut expr.kind {
+        HirExprKind::Binary { op, left, right, .. }
+            if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul
+                | BinOp::Div | BinOp::Mod) =>
+        {
+            coerce_int_dtype(left, target, span)?;
+            coerce_int_dtype(right, target, span)?;
+        }
+        // 函数体/分支体是 Block：`fn big() -> i64 { 2000000000 * 1000 }` 的 body 是
+        // `Block { stmts: [], final_expr: Some(Binary) }`——不下推到 final_expr 就无效。
+        HirExprKind::Block { final_expr: Some(tail), .. } => {
+            coerce_int_dtype(tail, target, span)?;
+        }
+        // if/else 两分支同一目标 dtype
+        HirExprKind::If { then_branch, else_branch, .. } => {
+            coerce_int_dtype(then_branch, target, span)?;
+            if let Some(e) = else_branch { coerce_int_dtype(e, target, span)?; }
+        }
+        HirExprKind::Unary { op, expr: inner, .. } if matches!(op, UnaryOp::Neg) => {
+            // `-<字面量>` 特例：负号的**取值范围检查必须看取负后的值**，
+            // 否则 `let a: i32 = -2147483648;` 会因字面量 2147483648 > i32::MAX
+            // 被误判超范围（2147483648 是合法 i32 取负的结果）。
+            if let HirExprKind::Literal(Literal::Int(n, _)) = &mut inner.kind {
+                if let Some(neg) = n.checked_neg() {
+                    if !int_fits(neg, target) {
+                        return Err(TenthError::TypeError {
+                            line: span.line,
+                            col: span.col,
+                            message: format!(
+                                "整数字面量 -{} 超出 {} 范围（类型注解强制失败）",
+                                n,
+                                crate::runtime::value::int_dtype_name(target)
+                            ),
+                        });
+                    }
+                    if let HirExprKind::Literal(Literal::Int(_, dt)) = &mut inner.kind { *dt = target; }
+                } else {
+                    // i64::MIN：取负溢出（运行期由 checked_neg 响亮报错）
+                    if let HirExprKind::Literal(Literal::Int(_, dt)) = &mut inner.kind { *dt = target; }
+                }
+            } else {
+                coerce_int_dtype(inner, target, span)?;
+            }
+        }
+        HirExprKind::Literal(Literal::Int(n, _)) => {
+            if !int_fits(*n, target) {
+                return Err(TenthError::TypeError {
+                    line: span.line,
+                    col: span.col,
+                    message: format!(
+                        "整数字面量 {} 超出 {} 范围（类型注解强制失败）",
+                        n,
+                        crate::runtime::value::int_dtype_name(target)
+                    ),
+                });
+            }
+            if let HirExprKind::Literal(Literal::Int(_, dt)) = &mut expr.kind { *dt = target; }
+        }
+        _ => {}
+    }
+    // 静态 dtype 改写（所有分支统一）
+    if matches!(&expr.ty, Type::Base(b) if matches!(b,
+        BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64
+        | BaseType::U8 | BaseType::U16 | BaseType::U32 | BaseType::U64))
+        || matches!(&expr.ty, Type::Unknown)
+    {
+        expr.ty = Type::Base(target);
+    }
+    Ok(())
+}
+
+/// 整数值是否落在 `dt` 的可表示区间内。
+fn int_fits(n: i64, dt: BaseType) -> bool {
+    match dt {
+        BaseType::I8 => (-128..=127).contains(&n),
+        BaseType::I16 => (-32768..=32767).contains(&n),
+        BaseType::I32 => (-2147483648..=2147483647).contains(&n),
+        BaseType::I64 => true,
+        BaseType::U8 => (0..=255).contains(&n),
+        BaseType::U16 => (0..=65535).contains(&n),
+        BaseType::U32 => (0..=4294967295).contains(&n),
+        BaseType::U64 => n >= 0,
+        _ => true,
+    }
+}
+
+/// 标注 dtype 是否为受支持的整型（供调用边界/返回边界判断是否强制）。
+pub(super) fn int_base_of(ty: &Type) -> Option<BaseType> {
+    match ty {
+        Type::Base(b) => match b {
+            BaseType::I8 | BaseType::I16 | BaseType::I32 | BaseType::I64
+            | BaseType::U8 | BaseType::U16 | BaseType::U32 | BaseType::U64 => Some(*b),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// 推断两个 shape 的 broadcast 结果（NumPy 规则，从右往左对齐）。
 /// 返回 `Some(dims)` 如果兼容，`None` 如果不兼容。
 ///
@@ -1082,11 +1204,15 @@ impl Lowerer {
     }
 
     /// 按 spec §4.3 隐式转换规则提升两个 dtype：
-    /// - f64 与任意浮点 → f64
-    /// - f32 与 f32 → f32
-    /// - f32 与整数 → f32
-    /// - f64 与整数 → f64
-    /// - 整数与整数 → 左侧（保留现有整数运算语义）
+    /// - f64 与任意浮点/整数 → f64
+    /// - f32 与 f32/整数 → f32（F16/BF16 同理，低精度优先保留）
+    /// - 整数与整数 → **AUDIT-11.4.53 R4：宽度优先的可交换秩提升**
+    ///   （rank: `i8/u8 < i16/u16 < i32/u32 < i64/u64`；取 rank 更大者；
+    ///    同 rank 异号 → 下一个更宽的有符号类型 `u8+i8→i16`、`u16+i16→i32`、
+    ///    `u32+i32→i64`、`u64+i64→i64`）。
+    ///   规则与运行期 `runtime::value::promote_int_dtype` **逐条一致**——
+    ///   静态 HIR dtype 与运行期 `Value::Int` 的 dtype 不得分叉。
+    /// - 任一操作数非数值（str 等）→ 保持左操作数（历史行为）
     pub(super) fn promote_float_dtype(l: BaseType, r: BaseType) -> BaseType {
         use BaseType::*;
         match (l, r) {
@@ -1094,7 +1220,9 @@ impl Lowerer {
             (F32, _) | (_, F32) => F32,
             (F16, _) | (_, F16) => F16,
             (BF16, _) | (_, BF16) => BF16,
-            _ => l,
+            // AUDIT-11.4.53 R4：整型秩提升（可交换）。用与运行期同一函数，
+            // 消除「静态类型按秩、运行期按左操作数」的双源漂移。
+            _ => crate::runtime::value::promote_int_dtype(l, r),
         }
     }
 

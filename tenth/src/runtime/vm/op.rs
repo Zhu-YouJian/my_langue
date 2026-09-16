@@ -6,7 +6,10 @@
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Op {
-    PushInt(i64), PushFloat(f64), PushFloat32(f32), PushBool(bool), PushChar(u32), PushStr(usize), PushUnit,
+    // AUDIT-11.4.53：PushInt 携带 dtype 载荷——`Literal::Int(i64, BaseType)` 的 dtype
+    // 此前在此被丢弃（硬编码回 I32），导致 i64 后缀/`let x: i64`/i64 形参与返回全部失效。
+    // 编码：8 字节 i64 值 + 1 字节 dtype tag（见 `value::int_dtype_tag`）。
+    PushInt(i64, crate::hir::types::BaseType), PushFloat(f64), PushFloat32(f32), PushBool(bool), PushChar(u32), PushStr(usize), PushUnit,
     Pop, Dup,
     Load(usize), Store(usize),
     LoadGlobal(usize), StoreGlobal(usize),

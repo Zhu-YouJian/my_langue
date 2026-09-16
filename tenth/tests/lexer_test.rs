@@ -179,8 +179,10 @@ fn test_hex_literal_zero() {
 
 #[test]
 fn test_hex_literal_max_i64() {
+    // AUDIT-11.4.53/R5：进制字面量与十进制对齐——超出 i32 范围自动提升 I64。
+    // 旧期望 `BaseType::I32` 是把「进制路径硬编码 I32」的缺陷当契约。
     let tokens = tokenize("0x7FFFFFFFFFFFFFFF");
-    assert_eq!(tokens[0], TokenKind::IntLiteral(i64::MAX, BaseType::I32));
+    assert_eq!(tokens[0], TokenKind::IntLiteral(i64::MAX, BaseType::I64));
 }
 
 #[test]

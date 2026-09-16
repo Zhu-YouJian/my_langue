@@ -222,6 +222,15 @@ fn int_params(k: usize) -> String {
     (0..k).map(|i| format!("x{i}: i32")).collect::<Vec<_>>().join(", ")
 }
 
+/// AUDIT-11.4.53（R3）：**特化 ABI 的形参/返回注解改用它**。
+/// 特化 ABI 以裸 i64 寄存器传参、体内按 I32 标量语义做范围检查 ⇒ 对声明为
+/// `i64` 的形参是错的（会误报「溢出 i32 范围」）。故 `BaseType::I64` 已从
+/// `ChunkSig::from_hir` 移除、`i64` 注解函数退回通用 ABI；`Int` 仍可用特化 ABI。
+/// 本 helper 让「spec」形态继续覆盖特化路径（覆盖意图不变，注解由 i64 → Int）。
+fn int_alias_params(k: usize) -> String {
+    (0..k).map(|i| format!("x{i}: Int")).collect::<Vec<_>>().join(", ")
+}
+
 fn sum_body(k: usize) -> String {
     (0..k).map(|i| format!("x{i}")).collect::<Vec<_>>().join(" + ")
 }
@@ -346,12 +355,12 @@ fn combo_program(path: &str, k: usize, shape: &str, n: usize) -> String {
                 i64_params(k))
         }
         ("spec", "accum") => format!(
-            "fn f({}) -> i64 {{\n{}\n}}\nfn main() -> i64 {{\n    {}\n}}",
-            i64_params(k), big_slow_body(k), accum_main(k, n)),
+            "fn f({}) -> Int {{\n{}\n}}\nfn main() -> Int {{\n    {}\n}}",
+            int_alias_params(k), big_slow_body(k), accum_main(k, n)),
         ("spec", "nested") => format!(
             "fn inner(a: i64, b: i64) -> i64 {{ a * b }}\n\
-             fn f({}) -> i64 {{\n{}\n}}\nfn main() -> i64 {{\n    {}\n}}",
-            i64_params(k), nested_slow_body(k), accum_main(k, n)),
+             fn f({}) -> Int {{\n{}\n}}\nfn main() -> Int {{\n    {}\n}}",
+            int_alias_params(k), nested_slow_body(k), accum_main(k, n)),
         ("general", "accum") => format!(
             "fn f({}) -> i32 {{\n{}\n}}\nfn main() -> i32 {{\n    {}\n}}",
             int_params(k), big_slow_body(k), accum_main(k, n)),
@@ -917,8 +926,11 @@ fn audit_d2_char_bool_kinds() {
 
 #[test]
 fn audit_d4_overflow_inline_loop() {
-    // 内联小函数 + 循环累加 → 溢出：JIT 必须报错（不得静默 0/回绕），行号一致。
-    // 11.4.35 的原型：3 参 i64 小函数循环，应报「溢出 i32 范围」。
+    // 内联小函数 + 循环累加：JIT 必须与 VM/解释器逐字节一致（不得静默 0/回绕）。
+    // AUDIT-11.4.53（R3）：3 参 **i64** 形参 → 累加 ≈4.5e11 **在 i64 内不溢出**
+    // （旧注释「应报溢出 i32 范围」是缺陷当契约）；本用例现守护「三路径同值」。
+    // i32 溢出的响亮守护见 `consistency_inline_i32_3param_loop_overflow`
+    // （jit_consistency_test）与 `audit_subprocess_byte_parity_error`。
     assert_three_consistent(r#"
         fn f(a: i64, b: i64, c: i64) -> i64 { a + b + c }
         fn main() -> i64 {
@@ -1050,7 +1062,8 @@ fn audit_d4_div_zero_loop_general() {
 
 #[test]
 fn audit_d4_neg_overflow() {
-    // Neg 溢出（-i32::MIN = 2147483648 超出 i32 范围）在特化体内——不静默。
+    // Neg 取值（-(-2147483648) = 2147483648）在 **i64** 形参/返回下不溢出，
+    // 三路径必须同值（AUDIT-11.4.53：旧注释「超出 i32 范围」是缺陷当契约）。
     // 中性体（乘除配对）u == x，最后 -u 触发范围溢出。
     assert_three_consistent(r#"
         fn f(x: i64) -> i64 {
@@ -1348,9 +1361,12 @@ fn main() -> Float {
 #[test]
 fn audit_subprocess_byte_parity_error() {
     // 错误路径 stdout/stderr/exit 逐字节一致：内联溢出。
-    assert_byte_parity_err("inline-overflow", r#"
-fn f(a: i64, b: i64, c: i64) -> i64 { a + b + c }
-fn main() -> i64 {
+    // AUDIT-11.4.53（R3）：改用**显式 i32** 形参/返回——i64 形参下该累加
+    // （≈4.5e11）在手册语义下**不再溢出**；「溢出必须响亮」的守护保留在此
+    // i32 变体（原用例误用 i64 形参来触发 i32 报错，是缺陷当契约）。
+    assert_byte_parity_err("inline-overflow-i32", r#"
+fn f(a: i32, b: i32, c: i32) -> i32 { a + b + c }
+fn main() -> i32 {
     let mut s = 0;
     let mut i = 0;
     while i < 1000000 {

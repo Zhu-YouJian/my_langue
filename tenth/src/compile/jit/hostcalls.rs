@@ -125,6 +125,14 @@ unsafe extern "C" fn host_make_int(_vm: *mut Vm, n: i64, out: *mut Value) { unsa
     std::ptr::write(out, Value::Int(n, BaseType::I32));
 }}
 
+/// AUDIT-11.4.53：带 dtype 载荷的整数常量物化。`tag` 由
+/// `crate::runtime::value::int_dtype_tag` 编码（0..7 = I8..U64）。
+/// JIT 只对 **I32 dtype** 的 PushInt 走原生标量槽；非 I32（i64/u8/...）
+/// 一律经此 hostcall 物化为携带真实 dtype 的 `Value`，保证与 VM 逐字节一致。
+unsafe extern "C" fn host_make_int_dtype(_vm: *mut Vm, n: i64, tag: i64, out: *mut Value) { unsafe {
+    std::ptr::write(out, Value::Int(n, crate::runtime::value::int_dtype_from_tag(tag as u8)));
+}}
+
 unsafe extern "C" fn host_make_float(_vm: *mut Vm, f: f64, out: *mut Value) { unsafe {
     std::ptr::write(out, Value::Float(f));
 }}
@@ -941,13 +949,20 @@ unsafe extern "C" fn host_check_error(vm: *mut Vm) -> u8 { unsafe {
 
 /// i64 层溢出（checked_* 失败）：`整数运算结果溢出 i32 范围`。
 /// 与 `int_overflow_err(I32)` 一致（int_dtype_name(I32) = "i32"）。
+///
+/// AUDIT-11.4.53：文案**无需**改为按 dtype 生成——本 hostcall 只被 `emit_binop` 的
+/// **原生 I32 标量路径**调用（`ScalarKind::I32`），而该标量种类现在**只**由
+/// I32 dtype 的 PushInt / Char / 特化 ABI（`Int`）产生；非 I32 dtype 的整型一律走
+/// 通用 hostcall（`host_add` 等 → `add_priv` → `int_overflow_err(公共 dtype)`），
+/// 因此此处恒为 i32 语义，文案先验正确。
 unsafe extern "C" fn host_set_int_overflow(vm: *mut Vm) { unsafe {
     let vm = &mut *vm;
     vm.set_last_error("整数运算结果溢出 i32 范围".into());
 }}
 
 /// I32 窄 dtype 范围溢出：`整数运算结果 {r} 溢出 i32 范围`。
-/// 与 `check_int_overflow(r, I32)` 一致。
+/// 与 `check_int_overflow(r, I32)` 一致。可达性同 `host_set_int_overflow`
+/// （仅 I32 标量原生路径），故文案同样无需 dtype 参数化。
 unsafe extern "C" fn host_set_int_range_error(vm: *mut Vm, r: i64) { unsafe {
     let vm = &mut *vm;
     vm.set_last_error(format!("整数运算结果 {} 溢出 i32 范围", r));
@@ -970,6 +985,7 @@ unsafe extern "C" fn host_set_mod_zero(vm: *mut Vm) { unsafe {
 pub fn hostcall_addr(name: &str) -> Option<usize> {
     let map: &[(&str, usize)] = &[
         ("host_make_int", host_make_int as *const () as usize),
+        ("host_make_int_dtype", host_make_int_dtype as *const () as usize),
         ("host_make_float", host_make_float as *const () as usize),
         ("host_make_float32", host_make_float32 as *const () as usize),
         ("host_make_bool", host_make_bool as *const () as usize),

@@ -371,7 +371,7 @@ pub struct HirProgram {
 ```rust
 pub enum Op {
     // 常量压栈
-    PushInt(i64), PushFloat(f64), PushBool(bool), PushStr(usize), PushUnit,
+    PushInt(i64, BaseType), PushFloat(f64), PushBool(bool), PushStr(usize), PushUnit,
     // 栈操作
     Pop, Dup,
     // 局部变量
@@ -397,6 +397,8 @@ pub enum Op {
     MakeClosure(i64, i64),   // opcode 44: 创建闭包(params_count, chunk_idx)
 }
 ```
+
+> **2026-09-17（`AUDIT-11.4.53` 修复）**：`PushInt` 由 `i64` 扩为 **`(i64, BaseType)`**——整型值在**字节码层携带 dtype tag**（编码 **8B 值 + 1B tag**），此前 dtype 在 `compile/bytecode.rs` 被丢弃、`vm/execute.rs` 又补回硬编码 `I32`，导致「整型算术被硬限 i32」。配套：注解驱动 dtype 入口 **`hir::lower::coerce_int_dtype`**；整数混合提升（宽度优先、可交换）在 **`runtime/value.rs::promote_int_dtype`** + VM/解释器算术入口；JIT 标量槽只承载 `Int`/f64（`ChunkSig` 特化仅 `Int`/f64，i64 注解走通用 ABI——见 `AUDIT.md` `P-11`）。`tenthc` **无需同步**（无字节码后端）。
 
 #### BytecodeCompiler 关键方法
 

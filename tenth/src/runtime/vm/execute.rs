@@ -3,11 +3,10 @@
 //! 从 runtime/vm.rs 拆分而来（T3b 架构重构）。
 
 use std::collections::HashMap;
-use crate::hir::types::BaseType;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::error::{TenthError, TenthResult};
-use crate::runtime::value::{Value, FutureState, check_int_overflow, int_overflow_err};
+use crate::runtime::value::{Value, FutureState, check_int_overflow, int_overflow_err, promote_int_dtype};
 use crate::runtime::autodiff::TapeOp;
 use crate::runtime::autodiff::record_binary as tape_record_binary;
 use crate::runtime::autodiff::record_unary as tape_record_unary;
@@ -261,10 +260,12 @@ impl Vm {
             // ip + n > code.len() 时 push Unit + 返回 Completed。
             macro_rules! r { ($t:ty) => {{ let n = std::mem::size_of::<$t>(); if ip + n > code.len() { if has_budget { self.step_budget = Some(budget_left); } self.stack.push(Value::Unit); return Ok(YieldReason::Completed); } let mut buf = [0u8; std::mem::size_of::<$t>()]; buf.copy_from_slice(&code[ip..ip+n]); ip += n; <$t>::from_le_bytes(buf) }}; }
             match b {
-                // 0 PushInt
+                // 0 PushInt（AUDIT-11.4.53：dtype 是载荷的一部分，不再硬编码 I32）
                 0 => {
                     let n = r!(i64);
-                    self.stack.push(Value::Int(n, BaseType::I32));
+                    if ip >= code.len() { if has_budget { self.step_budget = Some(budget_left); } self.stack.push(Value::Unit); return Ok(YieldReason::Completed); }
+                    let t = code[ip]; ip += 1;
+                    self.stack.push(Value::Int(n, crate::runtime::value::int_dtype_from_tag(t)));
                 }
                 // 1 PushFloat
                 1 => {
@@ -336,7 +337,10 @@ impl Vm {
                     let n = self.stack.len();
                     if n >= 2 {
                         let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
-                            (Value::Int(x, dt), Value::Int(y, _)) => {
+                            (Value::Int(x, dt), Value::Int(y, rt)) => {
+                                // AUDIT-11.4.53 R4：整数混合提升（可交换）——公共 dtype，
+                                // 与解释器 eval_binary / `*_priv` 同规则。
+                                let dt = &promote_int_dtype(*dt, *rt);
                                 // AUDIT-11.4.17：与 add_priv 完全一致（checked_add + 窄 dtype 检查，dtype 取左操作数）
                                 // M2-A5：溢出错误补行号（对齐 JIT 标量路径——此前 `?` 直接传播，行号为 None）
                                 let r = x.checked_add(*y).ok_or_else(|| int_overflow_err(*dt)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
@@ -367,7 +371,10 @@ impl Vm {
                     let n = self.stack.len();
                     if n >= 2 {
                         let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
-                            (Value::Int(x, dt), Value::Int(y, _)) => {
+                            (Value::Int(x, dt), Value::Int(y, rt)) => {
+                                // AUDIT-11.4.53 R4：整数混合提升（可交换）——公共 dtype，
+                                // 与解释器 eval_binary / `*_priv` 同规则。
+                                let dt = &promote_int_dtype(*dt, *rt);
                                 // M2-A5：溢出错误补行号（对齐 JIT 标量路径）
                                 let r = x.checked_sub(*y).ok_or_else(|| int_overflow_err(*dt)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                                 check_int_overflow(r, *dt).map_err(|e| self.with_line(chunk_idx, ip, e))?;
@@ -397,7 +404,10 @@ impl Vm {
                     let n = self.stack.len();
                     if n >= 2 {
                         let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
-                            (Value::Int(x, dt), Value::Int(y, _)) => {
+                            (Value::Int(x, dt), Value::Int(y, rt)) => {
+                                // AUDIT-11.4.53 R4：整数混合提升（可交换）——公共 dtype，
+                                // 与解释器 eval_binary / `*_priv` 同规则。
+                                let dt = &promote_int_dtype(*dt, *rt);
                                 // M2-A5：溢出错误补行号（对齐 JIT 标量路径）
                                 let r = x.checked_mul(*y).ok_or_else(|| int_overflow_err(*dt)).map_err(|e| self.with_line(chunk_idx, ip, e))?;
                                 check_int_overflow(r, *dt).map_err(|e| self.with_line(chunk_idx, ip, e))?;
@@ -427,7 +437,10 @@ impl Vm {
                     let n = self.stack.len();
                     if n >= 2 {
                         let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
-                            (Value::Int(x, dt), Value::Int(y, _)) => {
+                            (Value::Int(x, dt), Value::Int(y, rt)) => {
+                                // AUDIT-11.4.53 R4：整数混合提升（可交换）——公共 dtype，
+                                // 与解释器 eval_binary / `*_priv` 同规则。
+                                let dt = &promote_int_dtype(*dt, *rt);
                                 if *y == 0 {
                                     return Err(self.err_here(chunk_idx, ip, "整数除零".into()));
                                 }
@@ -464,7 +477,10 @@ impl Vm {
                     let n = self.stack.len();
                     if n >= 2 {
                         let fast = match (&self.stack[n - 2], &self.stack[n - 1]) {
-                            (Value::Int(x, dt), Value::Int(y, _)) => {
+                            (Value::Int(x, dt), Value::Int(y, rt)) => {
+                                // AUDIT-11.4.53 R4：整数混合提升（可交换）——公共 dtype，
+                                // 与解释器 eval_binary / `*_priv` 同规则。
+                                let dt = &promote_int_dtype(*dt, *rt);
                                 if *y == 0 {
                                     return Err(self.err_here(chunk_idx, ip, "整数取模除零".into()));
                                 }
@@ -1672,7 +1688,10 @@ impl Vm {
         }
         Ok(match (a, b) {
             // AUDIT-11.4.17：checked_add 拦截 i64 层溢出（overflow-checks=true 下直接 + 会 panic）
-            (Value::Int(x, dt), Value::Int(y, _)) => {
+            (Value::Int(x, dt), Value::Int(y, rt)) => {
+                // AUDIT-11.4.53 R4：整数混合提升（可交换）——公共 dtype，与 VM 快路径 /
+                // 解释器 eval_binary 逐字同规则（消除 `x_i64 + 1` 与 `1 + x_i64` 分叉）。
+                let dt = &promote_int_dtype(*dt, *rt);
                 let r = x.checked_add(*y).ok_or_else(|| int_overflow_err(*dt))?;
                 check_int_overflow(r, *dt)?;
                 Value::Int(r, *dt)
@@ -1740,7 +1759,10 @@ impl Vm {
         }
         Ok(match (a, b) {
             // AUDIT-11.4.17：checked_sub 拦截 i64 层溢出
-            (Value::Int(x, dt), Value::Int(y, _)) => {
+            (Value::Int(x, dt), Value::Int(y, rt)) => {
+                // AUDIT-11.4.53 R4：整数混合提升（可交换）——公共 dtype，与 VM 快路径 /
+                // 解释器 eval_binary 逐字同规则（消除 `x_i64 + 1` 与 `1 + x_i64` 分叉）。
+                let dt = &promote_int_dtype(*dt, *rt);
                 let r = x.checked_sub(*y).ok_or_else(|| int_overflow_err(*dt))?;
                 check_int_overflow(r, *dt)?;
                 Value::Int(r, *dt)
@@ -1809,7 +1831,10 @@ impl Vm {
         }
         Ok(match (a, b) {
             // AUDIT-11.4.17：checked_mul 拦截 i64 层溢出
-            (Value::Int(x, dt), Value::Int(y, _)) => {
+            (Value::Int(x, dt), Value::Int(y, rt)) => {
+                // AUDIT-11.4.53 R4：整数混合提升（可交换）——公共 dtype，与 VM 快路径 /
+                // 解释器 eval_binary 逐字同规则（消除 `x_i64 + 1` 与 `1 + x_i64` 分叉）。
+                let dt = &promote_int_dtype(*dt, *rt);
                 let r = x.checked_mul(*y).ok_or_else(|| int_overflow_err(*dt))?;
                 check_int_overflow(r, *dt)?;
                 Value::Int(r, *dt)
@@ -1877,7 +1902,10 @@ impl Vm {
             return self.div_priv(&a, &b);
         }
         Ok(match (a, b) {
-            (Value::Int(x, dt), Value::Int(y, _)) => {
+            (Value::Int(x, dt), Value::Int(y, rt)) => {
+                // AUDIT-11.4.53 R4：整数混合提升（可交换）——公共 dtype，与 VM 快路径 /
+                // 解释器 eval_binary 逐字同规则（消除 `x_i64 + 1` 与 `1 + x_i64` 分叉）。
+                let dt = &promote_int_dtype(*dt, *rt);
                 if *y == 0 {
                     return err("整数除零");
                 }
@@ -1951,7 +1979,10 @@ impl Vm {
             return self.rem_priv(&a, &b);
         }
         Ok(match (a, b) {
-            (Value::Int(x, dt), Value::Int(y, _)) => {
+            (Value::Int(x, dt), Value::Int(y, rt)) => {
+                // AUDIT-11.4.53 R4：整数混合提升（可交换）——公共 dtype，与 VM 快路径 /
+                // 解释器 eval_binary 逐字同规则（消除 `x_i64 + 1` 与 `1 + x_i64` 分叉）。
+                let dt = &promote_int_dtype(*dt, *rt);
                 if *y == 0 {
                     return err("整数取模除零");
                 }

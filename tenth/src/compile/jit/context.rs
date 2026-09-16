@@ -41,8 +41,11 @@ impl ChunkSig {
     /// 从 HIR 函数签名推导标量 ABI 签名；不满足特化条件 → `None`。
     /// 调用方需先排除默认参数（`param_defaults` 非空）。
     ///
-    /// 种类推导（P3）：
-    /// - `i64`（`Type::Base(I64)`）→ `I64`（I32 标量槽，8B 原始 i64）
+    /// 种类推导（P3 / AUDIT-11.4.53）：
+    /// - `i64`（`Type::Base(I64)`）→ **不推导**（None）。特化 ABI 以**裸 i64 寄存器**
+    ///   传参、体内按 `ScalarKind::I32` 语义做**i32 范围检查**——对声明为 i64 的形参
+    ///   这是错的（AUDIT-11.4.53：`fn scale(x: i64) -> i64 { x * 100 }` 会被误报
+    ///   「溢出 i32 范围」）。故 i64 注解函数退回通用 ABI，dtype 由运行期 Value 携带。
     /// - `Int`（`Type::TypeParam("Int")`）→ `I64`——`Int` 在 HIR 为**未声明
     ///   TypeParam**（`hir/types.rs` from_ident → TypeParam），运行时与 `i64` 同为
     ///   `Value::Int`、同为 I32 标量槽、body 编译类型无关（动态）；调用点实参
@@ -58,7 +61,6 @@ impl ChunkSig {
         use crate::hir::types::{BaseType, Type};
         let kind_of = |t: &Type| -> Option<ScalarAbiKind> {
             match t {
-                Type::Base(BaseType::I64) => Some(ScalarAbiKind::I64),
                 Type::TypeParam { name } if name == "Int" => Some(ScalarAbiKind::I64),
                 Type::Base(BaseType::F64) => Some(ScalarAbiKind::F64),
                 _ => None,
