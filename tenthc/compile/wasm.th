@@ -188,10 +188,14 @@ struct WasmCtx {
     closure_var_types: Vec<i64>,  // type_idx for each closure variable (parallel to closure_vars)
     compiling_closure: i64,       // 1 if compiling a closure body, 0 otherwise
     current_closure_idx: i64,     // current closure index into closure_* vectors, -1 if none
+    // AUDIT-11.4.58/59：resolve_local 的第二返回通道（Tenth 无多返回值）。
+    // resolve_kind: 0=未命中 1=let 绑定 2=闭包捕获 3=形参
+    resolve_kind: i64,
+    resolve_capture_ci: i64,      // 捕获槽位（env 偏移序号），未命中 -1
 }
 
 fn ctx_new() -> WasmCtx {
-    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0, local_names: Vec::new(), local_indices: Vec::new(), local_count: 0, string_data: Vec::new(), string_names: Vec::new(), string_addrs: Vec::new(), if_depth: 0, in_loop: 0, current_fn_idx: 0, break_offset: 0, closure_exprs: Vec::new(), closure_func_idxs: Vec::new(), closure_type_idxs: Vec::new(), closure_param_counts: Vec::new(), closure_vars: Vec::new(), closure_var_types: Vec::new(), compiling_closure: 0, current_closure_idx: -1 }
+    WasmCtx { out: Vec::new(), code_out: Vec::new(), func_count: 0, temp_local: 0, local_names: Vec::new(), local_indices: Vec::new(), local_count: 0, string_data: Vec::new(), string_names: Vec::new(), string_addrs: Vec::new(), if_depth: 0, in_loop: 0, current_fn_idx: 0, break_offset: 0, closure_exprs: Vec::new(), closure_func_idxs: Vec::new(), closure_type_idxs: Vec::new(), closure_param_counts: Vec::new(), closure_vars: Vec::new(), closure_var_types: Vec::new(), compiling_closure: 0, current_closure_idx: -1, resolve_kind: 0, resolve_capture_ci: -1 }
 }
 
 // ── String interning ──
@@ -236,6 +240,103 @@ fn is_closure_var(ctx: WasmCtx, name: str) -> i64 {
         if ctx.closure_vars[i] == name { return ctx.closure_var_types[i]; };
         i = i + 1;
     };
+    -1
+}
+
+// ── AUDIT-11.4.58 / 11.4.59：统一的 local 解析（唯一「未命中」出口） ──
+//
+// 查找顺序**必须**与既有 Var 读路径一致（不可调换）：
+//   1) let 绑定（local_names 倒序，支持 shadowing）
+//   2) 闭包 captures（仅闭包体内；env_ptr = local 0，偏移 ci*8）
+//   3) 当前函数形参
+// 顺序理由：闭包捕获的可能是**外层函数**的形参，若先查形参就会把外层形参
+// 下标误当成本层 local 下标（闭包函数里 local 0 是 env_ptr）。
+//
+// 返回值：命中的 1)/3) 返回 local 下标；命中 2) 返回 -1（捕获不在 local 表里）。
+// 未命中返回 -1。故返回值 < 0 时必须读 ctx.resolve_kind 区分「捕获」与「未命中」。
+fn current_fn_name(ctx: &mut WasmCtx, hir: HirProgram) -> str {
+    if ctx.current_fn_idx >= 0 && ctx.current_fn_idx < hir.fns.len() {
+        return hir.fns[ctx.current_fn_idx].name;
+    };
+    "<main>"
+}
+
+fn find_capture_slot(ctx: &mut WasmCtx, hir: HirProgram, name: str) -> i64 {
+    if ctx.compiling_closure != 1 { return -1; };
+    let cidx = ctx.current_closure_idx;
+    if cidx < 0 || cidx >= ctx.closure_exprs.len() { return -1; };
+    let closure_expr_idx = ctx.closure_exprs[cidx];
+    let ce = hir.expr_nodes[closure_expr_idx - 1];
+    if ce.captures_count <= 0 { return -1; };
+    let mut ci: i64 = 0;
+    while ci < ce.captures_count {
+        let cap_idx = ce.captures_start + ci;
+        if cap_idx > 0 && cap_idx <= hir.captures.len() {
+            if hir.captures[cap_idx - 1].name == name { return ci; };
+        };
+        ci = ci + 1;
+    };
+    -1
+}
+
+// AUDIT-11.4.58 注：tenthc 的 collect_free_vars 是**作用域盲**的——闭包体内
+// 顶层块里的 `let` 绑定名也会被当自由变量收进 hir.captures（既有缺陷，另案）。
+// 这类「伪捕获」在闭包本体里其实是 local，env 槽位永不读取；这里识别出来
+// 以免把 tenthc 自身的缺陷报成用户错误（仍用占位值，行为不变）。
+fn closure_body_binds_local(hir: HirProgram, closure_expr_idx: i64, name: str) -> bool {
+    if closure_expr_idx <= 0 || closure_expr_idx > hir.expr_nodes.len() { return false; };
+    let ce = hir.expr_nodes[closure_expr_idx - 1];
+    let body_idx = ce.body;
+    if body_idx <= 0 || body_idx > hir.expr_nodes.len() { return false; };
+    let be = hir.expr_nodes[body_idx - 1];
+    if be.disc != 13 { return false; };
+    let mut si: i64 = be.stmts_start;
+    let send: i64 = be.stmts_start + be.stmts_count;
+    while si < send {
+        if si > 0 && si <= hir.stmt_list.len() {
+            let sidx = hir.stmt_list[si - 1];
+            if sidx > 0 && sidx <= hir.stmt_nodes.len() {
+                let s = hir.stmt_nodes[sidx - 1];
+                if s.disc == 0 && s.name == name { return true; };
+            };
+        };
+        si = si + 1;
+    };
+    false
+}
+
+fn resolve_local(ctx: &mut WasmCtx, hir: HirProgram, name: str) -> i64 {
+    ctx.resolve_kind = 0;
+    ctx.resolve_capture_ci = -1;
+    // 1) let 绑定（倒序，支持 shadowing）
+    let mut li: i64 = ctx.local_names.len() - 1;
+    while li >= 0 {
+        if ctx.local_names[li] == name {
+            ctx.resolve_kind = 1;
+            return ctx.local_indices[li];
+        };
+        li = li - 1;
+    };
+    // 2) 闭包捕获
+    let ci = find_capture_slot(ctx, hir, name);
+    if ci >= 0 {
+        ctx.resolve_kind = 2;
+        ctx.resolve_capture_ci = ci;
+        return -1;
+    };
+    // 3) 当前函数形参（加越界保护：编译 main 语句时 hir.fns 可能为空）
+    if ctx.current_fn_idx >= 0 && ctx.current_fn_idx < hir.fns.len() {
+        let func = hir.fns[ctx.current_fn_idx];
+        let mut pi: i64 = 0;
+        while pi < func.params.len() {
+            if func.params[pi].name == name {
+                ctx.resolve_kind = 3;
+                return pi;
+            };
+            pi = pi + 1;
+        };
+    };
+    // 未命中：调用方必须响亮报错，绝不再默认落 local 0
     -1
 }
 
@@ -608,67 +709,36 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         return;
     };
     if d == 4 {
-        // Var — 先查 let 绑定的 local（倒序，支持 shadowing），再查 current fn params
+        // Var — AUDIT-11.4.58：统一走 resolve_local（let 绑定 → 闭包捕获 → 形参），
+        // 未命中必须响亮报错，不再静默落 local 0（＝首形参/env_ptr）。
         // Phase 5.5：非参数 local 是 i64 存储；若 Var 类型为 f32/f64，需 reinterpret 转换
         let name = e.name;
-        let mut local_idx: i64 = 0;
-        let mut found: bool = false;
-        let mut is_let_local: bool = false;
-        // Search let bindings first (backward for shadowing)
-        let mut li: i64 = ctx.local_names.len() - 1;
-        while li >= 0 {
-            if ctx.local_names[li] == name {
-                local_idx = ctx.local_indices[li];
-                found = true;
-                is_let_local = true;
-                break;
+        let local_idx = resolve_local(ctx, hir, name);
+        if ctx.resolve_kind == 2 {
+            // 闭包捕获：从 env_ptr (local 0) + ci * 8 装载
+            let ci = ctx.resolve_capture_ci;
+            wasm_local_get(out, 0);
+            wasm_i32_wrap_i64(out);
+            wasm_i32_const(out, ci * 8);
+            wasm_i32_add(out);
+            wasm_i64_load(out, 3, 0);
+            // Capture 也是 i64 存储，需 reinterpret
+            if is_expr_f32(hir, idx) {
+                wasm_f64_reinterpret_i64(out);
+                wasm_f32_demote_f64(out);
+            } else if is_expr_f64(hir, idx) {
+                wasm_f64_reinterpret_i64(out);
             };
-            li = li - 1;
+            return;
         };
-        // If compiling a closure body, check captures (env struct loads)
-        if !found && ctx.compiling_closure == 1 {
-            let cidx = ctx.current_closure_idx;
-            if cidx >= 0 && cidx < ctx.closure_exprs.len() {
-                let closure_expr_idx = ctx.closure_exprs[cidx];
-                let ce = hir.expr_nodes[closure_expr_idx - 1];
-                if ce.captures_count > 0 {
-                    let mut ci: i64 = 0;
-                    while ci < ce.captures_count {
-                        let cap_idx = ce.captures_start + ci;
-                        if cap_idx > 0 && cap_idx <= hir.captures.len() {
-                            if hir.captures[cap_idx - 1].name == name {
-                                // Load from env_ptr (local 0) + ci * 8
-                                wasm_local_get(out, 0);
-                                wasm_i32_wrap_i64(out);
-                                wasm_i32_const(out, ci * 8);
-                                wasm_i32_add(out);
-                                wasm_i64_load(out, 3, 0);
-                                // Capture 也是 i64 存储，需 reinterpret
-                                if is_expr_f32(hir, idx) {
-                                    wasm_f64_reinterpret_i64(out);
-                                    wasm_f32_demote_f64(out);
-                                } else if is_expr_f64(hir, idx) {
-                                    wasm_f64_reinterpret_i64(out);
-                                };
-                                return;
-                            };
-                        };
-                        ci = ci + 1;
-                    };
-                };
-            };
+        if ctx.resolve_kind == 0 {
+            // 未绑定名：编译期响亮报错；压 i64 常量 0 占位（栈效应与原来一致，
+            // 且不去别名任何真实 local，避免把「有名字的错误」换成「WASM 校验错」）
+            println("[tenthc] 未绑定变量 '" + name + "'（编译期错误，函数 " + current_fn_name(ctx, hir) + "）");
+            wasm_i64_const(out, 0);
+            return;
         };
-        // Fall back to current function's params
-        if !found {
-            let func = hir.fns[ctx.current_fn_idx];
-            for pi in 0..func.params.len() {
-                if func.params[pi].name == name {
-                    local_idx = pi;
-                    found = true;
-                    break;
-                };
-            };
-        };
+        let is_let_local = (ctx.resolve_kind == 1);
         wasm_local_get(out, local_idx);
         // Phase 5.5：非参数 local（let 绑定）以 i64 存储，需 reinterpret 回 float 类型
         if is_let_local {
@@ -793,31 +863,24 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
         // Assign — Phase 5.5：非参数 local（i64 存储）需将 float reinterpret 为 i64
         compile_expr(ctx, out, hir, e.right);
         let name = e.name;
-        let mut local_idx: i64 = 0;
-        let mut found: bool = false;
-        let mut is_let_local: bool = false;
-        // Search let bindings first (backward for shadowing)
-        let mut li: i64 = ctx.local_names.len() - 1;
-        while li >= 0 {
-            if ctx.local_names[li] == name {
-                local_idx = ctx.local_indices[li];
-                found = true;
-                is_let_local = true;
-                break;
-            };
-            li = li - 1;
+        let local_idx = resolve_local(ctx, hir, name);
+        if ctx.resolve_kind == 2 {
+            // AUDIT-11.4.59：闭包体内写自由变量原本会落到 env_ptr（local 0）——
+            // 自读自写不一致 + 覆写环境指针。现在编译期响亮报错，且**不发 set**。
+            // 已压栈的 RHS 必须 pop 掉：否则本函数 WASM 栈失衡、整个模块校验失败，
+            // 会把「有名字的编译期错误」变成「难查的 WASM 校验错」。
+            println("[tenthc] 不能对捕获变量赋值 '" + name + "'（闭包内写自由变量未实现，函数 " + current_fn_name(ctx, hir) + "）");
+            wasm_drop(out);
+            return;
         };
-        // Fall back to current function's params
-        if !found {
-            let func = hir.fns[ctx.current_fn_idx];
-            for pi in 0..func.params.len() {
-                if func.params[pi].name == name {
-                    local_idx = pi;
-                    found = true;
-                    break;
-                };
-            };
+        if ctx.resolve_kind == 0 {
+            // AUDIT-11.4.58：未绑定名赋值原本静默写 local 0（＝首形参）。
+            // 同样报错 + 丢弃 RHS（不写任何 local，栈效应净 0）。
+            println("[tenthc] 对未绑定变量赋值 '" + name + "'（编译期错误，函数 " + current_fn_name(ctx, hir) + "）");
+            wasm_drop(out);
+            return;
         };
+        let is_let_local = (ctx.resolve_kind == 1);
         // Phase 5.5：非参数 local 以 i64 存储，float 值需 reinterpret
         if is_let_local {
             if is_expr_f32(hir, e.right) {
@@ -1395,30 +1458,22 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
                     wasm_local_get(out, ctx.temp_local);
                     wasm_i32_wrap_i64(out);
                     // value: compile the captured variable (i64)
-                    // Look up the captured var as a local
-                    let mut cap_local: i64 = 0;
-                    let mut cap_found: bool = false;
-                    let mut li3: i64 = ctx.local_names.len() - 1;
-                    while li3 >= 0 {
-                        if ctx.local_names[li3] == cap_name {
-                            cap_local = ctx.local_indices[li3];
-                            cap_found = true;
-                            break;
+                    // AUDIT-11.4.58（第 4 处兜底点）：统一走 resolve_local，
+                    // 未命中不再静默落 local 0（＝首形参/env_ptr）。
+                    let cap_local = resolve_local(ctx, hir, cap_name);
+                    if ctx.resolve_kind == 0 || ctx.resolve_kind == 2 {
+                        // 未命中（或嵌套闭包的外层捕获，本层 env 表里没有）：
+                        // 响亮报错，并压常量 0 作占位值——地址已在栈上，
+                        // i64.store 需要「地址 + 值」两个操作数，不能少压。
+                        // 例外：captures 里的名字其实是闭包体内自己的 `let`
+                        // （tenthc 捕获分析的既有缺陷）→ 不算用户错误，不打印。
+                        if !closure_body_binds_local(hir, idx, cap_name) {
+                            println("[tenthc] 闭包捕获变量解析失败 '" + cap_name + "'（编译期错误，函数 " + current_fn_name(ctx, hir) + "）");
                         };
-                        li3 = li3 - 1;
+                        wasm_i64_const(out, 0);
+                    } else {
+                        wasm_local_get(out, cap_local);
                     };
-                    if !cap_found {
-                        // Check fn params
-                        let func = hir.fns[ctx.current_fn_idx];
-                        for pi in 0..func.params.len() {
-                            if func.params[pi].name == cap_name {
-                                cap_local = pi;
-                                cap_found = true;
-                                break;
-                            };
-                        };
-                    };
-                    wasm_local_get(out, cap_local);
                     // i64.store at offset ci*8
                     wasm_i64_store(out, 3, ci * 8);
                 };
@@ -1434,31 +1489,19 @@ fn compile_expr(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
     if d == 24 {
         // AssignOp (x += y) — Phase 5.5：按 dtype 分支，非参数 local 需 reinterpret
         let name = e.name;
-        let mut local_idx: i64 = 0;
-        let mut found: bool = false;
-        let mut is_let_local: bool = false;
-        // Search let bindings first (backward for shadowing)
-        let mut li: i64 = ctx.local_names.len() - 1;
-        while li >= 0 {
-            if ctx.local_names[li] == name {
-                local_idx = ctx.local_indices[li];
-                found = true;
-                is_let_local = true;
-                break;
+        let local_idx = resolve_local(ctx, hir, name);
+        if ctx.resolve_kind == 2 || ctx.resolve_kind == 0 {
+            // AUDIT-11.4.58/59（登记册原先漏记的第 3 处兜底点）：`x += 1` 同样
+            // 会静默落 local 0（首形参/env_ptr）。这里在发射任何字节**之前**报错，
+            // 因此不需要 pop：既没 local.get 也没编译 RHS，栈效应净 0。
+            if ctx.resolve_kind == 2 {
+                println("[tenthc] 不能对捕获变量赋值 '" + name + "'（闭包内写自由变量未实现，函数 " + current_fn_name(ctx, hir) + "）");
+            } else {
+                println("[tenthc] 对未绑定变量赋值 '" + name + "'（编译期错误，函数 " + current_fn_name(ctx, hir) + "）");
             };
-            li = li - 1;
+            return;
         };
-        // Fall back to current function's params
-        if !found {
-            let func = hir.fns[ctx.current_fn_idx];
-            for pi in 0..func.params.len() {
-                if func.params[pi].name == name {
-                    local_idx = pi;
-                    found = true;
-                    break;
-                };
-            };
-        };
+        let is_let_local = (ctx.resolve_kind == 1);
         // local.get → (reinterpret if non-param float local) → compile rhs → apply op → (reinterpret) → local.set
         wasm_local_get(out, local_idx);
         let rhs_is_f32 = is_expr_f32(hir, e.right);
@@ -1923,6 +1966,15 @@ fn compile_stmt(ctx: &mut WasmCtx, out: &mut Vec<i64>, hir: HirProgram, idx: i64
 // ── Main compilation entry ──
 
 fn compile_to_wasm(hir: HirProgram) -> Vec<i64> {
+    // AUDIT-11.4.57：解析错误必须**响亮**。tenthc 的两条 errors 通道
+    // （Parser.errors / HirProgram.errors）全都没有读取方，宿主只看返回码，
+    // 所以「响亮化」的唯一物理出口是让产物失效：这里打印并返回空 Vec。
+    // 空字节流没有 \0asm 魔数 ⇒ 任何下游校验/加载（parity_test、
+    // compile_program_to_wasm、compile_host 落盘）立刻炸，不再静默产出垃圾模块。
+    if hir.parse_error_count > 0 {
+        println("[tenthc] 编译中止：源码有 " + int_to_str(hir.parse_error_count) + " 个解析错误（顶层 let 等不受支持的顶层语句），不产出模块");
+        return Vec::new();
+    };
     let mut ctx = ctx_new();
     let num_funcs = hir.fns.len();
     ctx.func_count = num_funcs;

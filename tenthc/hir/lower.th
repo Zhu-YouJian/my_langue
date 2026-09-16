@@ -2662,7 +2662,7 @@ fn lower_stmt(p: &mut HirProgram, idx: i64, exprs: Vec<Expr>, stmts: Vec<Stmt>, 
 }
 
 fn lower_program(program: Program) -> HirProgram {
-    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new(), stmt_list: Vec::new(), body_list: Vec::new(), block_idxs: program.block_idxs, loop_idxs: program.loop_idxs, trait_defs: Vec::new(), trait_impls: Vec::new(), trait_methods: Vec::new(), trait_method_params: Vec::new(), impl_fn_indices: Vec::new(), impl_method_names: Vec::new(), generic_funcs: Vec::new(), ownership: Vec::new(), borrow_holders: Vec::new(), errors: Vec::new(), warnings: Vec::new(), custom_ops: Vec::new() };
+    let mut p = HirProgram { fns: Vec::new(), main_expr: 0, expr_nodes: Vec::new(), stmt_nodes: Vec::new(), type_nodes: Vec::new(), type_args: Vec::new(), type_params: Vec::new(), match_arms: Vec::new(), structs: Vec::new(), enums: Vec::new(), captures: Vec::new(), var_types: Vec::new(), arg_list: Vec::new(), stmt_list: Vec::new(), body_list: Vec::new(), block_idxs: program.block_idxs, loop_idxs: program.loop_idxs, trait_defs: Vec::new(), trait_impls: Vec::new(), trait_methods: Vec::new(), trait_method_params: Vec::new(), impl_fn_indices: Vec::new(), impl_method_names: Vec::new(), generic_funcs: Vec::new(), ownership: Vec::new(), borrow_holders: Vec::new(), errors: Vec::new(), warnings: Vec::new(), custom_ops: Vec::new(), parse_error_count: program.parse_error_count };
 
     // M3.1：注册自定义运算符（绑定函数为 `__custom_op_<op>`，已在 program.fns 中）
     for oi in 0..program.operator_ops.len() {

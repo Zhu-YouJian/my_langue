@@ -13,9 +13,13 @@ struct TraitMethodSig { name: str, params: Vec<Param>, return_type: str }
 struct TraitDef { name: str, methods: Vec<TraitMethodSig> }
 struct ImplBlock { trait_name: str, type_name: str, fns: Vec<FnDef> }
 struct MatchArm { pat_kind: str, pat_name: str, pat_bind: str, body_expr: i64 }
-struct Program { structs: Vec<StructDef>, enums: Vec<EnumDef>, fns: Vec<FnDef>, trait_defs: Vec<TraitDef>, impls: Vec<ImplBlock>, main_stmts_start: i64, main_stmts_count: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, block_idxs: Vec<i64>, loop_idxs: Vec<i64>, operator_ops: Vec<str> }
+// AUDIT-11.4.57：`parse_error_count` 是解析错误的**唯一物理出口**。
+// tenthc 的两条错误通道（Parser.errors / HirProgram.errors）都没有读取方，
+// 所以把一个 i64 计数透传到 HirProgram，由 compile_to_wasm 入口判非零后
+// 打印并返回空产物（详见 tenthc/compile/wasm.th 的说明）。
+struct Program { structs: Vec<StructDef>, enums: Vec<EnumDef>, fns: Vec<FnDef>, trait_defs: Vec<TraitDef>, impls: Vec<ImplBlock>, main_stmts_start: i64, main_stmts_count: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, block_idxs: Vec<i64>, loop_idxs: Vec<i64>, operator_ops: Vec<str>, parse_error_count: i64 }
 
-struct Parser { tokens: Vec<Token>, pos: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, no_struct_literal: bool, block_idxs: Vec<i64>, loop_idxs: Vec<i64>, errors: Vec<str> }
+struct Parser { tokens: Vec<Token>, pos: i64, expr_nodes: Vec<Expr>, stmt_nodes: Vec<Stmt>, match_arms: Vec<MatchArm>, no_struct_literal: bool, block_idxs: Vec<i64>, loop_idxs: Vec<i64>, errors: Vec<str>, error_count: i64 }
 
 fn parser_new(tokens: Vec<Token>) -> Parser {
     Parser {
@@ -28,6 +32,7 @@ fn parser_new(tokens: Vec<Token>) -> Parser {
         block_idxs: Vec::new(),
         loop_idxs: Vec::new(),
         errors: Vec::new(),
+        error_count: 0,
     }
 }
 
@@ -109,6 +114,7 @@ fn synchronize(p: &mut Parser) {
 // Record a parse error message and attempt to recover by synchronizing.
 fn record_error_and_recover(p: &mut Parser, msg: str) {
     p.errors.push(msg);
+    p.error_count = p.error_count + 1;
     synchronize(p);
 }
 
@@ -2057,5 +2063,6 @@ fn parse_program(tokens: Vec<Token>) -> Program {
         block_idxs: p.block_idxs,
         loop_idxs: p.loop_idxs,
         operator_ops: operator_ops,
+        parse_error_count: p.error_count,
     }
 }

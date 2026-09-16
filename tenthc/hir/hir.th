@@ -255,4 +255,7 @@ struct HirProgram {
     // 以合成名 `__custom_op_<op>` 存在于 p.fns，lower 期据 operator_ops
     // 把 `a <op> b` 降级为对 `__custom_op_<op>` 的调用。
     custom_ops: Vec<str>,
+    // AUDIT-11.4.57：parser 解析错误计数（0 = 无错）。tenthc 的 errors 通道
+    // 全无读取方，此计数由 compile_to_wasm 入口检查：非零 ⇒ 打印 + 返回空产物。
+    parse_error_count: i64,
 }

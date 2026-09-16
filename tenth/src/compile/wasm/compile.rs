@@ -19,7 +19,11 @@ impl WasmCompiler {
     // ── Function compilation ─────────────────────────────────────────────
 
     pub(super) fn compile_function(&mut self, func: &HirFnDef) -> TenthResult<Function> {
-        eprintln!("[WASM] compile {}", func.name);
+        // AUDIT-11.4.72：这行日志在自举编译（数百个函数）时会刷爆 stderr。
+        // 改为受环境变量控制（TENTH_WASM_VERBOSE=1 时打开），而不是删除。
+        if std::env::var_os("TENTH_WASM_VERBOSE").is_some() {
+            eprintln!("[WASM] compile {}", func.name);
+        }
         self.local_map.clear();
         self.local_count = 0;
         for (name, _) in &func.params {
