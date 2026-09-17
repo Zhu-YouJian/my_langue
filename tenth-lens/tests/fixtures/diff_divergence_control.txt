@@ -1,0 +1,17 @@
+# P1 差分检查器自检夹具 · **分歧阳性对照清单**（自检 `tests/selftest.th` 的 B08/B09/B10/B11 与
+# C10/C11/C16/C17/C18/C19 用它证明「检查器真的能判红」）。
+#
+# 为什么不再用 `corpus/diff_divergence.txt`：该清单指向 GAP-018 夹具
+# （`tests/fixtures/divergence_callsite_compare.th`），而 `AUDIT-11.4.85` 已在编译器中修复
+# 该缺陷 ⇒ 修复后它两路径一致、不再产生 DIVERGE（它仍是**历史证据**，见 `corpus/README.md`）。
+# 故自检的"判红是活的"改用**仍然分歧**的对照夹具 `diffctl_backend_split.th`
+# （=`AUDIT-11.4.56`：闭包体内写全局，VM 写穿 / 解释器按值捕获；也是差分检查器的内建阳性对照）。
+#
+# 跑法（项目根，env 必须干净）：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\tests\fixtures\diff_divergence_control.txt
+# 期望：`[DIVERGE] split_control` + `VERDICT|RED` + 退出码 1。
+#
+# 格式：`标签|路径.th|期望`
+
+split_control|tenth-lens/tests/fixtures/diffctl_backend_split.th|any
+callsite_controls|tenth-lens/tests/fixtures/gap018_controls.th|any

@@ -279,6 +279,39 @@
   本会话红线禁改 `AUDIT.md`）
 - **关联**：P1；GAP-009 / GAP-012（同族"跨后端分歧"）；`src/guard.th`；`tests/fixtures/gap018_mod.th`
 
+### GAP-018 后续（2026-09-17，运行时部 × 编译器部）：**已在编译器中修复**，本条目转为常驻探针
+
+- **登记号**：`AUDIT-11.4.85`。触发面已被 L2-B 只读审计收敛成 **28 行单变量表**
+  （`.agents/tmp/prep_audit_11485.md`），本节上文"触发面未收敛/与调用次数相关"的部分**已被该表取代**。
+- **真实触发条件（确定性 5/5，与"跨模块"无关）**：**默认执行路径 = Cranelift JIT**（`main.rs: vm_execute`
+  → `jit::run_jit`，"VM 运行时失败"文案不代表字节码 VM）下，**调用是运算符的第二操作数** + **该语句在循环里
+  重复求值** + **被调函数不可内联**（含 `while`/`if`/嵌套调用/指令数 > 16）+ **保持栈槽布局**。
+  「返回值派生自局部 vs 字面量」是误判；`TENTH_JIT_POISON` 无关。
+- **症状面（比较只是唯一响亮形态）**：`while i < f()` ⇒「无法比较」exit 1；`i+f()` ⇒ **静默错值** `2/4/6`；
+  `i-f()` ⇒ `-2/-4/-6`；`i!=f()` ⇒ **恒 true**；`let s = i+f()` ⇒「+ 类型不匹配」。解释器一直正确。
+- **真根因（已闭环证实，非"签名 ABI 不一致"——`import_sig` 隐式前置 `vm`，快路径签名本就是 4 参）**：
+  `compile/jit/translator.rs::emit_direct_call` 的 A1 两条分支**发射期状态不一致**——慢分支
+  （`host_jit_call` → `call_hostcall_call` → `invalidate_stack_scalars()`）会在慢块内发「把调用前压入的
+  操作数（懒物化标量）写成 Value」的 hostcall 并清空本块剩余栈跟踪；快分支（目标已编译 → `call_indirect`）
+  不做 ⇒ 该操作数 Value 槽陈旧（上一轮/上一表达式残留）。首次求值走慢分支（正确）⇒ 第 1 轮通过；
+  回边后目标已编译 → 快分支 ⇒ 第 2 轮起错。
+- **修法**：A1 **分叉之前**的公共块 `self.materialize_all_stack();` —— 两分支运行期内存状态一致，且与
+  `analyze_scalar_kinds` 对非特化 `Call/CallN` 的建模（`push(Unknown) + clear_stack`）一致；慢块内
+  `invalidate_stack_scalars` 随后成 no-op（零重复发射）。**未走"整形态回退 VM"**；性能 worst-case
+  实测 +1.1%（同会话交错）。
+- **常驻探针（本工具侧交付）**：`tests/fixtures/gap018_m1_minimal.th`（15 行最小形态 m1），
+  清单 `corpus/diff_regressions.txt`（期望 `clean`；修复前默认路径 exit 1 ⇒ 该清单会判红，故能钉住回归）。
+  跑法：`tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_regressions.txt`
+  ⇒ `[PASS] gap018_m1_minimal … exit(A/B)=0/0` + `VERDICT|GREEN`、退出码 0。
+- **Rust 侧同形守护**：`tenth/tests/audit_11485_regression_test.rs`（9 条；含四形态 + 子进程字节级两路径对拍）。
+- **影响本节的既有结论**：`corpus/diff_divergence.txt`（原"应判红"的真分歧证据）在修复后**转为 PASS**
+  （两路径一致）；该清单保留为**历史证据**，回归守护改用 `corpus/diff_regressions.txt`。
+- **自检连带修正（`tests/selftest.th`，仍 78 项）**：B08/B09/B11 与 C10/C11/C16/C17/C18/C19 这 9 项原本
+  用 GAP-018 夹具证明「检查器判红是活的」——修复后它不再分歧 ⇒ 这 9 项会假红。现改用**仍分歧**的
+  `tests/fixtures/diffctl_backend_split.th`（`AUDIT-11.4.56`，即差分检查器的内建阳性对照），
+  清单：`tests/fixtures/diff_divergence_control.txt`（2 条：`split_control` 判 DIVERGE + `callsite_controls`
+  仍 PASS，证明不误判）。实测 `SELFTEST|78|PASS|78|FAIL|0` + 退出码 0。
+
 ## GAP-019 · 解释器在 P0 全量 6 源清单上**栈溢出**（`thread 'tenth-main' has overflowed its stack`）
 
 - **缺什么**：解释器（tree-walk）对"多来源 × 多 key"工作负载的栈深控制/求值尾递归化

@@ -17,8 +17,9 @@
 | `manifest_clean_cross.txt` | P0 守卫 | 3 份 `perf_*.log` | GREEN（建议配 `--metric min`） | 干净集**有可比对象**的交叉自比 |
 | `manifest_all_sources.txt` | P0 守卫 | 6 份 `perf_*.log` | **默认路径 RED**；**解释器路径会栈溢出**（见 §四） | 非验收：全量红图 |
 | `diff_probes.txt` | P1 差分 | `probes/*.th` 全量（10） | **全 PASS + 退出码 0** | 验收 ①（正例） |
+| `diff_regressions.txt` | P1 差分 | 1 个**常驻回归探针**（`tests/fixtures/gap018_m1_minimal.th`） | **PASS + 退出码 0**（`AUDIT-11.4.85` 修复后） | 已修缺陷的回归守护 |
 | `diff_instances.txt` | P1 差分 | `Tenth实例/` 小批（13，含 2 个 `error`） | 全 PASS + 退出码 0 | 验收 ⑤（探索产出） |
-| `diff_divergence.txt` | P1 差分 | 2 个夹具（1 真分歧 + 1 对照） | **RED（退出码 1）** | 验收 ②（判红是活的） |
+| `diff_divergence.txt` | P1 差分 | 2 个夹具（1 真分歧 + 1 对照） | ~~RED（退出码 1）~~ → **2026-09-17 后 PASS**（`AUDIT-11.4.85` 已修） | 历史证据（修复前）；回归守护见 `diff_regressions.txt` |
 | `diff_timeout.txt` | P1 差分 | 1 个卡死夹具 | **RED + `[TIMEOUT]`** | 验收 ③（超时明确标注） |
 | `diff_nondet.txt` | P1 差分 | `Tenth实例/JSON处理/json_demo.th` | `--repeat 2` ⇒ `[NONDET]`（退出码 1） | 归因诚实性（见 §三） |
 
@@ -33,6 +34,7 @@ $e = "tenth\target\release\tenth.exe"     # 已有构建，本轮无需 cargo
 
 # P1
 & $e run tenth-lens\main.th --diff tenth-lens\corpus\diff_probes.txt
+& $e run tenth-lens\main.th --diff tenth-lens\corpus\diff_regressions.txt
 & $e run tenth-lens\main.th --diff tenth-lens\corpus\diff_instances.txt
 & $e run tenth-lens\main.th --diff tenth-lens\corpus\diff_divergence.txt
 & $e run tenth-lens\main.th --diff tenth-lens\corpus\diff_timeout.txt --timeout-ms 1200

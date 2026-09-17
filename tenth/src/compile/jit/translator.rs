@@ -3146,6 +3146,25 @@ impl<'a, M: Module> Translator<'a, M> {
         // ── A1：通用直接调用（参数已物化）──
         let vm = self.vm;
 
+        // ── AUDIT-11.4.85（静默错值红线）：分叉前统一物化「调用前压入的操作数」──
+        // A1 有两条分支：快分支（目标已编译 → 池内 `call_indirect`）与慢分支
+        // （`host_jit_call` trampoline，内部 `invalidate_stack_scalars`）。
+        // 慢分支的失效发生在**发射期**于慢块内发物化代码 + 清空本块剩余栈标量
+        // 跟踪；快分支不做。于是「调用前压入的、仍是懒物化标量的操作数」（即
+        // `i + f()` / `i < f()` 的**第一**操作数）只在慢分支的机器码里被物化
+        // ⇒ 快分支下该偏移的 Value 槽陈旧（上一轮/上一表达式残留），后续通用
+        // 消费者（`emit_binop` 通用路径）读陈旧 Value：比较落 `compare()` 兜底
+        // 报「无法比较」、算术静默错值（`i + f()` 得 2/4/6）、`!=` 恒 true、
+        // `let s = i + f()` 报「+ 类型不匹配」。触发还需「该语句被重复求值」
+        // （首次求值走慢分支 → 正确；回边后目标已编译 → 快分支 → 错）。
+        //
+        // 修法：把这次物化提到**分叉之前**的公共块 → 两条分支运行期内存状态
+        // 完全一致，且与 `analyze_scalar_kinds` 对非特化 Call/CallN 的建模
+        // （`stack.push(Unknown)` + `clear_stack`）一致。慢块内的
+        // `invalidate_stack_scalars` 随后成为 no-op（跟踪已空），零重复发射。
+        // 仅覆盖 `self.sp = args_base_off` 以下的活操作数（参数已在上方物化）。
+        self.materialize_all_stack();
+
         // ── 从函数指针表加载 callee 指针（0 = 未编译 → 慢路径）──
         let table_off = std::mem::offset_of!(Vm, jit_table_ptr) as i64;
         let table_off_v = self.builder.ins().iconst(self.ptr, table_off);

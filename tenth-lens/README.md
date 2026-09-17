@@ -77,10 +77,18 @@ tenth-lens/
 │   ├── guard.th   ← P0 **守卫层**：判决 / 报告 / 退出码（全局前缀 `GRD_`）
 │   ├── runner.th  ← P1 进程侧：一次 spawn 同源取三轴（`command_output_ex` 单点封装）
 │   └── diff.th    ← P1 **差分检查器**：两阶段双路径 + 判决 + 报告（全局前缀 `DIF_`）
-├── corpus/        ← 清单（P0 5 份 + P1 5 份）+ `README.md`（**语料去脆**：日志再生命令 / 判决语义 / 已知限制）
-├── tests/         ← 自检：`tests/selftest.th`（**78 项**）+ fixtures（P0 合成夹具 3 份；P1 夹具 7 份）
+├── corpus/        ← 清单（P0 5 份 + P1 6 份）+ `README.md`（**语料去脆**：日志再生命令 / 判决语义 / 已知限制）
+├── tests/         ← 自检：`tests/selftest.th`（**78 项**）+ fixtures（P0 合成夹具 3 份；P1 夹具 9 份）
 └── probes/        ← 各 GAP 的最小复现探针（**是证据，不要删**；AUDIT 条目会引用它们）
 ```
+
+> **常驻回归探针（2026-09-17，`AUDIT-11.4.85` 修复配套）**：`tests/fixtures/gap018_m1_minimal.th`
+> 是 GAP-018 的 **15 行最小形态 `m1`**（审计收敛后的确定性复现：默认 JIT 路径 + 调用作第二操作数 +
+> 循环里重复求值 + 被调函数不可内联）。清单 `corpus/diff_regressions.txt`（期望 `clean`）把它变成
+> **一跑就判红**的回归守护；缺陷已修（`compile/jit/translator.rs::emit_direct_call` A1 分叉前
+> `materialize_all_stack()`），根因与机制见 `GAPS.md` GAP-018 的"后续"小节。
+> 跑法：`tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_regressions.txt`。
+> 注：`probes/*` 是既有 AUDIT 证据文件（**只增不改**），故新探针一律放 `tests/fixtures/`。
 
 > **多文件工程约束（2026-09-17 W6-lens P1 实测）**：`use src::模块::名字` **可用**（脚本自身目录在
 > `use` 搜索路径内，`AUDIT-11.4.60(a)`）；模块之间也这样互相引用（`src/guard.th` → `src::record::…`）。
@@ -88,6 +96,9 @@ tenth-lens/
 > ① **每个模块的顶层 `let` 必须加模块前缀**——模块级全局**不按模块隔离**，同名会**静默别名**（`GAP-015`）；
 > ② **跨模块函数调用做比较操作数前必须先绑局部**——`let n = f(); while i < n`；直接写 `while i < f()` 会撞
 > `GAP-018`（VM 报「无法比较」或**静默中止所在模块函数**）。两处代码里都有指向 `GAPS.md` 的注释。
+> **（2026-09-17 更新）**：`AUDIT-11.4.85` 已在编译器中修复该缺陷（根因＝ JIT A1 快/慢分支发射期状态
+> 不一致，非"跨模块"；见 `GAPS.md` GAP-018 后续小节）⇒ **此绕行不再是必需**；工具代码里的"先绑局部"
+> 保持不变（零成本、且是更稳的写法），但**新代码不必再为其让路**。
 > `use tenth-lens::…` 仍会失败（`-` 不是合法路径段，`GAP-011`）——但现在给**可操作提示**（三条出路）。
 >
 > **跨会话比较的裁断（2026-09-16，总师）**：守卫**默认不排除跨会话比较**（宁可红、不可假绿），但**必须标注证据强度**：同会话/同 provenance 的偏离 = **强证据**（参与退出码）；跨会话的偏离 = **弱证据**（`PERF-NOTE` 已声明跨次不可直接比）。理由：跨会话红既可能是"测量污染"，也可能是"真的改了行为"（例：9/9 基线 `elementwise_mul_1k` vm 11.72ms vs 9/16 的 1.59ms = 7.36×，那是**修复带来的真实变化**，不是缺陷）——**工具分不清，就别替人把它判绿**，把强度摊开让人判断。

@@ -222,7 +222,12 @@ fn main() {
     // P1 段（2026-09-17 W6-lens）：跨路径差分检查器
     // ══════════════════════════════════════════════════════════════════
     let dprobes = "tenth-lens/corpus/diff_probes.txt";
-    let ddiv = "tenth-lens/corpus/diff_divergence.txt";
+    // 分歧阳性对照清单：**不能用** `corpus/diff_divergence.txt`（GAP-018 夹具）——
+    // `AUDIT-11.4.85` 修复后它两路径一致、不再 DIVERGE（该清单保留为历史证据）。
+    // 自检要证明的是「检查器判红是活的」，故改用**仍分歧**的 `diffctl_backend_split.th`
+    // （`AUDIT-11.4.56`，也是差分检查器的内建阳性对照）。夹具清单见
+    // `tests/fixtures/diff_divergence_control.txt`（2 条：1 DIVERGE + 1 PASS）。
+    let ddiv = "tenth-lens/tests/fixtures/diff_divergence_control.txt";
     let dtimeout = "tenth-lens/corpus/diff_timeout.txt";
     let dnondet = "tenth-lens/corpus/diff_nondet.txt";
     let dbadexp = "tenth-lens/tests/fixtures/diff_bad_expect.txt";
@@ -239,10 +244,11 @@ fn main() {
     assert_has("B06_汇总无静默跳过", full_out(rp), "SKIPPED|0");
     assert_absent("B07_正例里没有DIVERGE", full_out(rp), "[DIVERGE]");
 
-    // ── ② 真分歧（GAP-018 夹具）⇒ 判红 + 退出码 1；对照组不误判 ──
+    // ── ② 真分歧（对照夹具 `diffctl_backend_split.th`，见上方 ddiv 注释）⇒ 判红 + 退出码 1；
+    //      同清单里的 `callsite_controls` 仍应 PASS（不误判）──
     let rd = spawn_full(args1("--diff", ddiv));
-    assert_has("B08_真分歧判红", full_out(rd), "[DIVERGE] callsite_compare");
-    assert_has("B09_分歧给出退出码对照", full_out(rd), "exit(A/B)=1/0");
+    assert_has("B08_真分歧判红", full_out(rd), "[DIVERGE] split_control");
+    assert_has("B09_分歧给出退出码对照", full_out(rd), "exit(A/B)=0/0");
     assert_has("B10_对照组不误判", full_out(rd), "[PASS] callsite_controls");
     assert_code("B11_分歧退出码1", full_code(rd), 1);
 
@@ -364,7 +370,7 @@ fn main() {
     rcf.push("1");
     let rcfo = spawn_full(rcf);
     assert_has("C16_确认轮有留痕", full_out(rcfo), "CONFIRM|首个 DIVERGE");
-    assert_has("C17_确定性分歧复现后维持DIVERGE", full_out(rcfo), "[DIVERGE] callsite_compare");
+    assert_has("C17_确定性分歧复现后维持DIVERGE", full_out(rcfo), "[DIVERGE] split_control");
     assert_has("C18_确认轮如实标注只覆盖解释器侧", full_out(rcfo), "GAP-008：env_set 后无法再跑默认路径");
     assert_code("C19_维持分歧仍退1", full_code(rcfo), 1);
 

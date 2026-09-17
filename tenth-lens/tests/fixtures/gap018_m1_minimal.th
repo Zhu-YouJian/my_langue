@@ -1,0 +1,27 @@
+// AUDIT-11.4.85 常驻探针（**已修复**的回归守护）：最小确定性复现 `m1`。
+//
+// 触发面（审计收敛，确定性 5/5）——默认执行路径 = Cranelift JIT，不是字节码 VM：
+//   默认路径下，**调用作运算符的第二操作数** + **该语句在循环里重复求值** +
+//   **被调函数不可内联**（含 `while`/`if`/嵌套调用/指令数 > 16）⇒
+//   `emit_direct_call` 的 A1 快分支（目标已编译 → call_indirect）不像慢分支
+//   （host_jit_call trampoline，内部 invalidate_stack_scalars）那样物化「调用前
+//   压入的操作数」⇒ 该操作数的 Value 槽陈旧 ⇒ 后续通用消费者读陈旧值。
+//
+// 修复前实测（2026-09-17，`tenth\target\release\tenth.exe`，as-of 修复前构建）：
+//   默认（JIT）  : exit 1，stdout `k=0`，stderr `运行时错误 — 无法比较`（第 2 行）
+//   TENTH_NO_VM=1: exit 0，stdout `k=0` / `k=1` / `done`
+// 首次求值走慢分支（正确）⇒ 第 1 轮通过；回边后目标已编译 → 快分支 ⇒ 第 2 轮崩。
+//
+// 修复后（`translator.rs::emit_direct_call` 分叉前 `materialize_all_stack()`）：
+//   两路径逐行一致、exit 0（`k=0` / `k=1` / `done`）。
+//
+// 跑法（项目根目录；env 必须干净——P1 差分检查器会硬校验）：
+//   tenth\target\release\tenth.exe run tenth-lens\tests\fixtures\gap018_m1_minimal.th
+//   set TENTH_NO_VM=1 & tenth\target\release\tenth.exe run tenth-lens\tests\fixtures\gap018_m1_minimal.th
+//   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_regressions.txt
+//
+// 注：本文件是**常驻探针**（放在 `tests/fixtures/`）；`tenth-lens/probes/*` 是既有 AUDIT
+// 证据文件、只增不改。Rust 侧同形守护见 `tenth/tests/audit_11485_regression_test.rs`。
+
+fn f() -> i32 { let mut i = 0; while i < 2 { i = i + 1; }; 2 }
+fn main() { let mut i = 0; while i < f() { println("k=" + format("{}", i)); i = i + 1; }; println("done"); }
