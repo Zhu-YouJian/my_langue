@@ -1,0 +1,99 @@
+# L2-A 全量语料 · 来源① `Tenth实例/**/*.th`（72 条）
+#
+# 生成：2026-09-17 L2-A 全波扫。跑法（项目根，env 必须干净——检查器会硬校验 TENTH_NO_VM）：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_all_instances.txt --timeout-ms 20000
+# 复跑判定非确定项时加 `--repeat 2`。
+#
+# 组成：63 个实例目录（各自有 task.txt）下共 72 个 .th —— 6 个目录含多个脚本
+#       （MNIST训练 2 / Shape检查防线 4 / 多分类器 2 / 宏与自定义运算符 2 / 算力内存预警 2 / 类型状态Typestate 3）。
+#       其中 5 条是**故意违法程序**（Shape检查防线 err_* ×3 + Typestate 违法 ×2）⇒ 期望=error。
+# 期望分布：clean 0 / error 5 / any 67。
+#   · `any` 的原因（逐条见行尾 + `diff_all_nondet.txt`）：12 条输出非确定（随机初始化 / 墙钟 /
+#     HashMap 序）＋ `命令行参数/cli_demo.th`（打印 cli_args_count()/cli_arg()，**依赖调用方传参**）
+#     ＋ `算力内存预警/_test.th`（同目录另有 memory_warning.th；该脚本语义不明、不属 63 个"实例"演示
+#       之一，拿不准 ⇒ any）。
+#   · 为什么 clean=0：本清单**不充当"必须全绿"的门**。写 clean 等于断言"退出码必为 0"，
+#     对非确定/依赖参数的用例会变成假金标准；本清单的目的是**发现分歧**，故一律用 any。
+#
+# 期望口径（★不许把「现状」当「正确」）：
+#   `clean`/`error` 只声明**应当以什么方式结束**（退出码 0 / 非零），
+#   **不声明**输出内容应当等于它现在输出的内容。
+#   本清单每条路径的期望值都写在行尾，逐条可核。
+#
+# ★跑了默认口径（--repeat 1）看到 [DIVERGE] 时，**必须先加 --repeat 2 复跑**再下结论：
+#   本波实测 13 条「随机初始化 / 墙钟计时 / HashMap 迭代序」用例在 REPEAT|1 下被判 DIVERGE，
+#   加 --repeat 2 后**全部改判 NONDET**（真后端分歧 0 条）。名单见 `diff_all_nondet.txt`。
+
+# 标签为 ASCII（`l<hash>_<文件>`）——避开中文标签走原生参数的编码风险；路径栏是真实相对路径。
+l76994_adam|Tenth实例/Adam优化器/adam.th|any
+l22945_drop_copy|Tenth实例/Drop与Copy/drop_copy.th|any
+l77297_hashmap|Tenth实例/HashMap使用/hashmap.th|any
+l71344_json_demo|Tenth实例/JSON处理/json_demo.th|any
+l32644_mnist_mlp|Tenth实例/MNIST训练/mnist_mlp.th|any
+l97336_synthetic_mlp|Tenth实例/MNIST训练/synthetic_mlp.th|any
+l01024_newtype|Tenth实例/Newtype模式/newtype.th|any
+l63129_n_queens|Tenth实例/N皇后II/n_queens.th|any
+l92156_err_broadcast_incompatib|Tenth实例/Shape检查防线/err_broadcast_incompatible.th|error
+l99663_err_matmul_inner_dim|Tenth实例/Shape检查防线/err_matmul_inner_dim.th|error
+l96786_err_reshape_element_coun|Tenth实例/Shape检查防线/err_reshape_element_count.th|error
+l18834_shape_check_layers|Tenth实例/Shape检查防线/shape_check_layers.th|any
+l03502_shape_check_demo|Tenth实例/Shape检查演示/shape_check_demo.th|any
+l42734_softmax_regression|Tenth实例/Softmax回归/softmax_regression.th|any
+l95364_dyn_trait|Tenth实例/Trait对象/dyn_trait.th|any
+l50229_trait_demo|Tenth实例/Trait示例/trait_demo.th|any
+l64739_transformer_demo|Tenth实例/Transformer示例/transformer_demo.th|any
+l42770_union_demo|Tenth实例/Union类型/union_demo.th|any
+l95610_xor_net|Tenth实例/XOR神经网络/xor_net.th|any
+l09870_sieve|Tenth实例/埃拉托色尼筛法/sieve.th|any
+l93240_closure_capture|Tenth实例/闭包捕获/closure_capture.th|any
+l48966_closures|Tenth实例/闭包合集/closures.th|any
+l51969_sobel|Tenth实例/边缘检测/sobel.th|any
+l24752_labeled_loop|Tenth实例/标签循环/labeled_loop.th|any
+l37896_stdlib_demo|Tenth实例/标准库使用示例/stdlib_demo.th|any
+l75444_word_count|Tenth实例/词频统计/word_count.th|any
+l34892_house_robber|Tenth实例/打家劫舍II/house_robber.th|any
+l94527_queue|Tenth实例/队列/queue.th|any
+l81668_classifier|Tenth实例/多分类器/classifier.th|any
+l50463_classifier_ce|Tenth实例/多分类器/classifier_ce.th|any
+l80705_polyfit|Tenth实例/多项式回归/polyfit.th|any
+l82188_bintree|Tenth实例/二叉树遍历/bintree.th|any
+l85761_bst|Tenth实例/二叉搜索树/bst.th|any
+l76759_binary_search|Tenth实例/二分查找/binary_search.th|any
+l14127_generic_enum|Tenth实例/泛型枚举/generic_enum.th|any
+l13405_generics|Tenth实例/泛型示例/generics.th|any
+l75347_fibonacci|Tenth实例/斐波那契数列/fibonacci.th|any
+l74072_merge_sort|Tenth实例/归并排序/merge_sort.th|any
+l50516_hanoi|Tenth实例/汉诺塔/hanoi.th|any
+l00736_macro_ops|Tenth实例/宏与自定义运算符/macro_ops.th|any
+l18774_operator_overload|Tenth实例/宏与自定义运算符/operator_overload.th|any
+l96534_timer|Tenth实例/计时器/timer.th|any
+l49365_matmul|Tenth实例/矩阵乘法/matmul.th|any
+l43355_matfact|Tenth实例/矩阵分解/matfact.th|any
+l68161_matrix_ops|Tenth实例/矩阵转置与运算/matrix_ops.th|any
+l74681_caesar|Tenth实例/凯撒密码/caesar.th|any
+l15436_quicksort|Tenth实例/快速排序/quicksort.th|any
+l83585_typestate_arg_illegal|Tenth实例/类型状态Typestate/typestate_arg_illegal.th|error
+l52387_typestate_demo|Tenth实例/类型状态Typestate/typestate_demo.th|any
+l39816_typestate_illegal|Tenth实例/类型状态Typestate/typestate_illegal.th|error
+l99854_linked_list|Tenth实例/链表/linked_list.th|any
+l90315_bubble_sort|Tenth实例/冒泡排序/bubble_sort.th|any
+l34267_cli_demo|Tenth实例/命令行参数/cli_demo.th|any
+l65395_logging_demo|Tenth实例/日志系统/logging_demo.th|any
+l41471_neural_net|Tenth实例/神经网络层/neural_net.th|any
+l47797_math_demo|Tenth实例/数学函数/math_demo.th|any
+l20314__test|Tenth实例/算力内存预警/_test.th|any
+l68999_memory_warning|Tenth实例/算力内存预警/memory_warning.th|any
+l13370_random_demo|Tenth实例/随机数应用/random_demo.th|any
+l61601_grad_clip_accum|Tenth实例/梯度裁剪与累积/grad_clip_accum.th|any
+l88870_gradient_descent|Tenth实例/梯度下降/gradient_descent.th|any
+l47750_address_book|Tenth实例/通讯录/address_book.th|any
+l00869_cnn|Tenth实例/微型CNN/cnn.th|any
+l36841_fs_demo|Tenth实例/文件操作/fs_demo.th|any
+l65138_stack|Tenth实例/栈/stack.th|any
+l42194_tensor_broadcast|Tenth实例/张量广播/tensor_broadcast.th|any
+l40480_smart_ptr|Tenth实例/智能指针/smart_ptr.th|any
+l06811_linear_regression|Tenth实例/自动微分/linear_regression.th|any
+l69029_autodiff_shape_check|Tenth实例/自动微分Shape校验/autodiff_shape_check.th|any
+l97148_string_utils|Tenth实例/字符串处理/string_utils.th|any
+l84499_gcd|Tenth实例/最大公约数/gcd.th|any
+l58334_lcs|Tenth实例/最长公共子序列/lcs.th|any

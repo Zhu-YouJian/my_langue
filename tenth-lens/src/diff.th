@@ -12,6 +12,18 @@
 //   `PASS` ＝ **两路径一致**，**不等于两侧都正确**。本工具只能发现**分歧**，
 //   不能证明任何一侧语义正确——两侧一起错（同源同 bug）它看不见。
 //
+// ★**确定性复核是默认行为**（`--repeat 2`，全量语料下是**必需步骤而非可选优化**）：
+//   同一侧至少跑 2 次，**跨次不一致 ⇒ `NONDET`**（"无法归因"，需人看），**不许**冒充 `DIVERGE`。
+//   只跑 1 次时，被测程序自身的随机性（随机初始化 / 墙钟 / HashMap 迭代序）产生的差异
+//   会被**误判成后端分歧** ⇒ **假红**（红数还不可复现）——这与"假绿"是同一类病：
+//   都让报告失去判决价值（一个喊狼来了，一个瞒着）。`--repeat 1` 是**显式降级**：必须打 WARN 且留痕。
+//
+// ★退出码**三态**（"不冒充绿，也不冒充分歧"）：
+//   0 = 全部 `PASS`；1 = 有 `DIVERGE`（真两路径不一致）；2 = 用法/输入错误；
+//   3 = **无 DIVERGE 但有「无法判定」**（`NONDET` / `TIMEOUT` / `EXPECT_FAIL`）。
+//   `DIVERGE` 是**判决**而非噪声——故它与"无法判定"必须在退出码上分开，否则含随机程序的语料
+//   永远红，迟早有人加 `|| true`，工具就废了。
+//
 // ★防假绿（三层，宁可红不可假绿）：
 //   1. **父进程 env 硬校验**：`env_get("TENTH_NO_VM")` 若为 `Ok(_)`（**任何值**，含 `"0"`/空串）
 //      ⇒ **硬失败 exit 2**。理由：`tenth/src/main.rs` 用 `is_ok()` 判定该变量 ⇒ 父进程一旦带它，
@@ -58,7 +70,9 @@ let mut DIF_PHASE_A: Vec = Vec::new()   // 每条默认路径的 spawn 结果（
 let mut DIF_PHASE_B: Vec = Vec::new()   // 每条解释器路径的 spawn 结果（首次）
 let mut DIF_A_STABLE: Vec = Vec::new()  // 每条：默认路径的 --repeat 次是否彼此一致
 let mut DIF_B_STABLE: Vec = Vec::new()  // 每条：解释器路径的 --repeat 次是否彼此一致
-let mut DIF_REPEAT: i32 = 1
+let mut DIF_REPEAT: i32 = 2              // 确定性复核次数（**默认 2**；全量语料必需，见文件头 ★）
+let mut DIF_CONFIRM_IDX: i32 = -1        // 首个被判 DIVERGE 的用例下标（-1 = 无）
+let mut DIF_CONFIRM_BAD: i32 = 0         // 1 = 该用例的解释器侧复跑不一致 ⇒ 降级 NONDET
 let mut DIF_CTL_A: Vec = Vec::new()
 let mut DIF_CTL_B: Vec = Vec::new()
 let mut DIF_CTL_PATH: String = ""
@@ -75,13 +89,16 @@ fn dif_line(s: String) {
 
 fn dif_usage() {
     println("tenth-lens 跨路径差分检查器 v1（P1）");
-    println("用法：tenth.exe run tenth-lens\\main.th --diff <清单> [--timeout-ms <毫秒>] [--repeat <1..5>] [--stderr-contains <关键字>] [--control <对照脚本>] [--no-control] [--out <报告路径>]");
+    println("用法：tenth.exe run tenth-lens\\main.th --diff <清单> [--timeout-ms <毫秒>] [--repeat <1..5>] [--stderr-contains <关键字>] [--control <对照脚本>] [--no-control] [--fail-on-unverified] [--out <报告路径>]");
     println("  清单格式：每行 `标签|路径.th|期望`，可选第 4 段 `额外参数`（空格分隔）；`#` 注释、空行忽略");
     println("  `期望` 取 clean（默认路径应 exit 0）/ error（应非零退出）/ any");
     println("  逐条做两次 spawn：① 默认路径；② TENTH_NO_VM=1。每次一次 spawn 同源取三轴（stdout/stderr/退出码）");
     println("  判红：stdout 不同 / 退出码不同 / stderr 非空性不同 / 期望不符 / 超时 / 非确定(NONDET)");
-    println("  --repeat n（默认 1）：每条每侧跑 n 次做**确定性基线**；同侧 n 次不一致 ⇒ 判 NONDET（不冒充后端分歧）");
-    println("  退出码：有红 → 1；用法或输入错误（含清单、脚本缺失、后端对照失败、父进程 env 脏）→ 2；全一致 → 0");
+    println("  --repeat n（**默认 2**）：每条每侧跑 n 次做**确定性基线**；同侧 n 次不一致 ⇒ 判 NONDET（不冒充后端分歧）");
+    println("    ★全量语料必须用默认 2（同侧至少 2 次独立 spawn）；显式 --repeat 1 = 显式降级，报告会打 WARN 且 DIVERGE 未经复核");
+    println("  退出码**三态**：0 = 全部 PASS；1 = 有真分歧(DIVERGE)；2 = 用法/输入错误（清单/脚本缺失、对照失败、父进程 env 脏）；");
+    println("    3 = 无分歧但有「无法判定」（NONDET / TIMEOUT / EXPECT_FAIL）——**不冒充绿，也不冒充分歧**");
+    println("  --fail-on-unverified（可选，默认关）：把「无法判定」也当失败（退 1），供 CI 严格门使用；三态已可机读区分，故默认不启用");
     println("  ★PASS ＝ 两路径一致，**不等于两侧都正确**——本工具只发现分歧，不判定语义对错");
     println("  报告产物请用 --out .agents/tmp/xxx.txt（不得写进 tenth-lens/）");
 }
@@ -231,10 +248,20 @@ fn dif_judge(i: i32, timeout_ms: i32, stderr_needle: String) -> Vec {
     let mut st = "PASS";
     let mut line = "";
 
-    // ★确定性基线（--repeat n）：同一侧 n 次自己就不一致 ⇒ 判 NONDET，
-    // **不许**把它冒充成"DIVERGE（后端分歧）"——那样会诬告后端；也不许判 PASS。
+    // ★确定性基线（--repeat n，**默认 2**）：同一侧 n 次自己就不一致 ⇒ 判 NONDET，
+    // **不许**把它冒充成"DIVERGE（后端分歧）"——那样会诬告后端（假红）；也不许判 PASS。
     let a_stable = DIF_A_STABLE.get(i);
-    let b_stable = DIF_B_STABLE.get(i);
+    let mut b_stable = DIF_B_STABLE.get(i);
+    // ★首个 DIVERGE 的自动确认轮（仅 REPEAT=1 显式降级时补跑）：解释器侧复跑不一致 ⇒ 该侧降级为不稳定
+    let cidx = DIF_CONFIRM_IDX;
+    let cbad = DIF_CONFIRM_BAD;
+    if cidx >= 0 {
+        if i == cidx {
+            if cbad == 1 {
+                b_stable = false;
+            };
+        };
+    };
     if !a_stable {
         st = "NONDET";
         line = "[NONDET] " + label + "  script=" + script + "  expect=" + expect + "  side=默认路径（同侧连续 " + utl_int(DIF_REPEAT) + " 次 stdout/退出码不一致）⇒ **被测程序输出非确定**，本工具无法把差异归因于后端  out_bytes=" + utl_int(utl_bytes(oa)) + "  exit=" + utl_int(ca) + "  → 需人看（若确为随机/哈希序，应在清单里标注）";
@@ -340,9 +367,12 @@ fn dif_run() {
     };
     let stderr_needle = flag_value("--stderr-contains");
 
-    // 确定性基线重复次数（默认 1 = 只跑一次，即"两次 spawn"规格；≥2 时同侧复跑用于 NONDET 判定）
+    // 确定性复核次数（**默认 2 = 必需步骤，不是可选优化**）：同一侧至少跑 2 次，
+    // 跨次不一致 ⇒ NONDET。为什么默认不能是 1：全量语料里有一批「输出本身非确定」的程序
+    // （随机初始化 / 墙钟 / HashMap 迭代序），只跑 1 次时它们的随机差异会被误判成
+    // **后端分歧（假红）**，而且红数还不可复现 ⇒ 工具"喊狼来了"，判决力归零。
     let rp_raw = flag_value("--repeat");
-    let mut repeat = 1;
+    let mut repeat = 2;
     if !rp_raw.is_empty() {
         repeat = parse_int(rp_raw);
         if repeat <= 0 {
@@ -355,6 +385,11 @@ fn dif_run() {
         };
     };
     DIF_REPEAT = repeat;
+    // 显式降级（只可能在用户传 --repeat 1 时成立：默认是 2，且校验要求 ≥1）⇒ 必须留痕
+    let mut repeat_degraded = 0;
+    if repeat < 2 {
+        repeat_degraded = 1;
+    };
 
     let ctl = flag_value("--control");
     let mut ctl_path = "tenth-lens/tests/fixtures/diffctl_backend_split.th";
@@ -363,6 +398,8 @@ fn dif_run() {
     };
     DIF_CTL_PATH = ctl_path;
     let use_ctl = !has_flag("--no-control");
+    // 可选开关：把「无法判定」也当失败（CI 严格门）。默认关：三态退出码已可机读区分。
+    let fail_unv = has_flag("--fail-on-unverified");
 
     // ① 父进程 env 硬校验（在**任何** spawn 之前）
     let env_ok = dif_parent_env_ok();
@@ -404,6 +441,14 @@ fn dif_run() {
     dif_line("CLAIM|PASS ＝ 两路径一致（stdout 内容相等 + 退出码相等 + stderr 非空性相等）；**不等于两侧都正确**——同源同 bug 两侧一起错，本工具看不见");
     dif_line("MANIFEST|" + manifest + "  EXE|" + dif_exe() + "  CASES|" + utl_int(n_entries) + "  TIMEOUT_MS|" + utl_int(timeout_ms) + "  REPEAT|" + utl_int(repeat) + "  STDERR_CONTAINS|[" + stderr_needle + "]  CONTROL|" + (if use_ctl { DIF_CTL_PATH } else { "<disabled>" }));
     dif_line("DISPOSITION|无 per-child env 也无 env_unset（GAP-008，语言侧未改）⇒ 分两阶段：先跑完全部「默认路径」，再 env_set(TENTH_NO_VM=1) 跑完全部「解释器路径」");
+
+    // ── ★显式降级必须留痕：REPEAT=1 时 DIVERGE 未经确定性复核，可能来自被测程序自身的随机性 ──
+    if repeat_degraded == 1 {
+        dif_line("WARN|REPEAT=1：未做确定性复核 ⇒ 出现的 DIVERGE 可能来自被测程序自身的随机性，不是后端分歧");
+        dif_line("WARN|这是**显式降级**（用户传了 --repeat 1）：全量语料下请去掉该参数（默认 REPEAT|2）再下结论；本次 DIVERGE 只能当「待复跑候选」");
+    } else {
+        dif_line("REPEAT-POLICY|REPEAT=" + utl_int(repeat) + "（≥2）⇒ **已做确定性复核**：同侧跨次一致才判 DIVERGE，跨次不一致判 NONDET");
+    };
 
     let mut n_pass = 0;
     let mut n_div = 0;
@@ -511,6 +556,62 @@ fn dif_run() {
         exit(2);
     };
 
+    // ══════════════════════════════════════════════════════════════════
+    // ④ 首个 DIVERGE 的**自动复跑确认**
+    // ══════════════════════════════════════════════════════════════════
+    // 为什么需要：单侧只跑 1 次时，"两路径不同"与"同侧随机"**不可区分** ⇒ 假红。
+    //   默认 REPEAT|2 已让两侧各跑 2 次（= 各自跨次一轮），确认由采样本身承担；
+    //   这里在 REPEAT|1（显式降级）时**额外补跑一轮解释器侧**做确认：不一致 ⇒ 降级 NONDET。
+    // ★平台限制（GAP-008，如实标注不假装）：env_set 之后**无 env_unset** ⇒ 默认路径无法再跑，
+    //   故确认轮**只覆盖解释器侧**；默认路径侧的复核靠 REPEAT≥2 的跨次采样（默认即是）。
+    let mut confirm_idx = -1;
+    if repeat_degraded == 1 {
+        let mut ci = 0;
+        while ci < n_entries {
+            let found = confirm_idx >= 0;
+            if !found {
+                let jr0 = dif_judge(ci, timeout_ms, stderr_needle);
+                let st0 = jr0.get(0);
+                if st0 == "DIVERGE" {
+                    confirm_idx = ci;
+                };
+            };
+            ci = ci + 1;
+        };
+    };
+    if confirm_idx >= 0 {
+        DIF_CONFIRM_IDX = confirm_idx;
+        let ce = DIF_ENTRIES.get(confirm_idx);
+        let clabel = ce.get(0);
+        let cscript = ce.get(1);
+        let cargs = dif_args_of(confirm_idx);
+        let cbase = DIF_PHASE_B.get(confirm_idx);
+        let extra = run_spawn(dif_exe(), cscript, cargs, timeout_ms);
+        let ob0 = run_out(cbase);
+        let cb0 = run_code(cbase);
+        let ox = run_out(extra);
+        let cx = run_code(extra);
+        let out_same = ox == ob0;
+        let code_same = cx == cb0;
+        if out_same {
+            if code_same {
+                dif_line("CONFIRM|首个 DIVERGE｜" + clabel + " ⇒ 解释器侧复跑**复现了原结果**（exit=" + utl_int(cx) + "）⇒ 维持 DIVERGE；默认路径侧由 REPEAT=" + utl_int(repeat) + " 的跨次采样承担（GAP-008：env_set 后无法再跑默认路径）");
+            } else {
+                DIF_CONFIRM_BAD = 1;
+                dif_line("CONFIRM|首个 DIVERGE｜" + clabel + " ⇒ 解释器侧复跑**退出码不同**（" + utl_int(cb0) + " → " + utl_int(cx) + "）⇒ 该侧输出非确定 ⇒ **降级为 NONDET**（不冒充后端分歧）");
+            };
+        } else {
+            DIF_CONFIRM_BAD = 1;
+            dif_line("CONFIRM|首个 DIVERGE｜" + clabel + " ⇒ 解释器侧复跑**stdout 不同**（out_bytes " + utl_int(utl_bytes(ob0)) + " → " + utl_int(utl_bytes(ox)) + "）⇒ 该侧输出非确定 ⇒ **降级为 NONDET**（不冒充后端分歧）");
+        };
+    } else {
+        if repeat_degraded == 1 {
+            dif_line("CONFIRM|REPEAT=1 且无 DIVERGE ⇒ 无需确认轮（但 PASS 仍可能漏判：同侧随机会被当成「两路径一致」，见上面的 WARN）");
+        } else {
+            dif_line("CONFIRM|确定性复核由 REPEAT=" + utl_int(repeat) + " 承担：两侧各自 ≥2 次独立 spawn，跨次一致的差异才判 DIVERGE");
+        };
+    };
+
     // ── 逐条判决（判红优先输出）──
     let mut reds = Vec::new();
     let mut oks = Vec::new();
@@ -554,11 +655,23 @@ fn dif_run() {
 
     let n_red = n_div + n_tmo + n_exp + n_non;
     dif_line("---- 汇总 ----");
-    dif_line("CASES|" + utl_int(n_entries) + "  PASS(两路径一致)|" + utl_int(n_pass) + "  DIVERGE|" + utl_int(n_div) + "  TIMEOUT|" + utl_int(n_tmo) + "  NONDET(同侧复跑就不同)|" + utl_int(n_non) + "  EXPECT_FAIL|" + utl_int(n_exp) + "  SKIPPED|0  REPEAT|" + utl_int(repeat));
-    if n_red > 0 {
-        dif_line("VERDICT|RED（" + utl_int(n_red) + " 条需人看）→ 退出码 1");
+    // ★REPEAT 留痕（就在 CASES|/VERDICT| 旁边）：默认 2 = 已复核；1 = 显式降级 + WARN
+    if repeat_degraded == 1 {
+        dif_line("WARN|REPEAT=1：未做确定性复核 ⇒ 出现的 DIVERGE 可能来自被测程序自身的随机性，不是后端分歧");
+        dif_line("REPEAT|1（显式降级：DIVERGE 未经确定性复核 ⇒ 只能当「待复跑候选」，不能当结论）");
     } else {
-        dif_line("VERDICT|GREEN（" + utl_int(n_pass) + " 条两路径一致）——**不等于两侧都正确**：本工具只证明「分歧未被发现」");
+        dif_line("REPEAT|" + utl_int(repeat) + "（已做确定性复核：同侧 ≥2 次独立 spawn，跨次不一致判 NONDET 而非 DIVERGE）");
+    };
+    dif_line("CASES|" + utl_int(n_entries) + "  PASS(两路径一致)|" + utl_int(n_pass) + "  DIVERGE|" + utl_int(n_div) + "  TIMEOUT|" + utl_int(n_tmo) + "  NONDET(同侧复跑就不同)|" + utl_int(n_non) + "  EXPECT_FAIL|" + utl_int(n_exp) + "  SKIPPED|0  REPEAT|" + utl_int(repeat));
+    // ★退出码三态：DIVERGE 是**判决**（1），「无法判定」不是分歧也不是绿（3）
+    if n_div > 0 {
+        dif_line("VERDICT|RED（" + utl_int(n_div) + " 条两路径分歧）→ 退出码 1");
+    } else {
+        if n_red > 0 {
+            dif_line("VERDICT|UNVERIFIED（" + utl_int(n_red) + " 条无法判定，0 条分歧）→ **不是绿也不是分歧**：NONDET=" + utl_int(n_non) + " TIMEOUT=" + utl_int(n_tmo) + " EXPECT_FAIL=" + utl_int(n_exp) + "；本次没抓到后端分歧，也无权说两侧一致 → 退出码 " + (if fail_unv { "1（--fail-on-unverified 已启用）" } else { "3" }));
+        } else {
+            dif_line("VERDICT|GREEN（" + utl_int(n_pass) + " 条两路径一致）——**不等于两侧都正确**：本工具只证明「分歧未被发现」");
+        };
     };
 
     // --out（红线：运行产物只写 .agents/tmp/）
@@ -580,8 +693,15 @@ fn dif_run() {
         println("REPORT_WRITTEN|" + out_path);
     };
 
-    if n_red > 0 {
+    // ★三态退出码：有真分歧 ⇒ 1；只有「无法判定」⇒ 3（--fail-on-unverified 时抬成 1）；全 PASS ⇒ 0
+    if n_div > 0 {
         exit(1);
+    };
+    if n_red > 0 {
+        if fail_unv {
+            exit(1);
+        };
+        exit(3);
     };
     exit(0);
 }

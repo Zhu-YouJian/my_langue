@@ -1,0 +1,26 @@
+# L2-A 全量语料 · 来源② `tenth/std/**/test_*.th`（8 条）
+#
+# 生成：2026-09-17 L2-A 全波扫。跑法：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_all_std_tests.txt --timeout-ms 20000
+#
+# 期望分布：clean 0 / error 0 / any 8 —— 本清单**不充当"必须全绿"的门**，故一律 any。
+#   其中 6 条本波实测两路径 stdout/退出码/stderr 非空性**逐字节一致**（PASS；≠ 两侧都对）；
+#   另 2 条（`json/test_json.th`、`toml/test_toml.th`）输出**非确定**（HashMap 迭代序）：
+#   REPEAT|1 下被判 DIVERGE，`--repeat 2` 后改判 NONDET（同侧复跑就不同，不许冒充后端分歧）。
+#
+# 期望口径（★不许把「现状」当「正确」）：
+#   `clean`/`error` 只声明**应当以什么方式结束**（退出码 0 / 非零），
+#   **不声明**输出内容应当等于它现在输出的内容。
+#   本清单每条路径的期望值都写在行尾，逐条可核。
+#
+# ★跑了默认口径（--repeat 1）看到 [DIVERGE] 时，**必须先加 --repeat 2 复跑**再下结论：
+#   本波实测 13 条「随机初始化 / 墙钟计时 / HashMap 迭代序」用例在 REPEAT|1 下被判 DIVERGE，
+#   加 --repeat 2 后**全部改判 NONDET**（真后端分歧 0 条）。名单见 `diff_all_nondet.txt`。
+l31302_test_json|tenth/std/json/test_json.th|any
+l28164_test_min|tenth/std/json/test_min.th|any
+l15655_test_obj|tenth/std/json/test_obj.th|any
+l56543_test_stats|tenth/std/math/test_stats.th|any
+l18433_test_lr_schedule|tenth/std/optim/test_lr_schedule.th|any
+l84725_test_date|tenth/std/test_date.th|any
+l90533_test_runtime|tenth/std/test_runtime.th|any
+l35266_test_toml|tenth/std/toml/test_toml.th|any

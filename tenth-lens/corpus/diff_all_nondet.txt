@@ -1,0 +1,24 @@
+# L2-A 全量语料 · **非确定（NONDET）用例名单**（13 条）
+#
+# 用途：把「同侧复跑就不同」的用例**单独登记**，避免日后有人把它们塞进字节级对拍门而误判。
+# 判据：同一后端连续两次独立进程运行，stdout 或退出码已不一致 ⇒ 本工具无法把差异归因于后端。
+# 跑法（**必须**带 --repeat 2；REPEAT|1 会把它们误判成 DIVERGE）：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_all_nondet.txt --repeat 2 --timeout-ms 20000
+# 期望：全 NONDET（退出码 1 —— NONDET 计入红；这不是缺陷，是「输出非确定」的如实标注）。
+#
+# 这 13 条**不是**后端缺陷嫌疑；它们是「分歧不可判」的用例。真正的后端分歧（两路径稳定且不同）本波 0 条。
+#
+# 标签|路径.th|期望|非确定来源
+l71344_json_demo|Tenth实例/JSON处理/json_demo.th|any|HashMap 迭代序（json_encode 键序逐进程随机）
+l18834_shape_check_layers|Tenth实例/Shape检查防线/shape_check_layers.th|any|随机初始化权重 ⇒ loss 每次不同
+l64739_transformer_demo|Tenth实例/Transformer示例/transformer_demo.th|any|随机初始化 ⇒ x 均值/MSE 每次不同
+l95610_xor_net|Tenth实例/XOR神经网络/xor_net.th|any|随机初始化 ⇒ 预测值每次不同
+l37896_stdlib_demo|Tenth实例/标准库使用示例/stdlib_demo.th|any|Xavier/He 随机初始化 ⇒ 权值统计每次不同
+l81668_classifier|Tenth实例/多分类器/classifier.th|any|随机初始化 ⇒ softmax 输出每次不同
+l50463_classifier_ce|Tenth实例/多分类器/classifier_ce.th|any|随机初始化 ⇒ softmax 输出每次不同
+l96534_timer|Tenth实例/计时器/timer.th|any|墙钟时间戳/耗时 ⇒ 每次不同
+l43355_matfact|Tenth实例/矩阵分解/matfact.th|any|随机初始化 ⇒ 重构误差每次不同
+l13370_random_demo|Tenth实例/随机数应用/random_demo.th|any|随机数本身 ⇒ 每次不同
+l00869_cnn|Tenth实例/微型CNN/cnn.th|any|随机初始化 ⇒ 卷积/全连接输出每次不同
+l31302_test_json|tenth/std/json/test_json.th|any|HashMap 迭代序（stringify 键序逐进程随机）
+l35266_test_toml|tenth/std/toml/test_toml.th|any|HashMap 迭代序（stringify 键序逐进程随机）

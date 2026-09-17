@@ -34,7 +34,7 @@ Tenth 的**测试**装备很厚（三路径对拍 129+34+43 项、自举不动�
 | **P0**（首个闭环；**2026-09-16 次序调整**） | **消费既有结构化记录做差分守卫**：喂入 `PERF\|` 日志 → 断言「同一场景在不同来源/组之间必须一致（容差内）」→ 出报告。**验证对现成**：今日的「污染日志」（按组隔离）应被判红、「修复后日志」（按场景隔离）应通过 | **否** |
 | **P1**（原 P0；**前置原语已于 2026-09-17 落地 ⇒ 已开工**） | 跨路径差分检查器（默认 vs `TENTH_NO_VM=1`）：比对 stdout/stderr/退出码 | **否**（零 Rust 改动，纯 Tenth；前置原语由 W6 提供） |
 | **P1 前置原语** | 原生 `command_output_ex` → **一次 spawn 同源**返回 `(stdout, stderr, 退出码, timed_out)` + 超时 | **✅ 已落地（2026-09-17）**：4 元组；超时用 **native 内墙钟**（**不接**协作式 `deadline_ms`——它只在主循环每 4096 指令/tick 检查、**native 内不 tick**），超时**保留部分输出**；`std/process.th` wrapper = `output_ex`。详见 `AUDIT.md`「2026-09-17 W6 修复轮」 |
-| **P1 交付** | `--diff <清单>` 模式 + 多文件拆分 + 语料去脆 | **✅ 已交付（2026-09-17 W6-lens P1）**：见 §五；判 `PASS`/`DIVERGE`/`TIMEOUT`/`NONDET`/`EXPECT_FAIL`，退出码 0/1/2；防假绿三层（父 env 硬校验 + 两阶段 + **后端分离阳性对照**）；自检 **59 项全过** |
+| **P1 交付** | `--diff <清单>` 模式 + 多文件拆分 + 语料去脆 | **✅ 已交付（2026-09-17 W6-lens P1）**：见 §五；判 `PASS`/`DIVERGE`/`TIMEOUT`/`NONDET`/`EXPECT_FAIL`，退出码**三态** 0/1/2/3；**默认 `--repeat 2`（确定性复核是必需步骤）**；防假绿三层（父 env 硬校验 + 两阶段 + **后端分离阳性对照**）；自检 **78 项全过** |
 | **P2** | 只读钩子 `--dump-tokens/hir/bytecode` + **JIT 执行记录**（compiled / fallback + 原因） | **是**（须走全量 + 自举验证） |
 | **P3** | 报告 / 看板 / 自动缩小（先预留 stub） | 视情况 |
 
@@ -53,6 +53,16 @@ Tenth 的**测试**装备很厚（三路径对拍 129+34+43 项、自举不动�
 
 **理由**：卡住本身就是产出。项目跑完应顺带得到一份**真实需求驱动的语言缺口清单**——比"感觉还差点什么"可信得多。
 
+**方法论（2026-09-17 本波补，**判决语义**）**：
+
+> **全量语料比较前必须做确定性复核（默认 `--repeat 2`）；`DIVERGE` 是判决而非噪声。**
+
+为什么写进"不许绕过"这一节：`DIVERGE` 断言的是**后端分歧**，而只跑一次时它还会把「被测程序**自身**随机」（随机初始化 / 墙钟 / `HashMap` 迭代序）一并吞进来 ⇒ **假红**（全量实例清单 72 条实测：同一命令连跑两次得 `DIVERGE|9` 与 `DIVERGE|10`，**红数不可复现**，且两次**缺失的标签还不同**）——这与"假绿"是**同一类病**：一个瞒着、一个喊狼来了，**都让报告失去判决价值**。三层落地：
+
+1. **默认 `--repeat 2`**：同一侧至少 2 次独立 spawn；**跨次不一致 ⇒ `NONDET`（"无法归因"）而非 `DIVERGE`**。全量实例清单（72 条）加 `--repeat 2` 后实测 `DIVERGE|0`、**`NONDET|11`**（61 条 `PASS`），且**同一命令连跑两次逐行一致**（退出码 3 = 无分歧但有「无法判定」）。
+2. **显式降级要留痕**：传 `--repeat 1` ⇒ 报告打 `WARN|REPEAT=1：未做确定性复核 ⇒ 出现的 DIVERGE 可能来自被测程序自身的随机性，不是后端分歧`，并在 `CASES|`/`VERDICT|` 旁保留 `REPEAT|1`；首个被判 `DIVERGE` 的用例会**自动补跑一轮解释器侧**做确认（不一致 ⇒ 降级 `NONDET`；默认路径侧因 `GAP-008` 无 `env_unset` 无法补跑，报告如实标注）。
+3. **退出码三态（"不冒充绿，也不冒充分歧"）**：`0` = 全部 `PASS`；`1` = 有 `DIVERGE`（真分歧）；`2` = 用法/输入错误；`3` = **无分歧但有「无法判定」**（`NONDET`/`TIMEOUT`/`EXPECT_FAIL`）。`VERDICT|` 相应分 `GREEN` / `RED（N 条两路径分歧）` / `UNVERIFIED（N 条无法判定，0 条分歧）`。可选开关 `--fail-on-unverified` 把第三态抬成失败（CI 严格门），**默认关**：三态退出码已可机读区分，不需要用"一律红"来表达严格。
+
 ## 五、目录结构（`src/` 现已可用；其余均已落地）
 
 ```
@@ -68,7 +78,7 @@ tenth-lens/
 │   ├── runner.th  ← P1 进程侧：一次 spawn 同源取三轴（`command_output_ex` 单点封装）
 │   └── diff.th    ← P1 **差分检查器**：两阶段双路径 + 判决 + 报告（全局前缀 `DIF_`）
 ├── corpus/        ← 清单（P0 5 份 + P1 5 份）+ `README.md`（**语料去脆**：日志再生命令 / 判决语义 / 已知限制）
-├── tests/         ← 自检：`tests/selftest.th`（**59 项**）+ fixtures（P0 合成夹具 3 份；P1 夹具 7 份）
+├── tests/         ← 自检：`tests/selftest.th`（**78 项**）+ fixtures（P0 合成夹具 3 份；P1 夹具 7 份）
 └── probes/        ← 各 GAP 的最小复现探针（**是证据，不要删**；AUDIT 条目会引用它们）
 ```
 
@@ -98,11 +108,11 @@ tenth-lens/
 **P1 已交付**（2026-09-17 W6-lens 波；**零 Rust 改动**）：
 
 - **多文件拆分完成**：`main.th` ⟶ `main.th`(仅调度) + `src/{util,record,observe,guard,runner,diff}.th`（实测 `use src::…` 可用；拆分后 P0 行为逐字节等价）。
-- **P1 差分检查器**：`--diff <清单>`，逐条两次 spawn（默认 / `TENTH_NO_VM=1`），**各自一次 spawn 同源取三轴**（`command_output_ex`），比 `stdout` 内容 + 退出码 + `stderr` 非空性（可选 `--stderr-contains`），超时可配（`--timeout-ms`）、确定性基线可配（`--repeat n` ⇒ `NONDET` 归类）。判 `PASS` / `DIVERGE` / `TIMEOUT` / `NONDET` / `EXPECT_FAIL`；退出码 0 / 1 / 2。
+- **P1 差分检查器**：`--diff <清单>`，逐条两次 spawn（默认 / `TENTH_NO_VM=1`），**各自一次 spawn 同源取三轴**（`command_output_ex`），比 `stdout` 内容 + 退出码 + `stderr` 非空性（可选 `--stderr-contains`），超时可配（`--timeout-ms`）、确定性复核默认开启（`--repeat 2`；跨次不一致 ⇒ `NONDET`，`--repeat 1` 为显式降级 + `WARN`）。判 `PASS` / `DIVERGE` / `TIMEOUT` / `NONDET` / `EXPECT_FAIL`；退出码**三态** 0（全 PASS）/ 1（有真分歧）/ 2（用法/输入错误）/ 3（无分歧但有「无法判定」）＋可选 `--fail-on-unverified`。
 - **防假绿三层**：① 父进程 `env_get("TENTH_NO_VM")` 为 `Ok(_)`（含 `"0"`）⇒ **硬失败 exit 2**；② 无 per-child env / `env_unset`（`GAP-008`）⇒ **两阶段**（先跑完默认路径，再 `env_set` 跑解释器路径）；③ **阳性对照**：一个已知两路径必不同的夹具必须判分歧，否则硬失败（`tests/fixtures/diffctl_backend_split.th`，依据 `AUDIT-11.4.56`）。报告首行 `CLAIM|` 明写「**PASS ＝ 两路径一致，不等于两侧都正确**」。
 - **语料**：`corpus/diff_{probes,instances,divergence,timeout,nondet}.txt` + `corpus/README.md`（日志再生命令 / 判决语义 / 已知限制）。小批实测：24 条里 **23 条一致**、1 条真分歧（`GAP-018` 夹具）、1 条归因不明（`json_demo` 键序非确定）。
 - **语料去脆**：清单引用的日志/脚本不存在 ⇒ `[FATAL] SOURCE_MISSING` / `[FATAL] SCRIPT_MISSING` + **退出码 2**（不再"判红了事"，也不静默空转）。
-- **自检**：`tests/selftest.th` **59 项全过**（原 22 项未改，新增 37 项覆盖 P1 五类判决 + 输入错误 + 防假绿实测）。
+- **自检**：`tests/selftest.th` **78 项全过**（P1 首波 59 项 + 本波 19 项：默认 `--repeat 2` / `REPEAT=1` 警告与留痕 / 退出码三态 / 首个 `DIVERGE` 自动复跑确认 / `--fail-on-unverified`）。
 - **本轮新登记缺口**：`GAP-015`（模块级全局不隔离，静默别名）、`GAP-016`（`len()` 是字符数）、`GAP-017`（无子串原语）、`GAP-018`（**跨路径分歧**：`while i < f()`，建议转 AUDIT）、`GAP-019`（解释器在 P0 全量清单上**栈溢出**，A/B 证实非本轮拆分引入）。
 
 **当前下一步**：**P2 仍未开工**（`--dump-tokens/hir/bytecode` + JIT 执行记录，须动 Rust 并走全量 + 自举验证）。首个动作见 `GAPS.md` 的 `GAP-001` / `GAP-003`。

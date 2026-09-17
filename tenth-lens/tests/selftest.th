@@ -247,10 +247,12 @@ fn main() {
     assert_code("B11_分歧退出码1", full_code(rd), 1);
 
     // ── ③ 注入错期望：故意把金标准写错 ⇒ 必须判红（判决是活的，不是装饰）──
+    //    ★本波退出码三态化：`EXPECT_FAIL` 属「无法判定」⇒ `VERDICT|UNVERIFIED` + **退出码 3**，
+    //      不是 1——它**不是**两路径分歧（"不冒充绿，也不冒充分歧"）。
     let rb = spawn_full(args1("--diff", dbadexp));
     assert_has("B12_注入错期望判红", full_out(rb), "[EXPECT_FAIL] injected_wrong_expect");
-    assert_has("B13_注入错期望给VERDICT_RED", full_out(rb), "VERDICT|RED");
-    assert_code("B14_注入错期望退出码1", full_code(rb), 1);
+    assert_has("B13_注入错期望给VERDICT_UNVERIFIED", full_out(rb), "VERDICT|UNVERIFIED");
+    assert_code("B14_注入错期望退出码3", full_code(rb), 3);
 
     // ── ④ 超时用例：卡死程序必须被明确标注（不许静默）──
     let mut tt = Vec::new();
@@ -262,7 +264,8 @@ fn main() {
     assert_has("B15_超时明确标注", full_out(rt), "[TIMEOUT] hang");
     assert_has("B16_超时标出哪一侧", full_out(rt), "side=默认路径");
     assert_has("B17_超时给部分输出与退出码", full_out(rt), "partial_out_bytes=11");
-    assert_code("B18_超时退出码1", full_code(rt), 1);
+    // ★三态：只有 TIMEOUT（无 DIVERGE）⇒ 退出码 3
+    assert_code("B18_超时退出码3", full_code(rt), 3);
 
     // ── ⑤ 非确定输出：同侧复跑就不同 ⇒ 判 NONDET（不冒充后端分歧、不判绿）──
     let mut rn = Vec::new();
@@ -273,7 +276,8 @@ fn main() {
     let rr = spawn_full(rn);
     assert_has("B19_非确定判NONDET", full_out(rr), "[NONDET] json_demo");
     assert_has("B20_非确定说明归因不了", full_out(rr), "无法把差异归因于后端");
-    assert_code("B21_非确定退出码1", full_code(rr), 1);
+    // ★三态：只有 NONDET（无 DIVERGE）⇒ 退出码 3
+    assert_code("B21_非确定退出码3", full_code(rr), 3);
     assert_has("B22_重复次数入报告", full_out(rr), "REPEAT|2");
 
     // ── ⑥ 输入错误一律响亮（清单缺失 / 脚本缺失 / P0 日志缺失）──
@@ -308,7 +312,63 @@ fn main() {
     assert_has("B31_stderr关键字缺失判红", full_out(rs), "why=STDERR_CONTAINS_MISS");
     assert_code("B32_stderr关键字退出码1", full_code(rs), 1);
 
-    // ── ⑨ ★防假绿实测：父进程设 TENTH_NO_VM=0（`is_ok()` 判定 ⇒ 设 0 也算已设置）──
+    // ══════════════════════════════════════════════════════════════════
+    // 本波新增（方法论级默认缺陷"假红"修复）：
+    //   ① 默认 `--repeat 2`（确定性复核是**默认步骤**，不是可选优化）
+    //   ② 显式降级 `--repeat 1` 必须打 WARN 且留痕 `REPEAT|1`
+    //   ③ 退出码**三态**：0=全 PASS / 1=有 DIVERGE / 2=输入错误 / 3=无分歧但有「无法判定」
+    //   ④ 首个 DIVERGE 自动复跑确认（REPEAT=1 时补跑解释器侧；不一致 ⇒ 降级 NONDET）
+    // ══════════════════════════════════════════════════════════════════
+
+    // ── ⑨ 显式降级 --repeat 1：必须 WARN + 留痕（"喊狼来了"的病根在这里留证据）──
+    let mut r1x = Vec::new();
+    r1x.push("--diff");
+    r1x.push(dprobes);
+    r1x.push("--repeat");
+    r1x.push("1");
+    let r1o = spawn_full(r1x);
+    assert_has("C01_REPEAT1打警告", full_out(r1o), "WARN|REPEAT=1：未做确定性复核");
+    assert_has("C02_REPEAT1留痕", full_out(r1o), "REPEAT|1");
+    assert_has("C03_REPEAT1说明后果", full_out(r1o), "可能来自被测程序自身的随机性，不是后端分歧");
+    assert_code("C04_REPEAT1全PASS仍退0", full_code(r1o), 0);
+
+    // ── ⑩ 默认不传 --repeat 即为 REPEAT=2：非确定程序必须判 NONDET，**不许**判 DIVERGE ──
+    let rdef = spawn_full(args1("--diff", dnondet));
+    assert_has("C05_默认即REPEAT2", full_out(rdef), "REPEAT|2");
+    assert_has("C06_默认下非确定判NONDET", full_out(rdef), "[NONDET] json_demo");
+    assert_absent("C07_NONDET不被判DIVERGE", full_out(rdef), "[DIVERGE]");
+    assert_has("C08_NONDET终态UNVERIFIED", full_out(rdef), "VERDICT|UNVERIFIED");
+    assert_code("C09_无分歧只有无法判定退3", full_code(rdef), 3);
+
+    // ── ⑪ 三态退出码：有 DIVERGE ⇒ 1；全 PASS ⇒ 0（2 = 输入错误，见 B24/B26/B29/B36）──
+    let rdiv = spawn_full(args1("--diff", ddiv));
+    assert_has("C10_分歧VERDICT_RED", full_out(rdiv), "VERDICT|RED（1 条两路径分歧）");
+    assert_code("C11_有真分歧退1", full_code(rdiv), 1);
+    assert_code("C12_全PASS退0", full_code(spawn_full(args1("--diff", dprobes))), 0);
+
+    // ── ⑫ 可选加分开关 --fail-on-unverified：把「无法判定」抬成失败（CI 严格门）──
+    let mut rfu = Vec::new();
+    rfu.push("--diff");
+    rfu.push(dnondet);
+    rfu.push("--fail-on-unverified");
+    let rfuo = spawn_full(rfu);
+    assert_has("C13_开关下终态仍UNVERIFIED", full_out(rfuo), "VERDICT|UNVERIFIED");
+    assert_has("C14_开关在VERDICT里留痕", full_out(rfuo), "--fail-on-unverified 已启用");
+    assert_code("C15_开关把无法判定抬成1", full_code(rfuo), 1);
+
+    // ── ⑬ 首个 DIVERGE 的自动复跑确认（确定性夹具应复现 ⇒ 维持 DIVERGE 与退出码 1）──
+    let mut rcf = Vec::new();
+    rcf.push("--diff");
+    rcf.push(ddiv);
+    rcf.push("--repeat");
+    rcf.push("1");
+    let rcfo = spawn_full(rcf);
+    assert_has("C16_确认轮有留痕", full_out(rcfo), "CONFIRM|首个 DIVERGE");
+    assert_has("C17_确定性分歧复现后维持DIVERGE", full_out(rcfo), "[DIVERGE] callsite_compare");
+    assert_has("C18_确认轮如实标注只覆盖解释器侧", full_out(rcfo), "GAP-008：env_set 后无法再跑默认路径");
+    assert_code("C19_维持分歧仍退1", full_code(rcfo), 1);
+
+    // ── ⑭ ★防假绿实测：父进程设 TENTH_NO_VM=0（`is_ok()` 判定 ⇒ 设 0 也算已设置）──
     //     必须**硬失败**：否则两次 spawn 都跑解释器 ⇒ 报告"全一致"实为双解释器自比自。
     //     **本组必须是最后一项**：env_set 污染本进程 env，之后任何 spawn 都会带上它。
     env_set("TENTH_NO_VM", "0");
