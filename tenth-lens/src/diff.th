@@ -1,0 +1,587 @@
+// tenth-lens/src/diff.th —— **P1 跨路径差分检查器**（本波主交付）
+//
+// 干什么：读一份清单（`标签|路径.th|期望[|额外参数]`），对每条用 `command_output_ex`
+// **两次 spawn**：① 默认路径；② `TENTH_NO_VM=1` 的解释器路径。
+// **每次各自一次 spawn 同源取三轴**（stdout / stderr / 退出码 + timed_out），再比对：
+//   - `stdout` 内容相等（Tenth String 相等 = UTF-8 字节序列相等）
+//   - 退出码相等
+//   - `stderr` 的**非空性**相等（可选 `--stderr-contains <关键字>` 加强）
+// 并对照清单的 `期望`（`clean` / `error` / `any`）。
+//
+// ★判决语义（诚实第一）：
+//   `PASS` ＝ **两路径一致**，**不等于两侧都正确**。本工具只能发现**分歧**，
+//   不能证明任何一侧语义正确——两侧一起错（同源同 bug）它看不见。
+//
+// ★防假绿（三层，宁可红不可假绿）：
+//   1. **父进程 env 硬校验**：`env_get("TENTH_NO_VM")` 若为 `Ok(_)`（**任何值**，含 `"0"`/空串）
+//      ⇒ **硬失败 exit 2**。理由：`tenth/src/main.rs` 用 `is_ok()` 判定该变量 ⇒ 父进程一旦带它，
+//      连"默认路径"也会跑成解释器 ⇒ 报告"全一致"实为**双解释器自比自**（GAP-008 实测）。
+//   2. **两阶段顺序**：所有"默认路径"spawn 必须在 `env_set` **之前**跑完。Tenth 无 per-child env、
+//      无 env_unset（GAP-008 仍有效），所以"先全跑 A，再设变量跑 B"是唯一不撒谎的排法。
+//   3. **阳性对照（backend control）**：跑一个**已知在两路径上必定不同**的夹具
+//      （`tests/fixtures/diffctl_backend_split.th`，分歧本身由 AUDIT-11.4.56 钉住）。
+//      若对照竟然"一致" ⇒ 说明两次 spawn 其实落在同一后端 ⇒ **硬失败 exit 2**。
+//      这比"看 env 变量"强：它验的是**行为**，不是环境。
+//
+// ★超时：`--timeout-ms`（默认 20000）。超时**不静默**：判 `TIMEOUT` 并计入红，
+//   报告给出是哪一侧、部分输出字节数、退出码。卡死语料不会卡死检查器。
+//
+// ★输入错误一律 exit 2 且响亮：清单不存在 / 行格式错 / 期望值非法 / 清单引用的脚本不存在。
+//
+// 导入方式：`use src::diff::dif_run`
+
+use std::cli::cli::flag_value
+use std::cli::cli::has_flag
+use std::fs::fs::read_text
+
+use src::runner::run_spawn
+use src::runner::run_out
+use src::runner::run_err
+use src::runner::run_code
+use src::runner::run_timed
+
+use src::util::utl_int
+use src::util::utl_chars
+use src::util::utl_bytes
+use src::util::utl_flatten
+use src::util::utl_first_diff_line
+use src::util::utl_line_at
+use src::util::utl_out_path_forbidden
+
+// ───────────────────────── 差分检查器状态 ─────────────────────────
+
+let mut DIF_ENTRIES: Vec = Vec::new()   // [label, script, expect, args_raw]
+let mut DIF_BAD_LINES: i32 = 0          // 清单格式错误行数
+let mut DIF_MISSING: Vec = Vec::new()   // [label, path] 清单引用但文件不存在
+let mut DIF_REPORT: Vec = Vec::new()    // 报告全文（供 --out）
+let mut DIF_PHASE_A: Vec = Vec::new()   // 每条默认路径的 spawn 结果（首次）
+let mut DIF_PHASE_B: Vec = Vec::new()   // 每条解释器路径的 spawn 结果（首次）
+let mut DIF_A_STABLE: Vec = Vec::new()  // 每条：默认路径的 --repeat 次是否彼此一致
+let mut DIF_B_STABLE: Vec = Vec::new()  // 每条：解释器路径的 --repeat 次是否彼此一致
+let mut DIF_REPEAT: i32 = 1
+let mut DIF_CTL_A: Vec = Vec::new()
+let mut DIF_CTL_B: Vec = Vec::new()
+let mut DIF_CTL_PATH: String = ""
+
+fn dif_exe() -> String {
+    "tenth/target/release/tenth.exe"
+}
+
+// 报告行：同一份文本既进 stdout 也进 --out 报告（防两处漂移）
+fn dif_line(s: String) {
+    println(s);
+    DIF_REPORT.push(s);
+}
+
+fn dif_usage() {
+    println("tenth-lens 跨路径差分检查器 v1（P1）");
+    println("用法：tenth.exe run tenth-lens\\main.th --diff <清单> [--timeout-ms <毫秒>] [--repeat <1..5>] [--stderr-contains <关键字>] [--control <对照脚本>] [--no-control] [--out <报告路径>]");
+    println("  清单格式：每行 `标签|路径.th|期望`，可选第 4 段 `额外参数`（空格分隔）；`#` 注释、空行忽略");
+    println("  `期望` 取 clean（默认路径应 exit 0）/ error（应非零退出）/ any");
+    println("  逐条做两次 spawn：① 默认路径；② TENTH_NO_VM=1。每次一次 spawn 同源取三轴（stdout/stderr/退出码）");
+    println("  判红：stdout 不同 / 退出码不同 / stderr 非空性不同 / 期望不符 / 超时 / 非确定(NONDET)");
+    println("  --repeat n（默认 1）：每条每侧跑 n 次做**确定性基线**；同侧 n 次不一致 ⇒ 判 NONDET（不冒充后端分歧）");
+    println("  退出码：有红 → 1；用法或输入错误（含清单、脚本缺失、后端对照失败、父进程 env 脏）→ 2；全一致 → 0");
+    println("  ★PASS ＝ 两路径一致，**不等于两侧都正确**——本工具只发现分歧，不判定语义对错");
+    println("  报告产物请用 --out .agents/tmp/xxx.txt（不得写进 tenth-lens/）");
+}
+
+// ─────────────────── ① 父进程 env 硬校验（防假绿第一层） ───────────────────
+
+fn dif_parent_env_ok() -> bool {
+    let e = env_get("TENTH_NO_VM");
+    match e {
+        Result::Ok(v) => {
+            println("[FATAL] PARENT_ENV_DIRTY|TENTH_NO_VM 已被设置，值=[" + v + "]");
+            println("[FATAL] tenth/src/main.rs 用 is_ok() 判定该变量 ⇒ 设成 \"0\" / 空串也算「已设置」");
+            println("[FATAL] 若继续运行，两次 spawn 都会跑解释器 ⇒ 「全一致」是双解释器自比自的**假绿**");
+            println("[FATAL] 请先清掉该环境变量再重跑（退出码 2，不产出任何「绿」）");
+            false
+        },
+        Result::Err(_) => {
+            dif_line("BACKEND-GUARD|parent-env-clean|env_get(\"TENTH_NO_VM\") 未设置（is_ok()=false）⇒ 默认路径未被 env 强制成解释器");
+            true
+        },
+    };
+}
+
+// ─────────────────── ② 清单解析（输入错误一律响亮） ───────────────────
+
+fn dif_expect_ok(x: String) -> bool {
+    if x == "clean" {
+        return true;
+    };
+    if x == "error" {
+        return true;
+    };
+    if x == "any" {
+        return true;
+    };
+    false
+}
+
+fn dif_load_manifest(path: String) -> bool {
+    let exists = path_exists(path);
+    if !exists {
+        println("用法错误：差分清单不存在：" + path);
+        return false;
+    };
+    let lines = read_text(path).split("\n");
+    let mut i = 0;
+    while i < lines.len() {
+        let ln = lines.get(i).trim();
+        let mut skip = false;
+        if ln.is_empty() {
+            skip = true;
+        } else {
+            if ln.starts_with("#") {
+                skip = true;
+            };
+        };
+        if !skip {
+            let f = ln.split("|");
+            let fields = f.len();
+            if fields == 3 {
+                // ok
+            } else {
+                if fields == 4 {
+                    // ok
+                } else {
+                    println("清单格式错误（应为 `标签|路径.th|期望[|额外参数]`）：" + ln);
+                    DIF_BAD_LINES = DIF_BAD_LINES + 1;
+                };
+            };
+            // ★先绑局部再比较（GAP-018：全局标量/函数调用直接作比较操作数在 VM 下不可靠）
+            let bad_now = DIF_BAD_LINES;
+            if bad_now == 0 {
+                let label = f.get(0).trim();
+                let script = f.get(1).trim();
+                let expect = f.get(2).trim();
+                let mut args_raw = "";
+                if fields == 4 {
+                    args_raw = f.get(3).trim();
+                };
+                let expect_ok = dif_expect_ok(expect);
+                if !expect_ok {
+                    println("清单格式错误（期望值须为 clean|error|any，收到 [" + expect + "]）：" + ln);
+                    DIF_BAD_LINES = DIF_BAD_LINES + 1;
+                } else {
+                    let mut e = Vec::new();
+                    e.push(label);
+                    e.push(script);
+                    e.push(expect);
+                    e.push(args_raw);
+                    DIF_ENTRIES.push(e);
+                    let script_exists = path_exists(script);
+                    if !script_exists {
+                        let mut m = Vec::new();
+                        m.push(label);
+                        m.push(script);
+                        DIF_MISSING.push(m);
+                    };
+                };
+            };
+        };
+        i = i + 1;
+    };
+    let bad_final = DIF_BAD_LINES;
+    bad_final == 0
+}
+
+// 第 4 段的额外参数（空格分隔；空段忽略）
+fn dif_args_of(i: i32) -> Vec {
+    let e = DIF_ENTRIES.get(i);
+    let raw = e.get(3);
+    let mut a = Vec::new();
+    if raw.is_empty() {
+        return a;
+    };
+    let parts = raw.split(" ");
+    let mut j = 0;
+    while j < parts.len() {
+        let p = parts.get(j).trim();
+        if p.len() > 0 {
+            a.push(p);
+        };
+        j = j + 1;
+    };
+    a
+}
+
+// ─────────────────── ③ 判决 ───────────────────
+
+// 返回 [status, line]；status ∈ PASS / DIVERGE / TIMEOUT / EXPECT_FAIL
+fn dif_judge(i: i32, timeout_ms: i32, stderr_needle: String) -> Vec {
+    let e = DIF_ENTRIES.get(i);
+    let label = e.get(0);
+    let script = e.get(1);
+    let expect = e.get(2);
+
+    let ra = DIF_PHASE_A.get(i);
+    let rb = DIF_PHASE_B.get(i);
+    let oa = run_out(ra);
+    let ob = run_out(rb);
+    let ea = run_err(ra);
+    let eb = run_err(rb);
+    let ca = run_code(ra);
+    let cb = run_code(rb);
+    let ta = run_timed(ra);
+    let tb = run_timed(rb);
+
+    let mut st = "PASS";
+    let mut line = "";
+
+    // ★确定性基线（--repeat n）：同一侧 n 次自己就不一致 ⇒ 判 NONDET，
+    // **不许**把它冒充成"DIVERGE（后端分歧）"——那样会诬告后端；也不许判 PASS。
+    let a_stable = DIF_A_STABLE.get(i);
+    let b_stable = DIF_B_STABLE.get(i);
+    if !a_stable {
+        st = "NONDET";
+        line = "[NONDET] " + label + "  script=" + script + "  expect=" + expect + "  side=默认路径（同侧连续 " + utl_int(DIF_REPEAT) + " 次 stdout/退出码不一致）⇒ **被测程序输出非确定**，本工具无法把差异归因于后端  out_bytes=" + utl_int(utl_bytes(oa)) + "  exit=" + utl_int(ca) + "  → 需人看（若确为随机/哈希序，应在清单里标注）";
+    } else {
+        if !b_stable {
+            st = "NONDET";
+            line = "[NONDET] " + label + "  script=" + script + "  expect=" + expect + "  side=解释器路径（同侧连续 " + utl_int(DIF_REPEAT) + " 次 stdout/退出码不一致）⇒ **被测程序输出非确定**，本工具无法把差异归因于后端  out_bytes=" + utl_int(utl_bytes(ob)) + "  exit=" + utl_int(cb) + "  → 需人看";
+        };
+    };
+
+    if st == "PASS" {
+        if ta {
+            st = "TIMEOUT";
+            line = "[TIMEOUT] " + label + "  script=" + script + "  expect=" + expect + "  side=默认路径  timeout_ms=" + utl_int(timeout_ms) + "  partial_out_bytes=" + utl_int(utl_bytes(oa)) + "  partial_err_bytes=" + utl_int(utl_bytes(ea)) + "  exit_code=" + utl_int(ca) + "  → 未产生可比较结果（**不静默跳过**；卡死即判红）";
+        } else {
+            if tb {
+                st = "TIMEOUT";
+                line = "[TIMEOUT] " + label + "  script=" + script + "  expect=" + expect + "  side=解释器路径(TENTH_NO_VM=1)  timeout_ms=" + utl_int(timeout_ms) + "  partial_out_bytes=" + utl_int(utl_bytes(ob)) + "  partial_err_bytes=" + utl_int(utl_bytes(eb)) + "  exit_code=" + utl_int(cb) + "  → 未产生可比较结果（**不静默跳过**；卡死即判红）";
+            };
+        };
+    };
+
+    if st == "PASS" {
+        if oa != ob {
+            let fi = utl_first_diff_line(oa, ob);
+            st = "DIVERGE";
+            line = "[DIVERGE] " + label + "  script=" + script + "  expect=" + expect + "  why=STDOUT_DIFFER  first_diff_line=" + utl_int(fi) + "  A=[" + utl_flatten(utl_line_at(oa, fi)) + "]  B=[" + utl_flatten(utl_line_at(ob, fi)) + "]  out_bytes(A/B)=" + utl_int(utl_bytes(oa)) + "/" + utl_int(utl_bytes(ob)) + "  exit(A/B)=" + utl_int(ca) + "/" + utl_int(cb);
+        } else {
+            if ca != cb {
+                st = "DIVERGE";
+                line = "[DIVERGE] " + label + "  script=" + script + "  expect=" + expect + "  why=EXIT_CODE_DIFFER  exit(A/B)=" + utl_int(ca) + "/" + utl_int(cb) + "  out_bytes(A/B)=" + utl_int(utl_bytes(oa)) + "/" + utl_int(utl_bytes(ob)) + "  stderr_nonempty(A/B)=" + format("{}", ea.len() > 0) + "/" + format("{}", eb.len() > 0);
+            } else {
+                let na = ea.len() > 0;
+                let nb = eb.len() > 0;
+                if na != nb {
+                    st = "DIVERGE";
+                    line = "[DIVERGE] " + label + "  script=" + script + "  expect=" + expect + "  why=STDERR_NONEMPTY_DIFFER  stderr_nonempty(A/B)=" + format("{}", na) + "/" + format("{}", nb) + "  stderr_bytes(A/B)=" + utl_int(utl_bytes(ea)) + "/" + utl_int(utl_bytes(eb)) + "  A_stderr=[" + utl_flatten(ea) + "]  B_stderr=[" + utl_flatten(eb) + "]";
+                } else {
+                    if stderr_needle.len() > 0 {
+                        if !ea.contains(stderr_needle) {
+                            st = "DIVERGE";
+                            line = "[DIVERGE] " + label + "  script=" + script + "  expect=" + expect + "  why=STDERR_CONTAINS_MISS(side=A)  needle=[" + stderr_needle + "]  A_stderr=[" + utl_flatten(ea) + "]";
+                        } else {
+                            if !eb.contains(stderr_needle) {
+                                st = "DIVERGE";
+                                line = "[DIVERGE] " + label + "  script=" + script + "  expect=" + expect + "  why=STDERR_CONTAINS_MISS(side=B)  needle=[" + stderr_needle + "]  B_stderr=[" + utl_flatten(eb) + "]";
+                            };
+                        };
+                    };
+                };
+            };
+        };
+    };
+
+    if st == "PASS" {
+        if expect == "clean" {
+            if ca != 0 {
+                st = "EXPECT_FAIL";
+                line = "[EXPECT_FAIL] " + label + "  script=" + script + "  expect=clean（默认路径应退出码 0）但实测 exit=" + utl_int(ca) + "  stderr=[" + utl_flatten(ea) + "]  → 期望与实测不符（**这不是「两路径一致」能豁免的**）";
+            };
+        } else {
+            if expect == "error" {
+                if ca == 0 {
+                    st = "EXPECT_FAIL";
+                    line = "[EXPECT_FAIL] " + label + "  script=" + script + "  expect=error（默认路径应非零退出）但实测 exit=0  → 期望与实测不符";
+                };
+            };
+        };
+    };
+
+    if st == "PASS" {
+        line = "[PASS] " + label + "  script=" + script + "  expect=" + expect + "  两路径一致: out_bytes(A/B)=" + utl_int(utl_bytes(oa)) + "/" + utl_int(utl_bytes(ob)) + "  out_chars=" + utl_int(utl_chars(oa)) + "  out_lines(A/B)=" + utl_int(oa.split("\n").len()) + "/" + utl_int(ob.split("\n").len()) + "  exit(A/B)=" + utl_int(ca) + "/" + utl_int(cb) + "  stderr_nonempty(A/B)=" + format("{}", ea.len() > 0) + "/" + format("{}", eb.len() > 0);
+        if stderr_needle.len() > 0 {
+            line = line + "  stderr_contains=[" + stderr_needle + "]=ok";
+        };
+    };
+
+    let mut r = Vec::new();
+    r.push(st);
+    r.push(line);
+    r
+}
+
+// ─────────────────── ④ P1 入口（自己 exit） ───────────────────
+
+fn dif_run() {
+    let manifest = flag_value("--diff");
+    if manifest.is_empty() {
+        dif_usage();
+        exit(2);
+    };
+
+    // 超时（默认 20000ms；非正数 → 响亮失败。GAP-014：parse_int 静默返回 0，
+    // 而 0 在本工具里**不是合法超时**，故静默 0 一定被这里拦下）
+    let tmo_raw = flag_value("--timeout-ms");
+    let mut timeout_ms = 20000;
+    if !tmo_raw.is_empty() {
+        timeout_ms = parse_int(tmo_raw);
+        if timeout_ms <= 0 {
+            println("用法错误：--timeout-ms 必须是正整数（毫秒），收到 [" + tmo_raw + "]");
+            exit(2);
+        };
+    };
+    let stderr_needle = flag_value("--stderr-contains");
+
+    // 确定性基线重复次数（默认 1 = 只跑一次，即"两次 spawn"规格；≥2 时同侧复跑用于 NONDET 判定）
+    let rp_raw = flag_value("--repeat");
+    let mut repeat = 1;
+    if !rp_raw.is_empty() {
+        repeat = parse_int(rp_raw);
+        if repeat <= 0 {
+            println("用法错误：--repeat 必须是正整数（1..5），收到 [" + rp_raw + "]");
+            exit(2);
+        };
+        if repeat > 5 {
+            println("用法错误：--repeat 上限为 5（收到 " + utl_int(repeat) + "）——每次复跑都会再 spawn 一次，别把语料跑成压测");
+            exit(2);
+        };
+    };
+    DIF_REPEAT = repeat;
+
+    let ctl = flag_value("--control");
+    let mut ctl_path = "tenth-lens/tests/fixtures/diffctl_backend_split.th";
+    if !ctl.is_empty() {
+        ctl_path = ctl;
+    };
+    DIF_CTL_PATH = ctl_path;
+    let use_ctl = !has_flag("--no-control");
+
+    // ① 父进程 env 硬校验（在**任何** spawn 之前）
+    let env_ok = dif_parent_env_ok();
+    if !env_ok {
+        exit(2);
+    };
+
+    // ② 清单
+    let manifest_ok = dif_load_manifest(manifest);
+    if !manifest_ok {
+        exit(2);
+    };
+    let n_entries = DIF_ENTRIES.len();
+    if n_entries == 0 {
+        println("用法错误：差分清单未解析出任何用例：" + manifest);
+        exit(2);
+    };
+    let n_missing = DIF_MISSING.len();
+    if n_missing > 0 {
+        let mut i = 0;
+        while i < n_missing {
+            let m = DIF_MISSING.get(i);
+            println("[FATAL] SCRIPT_MISSING|" + m.get(0) + "|" + m.get(1));
+            i = i + 1;
+        };
+        println("[FATAL] 差分清单引用的脚本不存在：" + utl_int(n_missing) + " 个 → 输入错误（退出码 2，不是「绿」）");
+        exit(2);
+    };
+    if use_ctl {
+        let ctl_exists = path_exists(DIF_CTL_PATH);
+        if !ctl_exists {
+            println("[FATAL] CONTROL_MISSING|后端对照脚本不存在：" + DIF_CTL_PATH);
+            exit(2);
+        };
+    };
+
+    // 报告头（诚实声明写在最前面）
+    dif_line("tenth-lens 跨路径差分检查器 v1（P1：默认路径 vs TENTH_NO_VM=1 解释器路径）");
+    dif_line("CLAIM|PASS ＝ 两路径一致（stdout 内容相等 + 退出码相等 + stderr 非空性相等）；**不等于两侧都正确**——同源同 bug 两侧一起错，本工具看不见");
+    dif_line("MANIFEST|" + manifest + "  EXE|" + dif_exe() + "  CASES|" + utl_int(n_entries) + "  TIMEOUT_MS|" + utl_int(timeout_ms) + "  REPEAT|" + utl_int(repeat) + "  STDERR_CONTAINS|[" + stderr_needle + "]  CONTROL|" + (if use_ctl { DIF_CTL_PATH } else { "<disabled>" }));
+    dif_line("DISPOSITION|无 per-child env 也无 env_unset（GAP-008，语言侧未改）⇒ 分两阶段：先跑完全部「默认路径」，再 env_set(TENTH_NO_VM=1) 跑完全部「解释器路径」");
+
+    let mut n_pass = 0;
+    let mut n_div = 0;
+    let mut n_tmo = 0;
+    let mut n_exp = 0;
+    let mut n_non = 0;
+
+    let empty = Vec::new();
+
+    // ── 阶段 A：默认路径（env 干净）──
+    if use_ctl {
+        DIF_CTL_A = run_spawn(dif_exe(), DIF_CTL_PATH, empty, timeout_ms);
+    };
+    let mut i = 0;
+    while i < n_entries {
+        let e = DIF_ENTRIES.get(i);
+        let a = dif_args_of(i);
+        let script = e.get(1);
+        let first = run_spawn(dif_exe(), script, a, timeout_ms);
+        let o1 = run_out(first);
+        let c1 = run_code(first);
+        let mut stable = true;
+        let mut k = 1;
+        while k < repeat {
+            let more = run_spawn(dif_exe(), script, a, timeout_ms);
+            let o2 = run_out(more);
+            let c2 = run_code(more);
+            if o1 != o2 {
+                stable = false;
+            };
+            if c1 != c2 {
+                stable = false;
+            };
+            k = k + 1;
+        };
+        DIF_PHASE_A.push(first);
+        DIF_A_STABLE.push(stable);
+        i = i + 1;
+    };
+
+    // ── 切到解释器路径（此后所有 spawn 都带 TENTH_NO_VM=1）──
+    env_set("TENTH_NO_VM", "1");
+    dif_line("PHASE-A|默认路径|已完成 " + utl_int(n_entries) + " 条（env 干净，未被 TENTH_NO_VM 污染）");
+    dif_line("PHASE-B|解释器路径|已 env_set(TENTH_NO_VM=1)——此后 spawn 均走解释器（共享进程 env，语言侧无法按子进程作用域设置）");
+
+    if use_ctl {
+        DIF_CTL_B = run_spawn(dif_exe(), DIF_CTL_PATH, empty, timeout_ms);
+    };
+    i = 0;
+    while i < n_entries {
+        let e = DIF_ENTRIES.get(i);
+        let a = dif_args_of(i);
+        let script = e.get(1);
+        let first = run_spawn(dif_exe(), script, a, timeout_ms);
+        let o1 = run_out(first);
+        let c1 = run_code(first);
+        let mut stable = true;
+        let mut k = 1;
+        while k < repeat {
+            let more = run_spawn(dif_exe(), script, a, timeout_ms);
+            let o2 = run_out(more);
+            let c2 = run_code(more);
+            if o1 != o2 {
+                stable = false;
+            };
+            if c1 != c2 {
+                stable = false;
+            };
+            k = k + 1;
+        };
+        DIF_PHASE_B.push(first);
+        DIF_B_STABLE.push(stable);
+        i = i + 1;
+    };
+
+    // ── ③ 阳性对照：必须分离两个后端 ──
+    let mut ctl_ok = true;
+    if use_ctl {
+        let coa = run_out(DIF_CTL_A);
+        let cob = run_out(DIF_CTL_B);
+        let cta = run_timed(DIF_CTL_A);
+        let ctb = run_timed(DIF_CTL_B);
+        if cta {
+            ctl_ok = false;
+            dif_line("[FATAL] CONTROL|TIMEOUT|对照脚本在默认路径超时（无法证明两后端不同）→ 退出码 2");
+        } else {
+            if ctb {
+                ctl_ok = false;
+                dif_line("[FATAL] CONTROL|TIMEOUT|对照脚本在解释器路径超时（无法证明两后端不同）→ 退出码 2");
+            } else {
+                if coa == cob {
+                    ctl_ok = false;
+                    dif_line("[FATAL] CONTROL|NOT_DIVERGED|对照脚本两路径输出**相同** ⇒ 两次 spawn 实际落在**同一个后端** ⇒ 本次运行的一切「一致」都不可信（假绿风险）→ 退出码 2");
+                    dif_line("[FATAL] CONTROL|对照脚本=" + DIF_CTL_PATH + "  期望：默认路径 C1=1 C2=2 C3=3 / 解释器 C1=0 C2=0 C3=1（AUDIT-11.4.56 钉住）  实测 A=[" + utl_flatten(coa) + "] B=[" + utl_flatten(cob) + "]");
+                } else {
+                    dif_line("CONTROL|DIVERGED|两侧确为**不同后端**（同一脚本 stdout 不同：out_bytes(A/B)=" + utl_int(utl_bytes(coa)) + "/" + utl_int(utl_bytes(cob)) + "）  依据 AUDIT-11.4.56（闭包体内写全局：VM 写穿 / 解释器按值捕获）");
+                };
+            };
+        };
+    } else {
+        dif_line("CONTROL|DISABLED|--no-control ⇒ **无法证明两后端真的不同**，本次「一致」的证据强度**下降**（如实标注）");
+    };
+
+    if !ctl_ok {
+        exit(2);
+    };
+
+    // ── 逐条判决（判红优先输出）──
+    let mut reds = Vec::new();
+    let mut oks = Vec::new();
+    i = 0;
+    while i < n_entries {
+        let jr = dif_judge(i, timeout_ms, stderr_needle);
+        let st = jr.get(0);
+        let ln = jr.get(1);
+        if st == "PASS" {
+            n_pass = n_pass + 1;
+            oks.push(ln);
+        } else {
+            if st == "DIVERGE" {
+                n_div = n_div + 1;
+            } else {
+                if st == "TIMEOUT" {
+                    n_tmo = n_tmo + 1;
+                } else {
+                    if st == "NONDET" {
+                        n_non = n_non + 1;
+                    } else {
+                        n_exp = n_exp + 1;
+                    };
+                };
+            };
+            reds.push(ln);
+        };
+        i = i + 1;
+    };
+
+    i = 0;
+    while i < reds.len() {
+        dif_line(reds.get(i));
+        i = i + 1;
+    };
+    i = 0;
+    while i < oks.len() {
+        dif_line(oks.get(i));
+        i = i + 1;
+    };
+
+    let n_red = n_div + n_tmo + n_exp + n_non;
+    dif_line("---- 汇总 ----");
+    dif_line("CASES|" + utl_int(n_entries) + "  PASS(两路径一致)|" + utl_int(n_pass) + "  DIVERGE|" + utl_int(n_div) + "  TIMEOUT|" + utl_int(n_tmo) + "  NONDET(同侧复跑就不同)|" + utl_int(n_non) + "  EXPECT_FAIL|" + utl_int(n_exp) + "  SKIPPED|0  REPEAT|" + utl_int(repeat));
+    if n_red > 0 {
+        dif_line("VERDICT|RED（" + utl_int(n_red) + " 条需人看）→ 退出码 1");
+    } else {
+        dif_line("VERDICT|GREEN（" + utl_int(n_pass) + " 条两路径一致）——**不等于两侧都正确**：本工具只证明「分歧未被发现」");
+    };
+
+    // --out（红线：运行产物只写 .agents/tmp/）
+    let out_path = flag_value("--out");
+    if !out_path.is_empty() {
+        let forbidden = utl_out_path_forbidden(out_path);
+        if forbidden {
+            println("用法错误：运行产物不得写进 tenth-lens/（章程红线），请写到 .agents/tmp/");
+            exit(2);
+        };
+        let mut text = "";
+        let n_lines = DIF_REPORT.len();
+        i = 0;
+        while i < n_lines {
+            text = text + DIF_REPORT.get(i) + "\n";
+            i = i + 1;
+        };
+        write_file(out_path, text);
+        println("REPORT_WRITTEN|" + out_path);
+    };
+
+    if n_red > 0 {
+        exit(1);
+    };
+    exit(0);
+}

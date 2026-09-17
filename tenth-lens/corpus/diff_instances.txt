@@ -1,0 +1,31 @@
+# P1 差分检查器语料 · Tenth实例 小批（14 条，含 2 条 期望=error）
+#
+# 用途：验收 ⑤「探索产出」——让检查器对**真实语料**（不是自家探针）跑双路径差分。
+# 跑法（项目根目录，env 必须干净）：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_instances.txt
+#
+# 格式：`标签|路径.th|期望`
+# 选材原则（先小批，跑通再扩）：
+#   - 全部是**确定性 + 快**（单次 < 300ms）的纯计算实例；
+#   - 刻意排除 MNIST/CNN/Transformer/timer/random/fs/network 一类（慢、依赖外部、非确定）；
+#   - 含 **2 条 期望=error**（Shape 检查防线 / Typestate 违法程序——编译期就该拒绝）。
+#
+# 注：本清单是"发现分歧"用的，**不是**"必须全绿"的门。红线是「不许假绿」：
+#     若某条判 DIVERGE，报告给出首差异行，由人（总师）裁定是缺陷还是工具副作用。
+# 注：`Tenth实例/JSON处理/json_demo.th` **刻意不在此清单**——它输出非确定（HashMap 键序
+#     逐进程随机，与后端无关），放进来只会得到"归因不明"的红。它单独放在
+#     `diff_nondet.txt`，用 `--repeat 2` 演示 NONDET 分类。详见 corpus/README.md §三。
+
+hanoi|Tenth实例/汉诺塔/hanoi.th|clean
+bubble_sort|Tenth实例/冒泡排序/bubble_sort.th|clean
+binary_search|Tenth实例/二分查找/binary_search.th|clean
+fibonacci|Tenth实例/斐波那契数列/fibonacci.th|clean
+sieve|Tenth实例/埃拉托色尼筛法/sieve.th|clean
+gcd|Tenth实例/最大公约数/gcd.th|clean
+n_queens|Tenth实例/N皇后II/n_queens.th|clean
+string_utils|Tenth实例/字符串处理/string_utils.th|clean
+closure_capture|Tenth实例/闭包捕获/closure_capture.th|clean
+labeled_loop|Tenth实例/标签循环/labeled_loop.th|clean
+word_count|Tenth实例/词频统计/word_count.th|clean
+err_matmul_inner_dim|Tenth实例/Shape检查防线/err_matmul_inner_dim.th|error
+typestate_illegal|Tenth实例/类型状态Typestate/typestate_illegal.th|error

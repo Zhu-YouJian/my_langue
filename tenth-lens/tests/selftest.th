@@ -1,16 +1,19 @@
-// tenth-lens 自检：用**合成夹具**证明守卫的判红 / 标注 / 容差 / 退出码行为
+// tenth-lens 自检：用**合成夹具/真实语料**证明守卫与差分检查器的判决、标注、容差、退出码行为
 //
-// 跑法（项目根）：
+// 跑法（项目根；**env 必须干净**——本自检最后一项会故意污染 TENTH_NO_VM 来验防假绿）：
 //   tenth\target\release\tenth.exe run tenth-lens\tests\selftest.th
 // 通过标准：末行 `SELFTEST|n|PASS|n 项全过`，退出码 0；任一 FAIL → 退出码 1。
 //
-// 为什么自检要 spawn 子进程：守卫的判决是**进程级**的（报告 + 退出码），只能在进程边界上断言。
-// 已知代价（GAP-010）：`command_run` 拿退出码时子进程输出会**泄漏到本进程 stdout**——
-// 本自检是确定性的（守卫无副作用、不写文件），因此这里接受该泄漏，仅在断言里用 `command_output` 的信道。
+// 为什么自检要 spawn 子进程：判决是**进程级**的（报告 + 退出码），只能在进程边界上断言。
+// 旧写法（P0）：`command_output` 取文本 + `command_run` 取退出码 ⇒ 两次 spawn，且 run 阶段
+//   子进程输出会**泄漏到本进程 stdout**（GAP-010 时期的已知代价）。
+// 新写法（P1）：`command_output_ex` **一次 spawn 同源取四元**（stdout/stderr/退出码/超时）
+//   ⇒ 新增断言一律走 spawn_full()，不再泄漏、不再两次 spawn。
 //
 // 断言集见下方 assert_* 调用；FAIL 时打印期望的原文片段，便于直接定位。
 
-// 结果用容器累积（不用全局标量计数器：VM 对「main 与函数同时写的全局标量」会静默丢失函数侧写入，见 GAP-012）
+// 结果用容器累积（不用全局标量计数器：VM 对「main 与函数同时写的全局标量」会静默丢失函数侧写入，
+// 该缺陷 GAP-012 / AUDIT-11.4.55 已于 2026-09-17 修复，但此处保持既有写法，避免制造新依赖）
 let mut RESULTS: Vec = Vec::new()
 
 fn exe() -> String {
@@ -24,7 +27,8 @@ fn guard_args(tail: Vec) -> Vec {
     a.push("tenth-lens/main.th");
     let mut i = 0;
     while i < tail.len() {
-        // 先绑局部：解释器路径下「容器取出的临时值」丢类型标签，直接当 native 实参会被忽略（GAP-013）
+        // 先绑局部：解释器路径下「容器取出的临时值」丢类型标签，直接当 native 实参会被忽略
+        //（GAP-013，已修；保留写法零成本）
         let tv = tail.get(i);
         a.push(tv);
         i = i + 1;
@@ -70,6 +74,50 @@ fn spawn_code(tail: Vec) -> i32 {
         },
         Result::Err(e) => -1,
     }
+}
+
+// ── P1 新增：一次 spawn 同源取四元 Vec = [stdout, stderr, exit_code, timed_out] ──
+fn spawn_full(tail: Vec) -> Vec {
+    let mut r = Vec::new();
+    let h = command_new(exe());
+    match h {
+        Result::Ok(hh) => {
+            let a = guard_args(tail);
+            let mut i = 0;
+            while i < a.len() {
+                let av = a.get(i);
+                command_arg(hh, av);
+                i = i + 1;
+            };
+            let (out, err, code, timed) = command_output_ex(hh, 60000);
+            r.push(out);
+            r.push(err);
+            r.push(code);
+            r.push(timed);
+        },
+        Result::Err(e) => {
+            r.push("");
+            r.push("SPAWN_FAIL:" + e);
+            r.push(-1);
+            r.push(true);
+        },
+    };
+    r
+}
+
+fn full_out(r: Vec) -> String {
+    let x = r.get(0);
+    x
+}
+
+fn full_err(r: Vec) -> String {
+    let x = r.get(1);
+    x
+}
+
+fn full_code(r: Vec) -> i32 {
+    let x = r.get(2);
+    x
 }
 
 fn args1(k: String, v: String) -> Vec {
@@ -169,6 +217,107 @@ fn main() {
     assert_has("A20_偏离量约1.7倍", rv, "dev=174.64% (2.75x)");
     assert_has("A21_窄范围自我标注", rv, "SCOPE|narrowed");
     assert_absent("A22_不静默跳过", rv, "MISSING|SKIP");
+
+    // ══════════════════════════════════════════════════════════════════
+    // P1 段（2026-09-17 W6-lens）：跨路径差分检查器
+    // ══════════════════════════════════════════════════════════════════
+    let dprobes = "tenth-lens/corpus/diff_probes.txt";
+    let ddiv = "tenth-lens/corpus/diff_divergence.txt";
+    let dtimeout = "tenth-lens/corpus/diff_timeout.txt";
+    let dnondet = "tenth-lens/corpus/diff_nondet.txt";
+    let dbadexp = "tenth-lens/tests/fixtures/diff_bad_expect.txt";
+    let dmiss = "tenth-lens/tests/fixtures/diff_missing_script.txt";
+    let mmiss = "tenth-lens/tests/fixtures/manifest_missing_log.txt";
+
+    // ── ① 正例：probes 全量两路径一致 ⇒ 全绿 + 退出码 0 ──
+    let rp = spawn_full(args1("--diff", dprobes));
+    assert_has("B01_正例全绿", full_out(rp), "VERDICT|GREEN（10 条两路径一致）");
+    assert_code("B02_正例退出码0", full_code(rp), 0);
+    assert_has("B03_诚实声明PASS不等于正确", full_out(rp), "CLAIM|PASS ＝ 两路径一致");
+    assert_has("B04_防假绿_父环境干净已核", full_out(rp), "BACKEND-GUARD|parent-env-clean");
+    assert_has("B05_后端阳性对照已分离", full_out(rp), "CONTROL|DIVERGED");
+    assert_has("B06_汇总无静默跳过", full_out(rp), "SKIPPED|0");
+    assert_absent("B07_正例里没有DIVERGE", full_out(rp), "[DIVERGE]");
+
+    // ── ② 真分歧（GAP-018 夹具）⇒ 判红 + 退出码 1；对照组不误判 ──
+    let rd = spawn_full(args1("--diff", ddiv));
+    assert_has("B08_真分歧判红", full_out(rd), "[DIVERGE] callsite_compare");
+    assert_has("B09_分歧给出退出码对照", full_out(rd), "exit(A/B)=1/0");
+    assert_has("B10_对照组不误判", full_out(rd), "[PASS] callsite_controls");
+    assert_code("B11_分歧退出码1", full_code(rd), 1);
+
+    // ── ③ 注入错期望：故意把金标准写错 ⇒ 必须判红（判决是活的，不是装饰）──
+    let rb = spawn_full(args1("--diff", dbadexp));
+    assert_has("B12_注入错期望判红", full_out(rb), "[EXPECT_FAIL] injected_wrong_expect");
+    assert_has("B13_注入错期望给VERDICT_RED", full_out(rb), "VERDICT|RED");
+    assert_code("B14_注入错期望退出码1", full_code(rb), 1);
+
+    // ── ④ 超时用例：卡死程序必须被明确标注（不许静默）──
+    let mut tt = Vec::new();
+    tt.push("--diff");
+    tt.push(dtimeout);
+    tt.push("--timeout-ms");
+    tt.push("1200");
+    let rt = spawn_full(tt);
+    assert_has("B15_超时明确标注", full_out(rt), "[TIMEOUT] hang");
+    assert_has("B16_超时标出哪一侧", full_out(rt), "side=默认路径");
+    assert_has("B17_超时给部分输出与退出码", full_out(rt), "partial_out_bytes=11");
+    assert_code("B18_超时退出码1", full_code(rt), 1);
+
+    // ── ⑤ 非确定输出：同侧复跑就不同 ⇒ 判 NONDET（不冒充后端分歧、不判绿）──
+    let mut rn = Vec::new();
+    rn.push("--diff");
+    rn.push(dnondet);
+    rn.push("--repeat");
+    rn.push("2");
+    let rr = spawn_full(rn);
+    assert_has("B19_非确定判NONDET", full_out(rr), "[NONDET] json_demo");
+    assert_has("B20_非确定说明归因不了", full_out(rr), "无法把差异归因于后端");
+    assert_code("B21_非确定退出码1", full_code(rr), 1);
+    assert_has("B22_重复次数入报告", full_out(rr), "REPEAT|2");
+
+    // ── ⑥ 输入错误一律响亮（清单缺失 / 脚本缺失 / P0 日志缺失）──
+    let rmn = spawn_full(args1("--diff", "tenth-lens/corpus/NO_SUCH_MANIFEST.txt"));
+    assert_has("B23_清单不存在明确报错", full_out(rmn), "用法错误：差分清单不存在");
+    assert_code("B24_清单不存在退出码2", full_code(rmn), 2);
+
+    let rm = spawn_full(args1("--diff", dmiss));
+    assert_has("B25_脚本缺失FATAL", full_out(rm), "[FATAL] SCRIPT_MISSING|ghost_script");
+    assert_code("B26_脚本缺失退出码2", full_code(rm), 2);
+
+    let rml = spawn_full(args1("--manifest", mmiss));
+    assert_has("B27_P0日志缺失FATAL", full_out(rml), "[FATAL] SOURCE_MISSING|ghost-source");
+    assert_has("B28_P0日志缺失给重生成指针", full_out(rml), "corpus/README.md");
+    assert_code("B29_P0日志缺失退出码2", full_code(rml), 2);
+
+    // ── ⑦ 关掉后端对照 ⇒ 如实降级标注（不假装仍有证据）──
+    let mut nc = Vec::new();
+    nc.push("--diff");
+    nc.push(ddiv);
+    nc.push("--no-control");
+    let rc2 = spawn_full(nc);
+    assert_has("B30_关对照如实降级", full_out(rc2), "CONTROL|DISABLED");
+
+    // ── ⑧ --stderr-contains 关键字缺失也要判红 ──
+    let mut sc = Vec::new();
+    sc.push("--diff");
+    sc.push(ddiv);
+    sc.push("--stderr-contains");
+    sc.push("ZZ_NO_SUCH_TOKEN");
+    let rs = spawn_full(sc);
+    assert_has("B31_stderr关键字缺失判红", full_out(rs), "why=STDERR_CONTAINS_MISS");
+    assert_code("B32_stderr关键字退出码1", full_code(rs), 1);
+
+    // ── ⑨ ★防假绿实测：父进程设 TENTH_NO_VM=0（`is_ok()` 判定 ⇒ 设 0 也算已设置）──
+    //     必须**硬失败**：否则两次 spawn 都跑解释器 ⇒ 报告"全一致"实为双解释器自比自。
+    //     **本组必须是最后一项**：env_set 污染本进程 env，之后任何 spawn 都会带上它。
+    env_set("TENTH_NO_VM", "0");
+    let rg = spawn_full(args1("--diff", dprobes));
+    assert_has("B33_父进程env脏硬失败", full_out(rg), "[FATAL] PARENT_ENV_DIRTY");
+    assert_has("B34_硬失败点明假绿风险", full_out(rg), "假绿");
+    assert_has("B35_硬失败不给任何PASS", full_out(rg), "TENTH_NO_VM 已被设置");
+    assert_code("B36_env脏退出码2", full_code(rg), 2);
+    assert_absent("B37_env脏时不产出报告", full_out(rg), "VERDICT|GREEN");
 
     // ── 汇总 ──
     let mut n_pass = 0;

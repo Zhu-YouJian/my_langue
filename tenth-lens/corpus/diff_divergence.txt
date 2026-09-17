@@ -1,0 +1,17 @@
+# P1 差分检查器语料 · **已知真分歧**（1 条，期望=any；本清单**应当判红**）
+#
+# 用途：证明检查器**真的能抓到跨后端分歧**（不是只会说"一致"），并给总师一条可直接
+# 复现的回归夹具。跑法（项目根，env 必须干净）：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_divergence.txt
+# 期望：`[DIVERGE] callsite_compare` + `VERDICT|RED` + **退出码 1**。
+#
+# 分歧本体：见 GAPS.md GAP-018（`while i < f()`，f 的返回值派生自局部变量 ⇒ VM 抛
+# 「无法比较」，解释器正确）。夹具与说明：
+#   tenth-lens/tests/fixtures/divergence_callsite_compare.th
+#   tenth-lens/tests/fixtures/src/gap018_mod.th
+# 对照组（**不触发**、两路径一致）：`tenth-lens/tests/fixtures/gap018_controls.th`
+#
+# 格式：`标签|路径.th|期望`
+
+callsite_compare|tenth-lens/tests/fixtures/divergence_callsite_compare.th|any
+callsite_controls|tenth-lens/tests/fixtures/gap018_controls.th|any

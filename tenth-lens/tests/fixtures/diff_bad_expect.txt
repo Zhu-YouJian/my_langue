@@ -1,0 +1,13 @@
+# 自检夹具（**故意写错的期望**）：同一个"正常退出"的程序标成 `error`
+#
+# 用途：验收 ②「注入验证」——期望与实测不符必须**判红**（`EXPECT_FAIL` + 退出码 1）。
+# 这是"检查器判决是活的、不是装饰"的证据：我们**故意把金标准写错**，它必须报红。
+#
+# 跑法（项目根，env 必须干净）：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\tests\fixtures\diff_bad_expect.txt
+# 期望：`[EXPECT_FAIL] injected_wrong_expect … expect=error … 但实测 exit=0` + `VERDICT|RED` + 退出码 1。
+# 对照（同一程序、正确期望）见 `tenth-lens/corpus/diff_probes.txt` 中的 `gap005_child_ok|…|clean`。
+#
+# 格式：`标签|路径.th|期望`
+
+injected_wrong_expect|tenth-lens/probes/gap005_child_ok.th|error

@@ -1,0 +1,11 @@
+# P1 差分检查器语料 · **超时用例**（1 条，应当判红并明确标注）
+#
+# 跑法（项目根，env 必须干净）——**必须配 --timeout-ms**，否则会等满默认 20s：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_timeout.txt --timeout-ms 1200
+# 期望：`[TIMEOUT] hang  … side=默认路径  timeout_ms=1200  partial_out_bytes=…  exit_code=-1` + 退出码 1。
+#
+# 用途：验收 ③「超时用例被明确标注（不许静默）」，同时验证"卡死语料不会卡死检查器"。
+#
+# 格式：`标签|路径.th|期望`
+
+hang|tenth-lens/tests/fixtures/diff_hang.th|any

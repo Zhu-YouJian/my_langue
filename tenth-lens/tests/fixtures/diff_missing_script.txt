@@ -1,0 +1,12 @@
+# 自检夹具：清单引用的**脚本文件不存在**（验收 ⑤ 的一半）
+#
+# 期望：`[FATAL] SCRIPT_MISSING|ghost_script|tenth-lens/tests/fixtures/NO_SUCH_FILE.th`
+#       + `[FATAL] 差分清单引用的脚本不存在：1 个` + **退出码 2**（输入错误，不是「绿」）。
+# 强约束：**在任何 spawn 之前**就报错——不许先跑一半再说"文件缺失"。
+#
+# 跑法：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\tests\fixtures\diff_missing_script.txt
+#
+# 格式：`标签|路径.th|期望`
+
+ghost_script|tenth-lens/tests/fixtures/NO_SUCH_FILE.th|clean

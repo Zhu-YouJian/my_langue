@@ -1,0 +1,26 @@
+# P1 差分检查器语料 · probes 全量（10 条）
+#
+# 用途：验收 ①「正例：两路径一致的语料 ⇒ PASS、退出码 0」+ 验收 ⑤「探索产出」。
+# 跑法（项目根目录，env 必须干净——检查器自己会硬校验）：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_probes.txt
+#
+# 格式：`标签|路径.th|期望`
+#   期望 clean = 默认路径应退出码 0；error = 应非零退出；any = 不做期望约束
+#
+# `probes/` 是 AUDIT 条目的证据文件（红线：不得修改），此处只做**引用**。
+# 注：`gap005_child_fail` 故意 `exit(3)`（探针用途是"退出码能透传"），语义上不是错误，
+#     故标 `any` 而不是 `error`——避免把"按设计退出 3"误记成"应当失败"。
+# 注：`gap005_probe.th` 自身会 spawn 子进程；检查器阶段 B 的 TENTH_NO_VM=1 会被
+#     **孙进程**继承（Tenth 无 per-child env，GAP-008）——若它因此判 DIVERGE，
+#     那是**工具自身的测量副作用**而非真分歧，报告里会如实标注。
+
+check_vec_oob|tenth-lens/probes/check_vec_oob.th|error
+gap005_child_bad|tenth-lens/probes/gap005_child_bad.th|error
+gap005_child_env|tenth-lens/probes/gap005_child_env.th|clean
+gap005_child_fail|tenth-lens/probes/gap005_child_fail.th|any
+gap005_child_ok|tenth-lens/probes/gap005_child_ok.th|clean
+gap005_child_stderr|tenth-lens/probes/gap005_child_stderr.th|clean
+gap005_probe|tenth-lens/probes/gap005_probe.th|clean
+gap012_vm_global_write|tenth-lens/probes/gap012_vm_global_write.th|clean
+gap013_interp_tag_loss|tenth-lens/probes/gap013_interp_tag_loss.th|clean
+gap014_parse_float_silent|tenth-lens/probes/gap014_parse_float_silent.th|clean

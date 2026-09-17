@@ -1,0 +1,471 @@
+// tenth-lens/src/guard.th —— **守卫层**（判决书）：P0 跨来源差分守卫的判决 / 报告 / 退出码
+//
+// 拆自 P0 单文件 main.th 的「守卫层」分节 + `main()` 的 P0 分支。判红条件、报告文案、
+// 汇总格式、退出码**逐字未改**（P0 自检断言的是报告原文）。
+//
+// 核心断言（一句话）：同一个 (group, scenario, path, metric) 在**不同来源日志之间必须一致**；
+// 超出容差即判红。
+//
+// 一律判红（宁可红，不可假绿）：
+//   - 两来源同一 key 相对偏离 > 容差
+//   - 同一 key 的两来源单位不同（不可比）
+//   - 同一来源同一 key 出现多条数值（自相矛盾）
+//   - 某来源有数值、另一来源声明该 metric 不可用（PERF-NA）—— 口径分歧
+//   - `PERF|` / `PERF-NA|` 行字段数不符（格式漂移）
+//   - **清单引用的日志不存在**（2026-09-17 W6-lens P1 加硬：由「判红 exit 1」升为
+//     「FATAL 输入错误 exit 2」，见下方 grd_run 与 corpus/README.md）
+// 如实标注但**不判红**（无法比较，非不一致）：
+//   - 某来源根本没有该 key（MISSING）
+//   - 只有 1 个来源有该 key（ONE，无可比对象；在汇总里单独计数，防「静默假绿」）
+//
+// 导入方式：`use src::guard::grd_run`
+
+use std::cli::cli::flag_value
+use std::cli::cli::has_flag
+
+use src::record::rec_load_manifest
+use src::record::rec_src_count
+use src::record::rec_label_at
+use src::record::rec_path_at
+use src::record::rec_rows
+use src::record::rec_notes
+use src::record::rec_noise
+use src::record::rec_notes_total
+use src::record::rec_noise_total
+use src::record::rec_key_count
+use src::record::rec_key_at
+use src::record::rec_rows_of
+use src::record::rec_na_of
+use src::record::rec_malformed_count
+use src::record::rec_malformed_at
+use src::record::rec_unreadable_count
+use src::record::rec_unreadable_at
+
+use src::observe::obs_span_of_key
+use src::observe::obs_row_of_label
+use src::observe::obs_reason_of_label
+use src::observe::obs_label_has_row
+use src::observe::obs_count_numeric
+use src::observe::obs_dev_between
+use src::observe::obs_ratio_between
+
+use src::util::utl_fmt2
+use src::util::utl_int
+use src::util::utl_out_path_forbidden
+
+// ─────────────────── 守卫层状态（理由同 record.th：全局一律前缀） ───────────────────
+
+let mut GRD_HEAD: Vec = Vec::new()    // 报告头
+let mut GRD_PASSES: Vec = Vec::new()  // 非红判决行（OK / ONE / NA）
+let mut GRD_REDS: Vec = Vec::new()    // [dev, line]（用于排序，判红优先输出）
+
+fn grd_emit(s: String) {
+    GRD_HEAD.push(s);
+}
+
+fn grd_push_red(dev: f64, line: String) {
+    let mut r = Vec::new();
+    r.push(dev);
+    r.push(line);
+    GRD_REDS.push(r);
+}
+
+// 判红行按偏离降序（插入排序；内建 sort 无比较器形式）
+fn grd_sort_reds_desc() {
+    let n = GRD_REDS.len();
+    let mut i = 1;
+    while i < n {
+        let cur = GRD_REDS.get(i);
+        let curdev = cur.get(0);
+        let mut j = i;
+        while j > 0 {
+            let prev = GRD_REDS.get(j - 1);
+            if prev.get(0) < curdev {
+                GRD_REDS.set(j, prev);
+                j = j - 1;
+            } else {
+                break;
+            };
+        };
+        GRD_REDS.set(j, cur);
+        i = i + 1;
+    };
+}
+
+// 单 key 判决（每个 key 恰一行）：返回状态标签 "RED"/"OK"/"NA"/"ONE"（计数在调用方局部累加）
+fn grd_judge_key(key: String, tol: f64) -> String {
+    let rows = rec_rows_of(key);
+    let na_rows = rec_na_of(obs_span_of_key(key));
+    let n_src = rec_src_count();
+
+    let mut desc = "";
+    let mut units = Vec::new();
+    let mut num_vals = Vec::new();
+    let mut num_labels = Vec::new();
+    let mut dup_label = "";
+    let mut has_na_other = false;
+    let mut present = 0;
+    let mut i = 0;
+    while i < n_src {
+        let label = rec_label_at(i);
+        let any_row = obs_label_has_row(rows, label);
+        let na_reason = obs_reason_of_label(na_rows, label);
+        let mut piece = "";
+        if any_row {
+            present = present + 1;
+            let r = obs_row_of_label(rows, label);
+            if r.get(7) {
+                let ndup = obs_count_numeric(rows, label);
+                if ndup > 1 {
+                    dup_label = label;
+                };
+                num_vals.push(r.get(6));
+                num_labels.push(label);
+                units.push(r.get(5));
+                piece = label + "=" + r.get(4) + " " + r.get(5);
+            } else {
+                has_na_other = true;
+                piece = label + "=NA(值=" + r.get(4) + ")";
+            };
+        } else {
+            if na_reason.len() > 0 {
+                has_na_other = true;
+                piece = label + "=NA(" + na_reason + ")";
+            } else {
+                piece = label + "=MISSING";
+            };
+        };
+        if desc.len() > 0 {
+            desc = desc + " | " + piece;
+        } else {
+            desc = piece;
+        };
+        i = i + 1;
+    };
+
+    // 单位一致性
+    let mut unit_bad = "";
+    i = 1;
+    while i < units.len() {
+        if units.get(i) != units.get(0) {
+            unit_bad = units.get(0) + " vs " + units.get(i);
+        };
+        i = i + 1;
+    };
+
+    // 数值两两比较
+    let mut dev = 0.0;
+    let mut ratio = 1.0;
+    let mut worst_a = "";
+    let mut worst_b = "";
+    i = 0;
+    while i < num_vals.len() {
+        let mut j = i + 1;
+        while j < num_vals.len() {
+            let d = obs_dev_between(num_vals.get(i), num_vals.get(j));
+            if d > dev {
+                dev = d;
+                ratio = obs_ratio_between(num_vals.get(i), num_vals.get(j));
+                worst_a = num_labels.get(i);
+                worst_b = num_labels.get(j);
+            };
+            j = j + 1;
+        };
+        i = i + 1;
+    };
+
+    let n_num = num_vals.len();
+
+    let mut status = "OK";
+    let mut line = "";
+    let mut sort_dev = 0.0;
+
+    if dup_label.len() > 0 {
+        status = "RED";
+        sort_dev = 999999.0;
+        line = "[RED] " + key + "  why=DUP_IN_SOURCE(" + dup_label + ")  " + desc;
+    } else {
+        if n_num >= 2 {
+            if unit_bad.len() > 0 {
+                status = "RED";
+                sort_dev = 999998.0;
+                line = "[RED] " + key + "  why=UNIT_MISMATCH(" + unit_bad + ")  " + desc;
+            } else {
+                if has_na_other {
+                    status = "RED";
+                    sort_dev = 999997.0;
+                    line = "[RED] " + key + "  why=NA_DIVERGE(有数值来源 vs 声明不可用来源)  dev=" + utl_fmt2(dev) + "% (" + format("{:.2f}", ratio) + "x)  " + desc;
+                } else {
+                    if dev > tol {
+                        status = "RED";
+                        sort_dev = dev;
+                        line = "[RED] " + key + "  dev=" + utl_fmt2(dev) + "% (" + format("{:.2f}", ratio) + "x)  tol=±" + utl_fmt2(tol) + "%  worst=" + worst_a + " vs " + worst_b + "  " + desc;
+                    } else {
+                        line = "[OK ] " + key + "  dev=" + utl_fmt2(dev) + "% (" + format("{:.2f}", ratio) + "x)  tol=±" + utl_fmt2(tol) + "%  " + desc;
+                    };
+                };
+            };
+        } else {
+            if n_num == 1 {
+                if has_na_other {
+                    status = "RED";
+                    sort_dev = 999997.0;
+                    line = "[RED] " + key + "  why=NA_DIVERGE(有数值来源 vs 声明不可用来源)  " + desc;
+                } else {
+                    status = "ONE";
+                    line = "[ONE] " + key + "  无可比对象（仅 " + format("{}", present) + "/" + format("{}", n_src) + " 来源有该 key）  " + desc;
+                };
+            } else {
+                status = "NA";
+                line = "[NA ] " + key + "  各来源一致不可用  " + desc;
+            };
+        };
+    };
+
+    if status == "RED" {
+        grd_push_red(sort_dev, line);
+    } else {
+        GRD_PASSES.push(line);
+    };
+    status
+}
+
+// 过滤：--only <group:scenario>（支持 *）、--metric <name>
+fn grd_key_match(key: String, only_g: String, only_s: String, only_metric: String) -> bool {
+    let f = key.split("|");
+    if f.len() != 4 {
+        return false;
+    };
+    if only_metric != "*" {
+        if f.get(3) != only_metric {
+            return false;
+        };
+    };
+    if only_g != "*" {
+        if f.get(0) != only_g {
+            return false;
+        };
+    };
+    if only_s != "*" {
+        if f.get(1) != only_s {
+            return false;
+        };
+    };
+    true
+}
+
+fn grd_usage() {
+    println("tenth-lens 差分型守卫 v0（P0；缺 --manifest 时为用法提示）");
+    println("用法：tenth.exe run tenth-lens\\main.th --manifest <清单> [--tolerance <百分比>] [--only <group:scenario>] [--metric <名>] [--out <报告路径>]");
+    println("  清单格式：每行 `标签|路径`；`#` 开头为注释；空行忽略");
+    println("  默认容差 ±20%；--only 支持 `*`（如 `G2:*` / `G2:matmul_512`）；--metric 可只比可比统计量（如 min）");
+    println("  有任何红 → 退出码 1；用法/输入错误（含清单或清单引用的日志不存在）→ 退出码 2；全绿 → 退出码 0");
+    println("  报告产物请用 --out .agents/tmp/xxx.txt（不得写进 tenth-lens/）");
+    println("  P0 语料的 PERF| 日志如何重新生成：见 tenth-lens/corpus/README.md");
+}
+
+// P0 模式入口（自己 exit，不返回）
+fn grd_run() {
+    let manifest = flag_value("--manifest");
+    if manifest.is_empty() {
+        grd_usage();
+        exit(2);
+    };
+
+    // 容差（默认 20%；非正数 → 响亮失败，绝不静默取 0）
+    let tol_raw = flag_value("--tolerance");
+    let mut tol = 20.0;
+    if !tol_raw.is_empty() {
+        tol = parse_float(tol_raw);
+        if tol <= 0.0 {
+            println("用法错误：--tolerance 必须是正数，收到 [" + tol_raw + "]");
+            exit(2);
+        };
+    };
+
+    // 过滤
+    let only_raw = flag_value("--only");
+    let mut only_g = "*";
+    let mut only_s = "*";
+    if !only_raw.is_empty() {
+        let of = only_raw.split(":");
+        if of.len() != 2 {
+            println("用法错误：--only 需为 <group:scenario>，收到 [" + only_raw + "]");
+            exit(2);
+        };
+        only_g = of.get(0).trim();
+        only_s = of.get(1).trim();
+    };
+    let metric_raw = flag_value("--metric");
+    let mut only_metric = "*";
+    if !metric_raw.is_empty() {
+        only_metric = metric_raw.trim();
+    };
+    let mut scope_note = "full（未用 --only/--metric，结论覆盖全部 key）";
+    if only_g != "*" {
+        scope_note = "narrowed(only=" + only_g + ":" + only_s + ",metric=" + only_metric + ")——绿灯不能当作全量结论";
+    } else {
+        if only_s != "*" {
+            scope_note = "narrowed(only=" + only_g + ":" + only_s + ",metric=" + only_metric + ")——绿灯不能当作全量结论";
+        } else {
+            if only_metric != "*" {
+                scope_note = "narrowed(metric=" + only_metric + ")——绿灯不能当作全量结论";
+            };
+        };
+    };
+
+    // 清单
+    // ★跨模块调用结果必须先绑局部再用（GAP-018：`while i < 跨模块函数()` 这类**比较运算
+    // 的操作数是函数调用**时，VM 路径第二次求值即抛「无法比较」；在被导入模块的函数里
+    // 甚至**静默中止该函数**。`let n = f(); while i < n` 已实测可绕行。）
+    let manifest_ok = rec_load_manifest(manifest);
+    if !manifest_ok {
+        exit(2);
+    };
+    let n_src = rec_src_count();
+
+    // ★语料去脆（2026-09-17 W6-lens P1）：清单引用了**不存在**的日志 ⇒ 明确报错，不许静默空转。
+    // 先前行为是「判红 exit 1」；现升级为输入错误 exit 2——比红更响，且不给"部分比较"的机会。
+    // **必须排在「未解析出任何来源」之前**：清单全是缺失日志时，两者会同时成立，
+    // 但"日志缺失"才是可操作的诊断（前者只说明后果）。
+    let n_unread = rec_unreadable_count();
+    if n_unread > 0 {
+        let mut i = 0;
+        while i < n_unread {
+            let u = rec_unreadable_at(i);
+            println("[FATAL] SOURCE_MISSING|" + u.get(0) + "|" + u.get(1));
+            i = i + 1;
+        };
+        println("[FATAL] 清单引用的日志不存在：" + utl_int(n_unread) + " 个 → 无法给出可信判决（退出码 2，不是「绿」）");
+        println("提示：P0 语料的 PERF| 日志是 .agents/tmp/ 下的临时产物，重新生成的确切命令见 tenth-lens/corpus/README.md");
+        exit(2);
+    };
+
+    if n_src == 0 {
+        println("用法错误：清单未解析出任何来源：" + manifest);
+        exit(2);
+    };
+
+    // 报告头
+    grd_emit("tenth-lens 差分型守卫 v0（断言：同一 (group,scenario,path,metric) 跨来源必须一致）");
+    grd_emit("MANIFEST|" + manifest + "  TOLERANCE|±" + utl_fmt2(tol) + "%  SCOPE|" + scope_note);
+    // ★GAP-018 绕行：`rec_src_count()` 是跨模块调用，**不得**直接作比较/串接的操作数；
+    // 先绑局部（n_src 已在清单段绑好），循环条件用局部。
+    let mut src_line = "SOURCES|" + utl_int(n_src);
+    let mut i = 0;
+    while i < n_src {
+        let l = rec_label_at(i);
+        src_line = src_line + "  [" + l + "=" + rec_path_at(i) + " rows=" + utl_int(rec_rows(l)) + " notes=" + utl_int(rec_notes(l)) + " noise=" + utl_int(rec_noise(l)) + "]";
+        i = i + 1;
+    };
+    grd_emit(src_line);
+
+    // 计数一律用局部变量（不写成全局标量：见 record.th 的 GAP-012 说明）
+    let mut n_keys = 0;
+    let mut n_red = 0;
+    let mut n_ok = 0;
+    let mut n_na = 0;
+    let mut n_one = 0;
+
+    // 判决
+    let n_key_total = rec_key_count();
+    i = 0;
+    while i < n_key_total {
+        let k = rec_key_at(i);
+        let keep = grd_key_match(k, only_g, only_s, only_metric);
+        if keep {
+            let st = grd_judge_key(k, tol);
+            n_keys = n_keys + 1;
+            if st == "RED" {
+                n_red = n_red + 1;
+            } else {
+                if st == "OK" {
+                    n_ok = n_ok + 1;
+                } else {
+                    if st == "ONE" {
+                        n_one = n_one + 1;
+                    } else {
+                        n_na = n_na + 1;
+                    };
+                };
+            };
+        };
+        i = i + 1;
+    };
+
+    // 格式漂移 → 判红
+    let n_malformed = rec_malformed_count();
+    i = 0;
+    while i < n_malformed {
+        n_red = n_red + 1;
+        n_keys = n_keys + 1;
+        grd_push_red(999995.0, "[RED] MALFORMED_PERF_LINE(" + rec_malformed_at(i).get(0) + ") :: " + rec_malformed_at(i).get(1));
+        i = i + 1;
+    };
+
+    // 判红优先（按偏离降序），其后是非红判决行（按 key 插入序）
+    grd_sort_reds_desc();
+    let mut all = Vec::new();
+    i = 0;
+    while i < GRD_HEAD.len() {
+        all.push(GRD_HEAD.get(i));
+        i = i + 1;
+    };
+    i = 0;
+    while i < GRD_REDS.len() {
+        all.push(GRD_REDS.get(i).get(1));
+        i = i + 1;
+    };
+    i = 0;
+    while i < GRD_PASSES.len() {
+        all.push(GRD_PASSES.get(i));
+        i = i + 1;
+    };
+
+    // 汇总（先算再打印，保证报告文件与 stdout 同源）
+    let mut tail = "";
+    tail = tail + "---- 汇总 ----\n";
+    tail = tail + "KEYS|" + utl_int(n_keys) + "  RED|" + utl_int(n_red) + "  OK|" + utl_int(n_ok) + "  NA(一致不可用)|" + utl_int(n_na) + "  ONE(仅单来源)|" + utl_int(n_one) + "\n";
+    tail = tail + "TOLERANCE|±" + utl_fmt2(tol) + "%  SCOPE|" + scope_note + "\n";
+    tail = tail + "NOTE_LINES_IGNORED(非数据)|" + utl_int(rec_notes_total()) + "  NOISE_LINES|" + utl_int(rec_noise_total()) + "  MALFORMED|" + utl_int(rec_malformed_count()) + "  UNREADABLE_SOURCES|0\n";
+    if n_red > 0 {
+        tail = tail + "VERDICT|RED（" + utl_int(n_red) + " 项不一致）→ 退出码 1\n";
+    } else {
+        if n_one > 0 {
+            tail = tail + "VERDICT|GREEN（无红；但有 " + utl_int(n_one) + " 个 key 只有单一来源，未做比较——不等于「已验证一致」）\n";
+        } else {
+            tail = tail + "VERDICT|GREEN（全部可比 key 均在容差内）\n";
+        };
+    };
+
+    let mut full = tail;
+    i = 0;
+    while i < all.len() {
+        println(all.get(i));
+        i = i + 1;
+    };
+    print(full);
+
+    // 可选报告落盘（红线：运行产物只写 .agents/tmp/，不得写 tenth-lens/）
+    let out_path = flag_value("--out");
+    if !out_path.is_empty() {
+        let forbidden = utl_out_path_forbidden(out_path);
+        if forbidden {
+            println("用法错误：运行产物不得写进 tenth-lens/（章程红线），请写到 .agents/tmp/");
+            exit(2);
+        };
+        let mut text = "";
+        i = 0;
+        while i < all.len() {
+            text = text + all.get(i) + "\n";
+            i = i + 1;
+        };
+        write_file(out_path, text + tail);
+        println("REPORT_WRITTEN|" + out_path);
+    };
+
+    if n_red > 0 {
+        exit(1);
+    };
+    exit(0);
+}

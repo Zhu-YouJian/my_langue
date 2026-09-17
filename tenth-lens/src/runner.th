@@ -1,0 +1,71 @@
+// tenth-lens/src/runner.th —— **进程侧原语**：一次 spawn 同源取三轴 + 超时
+//
+// 拆自 P1 设计（P0 单文件时代没有子进程能力）。本模块只依赖 `command_output_ex`
+// 这一个 W6 新原生（2026-09-17 落地，见 AUDIT.md「2026-09-17 W6 修复轮」）：
+//
+//   command_output_ex(handle, timeout_ms) -> (stdout, stderr, exit_code, timed_out)
+//
+// ★为什么必须**一次** spawn 取三轴（GAP-010 的历史约束，已由该原生解除）：
+//   分开跑两遍会把副作用（写文件/随机/时间）做两次，还会把不匹配的输出/退出码配对，
+//   既产生假阳性也产生假阴性。此处**封装成单点**，全工具不许绕过它去用
+//   `command_run` / `command_output`（那两条会泄漏或丢轴）。
+//
+// ★超时语义（AUDIT W6 原文）：native 内**墙钟**分块读 + try_wait 轮询 + 到期 kill；
+//   `timed_out=true` 时 exit_code 为 -1、stdout/stderr 是**被 kill 前的部分输出**（正是证据）。
+//   ⇒ 超时**不走 Err**，由调用方检查第 4 元组元素。timeout_ms ≤ 0 ⇒ 不设超时（本工具禁止）。
+//
+// 导入方式：`use src::runner::run_spawn`
+
+// 返回 Vec = [stdout, stderr, exit_code(i32), timed_out(bool)]——异质 4 元组在 Tenth 里用
+// Vec 承载更省事（`r.0` 元组索引仍未实现，见 AUDIT-11.4.65 残留）。
+fn run_spawn(exe: String, script: String, extra: Vec, timeout_ms: i64) -> Vec {
+    let mut r = Vec::new();
+    let h = command_new(exe);
+    match h {
+        Result::Ok(hh) => {
+            command_arg(hh, "run");
+            command_arg(hh, script);
+            let mut i = 0;
+            while i < extra.len() {
+                // 先绑局部再当实参（GAP-013 的历史绕行；缺陷已修，保留写法零成本）
+                let a = extra.get(i);
+                command_arg(hh, a);
+                i = i + 1;
+            };
+            let (out, err, code, timed) = command_output_ex(hh, timeout_ms);
+            r.push(out);
+            r.push(err);
+            r.push(code);
+            r.push(timed);
+        },
+        Result::Err(e) => {
+            // spawn 失败**不静默**：落成 stderr + exit_code=-1 + timed_out=true，
+            // 让上层按"无法给出可信判决"处理，而不是当成一个平淡的 PASS。
+            r.push("");
+            r.push("SPAWN_FAIL: " + e);
+            r.push(-1);
+            r.push(true);
+        },
+    };
+    r
+}
+
+fn run_out(r: Vec) -> String {
+    let x = r.get(0);
+    x
+}
+
+fn run_err(r: Vec) -> String {
+    let x = r.get(1);
+    x
+}
+
+fn run_code(r: Vec) -> i32 {
+    let x = r.get(2);
+    x
+}
+
+fn run_timed(r: Vec) -> bool {
+    let x = r.get(3);
+    x
+}

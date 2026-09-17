@@ -1,0 +1,13 @@
+# 自检夹具：P0 清单引用的**日志文件不存在**（验收 ④/语料去脆的一半）
+#
+# 用途：证明 P0 模式在"清单引用的日志不存在"时**明确报错**，不静默空转、不假装通过。
+# 2026-09-17 W6-lens P1 起：该情形由「判红 exit 1」升级为 **FATAL 输入错误 exit 2**
+# （比红更响，且不给"部分比较"的机会）。日志重新生成方法见 tenth-lens/corpus/README.md。
+#
+# 跑法：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --manifest tenth-lens\tests\fixtures\manifest_missing_log.txt
+# 期望：`[FATAL] SOURCE_MISSING|ghost-source|.agents/tmp/NO_SUCH_perf.log` + 退出码 2。
+#
+# 格式：`标签|路径`（P0 记录层清单格式）
+
+ghost-source|.agents/tmp/NO_SUCH_perf.log

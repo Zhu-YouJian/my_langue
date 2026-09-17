@@ -1,0 +1,26 @@
+// 后端分离**阳性对照**夹具（tenth-lens P1 差分检查器用；不是探针、不在 probes/）
+//
+// 用途：证明「默认路径」与「TENTH_NO_VM=1」真的是**两个不同后端**。
+//   - 检查器若在本用例上报 PASS（两路径一致），说明两次 spawn 跑的是**同一个后端**
+//     ⇒ 本次运行的任何「全绿」都不可信，必须硬失败（宁可红，不可假绿）。
+//   - 语义来源：AUDIT-11.4.56（**未裁定、未修复**，由 `backend_parity_guard_test` 的
+//     ratchet 用例钉住）——「闭包体内写全局」VM 写穿全局表、解释器按值捕获。
+//     ⇒ 期望：默认路径 C1=1 C2=2 C3=3；解释器 C1=0 C2=0 C3=1；两侧 exit 均 0。
+//   - **若 11.4.56 被裁定/修复**：本夹具的期望随之失效（届时它不再分离两个后端），
+//     守卫会以 SUSPECT 响亮失败，倒逼同步更新本夹具与检查器文档（不静默）。
+//
+// 跑法：
+//   tenth\target\release\tenth.exe run tenth-lens\tests\fixtures\diffctl_backend_split.th
+//   set TENTH_NO_VM=1 & tenth\target\release\tenth.exe run tenth-lens\tests\fixtures\diffctl_backend_split.th
+
+let mut H: i32 = 0
+
+fn main() {
+    let f = |_u: i32| { H = H + 1; };
+    f(0);
+    println("C1|" + format("{}", H));
+    f(0);
+    println("C2|" + format("{}", H));
+    H = H + 1;
+    println("C3|" + format("{}", H));
+}

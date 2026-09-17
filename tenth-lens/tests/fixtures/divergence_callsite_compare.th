@@ -1,0 +1,33 @@
+// 跨路径分歧**确定性最小复现**（tenth-lens P1 撞出来的新缺口，见 GAPS.md GAP-018）
+//
+// 症状：`while <局部计数器> < <函数调用>()` —— 当
+//   (a) 被调函数的返回值**派生自函数内的局部变量**（不是字面量），**且**
+//   (b) 调用点位于 `main` 或某个**被导入模块**的函数内，
+// 则：
+//   - **VM（默认路径）**：第二次求值该比较 ⇒ `运行时错误 — 无法比较`，**exit 1**
+//   - **解释器（TENTH_NO_VM=1）**：正确执行完，**exit 0**
+// ⇒ **跨后端分歧**（VM 错、解释器对）。实测 **10/10 稳定复现**（非抖动）。
+//
+// 绕行（已实测可救）：把返回值**先绑到局部变量**再比较 —— `let n = f(); while i < n {...}`。
+// tenth-lens 自身（`src/guard.th` / `src/diff.th` / `src/runner.th`）全部采用该写法。
+//
+// 对照组（**不触发**）：`tests/fixtures/gap018_controls.th`（字面量返回值 + 先绑局部）。
+// ★已知异常细节（尚未收敛，见 GAPS.md GAP-018「触发面」）：**同一形状在不同入口下会
+//   被抑制**——本文件刻意**只调用触发函数**（`run_direct`），以保证复现稳定；
+//   若把对照组调用排在它之前，本机实测该分歧会**消失**（原因待运行时部定位，疑与
+//   调用次数/JIT 预热有关）。**故"未复现"不能当作"已修复"。**
+//
+// 跑法：
+//   tenth\target\release\tenth.exe run tenth-lens\tests\fixtures\divergence_callsite_compare.th
+//   set TENTH_NO_VM=1 & tenth\target\release\tenth.exe run tenth-lens\tests\fixtures\divergence_callsite_compare.th
+//
+// 注：`use src::gap018_mod::…` 走**脚本自身目录**这条搜索路径（AUDIT-11.4.60(a)），
+// 布局与 tenth-lens 自身一致（`X.th` + `X/src/`）。
+
+use src::gap018_mod::run_direct
+
+fn main() {
+    println("M|start");
+    run_direct();
+    println("M|returned");
+}

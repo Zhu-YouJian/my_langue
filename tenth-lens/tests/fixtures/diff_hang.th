@@ -1,0 +1,19 @@
+// P1 超时用例夹具：**故意卡死**的程序（验证检查器对超时"明确标注、不静默跳过"）
+//
+// 期望行为：默认路径与解释器路径**都会超时**；检查器应输出 `[TIMEOUT] hang … side=… `、
+// 部分输出字节数、退出码 -1，并把该条计入红（退出码 1）——**绝不静默跳过**。
+//
+// 跑法（必须配 --timeout-ms，否则会真的等满默认 20s）：
+//   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_timeout.txt --timeout-ms 1200
+//
+// 注：`while true { }` 是最省事的卡死法；超时由 `command_output_ex` 的 **native 内墙钟**
+// 负责 kill（AUDIT W6），不依赖协作式 deadline。
+
+fn main() {
+    println("HANG|start");
+    let mut i = 0;
+    while true {
+        i = i + 1;
+    };
+    println("HANG|unreachable");
+}

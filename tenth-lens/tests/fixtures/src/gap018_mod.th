@@ -1,0 +1,50 @@
+// 跨路径分歧夹具的**被导入模块**（GAP-018）。放在 `src/` 子目录里，与
+// `divergence_callsite_compare.th` 形成 `X.th` + `X/src/` 的两段式布局——这与
+// tenth-lens 自身（`main.th` + `src/`）以及首次撞到该缺陷时的探针布局一致。
+
+// 派生返回值：局部变量 + 循环算出（非字面量）
+fn calc_two() -> i32 {
+    let mut t = 0;
+    let mut i = 0;
+    while i < 2 {
+        t = t + 1;
+        i = i + 1;
+    };
+    t
+}
+
+// 字面量返回值（对照：不触发）
+fn lit_two() -> i32 {
+    2
+}
+
+// 对照组 2：派生返回值，但**先绑局部**（绕行写法，不触发）
+fn run_bound() {
+    let n = calc_two();
+    let mut i = 0;
+    while i < n {
+        println("BOUND|k=" + format("{}", i));
+        i = i + 1;
+    };
+    println("BOUND|done");
+}
+
+// 对照组 1：字面量返回值直接作比较操作数（不触发）
+fn run_literal() {
+    let mut i = 0;
+    while i < lit_two() {
+        println("LITERAL|k=" + format("{}", i));
+        i = i + 1;
+    };
+    println("LITERAL|done");
+}
+
+// ★触发组：派生返回值直接作比较操作数 —— VM 下第二次求值即 `运行时错误 — 无法比较`
+fn run_direct() {
+    let mut i = 0;
+    while i < calc_two() {
+        println("DIRECT|k=" + format("{}", i));
+        i = i + 1;
+    };
+    println("DIRECT|done");
+}

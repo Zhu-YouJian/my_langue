@@ -1,0 +1,19 @@
+# P1 差分检查器语料 · **非确定输出**（1 条）—— 用 `--repeat 2` 才看得出正确分类
+#
+# 用途：示范「诚实标注」的第三种判决 `NONDET`：被测程序**自己**每次跑输出就不同，
+# 这时**不许**把它冒充成 DIVERGE（那是诬告后端），也**不许**判 PASS。
+# 跑法（项目根，env 必须干净）：
+#   tenth\target\release\tenth.exe run tenth-lens\main.th --diff tenth-lens\corpus\diff_nondet.txt --repeat 2
+# 期望：`[NONDET] json_demo … side=默认路径` + `VERDICT|RED` + 退出码 1。
+#
+# 为什么非确定：`tenth/std/json` 的 `json_encode(HashMap)` 按 **Rust HashMap 迭代序**输出键，
+# 而该序**逐进程随机**（RandomState）⇒ 同一程序同一输入，每次跑键序都不同（VM / 解释器都一样）。
+# 最小复现见 `tenth-lens/corpus/README.md` §三。
+#
+# ★注意：不加 `--repeat`（默认 1）时，本清单会被判 `DIVERGE`——那不是后端分歧，而是
+# **本工具的归因局限**：只跑一次无法区分「后端不同」与「程序本身随机」。
+# 这就是为什么 `--repeat` 存在，也是为什么报告永不使用"正确/错误"字样。
+#
+# 格式：`标签|路径.th|期望`
+
+json_demo|Tenth实例/JSON处理/json_demo.th|clean

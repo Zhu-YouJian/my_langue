@@ -1,0 +1,109 @@
+// tenth-lens/src/observe.th —— **观察层**（显微镜）：归集查询 + 两两比较
+//
+// 拆自 P0 单文件 main.th 的「观察层」分节。本模块是**纯函数**：不读不写任何全局状态，
+// 需要的数据一律由调用方以参数传入（这也是它在多文件拆分后最干净的一层）。
+// 唯一的例外是 `obs_row_of_label`/`obs_reason_of_label` 里构造的空 record——那是**返回值**，
+// 不是状态。
+//
+// 导入方式：`use src::observe::<函数名>`
+
+// key `g|s|p|metric` → span `g|s|p`
+fn obs_span_of_key(key: String) -> String {
+    let f = key.split("|");
+    if f.len() < 3 {
+        key
+    } else {
+        f.get(0) + "|" + f.get(1) + "|" + f.get(2)
+    }
+}
+
+// 在 rows（Vec of [label, record]）里找某来源的 record；找不到返回**空 record**（8 字段）
+fn obs_row_of_label(rows: Vec, label: String) -> Vec {
+    let mut i = 0;
+    while i < rows.len() {
+        if rows.get(i).get(0) == label {
+            return rows.get(i).get(1);
+        };
+        i = i + 1;
+    };
+    let mut empty = Vec::new();
+    empty.push("");
+    empty.push("");
+    empty.push("");
+    empty.push("");
+    empty.push("");
+    empty.push("");
+    empty.push(0.0);
+    empty.push(false);
+    empty
+}
+
+// 在 na_rows（Vec of [label, reason]）里找某来源的 PERF-NA 原因；找不到返回 ""
+fn obs_reason_of_label(na_rows: Vec, label: String) -> String {
+    let mut i = 0;
+    while i < na_rows.len() {
+        if na_rows.get(i).get(0) == label {
+            return na_rows.get(i).get(1);
+        };
+        i = i + 1;
+    };
+    ""
+}
+
+fn obs_label_has_row(rows: Vec, label: String) -> bool {
+    let mut i = 0;
+    while i < rows.len() {
+        if rows.get(i).get(0) == label {
+            return true;
+        };
+        i = i + 1;
+    };
+    false
+}
+
+// 某来源的数值条数（>1 → 自相矛盾）
+fn obs_count_numeric(rows: Vec, label: String) -> i32 {
+    let mut n = 0;
+    let mut i = 0;
+    while i < rows.len() {
+        if rows.get(i).get(0) == label {
+            if rows.get(i).get(1).get(7) {
+                n = n + 1;
+            };
+        };
+        i = i + 1;
+    };
+    n
+}
+
+// 相对偏离（%），以较小值为基准 = 「大的是小的几倍」
+fn obs_dev_between(a: f64, b: f64) -> f64 {
+    let mut lo = a;
+    let mut hi = a;
+    if b > a {
+        hi = b;
+    } else {
+        lo = b;
+    };
+    if lo == hi {
+        return 0.0;
+    };
+    if lo <= 0.0 {
+        return 999999.0;
+    };
+    (hi - lo) / lo * 100.0
+}
+
+fn obs_ratio_between(a: f64, b: f64) -> f64 {
+    let mut lo = a;
+    let mut hi = a;
+    if b > a {
+        hi = b;
+    } else {
+        lo = b;
+    };
+    if lo <= 0.0 {
+        return 0.0;
+    };
+    hi / lo
+}

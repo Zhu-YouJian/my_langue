@@ -1,0 +1,14 @@
+// GAP-018 的**对照组**：同一模块、同一形态，只把"直接比较"换成两种安全写法。
+// 期望：默认路径与 TENTH_NO_VM=1 **输出完全一致、exit 0**（即"分歧只在 DIRECT 形态出现"）。
+//
+// 跑法：
+//   tenth\target\release\tenth.exe run tenth-lens\tests\fixtures\gap018_controls.th
+//   set TENTH_NO_VM=1 & tenth\target\release\tenth.exe run tenth-lens\tests\fixtures\gap018_controls.th
+
+use src::gap018_mod::run_bound
+use src::gap018_mod::run_literal
+
+fn main() {
+    run_bound();
+    run_literal();
+}

@@ -1,0 +1,131 @@
+// tenth-lens/src/util.th —— 通用纯函数层（记录/观察/守卫三层之外的共用工具）
+//
+// 拆自 P0 的单文件 main.th（见 README §五）。本模块**刻意不持有任何顶层 `let`**：
+// 实测「模块级顶层 `let` 不按模块隔离：两个模块声明**同名**全局会静默别名成同一个
+// 全局」——见 GAPS.md GAP-015（本次多文件 dogfood 撞出来的缺口）。
+// 因此全项目约定：每个模块的顶层全局一律加模块前缀（REC_/OBS_ 无/GRD_/RUN_/DIF_），
+// 且 util 层做成无状态纯函数。
+//
+// 导入方式（脚本为 tenth-lens/main.th 时）：`use src::util::<函数名>`
+
+// 两位小数的定点格式化（P0 报告里 dev/tol 的既有格式，勿改）
+fn utl_fmt2(v: f64) -> String {
+    format("{:.2f}", v)
+}
+
+// 整数转字符串（避免到处写 format("{}", x)）
+fn utl_int(n: i32) -> String {
+    format("{}", n)
+}
+
+// 单行化：把 CR/LF 转义成字面 `\r` / `\n`（报告是逐行文本，必须保持一行一案）
+fn utl_flatten(s: String) -> String {
+    let r = s.replace("\r", "\\r");
+    r.replace("\n", "\\n")
+}
+
+// 字符数。**注意语义**：实测 Tenth 的 `str.len()` 是**字符数**而非字节数
+// （`"中".len() == 1`），故此处如实命名为 chars；字节数见 utl_bytes。见 GAPS.md GAP-016。
+fn utl_chars(s: String) -> i32 {
+    s.len()
+}
+
+// UTF-8 字节数（既有 native `str_to_bytes`）
+fn utl_bytes(s: String) -> i32 {
+    str_to_bytes(s).len()
+}
+
+// 空 Vec 构造（避免调用方直接写 Vec::new() 时被类型推断成别的东西）
+fn utl_empty() -> Vec {
+    Vec::new()
+}
+
+// 把 Vec 的第 i 个元素取值成 String（越界返回空串，不抛）
+fn utl_at(v: Vec, i: i32) -> String {
+    if i < 0 {
+        ""
+    } else {
+        if i >= v.len() {
+            ""
+        } else {
+            let x = v.get(i);
+            x
+        };
+    }
+}
+
+// Vec 的第 i 个元素按 i32 取（越界返回 0）
+fn utl_at_int(v: Vec, i: i32) -> i32 {
+    if i >= 0 {
+        if i < v.len() {
+            let x = v.get(i);
+            return x;
+        };
+    };
+    0
+}
+
+// 两段文本的首个**差异行号**：完全一致返回 -1。
+// 用途：DIVERGE 报告给出可定位的最小证据（不需要子串 API——Tenth 暂无切片，
+// 故按行定位后再整行贴出；行内定位不可得这一点见 GAPS.md GAP-017）。
+fn utl_first_diff_line(a: String, b: String) -> i32 {
+    let la = a.split("\n");
+    let lb = b.split("\n");
+    let mut i = 0;
+    while i < la.len() {
+        if i >= lb.len() {
+            return i;
+        };
+        let xa = la.get(i);
+        let xb = lb.get(i);
+        if xa != xb {
+            return i;
+        };
+        i = i + 1;
+    };
+    if lb.len() > la.len() {
+        return la.len();
+    };
+    -1
+}
+
+// 取第 i 行（越界返回 "<no-line>"）
+fn utl_line_at(s: String, i: i32) -> String {
+    let l = s.split("\n");
+    if i < 0 {
+        return "<no-line>";
+    };
+    if i >= l.len() {
+        return "<no-line>";
+    };
+    let x = l.get(i);
+    x
+}
+
+fn utl_join_lines(v: Vec, sep: String) -> String {
+    let mut out = "";
+    let mut i = 0;
+    while i < v.len() {
+        let x = v.get(i);
+        if i > 0 {
+            out = out + sep;
+        };
+        out = out + x;
+        i = i + 1;
+    };
+    out
+}
+
+// 报告产物路径红线（章程 §三：运行产物不得写进 tenth-lens/）
+fn utl_out_path_forbidden(p: String) -> bool {
+    if p.starts_with("tenth-lens") {
+        return true;
+    };
+    if p.starts_with("tenth-lens/") {
+        return true;
+    };
+    if p.starts_with("tenth-lens\\") {
+        return true;
+    };
+    false
+}
