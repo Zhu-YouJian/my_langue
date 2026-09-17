@@ -1,6 +1,6 @@
 //! Stage 3+4 TCP/HTTP 原语集成测试。
 //!
-//! 覆盖 5 个 TCP native + 2 个 HTTP native：
+//! 覆盖 TCP native（客户端 5 个 + 服务端 3 个：`tcp_listen` / `tcp_accept` / `tcp_listener_close`）+ 2 个 HTTP native：
 //! - `tcp_connect(host: String, port: i64)` → `Result<i64>`（返回 1-based handle）
 //! - `tcp_read(handle: i64, n: i64)` → `Result<Vec<i64>>`（读最多 n 字节）
 //! - `tcp_write(handle: i64, data: Vec<i64>)` → `Result<i64>`（返回写入字节数）

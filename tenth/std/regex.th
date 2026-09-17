@@ -28,7 +28,7 @@ fn compile(pattern: String) -> Result<i64> {
     regex_compile(pattern)
 }
 
-/// 全匹配检查，返回 bool
+/// 部分匹配检查，返回 bool（内部用 regex crate 的 is_match：不锚定全串，子串命中即为 true）
 fn match_(handle: i64, input: String) -> bool {
     regex_match(handle, input)
 }

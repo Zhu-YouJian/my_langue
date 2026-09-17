@@ -31,8 +31,8 @@
 
 Tenth 是一门面向 AI/ML 研究的编程语言，核心特性包括：
 
-- **张量级自动微分**：内置 21 个算子的反向传播全链路，支持 `new_grad()` / `param()` / `backward()` / `grad()` 等控制函数
-- **双执行引擎**：字节码 VM（默认，65 指令）+ 树遍历解释器（fallback）
+- **张量级自动微分**：内置 `TapeOp` 枚举中全部算子的反向传播全链路（清单见 `docs/语言参考手册.md` §11.5，SSOT＝`tenth/src/runtime/autodiff/tape_op.rs`；本文件不硬编码计数），支持 `new_grad()` / `param()` / `backward()` / `grad()` 等控制函数
+- **双执行引擎**：字节码 VM（默认；指令集口径＝`tenth/src/runtime/vm/op.rs` 的 `enum Op` 变体数，本文件不硬编码计数）+ 树遍历解释器（fallback）
 - **WASM 编译**：通过 `wasm-encoder` 生成 WASM 字节码，`wasmi` 执行验证
 - **自举编译器**：用 Tenth 自身编写的编译器（`tenthc/`），经三阶段验证闭环
 - **闭包捕获**：闭包自动捕获外层作用域变量，支持单变量和多变量捕获
@@ -366,12 +366,14 @@ pub struct HirProgram {
 | `optimizations/fusion.rs` | 算子融合：FusionPass（合并连续算子减少内存带宽） |
 | `optimizations/parallel.rs` | 自动并行：ParallelPass（识别独立算子并行执行） |
 
-#### 字节码 VM 指令集（65 条）
+#### 字节码 VM 指令集（`enum Op` 全量）
+
+> **口径（as-of 2026-09-17）**：下列清单**逐行抄录** `tenth/src/runtime/vm/op.rs` 的 `pub enum Op`（`:8`–`:57`），按源码原有的分组注释排列；变体个数以**该源码文件**为 SSOT，本文件**不硬编码计数**（历史版本曾写“65 条”与“节选 45/65”，均已下线）。注释为摘要，完整注释见源码。
 
 ```rust
 pub enum Op {
-    // 常量压栈
-    PushInt(i64, BaseType), PushFloat(f64), PushBool(bool), PushStr(usize), PushUnit,
+    // 常量压栈（PushInt 携带 dtype tag，见 AUDIT-11.4.53）
+    PushInt(i64, crate::hir::types::BaseType), PushFloat(f64), PushFloat32(f32), PushBool(bool), PushChar(u32), PushStr(usize), PushUnit,
     // 栈操作
     Pop, Dup,
     // 局部变量
@@ -389,13 +391,36 @@ pub enum Op {
     // 数据结构
     MakeVec(usize), MakeMap(usize),
     NewStruct(usize, usize), LoadField(usize), StoreField(usize),
-    IndexGet, SliceStr,
-    MakeEnum(usize, usize, usize), IsEnumVariant(usize), EnumGetField(usize),
-    PushRange(i64, i64, bool), MoveOp,
-    // v0.3.1 新增
-    MakeTensor(usize, usize, u8),    // rows, cols, dtype(0=F64,1=F32) — 弹出 rows*cols 个值
-    MakeClosure(usize, usize, usize), // params_count, captures_count, chunk_idx — 创建闭包值
-    // 注：本代码块为**节选**（列 45 / 共 65 条）；完整定义见 tenth/src/runtime/vm/op.rs
+    NewUnion(usize, usize),        // M1.2：union 构造 — name_idx, active_field_idx
+    IndexGet,
+    SliceStr,
+    MakeEnum(usize, usize, usize),
+    IsEnumVariant(usize),
+    EnumGetField(usize),
+    IsStruct(usize),
+    PushRange(i64, i64, bool),     // start, end, inclusive
+    MoveOp,                        // no-op marker for move semantics
+    MakeTensor(usize, usize, u8),  // rows, cols, dtype (0=F64, 1=F32) — pops rows*cols values
+    MakeClosure(usize, usize, usize), // params_count, captures_count, chunk_idx
+    Await,
+    Spawn,
+    MakeTuple(usize),              // n — pops n values, pushes Value::Tuple
+    IsTuple(usize),                // expected_len — pops value, pushes Bool(is Tuple with len)
+    TupleGet(usize),               // index — pops Tuple, pushes element at index
+    Try,                           // pops Result; Ok(v) → push v; Err(e) → early return TryPropagate(e)
+    Yield,                         // 协作式调度：让出控制权，当前 task 回到 ready_queue 尾部
+    TailCall(usize, usize),        // TCO：函数名索引 + 参数数量 — 复用当前帧替换 PC 和 slot
+    // a1（VM 闭包值调用 / CallIndirect）P1：编码 57/58 追加在尾部
+    CallClosure(usize),            // 参数数量 n — 弹 callee + N 参数 → 压新帧调用
+    TailCallClosure(usize),        // TCO：同上但复用当前帧；JIT 不支持 → fallback VM
+    // AUDIT-11.4.21（&mut 写回顺序失效）：引用语义 opcodes（编码 59-62 追加在尾部）
+    MakeRef,                       // 弹值 → Value::Ref(Rc(RefCell(v)))
+    MakeMutRef(usize),             // slot — locals[slot] 包装/复用 Shared 回写槽位，压 Value::MutRef(Weak)
+    Deref,                         // 弹值；Ref/MutRef 读穿，其他透传（VM 宽松）
+    DerefStore,                    // 栈 [value, target] — target 为 MutRef/Ref 写穿，其他报错
+    // M1-S2（true letrec）：递归闭包自引用 cell opcodes（编码 63/64 追加在尾部）
+    MakeCell,                      // 压 Value::Shared(Rc(RefCell(Unit)))——自引用占位 cell
+    BindSelfCapture(usize),        // 弹 FnRef → 其 captures[k] 为 Shared cell → 写入自身 → 压回
 }
 ```
 
@@ -825,26 +850,42 @@ LSP 服务器为编辑器（VS Code 等）提供语言智能功能，基于 LSP 
 
 **位置**：`tenth/std/`
 
+> **口径（as-of 2026-09-17）**：本树按 `tenth/std/` **磁盘实况** + `tenth/std/prelude.th` 索引（`:154`–`:256`）整理；顶层文件/目录清单与模块计数以这两处为 **SSOT**，本文件**不硬编码计数**。`test_*.th` 为模块内测试，不是用户 API。
+
 ```
 tenth/std/
-├── nn/          ← 神经网络（linear, loss, activations, dropout, batchnorm, conv2d, embedding, attention, multihead_attention, layer_norm, positional_encoding, feedforward, transformer_encoder_block）
-├── optim/       ← 优化器（SGD, Adam, AdaGrad, RMSProp）
-├── data/        ← 数据加载（DataLoader, MNIST 加载器）
+├── nn/          ← 神经网络（activations, attention, batchnorm, conv, dropout, embedding, feedforward, layer_norm, linear, loss, multihead_attention, ops, pool, positional_encoding, transformer）
+├── optim/       ← 优化器（sgd, adam, adamw, nadam, radam, lion, adagrad, rmsprop, clip, accumulate, lr_schedule）
+├── data/        ← 数据加载（dataloader, mnist, csv, sampler）
 ├── init/        ← 初始化（xavier_uniform/xavier_normal/he_normal/he_uniform/zeros_init/constant_init）
-├── collections/ ← 迭代器与集合（iter map/filter/reduce, flat_map/partition）
-├── string/      ← 字符串工具（join_lines/join_comma/repeat_sep/indent/word_wrap/capitalize）
-├── utils/       ← 工具（序列化 save_model/load_model, math min/max/clamp）
+├── collections/ ← 迭代器与集合（iter map/filter/reduce, flat_map/partition, hashset）
+├── string/      ← 字符串工具（join_lines/join_comma/repeat_sep/indent/word_wrap/capitalize, string_builder）
+├── utils/       ← 工具（serialization save_model/load_model, math min/max/clamp）
 ├── fs/          ← 文件系统（exists/is_file/is_dir/mkdir/list_dir/remove/copy）
-├── json/        ← JSON 编解码（encode/decode/encode_pretty/load/save）
+├── json/        ← JSON（parse/stringify/stringify_pretty/load/save）
 ├── toml/        ← TOML 解析
 ├── cli/         ← 命令行参数处理
 ├── logging/     ← 日志（debug/info/warn/error + set_level）
 ├── time/        ← 时间（now/now_ms/date/datetime/sleep_ms/timer）
-├── random/      ← 随机数（rand_int/rand_float/choice/shuffle）
-├── math/        ← 数学函数与常量
-├── runtime.th   ← 资源限制（with_step_limit/with_timeout_ms）
+├── random/      ← 随机数（rand_int/rand_float/rand_range/choice/shuffle/rand_seed）
+├── math/        ← 数学函数与常量（functions / stats / constants）
+├── crypto/      ← 哈希 wrapper（hash.th：sha256_hex / sha512_hex / md5_hex）
+├── distributed/ ← 分布式本地语义（distributed.th：make_replicas / all_reduce_sum / all_reduce_mean / param_average）
+├── io.th        ← 标准流（包装 eprint/eprintln/read_line）
+├── env.th       ← 环境变量与进程退出（get/get_result/get_or_empty/set/exit）
+├── net.th       ← TCP 客户端 + 服务端包装（connect/read/write/close/set_timeout/listen/accept/listener_close；UDP 直接用 udp_* native，无包装）
+├── http.th      ← HTTP/1.1 客户端（get/post）
 ├── process.th   ← 子进程（new/arg/run/output/output_ex）
-└── prelude.th   ← 可用项总目录
+├── regex.th     ← 正则表达式（compile/match_/find/find_all/replace/split；句柄表）
+├── async.th     ← 异步 I/O（async_sleep_ms/async_tcp_read/async_tcp_write）
+├── date.th      ← Date 类型（date_new/date_add_days/date_diff/date_weekday …）
+├── duration.th  ← Duration 类型（纳秒精度；duration_from_secs/duration_add/duration_to_string …）
+├── autograd.th  ← 自定义可微算子 wrapper（call_custom_op1/2/3）
+├── curry.th     ← 柯里化 / 部分应用 / 函数组合（partial/curry/compose）
+├── runtime.th   ← 执行约束器（with_step_limit/with_timeout_ms；run_with_limit/run_with_timeout）
+├── test_date.th     ← 模块内测试（非用户 API）
+├── test_runtime.th  ← 模块内测试（非用户 API）
+└── prelude.th   ← 可用项总目录（模块/函数清单 SSOT）
 ```
 
 ### prelude.th 内容
