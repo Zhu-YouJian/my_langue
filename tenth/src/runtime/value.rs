@@ -735,3 +735,41 @@ impl fmt::Display for Value {
         write!(f, "{}", value_to_display_string(self))
     }
 }
+
+/// 字符串切片（**码点**语义 + **严格**边界）的单一权威实现。
+///
+/// AUDIT-11.4.89 / 11.4.93：同一件事此前有 4 份手写实现且语义分歧——
+/// 解释器 `s[a..b]` 严格报错、VM/JIT `s[a..b]` **静默 clamp**
+/// （`s[0..99]` 得 `"hello"`）、`str_slice(s,a,b)` 在 VM/解释器根本没有实现。
+/// 现四处（解释器索引、VM opcode 37、`Vm::slice_str`（含 JIT hostcall）、
+/// 双端 `str_slice` native）统一委托本函数。
+///
+/// 语义（对外权威口径）：
+/// - **码点**（`chars()`）计数与切片：与 `.len()` / `s[i]` / WASM `str_at` 现状一致；
+/// - 闭开区间 `[start, end)`；
+/// - `end == i64::MAX` 是 bytecode 的**开放端哨兵**（`s[a..]` 编译为 `a..i64::MAX`）
+///   ⇒ 等价于码点长度（糖，不是越界）；
+/// - 越界（`> len`）/ 负索引 / `start > end` ⇒ `Err(原因)`，**绝不 clamp**
+///   （clamp 会让调用方拿到"看起来合理实则错位"的结果 = 静默错值）。
+pub fn str_slice_codepoints(s: &str, start: i64, end: i64) -> Result<String, String> {
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len() as i64;
+    // 开放端哨兵（`s[a..]`）：bytecode 压 i64::MAX。
+    let end = if end == i64::MAX { len } else { end };
+    if start < 0 {
+        return Err(format!("字符串切片不支持负索引：start={}", start));
+    }
+    if end < 0 {
+        return Err(format!("字符串切片不支持负索引：end={}", end));
+    }
+    if start > len || end > len {
+        return Err(format!(
+            "字符串切片 {}..{} 越界（长度为 {} 个码点）",
+            start, end, len
+        ));
+    }
+    if start > end {
+        return Err(format!("字符串切片起始位置大于结束位置：{}..{}", start, end));
+    }
+    Ok(chars[start as usize..end as usize].iter().collect())
+}

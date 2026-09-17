@@ -650,19 +650,18 @@ impl Vm {
         }
     }
     pub fn slice_str(&mut self, target: &Value, start: &Value, end: &Value) -> TenthResult<Value> {
-        let start_idx = start.as_int().unwrap_or(0) as usize;
-        let end_idx = end.as_int().unwrap_or(0) as usize;
+        // AUDIT-11.4.89（红线级跨路径分歧 + 静默错值）：此前这里 `start.min(len)` /
+        // `end.min(len)` **静默 clamp**（`"hello"[0..99]` 静默得 `"hello"`），而解释器
+        // 对同一源码响亮报错 ⇒ 同一程序两路径不同结果。现与解释器、以及
+        // `str_slice(s,a,b)` native 统一委托**单一权威** `str_slice_codepoints`
+        // （码点语义 + 严格边界，开放端哨兵 i64::MAX ⇒ 到末尾）。
+        // JIT 的 `host_slice_str` 也走本函数 ⇒ 三条执行路径语义一致。
+        let start_i = start.as_int().unwrap_or(0);
+        let end_i = end.as_int().unwrap_or(0);
         match target {
-            Value::String(s) => {
-                let chars: Vec<char> = s.chars().collect();
-                let len = chars.len();
-                let si = start_idx.min(len);
-                let ei = end_idx.min(len);
-                if si > ei {
-                    return Err(TenthError::RuntimeError { line: None, col: None, message: "字符串切片起始位置大于结束位置".into() });
-                }
-                Ok(Value::String(chars[si..ei].iter().collect()))
-            }
+            Value::String(s) => crate::runtime::value::str_slice_codepoints(s, start_i, end_i)
+                .map(Value::String)
+                .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg }),
             _ => Err(TenthError::RuntimeError { line: None, col: None, message: "SliceStr 需要字符串目标".into() }),
         }
     }

@@ -137,6 +137,26 @@ const CASES: &[Case] = &[
         src: "fn f(seed: i64) -> i64 { let g = |u: i64| { let mut m = u; m = m + 1; m }; g(seed) }",
         expect: quiet(),
     },
+    // ── 11.4.89 ③（与 Rust 前端同步）：索引里的含端点范围 `..=` 在 tenthc 侧也必须
+    //    响亮拒绝。此前 tenthc 的 parser 保留了 inclusive 标志（parser.th 的 slice
+    //    分支 `ival`），但 wasm.th 的 slice 代码生成**从不读它**（只发
+    //    str_slice(t, start, end)）⇒ 与 Rust 前端同型的「静默丢 '=' 得错值」。
+    //    现在解析阶段计一次 parse_error_count ⇒ compile_to_wasm 打印「编译中止」
+    //    并返回**空产物**（本文件 11.4.57 已经用过这个唯一物理出口）。
+    Case {
+        group: "11489",
+        name: "index_inclusive_range_rejected",
+        src: "fn f() -> i64 { let s = \"hello\"; let t = s[0..=2]; str_len(t) }",
+        expect: empty_product("编译中止"),
+    },
+    // 对照组（同源、只把 `..=` 换成 `..`）：必须安静 + 产物有效 —— 否则上面那条
+    // "产物为空" 可能来自无关错误（假绿）。
+    Case {
+        group: "11489",
+        name: "index_exclusive_range_control",
+        src: "fn f() -> i64 { let s = \"hello\"; let t = s[0..2]; str_len(t) }",
+        expect: quiet(),
+    },
     // ── 11.4.72：只借这条用例触发 Rust 侧 compile_function 日志 ──
     Case {
         group: "72",
@@ -384,6 +404,15 @@ fn tenthc_loud_11_4_58_unbound_name_four_sites() {
 #[test]
 fn tenthc_loud_11_4_59_capture_write_is_loud_and_stack_balanced() {
     assert_group("59");
+}
+
+/// AUDIT-11.4.89 ③（跨编译器同型静默错值，与 Rust 前端同步）：索引 `..=` 的
+/// `=` 此前在 tenthc 侧也被静默丢掉（parser 收了 `inclusive` 标志，wasm 代码生成
+/// 从不读它）⇒ `s[0..=2]` 静默得 `s[0..2]`。现在解析阶段计错误 ⇒ 产物为空；
+/// 同组对照组（`..`，同源）必须安静且产物有效（排除"因无关错误而空"的假绿）。
+#[test]
+fn tenthc_loud_11_4_89_index_inclusive_range_rejected() {
+    assert_group("11489");
 }
 
 /// AUDIT-11.4.72：`[WASM] compile` 刷屏改为受 `TENTH_WASM_VERBOSE` 控制。

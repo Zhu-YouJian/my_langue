@@ -518,7 +518,19 @@ impl BytecodeCompiler {
                             }
                             self.chunk.emit(Op::SliceStr);
                         }
-                        _ => {}
+                        crate::hir::hir::Index::Colon => {
+                            // AUDIT-11.4.96（**红线级静默错值**）：此前这里是 `_ => {}`
+                            // ——Colon 下标**静默不发射任何指令** ⇒ `t[:]` 在 VM 上静默
+                            // 得到"张量本身"，而解释器静默得到 `t[0]`（跨路径分歧）。
+                            // parser 现在已在语法层响亮拒绝 Colon 下标（`parser/expr.rs`），
+                            // 本臂仅作**纵深防御**（HIR 由 bridge/上游直接构造时仍可能到达）：
+                            // 用负哨兵起始的 SliceStr 让它在**运行时响亮报错**（张量/容器
+                            // 目标报 "SliceStr 需要字符串目标"，字符串目标报负索引不支持），
+                            // 绝不静默。
+                            self.chunk.emit(Op::PushInt(-1, crate::hir::types::BaseType::I32));
+                            self.chunk.emit(Op::PushInt(i64::MAX, crate::hir::types::BaseType::I32));
+                            self.chunk.emit(Op::SliceStr);
+                        }
                     }
                 }
             }

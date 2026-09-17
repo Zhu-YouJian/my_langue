@@ -831,6 +831,69 @@ impl Lowerer {
                 "iter" => Type::Unknown,
                 _ => Type::Unknown,
             },
+            // AUDIT-11.4.78（**窄修**，总师裁定）：`Vec<T>` **注解**解析为
+            // `Type::Generic { base: TypeParam("Vec"), args: [T] }`（`TA::Generic → Type`
+            // 只特判 Box/Rc/Arc/Pin/Weak），**不是** `Type::Array` ⇒ 此前
+            // `let v: Vec<i64> = Vec::new(); v.get_opt(0)` 掉进兜底 `_ =>` ⇒ `Unknown`
+            // （内型其实早已在 `args[0]` 里——`index_type` 早就在用，见 `:241-251`）。
+            // ★**不要**动「注解 → Type」全局映射：那会波及 `tenthc/**` 40+ 处 `Vec<T>`
+            // 注解与 `types_compatible` 多分支，收益与本臂完全相同（L3-B 审计的更正）。
+            //
+            // 本臂**逐项镜像上方 `Type::Array` 臂**（同一份信息不再两处漂移），并按总师
+            // 加固条件让 `get`/`pop` **保持 Unknown**（改标 `Option` 会放开 `tenth/std/**`
+            // 约 178 处 `.get(` 的下游解析，风险远超收益，见 `:823-824`）。
+            // 末 9 个方法名是 L3-B 附录 A5 的同族缺口（运行时早已双路径实现，只差静态标注）。
+            // ★**必须带守卫**：只拦 `base == TypeParam("Vec")` 的 Generic。若写成无守卫的
+            // `Type::Generic { .. }` 臂，用户自定义泛型 struct（如 typestate 的
+            // `File<Open>`）也会被拦下 ⇒ `find_inherent_method` 永不被调用 ⇒
+            // `f.close().reopen()` 报「未知的方法 'reopen'」（call_arg_type_check_test
+            // 的 typestate_method_chain_regression 会红）。非 Vec 的 Generic 继续落到
+            // 下方 `_ =>` 兜底（先查用户方法表）。
+            Type::Generic { base, args }
+                if matches!(base.as_ref(), Type::TypeParam { name } if name == "Vec") =>
+            {
+                let inner = args.first().cloned().unwrap_or(Type::Unknown);
+                match method {
+                    "len" => Type::Base(BaseType::I64),
+                    "push" => Type::unit(),
+                    // 有意保持 Unknown（加固条件，见上）
+                    "pop" | "get" => Type::Unknown,
+                    "get_opt" | "try_get" => Type::Generic {
+                        base: Box::new(Type::Enum("Option".to_string())),
+                        args: vec![inner.clone()],
+                    },
+                    "map" | "filter" => Type::Array { inner: Box::new(inner), size: None },
+                    "is_empty" | "contains" => Type::bool_(),
+                    // `slice`/`reverse` 运行期返回新 Vec（clamp 语义，与字符串切片的严格
+                    // 语义不同；本波只补静态标注，语义收敛另案），静态标同内型容器。
+                    "slice" | "reverse" => Type::Array { inner: Box::new(inner), size: None },
+                    "join" => Type::str_(),
+                    // 运行期返回下标，未找到为 -1（不是 Option）——与双端实现一致
+                    "index_of" => Type::Base(BaseType::I64),
+                    "remove" => inner,
+                    "set" | "clear" | "extend" => Type::unit(),
+                    "iter" => Type::Unknown,
+                    _ => Type::Unknown,
+                }
+            }
+            // 裸 `-> Vec`（`TypeParam { name: "Vec" }`，如 `load_weights(...) -> Vec`）：
+            // 内型不可知，仅补出"方法存在且返回什么形状"，避免调用链再次静默退化。
+            Type::TypeParam { name } if name == "Vec" => match method {
+                "len" => Type::Base(BaseType::I64),
+                "push" | "set" | "clear" | "extend" => Type::unit(),
+                "get_opt" | "try_get" => Type::Generic {
+                    base: Box::new(Type::Enum("Option".to_string())),
+                    args: vec![Type::Unknown],
+                },
+                "is_empty" | "contains" => Type::bool_(),
+                "slice" | "reverse" | "map" | "filter" => {
+                    Type::Array { inner: Box::new(Type::Unknown), size: None }
+                }
+                "join" => Type::str_(),
+                "index_of" => Type::Base(BaseType::I64),
+                // `get`/`pop` 同样保持 Unknown（加固条件）
+                _ => Type::Unknown,
+            },
             // 问题29：智能指针容器方法（Box/Rc/Arc/Pin 双侧：VM call_method_priv 与
             // 解释器 eval_smart_ptr_method 运行时语义一致）
             Type::HeapBox(inner) | Type::SharedBox(inner) | Type::AtomicBox(inner) | Type::Pin(inner) => {
@@ -954,6 +1017,11 @@ impl Lowerer {
             "zeros_bf16" | "ones_bf16" => Ok(Type::tensor(BaseType::BF16, vec![Dim::Any])),
             "read_file" => Ok(Type::str_()),
             "str_at" => Ok(Type::str_()),
+            // AUDIT-11.4.89 ① / 11.4.93：`str_slice`/`str_len` 落 VM/解释器注册的同时
+            // 补上静态返回类型（否则调用点落 `_ => Ok(Type::Unknown)` ⇒ 静默类型退化，
+            // 与 `11.4.78` 同族）。`str_len` 与 `s.len()` 一致标 I64。
+            "str_slice" => Ok(Type::str_()),
+            "str_len" => Ok(Type::Base(BaseType::I64)),
             "write_file" | "write_bytes" => Ok(Type::unit()),
             "Vec::new" => Ok(Type::Array { inner: Box::new(Type::Unknown), size: None }),
             "HashMap::new" => Ok(Type::Unknown),

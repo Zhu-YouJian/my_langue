@@ -774,6 +774,21 @@ fn parse_postfix(p: &mut Parser) -> i64 {
                 let start_expr = p.expr_nodes[first_expr - 1].left;
                 let end_expr = p.expr_nodes[first_expr - 1].right;
                 let inclusive = p.expr_nodes[first_expr - 1].ival;
+                // AUDIT-11.4.89 ③（跨编译器同型的**静默错值**）：与 Rust 前端同步——
+                // 索引里的含端点范围 `..=` 四后端都没实现（tenthc 侧 wasm.th 的 slice
+                // 代码生成只发 str_slice(t, start, end)，**从不读**这个 inclusive 标志）
+                // ⇒ `s[0..=2]` 会静默等于 `s[0..2]`。这里改**响亮拒绝**：把
+                // p.error_count 加一 ⇒ Program.parse_error_count 非零 ⇒ compile_to_wasm
+                // 打印 "[tenthc] 编译中止：…" 并返回空产物（唯一物理出口，见本文件头部
+                // AUDIT-11.4.57 的说明）。
+                // 刻意**不**调用 record_error_and_recover：它的 synchronize 会在方括号
+                // 表达式内部跳 token，可能把后续解析带进不一致状态；而此处一旦计数非零
+                // 整个编译就中止，恢复无意义。也不要顺手实现含端点语义（对外语义新增，
+                // 待用户裁定）。
+                if inclusive != 0 {
+                    p.errors.push("索引不支持含端点范围 '..='（会被静默丢成 '..'；请改写为 a..b）");
+                    p.error_count = p.error_count + 1;
+                };
                 let idx = add_expr(p, "slice");
                 p.expr_nodes[idx - 1].left = expr_idx;
                 p.expr_nodes[idx - 1].right = start_expr;

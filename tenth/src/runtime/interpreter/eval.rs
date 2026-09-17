@@ -141,6 +141,11 @@ impl super::Interpreter {
                             // M3.4：Weak 弱引用 native（Weak::new 含 :: 走上方 FnRef 路径，自动覆盖）
                             | "weak_upgrade" | "weak_strong_count" | "weak_weak_count"
                             // B批：字符串/文本处理 native
+                            // AUDIT-11.4.89 ① / 11.4.93：字符串 native `str_at`/`str_len`/
+                            // `str_slice` 本波落 VM/解释器注册——解释器的**变量解析**
+                            // 也必须放行这些名字（否则调用点先报「未定义变量」，
+                            // 根本走不到 `call_named_fn` 的分派臂）。
+                            | "str_at" | "str_len" | "str_slice"
                             | "unicode_nfc" | "unicode_nfd"
                             | "str_to_utf16" | "utf16_to_str"
                             | "str_to_bytes" | "bytes_to_str"

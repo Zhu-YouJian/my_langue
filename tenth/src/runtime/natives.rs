@@ -3000,6 +3000,74 @@ pub fn register_all_natives(vm: &mut Vm) {
         })
     });
 
+    // AUDIT-11.4.89 ① / 11.4.93：`str_slice` / `str_len` / `str_at` 是**语言级名字**
+    // （前端白名单早已放行，`tenthc/**` 全仓 30+ 处直接调用），但实现只在 WASM host 层
+    // ⇒ VM/解释器路径调用它们即"未定义函数"。此处补 VM 侧注册（解释器侧同名同语义，
+    // 两处逐字对齐；均由 `value::str_slice_codepoints` 承担语义，避免再抄一份）。
+    //
+    // 语义（总师裁定，与 `s[a..b]` 语法、`.len()`、WASM `str_at` 现状一致）：
+    // - **Unicode 码点**（不是字节）；
+    // - **严格索引**：越界 / 负索引 / `start > end` ⇒ 响亮 RuntimeError（不 clamp）；
+    // - `str_slice(s, start, end)` 为闭开区间 `[start, end)`；`end` 省略时用 `s.len()`。
+    vm.add_native("str_slice".into(), |_vm, args| {
+        if args.len() < 3 {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "str_slice(s, start, end) 期望 3 个参数".into(),
+            });
+        }
+        match (&args[0], args[1].as_int(), args[2].as_int()) {
+            (Value::String(s), Some(start), Some(end)) => {
+                crate::runtime::value::str_slice_codepoints(s, start, end)
+                    .map(Value::String)
+                    .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })
+            }
+            (Value::String(_), _, _) => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "str_slice(s, start, end) 的 start/end 必须是整数".into(),
+            }),
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "str_slice(s, start, end) 的第一个参数必须是字符串".into(),
+            }),
+        }
+    });
+    // str_len(s) — 码点数（与解释器/VM 的 `s.len()` 同源同 dtype）
+    vm.add_native("str_len".into(), |_vm, args| {
+        match args.first() {
+            Some(Value::String(s)) => Ok(Value::Int(s.chars().count() as i64, BaseType::I32)),
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "str_len(s) 期望一个字符串参数".into(),
+            }),
+        }
+    });
+    // str_at(s, i) — 第 i 个**码点**（返回单字符字符串）；越界/负索引响亮报错
+    vm.add_native("str_at".into(), |_vm, args| {
+        if args.len() < 2 {
+            return Err(TenthError::RuntimeError { line: None, col: None,
+                message: "str_at(s, i) 期望 2 个参数".into(),
+            });
+        }
+        match (&args[0], args[1].as_int()) {
+            (Value::String(s), Some(i)) => {
+                if i < 0 {
+                    return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: format!("字符串索引不支持负索引：{}", i),
+                    });
+                }
+                let len = s.chars().count() as i64;
+                s.chars().nth(i as usize)
+                    .map(|c| Value::String(c.to_string()))
+                    .ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
+                        message: format!("字符串索引 {} 越界（长度为 {} 个码点）", i, len),
+                    })
+            }
+            (Value::String(_), None) => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "str_at(s, i) 的 i 必须是整数".into(),
+            }),
+            _ => Err(TenthError::RuntimeError { line: None, col: None,
+                message: "str_at(s, i) 的第一个参数必须是字符串".into(),
+            }),
+        }
+    });
+
     // 16. parse_int(s) — 字符串→整数（解析失败返回 0，与解释器一致）
     vm.add_native("parse_int".into(), |_vm, args| {
         if let Some(Value::String(s)) = args.first() {

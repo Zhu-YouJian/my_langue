@@ -1,4 +1,4 @@
-﻿//! 索引操作。
+//! 索引操作。
 //!
 //! 从 `interpreter.rs` 第 3101-3212 行迁移而来。包含 `eval_index`，
 //! 处理 String / Tensor / Vec 的下标与切片访问。
@@ -32,32 +32,31 @@ impl super::Interpreter {
                     }
                     Index::Range { start, end } => {
                         let s_val = s.clone();
-                        let start_idx = match start {
+                        let start_i = match start {
                             Some(e) => {
                                 let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                     message: "范围起始为空值".into(),
                                 })?;
-                                v.as_int().unwrap_or(0) as usize
+                                v.as_int().unwrap_or(0)
                             }
                             None => 0,
                         };
-                        let end_idx = match end {
+                        let end_i = match end {
                             Some(e) => {
                                 let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
                                     message: "范围结束为空值".into(),
                                 })?;
-                                v.as_int().unwrap_or(0) as usize
+                                v.as_int().unwrap_or(0)
                             }
-                            None => s_val.chars().count(),
+                            None => s_val.chars().count() as i64,
                         };
-                        let chars: Vec<char> = s_val.chars().collect();
-                        if start_idx > chars.len() || end_idx > chars.len() || start_idx > end_idx {
-                            return Err(TenthError::RuntimeError { line: None, col: None,
-                                message: format!("字符串切片 {}..{} 越界", start_idx, end_idx),
-                            });
-                        }
-                        let slice: String = chars[start_idx..end_idx].iter().collect();
-                        Ok(Value::String(slice))
+                        // AUDIT-11.4.89 / 11.4.93：字符串切片的单一权威实现与 VM/JIT/
+                        // `str_slice` native 共用（码点 + 严格：越界/负索引/start>end 一律
+                        // 响亮报错，不再各自手写一份）。此前 `as usize` 会把 `-1` 变成
+                        // `usize::MAX`（报错文案里出现 18446744073709551615）。
+                        crate::runtime::value::str_slice_codepoints(&s_val, start_i, end_i)
+                            .map(Value::String)
+                            .map_err(|msg| TenthError::RuntimeError { line: None, col: None, message: msg })
                     }
                     _ => Err(TenthError::RuntimeError { line: None, col: None,
                         message: "字符串索引必须是整数或范围".into(),
@@ -70,7 +69,7 @@ impl super::Interpreter {
                 let ndim = shape.len();
                 // 收集 Single 索引；Range/Colon 暂按 0 处理（保持原行为）。
                 let mut idx: Vec<usize> = Vec::new();
-                for (i, index_expr) in indices.iter().enumerate() {
+                for index_expr in indices.iter() {
                     match index_expr {
                         Index::Single(e) => {
                             let v = self.eval_expr(e)?.ok_or_else(|| TenthError::RuntimeError { line: None, col: None,
@@ -78,10 +77,24 @@ impl super::Interpreter {
                             })?;
                             idx.push(v.as_int().unwrap_or(0) as usize);
                         }
-                        _ => {
-                            if i < ndim {
-                                idx.push(0);
-                            }
+                        // AUDIT-11.4.96（**红线级静默错值**）：此前 Range/Colon 走
+                        // `_ => { if i < ndim { idx.push(0) } }` ⇒ `t[0..2]` / `t[:]`
+                        // **静默等于 `t[0]`**（注释自称"暂按 0 处理，保持原行为"）。
+                        // 张量切片四个后端都没有实现（VM/JIT 的 SliceStr 对张量目标
+                        // 响亮报错、WASM 显式拒绝 `Vec range slicing`）⇒ 本波裁定为
+                        // **响亮拒绝**（实现切片需 AST/HIR 多下标语义 + 四后端，且 JIT
+                        // 属 W10 作业面不可动）——绝不允许继续静默当 0。
+                        Index::Range { .. } | Index::Colon => {
+                            let form = match index_expr {
+                                Index::Colon => ":",
+                                _ => "a..b",
+                            };
+                            return Err(TenthError::RuntimeError { line: None, col: None,
+                                message: format!(
+                                    "张量切片（索引 `{}`）未实现：请改用 index_select(t, dim, idx) 或显式整维索引",
+                                    form
+                                ),
+                            });
                         }
                     }
                 }

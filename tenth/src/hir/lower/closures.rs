@@ -28,7 +28,9 @@ impl Lowerer {
                 match name.as_str() {
                     "println" | "eprintln" | "eprint" | "tensor" | "rand" | "randn" | "randn_f32" | "rand_f32" | "zeros_f32" | "ones_f32"
                     | "zeros_f16" | "ones_f16" | "zeros_bf16" | "ones_bf16"
-                    | "read_file" | "write_file" | "str_at" | "Vec::new" | "HashMap::new"
+                    // AUDIT-11.4.93：`str_len` / `str_slice` 与 `str_at` 同为语言级字符串
+                    // native（本波落 VM/解释器注册）⇒ 闭包体内调用不得被当作自由变量捕获。
+                    | "read_file" | "write_file" | "str_at" | "str_len" | "str_slice" | "Vec::new" | "HashMap::new"
                     | "compile_host" | "compile_program" | "write_bytes"
                     | "read_line" | "env_get" | "env_set" | "exit"
                     // 阶段1-静默失败：Result/Option 显式解包原语（自由函数 native，非枚举方法）

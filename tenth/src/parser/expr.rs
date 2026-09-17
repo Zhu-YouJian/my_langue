@@ -417,8 +417,22 @@ impl Parser {
                                 break;
                             }
                             if matches!(self.peek_kind(), TokenKind::Colon) {
-                                self.advance();
-                                indices.push(IndexExpr::Colon);
+                                // AUDIT-11.4.96（**红线级静默错值**）：`t[:]` 此前能解析，
+                                // 而 `Index::Colon` 在四条路径上都没有实现——VM 的 bytecode
+                                // 对 Colon **静默不发射任何指令**（`t[:]` 静默得张量本身），
+                                // 解释器 `index.rs` 则**静默 push(0)**（`t[:]` 静默得 `t[0]`）
+                                // ⇒ 跨路径分歧 + 静默错值。张量切片四后端均未实现（VM/JIT 的
+                                // SliceStr 对张量响亮报错、WASM 显式拒绝 `Vec range slicing`），
+                                // 本波裁定**响亮拒绝**（实现切片需 AST/HIR 多下标语义 + 四后端，
+                                // 且 JIT 属 W10 作业面不可动）——因此在语法层就响亮报错，
+                                // 不给任何后端留下"静默当 0"的机会。
+                                let tok = self.peek().span.clone();
+                                return Err(TenthError::ParseError {
+                                    line: tok.line,
+                                    col: tok.col,
+                                    message: "索引中的 ':'（Colon 全取）未实现——张量切片尚未支持；\
+                                              请改用 index_select(t, dim, idx) 或显式的 a..b 范围".into(),
+                                });
                             } else if matches!(self.peek_kind(), TokenKind::DotDot) {
                                 self.advance();
                                 let end = if !matches!(self.peek_kind(), TokenKind::Comma)
@@ -432,7 +446,23 @@ impl Parser {
                             } else {
                                 let start = self.parse_expr()?;
                                 // Check if parse_expr consumed a Range (e.g. 0..5)
-                                if let ExprKind::Range { start: rs, end: re, inclusive: _ } = &start.kind {
+                                if let ExprKind::Range { start: rs, end: re, inclusive } = &start.kind {
+                                    // AUDIT-11.4.89 ③（**红线级静默错值**）：此前这里
+                                    // `inclusive: _` 把 `..=` 的 `=` **显式丢弃**
+                                    // （AST/HIR 的索引范围根本没有该字段）⇒ `s[0..=2]`
+                                    // 静默等于 `s[0..2]`（得 "he" 而非 "hel"）。
+                                    // 总师裁定：本波只做**响亮化**（不实现含端点语义——
+                                    // 那要给 AST/HIR 加字段并传导到四后端，且属对外语义
+                                    // 新增，已列 C 类待用户裁定；沿用 11.4.67
+                                    // "先响亮化、不发明语义"的先例）。
+                                    if *inclusive {
+                                        return Err(TenthError::ParseError {
+                                            line: start.span.line,
+                                            col: start.span.col,
+                                            message: "索引不支持含端点范围 '..='（会被静默丢成 '..' 得到错值）——\
+                                                      请改写为 'a..b'，例如 s[0..=2] 写成 s[0..3]".into(),
+                                        });
+                                    }
                                     indices.push(IndexExpr::Range {
                                         start: rs.as_ref().map(|b| Box::new(*b.clone())),
                                         end: re.as_ref().map(|b| Box::new(*b.clone())),

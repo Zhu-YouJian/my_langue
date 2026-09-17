@@ -1014,23 +1014,19 @@ impl Vm {
                     }
                 }
                 37 => {
-                    let end_idx = self.pop_int()? as usize;
-                    let start_idx = self.pop_int()? as usize;
+                    let end_i = self.pop_int()?;
+                    let start_i = self.pop_int()?;
                     let target = self.stack.pop().unwrap_or(Value::Unit);
-                    match target {
-                        Value::String(s) => {
-                            let chars: Vec<char> = s.chars().collect();
-                            let len = chars.len();
-                            let si = start_idx.min(len);
-                            let ei = end_idx.min(len);
-                            if si > ei {
-                                return Err(self.err_here(chunk_idx, ip, "字符串切片起始位置大于结束位置".into()));
-                            }
-                            let slice: String = chars[si..ei].iter().collect();
-                            self.stack.push(Value::String(slice));
-                        }
-                        _ => return Err(self.err_here(chunk_idx, ip, "SliceStr 需要字符串目标".into())),
-                    }
+                    // AUDIT-11.4.89（静默 clamp = 静默错值）：opcode 37 与 JIT 的
+                    // `host_slice_str` 都必须与解释器同语义 ⇒ 统一委托 `Vm::slice_str`
+                    // （其内部再委托单一权威 `str_slice_codepoints`：码点 + 严格边界）。
+                    // 行号由 `with_line` 从当前指令位置补齐（保持既有"报错带行号"）。
+                    let start = Value::Int(start_i, crate::hir::types::BaseType::I64);
+                    let end = Value::Int(end_i, crate::hir::types::BaseType::I64);
+                    let sliced = self
+                        .slice_str(&target, &start, &end)
+                        .map_err(|e| self.with_line(chunk_idx, ip, e))?;
+                    self.stack.push(sliced);
                 }
 
                 // 38 MakeEnum / 39 IsEnumVariant / 40 EnumGetField（IsStruct=46 在下方）
