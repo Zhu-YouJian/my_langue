@@ -59,3 +59,49 @@
 # If you ever want this to win over an already-exported value, use
 # `RUST_MIN_STACK = { value = "33554432", force = true }`.
 RUST_MIN_STACK = "33554432"
+
+# W1 (2026-09-17) -- 受限沙箱下「写 temp_dir() 被拒 ⇒ 测试假红」的**机器保证**。
+#
+# THE PROBLEM
+# -----------
+# 本机沙箱下，位于工作区内的可执行文件以 **Low 完整性**（S-1-16-4096）运行；
+# Windows 的强制完整性策略禁止低完整性进程**向上写**更高完整性的对象，而 `%TEMP%`
+# 本身不带低完整性标签 ⇒ `std::env::temp_dir()` 下的建/写/删一律
+# `Os { code: 5, kind: PermissionDenied, message: "拒绝访问。" }`。
+# 12 个直接用 `temp_dir()` 的测试目标因此集体假红：同一提交、同一二进制，只把
+# `TEMP`/`TMP` 指向工作区内目录即全绿。**这不是代码回归**——但「人手记得先
+# `$env:TEMP=...`」是纪律，不是保证：一旦忘记，红掉的是一整片测试，
+# 而读的人会开始怀疑代码（可信度损失比一次失败更大）。
+#
+# THE FIX
+# -------
+# 把 `temp_dir()` 钉到工作区内的 `tenth/target/tmp`。该目录随 `target/` 一起被
+# 根 `.gitignore` 第 1 行覆盖 ⇒ 不入库、不产生未跟踪文件。
+#   * `relative = true`：值相对**本配置文件所在 `.cargo/` 的父目录**（仓库根）解析。
+#     cargo 会合并 cwd 的所有祖先配置，所以从仓库根跑
+#     `--manifest-path tenth/Cargo.toml` 与 `cd tenth` 后跑，读到的是同一份本文件、
+#     解析出同一个绝对路径。
+#   * 目录本身由 `tenth/build.rs` 在构建期创建——测试里有直接往 `temp_dir()` 写文件
+#     而不先建目录的（`mnist_loader_test` / `native_parity_test` / `stdlib_test` /
+#     `tensor_features_test`），靠手工 `mkdir` 就又是纪律了。
+#
+# WHY `force = true` HERE, BUT NOT FOR `RUST_MIN_STACK` ABOVE
+# ----------------------------------------------------------
+# cargo `[env]` 默认只在该变量**不存在**时才注入。日常 shell 里 `TEMP`/`TMP` 早已存在
+# ⇒ 非 force 版是**静默 no-op**，正是本文件顶部 AUDIT-11.4.49 段批评的那种
+# 「看起来生效、实际什么都没做」的 mitigation。这里的语义要求**覆盖**环境里那个
+# 已知会失败的值：shell 里的 `TEMP=D:\Temp` 在本机恰恰就是失败源，尊重它等于尊重故障。
+# `RUST_MIN_STACK` 不 force 是反向取舍：调用者显式导出的值通常是他**有意**调的
+# （例如为深栈临时调大），应当被尊重，且它没有「环境自带值必然坏」的性质。
+#
+# PLATFORM NOTE
+# -------------
+# Linux/macOS 的 `std::env::temp_dir()` 读 `TMPDIR`（Linux 无 `TMPDIR` 时退回 `/tmp`），
+# **不读** `TMP`/`TEMP` ⇒ 这两条对 Linux/macOS CI 是 no-op，CI 行为不变。
+# 因此常驻守卫 `tenth/tests/temp_dir_writable_test.rs` **只断言可写**，绝不断言
+# `temp_dir() == tenth/target/tmp`——后者会在三平台 CI 上假红。
+#
+# 若本机再出现 temp_dir() 不可写的红：先读 `DEPS.md`
+# 「已知环境陷阱：受限沙箱下测试写 `%TEMP%` 会「假红」」一节，再回看这两条。
+TMP = { value = "tenth/target/tmp", relative = true, force = true }
+TEMP = { value = "tenth/target/tmp", relative = true, force = true }
