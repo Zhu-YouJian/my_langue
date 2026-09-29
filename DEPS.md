@@ -85,7 +85,7 @@ set PATH=%PATH%;%USERPROFILE%\.cargo\bin
 
 无 `Tenth.toml` 时 `tenthpm install <pkg>` 走全局安装，写家目录 `~/.tenth/packages`（`tenth/tools/tenthpm/src/commands/install.rs:284-285`）⇒ 在**本机受限沙箱内**运行仓库内构建的那份 tenthpm 时**必然失败**；错误经 `?` 传播 ⇒ **响亮**（用户看得见）。发布的 `bin/tenthpm.exe` 解压到**工作区外**运行不受此限。⇒ 按「**写边界的约束后果**」对待，**不是缺陷**；是否让全局目录可配置由后续裁定，本文件不改代码语义。
 
-> **判据旁证（2026-09-29 实测）**：受限进程的令牌完整性级别为 `Low Mandatory Level (S-1-16-4096)`，工具 shell 为 `Medium`；同一 `cmd.exe` 在工作区外启动为 `Medium`、复制进工作区后启动为 `Low`。`%TEMP%` 本身不带低完整性标签 ⇒ 低完整性进程写入被拒。**基线口径 as-of 2026-09-29**：全量 = **153 结果行 / 2658 passed / 0 failed / 22 ignored**（152 个测试二进制 ＝ 2 unittests + 150 集成，另 1 个 Doc-tests；两个 cwd 逐字相同）。**唯一事实源＝`能力梳理/能力全梳理.md` §统计基线**，本节不重复维护该数字。
+> **判据旁证（2026-09-29 实测）**：受限进程的令牌完整性级别为 `Low Mandatory Level (S-1-16-4096)`，工具 shell 为 `Medium`；同一 `cmd.exe` 在工作区外启动为 `Medium`、复制进工作区后启动为 `Low`。`%TEMP%` 本身不带低完整性标签 ⇒ 低完整性进程写入被拒。**基线口径 as-of 2026-09-29**：全量 = **154 结果行 / 2671 passed / 0 failed / 22 ignored**（153 个测试二进制 ＝ 2 unittests + 151 集成，另 1 个 Doc-tests；两个 cwd 逐字相同；C4 新增 `write_loud_guard_test.rs` 13 例 ⇒ `2658 + 13 = 2671`）。**唯一事实源＝`能力梳理/能力全梳理.md` §统计基线**，本节不重复维护该数字。
 
 ---
 
