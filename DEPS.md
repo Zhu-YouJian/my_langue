@@ -33,26 +33,59 @@ Rust 未加入系统 PATH，编译时需用完整路径：
 set PATH=%PATH%;%USERPROFILE%\.cargo\bin
 ```
 
-### 已知环境陷阱：受限沙箱下测试写 `%TEMP%` 会「假红」
+### 写边界与临时目录（受限沙箱下的机器保证）
 
-**仅在进程以受限 / 低完整性（Low integrity）运行时出现**；普通终端与 CI 不受影响。
+> 本节取代 2026-09-29 之前的旧标题「已知环境陷阱：受限沙箱下测试写 `%TEMP%` 会「假红」」。**旧的手设 `$env:TMP`/`$env:TEMP` 绕行方案已作废**——现在由下述机器保证接管；仍引用旧标题的代码注释/守卫文案请改指本节。
 
-此时测试子进程**无法写入 `%TEMP%`**（操作系统拒绝向上写，报 `Access denied` / OS error 5），而**工作区内目录可写**。表现为下列直接使用 `std::env::temp_dir()` 的测试目标集体失败：
+**先记住结论**：本机（以及任何把可执行文件放在**工作区内**启动的环境）存在一条**写边界**——**只能写工作区内**。测试与示例的写落点必须落在仓库内；`%TEMP%`、家目录、桌面一律被拒。
 
-`audit_11485_regression_test` · `import_order_test` · `jit_controlflow_field_test` · `jit_silent_audit_test` · `mnist_loader_test` · `module_qualified_call_test` · `module_search_path_test` · `native_parity_test` · `s3a_runtime_gap_test` · `stdlib_smoke_test` · `stdlib_test` · `tensor_features_test`
+改动前，12 个直接使用 `std::env::temp_dir()` 的测试目标因此**集体假红**（清单与证据见 `AUDIT-11.4.100`）。**这是环境问题、不是代码回归**：同一提交、同一二进制，只把 `TEMP`/`TMP` 指向工作区内即由红转绿。**不要把这类红当回归处理，也不要用它改写基线数字**（基线口径见 `能力梳理/能力全梳理.md` §统计基线）。
 
-**这是环境问题，不是代码回归。** 判别方法：同一提交、同一二进制，只把 `TEMP`/`TMP` 指向工作区内目录即由红转绿。**不要把这类红当作回归处理，也不要用它改写基线数字**（基线口径见 `能力梳理/能力全梳理.md` §统计基线）。
+#### 写边界表（2026-09-29 实测）
 
-绕行（跑全量测试前执行一次）：
+| 写入目标 | 可写 | 典型症状 |
+|---|---|---|
+| 工作区内（`tenth/target/**`、仓库内任意相对路径） | ✅ | — |
+| `%TEMP%`（系统临时目录） | ❌ | `Os { code: 5, kind: PermissionDenied }`「拒绝访问。」 |
+| `~`（家目录） | ❌ | 同上 |
+| `~\.cargo` / `~\.rustup` | ❌ | 同上 |
+| 桌面 | ❌ | 同上 |
 
-```powershell
-$wt = Join-Path (Get-Location) '.agents\tmp\testtmp'
-New-Item -ItemType Directory -Path $wt -Force | Out-Null
-$env:TMP = $wt; $env:TEMP = $wt
-cargo test --release --manifest-path tenth/Cargo.toml
-```
+**为什么**：实测同一份 `cmd.exe`，在**工作区外**启动时令牌完整性为 **Medium**（`S-1-16-8192`），**复制进工作区后**启动变成 **Low**（`S-1-16-4096`）。`cargo.exe` / `rustc.exe` 本身在工作区外 ⇒ 不受限；**它们编译出来的东西落在工作区内 ⇒ 受限**（`tenth/target/**` 下的测试二进制、`tenth.exe`）。
+⚠️ **口径**：上表是**已实测的行为与边界**；「按工作区路径生效」这一**机制**是**推断**，本文件不把它当已证因果使用。
 
-> 判据旁证（2026-09-17 实测）：受限进程的令牌完整性级别为 `Low Mandatory Level (S-1-16-4096)`，工具 shell 为 `Medium`；`%TEMP%` 本身不带低完整性标签 ⇒ 低完整性进程写入被拒。
+#### 机器保证三件套（2026-09-29 起，不必手工设 `$env:TMP`/`$env:TEMP`）
+
+1. **仓库根 `.cargo/config.toml` 的 `[env]`**（把临时目录钉进工作区）：
+
+   ```toml
+   TMP  = { value = "tenth/target/tmp", relative = true, force = true }
+   TEMP = { value = "tenth/target/tmp", relative = true, force = true }
+   ```
+
+   - `relative = true` ⇒ 相对**仓库根**解析 ⇒ 从仓库根（`--manifest-path`）与 `cd tenth` 两种 cwd 得到**同一路径**（实测两 cwd 逐字相同）。
+   - **`force = true` 必须带**：cargo `[env]` 默认**不覆盖已存在的变量**，日常 shell 里 `TEMP` 已被系统设好 ⇒ 非 force 版是**静默 no-op**。实测（独立对抗性复核）：保留两条、只删 `, force = true` ⇒ `module_search_path_test` **0/7 红**、`code: 5`。
+2. **`tenth/build.rs` 构建期建目录**：cargo `[env]` 只设变量、**不建目录**，而部分测试（如 `mnist_loader_test`）是**直接**往 `temp_dir()` 写文件的 ⇒ 由构建脚本 `create_dir_all` 建出 `tenth/target/tmp`。**这不是「需要手工 `mkdir`」**——手工建只在当前这次有效，`fresh clone` / `cargo clean` 后会退回「缺目录」型假红。
+3. **常驻守卫**：`tenth/tests/temp_dir_writable_test.rs`（1 例、默认套件、**无 `#[ignore]`**）——建/写/读/删探针；越界时报红，文案指向本节、`[env]` 两条与 `build.rs`。**它只断言「可写」，不断言 `temp_dir()` 等于 `tenth/target/tmp`**（Linux/macOS 读 `TMPDIR`，钉路径会在三平台 CI 假红）。
+
+#### 4 条已知边界（独立对抗性复核实测，2026-09-29）
+
+1. **只对 cargo 启动的进程生效**：绕过 cargo 直接跑 `tenth/target/release/deps/*.exe`（IDE「直接运行二进制」、非 cargo 的 runner 同理）会回到真实 `%TEMP%` ⇒ 本机沙箱下 `Os { code: 5, kind: PermissionDenied }`。此时须自行把 `TEMP`/`TMP` 指向工作区内目录（实测：同一个 exe，自设后 7 passed）。
+2. **残窗（只在「过滤跑」咬人）**：`target/` 完好时**手工**删掉 `tenth/target/tmp`，构建脚本**不会**重跑（刻意不发 `rerun-if-changed`）⇒ 过滤跑（如 `cargo test --test mnist_loader_test`）会 4 failed / `Os { code: 3, kind: NotFound }`。**但整跑通常自愈**：多个测试的 `create_dir_all(temp_dir().join(...))` 会连带建出父目录，按字母序更早的目标先跑 ⇒ 全量套件常全绿。⇒ **本节不承诺「残窗时守卫一定会红」**；守卫只在过滤跑时可靠地喊。
+   **有效修法**：`touch tenth/build.rs`，或**在 `tenth/` 下**执行 `cargo clean -p tenth --release`。**注意**：不带 `--release` 的 `cargo clean -p tenth` 实测**无效**（与产物 profile 不匹配 ⇒ 构建脚本不重跑、目录不回来）。
+3. **Linux/macOS 是 no-op**：Rust 在那边读 `TMPDIR`，不读 `TMP`/`TEMP` ⇒ 该配置与常驻守卫对两平台 CI 无影响、行为不变（**静态判定**：本机无法执行 Linux/macOS 运行，未实测）。
+4. **`tenth/target/tmp` 是持久草稿目录**：跨运行持久、debug/release **共用**、**不自动清理**（部分测试用固定文件名，会看到上次残留）；被根 `.gitignore` 的 `target/` 覆盖 ⇒ **不入库、不产生未跟踪文件**。可安全删除，删后按上一条的有效修法让构建脚本重跑。
+
+#### 副作用（诚实披露）
+
+- **`force = true` 会静默覆盖调用者显式导出的 `TMP`/`TEMP`**（这正是它的用途）。⇒ **有意让测试用别的临时目录的，改 shell 无效，必须改 `.cargo/config.toml`**（否则会得到「我明明设了却不生效」的反向困惑）。
+- **生效前提是「cargo 从仓库内发起」**：cargo 按 **cwd 向上**发现 `.cargo/config.toml`，**不是**按 `--manifest-path` ⇒ 这也覆盖 `tenth/tools/tenthpm` 的 10 处 `temp_dir()` 单元测试。**未确证**：从仓库外发起 cargo 时是否仍被覆盖（未实测）。
+
+#### `tenthpm` 的边界后果（**约束后果，不是缺陷**）
+
+无 `Tenth.toml` 时 `tenthpm install <pkg>` 走全局安装，写家目录 `~/.tenth/packages`（`tenth/tools/tenthpm/src/commands/install.rs:284-285`）⇒ 在**本机受限沙箱内**运行仓库内构建的那份 tenthpm 时**必然失败**；错误经 `?` 传播 ⇒ **响亮**（用户看得见）。发布的 `bin/tenthpm.exe` 解压到**工作区外**运行不受此限。⇒ 按「**写边界的约束后果**」对待，**不是缺陷**；是否让全局目录可配置由后续裁定，本文件不改代码语义。
+
+> **判据旁证（2026-09-29 实测）**：受限进程的令牌完整性级别为 `Low Mandatory Level (S-1-16-4096)`，工具 shell 为 `Medium`；同一 `cmd.exe` 在工作区外启动为 `Medium`、复制进工作区后启动为 `Low`。`%TEMP%` 本身不带低完整性标签 ⇒ 低完整性进程写入被拒。**基线口径 as-of 2026-09-29**：全量 = **153 结果行 / 2658 passed / 0 failed / 22 ignored**（152 个测试二进制 ＝ 2 unittests + 150 集成，另 1 个 Doc-tests；两个 cwd 逐字相同）。**唯一事实源＝`能力梳理/能力全梳理.md` §统计基线**，本节不重复维护该数字。
 
 ---
 
