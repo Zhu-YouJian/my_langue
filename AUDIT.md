@@ -1,6 +1,6 @@
 # 项目总览与审计报告
 
-> 日期：2026-09-17 | 版本：v1.0.0 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 + 异步 Phase 2（协程调度 + async I/O）+ 正则表达式 + 张量修复（f16/bf16 + 序列化 + 优化器修复）+ Problem 21（tenthc 全量追上 Rust 母编译器：Lexer/Parser/HIR/Shape/WASM/bridge 六批次同步）+ 泛型函数运行时修复 + 护城河系列（函子化 shape / 静默失败 or_die/assume_ok / lossy 格 M1/M2）| 2635 项测试通过（--release 模式，150 个测试目标；`RUST_MIN_STACK` 已由仓库根 `.cargo/config.toml` 自动提供，见 AUDIT-11.4.19/11.4.49）
+> 日期：2026-09-17 | 版本：v1.0.0 | GPU 脚手架 + 包管理器 + LSP + 语言增强（元组类型 + `?` 操作符）+ 安全加固 + Shape 检查 + Autograd 反向 Shape 校验 + 论文披露缺陷登记 + 同步 I/O 原语 + AUDIT 缺陷修复 + 异步 Phase 2（协程调度 + async I/O）+ 正则表达式 + 张量修复（f16/bf16 + 序列化 + 优化器修复）+ Problem 21（tenthc 全量追上 Rust 母编译器：Lexer/Parser/HIR/Shape/WASM/bridge 六批次同步）+ 泛型函数运行时修复 + 护城河系列（函子化 shape / 静默失败 or_die/assume_ok / lossy 格 M1/M2）| 2657 项测试通过（--release 模式，152 个测试目标；`RUST_MIN_STACK` 已由仓库根 `.cargo/config.toml` 自动提供，见 AUDIT-11.4.19/11.4.49）
 >
 > 注意：本文件早期条目标注的 `.trae/tmp/...` 为当时临时验证/证据文件路径；该目录已于 2026 清理，保留作历史记录。
 
@@ -26,7 +26,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 ## 三、测试矩阵
 
-> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。**现行统计基线以 `能力梳理/能力全梳理.md` §统计基线为准（**2026-09-17：2635 passed / 0 failed / 22 ignored；150 个测试目标**）**；下表 per-文件 明细为较旧口径的存档记录（统计日期：2026-07-12，--release 模式），可能与合计数字不完全同步（合计见本行下行【总计】）。
+> 数量列格式：`passed/failed/ignored`。"栈溢出" 表示编译通过但运行时触发 Windows STATUS_STACK_OVERFLOW (0xc00000fd)，无法获取具体用例数。**现行统计基线以 `能力梳理/能力全梳理.md` §统计基线为准（**2026-09-17：2657 passed / 0 failed / 22 ignored；152 个测试目标**）**；下表 per-文件 明细为较旧口径的存档记录（统计日期：2026-07-12，--release 模式），可能与合计数字不完全同步（合计见本行下行【总计】）。
 
 ### 基础管线
 
@@ -167,7 +167,7 @@ Tenth = Tensor + Zenith，一门为 AI 研究而生的编程语言。Rust 编写
 
 | 测试目标 | 数量 | 说明 |
 |----------|------|------|
-| **总计** | **2635 passed / 0 failed / 22 ignored** | 现行基线（2026-09-17，`cargo test --release` 实测，150 个测试目标；需 `RUST_MIN_STACK=33554432`，套件数以实际为准）. 权威合计见 `能力梳理/能力全梳理.md` §统计基线。 |
+| **总计** | **2657 passed / 0 failed / 22 ignored** | 现行基线（2026-09-17，`cargo test --release` 实测，152 个测试目标；需 `RUST_MIN_STACK=33554432`，套件数以实际为准）. 权威合计见 `能力梳理/能力全梳理.md` §统计基线。 |
 
 > **2026-07-08 张量修复测试状态**：本次张量修复（f16/bf16 Phase 1 + 序列化 v2 + 4 项小修复）的代码改动已通过现有测试套件验证（lib 16 + integration 14 + native_parity 35 + stdlib 114 = 179 passed；autodiff 5 passed；自举通过），**未新增独立测试文件**——`native_parity_test.rs` 的 35 项已含序列化 v2 parity 测试（test_save_load_weights_parity + test_save_load_weights_nonzero_parity）。Wave 3 测试部补测试任务进行中（accumulate_loop 功能测试 / autodiff unbroadcast shape 测试 / AdamW 单值返回版本测试 / clip_grad_by_norm JIT 路径测试 / 序列化 f32 读写测试 / f16/bf16 基本运算测试），完成后由测试部同步 §三 测试矩阵新增 tensor_features_test 行 + 总计数字。
 

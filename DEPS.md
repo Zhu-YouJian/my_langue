@@ -33,6 +33,27 @@ Rust 未加入系统 PATH，编译时需用完整路径：
 set PATH=%PATH%;%USERPROFILE%\.cargo\bin
 ```
 
+### 已知环境陷阱：受限沙箱下测试写 `%TEMP%` 会「假红」
+
+**仅在进程以受限 / 低完整性（Low integrity）运行时出现**；普通终端与 CI 不受影响。
+
+此时测试子进程**无法写入 `%TEMP%`**（操作系统拒绝向上写，报 `Access denied` / OS error 5），而**工作区内目录可写**。表现为下列直接使用 `std::env::temp_dir()` 的测试目标集体失败：
+
+`audit_11485_regression_test` · `import_order_test` · `jit_controlflow_field_test` · `jit_silent_audit_test` · `mnist_loader_test` · `module_qualified_call_test` · `module_search_path_test` · `native_parity_test` · `s3a_runtime_gap_test` · `stdlib_smoke_test` · `stdlib_test` · `tensor_features_test`
+
+**这是环境问题，不是代码回归。** 判别方法：同一提交、同一二进制，只把 `TEMP`/`TMP` 指向工作区内目录即由红转绿。**不要把这类红当作回归处理，也不要用它改写基线数字**（基线口径见 `能力梳理/能力全梳理.md` §统计基线）。
+
+绕行（跑全量测试前执行一次）：
+
+```powershell
+$wt = Join-Path (Get-Location) '.agents\tmp\testtmp'
+New-Item -ItemType Directory -Path $wt -Force | Out-Null
+$env:TMP = $wt; $env:TEMP = $wt
+cargo test --release --manifest-path tenth/Cargo.toml
+```
+
+> 判据旁证（2026-09-17 实测）：受限进程的令牌完整性级别为 `Low Mandatory Level (S-1-16-4096)`，工具 shell 为 `Medium`；`%TEMP%` 本身不带低完整性标签 ⇒ 低完整性进程写入被拒。
+
 ---
 
 ## 网络代理（GitHub / crates.io 访问）
