@@ -415,7 +415,15 @@ fn vm_run(path: &str) -> TenthResult<()> {
                     .and_then(|prog| tenth::hir::lower::Lowerer::new().lower_program(&prog))
                     .and_then(|hir| tenth::compile::compile_to_wasm(&hir))
                 {
-                    Ok(bytes) => { let _ = std::fs::write(out, &bytes); return Ok(Value::Int(0, BaseType::I32)); }
+                    // C4/D5（AUDIT-11.4.102）：`vm_run` 当前无调用点（`#[allow(dead_code)]`），
+                    // 但这份重复注册与 runtime/natives.rs 的 VM 侧保持同语义，避免将来接回时带病上线。
+                    Ok(bytes) => match std::fs::write(out, &bytes) {
+                        Ok(()) => return Ok(Value::Int(0, BaseType::I32)),
+                        Err(e) => {
+                            eprintln!("compile_host: 写入 {} 失败: {}", out, e);
+                            return Ok(Value::Int(1, BaseType::I32));
+                        }
+                    },
                     Err(_) => return Ok(Value::Int(1, BaseType::I32)),
                 }
             }
@@ -427,8 +435,14 @@ fn vm_run(path: &str) -> TenthResult<()> {
             if let Value::String(out) = &args[1] {
                 match tenth::compile::compile_program_to_wasm(&args[0]) {
                     Ok(bytes) => {
-                        let _ = std::fs::write(out, &bytes);
-                        return Ok(Value::Int(0, BaseType::I32));
+                        // C4/D5（AUDIT-11.4.102）：同 compile_host——写失败不得报成功。
+                        match std::fs::write(out, &bytes) {
+                            Ok(()) => return Ok(Value::Int(0, BaseType::I32)),
+                            Err(e) => {
+                                eprintln!("compile_program: 写入 {} 失败: {}", out, e);
+                                return Ok(Value::Int(1, BaseType::I32));
+                            }
+                        }
                     }
                     Err(_) => return Ok(Value::Int(1, BaseType::I32)),
                 }

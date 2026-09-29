@@ -284,8 +284,13 @@ fn register_test_natives(vm: &mut Vm) {
                         }
                     }
                 }
-                let _ = std::fs::write(&resolved, &bytes);
-                return Ok(Value::Unit);
+                // C4/D1（AUDIT-11.4.101）：与生产侧（runtime/natives.rs）同步——写失败响亮。
+                match std::fs::write(&resolved, &bytes) {
+                    Ok(()) => return Ok(Value::Unit),
+                    Err(e) => return Err(tenth::error::TenthError::RuntimeError { line: None, col: None,
+                        message: format!("save_weights: 写入 {} 失败: {}", resolved.display(), e),
+                    }),
+                }
             }
         }
         Err(tenth::error::TenthError::RuntimeError { line: None, col: None, message: "save_weights(路径, 张量列表)".into() })

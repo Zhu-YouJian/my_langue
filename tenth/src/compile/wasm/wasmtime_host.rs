@@ -76,13 +76,16 @@ pub fn register_wasmtime_host_functions(linker: &mut Linker<u32>) -> TenthResult
 
     // 1. write_file(path_ptr: i32, content_ptr: i32) — write content to file.
     linker.func_wrap("host", "write_file",
-        |mut caller: Caller<'_, u32>, path_ptr: i32, content_ptr: i32| {
+        |mut caller: Caller<'_, u32>, path_ptr: i32, content_ptr: i32| -> Result<(), wasmtime::Error> {
             let mem = caller.get_export("memory").and_then(|e| e.into_memory()).unwrap();
             let data = mem.data(&caller);
             // 安全：两个指针都经 read_cstr 校验
             let path = read_cstr(data, path_ptr);
             let content = read_cstr(data, content_ptr);
-            let _ = std::fs::write(path, content);
+            // C4/D3（AUDIT-11.4.101）：写失败不得静默 no-op——报错（trap）传播给宿主。
+            // ABI 签名保持不变（仍是 (i32,i32)->()）。
+            std::fs::write(path, content)
+                .map_err(|e| wasmtime::Error::msg(format!("write_file: 写入 {} 失败: {}", path, e)))
     }).map_err(|e| TenthError::RuntimeError { line: None, col: None, message: format!("链接器：{}", e) })?;
 
     // 2. read_file(path: i32) -> i32 — read file into bump-allocated buffer.
@@ -336,8 +339,14 @@ pub fn register_wasmtime_host_functions(linker: &mut Linker<u32>) -> TenthResult
                 .and_then(|hir| crate::compile::compile_to_wasm(&hir))
             {
                 Ok(wasm_bytes) => {
-                    let _ = std::fs::write(&out, &wasm_bytes);
-                    0i32
+                    // C4/D2（AUDIT-11.4.102）：写失败必须返回 1（不是 0），仅失败路径打一行诊断。
+                    match std::fs::write(&out, &wasm_bytes) {
+                        Ok(()) => 0i32,
+                        Err(e) => {
+                            eprintln!("compile_host: 写入 {} 失败: {}", out, e);
+                            1i32
+                        }
+                    }
                 }
                 Err(_) => 1i32,
             }

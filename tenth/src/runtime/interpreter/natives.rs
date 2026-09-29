@@ -1792,8 +1792,14 @@ impl super::Interpreter {
                                 }
                             }
                         }
-                        let _ = std::fs::write(&resolved, &bytes);
-                        return Ok(Some(Value::Unit));
+                        // C4/D1（AUDIT-11.4.101）：写失败必须响亮——checkpoint 不许静默丢失。
+                        // 文案与 VM 路径（runtime/natives.rs）保持完全一致。
+                        match std::fs::write(&resolved, &bytes) {
+                            Ok(()) => return Ok(Some(Value::Unit)),
+                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
+                                message: format!("save_weights: 写入 {} 失败: {}", resolved.display(), e),
+                            }),
+                        }
                     }
                 }
                 return Err(TenthError::RuntimeError { line: None, col: None,
@@ -2020,9 +2026,12 @@ impl super::Interpreter {
                         } else {
                             std::path::PathBuf::from(path)
                         };
-                        let data: Vec<u8> = bytes.borrow().iter().filter_map(|v| {
-                            if let Value::Int(n, _) = v { Some(*n as u8) } else { None }
-                        }).collect();
+                        // C4/D4（AUDIT-11.4.104）：元素可能被 Shared/Ref 包裹
+                        // （`v.push(x)` 与字面量数组都会），统一解包后取值——
+                        // 原实现只匹配裸 `Value::Int`，会静默写出 0 字节文件。
+                        let data: Vec<u8> = bytes.borrow().iter()
+                            .map(|v| deref_wrapped(v).as_int().unwrap_or(0) as u8)
+                            .collect();
                         match std::fs::write(&resolved, &data) {
                             Ok(()) => return Ok(Some(Value::Unit)),
                             Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
@@ -2289,10 +2298,15 @@ impl super::Interpreter {
                             .and_then(|prog| crate::hir::lower::Lowerer::new().lower_program(&prog))
                             .and_then(|hir| crate::compile::compile_to_wasm(&hir))
                         {
-                            Ok(wasm_bytes) => {
-                                let _ = std::fs::write(&out_resolved, &wasm_bytes);
-                                return Ok(Some(Value::Int(0, BaseType::I32)));
-                            }
+                            Ok(wasm_bytes) => match std::fs::write(&out_resolved, &wasm_bytes) {
+                                // C4/D2（AUDIT-11.4.102）：写失败必须返回 1（不是 0），
+                                // 仅失败路径打一行诊断。与 VM 路径同文案。
+                                Ok(()) => return Ok(Some(Value::Int(0, BaseType::I32))),
+                                Err(e) => {
+                                    eprintln!("compile_host: 写入 {} 失败: {}", out_resolved.display(), e);
+                                    return Ok(Some(Value::Int(1, BaseType::I32)));
+                                }
+                            },
                             Err(_) => return Ok(Some(Value::Int(1, BaseType::I32))),
                         }
                     }
@@ -2316,10 +2330,15 @@ impl super::Interpreter {
                             std::path::PathBuf::from(out)
                         };
                         match crate::compile::compile_program_to_wasm(&args[0]) {
-                            Ok(wasm_bytes) => {
-                                let _ = std::fs::write(&out_resolved, &wasm_bytes);
-                                return Ok(Some(Value::Int(0, BaseType::I32)));
-                            }
+                            Ok(wasm_bytes) => match std::fs::write(&out_resolved, &wasm_bytes) {
+                                // C4/D2（AUDIT-11.4.102）：写失败必须返回 1（不是 0），
+                                // 仅失败路径打一行诊断。与 VM 路径同文案。
+                                Ok(()) => return Ok(Some(Value::Int(0, BaseType::I32))),
+                                Err(e) => {
+                                    eprintln!("compile_program: 写入 {} 失败: {}", out_resolved.display(), e);
+                                    return Ok(Some(Value::Int(1, BaseType::I32)));
+                                }
+                            },
                             Err(e) => {
                                 eprintln!("[compile_program] error: {}", e);
                                 return Ok(Some(Value::Int(1, BaseType::I32)));

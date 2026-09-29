@@ -1058,25 +1058,36 @@ pub fn register_all_natives(vm: &mut Vm) {
         }
     });
     vm.add_native("write_bytes".into(), |vm, args| {
+        // C4/D4（AUDIT-11.4.104）：实参顺序统一为 `(路径, 字节 Vec)`——与解释器侧
+        // 及标准库 `std::fs::fs::write_bytes(path, bytes)` 的声明一致；返回类型
+        // 与 HIR 白名单声明的 Unit 对齐（原实现丢错并返回 Int(0)＝假成功）。
         if args.len() >= 2 {
-            if let Value::String(path) = &args[1] {
-                if let Value::Vec(items) = &args[0] {
-                    // H-2: 沙箱校验
-                    let resolved = if let Some(ref sb) = vm.fs_sandbox {
-                        match sb.check_write(path) {
-                            Ok(p) => p,
-                            Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
-                        }
-                    } else {
-                        std::path::PathBuf::from(path)
-                    };
-                    let bytes: Vec<u8> = items.borrow().iter().map(|v| v.as_int().unwrap_or(0) as u8).collect();
-                    let _ = std::fs::write(&resolved, &bytes);
-                    return Ok(Value::Int(0, BaseType::I32));
+            if let (Value::String(path), Value::Vec(items)) = (&args[0], &args[1]) {
+                // H-2: 沙箱校验
+                let resolved = if let Some(ref sb) = vm.fs_sandbox {
+                    match sb.check_write(path) {
+                        Ok(p) => p,
+                        Err(e) => return Err(TenthError::RuntimeError { line: None, col: None, message: e }),
+                    }
+                } else {
+                    std::path::PathBuf::from(path)
+                };
+                // 元素可能被 Shared/Ref 包裹（`v.push(x)` 与字面量数组都会），
+                // 统一解包后取值，避免静默写出 0 字节文件。
+                let bytes: Vec<u8> = items.borrow().iter()
+                    .map(|v| crate::runtime::value::deref_wrapped(v).as_int().unwrap_or(0) as u8)
+                    .collect();
+                match std::fs::write(&resolved, &bytes) {
+                    Ok(()) => return Ok(Value::Unit),
+                    Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: format!("写入字节失败: {}", e),
+                    }),
                 }
             }
         }
-        Ok(Value::Int(1, BaseType::I32))
+        Err(TenthError::RuntimeError { line: None, col: None,
+            message: "write_bytes(路径, 字节数组) 期望一个字符串和一个字节 Vec".into(),
+        })
     });
     vm.add_native("read_bytes".into(), |vm, args| {
         if let Some(Value::String(path)) = args.first() {
@@ -1564,7 +1575,15 @@ pub fn register_all_natives(vm: &mut Vm) {
                     .and_then(|prog| crate::hir::lower::Lowerer::new().lower_program(&prog))
                     .and_then(|hir| crate::compile::compile_to_wasm(&hir))
                 {
-                    Ok(bytes) => { let _ = std::fs::write(&out_resolved, &bytes); return Ok(Value::Int(0, BaseType::I32)); }
+                    // C4/D2（AUDIT-11.4.102）：0 的含义收紧为「编译成功**且**写出成功」。
+                    // 写失败必须返回 1（否则调用方拿到的 0 是假绿），仅失败路径打一行诊断。
+                    Ok(bytes) => match std::fs::write(&out_resolved, &bytes) {
+                        Ok(()) => return Ok(Value::Int(0, BaseType::I32)),
+                        Err(e) => {
+                            eprintln!("compile_host: 写入 {} 失败: {}", out_resolved.display(), e);
+                            return Ok(Value::Int(1, BaseType::I32));
+                        }
+                    },
                     Err(_) => return Ok(Value::Int(1, BaseType::I32)),
                 }
             }
@@ -1584,7 +1603,13 @@ pub fn register_all_natives(vm: &mut Vm) {
                     std::path::PathBuf::from(out)
                 };
                 match crate::compile::compile_program_to_wasm(&args[0]) {
-                    Ok(bytes) => { let _ = std::fs::write(&out_resolved, &bytes); return Ok(Value::Int(0, BaseType::I32)); }
+                    Ok(bytes) => match std::fs::write(&out_resolved, &bytes) {
+                        Ok(()) => return Ok(Value::Int(0, BaseType::I32)),
+                        Err(e) => {
+                            eprintln!("compile_program: 写入 {} 失败: {}", out_resolved.display(), e);
+                            return Ok(Value::Int(1, BaseType::I32));
+                        }
+                    },
                     Err(_) => return Ok(Value::Int(1, BaseType::I32)),
                 }
             }
@@ -2726,8 +2751,14 @@ pub fn register_all_natives(vm: &mut Vm) {
                         }
                     }
                 }
-                let _ = std::fs::write(&resolved, &bytes);
-                return Ok(Value::Unit);
+                // C4/D1（AUDIT-11.4.101）：写失败必须响亮——checkpoint 不许静默丢失。
+                // 文案与解释器路径（interpreter/natives.rs）保持完全一致。
+                match std::fs::write(&resolved, &bytes) {
+                    Ok(()) => return Ok(Value::Unit),
+                    Err(e) => return Err(TenthError::RuntimeError { line: None, col: None,
+                        message: format!("save_weights: 写入 {} 失败: {}", resolved.display(), e),
+                    }),
+                }
             }
         }
         Err(TenthError::RuntimeError { line: None, col: None,

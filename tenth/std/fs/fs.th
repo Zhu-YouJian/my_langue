@@ -67,7 +67,7 @@ fn write_text(path: String, content: String) {
 
 /// Write bytes to a file
 fn write_bytes(path: String, bytes: Vec) {
-    write_bytes(bytes, path)
+    write_bytes(path, bytes)
 }
 
 /// Read all lines from a text file
