@@ -1,87 +1,66 @@
-# Tenth — AI 原生通用编程语言
+# Tenth
 
-> 代号 Tenth = Tensor + Zenith，意为「张量之巅」
+**Tenth 是一门 AI 原生的通用编程语言**：张量与自动微分是语言内置能力，同时具备通用语言所需的完整设施——控制流、结构体/枚举/match、泛型、Trait、闭包、模块系统与包管理器。用 Tenth 写脚本、工具或服务时，不需要切换到另一门语言，也不需要引入外部 AI 框架。
+
+> 代号 Tenth = Tensor + Zenith，意为「张量之巅」。
 >
 > [![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-blue.svg)](RELEASE_NOTES.md)
 > [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 > [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 > [![Rust: 1.95+](https://img.shields.io/badge/Rust-1.95+-orange.svg)](https://www.rust-lang.org/)
 
-Tenth 是一门**通用编程语言**——你可以把它当作日常语言来写脚本、构建工具、开发服务，同时发现 AI 能力就在手边，无需切换语言或引入外部框架。
+## 快速开始
 
-- **作为通用语言**：控制流、数据结构、模块系统、错误处理、包管理
-- **作为 AI 语言**：张量是内置类型，自动微分是一等公民，训练循环无需外部框架
-- **差异化能力**：编译期 + 运行时双层 shape 防御
-
-Tenth 是**一种新的可能性**：一门语言同时覆盖通用编程和 AI 研究。
-
-## 为什么需要 Tenth
-
-主流 AI 开发的痛点是「**运行时才发现错误**」：shape 不匹配要等到前向传播崩溃、内存 OOM 要等到训练中途、梯度 shape 错误被静默 squeeze 掩盖（典型症状是 loss 不降反升却无报错）。Tenth 把这些错误前移到编译期，并在运行时兜底：
-
-| 防护层 | 能力 |
-|--------|------|
-| **编译期 shape 检查** | `Tensor[f64, 3, 4] @ Tensor[f64, 5, 6]` 编译期报错 |
-| **编译期内存/算力预估** | ≥1GB tensor 或 ≥1 GFLOP matmul 发 warning |
-| **运行时 autodiff shape 校验** | `backward()` 返回 `Result`，梯度 shape 不匹配显式报错 |
-
-三层防护共同构成 Tenth 的「**AI 原生防护能力**」——用编译期信息换开发者真实的时间。
-
-## Features
-
-**语言核心**
-- 张量是一等类型：`Tensor[f64, M, K]` / `Tensor[f32, ..]`，符号维度编译期追踪
-- 21 个可微算子：Add/Sub/Mul/Div/MatMul/Conv2D/BatchNorm/LayerNorm/GELU/Softmax/CrossEntropy 等
-- 控制流 + struct/enum/match + 泛型 + Trait + 闭包捕获 + 借用检查
-- f32 / f64 双精度张量，自动微分方案 B 天然支持（前向 f32 + 反向 f64 + 梯度按参数 dtype 写回）
-
-**编译管线**
-- 字节码 VM（65 指令，默认路径，~0.2s 自举）
-- 树遍历解释器（fallback 路径）
-- Cranelift JIT（热点编译）
-- WASM 后端（wasm-encoder + wasmi 闭环）
-
-**自举**
-- Tenth 编译器由 Tenth 自身编写（`tenthc/`，7 个 `.th` 文件，5000+ 行）
-- 三条自举路径通过验证（Rust 全栈 / Tenth 前端 + Rust 后端 / 全 WASM 闭环）
-
-**工具链**
-- `tenthpm` 包管理器：init/build/test/run/add/remove/list/clean/publish/install
-- LSP 服务器：hover/completion/definition/references/rename/formatting 等 13 项能力
-- GPU 后端脚手架：CudaKernel 模板 + Device 抽象 + 算子融合/并行分解
-
-**标准库**：以 `tenth/std/` + `prelude.th` 索引为准（模块数见 `能力梳理/能力全梳理.md` §统计基线；命名空间约 29）覆盖 nn/optim/data/init/collections/string/utils/fs/json/toml/cli/logging/time/random/math/crypto/regex/net/http/process/distributed 等
-
-**测试**：测试数/实例数见 `能力梳理/能力全梳理.md` §统计基线（实测，`cargo test --release`）；实例双路径可运行；自举验证 `[OK]`
-
-## Quick Start
+前置条件：Rust **1.95+**。所有 crate 依赖由 cargo 自动下载；环境细节（含 Windows 下 Rust 未加入 PATH 时的写法）见 `DEPS.md`。
 
 ```bash
-# 编译（release 模式，推荐）
+# 构建（release）
 cargo build --release --manifest-path tenth/Cargo.toml
 
-# 运行 REPL
-cargo run --release --manifest-path tenth/Cargo.toml
-
 # 运行 .th 文件
-cargo run --release --manifest-path tenth/Cargo.toml run path/to/file.th
+cargo run --release --manifest-path tenth/Cargo.toml -- run path/to/file.th
+
+# 启动 REPL
+cargo run --release --manifest-path tenth/Cargo.toml
 
 # 运行测试
 cargo test --manifest-path tenth/Cargo.toml
 ```
 
-依赖：Rust ≥ 1.95（所有 crate 依赖自动下载，详见 `DEPS.md`）。
+最小程序：
 
-### 发布产物（v1.0.0）
+```tenth
+fn main() {
+    println("Hello, Tenth");
+}
+```
 
-- **从源码构建**（推荐，任一平台）：`cargo build --release --manifest-path tenth/Cargo.toml`
-- **GitHub Releases**（CI 三平台原生构建，tag `v1.0.0`）：下载 `tenth-1.0.0-<windows-x86_64.zip | linux-x86_64.tar.gz | macos-x86_64.tar.gz>`，解压后 `bin/` 含 5 个可执行产物（`tenth` / `tenthpm` / `tenth-debug` / `tenth-prof` / `tenth-lsp`），`std/` 为运行时必需标准库，`docs/` 含手册/规范/API 冻结清单
-- 校验：`sha256sum -c SHA256SUMS.txt`（Windows 用 `scripts/release/verify.ps1`）
-- 发布说明：`RELEASE_NOTES.md`；发布流程：`scripts/release/README.md`
+## 它解决的问题
 
-## Examples
+AI 开发中最常见的故障模式是**错误到运行期才暴露**：矩阵维度不匹配要等到前向传播失败，内存不足要等到训练中途，梯度形状错误被静默修正——典型表现是 loss 不下降，却没有任何报错。Tenth 把这类错误前移到编译期，并在运行期保留校验：
 
-### 张量运算 + 自动微分
+| 防护层 | 机制 |
+|--------|------|
+| 编译期 shape 检查 | `Tensor[f64, 3, 4] @ Tensor[f64, 5, 6]` 在编译期报错 |
+| 编译期内存与算力预估 | ≥ 1 GB 的张量、≥ 1 GFLOP 的矩阵乘法发出 warning |
+| 运行期自动微分校验 | `backward()` 返回 `Result`，梯度 shape 不匹配时显式报错 |
+
+## 示例
+
+### 编译期 shape 检查
+
+```tenth
+fn main() {
+    let a: Tensor[f64, 2, 3] = tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+    let b: Tensor[f64, 3, 2] = tensor[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
+
+    let c = a.matmul(b);  // (2×3) @ (3×2) = (2×2)，编译通过
+
+    // let bad = a.matmul(a);  // 编译期报错：(2×3) @ (2×3)，内侧维度 3 ≠ 2
+}
+```
+
+### 自动微分：线性回归
 
 ```tenth
 fn main() {
@@ -102,7 +81,7 @@ fn main() {
         let pred = w * x + b;
         let loss = ((pred - target) * (pred - target)).mean();
 
-        backward(loss);  // backward 返回 Result，shape 错误会显式报错
+        backward(loss);  // 返回 Result；梯度 shape 不匹配会显式报错
 
         stop_grad();
         w = w - lr * grad(w);
@@ -110,115 +89,136 @@ fn main() {
         epoch = epoch + 1;
     };
 
-    println(w.sum());   // ~2.0
-    println(b.sum());   // ~1.0
+    println(w.sum());   // ≈ 2.0
+    println(b.sum());   // ≈ 1.0
 }
 ```
 
-### 编译期 Shape 检查
-
-```tenth
-fn main() {
-    let a: Tensor[f64, 2, 3] = tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
-    let b: Tensor[f64, 3, 2] = tensor[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
-    let c = a.matmul(b);  // (2×3) @ (3×2) = (2×2) ✅ 编译通过
-
-    // let bad = a.matmul(a);  // ❌ 编译期报错：(2×3) @ (2×3) 内侧维度 3 ≠ 2
-}
-```
-
-### 矩阵乘法 + 广播
+### 矩阵乘法与广播
 
 ```tenth
 fn main() {
     let a = tensor[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];  // 2×3
     let b = tensor[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];  // 3×2
     let c = a.matmul(b);  // (2×3) @ (3×2) = (2×2)
-    println(c.sum());      // => 163
+    println(c.sum());      // 163
 }
 ```
 
-更多示例见 `Tenth实例/` 目录（实例数见 `能力梳理/能力全梳理.md` §统计基线）和 `tenth/std/` 标准库（以 `tenth/std/` + `prelude.th` 索引为准，模块数见 `能力梳理/能力全梳理.md` §统计基线）。
+更多可运行实例见 `Tenth实例/`（每个实例含 `task.txt`）。
+
+## 语言核心
+
+- **张量为内置类型**：`Tensor[f64, M, K]`、`Tensor[f32, ..]`，维度是可编译期追踪的符号。
+- **可微算子**：Add / Sub / Mul / Div / Neg / ReLU / MatMul / Transpose / Sum / Mean / Exp / Log / Sigmoid / Softmax / CrossEntropy / Dropout / Conv2D / BatchNorm / LayerNorm / GELU / Input，全部实现反向传播。
+- **通用语言设施**：控制流、struct / enum / match、泛型、Trait（含 trait 对象）、闭包捕获、借用检查、模块与包管理。
+- **双精度张量**：f32 与 f64；自动微分采用「前向 f32 + 反向 f64，梯度按参数 dtype 写回」。
 
 ## 自动微分
 
-Tenth 内置张量级自动微分，通过 7 个内置函数控制：
+Tenth 内置张量级自动微分，由 7 个内置函数控制：
 
 | 函数 | 作用 |
 |------|------|
-| `new_grad()` | 创建新计算图，开启录制 |
-| `param(tensor)` | 注册可训练参数（≥1GB 时编译期发梯度 OOM warning） |
-| `backward(loss)` | 反向传播，返回 `Result`，梯度 shape 不匹配时显式报错 |
+| `new_grad()` | 创建新的计算图并开启录制 |
+| `param(tensor)` | 注册可训练参数（≥ 1 GB 时编译期发出梯度 OOM warning） |
+| `backward(loss)` | 反向传播；返回 `Result`，梯度 shape 不匹配时显式报错 |
 | `grad(param)` | 读取参数梯度 |
-| `stop_grad()` | 关闭录制（SGD 更新时不录） |
+| `stop_grad()` | 关闭录制（参数更新阶段不录制） |
 | `zero_grad()` | 清零所有参数梯度 |
 | `cross_entropy(logits, target)` | 交叉熵损失（融合 softmax） |
 
-支持的算子（21 个，全部有正确的 backward）：
-`Add / Sub / Mul / Div / Neg / ReLU / MatMul / Transpose / Sum / Mean / Exp / Log / Sigmoid / Softmax / CrossEntropy / Dropout / Conv2D / BatchNorm / LayerNorm / GELU / Input`
-
-**防护层 A：反向 shape 静态验证**。`backward()` 全链路返回 `Result`，消除 autodiff 中 5 处 silent squeeze 静默修正梯度 shape 的代码（`acc_grad` / `unbroadcast` / `matmul_2d` / MatMul 1D squeeze / Conv2D 零填充兜底全部改为报错）。梯度 shape 错误会显式报错而非静默写入错误数据。
+`backward()` 全链路返回 `Result`：梯度 shape 不匹配时显式报错，而不是静默 squeeze 成某个能写回的形状。
 
 ## 标准库
 
 ```
 tenth/std/
-├── nn/          ← linear, loss (MSE/L1/BCE), activations, dropout, batchnorm, conv2d, embedding, attention, multihead_attention, layer_norm, positional_encoding, feedforward, transformer_encoder_block
-├── optim/       ← SGD (vanilla/momentum/decay), Adam, AdaGrad, RMSProp (全部可运行)
-├── data/        ← DataLoader, MNIST 加载器
-├── init/        ← xavier_uniform/xavier_normal/he_normal/he_uniform/zeros_init/constant_init
-├── collections/ ← iter (map/filter/reduce/zip/enumerate 等), collections (flat_map/partition 等)
-├── string/      ← join_lines/join_comma/repeat_sep/indent/word_wrap/capitalize 等
-├── utils/       ← 序列化 (save_model/load_model/save_checkpoint), math (min/max/clamp 等)
-├── fs/          ← 文件系统操作 (exists/is_file/is_dir/mkdir/list_dir/remove/copy 等)
-├── json/        ← JSON 编解码 (encode/decode/encode_pretty/load/save)
-├── toml/        ← TOML 解析
-├── cli/         ← 命令行参数处理
-├── logging/     ← 日志 (debug/info/warn/error + set_level)
-├── time/        ← 时间工具 (now/now_ms/date/datetime/sleep_ms/timer)
-├── random/      ← 随机数 (rand_int/rand_float/choice/shuffle 等)
-├── math/        ← 数学函数与常量
-├── runtime.th   ← 资源限制 (with_step_limit/with_timeout_ms)
-└── prelude.th   ← 可用项总目录
+├── nn/            # linear, loss (MSE/L1/BCE), activations, dropout, batchnorm, conv2d,
+│                  # embedding, attention, multihead_attention, layer_norm,
+│                  # positional_encoding, feedforward, transformer_encoder_block
+├── optim/         # SGD (vanilla/momentum/decay), Adam, AdaGrad, RMSProp
+├── data/          # DataLoader, MNIST 加载器
+├── init/          # xavier_uniform / xavier_normal / he_normal / he_uniform / zeros / constant
+├── collections/   # iter (map/filter/reduce/zip/enumerate), collections (flat_map/partition)
+├── string/        # join_lines / join_comma / repeat_sep / indent / word_wrap / capitalize
+├── utils/         # 序列化 (save_model / load_model / save_checkpoint)、math (min/max/clamp)
+├── fs/            # exists / is_file / is_dir / mkdir / list_dir / remove / copy
+├── json/          # encode / decode / encode_pretty / load / save
+├── toml/          # TOML 解析
+├── cli/           # 命令行参数处理
+├── logging/       # debug / info / warn / error + set_level
+├── time/          # now / now_ms / date / datetime / sleep_ms / timer
+├── random/        # rand_int / rand_float / choice / shuffle
+├── math/          # 数学函数与常量
+├── crypto/
+├── distributed/
+├── async.th autograd.th curry.th date.th duration.th env.th io.th
+├── http.th net.th process.th regex.th
+├── runtime.th     # 资源限制 (with_step_limit / with_timeout_ms)
+└── prelude.th     # 可用项总目录
 ```
 
-## 自举
+模块数、测试数与运行实例数以 `能力梳理/能力全梳理.md` §统计基线为唯一事实源。
 
-Tenth 编译器由 Tenth 自身编写（`tenthc/`），三条自举路径通过验证：
+## 工具链
+
+| 可执行产物 | 用途 |
+|------------|------|
+| `tenth` | 编译器与运行时（`run` 子命令、REPL） |
+| `tenthpm` | 包管理器：init / build / test / run / add / remove / list / clean / publish / install |
+| `tenth-lsp` | 语言服务器：hover / completion / definition / references / rename / formatting 等 13 项能力 |
+| `tenth-debug` | CLI 调试器：断点、单步、变量查看 |
+| `tenth-prof` | 热点剖析器：函数级耗时与调用次数 |
+
+## 执行管线与自举
+
+源文件经 `Lexer → Parser → HIR` 后，可选四条执行路径：
+
+| 路径 | 说明 |
+|------|------|
+| 字节码 VM | 默认路径 |
+| 树遍历解释器 | 备选路径，`TENTH_NO_VM=1` 时启用 |
+| Cranelift JIT | 热点函数编译，含标量参数 ABI |
+| WASM 后端 | wasm-encoder 生成 + wasmi 执行 |
+
+Tenth 编译器本身由 Tenth 编写（`tenthc/`），三条自举路径均通过验证：
 
 | 路径 | 词法分析 | 语法分析 | 编译 | 状态 |
 |------|---------|---------|------|------|
-| A | Rust | Rust | compile_host | ✅ 约 0.2 秒 |
-| B | **Tenth** | **Tenth** | compile_program | ✅ 已验证 |
-| C | WASM | wasmi | compile_host | ✅ 闭环 |
+| A | Rust | Rust | `compile_host` | 通过（约 0.2 秒） |
+| B | **Tenth** | **Tenth** | `compile_program` | 通过 |
+| C | WASM | wasmi | `compile_host` | 通过（闭环） |
 
-自举管线执行时间 ~0.2s（VM 路径，无 fallback）。
+## 项目状态
 
-## Documentation
+- **版本**：v1.0.0（2026-08-04 发布）。API 已冻结，权威清单见 `docs/API冻结清单.md`；版本语义为 `PATCH` = 缺陷修复、`MINOR` = 兼容新增、`MAJOR` = 破坏性变更。
+- **已知限制**：见 `RELEASE_NOTES.md` §五，逐项列出 1.0 门槛遗留项与绕行方式。
+- **规模数据**：测试数、可运行实例数、标准库模块数以 `能力梳理/能力全梳理.md` §统计基线为唯一事实源。
+- **后续方向**：编译期 shape 检查与静态分析规划见 `docs/shape-check-roadmap/`。
+- **GPU 后端**：目前为 CUDA 代码生成脚手架（`tenth/src/compile/gpu/`），尚未接入运行时与真实设备。
+
+## 从源码构建与发布产物
+
+- **从源码构建**（推荐，任一平台）：`cargo build --release --manifest-path tenth/Cargo.toml`
+- **GitHub Releases**（CI 三平台原生构建，tag `v1.0.0`）：下载 `tenth-1.0.0-<windows-x86_64.zip | linux-x86_64.tar.gz | macos-x86_64.tar.gz>`。解压后 `bin/` 含 5 个可执行产物，`std/` 为运行时必需的标准库，`docs/` 含手册、语言规范与 API 冻结清单。
+- **校验**：`sha256sum -c SHA256SUMS.txt`（Windows 使用 `scripts/release/verify.ps1`）
+- **发布说明**：`RELEASE_NOTES.md`；发布流程：`scripts/release/README.md`
+
+## 文档
 
 | 文档 | 内容 |
 |------|------|
-| `RELEASE_NOTES.md` | 1.0 发布说明（里程碑回顾/关键能力/已知限制/升级指引） |
+| `docs/语言参考手册.md` | 语言语法、类型系统、标准库 API（对外权威） |
+| `docs/语言规范.md` | 语言规范（稳定契约，v1.0.0 冻结） |
+| `docs/教程.md` | 入门与进阶教程 |
+| `docs/API冻结清单.md` | API 冻结范围与 semver 承诺 |
+| `RELEASE_NOTES.md` | 1.0 发布说明：里程碑、关键能力、已知限制、升级指引 |
 | `CODE_WIKI.md` | 模块架构、编译管线、依赖关系 |
-| `MEMO.md` | 逐版变更记录、已知限制演化、重大决策 |
-| `能力梳理/能力全梳理.md` | 601 项能力的逐条完成状态（✅/⚠️/❌） |
-| `docs/语言参考手册.md` | 语言语法、类型系统、标准库 API |
-| `docs/shape-check-roadmap/` | Shape 检查战略规划与短期规划 |
 | `AUDIT.md` | 缺陷登记册、测试覆盖矩阵、架构债务 |
 | `DEPS.md` | 环境配置、构建命令、依赖清单 |
 | `SECURITY.md` | 威胁模型与沙箱选项 |
-
-## Roadmap
-
-| 阶段 | 目标 | 状态 |
-|------|------|------|
-| **阶段 1：可用** | VM 张量方法 + 日常标准库 + tenthpm 基本可用 | 🚧 进行中 |
-| **阶段 2：好用** | Cranelift JIT 编译热函数，标量性能接近 Go | 📋 规划中 |
-| **阶段 3：差异化能力** | 编译期 shape 检查 + 运行时 autodiff 校验 + 内存预估 | ✅ Phase 1+2+3 + 防护层 A/D 已实现 |
-
-每个阶段独立可用——阶段 1 完成后即使不做 JIT，用户也能用 Tenth 写脚本和训练小模型；阶段 2 完成后即使不做 shape 检查，Tenth 也是一门性能不错的通用语言。
-
-详见 `CODE_WIKI.md` §10 与 `MEMO.md`。
+| `docs/性能基线.md` | 性能数据（唯一事实源） |
 
 ## License
 
