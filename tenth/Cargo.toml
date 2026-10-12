@@ -2,7 +2,7 @@
 name = "tenth"
 version = "1.0.0"
 edition = "2024"
-description = "Tenth language bootstrap compiler"
+description = "Tenth (Tensor + Zenith) — an AI-native general-purpose programming language: tensors built in, autodiff first-class, compile-time shape checking"
 
 [features]
 # Enable memory tracking counters and hard-limit enforcement.
